@@ -4609,6 +4609,66 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_degraded_startup_self_test_survives_worker_reregister(cp):
+    machine = cp.register_machine("worker-host", resources={"cpu": 4})
+    worker = cp.register_agent(machine.id, "worker", agent_id="agent_worker", resources={})
+    report = {
+        "schema": "mac.agent_startup_self_test.v1",
+        "status": "degraded",
+        "hermes_failure_class": "budget_exceeded",
+        "blocking_problems": [],
+    }
+    cp.heartbeat_agent(
+        worker.id,
+        status=AgentStatus.IDLE.value,
+        health_status=HealthStatus.DEGRADED.value,
+        resources={"startup_self_test": report},
+    )
+
+    refreshed = cp.register_agent(machine.id, "worker", agent_id=worker.id, resources={})
+
+    assert refreshed.health_status == HealthStatus.DEGRADED.value
+    assert refreshed.resources["startup_self_test"] == report
+
+
+def test_degraded_startup_self_test_survives_liveness_heartbeat_until_passed(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    report = {
+        "schema": "mac.agent_startup_self_test.v1",
+        "status": "degraded",
+        "hermes_failure_class": "budget_exceeded",
+        "blocking_problems": [],
+    }
+    cp.heartbeat_agent(
+        worker.id,
+        status=AgentStatus.IDLE.value,
+        health_status=HealthStatus.DEGRADED.value,
+        resources={"startup_self_test": report},
+    )
+
+    refreshed = cp.heartbeat_agent(
+        worker.id,
+        status=AgentStatus.IDLE.value,
+        health_status=HealthStatus.HEALTHY.value,
+        resources={},
+    )
+
+    assert refreshed.health_status == HealthStatus.DEGRADED.value
+    assert refreshed.resources["startup_self_test"] == report
+
+    passed = dict(report)
+    passed["status"] = "passed"
+    passed["hermes_failure_class"] = ""
+    recovered = cp.heartbeat_agent(
+        worker.id,
+        health_status=HealthStatus.HEALTHY.value,
+        resources={"startup_self_test": passed},
+    )
+
+    assert recovered.health_status == HealthStatus.HEALTHY.value
+    assert recovered.resources["startup_self_test"] == passed
+
+
 def test_deliver_messages_is_idempotent_under_concurrent_calls(cp):
     """mac-4pkm: SELECT+UPDATE used to interleave so two concurrent
     deliver_messages calls could both mark the same row delivered. With

@@ -660,6 +660,51 @@ class ControlPlane:
             return json_dumps({})
         return row["value"]
 
+    def _agent_resources_with_preserved_startup_self_test(
+        self,
+        agent_id: str,
+        resources: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        if resources is None:
+            raw = self._resolved_json_column("agents", "resources", agent_id, None)
+            return ensure_json_object(json_loads(raw, {}))
+        resource_value = ensure_json_object(resources)
+        if "startup_self_test" in resource_value:
+            return resource_value
+        row = self.store.query_one("SELECT resources FROM agents WHERE id = ?", (agent_id,))
+        if row is None:
+            return resource_value
+        existing = ensure_json_object(json_loads(row["resources"], {}))
+        if "startup_self_test" in existing:
+            merged = dict(resource_value)
+            merged["startup_self_test"] = existing["startup_self_test"]
+            return merged
+        return resource_value
+
+    @staticmethod
+    def _startup_self_test_degrades_health(resources: Dict[str, Any]) -> bool:
+        startup = resources.get("startup_self_test")
+        if not isinstance(startup, dict):
+            return False
+        status = str(startup.get("status") or "").strip().lower()
+        if status in {"degraded", "failed"}:
+            return True
+        return bool(str(startup.get("hermes_failure_class") or "").strip())
+
+    def _project_agent_health_for_resources(
+        self,
+        current_health: str,
+        requested_health: Optional[str],
+        resources: Dict[str, Any],
+    ) -> Optional[str]:
+        if not self._startup_self_test_degrades_health(resources):
+            return requested_health
+        if requested_health is None:
+            return HealthStatus.DEGRADED.value if current_health == HealthStatus.HEALTHY.value else None
+        if requested_health == HealthStatus.HEALTHY.value:
+            return HealthStatus.DEGRADED.value
+        return requested_health
+
     # Human-facing identity + Hermes boundary: thin facade over
     # ``self.identity``. New code should call ``cp.identity.<method>``.
 
@@ -5334,7 +5379,13 @@ class ControlPlane:
             )
         else:
             capabilities_json = json_dumps(coerce_list(capabilities))
-        resources_json = self._resolved_json_column("agents", "resources", aid, resources)
+        resource_value = self._agent_resources_with_preserved_startup_self_test(aid, resources)
+        resources_json = json_dumps(resource_value)
+        health_value = self._project_agent_health_for_resources(
+            HealthStatus.HEALTHY.value,
+            HealthStatus.HEALTHY.value,
+            resource_value,
+        ) or HealthStatus.HEALTHY.value
         # Preserve hermes_instance_id across re-registrations when the caller
         # didn't pass one, so an ops re-register doesn't accidentally orphan
         # the agent from its soul.
@@ -5388,7 +5439,7 @@ class ControlPlane:
                     capabilities_json,
                     resources_json,
                     AgentStatus.IDLE.value,
-                    HealthStatus.HEALTHY.value,
+                    health_value,
                     now,
                     now,
                     now,
@@ -5408,7 +5459,7 @@ class ControlPlane:
                     "capabilities": json_loads(capabilities_json, []),
                     "resource_keys": sorted(ensure_json_object(json_loads(resources_json, {})).keys()),
                     "status": AgentStatus.IDLE.value,
-                    "health_status": HealthStatus.HEALTHY.value,
+                    "health_status": health_value,
                     "hermes_instance_id": hermes_instance_id,
                 },
                 now,
@@ -5649,6 +5700,7 @@ class ControlPlane:
         params: List[Any] = [now, now]
         status_value: Optional[str] = None
         health_value: Optional[str] = None
+        resource_value = agent_before.resources
         next_running_digest = agent_before.running_digest
         changed_fields: List[str] = []
         if status is not None:
@@ -5667,16 +5719,23 @@ class ControlPlane:
                 HealthStatus(health_value)
             except ValueError:
                 raise ValidationError("unsupported agent health_status: %s" % health_value)
-            updates.append("health_status = ?")
-            params.append(health_value)
-            if health_value != agent_before.health_status:
-                changed_fields.append("health_status")
         if resources is not None:
-            resource_value = ensure_json_object(resources)
+            resource_value = self._agent_resources_with_preserved_startup_self_test(agent_id, resources)
             updates.append("resources = ?")
             params.append(json_dumps(resource_value))
             if resource_value != agent_before.resources:
                 changed_fields.append("resources")
+        projected_health_value = self._project_agent_health_for_resources(
+            agent_before.health_status,
+            health_value,
+            resource_value,
+        )
+        if projected_health_value is not None:
+            updates.append("health_status = ?")
+            params.append(projected_health_value)
+            if projected_health_value != agent_before.health_status:
+                changed_fields.append("health_status")
+            health_value = projected_health_value
         if running_digest is not None:
             digest = running_digest.strip()
             if digest:
