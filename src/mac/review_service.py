@@ -283,7 +283,32 @@ class ReviewService:
                     raise ValidationError("publication policy requires publication evidence")
                 if not evidence.checksum:
                     raise ValidationError("publication evidence requires a checksum")
-            content_hash = evidence.checksum
+            # mac-er6u: publication content_hash used to be the worker's
+            # opaque checksum string verbatim. Validate the shape so a
+            # garbage value (or one that accidentally collides with an
+            # executor evidence checksum) can't pass through and
+            # masquerade as a tamper-evidence anchor. Format must look
+            # like ``<algo>:<digest>`` with algo in {sha256, sha512,
+            # blake2b} and hex digest of the expected length.
+            content_hash = (evidence.checksum or "").strip()
+            if content_hash:
+                allowed_formats = {
+                    "sha256": 64,
+                    "sha512": 128,
+                    "blake2b": 128,
+                }
+                algo, sep, digest = content_hash.partition(":")
+                if (
+                    not sep
+                    or algo.lower() not in allowed_formats
+                    or len(digest) != allowed_formats[algo.lower()]
+                    or not all(c in "0123456789abcdefABCDEF" for c in digest)
+                ):
+                    raise ValidationError(
+                        "publication evidence checksum must be one of "
+                        "sha256/sha512/blake2b in <algo>:<hex> form (got %r)"
+                        % content_hash
+                    )
         owner_agent_id = task.owner_agent_id
         now = utcnow()
         publication_id = new_id("pub")

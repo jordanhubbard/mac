@@ -4568,11 +4568,13 @@ def test_publication_policy_requires_publication_evidence_with_hash(cp):
         "test://publish",
         "published",
         reviewer.id,
-        checksum="sha256:abc123",
+        # mac-er6u: publication checksum must be a real sha256 hex form
+        # (64 chars), not a short opaque string.
+        checksum="sha256:" + ("ab" * 32),
     )
     publication = cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=pub_evidence.id)
 
-    assert publication.content_hash == "sha256:abc123"
+    assert publication.content_hash == "sha256:" + ("ab" * 32)
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
@@ -4759,6 +4761,58 @@ def test_signature_includes_signed_by_in_mac(cp):
     swapped["signed_by"] = agent_b.id
     assert not verify_verification_manifest_signature(key_b, swapped, sig_a)
     assert not verify_verification_manifest_signature(key_a, swapped, sig_a)
+
+
+def test_tasks_state_trigger_rejects_unknown_state(cp):
+    """mac-1hnt: a direct UPDATE that bypasses validate_transition (e.g.
+    a bug or a manual fix) used to be able to put a task into an
+    illegal state. The DB-level trigger now rejects that."""
+    import sqlite3
+
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    with pytest.raises(sqlite3.IntegrityError):
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            ("not-a-real-state", task.id),
+        )
+
+
+def test_publication_content_hash_format_is_enforced(cp):
+    """mac-er6u: publication content_hash used to accept any opaque
+    string the worker passed. Now we require a real ``algo:hex`` form
+    with a recognized algorithm and digest length."""
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task(
+        "t",
+        required_capabilities=["python"],
+        metadata={"policy": {"require_publication_evidence": True}},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    test_ev = cp.add_evidence(
+        task.id, "test", "artifact://x", "ok",
+        worker.id, metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    from tests.conftest import submit_review_verdict
+    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, test_ev.id)
+    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
+
+    # Bad format → refused
+    bad_ev = cp.add_evidence(
+        task.id, "publication", "p://x", "p", reviewer.id, checksum="not-a-hash",
+    )
+    with pytest.raises(ValidationError, match="checksum"):
+        cp.publish_task(task.id, "p://x", reviewer.id, evidence_id=bad_ev.id)
+
+    short_ev = cp.add_evidence(
+        task.id, "publication", "p://x", "p", reviewer.id, checksum="sha256:abc",
+    )
+    with pytest.raises(ValidationError, match="checksum"):
+        cp.publish_task(task.id, "p://x", reviewer.id, evidence_id=short_ev.id)
 
 
 def test_observability_record_truncates_oversized_detail(cp):

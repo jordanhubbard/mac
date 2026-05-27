@@ -172,6 +172,35 @@ class SQLiteStore:
                     ON tasks (state, priority DESC, created_at);
                 CREATE INDEX IF NOT EXISTS idx_tasks_owner
                     ON tasks (owner_agent_id);
+                -- mac-1hnt: enforce the task state machine at the DB
+                -- layer. A SQLite CHECK constraint can't be added to
+                -- an existing table, so use a trigger that rejects
+                -- INSERTs/UPDATEs with a state outside the enum. The
+                -- Python ``validate_transition`` still handles the
+                -- richer "from → to" rule; this trigger is the
+                -- belt-and-braces against bare UPDATEs and bugs.
+                CREATE TRIGGER IF NOT EXISTS trg_tasks_state_enum_ins
+                BEFORE INSERT ON tasks
+                FOR EACH ROW
+                WHEN NEW.state NOT IN (
+                    'open', 'blocked', 'claimed', 'running',
+                    'needs_review', 'reviewing', 'completed',
+                    'failed', 'cancelled'
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid task state');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_tasks_state_enum_upd
+                BEFORE UPDATE OF state ON tasks
+                FOR EACH ROW
+                WHEN NEW.state NOT IN (
+                    'open', 'blocked', 'claimed', 'running',
+                    'needs_review', 'reviewing', 'completed',
+                    'failed', 'cancelled'
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'invalid task state');
+                END;
 
                 CREATE TABLE IF NOT EXISTS task_history (
                     id TEXT PRIMARY KEY,
