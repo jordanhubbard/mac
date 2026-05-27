@@ -703,7 +703,7 @@ env_value_or_empty() {
 
 fleet_scoped_name() {
   local key="$1" fleet="$2"
-  "$PY" - "$key" "$fleet" <<'PY'
+  python3 - "$key" "$fleet" <<'PY'
 import re
 import sys
 
