@@ -24,6 +24,8 @@ TOKENHUB_REF="${TOKENHUB_REF:-}"
 TOKENHUB_PORT="${TOKENHUB_PORT:-${MAC_TOKENHUB_PORT:-8090}}"
 TOKENHUB_GO_VERSION="${TOKENHUB_GO_VERSION:-1.24.0}"
 TOKENHUB_CREDENTIALS_FILE="${TOKENHUB_CREDENTIALS_FILE:-$TOKENHUB_STATE_DIR/credentials}"
+TOKENHUB_BINARY_CLEANUP_FILE="${TOKENHUB_BINARY_CLEANUP_FILE:-$TOKENHUB_STATE_DIR/pending-binary-cleanup}"
+TOKENHUB_BINARY_OLD_DIR="${TOKENHUB_BINARY_OLD_DIR:-$TOKENHUB_BIN_DIR/.old-tokenhub-binaries}"
 TOKENHUB_VAULT_ENABLED="${TOKENHUB_VAULT_ENABLED:-true}"
 MAC_ENV_FILE="${MAC_ENV_FILE:-$MAC_HOME/mac.env}"
 HERMES_ENV_FILE="${HERMES_ENV_FILE:-$HERMES_HOME/.env}"
@@ -254,9 +256,68 @@ print(m.group(1) if m else "")
 PY
 }
 
+activate_tokenhub_binaries() {
+  local staged_dir="$1" cleanup_tmp binary src dest old stamp
+  mkdir -p "$TOKENHUB_BIN_DIR" "$TOKENHUB_STATE_DIR" "$TOKENHUB_BINARY_OLD_DIR"
+  chmod 700 "$TOKENHUB_STATE_DIR" "$TOKENHUB_BINARY_OLD_DIR"
+  cleanup_tmp="$(mktemp "${TOKENHUB_STATE_DIR}/binary-cleanup.XXXXXX")"
+  for binary in tokenhub tokenhubctl; do
+    src="${staged_dir%/}/${binary}"
+    if [ ! -f "$src" ]; then
+      rm -f "$cleanup_tmp"
+      echo "[tokenhub] ERROR: staged TokenHub binary missing: $src" >&2
+      return 1
+    fi
+  done
+  for binary in tokenhub tokenhubctl; do
+    src="${staged_dir%/}/${binary}"
+    dest="${TOKENHUB_BIN_DIR%/}/${binary}"
+    old=""
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+      stamp="$(date -u +%Y%m%dT%H%M%SZ).$$"
+      old="${TOKENHUB_BINARY_OLD_DIR%/}/${binary}.${stamp}"
+      mv -f "$dest" "$old"
+      printf '%s\n' "$old" >> "$cleanup_tmp"
+    fi
+    if ! mv -f "$src" "$dest"; then
+      if [ -n "$old" ] && [ -e "$old" ] && [ ! -e "$dest" ]; then
+        mv -f "$old" "$dest"
+      fi
+      rm -f "$cleanup_tmp"
+      return 1
+    fi
+    chmod 755 "$dest"
+  done
+  if [ -s "$cleanup_tmp" ]; then
+    cat "$cleanup_tmp" >> "$TOKENHUB_BINARY_CLEANUP_FILE"
+    chmod 600 "$TOKENHUB_BINARY_CLEANUP_FILE"
+  fi
+  rm -f "$cleanup_tmp"
+}
+
+cleanup_replaced_tokenhub_binaries() {
+  local pending="$TOKENHUB_BINARY_CLEANUP_FILE" remaining old
+  [ -f "$pending" ] || return 0
+  remaining="$(mktemp "${TOKENHUB_STATE_DIR}/binary-cleanup-remaining.XXXXXX")"
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    if [ -e "$old" ] || [ -L "$old" ]; then
+      if ! rm -f "$old" 2>/dev/null; then
+        printf '%s\n' "$old" >> "$remaining"
+      fi
+    fi
+  done < "$pending"
+  if [ -s "$remaining" ]; then
+    mv -f "$remaining" "$pending"
+    chmod 600 "$pending"
+  else
+    rm -f "$remaining" "$pending"
+  fi
+}
+
 _install_tokenhub_from_release() {
   local owner_repo="$1"
-  local api_url="" release_json="" uname_s="" uname_m="" tmp_dir="" downloaded="" ok=0
+  local api_url="" release_json="" uname_s="" uname_m="" tmp_dir="" staged_dir="" downloaded="" ok=0
   if [ -n "${TOKENHUB_REF:-}" ]; then
     api_url="https://api.github.com/repos/${owner_repo}/releases/tags/${TOKENHUB_REF}"
   else
@@ -271,13 +332,15 @@ _install_tokenhub_from_release() {
   uname_s="$(uname -s)"
   uname_m="$(uname -m)"
   tmp_dir="$(mktemp -d)"
+  staged_dir="$tmp_dir/staged"
 
-  downloaded="$("$PYTHON_BIN" - "$release_json" "$uname_s" "$uname_m" "$tmp_dir" "$TOKENHUB_BIN_DIR" <<'PY'
-import json, os, re, subprocess, sys, tarfile, zipfile, urllib.request
+  downloaded="$("$PYTHON_BIN" - "$release_json" "$uname_s" "$uname_m" "$tmp_dir" "$staged_dir" <<'PY'
+import json, os, sys, tarfile, zipfile, urllib.request
 from pathlib import Path
 
 release = json.loads(sys.argv[1])
-uname_s, uname_m, tmp_dir, bin_dir = sys.argv[2], sys.argv[3], Path(sys.argv[4]), Path(sys.argv[5])
+uname_s, uname_m = sys.argv[2], sys.argv[3]
+tmp_dir, staged_dir = Path(sys.argv[4]), Path(sys.argv[5])
 
 # Normalise OS / arch into common naming variants
 os_variants = {"Linux": ["Linux", "linux"], "Darwin": ["Darwin", "darwin", "macos"]}
@@ -320,10 +383,11 @@ if token:
 with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
     f.write(resp.read())
 
-bin_dir.mkdir(parents=True, exist_ok=True)
+staged_dir.mkdir(parents=True, exist_ok=True)
 
 def extract_bins(src):
     names = ["tokenhub", "tokenhubctl"]
+    staged = {}
 
     def binary_name(member_name):
         base = Path(member_name).name
@@ -336,9 +400,15 @@ def extract_bins(src):
         return ""
 
     def write_bin(binary, data):
-        out = bin_dir / binary
-        out.write_bytes(data)
-        out.chmod(0o755)
+        staged[binary] = data
+
+    def flush_staged():
+        if not all(name in staged for name in names):
+            raise SystemExit(1)
+        for binary, data in staged.items():
+            out = staged_dir / binary
+            out.write_bytes(data)
+            out.chmod(0o755)
 
     if src.suffix == ".gz" and src.stem.endswith(".tar"):
         with tarfile.open(src) as tf:
@@ -360,24 +430,23 @@ def extract_bins(src):
         # Bare binary asset.
         binary = binary_name(src.name) or "tokenhub"
         write_bin(binary, src.read_bytes())
+    flush_staged()
 
 extract_bins(dest)
 
-# Verify both command binaries were installed from the archive.
-if not all((bin_dir / name).exists() for name in names):
-    raise SystemExit(1)
-
-print("installed", flush=True)
+print("staged", flush=True)
 PY
   )" || true
 
-  if printf '%s' "$downloaded" | grep -q "^installed"; then
-    ok=1
+  if printf '%s' "$downloaded" | grep -q "^staged"; then
+    if activate_tokenhub_binaries "$staged_dir"; then
+      ok=1
+    fi
   fi
   rm -rf "$tmp_dir"
   if [ "$ok" = "1" ]; then
     log "TokenHub binaries installed from release"
-    printf '%s\n' "$downloaded" | grep -v "^installed" | grep -v "^downloading" | while IFS= read -r line; do
+    printf '%s\n' "$downloaded" | grep -v "^staged" | grep -v "^downloading" | while IFS= read -r line; do
       [ -n "$line" ] && log "$line"
     done
     return 0
@@ -387,6 +456,7 @@ PY
 }
 
 _install_tokenhub_from_source() {
+  local build_dir
   mkdir -p "$(dirname "$TOKENHUB_REPO")" "$TOKENHUB_BIN_DIR"
   if [ -d "$TOKENHUB_REPO/.git" ]; then
     log "updating TokenHub source at $TOKENHUB_REPO"
@@ -403,10 +473,12 @@ _install_tokenhub_from_source() {
     git -C "$TOKENHUB_REPO" pull --ff-only --quiet origin main 2>/dev/null || true
   fi
   ensure_go
+  build_dir="$(mktemp -d)"
   log "building TokenHub binaries from source"
-  (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$TOKENHUB_BIN_DIR/tokenhub" ./cmd/tokenhub)
-  (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$TOKENHUB_BIN_DIR/tokenhubctl" ./cmd/tokenhubctl)
-  chmod 755 "$TOKENHUB_BIN_DIR/tokenhub" "$TOKENHUB_BIN_DIR/tokenhubctl"
+  (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$build_dir/tokenhub" ./cmd/tokenhub)
+  (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$build_dir/tokenhubctl" ./cmd/tokenhubctl)
+  activate_tokenhub_binaries "$build_dir"
+  rm -rf "$build_dir"
 }
 
 install_tokenhub_binaries() {
@@ -943,6 +1015,7 @@ install_tokenhub_binaries
 write_service_env
 install_service
 wait_for_tokenhub
+cleanup_replaced_tokenhub_binaries
 configure_aliases
 write_client_env
 verify_no_direct_provider_env

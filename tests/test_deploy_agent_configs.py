@@ -306,7 +306,11 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert 'health_urls+=("http://${TOKENHUB_BIND_ADDR}:${TOKENHUB_PORT}/healthz")' in tokenhub_installer
     assert 'base.startswith("tokenhubctl-")' in tokenhub_installer
     assert 'base.startswith("tokenhub-")' in tokenhub_installer
-    assert 'all((bin_dir / name).exists() for name in names)' in tokenhub_installer
+    assert "activate_tokenhub_binaries()" in tokenhub_installer
+    assert 'mv -f "$dest" "$old"' in tokenhub_installer
+    assert 'mv -f "$src" "$dest"' in tokenhub_installer
+    assert "cleanup_replaced_tokenhub_binaries" in tokenhub_installer
+    assert "wait_for_tokenhub\ncleanup_replaced_tokenhub_binaries" in tokenhub_installer
     assert '"https://inference-api.nvidia.com/v1"' in tokenhub_installer
     assert 'api_key.startswith("tokenhub_")' in tokenhub_installer
     assert "provider_ids = set(by_id)" in tokenhub_installer
