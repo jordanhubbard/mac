@@ -378,9 +378,17 @@ def test_e2e_rollout_advance_blocks_on_eval_gate_via_http(tmp_path: Path):
     assert started.json()["status"] == "canarying"
 
     # Pass the health gate so the eval gate is the next thing standing.
+    # mac-jmjc: default health_policy now requires "runtime"; supply it.
     health = client.post(
         "/rollouts/%s/health" % rollout["id"],
-        json={"actor": "ops", "checks": {"latency_p95_ms": "ok", "error_rate": "ok"}},
+        json={
+            "actor": "ops",
+            "checks": {
+                "runtime": "healthy",
+                "latency_p95_ms": "ok",
+                "error_rate": "ok",
+            },
+        },
     ).json()
     assert health["healthy"] is True
 

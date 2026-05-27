@@ -106,6 +106,19 @@ class RolloutService:
         if required_eval_set_id is not None:
             self._get_eval_set(required_eval_set_id)
         policy = ensure_json_object(health_policy)
+        # mac-jmjc: a rollout without an explicit required_checks list
+        # would let the health gate trivially pass on any caller input.
+        # Default to ["runtime"] when the caller didn't specify, and
+        # reject health_policy that explicitly sets required_checks=[].
+        if "required_checks" in policy:
+            required_value = policy.get("required_checks") or []
+            if not isinstance(required_value, list) or not required_value:
+                raise ValidationError(
+                    "rollout health_policy.required_checks must be a non-empty list"
+                )
+        else:
+            policy = dict(policy)
+            policy["required_checks"] = ["runtime"]
         now = utcnow()
         rollout_id = new_id("rollout")
         self.store.execute(
@@ -502,7 +515,14 @@ class RolloutService:
         required = rollout.health_policy.get("required_checks")
         if required:
             return [str(check) for check in required]
-        return sorted(str(check) for check in checks)
+        # mac-jmjc: without an explicit required_checks list the gate
+        # previously degraded to "whatever keys the caller supplied",
+        # which makes ``evaluate_rollout_health(rollout_id, {})`` always
+        # report healthy. Refuse to evaluate health without policy.
+        raise ValidationError(
+            "rollout health policy must declare required_checks; refusing to evaluate health for %s"
+            % rollout.id
+        )
 
     def _check_passed(self, value: Any) -> bool:
         if isinstance(value, bool):

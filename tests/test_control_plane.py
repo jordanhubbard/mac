@@ -4603,6 +4603,98 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_rollout_health_policy_requires_explicit_required_checks_at_create(cp):
+    """mac-jmjc: an empty required_checks list trivially passes the
+    health gate. Reject it at rollout creation and default missing
+    policy to a baseline ``required_checks=['runtime']`` so the gate
+    cannot be silently bypassed.
+    """
+    runtime = create_runtime(cp, "runtime-x")
+    # Explicit empty required_checks is rejected.
+    with pytest.raises(ValidationError, match="required_checks"):
+        cp.create_rollout(
+            "9.0",
+            "canary",
+            10,
+            "human",
+            runtime_environment_id=runtime.id,
+            artifact_uri="artifact://mac/9.0",
+            artifact_hash="sha256:abc123",
+            health_policy={"required_checks": []},
+        )
+    # No health_policy gets the default baseline (not silently empty).
+    rollout = cp.create_rollout(
+        "9.1",
+        "canary",
+        10,
+        "human",
+        runtime_environment_id=runtime.id,
+        artifact_uri="artifact://mac/9.1",
+        artifact_hash="sha256:abc123",
+    )
+    assert rollout.health_policy["required_checks"] == ["runtime"]
+    # evaluate_rollout_health with empty caller-supplied checks now FAILS
+    # the gate (instead of trivially passing on []).
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    result = cp.evaluate_rollout_health(rollout.id, {}, "human")
+    status = result.get("status") if isinstance(result, dict) else result.status
+    assert status != "healthy"
+
+
+def test_workflow_advance_race_does_not_orphan_tasks(cp):
+    """mac-t8ih: two concurrent terminal events on the same workflow run
+    must not both spawn a next-node task. The guarded UPDATE in _advance
+    ensures only the first caller proceeds; the second one observes
+    rowcount=0 and exits without writing history."""
+    from tests.conftest import bind_soul as _bs
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="race-wf",
+        name="race",
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {"node_key": "a", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "b", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "a", "condition": "success", "priority": 100},
+                {"from_node_key": "a", "to_node_key": "b", "condition": "failure", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run("race-wf", started_by="ops")
+    machine = cp.register_machine("h")
+    qa_soul = _bs(cp, persona_name="qa", allowed_role_slugs=["qa"])
+    qa_agent = cp.register_agent(machine.id, "qa1", capabilities=["python", "qa"], hermes_instance_id=qa_soul)
+    cp.roles.assign_role(qa_agent.id, "qa")
+    first_task = cp.get_task(run.current_task_id)
+    cp.claim_task(first_task.id, qa_agent.id)
+    cp.start_task(first_task.id, qa_agent.id)
+
+    # Simulate a race: two callers invoke _advance with the SAME completed
+    # task. The first wins, the second's guarded UPDATE finds the run
+    # has moved on and exits cleanly.
+    cp.transition_task(first_task.id, TaskState.FAILED.value, qa_agent.id)
+    # At this point, the runtime advanced once via on_task_completed.
+    # Calling _advance again directly should be a no-op.
+    cp.workflow_runtime._advance(
+        cp.workflow_runtime.get_run(run.id), "a", "failure", first_task.id
+    )
+
+    history = cp.store.query_all(
+        "SELECT to_node_key FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    # Expect: start (to=a), then advance to b, then either a refused or
+    # a cancellation. Critically, we must not see two spawns of `b`.
+    b_spawns = sum(1 for r in history if r["to_node_key"] == "b")
+    assert b_spawns <= 1, f"workflow spawned {b_spawns} `b` tasks, expected <= 1"
+
+
 def test_bead_issue_is_importable_strict_validation(cp):
     """mac-3xpl: bd ready --json import must reject hostile/oversized
     fields before they reach the project ledger."""
@@ -5115,7 +5207,8 @@ def test_rollout_promote_requires_passing_eval_run(cp):
         required_eval_set_id=eval_set.id,
     )
     cp.advance_rollout(gated.id, "start_canary", "human")
-    cp.evaluate_rollout_health(gated.id, {}, "human")  # default health gate passes
+    # mac-jmjc: must supply checks that satisfy the policy's required_checks.
+    cp.evaluate_rollout_health(gated.id, {"runtime": "healthy"}, "human")
 
     # No eval run yet — promote refused.
     with pytest.raises(ValidationError):
@@ -5166,7 +5259,8 @@ def _gated_rollout(cp, version, eval_set_id):
         required_eval_set_id=eval_set_id,
     )
     cp.advance_rollout(rollout.id, "start_canary", "human")
-    cp.evaluate_rollout_health(rollout.id, {}, "human")
+    # mac-jmjc: default health gate now requires non-empty checks.
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "human")
     return rollout
 
 

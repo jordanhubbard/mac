@@ -1182,9 +1182,9 @@ validate_tokenhub_endpoint() {
   if ! curl -fsS --connect-timeout 2 --max-time 5 "${tokenhub_url%/}/healthz" >/dev/null; then
     # The configured URL may be an external DNS name not reachable from inside this host
     # (e.g. a K8s service FQDN when the service doesn't expose the tokenhub port).
-    # Fall back to loopback — valid when tokenhub is installed locally on this node.
+    # Fall back to loopback only when tokenhub is installed locally on this node.
     local loopback_port="${MAC_TOKENHUB_PORT:-${TOKENHUB_PORT_CONFIGURED:-8090}}"
-    if curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${loopback_port}/healthz" >/dev/null 2>&1; then
+    if tokenhub_install_enabled && curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${loopback_port}/healthz" >/dev/null 2>&1; then
       log "TokenHub health confirmed on loopback; configured URL ${tokenhub_url%/} is not reachable from this host"
       tokenhub_url="http://127.0.0.1:${loopback_port}"
     elif truthy "$allow_degraded"; then

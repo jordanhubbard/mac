@@ -325,13 +325,21 @@ class WorkflowRuntime:
         condition: str,
         task_id: Optional[str],
     ) -> WorkflowRun:
+        """Walk the workflow DAG from the just-completed task to the next.
+
+        mac-t8ih: every state-mutating branch is wrapped in a transaction
+        whose first statement is a *guarded* UPDATE that requires the run
+        to still be in RUNNING state. If two terminal events race, the
+        second one sees rowcount=0 on the guard and returns early — only
+        one caller advances the run, no duplicate task gets spawned, no
+        orphaned history row gets written.
+        """
         definition = run.definition_snapshot
         edge = self._pick_edge(definition, from_key, condition)
         if edge is None and condition != "success":
             # Fall back to a generic success edge when a more-specific
             # condition isn't wired.
             edge = self._pick_edge(definition, from_key, "success")
-        next_seq = self._next_history_seq(run.id)
         now = utcnow()
         if edge is None or not edge.get("to_node_key"):
             # Terminal: success → COMPLETED, anything else → FAILED.
@@ -340,33 +348,37 @@ class WorkflowRuntime:
                 if condition in {"success", "approved"}
                 else WorkflowState.FAILED.value
             )
-            self.store.execute(
-                """
-                UPDATE workflow_runs
-                SET state = ?, current_node_key = NULL, current_task_id = NULL,
-                    updated_at = ?, completed_at = ?
-                WHERE id = ?
-                """,
-                (final_state, now, now, run.id),
-            )
-            self.store.execute(
-                """
-                INSERT INTO workflow_run_history (
-                    id, run_id, seq, from_node_key, to_node_key, condition,
-                    task_id, actor, attempt_number, detail, created_at
-                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', 1, ?, ?)
-                """,
-                (
-                    new_id("wfh"),
-                    run.id,
-                    next_seq,
-                    from_key,
-                    condition,
-                    task_id,
-                    json_dumps({"final_state": final_state}),
-                    now,
-                ),
-            )
+            with self.store.transaction() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET state = ?, current_node_key = NULL, current_task_id = NULL,
+                        updated_at = ?, completed_at = ?
+                    WHERE id = ? AND state = ?
+                    """,
+                    (final_state, now, now, run.id, WorkflowState.RUNNING.value),
+                )
+                if cur.rowcount == 0:
+                    return self.get_run(run.id)
+                next_seq = self._next_history_seq(run.id)
+                conn.execute(
+                    """
+                    INSERT INTO workflow_run_history (
+                        id, run_id, seq, from_node_key, to_node_key, condition,
+                        task_id, actor, attempt_number, detail, created_at
+                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', 1, ?, ?)
+                    """,
+                    (
+                        new_id("wfh"),
+                        run.id,
+                        next_seq,
+                        from_key,
+                        condition,
+                        task_id,
+                        json_dumps({"final_state": final_state}),
+                        now,
+                    ),
+                )
             return self.get_run(run.id)
         target = self._node_by_key(definition, edge["to_node_key"])
         if target is None:
@@ -383,43 +395,49 @@ class WorkflowRuntime:
         )
         prior_attempts = int(prior["n"]) if prior else 0
         if prior_attempts >= max_attempts:
-            self.store.execute(
-                """
-                UPDATE workflow_runs
-                SET state = ?, current_node_key = NULL, current_task_id = NULL,
-                    updated_at = ?, completed_at = ?
-                WHERE id = ?
-                """,
-                (WorkflowState.FAILED.value, now, now, run.id),
-            )
-            self.store.execute(
-                """
-                INSERT INTO workflow_run_history (
-                    id, run_id, seq, from_node_key, to_node_key, condition,
-                    task_id, actor, attempt_number, detail, created_at
-                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', ?, ?, ?)
-                """,
-                (
-                    new_id("wfh"),
-                    run.id,
-                    next_seq,
-                    from_key,
-                    "max_attempts_exhausted",
-                    task_id,
-                    prior_attempts + 1,
-                    json_dumps(
-                        {
-                            "node_key": target["node_key"],
-                            "max_attempts": max_attempts,
-                            "prior_attempts": prior_attempts,
-                        }
+            with self.store.transaction() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET state = ?, current_node_key = NULL, current_task_id = NULL,
+                        updated_at = ?, completed_at = ?
+                    WHERE id = ? AND state = ?
+                    """,
+                    (WorkflowState.FAILED.value, now, now, run.id, WorkflowState.RUNNING.value),
+                )
+                if cur.rowcount == 0:
+                    return self.get_run(run.id)
+                next_seq = self._next_history_seq(run.id)
+                conn.execute(
+                    """
+                    INSERT INTO workflow_run_history (
+                        id, run_id, seq, from_node_key, to_node_key, condition,
+                        task_id, actor, attempt_number, detail, created_at
+                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', ?, ?, ?)
+                    """,
+                    (
+                        new_id("wfh"),
+                        run.id,
+                        next_seq,
+                        from_key,
+                        "max_attempts_exhausted",
+                        task_id,
+                        prior_attempts + 1,
+                        json_dumps(
+                            {
+                                "node_key": target["node_key"],
+                                "max_attempts": max_attempts,
+                                "prior_attempts": prior_attempts,
+                            }
+                        ),
+                        now,
                     ),
-                    now,
-                ),
-            )
+                )
             return self.get_run(run.id)
-        # Spawn the next task and update the run pointer atomically with
-        # the history row.
+        # Spawn the next task BEFORE the transaction (because create_task
+        # opens its own transaction and SQLite cannot nest). If the
+        # subsequent guarded UPDATE finds the run has moved on, we cancel
+        # the freshly-spawned task to avoid an orphan.
         new_task = self._spawn_node_task(
             run.id,
             target,
@@ -428,34 +446,55 @@ class WorkflowRuntime:
             tenant_id=run.tenant_id,
             attempt=prior_attempts + 1,
         )
-        self.store.execute(
-            """
-            UPDATE workflow_runs
-            SET current_node_key = ?, current_task_id = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (target["node_key"], new_task.id, now, run.id),
-        )
-        self.store.execute(
-            """
-            INSERT INTO workflow_run_history (
-                id, run_id, seq, from_node_key, to_node_key, condition,
-                task_id, actor, attempt_number, detail, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'workflow_runtime', ?, ?, ?)
-            """,
-            (
-                new_id("wfh"),
-                run.id,
-                next_seq,
-                from_key,
-                target["node_key"],
-                condition,
-                new_task.id,
-                prior_attempts + 1,
-                json_dumps({"reason": "advance"}),
-                now,
-            ),
-        )
+        with self.store.transaction() as conn:
+            cur = conn.execute(
+                """
+                UPDATE workflow_runs
+                SET current_node_key = ?, current_task_id = ?, updated_at = ?
+                WHERE id = ? AND state = ?
+                """,
+                (target["node_key"], new_task.id, now, run.id, WorkflowState.RUNNING.value),
+            )
+            if cur.rowcount == 0:
+                # Another _advance won the race. Cancel our spawn outside
+                # the transaction (also opens its own tx).
+                orphan_task_id = new_task.id
+                # We can't call self.cp.transition_task from inside the
+                # current tx; mark for cleanup after we exit.
+                cleanup_orphan = True
+            else:
+                cleanup_orphan = False
+                next_seq = self._next_history_seq(run.id)
+                conn.execute(
+                    """
+                    INSERT INTO workflow_run_history (
+                        id, run_id, seq, from_node_key, to_node_key, condition,
+                        task_id, actor, attempt_number, detail, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'workflow_runtime', ?, ?, ?)
+                    """,
+                    (
+                        new_id("wfh"),
+                        run.id,
+                        next_seq,
+                        from_key,
+                        target["node_key"],
+                        condition,
+                        new_task.id,
+                        prior_attempts + 1,
+                        json_dumps({"reason": "advance"}),
+                        now,
+                    ),
+                )
+        if cleanup_orphan:
+            try:
+                self.cp.transition_task(
+                    orphan_task_id,
+                    TaskState.CANCELLED.value,
+                    "workflow_runtime",
+                    {"reason": "advance_race_orphan"},
+                )
+            except Exception:
+                pass
         return self.get_run(run.id)
 
     def _spawn_node_task(
