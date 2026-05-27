@@ -174,6 +174,43 @@ class WorkflowDefinition:
             if inbound.get(key, 0) == 0:
                 raise ValidationError("workflow node %s is unreachable (no inbound edge)" % key)
 
+    @staticmethod
+    def find_cycles(node_keys: Iterable[str], edges: Iterable[WorkflowEdge]) -> List[List[str]]:
+        """Return a list of simple cycles in the workflow DAG.
+
+        Cycles are legitimate (e.g. review→fix→review rejection loops) but
+        callers should pair them with finite max_attempts to avoid unbounded
+        loops at runtime — see workflow_runtime._advance.
+        """
+        graph: Dict[str, List[str]] = {key: [] for key in node_keys}
+        for edge in edges:
+            if edge.from_node_key and edge.to_node_key and edge.from_node_key in graph:
+                graph[edge.from_node_key].append(edge.to_node_key)
+        cycles: List[List[str]] = []
+        path: List[str] = []
+        in_path: set = set()
+        visited: set = set()
+
+        def dfs(node: str) -> None:
+            if node in in_path:
+                start = path.index(node)
+                cycles.append(path[start:] + [node])
+                return
+            if node in visited:
+                return
+            visited.add(node)
+            in_path.add(node)
+            path.append(node)
+            for nxt in graph.get(node, []):
+                dfs(nxt)
+            path.pop()
+            in_path.remove(node)
+
+        for key in graph:
+            if key not in visited:
+                dfs(key)
+        return cycles
+
     def to_dict(self) -> JsonDict:
         data: JsonDict = {
             "schema_version": self.schema_version,

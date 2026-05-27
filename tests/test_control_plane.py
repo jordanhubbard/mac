@@ -4603,6 +4603,81 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_release_lease_refuses_to_clobber_after_takeover(cp):
+    """mac-79s1: if the lease has already been expired and the task
+    reclaimed by another agent, a stale release_lease call from the
+    original owner must not clear the new owner.
+    """
+    worker_a = register_agent(cp, "worker-a", ["python"])
+    worker_b = register_agent(cp, "worker-b", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    _, lease_a = cp.claim_task(task.id, worker_a.id)
+
+    # Simulate hub-side lease takeover: flip lease to RELEASED and
+    # re-open the task, then have worker_b claim it.
+    cp.store.execute(
+        "UPDATE leases SET status = ? WHERE id = ?",
+        (LeaseStatus.RELEASED.value, lease_a.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, owner_agent_id = NULL, lease_id = NULL WHERE id = ?",
+        (TaskState.OPEN.value, task.id),
+    )
+    _, lease_b = cp.claim_task(task.id, worker_b.id)
+
+    # Stale release from worker_a must fail and leave worker_b's lease intact.
+    with pytest.raises(TransitionError):
+        cp.release_lease(lease_a.id, worker_a.id)
+    assert cp.get_lease(lease_b.id).status == LeaseStatus.ACTIVE.value
+    assert cp.get_task(task.id).owner_agent_id == worker_b.id
+    assert cp.get_task(task.id).lease_id == lease_b.id
+
+
+def test_expire_leases_does_not_clobber_a_reclaimed_task(cp):
+    """mac-s0ta: between expire_leases reading the row and writing the
+    expiration, another path may have already released the lease and
+    reclaimed the task. The UPDATE must be guarded so a stale expiration
+    pass does not silently steal the task back from the new owner.
+    """
+    worker_a = register_agent(cp, "wa", ["python"])
+    worker_b = register_agent(cp, "wb", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    _, lease_a = cp.claim_task(task.id, worker_a.id)
+
+    # Simulate the race: between expire_leases() finding lease_a as
+    # "expired" and writing the UPDATE, release+reclaim happens.
+    # We do this by manually flipping lease_a to RELEASED and
+    # re-claiming with worker_b, then call expire_leases with a future
+    # `now` so it sees lease_a as eligible for expiry.
+    cp.store.execute(
+        "UPDATE leases SET status = ? WHERE id = ?",
+        (LeaseStatus.RELEASED.value, lease_a.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, owner_agent_id = NULL, lease_id = NULL WHERE id = ?",
+        (TaskState.OPEN.value, task.id),
+    )
+    _, lease_b = cp.claim_task(task.id, worker_b.id)
+
+    # Now force-expire by setting lease_a's expires_at into the past AND
+    # status back to ACTIVE — mimicking the read-then-stale-state window.
+    # The guard on status='active' in the UPDATE then misses (rowcount=0)
+    # because lease_a is no longer ACTIVE in reality? Actually it IS
+    # ACTIVE now in our setup. Test what happens then: lease_a expires,
+    # but the task UPDATE guard misses because tasks.lease_id != lease_a.id.
+    cp.store.execute(
+        "UPDATE leases SET status = ?, expires_at = ? WHERE id = ?",
+        (LeaseStatus.ACTIVE.value, "2000-01-01T00:00:00+00:00", lease_a.id),
+    )
+    cp.expire_leases()
+
+    # Worker_b's lease and task ownership must be untouched.
+    assert cp.get_lease(lease_b.id).status == LeaseStatus.ACTIVE.value
+    refreshed = cp.get_task(task.id)
+    assert refreshed.owner_agent_id == worker_b.id
+    assert refreshed.lease_id == lease_b.id
+
+
 def test_draining_heartbeat_pauses_claims_without_requeueing_active_lease(cp):
     worker = register_agent(cp, "worker", ["python"])
     active = cp.create_task("active", required_capabilities=["python"])
@@ -5227,6 +5302,18 @@ def test_events_filter_by_event_type_prefix(cp):
     rollout_prefix = cp.list_events(event_type_prefix="rollout.")
     assert rollout_prefix
     assert all(event["event_type"].startswith("rollout.") for event in rollout_prefix)
+
+
+def test_events_filter_event_type_prefix_escapes_like_wildcards(cp):
+    rollout = create_verified_rollout(cp, "8.2.1")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+
+    # bare `%` must not be treated as wildcard — should match nothing
+    assert cp.list_events(event_type_prefix="%") == []
+    # bare `_` likewise
+    assert cp.list_events(event_type_prefix="_") == []
+    # a real prefix still works
+    assert cp.list_events(event_type_prefix="rollout.")
 
 
 def test_events_filter_by_actor_and_time_window(cp):

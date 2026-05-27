@@ -3430,8 +3430,9 @@ class ControlPlane:
             clauses.append("event_type = ?")
             params.append(event_type)
         if event_type_prefix is not None:
-            clauses.append("event_type LIKE ?")
-            params.append(event_type_prefix + "%")
+            escaped = event_type_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("event_type LIKE ? ESCAPE '\\'")
+            params.append(escaped + "%")
         if since is not None:
             clauses.append("created_at >= ?")
             params.append(since)
@@ -4661,11 +4662,17 @@ class ControlPlane:
             next_state = TaskState.FAILED.value if task.attempt_count >= task.max_attempts else TaskState.OPEN.value
             timestamp = utcnow()
             with self.store.transaction() as conn:
-                conn.execute(
-                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
-                    (LeaseStatus.EXPIRED.value, timestamp, lease.id),
+                # mac-s0ta: guard the lease UPDATE on status='active' so we
+                # don't expire a lease that another path (release/renew)
+                # already moved. If we lost the race, skip this row entirely
+                # — the task may have been reclaimed by a new owner.
+                cur = conn.execute(
+                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                    (LeaseStatus.EXPIRED.value, timestamp, lease.id, LeaseStatus.ACTIVE.value),
                 )
-                conn.execute(
+                if cur.rowcount == 0:
+                    continue
+                cur = conn.execute(
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
@@ -4674,7 +4681,7 @@ class ControlPlane:
                             ELSE completed_at
                         END,
                         updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND lease_id = ?
                     """,
                     (
                         next_state,
@@ -4683,8 +4690,13 @@ class ControlPlane:
                         timestamp,
                         timestamp,
                         task.id,
+                        lease.id,
                     ),
                 )
+                if cur.rowcount == 0:
+                    # Task no longer points at this lease — a new owner has
+                    # taken over. Leave their state alone.
+                    continue
                 conn.execute(
                     """
                     UPDATE agents
@@ -4724,18 +4736,33 @@ class ControlPlane:
         task = self.get_task(lease.task_id)
         now = utcnow()
         with self.store.transaction() as conn:
-            conn.execute(
-                "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
-                (LeaseStatus.RELEASED.value, now, lease_id),
+            # mac-79s1: guard the lease UPDATE on status='active'. If
+            # the lease was already expired/released by the hub or another
+            # path, this UPDATE affects 0 rows and we must NOT proceed to
+            # clobber the task row — by then it may have a new owner.
+            cur = conn.execute(
+                "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (LeaseStatus.RELEASED.value, now, lease_id, LeaseStatus.ACTIVE.value),
             )
-            conn.execute(
+            if cur.rowcount == 0:
+                raise TransitionError(
+                    "lease %s is no longer active (already released or expired)" % lease_id
+                )
+            # mac-79s1: guard the task UPDATE on the lease still pointing at
+            # this lease and being owned by this agent. If a new owner has
+            # taken over, the row count is 0 and we refuse.
+            cur = conn.execute(
                 """
                 UPDATE tasks
                 SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND lease_id = ? AND owner_agent_id = ?
                 """,
-                (TaskState.OPEN.value, now, task.id),
+                (TaskState.OPEN.value, now, task.id, lease_id, agent_id),
             )
+            if cur.rowcount == 0:
+                raise TransitionError(
+                    "task %s has been reclaimed by another owner; refusing to release" % task.id
+                )
             conn.execute(
                 "UPDATE agents SET status = ?, current_task_id = NULL, updated_at = ? WHERE id = ?",
                 (AgentStatus.IDLE.value, now, agent_id),

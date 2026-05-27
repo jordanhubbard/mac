@@ -278,3 +278,13 @@ edges:
     wf = cp.workflows.import_yaml(yaml_text, created_by="human")
     assert wf.slug == "bug-default"
     assert wf.definition["nodes"][0]["role_required"] == "qa"  # normalised to slug
+
+
+def test_import_yaml_rejects_oversized_payload(cp):
+    """mac-i044: yaml.safe_load with no size cap is a DoS vector via
+    billion-laughs-style nested alias expansion. Cap the input size."""
+    from mac.workflow_service import WorkflowService
+
+    huge = "x" * (WorkflowService.YAML_IMPORT_MAX_BYTES + 1)
+    with pytest.raises(ValidationError, match="byte limit"):
+        cp.workflows.import_yaml(huge, created_by="human")

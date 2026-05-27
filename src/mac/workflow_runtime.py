@@ -373,6 +373,51 @@ class WorkflowRuntime:
             raise ValidationError(
                 "edge points at unknown node %r" % edge.get("to_node_key")
             )
+        # Enforce per-node max_attempts so a cyclic workflow cannot loop
+        # forever. We count prior history rows that landed on this node_key
+        # in this run; refuse to spawn if we'd exceed the declared cap.
+        max_attempts = int(target.get("max_attempts", 1) or 1)
+        prior = self.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ? AND to_node_key = ?",
+            (run.id, target["node_key"]),
+        )
+        prior_attempts = int(prior["n"]) if prior else 0
+        if prior_attempts >= max_attempts:
+            self.store.execute(
+                """
+                UPDATE workflow_runs
+                SET state = ?, current_node_key = NULL, current_task_id = NULL,
+                    updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (WorkflowState.FAILED.value, now, now, run.id),
+            )
+            self.store.execute(
+                """
+                INSERT INTO workflow_run_history (
+                    id, run_id, seq, from_node_key, to_node_key, condition,
+                    task_id, actor, attempt_number, detail, created_at
+                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', ?, ?, ?)
+                """,
+                (
+                    new_id("wfh"),
+                    run.id,
+                    next_seq,
+                    from_key,
+                    "max_attempts_exhausted",
+                    task_id,
+                    prior_attempts + 1,
+                    json_dumps(
+                        {
+                            "node_key": target["node_key"],
+                            "max_attempts": max_attempts,
+                            "prior_attempts": prior_attempts,
+                        }
+                    ),
+                    now,
+                ),
+            )
+            return self.get_run(run.id)
         # Spawn the next task and update the run pointer atomically with
         # the history row.
         new_task = self._spawn_node_task(
@@ -381,7 +426,7 @@ class WorkflowRuntime:
             workflow=None,
             started_by=run.started_by,
             tenant_id=run.tenant_id,
-            attempt=1,
+            attempt=prior_attempts + 1,
         )
         self.store.execute(
             """
@@ -396,7 +441,7 @@ class WorkflowRuntime:
             INSERT INTO workflow_run_history (
                 id, run_id, seq, from_node_key, to_node_key, condition,
                 task_id, actor, attempt_number, detail, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'workflow_runtime', 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'workflow_runtime', ?, ?, ?)
             """,
             (
                 new_id("wfh"),
@@ -406,6 +451,7 @@ class WorkflowRuntime:
                 target["node_key"],
                 condition,
                 new_task.id,
+                prior_attempts + 1,
                 json_dumps({"reason": "advance"}),
                 now,
             ),

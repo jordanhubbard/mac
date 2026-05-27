@@ -809,6 +809,14 @@ def test_mac_worker_audits_subprocess_commands(tmp_path: Path):
         limit=10,
     )
     assert {event["event_type"] for event in events} >= {"command.started", "command.completed"}
+    # /events must NOT expose raw argv (mac-7osn): callers with read scope on /events
+    # must not see flag values that may contain secrets.
+    for event in events:
+        detail = event["detail"] if isinstance(event["detail"], dict) else json.loads(event["detail"])
+        assert "argv" not in detail, f"raw argv leaked into events view: {detail}"
+        assert detail.get("argv_redacted") is True
+        # argv0 (command name) is fine — same level of disclosure as `ps`
+        assert "argv0" in detail
 
 
 def test_mac_worker_prepares_repository_task_in_git_worktree(tmp_path: Path):

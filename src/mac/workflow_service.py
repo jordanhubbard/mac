@@ -519,6 +519,11 @@ class WorkflowService:
 
     # YAML import + seed -----------------------------------------------
 
+    # 256 KiB is well above any legitimate workflow YAML we've seen and
+    # below the threshold where yaml.safe_load alias expansion becomes
+    # an attractive DoS vector (mac-i044).
+    YAML_IMPORT_MAX_BYTES = 256 * 1024
+
     def import_yaml(
         self,
         yaml_text: str,
@@ -529,6 +534,10 @@ class WorkflowService:
     ) -> Workflow:
         import yaml as _yaml
 
+        if len(yaml_text.encode("utf-8")) > self.YAML_IMPORT_MAX_BYTES:
+            raise ValidationError(
+                "workflow YAML exceeds %d byte limit" % self.YAML_IMPORT_MAX_BYTES
+            )
         raw = _yaml.safe_load(yaml_text)
         if not isinstance(raw, dict):
             raise ValidationError("workflow YAML must be a mapping")

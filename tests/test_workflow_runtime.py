@@ -209,6 +209,92 @@ def test_disabled_workflow_cannot_be_started(cp):
         cp.workflow_runtime.start_run("bug-disabled", started_by="ops")
 
 
+def test_cyclic_workflow_terminates_when_max_attempts_exhausted(cp):
+    """mac-q0mq / mac-pykd: a cyclic workflow (e.g. review→fix→review) must
+    not loop forever. Each node's max_attempts caps how many times the
+    runtime will spawn a task for that node within a single run."""
+    cp.workflows.create_workflow(
+        slug="bug-cycle",
+        name="cycle",
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {"node_key": "investigate", "node_type": "task", "role_required": "qa", "max_attempts": 2},
+                {"node_key": "fix", "node_type": "task", "role_required": "dev", "max_attempts": 2},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
+                # cycle: each side fails into the other on failure
+                {"from_node_key": "investigate", "to_node_key": "fix", "condition": "failure", "priority": 100},
+                {"from_node_key": "fix", "to_node_key": "investigate", "condition": "failure", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run("bug-cycle", started_by="ops")
+
+    machine = cp.register_machine("h1")
+    qa_soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
+    qa_agent = cp.register_agent(machine.id, "qa1", capabilities=["python", "qa"], hermes_instance_id=qa_soul)
+    cp.roles.assign_role(qa_agent.id, "qa")
+    dev_soul = bind_soul(cp, persona_name="Dev Soul", allowed_role_slugs=["dev"])
+    dev_agent = cp.register_agent(machine.id, "dev1", capabilities=["python"], hermes_instance_id=dev_soul)
+    cp.roles.assign_role(dev_agent.id, "dev")
+
+    # Drive the cycle: every task fails, looping between investigate ↔ fix.
+    # investigate max_attempts=2, fix max_attempts=2.
+    # Spawns: investigate#1 (start) → fix#1 → investigate#2 → fix#2 → next
+    # spawn refused (cap hit on whichever side comes next).
+    for _ in range(10):
+        run = cp.workflow_runtime.get_run(run.id)
+        if run.state != "running":
+            break
+        task = cp.get_task(run.current_task_id)
+        agent = qa_agent if task.metadata["required_role"] == "qa" else dev_agent
+        cp.claim_task(task.id, agent.id)
+        cp.start_task(task.id, agent.id)
+        cp.transition_task(task.id, TaskState.FAILED.value, agent.id)
+
+    final = cp.workflow_runtime.get_run(run.id)
+    assert final.state == "failed", f"expected failed after max_attempts, got {final.state}"
+    history = cp.store.query_all(
+        "SELECT to_node_key, condition FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    assert history[-1]["condition"] == "max_attempts_exhausted"
+    # And the loop was bounded — neither node spawned more than its cap.
+    investigate_spawns = sum(1 for r in history if r["to_node_key"] == "investigate")
+    fix_spawns = sum(1 for r in history if r["to_node_key"] == "fix")
+    assert investigate_spawns <= 2 and fix_spawns <= 2
+
+
+def test_find_cycles_detects_review_fix_loop():
+    """mac-q0mq: cycle detection is exposed as a method on WorkflowDefinition."""
+    from mac.workflow_models import WorkflowDefinition
+
+    definition = WorkflowDefinition.parse(
+        {
+            "nodes": [
+                {"node_key": "review", "node_type": "approval", "role_required": "pm"},
+                {"node_key": "fix", "node_type": "task", "role_required": "dev"},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "fix", "condition": "approved", "priority": 100},
+                {"from_node_key": "fix", "to_node_key": "review", "condition": "success", "priority": 100},
+            ],
+        }
+    )
+    cycles = WorkflowDefinition.find_cycles(
+        [n.node_key for n in definition.nodes], definition.edges
+    )
+    assert cycles, "expected at least one cycle"
+    # The detected cycle should include both nodes
+    nodes_in_cycles = {n for cycle in cycles for n in cycle}
+    assert {"review", "fix"} <= nodes_in_cycles
+
+
 def test_tick_times_out_stuck_node_and_advances_via_failure_edge(cp):
     # Workflow whose first node has a 1-minute timeout and a failure
     # edge to the terminal sink.

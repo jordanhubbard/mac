@@ -1016,7 +1016,8 @@ class SQLiteStore:
                         json_object(
                             'command_id', command_id,
                             'agent_id', agent_id,
-                            'argv', json(argv),
+                            'argv0', json_extract(argv, '$[0]'),
+                            'argv_redacted', json('true'),
                             'cwd', cwd,
                             'task_id', task_id,
                             'lease_id', lease_id,
