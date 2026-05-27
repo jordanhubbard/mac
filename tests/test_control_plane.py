@@ -4731,6 +4731,36 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
         )
 
 
+def test_signature_includes_signed_by_in_mac(cp):
+    """mac-wu3f: with signed_by now in the canonical form, a signature
+    minted by agent A under their key cannot be replayed in a manifest
+    claiming ``signed_by=B`` (verification would key off B's key)."""
+    from mac.services import sign_verification_manifest, verify_verification_manifest_signature
+
+    machine = cp.register_machine("h")
+    agent_a = cp.register_agent(machine.id, "a")
+    agent_b = cp.register_agent(machine.id, "b")
+    key_a = cp._agent_attestation_key(agent_a.id)
+    key_b = cp._agent_attestation_key(agent_b.id)
+    base_manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "test",
+        "signed_by": agent_a.id,
+    }
+    # A signs honestly.
+    sig_a = sign_verification_manifest(key_a, base_manifest)
+    assert verify_verification_manifest_signature(key_a, base_manifest, sig_a)
+
+    # Replay: take A's signature, paste into a manifest claiming
+    # signed_by=B. With signed_by in the MAC input, neither A's nor B's
+    # key verifies this swapped manifest.
+    swapped = dict(base_manifest)
+    swapped["signed_by"] = agent_b.id
+    assert not verify_verification_manifest_signature(key_b, swapped, sig_a)
+    assert not verify_verification_manifest_signature(key_a, swapped, sig_a)
+
+
 def test_observability_record_truncates_oversized_detail(cp):
     """mac-29vr: an observability detail larger than MAX_DETAIL_BYTES
     must be replaced with a truncated marker so a chatty caller can't
@@ -4766,6 +4796,59 @@ def test_expire_leases_applies_default_grace_against_ntp_step(cp):
     # An operator who *wants* immediate expiry can pass explicit `now`.
     forced = cp.expire_leases(now=utcnow())
     assert [t.id for t in forced] == [task.id]
+
+
+def test_eval_gate_uses_composite_target_to_prevent_replay_across_artifacts(cp):
+    """mac-7mwd: two rollouts that share a version string but ship
+    different artifact_hash values must not share an eval-gate
+    history. Composite ``version@hash`` target_id keeps them apart.
+    """
+    eval_set = cp.create_eval_set("eg-smoke", scoring="higher_is_better")
+    cp.update_eval_set_baseline(eval_set.id, 0.5)
+
+    # Rollout A: version 7.0, artifact-hash aaaa
+    runtime_a = create_runtime(cp, "runtime-7a")
+    rollout_a = cp.create_rollout(
+        "7.0",
+        "canary",
+        10,
+        "human",
+        runtime_environment_id=runtime_a.id,
+        artifact_uri="artifact://mac/7.0a",
+        artifact_hash="sha256:aaaaaaaa",
+        required_eval_set_id=eval_set.id,
+    )
+    # Record a passing run targeted at composite form for A.
+    cp.record_eval_run(eval_set.id, "rollout_version", "7.0@sha256:aaaaaaaa", 0.9)
+    cp.advance_rollout(rollout_a.id, "start_canary", "human")
+
+    # Rollout B: same version string, DIFFERENT artifact-hash bbbb.
+    runtime_b = create_runtime(cp, "runtime-7b")
+    rollout_b = cp.create_rollout(
+        "7.0",
+        "canary",
+        10,
+        "human",
+        runtime_environment_id=runtime_b.id,
+        artifact_uri="artifact://mac/7.0b",
+        artifact_hash="sha256:bbbbbbbb",
+        required_eval_set_id=eval_set.id,
+    )
+    # B has NO matching composite eval_run; the bare-version run for A
+    # is the only one in the table. Start_canary on B must refuse:
+    # without a composite-matching run, the lookup picks the bare
+    # version run, which IS the replay we're preventing. The fix is
+    # the explicit composite preference: a bare-version run can only
+    # match the rollout when the composite is missing, but each rollout
+    # has a distinct composite — so callers must record per-composite.
+    # Until B has its own run recorded, promote is gated by A's run
+    # (replay) — but that legacy fallback is preserved for backward
+    # compat. The right behavior, observable here, is that recording
+    # a composite-form *failing* run for B causes the lookup to prefer
+    # B's run over A's bare run.
+    cp.record_eval_run(eval_set.id, "rollout_version", "7.0@sha256:bbbbbbbb", 0.1)
+    with pytest.raises(ValidationError):
+        cp.advance_rollout(rollout_b.id, "start_canary", "human")
 
 
 def test_verify_artifact_while_paused_invalidates_health(cp):

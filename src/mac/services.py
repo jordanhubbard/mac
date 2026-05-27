@@ -441,11 +441,17 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
 
 def _canonicalize_for_signature(manifest: Dict[str, Any]) -> bytes:
     """Deterministic JSON encoding of the verification manifest for
-    HMAC signing. The ``signature`` field is excluded from the
-    canonical form so a manifest can be signed once and embedded
-    without recursive hashing.
+    HMAC signing.
+
+    mac-wu3f: include ``signed_by`` in the canonical form so the
+    signer identity is cryptographically bound into the MAC. Previously
+    ``signed_by`` was excluded — a captured signature could be replayed
+    in a manifest with a different ``signed_by``, and verification
+    (which keys off the new ``signed_by``) might still pass if both
+    agents shared a key. The ``signature`` field is still excluded
+    because it's the output, not the input.
     """
-    excluded = {"signature", "signed_by"}
+    excluded = {"signature"}
     filtered = {k: v for k, v in manifest.items() if k not in excluded}
     return json_dumps(filtered).encode("utf-8")
 

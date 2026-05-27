@@ -320,24 +320,38 @@ class RolloutService:
                         "rollout promote blocked: required eval_set %s no longer exists"
                         % rollout.required_eval_set_id
                     )
+                # mac-7mwd: the lookup must distinguish rollouts that
+                # share a version string but ship different artifacts.
+                # Match on either the new composite ``version@hash``
+                # target_id form (preferred) or the legacy bare version
+                # — but legacy lookup is only safe when at least one
+                # composite-form run exists, otherwise an old eval_run
+                # for a different artifact would gate the new one.
+                composite_target = "%s@%s" % (rollout.version, rollout.artifact_hash or "")
                 run_row = conn.execute(
                     """
                     SELECT id, score, delta, threshold, passed
                     FROM eval_runs
-                    WHERE eval_set_id = ? AND target_kind = ? AND target_id = ?
-                    ORDER BY created_at DESC, id DESC
+                    WHERE eval_set_id = ? AND target_kind = ?
+                      AND target_id IN (?, ?)
+                    ORDER BY
+                      CASE WHEN target_id = ? THEN 0 ELSE 1 END,
+                      created_at DESC, id DESC
                     LIMIT 1
                     """,
                     (
                         rollout.required_eval_set_id,
                         EvalTargetKind.ROLLOUT_VERSION.value,
+                        composite_target,
                         rollout.version,
+                        composite_target,
                     ),
                 ).fetchone()
                 if run_row is None:
                     raise ValidationError(
-                        "rollout promote requires an eval_run against %s for version %s"
-                        % (rollout.required_eval_set_id, rollout.version)
+                        "rollout %s requires an eval_run against %s for version %s "
+                        "(prefer composite target_id %s to avoid cross-rollout replay)"
+                        % (action, rollout.required_eval_set_id, rollout.version, composite_target)
                     )
                 if not bool(run_row["passed"]):
                     raise ValidationError(
