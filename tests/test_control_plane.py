@@ -4702,6 +4702,31 @@ def test_expire_leases_applies_default_grace_against_ntp_step(cp):
     assert [t.id for t in forced] == [task.id]
 
 
+def test_verify_artifact_while_paused_invalidates_health(cp):
+    """mac-vh9h: swapping artifact_uri/hash on a PAUSED rollout must
+    not let the prior health gate persist; resume + promote must
+    re-evaluate against the new artifact.
+    """
+    rollout = create_verified_rollout(cp, "9.5")
+    # Seed a passing run + advance to canary + pass health.
+    eval_set = cp.create_eval_set("e95", scoring="higher_is_better")
+    cp.update_eval_set_baseline(eval_set.id, 0.5)
+    # Don't tie it to this rollout — we just need the health gate.
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "human")
+    cp.advance_rollout(rollout.id, "pause", "human")
+
+    # Swap artifact. The previous health pass is now stale.
+    cp.verify_rollout_artifact(rollout.id, "artifact://mac/9.5b", "sha256:zzz1234", "human")
+    # _latest_health_passed should now be False because we recorded a
+    # ``status=invalidated`` health event.
+    assert cp.rollouts._latest_health_passed(rollout.id) is False
+    # Resuming and trying to promote without a fresh health pass must fail.
+    cp.advance_rollout(rollout.id, "resume", "human")
+    with pytest.raises((ValidationError, TransitionError)):
+        cp.advance_rollout(rollout.id, "promote", "human")
+
+
 def test_rollout_health_policy_requires_explicit_required_checks_at_create(cp):
     """mac-jmjc: an empty required_checks list trivially passes the
     health gate. Reject it at rollout creation and default missing
@@ -5305,20 +5330,19 @@ def test_rollout_promote_requires_passing_eval_run(cp):
         artifact_hash="sha256:abc123",
         required_eval_set_id=eval_set.id,
     )
+    # mac-wfct: start_canary now also consults the eval gate, so seed
+    # a passing run first.
+    cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.92)
     cp.advance_rollout(gated.id, "start_canary", "human")
     # mac-jmjc: must supply checks that satisfy the policy's required_checks.
     cp.evaluate_rollout_health(gated.id, {"runtime": "healthy"}, "human")
 
-    # No eval run yet — promote refused.
-    with pytest.raises(ValidationError):
-        cp.advance_rollout(gated.id, "promote", "human")
-
-    # A failing run is still refused.
+    # A failing run posted after canary now blocks promote.
     cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.70)
     with pytest.raises(ValidationError):
         cp.advance_rollout(gated.id, "promote", "human")
 
-    # A passing run unlocks promote.
+    # A subsequent passing run unlocks promote.
     cp.record_eval_run(eval_set.id, "rollout_version", "2.1", 0.92)
     promoted = cp.advance_rollout(gated.id, "promote", "human")
     assert promoted.status == RolloutStatus.PROMOTED.value
@@ -5357,6 +5381,8 @@ def _gated_rollout(cp, version, eval_set_id):
         artifact_hash="sha256:abc123",
         required_eval_set_id=eval_set_id,
     )
+    # mac-wfct: start_canary now also requires a passing eval run; seed one.
+    cp.record_eval_run(eval_set_id, "rollout_version", version, 0.95)
     cp.advance_rollout(rollout.id, "start_canary", "human")
     # mac-jmjc: default health gate now requires non-empty checks.
     cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "human")

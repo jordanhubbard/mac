@@ -225,6 +225,10 @@ class RolloutService:
         if not artifact_uri:
             raise ValidationError("artifact_uri is required")
         self._validate_artifact_hash(artifact_hash)
+        artifact_changed = (
+            artifact_uri != rollout.artifact_uri
+            or artifact_hash != rollout.artifact_hash
+        )
         now = utcnow()
         self.store.execute(
             """
@@ -240,6 +244,22 @@ class RolloutService:
             actor,
             {"artifact_uri": artifact_uri, "artifact_hash": artifact_hash},
         )
+        # mac-vh9h: when the artifact actually changes while PAUSED, the
+        # prior health check (and any eval run) was for a different
+        # artifact. Invalidate health so resume/promote must re-gate
+        # against the new artifact.
+        if artifact_changed and rollout.status == RolloutStatus.PAUSED.value:
+            self._record_event(
+                rollout_id,
+                "rollout.health_checked",
+                actor,
+                {
+                    "status": "invalidated",
+                    "reason": "artifact_swap_requires_recheck",
+                    "previous_artifact_hash": rollout.artifact_hash,
+                    "new_artifact_hash": artifact_hash,
+                },
+            )
         return self.get_rollout(rollout_id)
 
     def advance_rollout(
@@ -285,7 +305,12 @@ class RolloutService:
         # commit. The conditional UPDATE on status ensures no other writer
         # advanced the rollout out from under us.
         with self.store.transaction() as conn:
-            if action == "promote" and rollout.required_eval_set_id is not None:
+            # mac-wfct: the eval gate must also fire on start_canary so
+            # canary traffic is never sent to an artifact whose evals
+            # haven't passed. Previously only promote consulted the
+            # gate, allowing half-bypass for INSTANT or start_canary.
+            eval_gated_actions = {"promote", "start_canary"}
+            if action in eval_gated_actions and rollout.required_eval_set_id is not None:
                 eval_set_row = conn.execute(
                     "SELECT id FROM eval_sets WHERE id = ?",
                     (rollout.required_eval_set_id,),
@@ -316,8 +341,8 @@ class RolloutService:
                     )
                 if not bool(run_row["passed"]):
                     raise ValidationError(
-                        "rollout promote blocked: latest eval_run %s did not pass (score=%s delta=%s threshold=%s)"
-                        % (run_row["id"], run_row["score"], run_row["delta"], run_row["threshold"])
+                        "rollout %s blocked: latest eval_run %s did not pass (score=%s delta=%s threshold=%s)"
+                        % (action, run_row["id"], run_row["score"], run_row["delta"], run_row["threshold"])
                     )
                 detail.setdefault("eval_run_id", run_row["id"])
                 detail.setdefault("eval_score", run_row["score"])

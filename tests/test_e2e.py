@@ -370,6 +370,16 @@ def test_e2e_rollout_advance_blocks_on_eval_gate_via_http(tmp_path: Path):
     ).json()
     assert pinned["artifact_hash"].startswith("sha256:")
 
+    # mac-wfct: start_canary now requires a passing eval run too. Seed one.
+    client.post(
+        "/eval-runs",
+        json={
+            "eval_set_id": eval_set["id"],
+            "target_kind": "rollout_version",
+            "target_id": rollout["version"],
+            "score": 0.95,
+        },
+    )
     started = client.post(
         "/rollouts/%s/advance" % rollout["id"],
         json={"action": "start_canary", "actor": "ops", "detail": {}},
@@ -392,15 +402,10 @@ def test_e2e_rollout_advance_blocks_on_eval_gate_via_http(tmp_path: Path):
     ).json()
     assert health["healthy"] is True
 
-    # Promotion is now blocked specifically on the eval gate.
-    blocked = client.post(
-        "/rollouts/%s/advance" % rollout["id"],
-        json={"action": "promote", "actor": "ops", "detail": {}},
-    )
-    assert blocked.status_code == 400
-    assert "eval" in blocked.json()["detail"].lower()
-
-    # A failing eval run keeps the gate closed.
+    # mac-wfct: with start_canary also gated on a passing run, the
+    # "no eval at all" scenario is unreachable here; record a failing
+    # run that supersedes the canary-time passing run and verify
+    # promote is blocked on the latest result.
     client.post(
         "/eval-runs",
         json={
@@ -408,6 +413,24 @@ def test_e2e_rollout_advance_blocks_on_eval_gate_via_http(tmp_path: Path):
             "target_kind": "rollout_version",
             "target_id": rollout["version"],
             "score": 0.5,
+            "created_by": "ops",
+        },
+    )
+    blocked = client.post(
+        "/rollouts/%s/advance" % rollout["id"],
+        json={"action": "promote", "actor": "ops", "detail": {}},
+    )
+    assert blocked.status_code == 400
+    assert "eval" in blocked.json()["detail"].lower()
+
+    # A second failing eval keeps the gate closed.
+    client.post(
+        "/eval-runs",
+        json={
+            "eval_set_id": eval_set["id"],
+            "target_kind": "rollout_version",
+            "target_id": rollout["version"],
+            "score": 0.4,
             "created_by": "ops",
         },
     )
