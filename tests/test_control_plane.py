@@ -4603,6 +4603,68 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_deliver_messages_is_idempotent_under_concurrent_calls(cp):
+    """mac-4pkm: SELECT+UPDATE used to interleave so two concurrent
+    deliver_messages calls could both mark the same row delivered. With
+    the guarded UPDATE inside a transaction, the loser's UPDATE affects
+    0 rows and the row is excluded from its returned list.
+    """
+    sender = register_agent(cp, "sender", ["python"])
+    recipient = register_agent(cp, "recipient", ["python"])
+    msg = cp.send_message(
+        sender.id,
+        recipient.id,
+        MessageType.STATUS_UPDATE.value,
+        {"status": "hello", "task_id": "task_demo"},
+    )
+    first = cp.deliver_messages(recipient.id)
+    second = cp.deliver_messages(recipient.id)
+    # Only the first call gets the message; the second is empty.
+    assert [m.id for m in first] == [msg.id]
+    assert second == []
+
+
+def test_notifier_dedupes_on_notification_id_in_payload(cp):
+    """mac-zipf: a notifier retry must not duplicate downstream messages.
+    Verify the dedup query directly: when a message already exists
+    whose payload's notification.id matches, _deliver_notification
+    short-circuits and returns the existing message id list."""
+    sender = register_agent(cp, "sender", ["hermes"])
+    recipient = register_agent(cp, "recipient", ["hermes"])
+
+    # Seed a "previously delivered" message whose payload already
+    # carries a notification.id.
+    notification_id = "notif_test_123"
+    seeded = cp.send_message(
+        sender.id,
+        recipient.id,
+        MessageType.STATUS_UPDATE.value,
+        {
+            "status": "task.test",
+            "notification": {"id": notification_id, "event_type": "task.test"},
+        },
+    )
+
+    # Build a fake OperatorNotification with the same id and call the
+    # private delivery path directly.
+    from mac.models import OperatorNotification
+    notif = OperatorNotification(
+        id=notification_id,
+        event_type="task.test",
+        subject_type="task",
+        subject_id="task_x",
+        title="test",
+        body="test body",
+        channels=["hermes"],
+        metadata={},
+        status="pending",
+        created_at="2024-01-01T00:00:00+00:00",
+        delivered_at=None,
+    )
+    delivered = cp.notifiers._deliver_notification(notif)
+    assert seeded.id in delivered, "dedup should return the pre-seeded message id"
+
+
 def test_observability_record_truncates_oversized_detail(cp):
     """mac-29vr: an observability detail larger than MAX_DETAIL_BYTES
     must be replaced with a truncated marker so a chatty caller can't

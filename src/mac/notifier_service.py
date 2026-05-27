@@ -219,6 +219,20 @@ class NotifierService:
         }
 
     def _deliver_notification(self, notification: OperatorNotification) -> List[str]:
+        # mac-zipf: notifier delivery is two non-atomic statements
+        # (send_message + mark_notification). If we crash between them,
+        # the notification stays "pending" and a later retry would send
+        # a duplicate message. Dedupe by checking for any existing
+        # message whose payload carries this notification.id.
+        existing = self.store.query_all(
+            """
+            SELECT id FROM messages
+            WHERE json_extract(payload, '$.notification.id') = ?
+            """,
+            (notification.id,),
+        )
+        if existing:
+            return [row["id"] for row in existing]
         targets = self._configured_targets(notification)
         if not targets and "hermes" in notification.channels:
             targets = self._auto_hermes_targets(notification)

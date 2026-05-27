@@ -168,25 +168,31 @@ class MessagingService:
 
     def deliver_messages(self, agent_id: str, limit: int = 50) -> List[AgentMessage]:
         self._get_agent(agent_id)
-        rows = self.store.query_all(
-            """
-            SELECT * FROM messages
-            WHERE status = ? AND (recipient_agent_id = ? OR recipient_agent_id IS NULL)
-            ORDER BY created_at, id
-            LIMIT ?
-            """,
-            (MessageStatus.QUEUED.value, agent_id, int(limit)),
-        )
+        # mac-4pkm: do SELECT + UPDATE inside one transaction so two
+        # concurrent deliver_messages calls to the same recipient can't
+        # both see a queued row and both mark it delivered. The guarded
+        # UPDATE (status = 'queued' in WHERE) means the loser's UPDATE
+        # affects 0 rows and the row is excluded from its returned list.
         now = utcnow()
-        messages: List[AgentMessage] = []
-        for row in rows:
-            message = self._from_row(row)
-            self.store.execute(
-                "UPDATE messages SET status = ?, delivered_at = ? WHERE id = ?",
-                (MessageStatus.DELIVERED.value, now, message.id),
-            )
-            messages.append(self.get_message(message.id))
-        return messages
+        delivered_ids: List[str] = []
+        with self.store.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM messages
+                WHERE status = ? AND (recipient_agent_id = ? OR recipient_agent_id IS NULL)
+                ORDER BY created_at, id
+                LIMIT ?
+                """,
+                (MessageStatus.QUEUED.value, agent_id, int(limit)),
+            ).fetchall()
+            for row in rows:
+                cur = conn.execute(
+                    "UPDATE messages SET status = ?, delivered_at = ? WHERE id = ? AND status = ?",
+                    (MessageStatus.DELIVERED.value, now, row["id"], MessageStatus.QUEUED.value),
+                )
+                if cur.rowcount == 1:
+                    delivered_ids.append(row["id"])
+        return [self.get_message(mid) for mid in delivered_ids]
 
     def list_messages(self, agent_id: Optional[str] = None) -> List[AgentMessage]:
         if agent_id:
