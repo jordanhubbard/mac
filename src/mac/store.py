@@ -1111,6 +1111,13 @@ class SQLiteStore:
             self._conn.commit()
 
     def _migrate(self) -> None:
+        # mac-s2vz: record when an agent's attestation key was last
+        # rotated so the verifier can produce a clear error message
+        # (key-rotation-after-signature, not "signature does not verify")
+        # for evidence signed under a now-retired key.
+        self._ensure_column(
+            "agents", "attestation_key_rotated_at", "attestation_key_rotated_at TEXT"
+        )
         # mac-1oi4: capture who asked for an agent so fulfill can refuse
         # a self-fulfill (the same actor approving its own request).
         self._ensure_column(

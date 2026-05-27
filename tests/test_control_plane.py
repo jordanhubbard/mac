@@ -4733,6 +4733,61 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
         )
 
 
+def test_claim_task_enforces_tenant_policy_as_explicit_chokepoint(cp):
+    """mac-1g3u: tenant isolation used to depend on whoever called
+    ``_agent_available_for`` remembering to. The audit warned that a
+    future dispatch path could skip it. ``claim_task`` now ALSO calls
+    ``_machine_allows_tenant`` directly, so even a hypothetical caller
+    that bypasses the broader eligibility filter still hits the gate."""
+    from mac.models import AuthorizationError
+
+    cp.register_tenant("tenant-priv")
+    private_machine = cp.register_machine(
+        "private-host",
+        labels={"tenant_policy": {"mode": "private", "tenant_ids": ["tenant-priv"]}},
+    )
+    worker = cp.register_agent(private_machine.id, "worker", capabilities=["python"])
+    task = cp.create_task(
+        "cross-tenant",
+        required_capabilities=["python"],
+        metadata={"tenant_id": "tenant-other"},
+    )
+    with pytest.raises(AuthorizationError, match="tenant"):
+        cp.claim_task(task.id, worker.id)
+
+
+def test_attestation_key_rotation_produces_clear_recovery_error(cp):
+    """mac-s2vz: when a reviewer signs a verdict and then their
+    attestation key is rotated, the publication-time check used to
+    fail with a generic 'signature does not verify' message. The fix
+    records the rotation timestamp and surfaces a clear 'key was
+    rotated; re-sign required' error instead."""
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "test", "artifact://t", "ok",
+        worker.id, metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    from tests.conftest import submit_review_verdict
+    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    # Rotate the reviewer's key (e.g. lost-key recovery).
+    cp.rotate_agent_attestation_key(reviewer.id)
+    _verdict, problems = cp._find_review_verdict_evidence(
+        task.id,
+        reviewer.id,
+        executor_evidence_id=evidence.id,
+        verdict_evidence_id=verdict_id,
+        not_before=review.created_at,
+    )
+    assert any("rotated" in p for p in problems), \
+        "expected clear rotation error in problems, got: %s" % problems
+
+
 def test_rollout_complete_rescue_returns_to_paused(cp):
     """mac-24f4: RESCUING used to be a one-way trap. ``complete_rescue``
     returns the rollout to PAUSED so the operator can re-gate the

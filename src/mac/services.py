@@ -4354,6 +4354,19 @@ class ControlPlane:
             task = self.transition_task(task_id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
+        # mac-1g3u: the tenant gate also runs as an explicit chokepoint
+        # in claim_task itself, not only through _agent_available_for.
+        # A future dispatch path that forgets the broader eligibility
+        # check still hits this assertion because every claim must go
+        # through claim_task. The richer Python policy lives in
+        # _machine_allows_tenant; this is the redundant safety belt.
+        machine = self.get_machine(agent.machine_id)
+        task_tenant = self._task_tenant_id(task)
+        if not self._machine_allows_tenant(machine, task_tenant):
+            raise AuthorizationError(
+                "machine %s tenant policy refuses tenant %s for task %s"
+                % (machine.id, task_tenant, task_id)
+            )
         if not self._agent_available_for(agent, task):
             raise ValidationError("agent %s cannot claim task %s" % (agent_id, task_id))
         if task.attempt_count >= task.max_attempts:
@@ -5365,7 +5378,9 @@ class ControlPlane:
         environment lost that one-time value before the worker could sign
         evidence. It intentionally rotates instead of exporting the old
         secret; in-flight signatures from the previous key will no longer
-        verify.
+        verify — and the rotation timestamp is recorded so the verifier
+        can produce a clearer "key was rotated" error for pending
+        verdicts signed under the previous key (mac-s2vz).
         """
         self.get_agent(agent_id)
         key = _generate_attestation_key()
@@ -5373,10 +5388,10 @@ class ControlPlane:
         self.store.execute(
             """
             UPDATE agents
-            SET attestation_key_ciphertext = ?, updated_at = ?
+            SET attestation_key_ciphertext = ?, attestation_key_rotated_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (self.secrets._encrypt(key), now, agent_id),
+            (self.secrets._encrypt(key), now, now, agent_id),
         )
         return key
 
@@ -11181,6 +11196,27 @@ class ControlPlane:
                 problems.append("verdict %s signer has no attestation key" % evidence.id)
                 continue
             if not verify_verification_manifest_signature(key, manifest, signature):
+                # mac-s2vz: if the signer's key was rotated AFTER this
+                # evidence was created, surface a clear "key rotated"
+                # error with recovery guidance instead of the generic
+                # "signature does not verify" message.
+                rotation_row = self.store.query_one(
+                    "SELECT attestation_key_rotated_at FROM agents WHERE id = ?",
+                    (signed_by,),
+                )
+                rotated_at = rotation_row["attestation_key_rotated_at"] if rotation_row else None
+                if rotated_at and evidence.created_at:
+                    try:
+                        if parse_time(rotated_at) > parse_time(evidence.created_at):
+                            problems.append(
+                                "verdict %s signed under rotated attestation key "
+                                "(rotated_at=%s, evidence created_at=%s); "
+                                "the reviewer must re-sign with the current key"
+                                % (evidence.id, rotated_at, evidence.created_at)
+                            )
+                            continue
+                    except ValueError:
+                        pass
                 problems.append("verdict %s signature does not verify" % evidence.id)
                 continue
             executor_evidence = self.get_evidence(executor_evidence_id)
