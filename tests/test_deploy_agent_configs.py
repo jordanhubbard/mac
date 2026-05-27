@@ -98,6 +98,16 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     assert "evidence_type=review_verdict" in script
 
 
+def test_fleet_deploy_bootstraps_hub_fleet_record():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    assert 'values["MAC_FLEET_NAME"] = os.environ.get("FLEET_NAME") or "mac"' in script
+    assert "if agent == shared_services_manager:" in script
+    assert "cp.create_fleet(" in script
+    assert 'fleet_id=stable_id("fleet", fleet)' in script
+    assert 'description="Auto-registered deployment fleet"' in script
+
+
 def test_fleet_deploy_drain_agent_lookup_does_not_pipe_json_into_python_stdin():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     agent_id_for_drain = script.split("agent_id_for_drain() {", 1)[1].split(
@@ -430,6 +440,8 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     env_file = tmp_path / ".mac" / ".env"
     answers = "\n".join(
         [
+            "n",
+            "hub",
             "test-fleet",
             "hub",
             "operator@hub.example.internal",
@@ -447,7 +459,11 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
             "",
             "",
             "",
-            "n",
+            "",
+            "openai",
+            "sk-test",
+            "",
+            "",
             "n",
             "n",
             "",
@@ -502,6 +518,8 @@ def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):
     env_file = tmp_path / ".mac" / ".env"
     answers = "\n".join(
         [
+            "n",
+            "hub",
             "headscale-fleet",
             "hub",
             "operator@hub.example.internal",
@@ -529,6 +547,10 @@ def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):
             "",
             "n",
             "n",
+            "openai",
+            "sk-test",
+            "",
+            "",
             "n",
             "n",
             "",

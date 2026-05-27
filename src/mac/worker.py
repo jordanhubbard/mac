@@ -249,7 +249,7 @@ def register_worker(
         },
     )
     _register_runtime_identity_for_worker(client, name, hermes_instance_id)
-    return client.post(
+    agent = client.post(
         "/agents",
         {
             "machine_id": machine["id"],
@@ -260,6 +260,8 @@ def register_worker(
             "hermes_instance_id": hermes_instance_id,
         },
     )
+    _ensure_worker_fleet_membership(client, agent_name=name, agent_id=str(agent["id"]))
+    return agent
 
 
 class MacWorker:
@@ -2649,6 +2651,103 @@ def _register_runtime_identity_for_worker(
             "home_ref": str(hermes_home),
             "instance_id": hermes_instance_id,
             "metadata": {"source": "mac-agent", "agent_id": agent_id, "fleet": fleet_name},
+        },
+    )
+
+
+def _fleet_name_from_env(tenant_id: str) -> str:
+    explicit = (os.environ.get("MAC_FLEET_NAME") or os.environ.get("FLEET_NAME") or "").strip()
+    if explicit:
+        return explicit
+    if tenant_id.startswith("tenant_"):
+        return tenant_id.removeprefix("tenant_") or "mac"
+    return "mac"
+
+
+def _fleet_auto_registration_enabled() -> bool:
+    raw = os.environ.get("MAC_AUTO_REGISTER_FLEET")
+    if raw is None or raw == "":
+        return True
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_fleet_or_none(client: MacApiClient, fleet_name: str) -> Optional[JsonDict]:
+    try:
+        result = client.get("/fleets/%s" % quote(fleet_name, safe=""))
+    except MacApiError as exc:
+        if "not found" in str(exc).lower() or "404" in str(exc):
+            return None
+        raise
+    return result if isinstance(result, dict) else None
+
+
+def _ensure_worker_fleet_membership(
+    client: MacApiClient,
+    *,
+    agent_name: str,
+    agent_id: str,
+) -> None:
+    """Ensure deployed agents are visible through the first-class fleet API."""
+    if not _fleet_auto_registration_enabled():
+        return
+    tenant_id = (os.environ.get("MAC_FLEET_TENANT_ID") or "").strip()
+    if not tenant_id:
+        return
+    fleet_name = _fleet_name_from_env(tenant_id)
+    shared_services_manager = (
+        os.environ.get("MAC_SHARED_SERVICES_MANAGER_AGENT")
+        or os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT")
+        or ""
+    ).strip()
+    metadata = {
+        "source": "mac-agent",
+        "fleet": fleet_name,
+        "hub_agent": shared_services_manager or agent_name,
+    }
+    client.post(
+        "/tenants",
+        {
+            "name": fleet_name,
+            "tenant_id": tenant_id,
+            "metadata": metadata,
+        },
+    )
+    existing = _get_fleet_or_none(client, fleet_name)
+    if existing is None:
+        try:
+            client.post(
+                "/fleets",
+                {
+                    "name": fleet_name,
+                    "description": "Auto-registered deployment fleet",
+                    "status": "active",
+                    "metadata": metadata,
+                    "tenant_id": tenant_id,
+                    "agent_ids": [agent_id],
+                    "fleet_id": _stable_id("fleet", fleet_name),
+                    "actor": "mac-agent",
+                },
+            )
+            return
+        except MacApiError as exc:
+            if "already exists" not in str(exc).lower() and "unique" not in str(exc).lower():
+                raise
+            existing = _get_fleet_or_none(client, fleet_name)
+    if not existing:
+        return
+    current_members = [str(item) for item in existing.get("agent_ids") or [] if str(item).strip()]
+    next_members = sorted(set(current_members + [agent_id]))
+    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+    next_metadata = {**existing_metadata, **metadata}
+    client.request(
+        "PUT",
+        "/fleets/%s" % quote(str(existing.get("id") or fleet_name), safe=""),
+        {
+            "status": "active",
+            "metadata": next_metadata,
+            "tenant_id": tenant_id,
+            "agent_ids": next_members,
+            "actor": "mac-agent",
         },
     )
 

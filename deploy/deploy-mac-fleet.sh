@@ -1534,6 +1534,7 @@ from __future__ import annotations
 import os
 
 from mac.hermes_runtime import stable_id
+from mac.models import NotFoundError
 from mac.services import ControlPlane
 
 agent = os.environ["AGENT"]
@@ -1543,6 +1544,7 @@ tenant_id = os.environ.get("MAC_FLEET_TENANT_ID") or stable_id("tenant", fleet)
 agent_id = os.environ.get("MAC_AGENT_ID") or stable_id("agent", agent)
 persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or stable_id("persona", agent)
 instance_id = os.environ.get("MAC_HERMES_INSTANCE_ID") or stable_id("hermes", agent)
+shared_services_manager = os.environ.get("SHARED_SERVICES_MANAGER_AGENT") or agent
 cp = ControlPlane()
 cp.register_tenant(
     fleet,
@@ -1565,6 +1567,27 @@ cp.register_hermes_instance(
     instance_id=instance_id,
     metadata={"source": "mac-deploy", "agent_id": agent_id, "fleet": fleet},
 )
+if agent == shared_services_manager:
+    fleet_metadata = {"source": "mac-deploy", "fleet": fleet, "hub_agent": agent}
+    try:
+        existing_fleet = cp.get_fleet(fleet)
+    except NotFoundError:
+        cp.create_fleet(
+            fleet,
+            description="Auto-registered deployment fleet",
+            metadata=fleet_metadata,
+            tenant_id=tenant_id,
+            fleet_id=stable_id("fleet", fleet),
+            actor="mac-deploy",
+        )
+    else:
+        cp.update_fleet(
+            existing_fleet.id,
+            status="active",
+            tenant_id=tenant_id,
+            metadata={**existing_fleet.metadata, **fleet_metadata},
+            actor="mac-deploy",
+        )
 print("Hermes runtime identity: tenant=%s persona=%s instance=%s agent=%s" % (tenant_id, persona_id, instance_id, agent_id))
 PY
 }
@@ -3459,6 +3482,7 @@ values["MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM"] = "1"
 values["MAC_HERMES_STARTUP_CHECK"] = "1"
 values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
 values["MAC_URL"] = values["MAC_HUB_URL"]
+values["MAC_FLEET_NAME"] = os.environ.get("FLEET_NAME") or "mac"
 values["MAC_FLEET_TENANT_ID"] = stable_id("tenant", os.environ.get("FLEET_NAME") or "mac")
 values["MAC_AGENT_ID"] = stable_id("agent", agent_name)
 values["MAC_HERMES_PERSONA_ID"] = stable_id("persona", agent_name)

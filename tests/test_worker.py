@@ -1725,6 +1725,65 @@ def test_register_worker_bootstraps_hermes_identity_from_env(monkeypatch, tmp_pa
     assert cp.get_agent(registered["id"]).hermes_instance_id == "hermes_natasha"
 
 
+def test_register_worker_auto_registers_deployment_fleet(monkeypatch, tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
+    monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_rocky")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+    registered = register_worker(
+        api,
+        hostname="rocky.local",
+        agent_name="rocky",
+        capabilities=["python"],
+        hermes_instance_id="hermes_rocky",
+    )
+
+    fleets = cp.list_fleets()
+    assert len(fleets) == 1
+    fleet = fleets[0]
+    assert fleet.id == "fleet_rocky"
+    assert fleet.name == "rocky"
+    assert fleet.tenant_id == "tenant_rocky"
+    assert fleet.status == "active"
+    assert fleet.agent_ids == [registered["id"]]
+    assert fleet.metadata["source"] == "mac-agent"
+    assert fleet.metadata["hub_agent"] == "rocky"
+
+
+def test_register_worker_adds_additional_agents_to_deployment_fleet(monkeypatch, tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+    rocky = register_worker(
+        api,
+        hostname="rocky.local",
+        agent_name="rocky",
+        capabilities=["python"],
+        hermes_instance_id="hermes_rocky",
+    )
+    natasha = register_worker(
+        api,
+        hostname="natasha.local",
+        agent_name="natasha",
+        capabilities=["review"],
+        hermes_instance_id="hermes_natasha",
+    )
+
+    fleet = cp.get_fleet("rocky")
+    assert fleet.agent_ids == sorted([rocky["id"], natasha["id"]])
+    assert fleet.metadata["hub_agent"] == "rocky"
+
+
 def test_worker_detects_stale_local_attestation_key():
     from mac.worker import _attestation_key_matches_hub
 
