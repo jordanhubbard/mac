@@ -154,22 +154,28 @@ class ReviewService:
             if evidence.task_id != review.task_id:
                 raise ValidationError("review evidence must belong to reviewed task")
         now = utcnow()
-        self.store.execute(
-            """
-            UPDATE reviews
-            SET status = ?, reason = ?, evidence_id = ?, completed_at = ?
-            WHERE id = ?
-            """,
-            (status_value, reason, evidence_id, now, review_id),
-        )
-        self._record_history(
-            review.task_id,
-            "task.review_completed",
-            reviewer_agent_id,
-            None,
-            None,
-            {"review_id": review_id, "status": status_value, "reason": reason},
-        )
+        # mac-p5a4: the review status UPDATE and the task.review_completed
+        # history row were two bare store.execute calls — a crash between
+        # them left the review APPROVED with no audit row. Wrap them in
+        # one transaction so either both land or neither does.
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE reviews
+                SET status = ?, reason = ?, evidence_id = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (status_value, reason, evidence_id, now, review_id),
+            )
+            self._record_history(
+                review.task_id,
+                "task.review_completed",
+                reviewer_agent_id,
+                None,
+                None,
+                {"review_id": review_id, "status": status_value, "reason": reason},
+                conn=conn,
+            )
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,

@@ -3929,6 +3929,65 @@ class ControlPlane:
 
     # Short-retention command audit -------------------------------------
 
+    # mac-6m14: scrub common secret-bearing argv shapes before writing.
+    _SECRET_KEY_HINTS = (
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "apikey",
+        "api_key",
+        "api-key",
+        "credential",
+        "auth",
+    )
+    # High-entropy bare values: anything resembling a base64/hex blob of
+    # ≥ 32 chars and not a path, URL, or numeric.
+    _ARGV_BARE_HIGH_ENTROPY_RE = re.compile(r"^[A-Za-z0-9+/=_-]{32,}$")
+
+    @classmethod
+    def _scrub_argv(cls, argv: Iterable[str]) -> List[str]:
+        """Replace secret-bearing argv elements with redaction markers.
+
+        Common patterns:
+          ``--token=abc123`` -> ``--token=<redacted>``
+          ``--password sekret`` -> ``--password <redacted>`` (best-effort
+            via key-then-value matching)
+          ``ghp_abcdef...`` (bare 32+ char alphanum) -> ``<redacted>``
+        """
+        out: List[str] = []
+        skip_next = False
+        for raw in argv:
+            item = str(raw)
+            if skip_next:
+                out.append("<redacted>")
+                skip_next = False
+                continue
+            # --foo=bar where the key contains a secret hint
+            if item.startswith("-") and "=" in item:
+                key_part, _sep, value = item.partition("=")
+                if any(hint in key_part.lower() for hint in cls._SECRET_KEY_HINTS) and value:
+                    out.append("%s=<redacted>" % key_part)
+                    continue
+            # --foo  <value>: key flag followed by a separate value
+            if item.startswith("-") and any(
+                hint in item.lower() for hint in cls._SECRET_KEY_HINTS
+            ):
+                out.append(item)
+                skip_next = True
+                continue
+            # Bare high-entropy values; skip URLs and absolute paths.
+            if (
+                cls._ARGV_BARE_HIGH_ENTROPY_RE.match(item)
+                and "/" not in item
+                and ":" not in item
+                and not item.isdigit()
+            ):
+                out.append("<redacted>")
+                continue
+            out.append(item)
+        return out
+
     def record_command_audit(
         self,
         agent_id: str,
@@ -3953,9 +4012,12 @@ class ControlPlane:
         phase_value = str(phase or "").strip().lower()
         if phase_value not in COMMAND_AUDIT_PHASES:
             raise ValidationError("unsupported command audit phase: %s" % phase)
-        argv_list = [str(item) for item in argv]
-        if not argv_list:
+        argv_raw = [str(item) for item in argv]
+        if not argv_raw:
             raise ValidationError("command audit requires argv")
+        # mac-6m14: scrub before persisting so secrets on argv never
+        # land in command_audit or observability detail.
+        argv_list = self._scrub_argv(argv_raw)
         cwd_value = str(cwd or "").strip()
         if not cwd_value:
             raise ValidationError("command audit requires cwd")

@@ -4665,6 +4665,38 @@ def test_notifier_dedupes_on_notification_id_in_payload(cp):
     assert seeded.id in delivered, "dedup should return the pre-seeded message id"
 
 
+def test_command_audit_scrubs_argv_secrets(cp):
+    """mac-6m14: argv on subprocess audit must have password-like flags
+    and bare high-entropy strings redacted before persisting to
+    command_audit and re-broadcasting through observability."""
+    agent = register_agent(cp, "w", ["python"])
+    record = cp.record_command_audit(
+        agent.id,
+        "started",
+        argv=[
+            "/usr/bin/curl",
+            "--header",
+            "Authorization: Bearer abc",
+            "--token=ghp_supersecrettoken123456789",
+            "--user-password",
+            "topsecret123456789",
+            "https://example.com/api",
+            "ghp_abcdefghijklmnopqrstuvwxyz1234",  # bare high-entropy
+        ],
+        cwd="/tmp",
+    )
+    # Flag=value with secret hint → redacted
+    assert "<redacted>" in record.argv[3]
+    assert "abc" not in record.argv[3]
+    # --foo-password followed by a value → value redacted (best-effort)
+    assert record.argv[5] == "<redacted>"
+    # Bare high-entropy element redacted (not URL, not path)
+    assert "<redacted>" in record.argv
+    # Non-secret args preserved
+    assert "/usr/bin/curl" in record.argv
+    assert "https://example.com/api" in record.argv
+
+
 def test_observability_record_truncates_oversized_detail(cp):
     """mac-29vr: an observability detail larger than MAX_DETAIL_BYTES
     must be replaced with a truncated marker so a chatty caller can't
