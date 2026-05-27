@@ -372,6 +372,18 @@ class RolloutService:
                 raise TransitionError(
                     "rollout %s status changed during advance; retry" % rollout_id
                 )
+            # mac-kg8y: reaching PROMOTED previously did not trigger an
+            # environment deployment, so the active environment could
+            # stay on the prior artifact even as the rollout reported
+            # PROMOTED. Record a hint event the deploy service can act
+            # on; full automatic deploy is opt-in per environment.
+            if status == RolloutStatus.PROMOTED.value and rollout.artifact_hash:
+                detail.setdefault("promoted_artifact_hash", rollout.artifact_hash)
+                detail.setdefault("promoted_artifact_uri", rollout.artifact_uri)
+                detail.setdefault(
+                    "deploy_hint",
+                    "call deploy_artifact(env, %s) to apply this rollout" % rollout.artifact_hash,
+                )
             conn.execute(
                 """
                 INSERT INTO rollout_events (id, rollout_id, event_type, actor, detail, created_at)

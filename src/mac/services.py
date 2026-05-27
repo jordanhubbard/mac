@@ -9896,7 +9896,7 @@ class ControlPlane:
         acc_metadata = task.metadata.get("acc_metadata") if isinstance(task.metadata, dict) else {}
         if isinstance(acc_metadata, dict) and acc_metadata.get("beads_sync_close_on_complete") is False:
             return
-        self._run_bd_for_task(
+        ok = self._run_bd_for_task(
             task,
             [
                 "close",
@@ -9907,6 +9907,26 @@ class ControlPlane:
             actor,
             "close",
         )
+        # mac-4p2f: bd close used to be fire-and-forget — if it failed,
+        # mac recorded COMPLETED while the bead stayed open, with no
+        # reconciliation path. Record a task_history row that flags the
+        # pending close so the periodic Beads heartbeat poll can pick
+        # it up and retry. The reconciler keys on this event_type and
+        # the binding bead_id; if the bd close already happened (e.g.
+        # mid-retry race) the dedupe in _append_beads_ledger_comment +
+        # bd close's natural idempotency keep retries safe.
+        if not ok:
+            try:
+                self._record_history(
+                    task.id,
+                    "task.beads_close_pending",
+                    actor,
+                    None,
+                    None,
+                    {"bead_id": binding["bead_id"], "reason": "initial close did not succeed"},
+                )
+            except Exception:  # noqa: BLE001 - audit insert failure is non-fatal
+                pass
 
     def _sync_beads_reopen(
         self,

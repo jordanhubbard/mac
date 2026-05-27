@@ -106,53 +106,60 @@ class DeployService:
             raise ValidationError("artifact uri is required")
         signer_list = coerce_list(signers)
         now = utcnow()
-        existing = self.store.query_one(
-            "SELECT * FROM artifacts WHERE digest = ?", (digest,)
-        )
-        if existing is not None:
-            existing_signers = json_loads(existing["signers"], [])
-            merged_signers = coerce_list(list(existing_signers) + signer_list)
-            existing_meta = json_loads(existing["metadata"], {})
-            merged_meta = dict(existing_meta)
-            if metadata:
-                merged_meta.update(metadata)
-            new_sbom = sbom_uri if sbom_uri is not None else existing["sbom_uri"]
-            self.store.execute(
+        # mac-vaze: re-register-with-new-signers used to do SELECT then
+        # UPDATE outside a transaction, so two concurrent callers could
+        # each read the same ``existing_signers`` and the later UPDATE
+        # would silently drop the racer's additions. Wrap the
+        # read+merge+write in one transaction; re-read inside.
+        with self.store.transaction() as conn:
+            existing_row = conn.execute(
+                "SELECT * FROM artifacts WHERE digest = ?", (digest,)
+            ).fetchone()
+            if existing_row is not None:
+                existing_signers = json_loads(existing_row["signers"], [])
+                merged_signers = coerce_list(list(existing_signers) + signer_list)
+                existing_meta = json_loads(existing_row["metadata"], {})
+                merged_meta = dict(existing_meta)
+                if metadata:
+                    merged_meta.update(metadata)
+                new_sbom = sbom_uri if sbom_uri is not None else existing_row["sbom_uri"]
+                conn.execute(
+                    """
+                    UPDATE artifacts
+                    SET sbom_uri = ?, signers = ?, metadata = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        new_sbom,
+                        json_dumps(merged_signers),
+                        json_dumps(merged_meta),
+                        now,
+                        existing_row["id"],
+                    ),
+                )
+                return self.get_artifact(existing_row["id"])
+            # No existing row inside the same transaction → insert.
+            artifact_id = new_id("art")
+            conn.execute(
                 """
-                UPDATE artifacts
-                SET sbom_uri = ?, signers = ?, metadata = ?, updated_at = ?
-                WHERE id = ?
+                INSERT INTO artifacts (
+                    id, kind, digest, uri, sbom_uri, signers, metadata,
+                    created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    new_sbom,
-                    json_dumps(merged_signers),
-                    json_dumps(merged_meta),
+                    artifact_id,
+                    kind,
+                    digest,
+                    uri,
+                    sbom_uri,
+                    json_dumps(signer_list),
+                    json_dumps(ensure_json_object(metadata)),
+                    created_by,
                     now,
-                    existing["id"],
+                    now,
                 ),
             )
-            return self.get_artifact(existing["id"])
-        artifact_id = new_id("art")
-        self.store.execute(
-            """
-            INSERT INTO artifacts (
-                id, kind, digest, uri, sbom_uri, signers, metadata,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                artifact_id,
-                kind,
-                digest,
-                uri,
-                sbom_uri,
-                json_dumps(signer_list),
-                json_dumps(ensure_json_object(metadata)),
-                created_by,
-                now,
-                now,
-            ),
-        )
         return self.get_artifact(artifact_id)
 
     def get_artifact(self, artifact_id_or_digest: str) -> Artifact:

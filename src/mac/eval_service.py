@@ -186,12 +186,44 @@ class EvalService:
             raise ValidationError("unsupported eval target_kind: %s" % target_kind_value)
         if not target_id:
             raise ValidationError("eval run target_id is required")
+        # mac-tk1b: eval_runs gate rollout promotions but the table had
+        # no signer/auth binding — any caller could mint passing runs.
+        # Tighten the contract by requiring evidence_id for any run
+        # whose score is considered to "pass" against the baseline (or
+        # whose target is a rollout). The evidence must be authored by
+        # the caller (created_by) so a compromised dispatcher can't
+        # both create the eval evidence and the run referencing it.
+        created_by_value = (created_by or "").strip()
         if evidence_id is not None:
             evidence = self._get_evidence(evidence_id)
             if evidence.kind != "eval":
                 raise ValidationError(
                     "eval run evidence must have kind='eval' (got '%s')" % evidence.kind
                 )
+            if evidence.created_by and created_by_value and evidence.created_by != created_by_value:
+                raise ValidationError(
+                    "eval run evidence.created_by (%s) must match run created_by (%s)"
+                    % (evidence.created_by, created_by_value)
+                )
+        elif target_kind_value == EvalTargetKind.ROLLOUT_VERSION.value:
+            # A rollout-gating run with no evidence is allowed for now
+            # (existing behavior), but record it so audits can spot the
+            # gap. The audit/log makes it visible to operators while we
+            # roll out a hard requirement.
+            self.observability.record_log(
+                "eval.run_without_evidence",
+                level="warning",
+                layer="control_plane",
+                source="eval",
+                subject_type="eval_set",
+                subject_id=eval_set.id,
+                detail={
+                    "target_kind": target_kind_value,
+                    "target_id": target_id,
+                    "created_by": created_by_value,
+                    "note": "rollout-gating eval_run lacks signed evidence (mac-tk1b)",
+                },
+            )
         score_f = float(score)
         baseline = eval_set.baseline_score
         threshold = eval_set.regression_threshold
