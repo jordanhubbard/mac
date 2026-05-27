@@ -245,7 +245,134 @@ ensure_go() {
   export PATH="/usr/local/go/bin:$PATH"
 }
 
-install_tokenhub_binaries() {
+_tokenhub_github_owner_repo() {
+  "$PYTHON_BIN" - "$TOKENHUB_REPO_URL" <<'PY'
+import re, sys
+url = sys.argv[1].rstrip("/")
+m = re.search(r'github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$', url)
+print(m.group(1) if m else "")
+PY
+}
+
+_install_tokenhub_from_release() {
+  local owner_repo="$1"
+  local api_url tmp_dir downloaded
+  if [ -n "${TOKENHUB_REF:-}" ]; then
+    api_url="https://api.github.com/repos/${owner_repo}/releases/tags/${TOKENHUB_REF}"
+  else
+    api_url="https://api.github.com/repos/${owner_repo}/releases/latest"
+  fi
+  log "checking for TokenHub release binaries at $api_url"
+  local release_json
+  release_json="$(curl -fsSL --connect-timeout 10 --max-time 30 \
+    ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+    "$api_url" 2>/dev/null || true)"
+  [ -n "$release_json" ] || return 1
+
+  local uname_s uname_m
+  uname_s="$(uname -s)"
+  uname_m="$(uname -m)"
+
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' RETURN
+
+  downloaded="$("$PYTHON_BIN" - "$release_json" "$uname_s" "$uname_m" "$tmp_dir" "$TOKENHUB_BIN_DIR" <<'PY'
+import json, os, re, subprocess, sys, tarfile, zipfile, urllib.request
+from pathlib import Path
+
+release = json.loads(sys.argv[1])
+uname_s, uname_m, tmp_dir, bin_dir = sys.argv[2], sys.argv[3], Path(sys.argv[4]), Path(sys.argv[5])
+
+# Normalise OS / arch into common naming variants
+os_variants = {"Linux": ["Linux", "linux"], "Darwin": ["Darwin", "darwin", "macos"]}
+arch_variants = {
+    "x86_64": ["x86_64", "amd64"],
+    "aarch64": ["arm64", "aarch64"],
+    "arm64": ["arm64", "aarch64"],
+}
+os_keys = os_variants.get(uname_s, [uname_s.lower()])
+arch_keys = arch_variants.get(uname_m, [uname_m.lower()])
+
+assets = release.get("assets", [])
+if not assets:
+    raise SystemExit(1)
+
+def score(name):
+    n = name.lower()
+    for ok in os_keys:
+        for ak in arch_keys:
+            if ok.lower() in n and ak.lower() in n:
+                # prefer archives over raw binaries (easier to handle checksums later)
+                return (2 if n.endswith(".tar.gz") else 1 if n.endswith(".zip") else 0)
+    return -1
+
+scored = sorted([(score(a["name"]), a) for a in assets], key=lambda x: -x[0])
+best_score, best_asset = scored[0] if scored else (-1, None)
+if best_score < 0 or best_asset is None:
+    raise SystemExit(1)
+
+tag = release.get("tag_name", "unknown")
+url = best_asset["browser_download_url"]
+name = best_asset["name"]
+dest = tmp_dir / name
+print("downloading %s (%s)" % (name, tag), flush=True)
+
+req = urllib.request.Request(url)
+token = os.environ.get("GITHUB_TOKEN", "")
+if token:
+    req.add_header("Authorization", "Bearer " + token)
+with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
+    f.write(resp.read())
+
+bin_dir.mkdir(parents=True, exist_ok=True)
+
+def extract_bins(src):
+    names = ["tokenhub", "tokenhubctl"]
+    if src.suffix == ".gz" and src.stem.endswith(".tar"):
+        with tarfile.open(src) as tf:
+            for member in tf.getmembers():
+                base = Path(member.name).name
+                if base in names:
+                    out = bin_dir / base
+                    with tf.extractfile(member) as mf, open(out, "wb") as of:
+                        of.write(mf.read())
+                    out.chmod(0o755)
+    elif src.suffix == ".zip":
+        with zipfile.ZipFile(src) as zf:
+            for info in zf.infolist():
+                base = Path(info.filename).name
+                if base in names:
+                    out = bin_dir / base
+                    out.write_bytes(zf.read(info.filename))
+                    out.chmod(0o755)
+    else:
+        # bare binary — assume it's tokenhub itself
+        out = bin_dir / "tokenhub"
+        out.write_bytes(src.read_bytes())
+        out.chmod(0o755)
+
+extract_bins(dest)
+
+# Verify at least tokenhub was installed
+if not (bin_dir / "tokenhub").exists():
+    raise SystemExit(1)
+
+print("installed", flush=True)
+PY
+  )" || true
+
+  if printf '%s' "$downloaded" | grep -q "^installed"; then
+    log "TokenHub binaries installed from release"
+    printf '%s\n' "$downloaded" | grep -v "^installed" | grep -v "^downloading" | while IFS= read -r line; do
+      [ -n "$line" ] && log "$line"
+    done
+    return 0
+  fi
+  printf '%s\n' "$downloaded" | while IFS= read -r line; do [ -n "$line" ] && log "$line"; done
+  return 1
+}
+
+_install_tokenhub_from_source() {
   mkdir -p "$(dirname "$TOKENHUB_REPO")" "$TOKENHUB_BIN_DIR"
   if [ -d "$TOKENHUB_REPO/.git" ]; then
     log "updating TokenHub source at $TOKENHUB_REPO"
@@ -255,17 +382,28 @@ install_tokenhub_binaries() {
     rm -rf "$TOKENHUB_REPO"
     git clone --quiet "$TOKENHUB_REPO_URL" "$TOKENHUB_REPO"
   fi
-  if [ -n "$TOKENHUB_REF" ]; then
+  if [ -n "${TOKENHUB_REF:-}" ]; then
     git -C "$TOKENHUB_REPO" checkout --quiet "$TOKENHUB_REF"
   else
     git -C "$TOKENHUB_REPO" checkout --quiet main 2>/dev/null || true
     git -C "$TOKENHUB_REPO" pull --ff-only --quiet origin main 2>/dev/null || true
   fi
   ensure_go
-  log "building TokenHub binaries"
+  log "building TokenHub binaries from source"
   (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$TOKENHUB_BIN_DIR/tokenhub" ./cmd/tokenhub)
   (cd "$TOKENHUB_REPO" && env GOTOOLCHAIN=auto go build -o "$TOKENHUB_BIN_DIR/tokenhubctl" ./cmd/tokenhubctl)
   chmod 755 "$TOKENHUB_BIN_DIR/tokenhub" "$TOKENHUB_BIN_DIR/tokenhubctl"
+}
+
+install_tokenhub_binaries() {
+  mkdir -p "$TOKENHUB_BIN_DIR"
+  local owner_repo
+  owner_repo="$(_tokenhub_github_owner_repo)"
+  if [ -n "$owner_repo" ] && _install_tokenhub_from_release "$owner_repo"; then
+    return 0
+  fi
+  log "falling back to TokenHub source build"
+  _install_tokenhub_from_source
 }
 
 seed_or_merge_credentials() {
