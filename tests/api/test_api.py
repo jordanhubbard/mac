@@ -1806,7 +1806,7 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
 
 
 def test_dashboard_has_typescript_source_without_node_toolchain_files():
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
 
     assert (root / "src/mac/ui/app.ts").exists()
     assert (root / "src/mac/ui/app.js").exists()
