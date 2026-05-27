@@ -484,6 +484,21 @@ const VIEW_TITLES: Record<ViewKey, string> = {
 const VIEW_KEYS = new Set(Object.keys(VIEW_TITLES));
 const DEFAULT_URL_STATE = readUrlState();
 
+// Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
+// Stored into sessionStorage and then stripped from the URL so it doesn't
+// linger in browser history.
+(function bootstrapTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const t = params.get("t");
+  if (t) {
+    sessionStorage.setItem(TOKEN_KEY, t);
+    params.delete("t");
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? "?" + newSearch : "") + window.location.hash;
+    history.replaceState(null, "", newUrl);
+  }
+})();
+
 const state: DashboardState = {
   activeView: DEFAULT_URL_STATE.activeView,
   token: sessionStorage.getItem(TOKEN_KEY) || "",

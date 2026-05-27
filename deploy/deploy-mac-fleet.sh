@@ -5504,8 +5504,10 @@ main() {
       fi
       upsert_local_env "MAC_DEPLOY_TOKENHUB_API_KEY" "$tokenhub_api_key"
       echo "==> ${agent}: hub UI access:"
-      echo "    ssh -L 8789:127.0.0.1:8789 ${hub_target_str}  # then open http://localhost:8789/ui"
-      echo "    token stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as MAC_DEPLOY_HUB_TOKEN"
+      echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
+      echo "    2. open browser: http://localhost:8789/ui?t=${hub_token}"
+      echo "       (token auto-populates from ?t= param and is stripped from the URL)"
+      echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as MAC_DEPLOY_HUB_TOKEN"
       hub_tunnel_pubkey="$(read_hub_tunnel_pubkey)"
     else
       if uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"; then

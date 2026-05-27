@@ -48,6 +48,18 @@ const VIEW_TITLES = {
 };
 const VIEW_KEYS = new Set(Object.keys(VIEW_TITLES));
 const DEFAULT_URL_STATE = readUrlState();
+// Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
+(function bootstrapTokenFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("t");
+    if (t) {
+        sessionStorage.setItem(TOKEN_KEY, t);
+        params.delete("t");
+        const newSearch = params.toString();
+        const newUrl = window.location.pathname + (newSearch ? "?" + newSearch : "") + window.location.hash;
+        history.replaceState(null, "", newUrl);
+    }
+})();
 const state = {
     activeView: DEFAULT_URL_STATE.activeView,
     token: sessionStorage.getItem(TOKEN_KEY) || "",
