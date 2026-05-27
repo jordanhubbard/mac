@@ -1597,7 +1597,7 @@ function projectFrontierRecord(project) {
       <div>
         <div class="record-header">
           <div><h3>${escapeHtml(project.project)}</h3><p class="muted small">${project.task_count} stories, ${project.active_agent_ids.length} active agents</p></div>
-          <button class="link-button" type="button" data-project="${escapeHtml(project.project)}">Focus</button>
+          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
         </div>
         <div class="chip-row">
           ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
@@ -1621,7 +1621,7 @@ function projectCrudRecord(project) {
     <article class="record ${state.projectFilter === project.project ? "is-selected" : ""}">
       <div class="record-header">
         <div><h3>${escapeHtml(project.project)}</h3><p class="muted small">${project.task_count} stories, ${project.repository_count} repositories</p></div>
-        <button class="link-button" type="button" data-project="${escapeHtml(project.project)}">Focus</button>
+        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
       </div>
       <div class="chip-row">
         ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
@@ -1629,21 +1629,19 @@ function projectCrudRecord(project) {
         ${chip(`${project.blocked_count} blocked`, project.blocked_count ? "warn" : "good")}
         ${chip(status, status === "active" ? "good" : "warn")}
       </div>
-      <details class="action-box">
-        <summary>Project CRUD</summary>
+      <div class="record-actions">
+        <details class="row-actions edit-disclosure">
+          <summary>Edit</summary>
         <form class="action-form" data-action="projectUpdate" data-project="${escapeHtml(project.project)}">
           <label>Name <input name="name" value="${escapeHtml(project.project)}"></label>
           <label>Description <textarea name="description">${escapeHtml(description)}</textarea></label>
           <label>Status ${select("status", ["active", "inactive", "archived"], status)}</label>
           <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Update</button>
+          <button type="submit">Save</button>
         </form>
-        <form class="action-form compact danger-action" data-action="projectDelete" data-project="${escapeHtml(project.project)}">
-          <label><input name="force" type="checkbox"> Force unlink</label>
-          <label>Actor <input name="actor" value="human"></label>
-          <button type="submit">Delete</button>
-        </form>
-      </details>
+        </details>
+        <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}">Delete</button>
+      </div>
     </article>
   `;
 }
@@ -2496,10 +2494,36 @@ function bindAuditControl(selector, key, replace = false) {
         render();
     });
 }
-function handleContentClick(event) {
-    const projectTarget = event.target?.closest("[data-project]");
+async function handleContentClick(event) {
+    const projectDelete = event.target?.closest("[data-project-delete]");
+    if (projectDelete) {
+        event.preventDefault();
+        const project = projectDelete.dataset.projectDelete || "";
+        if (!project)
+            return;
+        projectDelete.disabled = true;
+        try {
+            const result = await deleteJSON(`/projects/${encodeURIComponent(project)}?actor=human`);
+            state.actionMessage = `Project delete ok: ${redactedJson(result)}`;
+            if (state.projectFilter === project)
+                state.projectFilter = "all";
+            if (state.selectedId === project)
+                state.selectedId = "";
+            updateUrlState();
+            await loadDashboard();
+        }
+        catch (error) {
+            state.actionMessage = `Project delete failed: ${error instanceof Error ? error.message : String(error)}`;
+            render();
+        }
+        finally {
+            projectDelete.disabled = false;
+        }
+        return;
+    }
+    const projectTarget = event.target?.closest("[data-project-focus]");
     if (projectTarget) {
-        state.projectFilter = projectTarget.dataset.project || "all";
+        state.projectFilter = projectTarget.dataset.projectFocus || "all";
         state.agentPage = 1;
         updateUrlState();
         render();
@@ -2690,10 +2714,6 @@ async function runAction(action, form, values) {
             metadata: parseJsonObject(values.metadata),
             actor: "human",
         });
-    }
-    if (action === "projectDelete") {
-        const project = requiredDataset(form, "project");
-        return deleteJSON(`/projects/${encodeURIComponent(project)}?force=${boolValue(values.force)}&actor=${encodeURIComponent(String(values.actor || "human"))}`);
     }
     if (action === "taskCreate") {
         return postJSON("/tasks", {

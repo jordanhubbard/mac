@@ -488,6 +488,29 @@ h3 {
   background: var(--danger);
 }
 
+.record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+.record-actions .edit-disclosure {
+  flex: 1 1 320px;
+}
+
+.danger-button {
+  min-width: 96px;
+  height: 36px;
+  border: 1px solid #b42318;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #ffffff;
+  padding: 0 14px;
+  font-weight: 800;
+}
+
 details.action-box {
   margin-top: 12px;
   border: 1px solid #e5e9ef;
@@ -498,6 +521,13 @@ details.action-box {
 
 details.row-actions {
   min-width: 180px;
+}
+
+details.row-actions.edit-disclosure {
+  border: 1px solid #e5e9ef;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 8px 10px;
 }
 
 details.row-actions summary {
