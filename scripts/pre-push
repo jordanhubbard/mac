@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-push regression gate. Install via: make install-hooks
+set -euo pipefail
+
+echo "==> pre-push: running regression tests (api, cli, ui)"
+uv run --extra dev pytest -q --tb=short -m "api or cli or ui" tests/
+echo "==> pre-push: all tests passed"

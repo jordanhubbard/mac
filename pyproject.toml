@@ -32,6 +32,11 @@ mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "api: FastAPI HTTP endpoint tests (tests/api/)",
+    "cli: CLI command tests — mac, hgmac (tests/cli/)",
+    "ui: UI asset-serving and dashboard tests (tests/ui/)",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mac"]

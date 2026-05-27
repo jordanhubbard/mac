@@ -4,7 +4,20 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
+import pytest
 from mac.services import ControlPlane
+
+
+def pytest_collection_modifyitems(items: list) -> None:
+    """Auto-apply category markers based on test subdirectory."""
+    for item in items:
+        path = str(item.fspath)
+        if "/tests/api/" in path:
+            item.add_marker(pytest.mark.api)
+        elif "/tests/cli/" in path:
+            item.add_marker(pytest.mark.cli)
+        elif "/tests/ui/" in path:
+            item.add_marker(pytest.mark.ui)
 
 
 def submit_review_verdict(

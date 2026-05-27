@@ -12,6 +12,8 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -20,10 +22,18 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Sync dependencies
         run: uv sync --extra dev
-      - name: Run tests
-        env:
-          MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
-        run: uv run --extra dev pytest -q
+
+      - name: Run API tests
+        run: uv run --extra dev pytest -q --tb=short -m api tests/
+
+      - name: Run CLI tests
+        run: uv run --extra dev pytest -q --tb=short -m cli tests/
+
+      - name: Run UI tests
+        run: uv run --extra dev pytest -q --tb=short -m ui tests/
+
+      - name: Run full regression suite
+        run: uv run --extra dev pytest -q --tb=short
 
   docker:
     runs-on: ubuntu-latest
@@ -45,7 +55,6 @@ jobs:
           docker run --rm -d --name mac-ci \
             -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
             -p 8000:8000 mac:ci-${{ github.sha }}
-          # Wait for healthcheck (the container has its own; this is a belt+suspenders)
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
               echo "ok"; break
