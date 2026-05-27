@@ -859,10 +859,17 @@ write_client_env() {
     set_env_key "$env_file" MAC_HERMES_GATEWAY_PROVIDER "custom"
     set_env_key "$env_file" ACC_HERMES_GATEWAY_PROVIDER "custom"
     set_env_key "$env_file" HERMES_INFERENCE_PROVIDER "custom"
-    set_env_key "$env_file" MAC_HERMES_GATEWAY_MODEL "${MAC_HERMES_GATEWAY_MODEL:-*}"
-    set_env_key "$env_file" ACC_HERMES_GATEWAY_MODEL "${ACC_HERMES_GATEWAY_MODEL:-*}"
-    set_env_key "$env_file" HERMES_INFERENCE_MODEL "${HERMES_INFERENCE_MODEL:-*}"
-    set_env_key "$env_file" ACC_LLM_MODEL "${ACC_LLM_MODEL:-*}"
+    model="${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-${ACC_HERMES_GATEWAY_MODEL:-${ACC_LLM_MODEL:-}}}}"
+    if [ -n "$model" ]; then
+      set_env_key "$env_file" MAC_HERMES_GATEWAY_MODEL "$model"
+      set_env_key "$env_file" ACC_HERMES_GATEWAY_MODEL "$model"
+      set_env_key "$env_file" HERMES_INFERENCE_MODEL "$model"
+      set_env_key "$env_file" ACC_LLM_MODEL "$model"
+    else
+      delete_env_keys "$env_file" \
+        MAC_HERMES_GATEWAY_MODEL ACC_HERMES_GATEWAY_MODEL \
+        HERMES_INFERENCE_MODEL ACC_LLM_MODEL
+    fi
     set_env_key "$env_file" MAC_REQUIRE_TOKENHUB "1"
   done
 }

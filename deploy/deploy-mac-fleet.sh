@@ -2809,12 +2809,13 @@ model = (
     source.get("MAC_HERMES_GATEWAY_MODEL")
     or source.get("HERMES_INFERENCE_MODEL")
     or source.get("ACC_HERMES_GATEWAY_MODEL")
-    or "*"
-)
-updates["MAC_HERMES_GATEWAY_MODEL"] = model
-updates["ACC_HERMES_GATEWAY_MODEL"] = model
-updates["HERMES_INFERENCE_MODEL"] = model
-updates["ACC_LLM_MODEL"] = model
+    or source.get("ACC_LLM_MODEL")
+    or ""
+).strip()
+updates["MAC_HERMES_GATEWAY_MODEL"] = model or None
+updates["ACC_HERMES_GATEWAY_MODEL"] = model or None
+updates["HERMES_INFERENCE_MODEL"] = model or None
+updates["ACC_LLM_MODEL"] = model or None
 
 write_env(target_path, updates)
 pool_synced = sync_tokenhub_credential_pool(target_path.parent, tokenhub_url, tokenhub_key)
@@ -2866,12 +2867,14 @@ tokenhub_v1 = tokenhub_url.rstrip("/") + "/v1/"
 model = (
     str(env.get("HERMES_INFERENCE_MODEL") or "").strip()
     or str(env.get("MAC_HERMES_GATEWAY_MODEL") or "").strip()
-    or "*"
 )
 
 model_config = config.get("model") if isinstance(config.get("model"), dict) else {}
 model_config = dict(model_config)
-model_config["default"] = model
+if model:
+    model_config["default"] = model
+else:
+    model_config.pop("default", None)
 model_config["provider"] = "tokenhub"
 model_config["base_url"] = tokenhub_v1
 # Keep the client key in .env and point Hermes at it. Inline keys in config.yaml
@@ -2889,9 +2892,12 @@ tokenhub_provider.update(
         "api": tokenhub_v1,
         "key_env": "TOKENHUB_API_KEY",
         "transport": "chat_completions",
-        "default_model": model,
     }
 )
+if model:
+    tokenhub_provider["default_model"] = model
+else:
+    tokenhub_provider.pop("default_model", None)
 tokenhub_provider.pop("api_key", None)
 providers["tokenhub"] = tokenhub_provider
 config["providers"] = providers
@@ -3787,11 +3793,16 @@ if derived_tokenhub_url:
     values["MAC_HERMES_GATEWAY_PROVIDER"] = "custom"
     values["ACC_HERMES_GATEWAY_PROVIDER"] = "custom"
     values["HERMES_INFERENCE_PROVIDER"] = "custom"
-    tokenhub_model = configured_gateway_model or "*"
-    values["MAC_HERMES_GATEWAY_MODEL"] = tokenhub_model
-    values["ACC_HERMES_GATEWAY_MODEL"] = tokenhub_model
-    values["HERMES_INFERENCE_MODEL"] = tokenhub_model
-    values["ACC_LLM_MODEL"] = tokenhub_model
+    if configured_gateway_model:
+        values["MAC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
+        values["ACC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
+        values["HERMES_INFERENCE_MODEL"] = configured_gateway_model
+        values["ACC_LLM_MODEL"] = configured_gateway_model
+    else:
+        values.pop("MAC_HERMES_GATEWAY_MODEL", None)
+        values.pop("ACC_HERMES_GATEWAY_MODEL", None)
+        values.pop("HERMES_INFERENCE_MODEL", None)
+        values.pop("ACC_LLM_MODEL", None)
     if configured_tokenhub_api_key:
         values["TOKENHUB_API_KEY"] = configured_tokenhub_api_key
         values["OPENAI_API_KEY"] = configured_tokenhub_api_key
@@ -4518,7 +4529,7 @@ try:
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     runtime_provider = resolve_runtime_provider(
-        target_model=os.environ.get("HERMES_INFERENCE_MODEL") or "*"
+        target_model=os.environ.get("HERMES_INFERENCE_MODEL") or None
     )
     runtime_key = str(runtime_provider.get("api_key") or "")
     runtime_base_url = str(runtime_provider.get("base_url") or "").rstrip("/")
