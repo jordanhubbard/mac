@@ -14,8 +14,9 @@ Use this skill when the user asks to set up or deploy a new mac fleet and
   model selectors.
 - Do not commit fleet topology or secrets. Fleet topology belongs in
   `~/.mac/fleets.yaml`; local deploy secrets belong in `~/.mac/.env`.
-- Do not put upstream provider API keys in mac config. Those belong in
-  TokenHub or the site's secret store.
+- Provider API keys (`NVIDIA_API_KEY`, `OPENAI_API_KEY`, etc.) belong in
+  `~/.mac/.env` — the wizard collects them and TokenHub absorbs them on first
+  deploy. Do not put them in fleet YAML or any committed file.
 - Keep committed fleet examples generic. Personal fleets must live only in the
   home-scoped fleet registry.
 
@@ -33,18 +34,39 @@ Use this skill when the user asks to set up or deploy a new mac fleet and
    bash setup.sh --fleets-config ~/.mac/fleets.yaml --env-file ~/.mac/.env
    ```
 
-3. The wizard asks for fleet topology, hub, supervisor, Slack home channel,
-   per-agent Hermes models, worker mode, canary policy, shared Qdrant readiness,
-   fleet network provider, and optional deploy hub token. Keep Tailscale as the
-   default; use Headscale only when the user supplies an explicit login server,
-   enrollment-key source, DNS assumption, and health check.
+3. The wizard opens with two required questions before anything else:
+   - **"Are you running this on the machine being configured?"** — skips SSH
+     target prompts and adjusts the Next-step instructions when yes.
+   - **"Setting up a hub or a worker?"** — required, no default.
+     - **hub**: creates a new fleet entry. The wizard asks for fleet topology,
+       supervisor, Slack channel, per-agent Hermes models, worker mode, canary
+       policy, shared Qdrant readiness, fleet network provider (Tailscale
+       default; Headscale needs explicit login server, enrollment-key source,
+       DNS assumption, and health URL), and **at least one upstream LLM
+       provider** (nvidia / openai / anthropic / perplexity — API key required,
+       base URL optional). The loop does not exit until at least one provider is
+       entered.
+     - **worker**: looks up the existing fleet by hub name, then asks only for
+       the new worker's name, SSH target, OS, supervisor, mode, and canary
+       policy.
 
-4. Source the generated caller-machine env, then deploy:
+4. For hub setup on a remote machine, source the generated caller-machine env,
+   then deploy:
 
    ```bash
    set -a; . ~/.mac/.env; set +a
    bash deploy/deploy-mac-fleet.sh --hub <hub-node>
    ```
+
+   For hub setup running locally on the hub machine:
+
+   ```bash
+   bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+   ```
+
+   Provider keys in `~/.mac/.env` are forwarded through the SSH layer to
+   `seed_or_merge_credentials()`, which writes them into
+   `~/.tokenhub/credentials` on the hub.
 
 5. If asked to inspect or edit the fleet later, edit
    `~/.mac/fleets.yaml`, not `deploy/fleet/config.yaml`.
