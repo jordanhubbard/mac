@@ -952,7 +952,7 @@ def test_fastapi_serves_dashboard_shell_without_api_token():
     ui_response = client.get("/ui")
     assert ui_response.status_code == 200
     assert "MAC Control Plane" in ui_response.text
-    assert "/ui/assets/app.js" in ui_response.text
+    assert "/ui/assets/app.js?v=" in ui_response.text
     assert 'data-view="observability"' in ui_response.text
 
     script_response = client.get("/ui/assets/app.js")
@@ -1047,6 +1047,50 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
 
     agent_detail = client.get("/dashboard/agents/%s" % agent["id"]).json()
     assert agent_detail["availability"]["eligible"] is True
+
+
+def test_dashboard_state_caps_high_volume_task_and_message_data():
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+
+    machine = client.post("/machines", json={"hostname": "host-1"}).json()
+    agent = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "worker", "capabilities": ["python"]},
+    ).json()
+    task = client.post("/tasks", json={"title": "High volume task"}).json()
+
+    for index in range(75):
+        cp.add_evidence(
+            task["id"],
+            "test",
+            "artifact://evidence/%03d" % index,
+            "evidence %03d" % index,
+            agent["id"],
+            sync_beads=False,
+        )
+    for index in range(250):
+        cp.send_message(
+            "dispatcher",
+            agent["id"],
+            "status_update",
+            {"status": "update-%03d" % index},
+        )
+
+    state = client.get("/dashboard/state").json()
+    detail = next(item for item in state["tasks"] if item["task"]["id"] == task["id"])
+
+    assert len(detail["history"]) == 50
+    assert len(detail["evidence"]) == 25
+    assert detail["history_limited_to"] == 50
+    assert detail["evidence_limited_to"] == 25
+    assert len(state["messages"]) == 200
+
+    timeline = client.get("/dashboard/tasks/%s/timeline" % task["id"]).json()
+    assert len(timeline["history"]) > len(detail["history"])
+    assert len(timeline["evidence"]) == 75
+    assert len(client.get("/messages").json()) == 250
+    assert len(client.get("/messages?limit=10").json()) == 10
 
 
 def test_tasks_expose_lifecycle_timestamps_and_child_relationships():

@@ -249,11 +249,29 @@ class ReviewService:
             raise NotFoundError("review not found: %s" % review_id)
         return self._review_from_row(row)
 
-    def list_reviews(self, task_id: str) -> List[Review]:
-        rows = self.store.query_all(
-            "SELECT * FROM reviews WHERE task_id = ? ORDER BY created_at, id",
-            (task_id,),
-        )
+    def list_reviews(self, task_id: str, limit: Optional[int] = None) -> List[Review]:
+        limit_value = None if limit is None else max(0, int(limit))
+        if limit_value == 0:
+            return []
+        if limit_value is None:
+            rows = self.store.query_all(
+                "SELECT * FROM reviews WHERE task_id = ? ORDER BY created_at, id",
+                (task_id,),
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        """
+                        SELECT * FROM reviews
+                        WHERE task_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (task_id, limit_value),
+                    )
+                )
+            )
         return [self._review_from_row(row) for row in rows]
 
     # Publication -------------------------------------------------------
@@ -373,16 +391,51 @@ class ReviewService:
             raise NotFoundError("publication not found: %s" % publication_id)
         return self._publication_from_row(row)
 
-    def list_publications(self, task_id: Optional[str] = None) -> List[Publication]:
+    def list_publications(
+        self,
+        task_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Publication]:
+        limit_value = None if limit is None else max(0, int(limit))
+        if limit_value == 0:
+            return []
         if task_id is not None:
             self._get_task(task_id)
-            rows = self.store.query_all(
-                "SELECT * FROM publications WHERE task_id = ? ORDER BY created_at, id",
-                (task_id,),
-            )
-        else:
+            if limit_value is None:
+                rows = self.store.query_all(
+                    "SELECT * FROM publications WHERE task_id = ? ORDER BY created_at, id",
+                    (task_id,),
+                )
+            else:
+                rows = list(
+                    reversed(
+                        self.store.query_all(
+                            """
+                            SELECT * FROM publications
+                            WHERE task_id = ?
+                            ORDER BY created_at DESC, id DESC
+                            LIMIT ?
+                            """,
+                            (task_id, limit_value),
+                        )
+                    )
+                )
+        elif limit_value is None:
             rows = self.store.query_all(
                 "SELECT * FROM publications ORDER BY created_at, id"
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        """
+                        SELECT * FROM publications
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (limit_value,),
+                    )
+                )
             )
         return [self._publication_from_row(row) for row in rows]
 

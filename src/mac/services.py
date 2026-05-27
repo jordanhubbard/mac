@@ -3353,21 +3353,42 @@ class ControlPlane:
             metadata={"actor": actor, "force": force},
         )
 
-    def task_detail(self, task_id: str) -> JsonDict:
+    def task_detail(
+        self,
+        task_id: str,
+        *,
+        history_limit: Optional[int] = None,
+        evidence_limit: Optional[int] = None,
+        review_limit: Optional[int] = None,
+        publication_limit: Optional[int] = None,
+    ) -> JsonDict:
         task = self.get_task(task_id)
         return {
             "task": task.to_dict(),
-            "history": [event.to_dict() for event in self.task_history(task_id)],
-            "evidence": [item.to_dict() for item in self.list_evidence(task_id)],
-            "reviews": [item.to_dict() for item in self.list_reviews(task_id)],
-            "publications": [item.to_dict() for item in self.list_publications(task_id)],
+            "history": [
+                event.to_dict()
+                for event in self.task_history(task_id, limit=history_limit)
+            ],
+            "evidence": [
+                item.to_dict()
+                for item in self.list_evidence(task_id, limit=evidence_limit)
+            ],
+            "reviews": [
+                item.to_dict()
+                for item in self.list_reviews(task_id, limit=review_limit)
+            ],
+            "publications": [
+                item.to_dict()
+                for item in self.list_publications(
+                    task_id, limit=publication_limit
+                )
+            ],
         }
 
     def task_summary(self, task_id: str) -> JsonDict:
-        detail = self.task_detail(task_id)
-        task = detail["task"]
-        evidence = detail["evidence"]
-        reviews = detail["reviews"]
+        task = self.get_task(task_id).to_dict()
+        evidence = [item.to_dict() for item in self.list_evidence(task_id)]
+        reviews = [item.to_dict() for item in self.list_reviews(task_id)]
         approved_reviews = [review for review in reviews if review["status"] == ReviewStatus.APPROVED.value]
         publications = [
             pub.to_dict()
@@ -3397,12 +3418,34 @@ class ControlPlane:
             "summary": "; ".join(parts),
         }
 
-    def task_history(self, task_id: str) -> List[HistoryEvent]:
+    def task_history(
+        self,
+        task_id: str,
+        limit: Optional[int] = None,
+    ) -> List[HistoryEvent]:
         self.get_task(task_id)
-        rows = self.store.query_all(
-            "SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at, id",
-            (task_id,),
-        )
+        limit_value = None if limit is None else max(0, int(limit))
+        if limit_value == 0:
+            return []
+        if limit_value is None:
+            rows = self.store.query_all(
+                "SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at, id",
+                (task_id,),
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        """
+                        SELECT * FROM task_history
+                        WHERE task_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (task_id, limit_value),
+                    )
+                )
+            )
         return [self._history_from_row(row) for row in rows]
 
     # Unified audit / event stream
@@ -4704,11 +4747,33 @@ class ControlPlane:
             raise NotFoundError("evidence not found: %s" % evidence_id)
         return self._evidence_from_row(row)
 
-    def list_evidence(self, task_id: str) -> List[Evidence]:
-        rows = self.store.query_all(
-            "SELECT * FROM evidence WHERE task_id = ? ORDER BY created_at, id",
-            (task_id,),
-        )
+    def list_evidence(
+        self,
+        task_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Evidence]:
+        limit_value = None if limit is None else max(0, int(limit))
+        if limit_value == 0:
+            return []
+        if limit_value is None:
+            rows = self.store.query_all(
+                "SELECT * FROM evidence WHERE task_id = ? ORDER BY created_at, id",
+                (task_id,),
+            )
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        """
+                        SELECT * FROM evidence
+                        WHERE task_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (task_id, limit_value),
+                    )
+                )
+            )
         return [self._evidence_from_row(row) for row in rows]
 
     def renew_lease(self, lease_id: str, agent_id: str, lease_seconds: int = 900) -> Lease:
@@ -6438,8 +6503,12 @@ class ControlPlane:
     def get_review(self, review_id: str) -> Review:
         return self.reviews.get_review(review_id)
 
-    def list_reviews(self, task_id: str) -> List[Review]:
-        return self.reviews.list_reviews(task_id)
+    def list_reviews(
+        self,
+        task_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Review]:
+        return self.reviews.list_reviews(task_id, limit=limit)
 
     def publish_task(self, *args: Any, **kwargs: Any) -> Publication:
         task_id = kwargs.get("task_id") if "task_id" in kwargs else (args[0] if args else None)

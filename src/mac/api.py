@@ -182,6 +182,11 @@ def _data(model: BaseModel) -> Dict[str, Any]:
 AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS = 60.0
 AGENTBUS_MIN_EVENT_POLL_SECONDS = 0.25
 AGENTBUS_MAX_EVENT_POLL_SECONDS = 5.0
+DASHBOARD_TASK_HISTORY_LIMIT = 50
+DASHBOARD_TASK_EVIDENCE_LIMIT = 25
+DASHBOARD_TASK_REVIEW_LIMIT = 25
+DASHBOARD_TASK_PUBLICATION_LIMIT = 10
+DASHBOARD_MESSAGE_LIMIT = 200
 
 
 def _agentbus_clamp_timeout(value: float) -> float:
@@ -1235,13 +1240,29 @@ def _dashboard_swarm_summary(
     }
 
 
-def _dashboard_task(cp: ControlPlane, task_id: str) -> Dict[str, Any]:
-    detail = cp.task_detail(task_id)
+def _dashboard_task(
+    cp: ControlPlane,
+    task_id: str,
+    *,
+    compact: bool = False,
+) -> Dict[str, Any]:
+    if compact:
+        detail = cp.task_detail(
+            task_id,
+            history_limit=DASHBOARD_TASK_HISTORY_LIMIT,
+            evidence_limit=DASHBOARD_TASK_EVIDENCE_LIMIT,
+            review_limit=DASHBOARD_TASK_REVIEW_LIMIT,
+            publication_limit=DASHBOARD_TASK_PUBLICATION_LIMIT,
+        )
+    else:
+        detail = cp.task_detail(task_id)
     summary = cp.task_summary(task_id)
     detail["summary"] = summary
-    detail["publications"] = [
-        publication.to_dict() for publication in cp.list_publications(task_id)
-    ]
+    if compact:
+        detail["history_limited_to"] = DASHBOARD_TASK_HISTORY_LIMIT
+        detail["evidence_limited_to"] = DASHBOARD_TASK_EVIDENCE_LIMIT
+        detail["reviews_limited_to"] = DASHBOARD_TASK_REVIEW_LIMIT
+        detail["publications_limited_to"] = DASHBOARD_TASK_PUBLICATION_LIMIT
     return detail
 
 
@@ -1720,7 +1741,7 @@ def _dashboard_state(
         observation.to_dict()
         for observation in cp.list_integration_observations(limit=120)
     ]
-    task_details = [_dashboard_task(cp, task.id) for task in tasks]
+    task_details = [_dashboard_task(cp, task.id, compact=True) for task in tasks]
     rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
     hermes_work_contexts = {
@@ -1797,7 +1818,10 @@ def _dashboard_state(
         "tasks": task_details,
         "dead_letters": dead_letters,
         "dispatch": _dashboard_dispatch_explain(cp, tasks, agents, machines_by_id),
-        "messages": [message.to_dict() for message in cp.list_messages()],
+        "messages": [
+            message.to_dict()
+            for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
+        ],
         "notifications": [
             notification.to_dict() for notification in cp.list_notifications(limit=120)
         ],
@@ -1998,7 +2022,10 @@ def create_app(
         tasks = cp.list_tasks()
         machines_by_id = {machine.id: machine for machine in cp.list_machines()}
         model = _dashboard_agent_base(cp, agent, tasks, machines_by_id)
-        model["messages"] = [message.to_dict() for message in cp.list_messages(agent_id)]
+        model["messages"] = [
+            message.to_dict()
+            for message in cp.list_messages(agent_id, limit=DASHBOARD_MESSAGE_LIMIT)
+        ]
         model["dispatch"] = [
             item
             for item in _dashboard_dispatch_explain(cp, tasks, [agent], machines_by_id)["tasks"]
@@ -3285,8 +3312,11 @@ def create_app(
         return cp.send_message(**_data(body)).to_dict()
 
     @app.get("/messages")
-    def list_messages(agent_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [message.to_dict() for message in cp.list_messages(agent_id)]
+    def list_messages(
+        agent_id: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return [message.to_dict() for message in cp.list_messages(agent_id, limit=limit)]
 
     @app.post("/agents/{agent_id}/messages/deliver")
     def deliver_messages(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:

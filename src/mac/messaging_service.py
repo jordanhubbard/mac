@@ -194,14 +194,49 @@ class MessagingService:
                     delivered_ids.append(row["id"])
         return [self.get_message(mid) for mid in delivered_ids]
 
-    def list_messages(self, agent_id: Optional[str] = None) -> List[AgentMessage]:
+    def list_messages(
+        self,
+        agent_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[AgentMessage]:
+        limit_value = None if limit is None else max(0, int(limit))
+        if limit_value == 0:
+            return []
         if agent_id:
-            rows = self.store.query_all(
-                "SELECT * FROM messages WHERE recipient_agent_id = ? ORDER BY created_at, id",
-                (agent_id,),
-            )
-        else:
+            if limit_value is None:
+                rows = self.store.query_all(
+                    "SELECT * FROM messages WHERE recipient_agent_id = ? ORDER BY created_at, id",
+                    (agent_id,),
+                )
+            else:
+                rows = list(
+                    reversed(
+                        self.store.query_all(
+                            """
+                            SELECT * FROM messages
+                            WHERE recipient_agent_id = ?
+                            ORDER BY created_at DESC, id DESC
+                            LIMIT ?
+                            """,
+                            (agent_id, limit_value),
+                        )
+                    )
+                )
+        elif limit_value is None:
             rows = self.store.query_all("SELECT * FROM messages ORDER BY created_at, id")
+        else:
+            rows = list(
+                reversed(
+                    self.store.query_all(
+                        """
+                        SELECT * FROM messages
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (limit_value,),
+                    )
+                )
+            )
         return [self._from_row(row) for row in rows]
 
     # Validation ---------------------------------------------------------
