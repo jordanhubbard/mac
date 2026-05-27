@@ -4411,6 +4411,20 @@ def output_contains_identity(output: str, field: str, value: str) -> bool:
     return any(candidate in normalized for candidate in candidates)
 
 
+def classify_hermes_chat_failure(output: str) -> str:
+    normalized = output.lower()
+    if (
+        "budget_exceeded" in normalized
+        or "insufficient_quota" in normalized
+        or "exceeded your current quota" in normalized
+        or ("http 429" in normalized and "quota" in normalized)
+    ):
+        return "budget_exceeded"
+    if "no eligible models registered" in normalized:
+        return "no_eligible_models"
+    return ""
+
+
 home = Path.home()
 mac_home = home / ".mac"
 hermes_home = Path(os.environ.get("HERMES_HOME") or home / ".hermes")
@@ -4473,6 +4487,7 @@ checks: dict[str, object] = {
 runtime_provider: dict[str, object] = {}
 chat_output = ""
 chat_returncode: int | None = None
+hermes_failure_class = ""
 
 for key, value in {
     "MAC_WORKER_AGENT_NAME": agent_name,
@@ -4609,6 +4624,7 @@ try:
     chat_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
     normalized = chat_output.lower()
     if completed.returncode != 0:
+        hermes_failure_class = classify_hermes_chat_failure(chat_output)
         problems.append(f"Hermes chat self-test exited {completed.returncode}")
     expected_fragments = {
         "name": agent_name,
@@ -4622,15 +4638,27 @@ try:
 except subprocess.TimeoutExpired as exc:
     chat_returncode = None
     chat_output = tail((exc.stdout or "") + "\n" + (exc.stderr or ""))
+    hermes_failure_class = classify_hermes_chat_failure(chat_output)
     problems.append(f"Hermes chat self-test timed out after {timeout}s")
 except Exception as exc:
     chat_returncode = None
     problems.append(f"Hermes chat self-test failed to execute: {safe_error(exc)}")
 
+blocking_problems = list(problems)
+if hermes_failure_class == "budget_exceeded":
+    blocking_problems = [
+        problem
+        for problem in blocking_problems
+        if not problem.startswith("Hermes chat self-test")
+    ]
+status = "passed"
+if problems:
+    status = "failed" if blocking_problems else "degraded"
+
 report = {
     "schema": "mac.agent_startup_self_test.v1",
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "status": "failed" if problems else "passed",
+    "status": status,
     "agent_name": agent_name,
     "agent_id": agent_id,
     "hermes_instance_id": hermes_instance,
@@ -4655,7 +4683,9 @@ report = {
     "runtime_provider": runtime_provider,
     "chat_returncode": chat_returncode,
     "chat_output_tail": chat_output,
+    "hermes_failure_class": hermes_failure_class,
     "problems": problems,
+    "blocking_problems": blocking_problems,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -4664,7 +4694,7 @@ if problems:
     token = os.environ.get("MAC_WORKER_TOKEN") or ""
     if hub_url and token and agent_id:
         payload = {
-            "status": "offline",
+            "status": "offline" if blocking_problems else "idle",
             "health_status": "degraded",
             "resources": {"startup_self_test": report},
         }
@@ -4681,10 +4711,10 @@ if problems:
             urllib.request.urlopen(req, timeout=10).read()
         except (OSError, urllib.error.URLError) as exc:
             print(f"agent startup self-test: failed to report degraded heartbeat: {safe_error(exc)}", file=sys.stderr)
-    print(f"agent startup self-test: failed; report={report_path}", file=sys.stderr)
+    print(f"agent startup self-test: {status}; report={report_path}", file=sys.stderr)
     for problem in problems:
         print(f"agent startup self-test: {problem}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(1 if blocking_problems else 0)
 
 print(f"agent startup self-test: passed; report={report_path}")
 PY

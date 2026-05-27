@@ -711,6 +711,11 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert '"mandatory_services": {' in selftest
     assert '"key_matches_env": key_matches_env' in selftest
     assert '[python_bin, hermes_script, "chat", "--query", prompt, "--quiet"]' in selftest
+    assert "classify_hermes_chat_failure" in selftest
+    assert '"hermes_failure_class": hermes_failure_class' in selftest
+    assert '"blocking_problems": blocking_problems' in selftest
+    assert '"status": "offline" if blocking_problems else "idle"' in selftest
+    assert "sys.exit(1 if blocking_problems else 0)" in selftest
     assert '"resources": {"startup_self_test": report}' in selftest
     assert '"health_status": "degraded"' in selftest
 
