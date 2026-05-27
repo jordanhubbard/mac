@@ -2285,7 +2285,13 @@ def create_app(
         task_id: str,
         body: EvidenceCreate,
         background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        # mac-rreh: ``created_by`` arrived as opaque payload before; an
+        # agent token could mint evidence as any other agent and defeat
+        # the reviewer-independence check (which reads evidence.created_by
+        # downstream). Bind it to the principal.
+        principal.assert_actor(body.created_by)
         evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
         background_tasks.add_task(cp.sync_evidence_side_effects, evidence.id)
         return evidence.to_dict()
@@ -2806,7 +2812,16 @@ def create_app(
         return cp.fail_nap(run_id, **_data(body)).to_dict()
 
     @app.post("/agents/{agent_id}/heartbeat")
-    def heartbeat_agent(agent_id: str, body: HeartbeatRequest) -> Dict[str, Any]:
+    def heartbeat_agent(
+        agent_id: str,
+        body: HeartbeatRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-wcfy: heartbeat/claim-next/command-audit took agent_id
+        # from the URL with no check that the token represents that
+        # agent. Any agent-scoped token could heartbeat/claim/audit-log
+        # as a peer. Bind to principal.
+        principal.assert_actor(agent_id)
         return cp.heartbeat_agent(agent_id, **_data(body)).to_dict()
 
     @app.post("/agents/{agent_id}/claim-next")
@@ -2814,7 +2829,9 @@ def create_app(
         agent_id: str,
         body: AgentClaimNextRequest,
         background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Optional[Dict[str, Any]]:
+        principal.assert_actor(agent_id)  # mac-wcfy
         assignment = cp.claim_next_for_agent(
             agent_id,
             lease_seconds=body.lease_seconds,
@@ -2840,7 +2857,9 @@ def create_app(
     def record_agent_command_audit(
         agent_id: str,
         body: CommandAuditCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # mac-wcfy
         return cp.record_command_audit(agent_id=agent_id, **_data(body)).to_dict()
 
     @app.get("/command-audit")
@@ -3171,7 +3190,12 @@ def create_app(
         return StreamingResponse(iter_observations(), media_type="application/x-ndjson")
 
     @app.post("/messages")
-    def send_message(body: MessageCreate) -> Dict[str, Any]:
+    def send_message(
+        body: MessageCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5: bind sender to the principal.
+        principal.assert_actor(body.sender_agent_id)
         return cp.send_message(**_data(body)).to_dict()
 
     @app.get("/messages")
@@ -3183,7 +3207,12 @@ def create_app(
         return [message.to_dict() for message in cp.deliver_messages(agent_id, limit)]
 
     @app.post("/agentbus/streams")
-    def open_agentbus_stream(body: AgentBusOpen) -> Dict[str, Any]:
+    def open_agentbus_stream(
+        body: AgentBusOpen,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
         return cp.open_agentbus_stream(**_data(body)).to_dict()
 
     @app.get("/agentbus/streams")
@@ -3198,7 +3227,13 @@ def create_app(
         ]
 
     @app.post("/agentbus/streams/{stream_id}/chunks")
-    def append_agentbus_chunk(stream_id: str, body: AgentBusAppend) -> Dict[str, Any]:
+    def append_agentbus_chunk(
+        stream_id: str,
+        body: AgentBusAppend,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
         return cp.append_agentbus_chunk(stream_id, **_data(body)).to_dict()
 
     @app.get("/agentbus/streams/{stream_id}/chunks")
@@ -3218,15 +3253,37 @@ def create_app(
         stream_id: str,
         sender_agent_id: str,
         status: str = "closed",
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(sender_agent_id)
         return cp.close_agentbus_stream(stream_id, sender_agent_id, status).to_dict()
 
     @app.post("/agentbus")
-    def publish_agentbus_content(body: AgentBusPublish) -> Dict[str, Any]:
+    def publish_agentbus_content(
+        body: AgentBusPublish,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
         return cp.publish_agentbus_content(**_data(body))
 
     @app.post("/agentbus/repo-update")
-    def publish_agentbus_repo_update(body: AgentBusRepoUpdate) -> Dict[str, Any]:
+    def publish_agentbus_repo_update(
+        body: AgentBusRepoUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-si4l: /agentbus/repo-update is a fleet-wide restart
+        # primitive. Require admin scope OR a sender that matches the
+        # principal's agent_id binding. Combined, this means a single
+        # compromised agent token can't broadcast restart=true to every
+        # peer; only an admin or the bound agent's own future-self can.
+        if not principal.is_admin:
+            principal.assert_actor(body.sender_agent_id)
+            if body.all_agents:
+                raise AuthorizationError(
+                    "fleet-wide repo-update (all_agents=true) requires admin scope"
+                )
         recipients = list(body.recipient_agent_ids)
         if body.all_agents:
             recipients.extend(agent.id for agent in cp.list_agents())

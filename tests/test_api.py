@@ -457,6 +457,139 @@ def test_secret_routes_bind_actor_and_tenant_to_principal():
     assert cross.status_code == 403, cross.text
 
 
+def test_agent_id_path_routes_bind_to_principal():
+    """mac-wcfy: heartbeat/claim-next/command-audit took agent_id from
+    the URL with no check that the token represents that agent. A
+    bound agent token must not be able to act as a peer."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("h")
+    agent_a = cp.register_agent(machine.id, "a", capabilities=["python"])
+    agent_b = cp.register_agent(machine.id, "b", capabilities=["python"])
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "tok-a": {"scopes": ["agent"], "agent_id": agent_a.id},
+                "admin": ["admin"],
+            },
+        )
+    )
+    # heartbeat as self: ok
+    ok = client.post(
+        "/agents/%s/heartbeat" % agent_a.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={},
+    )
+    assert ok.status_code == 200
+    # heartbeat as peer: refused
+    blocked = client.post(
+        "/agents/%s/heartbeat" % agent_b.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={},
+    )
+    assert blocked.status_code == 403, blocked.text
+    # command-audit as peer: refused
+    blocked = client.post(
+        "/agents/%s/command-audit" % agent_b.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={"phase": "started", "argv": ["/bin/true"], "cwd": "/tmp"},
+    )
+    assert blocked.status_code == 403, blocked.text
+    # admin can act as anyone
+    ok = client.post(
+        "/agents/%s/heartbeat" % agent_b.id,
+        headers={"Authorization": "Bearer admin"},
+        json={},
+    )
+    assert ok.status_code == 200
+
+
+def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
+    """mac-si4l: /agentbus/repo-update is a fleet-wide restart primitive.
+    A non-admin token with agent binding must not be able to broadcast
+    restart=true to every peer.
+    """
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("h")
+    agent_a = cp.register_agent(machine.id, "a", capabilities=["ops"])
+    cp.register_agent(machine.id, "b", capabilities=["ops"])  # peer to be spammed
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "tok-a": {"scopes": ["agent"], "agent_id": agent_a.id},
+                "admin": ["admin"],
+            },
+        )
+    )
+    # all_agents=True from a non-admin token: refused
+    blocked = client.post(
+        "/agentbus/repo-update",
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "sender_agent_id": agent_a.id,
+            "all_agents": True,
+            "restart": True,
+        },
+    )
+    assert blocked.status_code == 403, blocked.text
+    # Admin can fan out
+    ok = client.post(
+        "/agentbus/repo-update",
+        headers={"Authorization": "Bearer admin"},
+        json={
+            "sender_agent_id": agent_a.id,
+            "all_agents": True,
+            "restart": False,
+        },
+    )
+    assert ok.status_code == 200
+
+
+def test_evidence_created_by_bound_to_principal():
+    """mac-rreh: ``created_by`` on /tasks/{id}/evidence used to be
+    self-asserted in the payload. An agent-bound token must not be
+    able to forge evidence under another agent's name."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("h")
+    agent_a = cp.register_agent(machine.id, "a", capabilities=["python"])
+    agent_b = cp.register_agent(machine.id, "b", capabilities=["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, agent_a.id)
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "tok-a": {"scopes": ["agent", "write"], "agent_id": agent_a.id},
+            },
+        )
+    )
+    # Forging as agent_b is refused
+    blocked = client.post(
+        "/tasks/%s/evidence" % task.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "kind": "log",
+            "uri": "file:///tmp/e",
+            "summary": "ok",
+            "created_by": agent_b.id,
+        },
+    )
+    assert blocked.status_code == 403, blocked.text
+    # Honest evidence as agent_a is OK
+    ok = client.post(
+        "/tasks/%s/evidence" % task.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "kind": "log",
+            "uri": "file:///tmp/e",
+            "summary": "ok",
+            "created_by": agent_a.id,
+        },
+    )
+    assert ok.status_code == 200, ok.text
+
+
 def test_attestation_key_rotation_requires_global_fleet_token():
     client = TestClient(
         create_app(
