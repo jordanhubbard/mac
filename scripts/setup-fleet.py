@@ -494,7 +494,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
 
     # Provider credentials — at least one required for TokenHub to route requests.
     _KNOWN_PROVIDERS: Dict[str, tuple] = {
-        "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://integrate.api.nvidia.com/v1"),
+        "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
         "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
         "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
         "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),

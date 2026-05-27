@@ -487,9 +487,17 @@ def maybe_provider(provider_id: str, provider_type: str, api_key_name: str, base
     api_key = (env.get(api_key_name) or "").strip()
     if not api_key:
         return
+    if api_key.startswith("tokenhub_"):
+        return
     if api_key == (env.get("TOKENHUB_API_KEY") or "").strip():
         return
     if api_key == (env.get("TOKENHUB_AGENT_KEY") or "").strip():
+        return
+    if api_key == (env.get("MAC_DEPLOY_TOKENHUB_API_KEY") or "").strip():
+        return
+    if api_key == (env.get("MAC_HERMES_GATEWAY_API_KEY") or "").strip():
+        return
+    if api_key == (env.get("ACC_HERMES_GATEWAY_API_KEY") or "").strip():
         return
     base = ""
     for name in base_names:
@@ -516,7 +524,7 @@ maybe_provider(
     "openai",
     "NVIDIA_API_KEY",
     ("NVIDIA_API_BASE", "NVIDIA_BASE_URL"),
-    "https://integrate.api.nvidia.com/v1",
+    "https://inference-api.nvidia.com/v1",
 )
 maybe_provider(
     "openai",
@@ -539,6 +547,14 @@ maybe_provider(
     ("PERPLEXITY_BASE_URL", "PERPLEXITY_API_BASE"),
     "https://api.perplexity.ai",
 )
+
+provider_ids = set(by_id)
+models = [
+    item
+    for item in models
+    if isinstance(item, dict)
+    and str(item.get("provider_id") or item.get("provider") or "") in provider_ids
+]
 
 ordered = [by_id[key] for key in sorted(by_id)]
 credentials_path.parent.mkdir(parents=True, exist_ok=True)

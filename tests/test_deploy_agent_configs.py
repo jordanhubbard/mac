@@ -307,6 +307,10 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert 'base.startswith("tokenhubctl-")' in tokenhub_installer
     assert 'base.startswith("tokenhub-")' in tokenhub_installer
     assert 'all((bin_dir / name).exists() for name in names)' in tokenhub_installer
+    assert '"https://inference-api.nvidia.com/v1"' in tokenhub_installer
+    assert 'api_key.startswith("tokenhub_")' in tokenhub_installer
+    assert "provider_ids = set(by_id)" in tokenhub_installer
+    assert 'nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"' in script
     assert "OPENAI_API_KEY" in tokenhub_installer
     assert "MAC_HERMES_GATEWAY_API_KEY" in tokenhub_installer
     assert env_example["MAC_REQUIRE_TOKENHUB"] == "1"
