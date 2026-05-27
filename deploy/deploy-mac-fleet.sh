@@ -4707,28 +4707,29 @@ report = {
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ.get("MAC_WORKER_TOKEN") or ""
+if hub_url and token and agent_id:
+    payload = {
+        "status": "offline" if blocking_problems else "idle",
+        "health_status": "degraded" if problems else "healthy",
+        "resources": {"startup_self_test": report},
+    }
+    req = urllib.request.Request(
+        f"{hub_url}/agents/{agent_id}/heartbeat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+    except (OSError, urllib.error.URLError) as exc:
+        print(f"agent startup self-test: failed to report heartbeat: {safe_error(exc)}", file=sys.stderr)
+
 if problems:
-    hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
-    token = os.environ.get("MAC_WORKER_TOKEN") or ""
-    if hub_url and token and agent_id:
-        payload = {
-            "status": "offline" if blocking_problems else "idle",
-            "health_status": "degraded",
-            "resources": {"startup_self_test": report},
-        }
-        req = urllib.request.Request(
-            f"{hub_url}/agents/{agent_id}/heartbeat",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            urllib.request.urlopen(req, timeout=10).read()
-        except (OSError, urllib.error.URLError) as exc:
-            print(f"agent startup self-test: failed to report degraded heartbeat: {safe_error(exc)}", file=sys.stderr)
     print(f"agent startup self-test: {status}; report={report_path}", file=sys.stderr)
     for problem in problems:
         print(f"agent startup self-test: {problem}", file=sys.stderr)

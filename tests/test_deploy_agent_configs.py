@@ -763,6 +763,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert '"status": "offline" if blocking_problems else "idle"' in selftest
     assert "sys.exit(1 if blocking_problems else 0)" in selftest
     assert '"resources": {"startup_self_test": report}' in selftest
+    assert '"health_status": "degraded" if problems else "healthy"' in selftest
     assert '"health_status": "degraded"' in selftest
 
 
