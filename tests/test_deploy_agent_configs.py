@@ -711,6 +711,8 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert '"mandatory_services": {' in selftest
     assert '"key_matches_env": key_matches_env' in selftest
     assert '[python_bin, hermes_script, "chat", "--query", prompt, "--quiet"]' in selftest
+    assert "def output_text" in selftest
+    assert "output_text(exc.stdout)" in selftest
     assert "classify_hermes_chat_failure" in selftest
     assert '"hermes_failure_class": hermes_failure_class' in selftest
     assert '"blocking_problems": blocking_problems' in selftest

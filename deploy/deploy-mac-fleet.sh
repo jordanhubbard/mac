@@ -4366,6 +4366,14 @@ def tail(text: str, limit: int = 1200) -> str:
     return text[-limit:]
 
 
+def output_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
 def safe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
@@ -4637,7 +4645,7 @@ try:
     checks["hermes_chat"] = not any("Hermes chat self-test" in problem for problem in problems)
 except subprocess.TimeoutExpired as exc:
     chat_returncode = None
-    chat_output = tail((exc.stdout or "") + "\n" + (exc.stderr or ""))
+    chat_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
     hermes_failure_class = classify_hermes_chat_failure(chat_output)
     problems.append(f"Hermes chat self-test timed out after {timeout}s")
 except Exception as exc:
