@@ -5519,13 +5519,9 @@ main() {
     deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$tokenhub_api_key" "$allow_degraded_services" "$github_review_key_b64"
     deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
-      if [ -z "$hub_token" ]; then
-        hub_token="$(read_hub_token)"
-      fi
+      hub_token="$(read_hub_token)"
       upsert_local_env "MAC_DEPLOY_HUB_TOKEN" "$hub_token"
-      if [ -z "$tokenhub_api_key" ]; then
-        tokenhub_api_key="$(read_hub_tokenhub_api_key)"
-      fi
+      tokenhub_api_key="$(read_hub_tokenhub_api_key)"
       upsert_local_env "MAC_DEPLOY_TOKENHUB_API_KEY" "$tokenhub_api_key"
       echo "==> ${agent}: hub UI access:"
       echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
