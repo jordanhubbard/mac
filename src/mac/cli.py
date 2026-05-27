@@ -45,6 +45,31 @@ def cmd_init(args: argparse.Namespace) -> None:
     _print({"status": "initialized", "db": args.db})
 
 
+def cmd_config_migrate_env_namespace(args: argparse.Namespace) -> None:
+    """mac-g55y: rewrite a flat ~/.mac/.env into fleet-scoped form.
+
+    For every credential that may collide across fleets (MAC_API_TOKEN
+    et al.), this appends a fleet-scoped sibling key like
+    ``MAC_API_TOKEN__<FLEET>`` with the same value. The legacy flat
+    key is preserved unless ``--drop-legacy`` is set, so other
+    consumers continue working during the transition.
+    """
+    from pathlib import Path as _P
+
+    from mac.fleet_env import migrate_env_file
+
+    path = _P(args.env_file).expanduser()
+    added, kept = migrate_env_file(path, args.fleet, keep_legacy=not args.drop_legacy)
+    _print(
+        {
+            "env_file": str(path),
+            "fleet": args.fleet,
+            "added": sorted(added.keys()),
+            "kept_legacy": sorted(kept.keys()) if not args.drop_legacy else [],
+        }
+    )
+
+
 def cmd_tenant_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_tenant(
@@ -948,6 +973,31 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
+
+    # mac config migrate-env-namespace --fleet <name> [--env-file ...]
+    config = sub.add_parser("config", help="configuration helpers").add_subparsers(
+        dest="config_command", required=True
+    )
+    migrate_env = config.add_parser(
+        "migrate-env-namespace",
+        help="add fleet-scoped variants of flat MAC_* credentials in ~/.mac/.env (mac-g55y)",
+    )
+    migrate_env.add_argument(
+        "--fleet",
+        required=True,
+        help="fleet name to scope credentials under (e.g. rocky, jordanh-hub)",
+    )
+    migrate_env.add_argument(
+        "--env-file",
+        default=os.path.expanduser("~/.mac/.env"),
+        help="path to the env file to migrate (default ~/.mac/.env)",
+    )
+    migrate_env.add_argument(
+        "--drop-legacy",
+        action="store_true",
+        help="remove the flat unscoped keys after writing the scoped variants",
+    )
+    _set(cmd_config_migrate_env_namespace, migrate_env)
 
     tenant = sub.add_parser("tenant", help="tenant boundary commands").add_subparsers(dest="tenant_command", required=True)
     tenant_register = tenant.add_parser("register")

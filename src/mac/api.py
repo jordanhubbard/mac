@@ -872,11 +872,16 @@ class RolloutHealthReport(BaseModel):
 
 
 def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
-    raw = os.environ.get("MAC_API_TOKENS")
+    # Server-side hub is single-fleet, but honor the fleet-scoped form
+    # so a hub started from a multi-fleet ~/.mac/.env (e.g., via
+    # `source ~/.mac/.env`) picks the right token (mac-g55y).
+    from mac.fleet_env import resolve as _resolve_env
+
+    raw = _resolve_env("MAC_API_TOKENS")
     if raw:
         loaded = json.loads(raw)
         return _normalize_auth_tokens(loaded)
-    single = os.environ.get("MAC_API_TOKEN")
+    single = _resolve_env("MAC_API_TOKEN")
     if single is None:
         return {}
     single = single.strip()

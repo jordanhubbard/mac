@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default=None, help="MAC API base URL")
     parser.add_argument("--token", default=None, help="MAC API bearer token")
     parser.add_argument(
+        "--fleet",
+        default=os.environ.get("MAC_FLEET"),
+        help="fleet name used to scope env var lookup (mac-g55y)",
+    )
+    parser.add_argument(
         "--config",
         default=str(Path.home() / ".config" / "hgmac" / "config.json"),
         help="JSON config with url/token defaults",
@@ -826,7 +831,14 @@ def run(
     err = stderr or sys.stderr
     config = _load_config(Path(args.config).expanduser())
     url = args.url or os.environ.get("HGMAC_URL") or os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or config.get("url")
-    token = args.token or os.environ.get("HGMAC_TOKEN") or os.environ.get("MAC_API_TOKEN") or config.get("token")
+    from mac.fleet_env import resolve as _resolve_env
+
+    token = (
+        args.token
+        or os.environ.get("HGMAC_TOKEN")
+        or _resolve_env("MAC_API_TOKEN", fleet=getattr(args, "fleet", None))
+        or config.get("token")
+    )
     if not url:
         print("hgmac: --url, HGMAC_URL, MAC_URL, MAC_HUB_URL, or config url is required", file=err)
         return 2

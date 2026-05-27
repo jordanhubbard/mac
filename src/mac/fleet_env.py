@@ -1,0 +1,223 @@
+"""Fleet-scoped environment variable resolution.
+
+mac-g55y: ~/.mac/.env historically stored credentials under unscoped
+names like MAC_API_TOKEN, MAC_DEPLOY_HUB_TOKEN, MAC_WORKER_TOKEN. When
+a workstation participates in more than one fleet, the second fleet's
+setup overwrites the first fleet's value because they share the name.
+
+This module gives every fleet-bound credential a scoped form:
+
+    MAC_API_TOKEN__<FLEET>
+
+where ``<FLEET>`` is the fleet name uppercased with non-alphanumeric
+chars replaced by ``_`` (e.g. ``MAC_API_TOKEN__JORDANH_HUB``).
+
+Readers should call :func:`resolve` with ``fleet`` set to the active
+fleet (CLI ``--fleet``, ``MAC_FLEET`` env, or hub-derived). When the
+scoped form is missing the resolver falls back to the legacy flat form
+and emits a one-time deprecation warning per (var, fleet).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Dict, Iterable, Optional, Tuple
+
+_LOG = logging.getLogger("mac.fleet_env")
+_DEPRECATION_SEEN: set = set()
+
+# Credential-bearing env vars whose flat form collides across fleets.
+# Keep this list small and explicit so we don't accidentally scope
+# things like MAC_DB or MAC_SECRET_KEY that should stay shared.
+FLEET_SCOPED_VARS = frozenset(
+    {
+        "MAC_API_TOKEN",
+        "MAC_API_TOKENS",
+        "MAC_DEPLOY_HUB_TOKEN",
+        "MAC_WORKER_TOKEN",
+        "MAC_DEPLOY_TOKENHUB_API_KEY",
+        "MAC_DEPLOY_TAILSCALE_AUTH_KEY",
+        "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
+    }
+)
+
+
+def _normalize_fleet(fleet: str) -> str:
+    """Map a fleet name to its env-var suffix form.
+
+    >>> _normalize_fleet("jordanh-hub")
+    'JORDANH_HUB'
+    >>> _normalize_fleet("rocky")
+    'ROCKY'
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", fleet.strip()).strip("_").upper()
+    if not cleaned:
+        raise ValueError("fleet name produces an empty env suffix: %r" % fleet)
+    return cleaned
+
+
+def scoped_var(base_name: str, fleet: str) -> str:
+    """Return the fleet-scoped variant of ``base_name``."""
+    return "%s__%s" % (base_name, _normalize_fleet(fleet))
+
+
+def resolve(
+    base_name: str,
+    fleet: Optional[str] = None,
+    *,
+    env: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Resolve a fleet-scoped env var with legacy fallback.
+
+    Lookup order:
+      1. ``BASE_NAME__<fleet>`` if ``fleet`` is set (explicit arg, then
+         ``MAC_FLEET`` env var).
+      2. ``BASE_NAME`` (legacy flat form). Emits a one-time deprecation
+         warning when ``base_name`` is a fleet-scoped credential.
+    """
+    src = os.environ if env is None else env
+    active_fleet = fleet or src.get("MAC_FLEET")
+    if active_fleet:
+        scoped = scoped_var(base_name, active_fleet)
+        value = src.get(scoped)
+        if value is not None:
+            return value
+    legacy = src.get(base_name)
+    if legacy is not None and base_name in FLEET_SCOPED_VARS:
+        key = (base_name, active_fleet or "")
+        if key not in _DEPRECATION_SEEN:
+            _DEPRECATION_SEEN.add(key)
+            _LOG.warning(
+                "using legacy flat env var %s; switch to %s to avoid cross-fleet collisions "
+                "(see mac-g55y; run `mac config migrate-env-namespace` to migrate)",
+                base_name,
+                scoped_var(base_name, active_fleet) if active_fleet else "<base>__<FLEET>",
+            )
+    return legacy
+
+
+def parse_env_file(path: Path) -> Dict[str, str]:
+    """Parse a shell-style ``KEY=VALUE`` env file.
+
+    Handles ``export``-prefixed lines and double-quoted values. Does NOT
+    expand variables or run subshells; the file is treated as static
+    config. Comments (``# ...``) and blank lines are ignored.
+    """
+    values: Dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        if "=" not in line:
+            continue
+        key, _, raw_value = line.partition("=")
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if raw_value.startswith('"') and raw_value.endswith('"') and len(raw_value) >= 2:
+            raw_value = raw_value[1:-1]
+        elif raw_value.startswith("'") and raw_value.endswith("'") and len(raw_value) >= 2:
+            raw_value = raw_value[1:-1]
+        values[key] = raw_value
+    return values
+
+
+def migrate_env_file(
+    path: Path,
+    fleet: str,
+    *,
+    keep_legacy: bool = True,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Rewrite ``path`` to add fleet-scoped variants of flat credentials.
+
+    For every key in :data:`FLEET_SCOPED_VARS` that exists in the file
+    in flat form, append the scoped form ``KEY__<FLEET>`` with the same
+    value. When ``keep_legacy`` is False, the flat key is removed; the
+    default keeps both so other consumers (older mac releases on the
+    same machine, sourcing the file directly) still work for one
+    deprecation cycle.
+
+    Returns ``(added, kept_legacy)`` mapping for caller-reporting.
+    """
+    values = parse_env_file(path)
+    added: Dict[str, str] = {}
+    kept: Dict[str, str] = {}
+    for key, value in list(values.items()):
+        if key not in FLEET_SCOPED_VARS:
+            continue
+        scoped = scoped_var(key, fleet)
+        if scoped in values:
+            continue  # already migrated for this fleet
+        added[scoped] = value
+        if keep_legacy:
+            kept[key] = value
+        else:
+            values.pop(key, None)
+    if not added:
+        return added, kept
+    values.update(added)
+    # Rewrite preserving key order: keep existing lines, append new ones.
+    lines: list = []
+    existing_keys: set = set()
+    if path.is_file():
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                lines.append(raw_line)
+                continue
+            check = stripped[len("export "):] if stripped.startswith("export ") else stripped
+            key_part, sep, _ = check.partition("=")
+            key_part = key_part.strip()
+            if sep and not keep_legacy and key_part in FLEET_SCOPED_VARS:
+                # Skip the legacy flat line when caller asked us to drop it.
+                continue
+            existing_keys.add(key_part)
+            lines.append(raw_line)
+    lines.append("")
+    lines.append("# Added by `mac config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet)
+    for new_key, new_value in added.items():
+        # Quote values containing spaces or shell meta chars.
+        if re.search(r"[\s\"'$`\\]", new_value):
+            escaped = new_value.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append('%s="%s"' % (new_key, escaped))
+        else:
+            lines.append("%s=%s" % (new_key, new_value))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return added, kept
+
+
+def resolve_first(
+    base_names: Iterable[str],
+    fleet: Optional[str] = None,
+    *,
+    env: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Resolve the first env var in ``base_names`` that has a value.
+
+    Each base name is looked up via :func:`resolve` (fleet-scoped first,
+    then legacy fallback). Useful for chains like
+    ``MAC_TOKEN > MAC_WORKER_TOKEN > MAC_API_TOKEN``.
+    """
+    for name in base_names:
+        value = resolve(name, fleet=fleet, env=env)
+        if value:
+            return value
+    return None
+
+
+def list_scoped_vars(env: Optional[Dict[str, str]] = None) -> Iterable[Tuple[str, str, str]]:
+    """Yield ``(base_name, fleet_suffix, value)`` for every scoped var
+    currently present in the environment.
+    """
+    src = os.environ if env is None else env
+    for key, value in src.items():
+        if "__" not in key:
+            continue
+        base, _, suffix = key.rpartition("__")
+        if base in FLEET_SCOPED_VARS and suffix:
+            yield base, suffix, value

@@ -2686,11 +2686,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8000",
     )
+    # Token resolution honors --fleet (or MAC_FLEET) so machines in
+    # multiple fleets don't collide on a single MAC_API_TOKEN. See
+    # mac.fleet_env (mac-g55y).
+    from mac.fleet_env import resolve_first as _resolve_token
+
+    parser.add_argument(
+        "--fleet",
+        default=os.environ.get("MAC_FLEET"),
+        help="fleet name used to scope env var lookup (MAC_API_TOKEN__<FLEET>)",
+    )
     parser.add_argument(
         "--token",
-        default=os.environ.get("MAC_TOKEN")
-        or os.environ.get("MAC_WORKER_TOKEN")
-        or os.environ.get("MAC_API_TOKEN"),
+        default=_resolve_token(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"]),
     )
     parser.add_argument("--agent-id", default=os.environ.get("MAC_AGENT_ID"))
     parser.add_argument(
@@ -2804,6 +2812,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    # Re-resolve token using --fleet if it wasn't already supplied; this
+    # lets `--fleet rocky` pick MAC_API_TOKEN__ROCKY without requiring
+    # MAC_FLEET to be exported separately (mac-g55y).
+    if args.token is None and args.fleet:
+        from mac.fleet_env import resolve_first as _rt
+
+        args.token = _rt(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet)
     client = MacApiClient(args.url, token=args.token)
     agent_id = args.agent_id
     try:

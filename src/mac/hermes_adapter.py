@@ -1228,11 +1228,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8000",
     )
+    from mac.fleet_env import resolve_first as _resolve_token
+
+    parser.add_argument(
+        "--fleet",
+        default=os.environ.get("MAC_FLEET"),
+        help="fleet name used to scope env var lookup (MAC_API_TOKEN__<FLEET>)",
+    )
     parser.add_argument(
         "--token",
-        default=os.environ.get("MAC_TOKEN")
-        or os.environ.get("MAC_WORKER_TOKEN")
-        or os.environ.get("MAC_API_TOKEN"),
+        default=_resolve_token(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"]),
     )
     parser.add_argument("--web-url", default=_default_web_url())
     parser.add_argument("--web-token", default=os.environ.get("FIRECRAWL_API_KEY"))
@@ -1507,6 +1512,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if getattr(args, "token", None) is None and getattr(args, "fleet", None):
+        from mac.fleet_env import resolve_first as _rt
+
+        args.token = _rt(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet)
     try:
         args.func(args)
     except MacApiError as exc:
