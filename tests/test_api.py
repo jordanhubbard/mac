@@ -1769,22 +1769,28 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "renderFleets" in app_js
     assert "Epic / Project Frontier" in app_js
     assert "Agent Resource Table" in app_js
-    assert "Fleet CRUD" in app_js
+    assert "Fleet CRUD" not in app_js
     assert "data-project-focus" in app_js
     assert "[data-project-focus]" in app_js
-    assert "data-project-delete" in app_js
-    assert "[data-project-delete]" in app_js
+    for delete_marker in [
+        "data-project-delete",
+        "data-fleet-delete",
+        "data-agent-delete",
+        "data-task-delete",
+        "[data-project-delete]",
+        "[data-fleet-delete]",
+        "[data-agent-delete]",
+        "[data-task-delete]",
+    ]:
+        assert delete_marker in app_js
     assert 'closest("[data-project]")' not in app_js
     assert "Project CRUD" not in app_js
     assert 'data-action="fleetCreate"' in app_js
     assert 'data-action="fleetUpdate"' in app_js
-    assert 'data-action="fleetDelete"' in app_js
     assert 'data-action="agentCreate"' in app_js
     assert 'data-action="agentUpdate"' in app_js
-    assert 'data-action="agentDelete"' in app_js
     assert 'data-action="taskCreate"' in app_js
     assert 'data-action="taskUpdate"' in app_js
-    assert 'data-action="taskDelete"' in app_js
     assert 'data-action="projectCreate"' in app_js
     assert 'data-action="projectUpdate"' in app_js
     assert "putJSON" in app_js

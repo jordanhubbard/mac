@@ -2121,20 +2121,20 @@ function fleetRecord(fleet: FleetRecord, data: DashboardData): string {
         ${field("Members", memberNames.join(", ") || "none")}
         ${field("Metadata", jsonSummary(fleet.metadata))}
       </div>
-      <details class="action-box">
-        <summary>Fleet CRUD</summary>
+      <div class="record-actions">
+        <details class="row-actions edit-disclosure">
+          <summary>Edit</summary>
         <form class="action-form" data-action="fleetUpdate" data-fleet-id="${escapeHtml(fleet.id)}">
           <label>Name <input name="name" value="${escapeHtml(fleet.name)}"></label>
           <label>Description <textarea name="description">${escapeHtml(fleet.description || "")}</textarea></label>
           <label>Status ${select("status", ["active", "inactive", "retired"], fleet.status)}</label>
           <label>Agent IDs <input name="agent_ids" value="${escapeHtml((fleet.agent_ids || []).join(","))}"></label>
           <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Update</button>
+          <button type="submit">Save</button>
         </form>
-        <form class="action-form compact danger-action" data-action="fleetDelete" data-fleet-id="${escapeHtml(fleet.id)}">
-          <button type="submit">Delete</button>
-        </form>
-      </details>
+        </details>
+        <button class="danger-button" type="button" data-fleet-delete="${escapeHtml(fleet.id)}">Delete</button>
+      </div>
     </article>
   `;
 }
@@ -2310,25 +2310,25 @@ function agentRow(item: AgentItem, data: DashboardData): string {
       <td>${escapeHtml((item.agent.capabilities || []).slice(0, 8).join(", ") || "none")}</td>
       <td>${task ? storyButton(task) : `<span class="muted small">none</span>`}</td>
       <td>
-        <details class="row-actions">
-          <summary>Manage</summary>
+        <div class="table-actions">
           <form class="inline-form" data-action="agentBulkUpdate">
             <input type="hidden" name="agent_ids" value="${escapeHtml(item.agent.id)}">
             <input type="hidden" name="status" value="draining">
             <button type="submit">Drain</button>
           </form>
-          <form class="action-form compact" data-action="agentUpdate" data-agent-id="${escapeHtml(item.agent.id)}">
-            <label>Name <input name="name" value="${escapeHtml(item.agent.name)}"></label>
-            <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status)}</label>
-            <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status)}</label>
-            <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}"></label>
-            <label>Resources JSON <textarea name="resources">${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
-            <button type="submit">Update</button>
-          </form>
-          <form class="action-form compact danger-action" data-action="agentDelete" data-agent-id="${escapeHtml(item.agent.id)}">
-            <button type="submit">Delete</button>
-          </form>
-        </details>
+          <details class="row-actions edit-disclosure">
+            <summary>Edit</summary>
+            <form class="action-form compact" data-action="agentUpdate" data-agent-id="${escapeHtml(item.agent.id)}">
+              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}"></label>
+              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status)}</label>
+              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status)}</label>
+              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}"></label>
+              <label>Resources JSON <textarea name="resources">${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
+              <button type="submit">Save</button>
+            </form>
+          </details>
+          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}">Delete</button>
+        </div>
       </td>
     </tr>
   `;
@@ -2414,8 +2414,9 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
       <div class="timeline">
         ${detail.history.slice(-3).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}
       </div>
-      <details class="action-box">
-        <summary>Task actions</summary>
+      <div class="record-actions">
+        <details class="row-actions edit-disclosure">
+          <summary>Edit</summary>
         <form class="action-form" data-action="taskUpdate" data-task-id="${escapeHtml(task.id)}">
           <label>Title <input name="title" value="${escapeHtml(task.title)}"></label>
           <label>Description <textarea name="description">${escapeHtml(String(task.description || ""))}</textarea></label>
@@ -2424,13 +2425,13 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
           <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}"></label>
           <label>Dependencies <input name="dependencies" value="${escapeHtml((task.dependencies || []).join(","))}"></label>
           <label>Metadata JSON <textarea name="metadata">${escapeHtml(JSON.stringify(task.metadata || {}))}</textarea></label>
-          <button type="submit">Update</button>
+          <button type="submit">Save</button>
         </form>
-        <form class="action-form compact danger-action" data-action="taskDelete" data-task-id="${escapeHtml(task.id)}">
-          <label><input name="force" type="checkbox"> Force dependents</label>
-          <label>Actor <input name="actor" value="human"></label>
-          <button type="submit">Delete</button>
-        </form>
+        </details>
+        <button class="danger-button" type="button" data-task-delete="${escapeHtml(task.id)}">Delete</button>
+      </div>
+      <details class="action-box">
+        <summary>Task actions</summary>
         <form class="action-form compact" data-action="taskClaim" data-task-id="${escapeHtml(task.id)}">
           <label>Agent ${agentSelect("agent_id", agents, task.owner_agent_id || "")}</label>
           <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1"></label>
@@ -2942,20 +2943,40 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
     event.preventDefault();
     const project = projectDelete.dataset.projectDelete || "";
     if (!project) return;
-    projectDelete.disabled = true;
-    try {
-      const result = await deleteJSON(`/projects/${encodeURIComponent(project)}?actor=human`);
-      state.actionMessage = `Project delete ok: ${redactedJson(result)}`;
+    await runDirectDelete(projectDelete, "Project", `/projects/${encodeURIComponent(project)}?actor=human`, () => {
       if (state.projectFilter === project) state.projectFilter = "all";
       if (state.selectedId === project) state.selectedId = "";
-      updateUrlState();
-      await loadDashboard();
-    } catch (error) {
-      state.actionMessage = `Project delete failed: ${error instanceof Error ? error.message : String(error)}`;
-      render();
-    } finally {
-      projectDelete.disabled = false;
-    }
+    });
+    return;
+  }
+  const fleetDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-fleet-delete]");
+  if (fleetDelete) {
+    event.preventDefault();
+    const fleetId = fleetDelete.dataset.fleetDelete || "";
+    if (!fleetId) return;
+    await runDirectDelete(fleetDelete, "Fleet", `/fleets/${encodeURIComponent(fleetId)}`, () => {
+      if (state.selectedId === fleetId) state.selectedId = "";
+    });
+    return;
+  }
+  const agentDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-agent-delete]");
+  if (agentDelete) {
+    event.preventDefault();
+    const agentId = agentDelete.dataset.agentDelete || "";
+    if (!agentId) return;
+    await runDirectDelete(agentDelete, "Agent", `/agents/${encodeURIComponent(agentId)}`, () => {
+      if (state.selectedId === agentId) state.selectedId = "";
+    });
+    return;
+  }
+  const taskDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-task-delete]");
+  if (taskDelete) {
+    event.preventDefault();
+    const taskId = taskDelete.dataset.taskDelete || "";
+    if (!taskId) return;
+    await runDirectDelete(taskDelete, "Task", `/tasks/${encodeURIComponent(taskId)}?actor=human`, () => {
+      if (state.selectedId === taskId) state.selectedId = "";
+    });
     return;
   }
   const projectTarget = (event.target as Element | null)?.closest<HTMLElement>("[data-project-focus]");
@@ -2985,6 +3006,27 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
   state.selectedId = state.selectedId === selectedId ? "" : selectedId;
   updateUrlState();
   render();
+}
+
+async function runDirectDelete(
+  button: HTMLButtonElement,
+  label: string,
+  path: string,
+  onSuccess: () => void = () => {},
+): Promise<void> {
+  button.disabled = true;
+  try {
+    const result = await deleteJSON(path);
+    state.actionMessage = `${label} delete ok: ${redactedJson(result)}`;
+    onSuccess();
+    updateUrlState();
+    await loadDashboard();
+  } catch (error) {
+    state.actionMessage = `${label} delete failed: ${error instanceof Error ? error.message : String(error)}`;
+    render();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function syncObservabilitySubscription(): void {
@@ -3101,9 +3143,6 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       metadata: parseJsonObject(values.metadata),
     });
   }
-  if (action === "fleetDelete") {
-    return deleteJSON(`/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}`);
-  }
   if (action === "agentCreate") {
     return postJSON("/agents", {
       machine_id: requiredString(values.machine_id),
@@ -3120,9 +3159,6 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       capabilities: csvList(values.capabilities),
       resources: parseJsonObject(values.resources),
     });
-  }
-  if (action === "agentDelete") {
-    return deleteJSON(`/agents/${encodeURIComponent(requiredDataset(form, "agentId"))}`);
   }
   if (action === "projectCreate") {
     return postJSON("/projects", {
@@ -3165,10 +3201,6 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       metadata: parseJsonObject(values.metadata),
       actor: "human",
     });
-  }
-  if (action === "taskDelete") {
-    const taskId = requiredDataset(form, "taskId");
-    return deleteJSON(`/tasks/${encodeURIComponent(taskId)}?force=${boolValue(values.force)}&actor=${encodeURIComponent(String(values.actor || "human"))}`);
   }
   if (action === "taskClaim") {
     const taskId = requiredDataset(form, "taskId");

@@ -496,6 +496,12 @@ h3 {
   margin-top: 12px;
 }
 
+.table-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+}
+
 .record-actions .edit-disclosure {
   flex: 1 1 320px;
 }
@@ -509,6 +515,11 @@ h3 {
   color: #ffffff;
   padding: 0 14px;
   font-weight: 800;
+}
+
+.danger-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 details.action-box {
