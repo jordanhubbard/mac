@@ -1537,7 +1537,11 @@ def _dashboard_service_links(
         ("TOKENHUB_API_KEY", "TOKENHUB_AGENT_KEY", "OPENAI_API_KEY"),
         env_files,
     )
+    qdrant_key = _credential_ref(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files)
+    firecrawl_key = _credential_ref(("FIRECRAWL_API_KEY",), env_files)
     tokenhub_sso_available = bool(tokenhub_url and tokenhub_admin["present"])
+    qdrant_navigate_available = bool(qdrant_url)
+    firecrawl_navigate_available = bool(firecrawl_url)
     return [
         {
             "id": "tokenhub",
@@ -1573,11 +1577,18 @@ def _dashboard_service_links(
             "health_url": _redact_service_url(_join_service_url(qdrant_url, "/healthz")),
             "auth": {
                 "type": "api_key_or_none",
-                "credential_pass_through": False,
-                "pass_through_url": "",
-                "notes": "Qdrant owns its browser authentication surface",
+                "credential_pass_through": qdrant_navigate_available,
+                "pass_through_url": (
+                    "/dashboard/service-links/qdrant/navigate"
+                    if qdrant_navigate_available else ""
+                ),
+                "notes": (
+                    "MAC injects the Qdrant API key into the dashboard redirect"
+                    if qdrant_key["present"]
+                    else "Qdrant is open (no API key configured)"
+                ),
             },
-            "credentials": [_credential_ref(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files)],
+            "credentials": [qdrant_key],
         },
         {
             "id": "firecrawl",
@@ -1590,11 +1601,18 @@ def _dashboard_service_links(
             "health_url": _redact_service_url(_join_service_url(firecrawl_url, "/health")),
             "auth": {
                 "type": "api_key_or_none",
-                "credential_pass_through": False,
-                "pass_through_url": "",
-                "notes": "The MAC Firecrawl gateway exposes an API health page, not a separate admin UI",
+                "credential_pass_through": firecrawl_navigate_available,
+                "pass_through_url": (
+                    "/dashboard/service-links/firecrawl/navigate"
+                    if firecrawl_navigate_available else ""
+                ),
+                "notes": (
+                    "MAC Firecrawl gateway health page"
+                    if firecrawl_key["present"]
+                    else "Firecrawl gateway (no API key configured)"
+                ),
             },
-            "credentials": [_credential_ref(("FIRECRAWL_API_KEY",), env_files)],
+            "credentials": [firecrawl_key],
         },
     ]
 
@@ -1622,6 +1640,35 @@ def _tokenhub_session_ticket_url() -> str:
         {"expires": str(expires), "signature": signature, "redirect": "/"}
     )
     return "%s/admin/v1/session/claim?%s" % (tokenhub_url, query)
+
+
+def _qdrant_navigate_url() -> str:
+    env_files = _service_env_files()
+    qdrant_url = str(
+        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    if not qdrant_url:
+        raise ValidationError("Qdrant URL is not configured")
+    api_key = str(
+        _lookup_config_value(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files).get("value")
+        or ""
+    )
+    dashboard_url = "%s/dashboard" % qdrant_url
+    if api_key:
+        dashboard_url += "?%s" % urllib.parse.urlencode({"api_key": api_key})
+    return dashboard_url
+
+
+def _firecrawl_navigate_url() -> str:
+    env_files = _service_env_files()
+    firecrawl_url = str(
+        _lookup_config_value(("FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    if not firecrawl_url:
+        raise ValidationError("Firecrawl URL is not configured")
+    return firecrawl_url
 
 
 def _dashboard_state(
@@ -1934,6 +1981,16 @@ def create_app(
         if not principal.is_admin:
             raise AuthorizationError("TokenHub pass-through requires an admin MAC token")
         return RedirectResponse(_tokenhub_session_ticket_url(), status_code=303)
+
+    @app.get("/dashboard/service-links/{service_id}/navigate", include_in_schema=False)
+    def service_navigate(service_id: str) -> Dict[str, str]:
+        if service_id == "tokenhub":
+            return {"url": _tokenhub_session_ticket_url()}
+        if service_id == "qdrant":
+            return {"url": _qdrant_navigate_url()}
+        if service_id == "firecrawl":
+            return {"url": _firecrawl_navigate_url()}
+        raise NotFoundError("unknown service: %s" % service_id)
 
     @app.get("/dashboard/agents/{agent_id}")
     def dashboard_agent(agent_id: str) -> Dict[str, Any]:

@@ -438,6 +438,7 @@ interface DashboardNodes {
   loginScreen: HTMLElement;
   loginForm: HTMLFormElement;
   loginTokenInput: HTMLInputElement;
+  serviceLinks: HTMLElement;
 }
 
 const TOKEN_KEY = "mac.dashboard.token";
@@ -547,6 +548,7 @@ const nodes: DashboardNodes = {
   loginScreen: requiredElement("#loginScreen"),
   loginForm: requiredElement<HTMLFormElement>("#loginForm"),
   loginTokenInput: requiredElement<HTMLInputElement>("#loginTokenInput"),
+  serviceLinks: requiredElement("#serviceLinks"),
 };
 const api = createDashboardApi(() => state.token);
 
@@ -592,6 +594,25 @@ function bindEvents(): void {
     sessionStorage.removeItem(TOKEN_KEY);
     nodes.loginScreen.hidden = false;
   });
+  nodes.serviceLinks.addEventListener("click", async (event) => {
+    const btn = (event.target as Element | null)?.closest<HTMLElement>("[data-service-id]");
+    if (!btn || btn.hasAttribute("disabled")) return;
+    const serviceId = btn.dataset.serviceId || "";
+    const directUrl = btn.dataset.url || "";
+    if (btn.dataset.passThrough === "1" && serviceId) {
+      btn.setAttribute("disabled", "");
+      try {
+        const result = (await requestJSON(`/dashboard/service-links/${serviceId}/navigate`)) as { url: string };
+        window.open(result.url, "_blank", "noreferrer");
+      } catch {
+        if (directUrl) window.open(directUrl, "_blank", "noreferrer");
+      } finally {
+        btn.removeAttribute("disabled");
+      }
+    } else if (directUrl) {
+      window.open(directUrl, "_blank", "noreferrer");
+    }
+  });
 }
 
 async function loadDashboard(): Promise<void> {
@@ -613,6 +634,25 @@ async function requestJSON(path: string, init: RequestInit = {}): Promise<unknow
   return api.request(path, init);
 }
 
+function renderServiceLinksSidebar(services: ServiceLinkRecord[]): string {
+  const visible = services.filter((s) => s.url || s.ui_url);
+  if (!visible.length) return "";
+  return `
+    <span class="service-link-label">Services</span>
+    ${visible.map((service) => {
+      const hasPassThrough = !!(service.auth?.credential_pass_through);
+      const directUrl = service.ui_url || service.url || "";
+      const tone = healthTone(service.status);
+      return `<button class="service-link-btn" type="button"
+        data-service-id="${escapeHtml(service.id)}"
+        data-url="${escapeHtml(directUrl)}"
+        data-pass-through="${hasPassThrough ? "1" : "0"}"
+        title="${escapeHtml(service.role)}"
+      ><span>${escapeHtml(service.name)}</span>${chip(service.status || "unknown", tone)}</button>`;
+    }).join("")}
+  `;
+}
+
 function render(): void {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === state.activeView);
@@ -620,6 +660,10 @@ function render(): void {
   nodes.title.textContent = VIEW_TITLES[state.activeView];
   renderSyncState();
   renderBanner();
+  if (state.data) {
+    nodes.serviceLinks.hidden = false;
+    nodes.serviceLinks.innerHTML = renderServiceLinksSidebar(state.data.service_links || []);
+  }
   if (state.loading && !state.data) {
     nodes.content.innerHTML = `<div class="empty-state">Loading</div>`;
     return;

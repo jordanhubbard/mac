@@ -169,6 +169,48 @@ button {
   font-weight: 700;
 }
 
+.service-links {
+  display: grid;
+  gap: 6px;
+}
+
+.service-links[hidden] {
+  display: none;
+}
+
+.service-link-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.service-link-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  padding: 6px 10px;
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.service-link-btn:hover {
+  border-color: #b8d8d0;
+  background: var(--accent-soft);
+}
+
+.service-link-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .token-form {
   display: grid;
   gap: 8px;

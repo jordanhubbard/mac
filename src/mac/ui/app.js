@@ -104,6 +104,7 @@ const nodes = {
     loginScreen: requiredElement("#loginScreen"),
     loginForm: requiredElement("#loginForm"),
     loginTokenInput: requiredElement("#loginTokenInput"),
+    serviceLinks: requiredElement("#serviceLinks"),
 };
 const api = createDashboardApi(() => state.token);
 nodes.tokenInput.value = state.token;
@@ -152,6 +153,30 @@ function bindEvents() {
         sessionStorage.removeItem(TOKEN_KEY);
         nodes.loginScreen.hidden = false;
     });
+    nodes.serviceLinks.addEventListener("click", async (event) => {
+        const btn = event.target?.closest("[data-service-id]");
+        if (!btn || btn.hasAttribute("disabled"))
+            return;
+        const serviceId = btn.dataset.serviceId || "";
+        const directUrl = btn.dataset.url || "";
+        if (btn.dataset.passThrough === "1" && serviceId) {
+            btn.setAttribute("disabled", "");
+            try {
+                const result = (await requestJSON(`/dashboard/service-links/${serviceId}/navigate`));
+                window.open(result.url, "_blank", "noreferrer");
+            }
+            catch {
+                if (directUrl)
+                    window.open(directUrl, "_blank", "noreferrer");
+            }
+            finally {
+                btn.removeAttribute("disabled");
+            }
+        }
+        else if (directUrl) {
+            window.open(directUrl, "_blank", "noreferrer");
+        }
+    });
 }
 async function loadDashboard() {
     state.loading = true;
@@ -172,6 +197,25 @@ async function loadDashboard() {
 async function requestJSON(path, init = {}) {
     return api.request(path, init);
 }
+function renderServiceLinksSidebar(services) {
+    const visible = services.filter((s) => s.url || s.ui_url);
+    if (!visible.length)
+        return "";
+    return `
+    <span class="service-link-label">Services</span>
+    ${visible.map((service) => {
+        const hasPassThrough = !!(service.auth?.credential_pass_through);
+        const directUrl = service.ui_url || service.url || "";
+        const tone = healthTone(service.status);
+        return `<button class="service-link-btn" type="button"
+        data-service-id="${escapeHtml(service.id)}"
+        data-url="${escapeHtml(directUrl)}"
+        data-pass-through="${hasPassThrough ? "1" : "0"}"
+        title="${escapeHtml(service.role)}"
+      ><span>${escapeHtml(service.name)}</span>${chip(service.status || "unknown", tone)}</button>`;
+    }).join("")}
+  `;
+}
 function render() {
     document.querySelectorAll("[data-view]").forEach((button) => {
         button.classList.toggle("is-active", button.dataset.view === state.activeView);
@@ -179,6 +223,10 @@ function render() {
     nodes.title.textContent = VIEW_TITLES[state.activeView];
     renderSyncState();
     renderBanner();
+    if (state.data) {
+        nodes.serviceLinks.hidden = false;
+        nodes.serviceLinks.innerHTML = renderServiceLinksSidebar(state.data.service_links || []);
+    }
     if (state.loading && !state.data) {
         nodes.content.innerHTML = `<div class="empty-state">Loading</div>`;
         return;
