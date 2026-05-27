@@ -108,9 +108,15 @@ const nodes = {
 };
 const api = createDashboardApi(() => state.token);
 nodes.tokenInput.value = state.token;
-nodes.loginScreen.hidden = !!state.token;
+nodes.loginTokenInput.value = state.token;
 bindEvents();
-if (state.token) loadDashboard();
+if (state.token) {
+    hideLoginScreen();
+    loadDashboard();
+}
+else {
+    showLoginScreen(false);
+}
 function bindEvents() {
     nodes.nav.addEventListener("click", (event) => {
         const button = event.target?.closest("[data-view]");
@@ -132,7 +138,7 @@ function bindEvents() {
         state.token = token;
         sessionStorage.setItem(TOKEN_KEY, token);
         nodes.tokenInput.value = token;
-        nodes.loginScreen.hidden = true;
+        hideLoginScreen();
         loadDashboard();
     });
     nodes.tokenForm.addEventListener("submit", (event) => {
@@ -142,7 +148,10 @@ function bindEvents() {
             sessionStorage.setItem(TOKEN_KEY, state.token);
         else
             sessionStorage.removeItem(TOKEN_KEY);
-        nodes.loginScreen.hidden = !!state.token;
+        if (state.token)
+            hideLoginScreen();
+        else
+            showLoginScreen();
         if (state.token)
             loadDashboard();
     });
@@ -151,7 +160,7 @@ function bindEvents() {
         nodes.tokenInput.value = "";
         nodes.loginTokenInput.value = "";
         sessionStorage.removeItem(TOKEN_KEY);
-        nodes.loginScreen.hidden = false;
+        showLoginScreen();
     });
     nodes.serviceLinks.addEventListener("click", async (event) => {
         const btn = event.target?.closest("[data-service-id]");
@@ -179,6 +188,12 @@ function bindEvents() {
     });
 }
 async function loadDashboard() {
+    if (!state.token) {
+        state.error = "403 missing bearer token";
+        showLoginScreen();
+        render();
+        return;
+    }
     state.loading = true;
     state.error = null;
     renderSyncState();
@@ -188,6 +203,10 @@ async function loadDashboard() {
     }
     catch (error) {
         state.error = error instanceof Error ? error.message : String(error);
+        if (isAuthError(state.error)) {
+            sessionStorage.removeItem(TOKEN_KEY);
+            showLoginScreen();
+        }
     }
     finally {
         state.loading = false;
@@ -281,9 +300,21 @@ function renderBanner() {
         return;
     }
     nodes.banner.hidden = false;
-    nodes.banner.textContent = state.error.includes("403")
+    nodes.banner.textContent = isAuthError(state.error)
         ? "Dashboard data needs a token with read scope."
         : state.error;
+}
+function isAuthError(message) {
+    return /^403\b/.test(message);
+}
+function showLoginScreen(focus = true) {
+    nodes.loginTokenInput.value = state.token || nodes.tokenInput.value.trim();
+    nodes.loginScreen.hidden = false;
+    if (focus)
+        window.setTimeout(() => nodes.loginTokenInput.focus(), 0);
+}
+function hideLoginScreen() {
+    nodes.loginScreen.hidden = true;
 }
 function readUrlState() {
     const params = new URLSearchParams(window.location.search);

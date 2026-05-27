@@ -1717,6 +1717,9 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     index_html = (root / "src/mac/ui/index.html").read_text(encoding="utf-8")
     assert "URLSearchParams" in app_js
     assert "createDashboardApi" in app_js
+    assert "showLoginScreen" in app_js
+    assert "403 missing bearer token" in app_js
+    assert "sessionStorage.removeItem(TOKEN_KEY)" in app_js
     assert "renderWork" in app_js
     assert "renderProjects" in app_js
     assert "renderFleets" in app_js

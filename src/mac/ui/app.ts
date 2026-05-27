@@ -553,9 +553,14 @@ const nodes: DashboardNodes = {
 const api = createDashboardApi(() => state.token);
 
 nodes.tokenInput.value = state.token;
-nodes.loginScreen.hidden = !!state.token;
+nodes.loginTokenInput.value = state.token;
 bindEvents();
-if (state.token) loadDashboard();
+if (state.token) {
+  hideLoginScreen();
+  loadDashboard();
+} else {
+  showLoginScreen(false);
+}
 
 function bindEvents(): void {
   nodes.nav.addEventListener("click", (event) => {
@@ -576,7 +581,7 @@ function bindEvents(): void {
     state.token = token;
     sessionStorage.setItem(TOKEN_KEY, token);
     nodes.tokenInput.value = token;
-    nodes.loginScreen.hidden = true;
+    hideLoginScreen();
     loadDashboard();
   });
   nodes.tokenForm.addEventListener("submit", (event) => {
@@ -584,7 +589,8 @@ function bindEvents(): void {
     state.token = nodes.tokenInput.value.trim();
     if (state.token) sessionStorage.setItem(TOKEN_KEY, state.token);
     else sessionStorage.removeItem(TOKEN_KEY);
-    nodes.loginScreen.hidden = !!state.token;
+    if (state.token) hideLoginScreen();
+    else showLoginScreen();
     if (state.token) loadDashboard();
   });
   nodes.clearToken.addEventListener("click", () => {
@@ -592,7 +598,7 @@ function bindEvents(): void {
     nodes.tokenInput.value = "";
     nodes.loginTokenInput.value = "";
     sessionStorage.removeItem(TOKEN_KEY);
-    nodes.loginScreen.hidden = false;
+    showLoginScreen();
   });
   nodes.serviceLinks.addEventListener("click", async (event) => {
     const btn = (event.target as Element | null)?.closest<HTMLElement>("[data-service-id]");
@@ -616,6 +622,12 @@ function bindEvents(): void {
 }
 
 async function loadDashboard(): Promise<void> {
+  if (!state.token) {
+    state.error = "403 missing bearer token";
+    showLoginScreen();
+    render();
+    return;
+  }
   state.loading = true;
   state.error = null;
   renderSyncState();
@@ -624,6 +636,10 @@ async function loadDashboard(): Promise<void> {
     state.loadedAt = new Date();
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
+    if (isAuthError(state.error)) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      showLoginScreen();
+    }
   } finally {
     state.loading = false;
     render();
@@ -721,9 +737,23 @@ function renderBanner(): void {
     return;
   }
   nodes.banner.hidden = false;
-  nodes.banner.textContent = state.error.includes("403")
+  nodes.banner.textContent = isAuthError(state.error)
     ? "Dashboard data needs a token with read scope."
     : state.error;
+}
+
+function isAuthError(message: string): boolean {
+  return /^403\b/.test(message);
+}
+
+function showLoginScreen(focus = true): void {
+  nodes.loginTokenInput.value = state.token || nodes.tokenInput.value.trim();
+  nodes.loginScreen.hidden = false;
+  if (focus) window.setTimeout(() => nodes.loginTokenInput.focus(), 0);
+}
+
+function hideLoginScreen(): void {
+  nodes.loginScreen.hidden = true;
 }
 
 function readUrlState(): Pick<DashboardState, "activeView" | "agentQuery" | "agentFilter" | "agentSort" | "agentPage" | "projectFilter" | "taskFilter" | "selectedId" | "auditSubjectType" | "auditSubjectId" | "auditEventPrefix" | "auditActor" | "auditLayer" | "auditLevel" | "auditAgentId" | "auditTaskId" | "auditProject" | "auditFleet" | "auditSince" | "auditUntil"> {
