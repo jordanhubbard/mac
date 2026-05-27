@@ -256,25 +256,21 @@ PY
 
 _install_tokenhub_from_release() {
   local owner_repo="$1"
-  local api_url tmp_dir downloaded
+  local api_url="" release_json="" uname_s="" uname_m="" tmp_dir="" downloaded="" ok=0
   if [ -n "${TOKENHUB_REF:-}" ]; then
     api_url="https://api.github.com/repos/${owner_repo}/releases/tags/${TOKENHUB_REF}"
   else
     api_url="https://api.github.com/repos/${owner_repo}/releases/latest"
   fi
   log "checking for TokenHub release binaries at $api_url"
-  local release_json
   release_json="$(curl -fsSL --connect-timeout 10 --max-time 30 \
     ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
     "$api_url" 2>/dev/null || true)"
   [ -n "$release_json" ] || return 1
 
-  local uname_s uname_m
   uname_s="$(uname -s)"
   uname_m="$(uname -m)"
-
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' RETURN
 
   downloaded="$("$PYTHON_BIN" - "$release_json" "$uname_s" "$uname_m" "$tmp_dir" "$TOKENHUB_BIN_DIR" <<'PY'
 import json, os, re, subprocess, sys, tarfile, zipfile, urllib.request
@@ -362,6 +358,10 @@ PY
   )" || true
 
   if printf '%s' "$downloaded" | grep -q "^installed"; then
+    ok=1
+  fi
+  rm -rf "$tmp_dir"
+  if [ "$ok" = "1" ]; then
     log "TokenHub binaries installed from release"
     printf '%s\n' "$downloaded" | grep -v "^installed" | grep -v "^downloading" | while IFS= read -r line; do
       [ -n "$line" ] && log "$line"
