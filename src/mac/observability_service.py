@@ -36,6 +36,12 @@ OBSERVABILITY_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/:]{0,127}$")
 
 
 class ObservabilityService:
+    # mac-29vr: cap the serialised detail JSON we will persist on a
+    # single observation. The events table fans out across every layer
+    # and a chatty caller (e.g., a worker that logs full subprocess
+    # output) can otherwise pump GB into one SQLite table.
+    MAX_DETAIL_BYTES = 64 * 1024
+
     def __init__(self, store: Any) -> None:
         self.store = store
 
@@ -272,6 +278,18 @@ class ObservabilityService:
         obs_id = new_id("obs")
         unit_value = str(unit or "")
         detail_json = json_dumps(ensure_json_object(detail))
+        # mac-29vr: cap detail size. If we'd exceed MAX_DETAIL_BYTES,
+        # replace it with a truncated marker so we keep the audit record
+        # but don't bloat the table.
+        if len(detail_json.encode("utf-8")) > self.MAX_DETAIL_BYTES:
+            detail_json = json_dumps(
+                {
+                    "_truncated": True,
+                    "_max_bytes": self.MAX_DETAIL_BYTES,
+                    "_original_bytes": len(detail_json.encode("utf-8")),
+                    "_keys": list(ensure_json_object(detail).keys())[:50],
+                }
+            )
         cursor = conn.execute(
             """
             INSERT INTO observability_events (

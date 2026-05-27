@@ -4674,8 +4674,21 @@ class ControlPlane:
             raise NotFoundError("lease not found: %s" % lease_id)
         return self._lease_from_row(row)
 
-    def expire_leases(self, now: Optional[str] = None) -> List[Task]:
-        cutoff = now or utcnow()
+    def expire_leases(
+        self, now: Optional[str] = None, *, grace_seconds: Optional[int] = None
+    ) -> List[Task]:
+        # mac-vgw9: when `now` is auto-derived, subtract a small tolerance
+        # so an NTP step forward doesn't mass-expire every lease. When
+        # the caller passes `now` explicitly, honor it exactly (callers
+        # use this for deterministic tests or for manually advancing the
+        # clock). Operators can also pass an explicit ``grace_seconds``.
+        if now is not None:
+            grace = grace_seconds or 0
+            cutoff_dt = parse_time(now) - timedelta(seconds=int(grace))
+        else:
+            grace = 30 if grace_seconds is None else int(grace_seconds)
+            cutoff_dt = parse_time(utcnow()) - timedelta(seconds=grace)
+        cutoff = cutoff_dt.isoformat(timespec="microseconds")
         rows = self.store.query_all(
             "SELECT * FROM leases WHERE status = ? AND expires_at <= ? ORDER BY expires_at",
             (LeaseStatus.ACTIVE.value, cutoff),

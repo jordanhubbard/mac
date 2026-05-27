@@ -4603,6 +4603,43 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_observability_record_truncates_oversized_detail(cp):
+    """mac-29vr: an observability detail larger than MAX_DETAIL_BYTES
+    must be replaced with a truncated marker so a chatty caller can't
+    pump GB into the events table."""
+    huge_detail = {"blob": "x" * (cp.observability.MAX_DETAIL_BYTES + 10)}
+    record = cp.observability.record_log(
+        "test.huge_detail", level="info", detail=huge_detail
+    )
+    assert record.detail.get("_truncated") is True
+    assert record.detail.get("_max_bytes") == cp.observability.MAX_DETAIL_BYTES
+    # Original blob is gone — only the truncation marker remains.
+    assert "blob" not in record.detail
+
+
+def test_expire_leases_applies_default_grace_against_ntp_step(cp):
+    """mac-vgw9: with no explicit `now`, expire_leases subtracts a 30s
+    grace from the cutoff so a small NTP step forward doesn't mass-expire.
+    """
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    # Claim with a 10-second lease — about to expire but well within
+    # the 30s NTP-step grace window.
+    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=10)
+    # Bring the lease just barely past expires_at (5s in the past).
+    import datetime as _dt
+    past = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=5)).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE leases SET expires_at = ? WHERE id = ?", (past, lease.id),
+    )
+    # Default invocation (no explicit `now`) honors the 30s grace.
+    recovered = cp.expire_leases()
+    assert recovered == [], "default grace should absorb a 5s NTP step"
+    # An operator who *wants* immediate expiry can pass explicit `now`.
+    forced = cp.expire_leases(now=utcnow())
+    assert [t.id for t in forced] == [task.id]
+
+
 def test_rollout_health_policy_requires_explicit_required_checks_at_create(cp):
     """mac-jmjc: an empty required_checks list trivially passes the
     health gate. Reject it at rollout creation and default missing

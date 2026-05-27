@@ -3096,6 +3096,7 @@ def create_app(
 
     @app.get("/observability/stream")
     async def observability_stream(
+        request: Request,
         after_sequence: int = Query(default=0),
         timeout_seconds: float = Query(default=30.0),
         poll_interval_seconds: float = Query(default=0.5),
@@ -3116,6 +3117,11 @@ def create_app(
             deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
             poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
             while True:
+                # mac-ob1m: abort cleanly when the client has gone away
+                # so a slow-or-abandoned consumer doesn't keep issuing
+                # DB queries until deadline.
+                if await request.is_disconnected():
+                    break
                 observations = cp.list_observability(
                     kind=kind,
                     layer=layer,
@@ -3226,6 +3232,7 @@ def create_app(
     @app.get("/agentbus/streams/{stream_id}/events")
     async def agentbus_stream_events(
         stream_id: str,
+        request: Request,
         agent_id: str,
         after_sequence: int = Query(default=0),
         timeout_seconds: float = Query(default=30.0),
@@ -3240,6 +3247,9 @@ def create_app(
             deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
             poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
             while True:
+                # mac-ob1m: stop polling when the client has disconnected.
+                if await request.is_disconnected():
+                    break
                 chunks = cp.read_agentbus_chunks(agent_id, stream_id, cursor, limit=100)
                 for chunk in chunks:
                     cursor = chunk.sequence
