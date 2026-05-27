@@ -5693,6 +5693,17 @@ worker_has_mesh_client() {
     'command -v tailscale >/dev/null 2>&1 && tailscale status --self >/dev/null 2>&1' 2>/dev/null
 }
 
+worker_can_reach_hub_url() {
+  local raw_target="$1" hub_url="$2" ssh_parts=() ssh_args=() ssh_target item last_index
+  [ -n "$hub_url" ] || return 1
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$raw_target")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${ssh_args[@]}" "$ssh_target" \
+    "curl -fsS --connect-timeout 3 --max-time 5 '${hub_url%/}/health' >/dev/null 2>&1" 2>/dev/null
+}
+
 main() {
   make_archive
   local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey tokenhub_api_key tokenhub_api_key_name github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
@@ -5719,7 +5730,7 @@ main() {
     direct_mesh_hub=0
     if [ "$agent" != "$hub_agent" ] \
       && uses_direct_mesh_hub "$network_provider_field" "$hub_url_field" \
-      && worker_has_mesh_client "$local_target" "$network_provider_field"; then
+      && worker_can_reach_hub_url "$local_target" "$hub_url_field"; then
       direct_mesh_hub=1
     fi
     if [ "$agent" != "$hub_agent" ] && [ -z "$hub_token" ]; then
