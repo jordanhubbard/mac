@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     import yaml
@@ -189,6 +189,7 @@ def write_generated_files(
     hub_name: str,
     fleet_config: Dict[str, Any],
     env_values: Dict[str, str],
+    next_steps: Optional[List[str]] = None,
 ) -> int:
     registry = load_fleet_registry(fleets_config)
     fleets = registry.get("fleets")
@@ -227,199 +228,41 @@ def write_generated_files(
     print("Wrote %s" % env_file)
     print("")
     print("Next:")
-    print("  set -a; . %s; set +a" % env_file)
-    print("  bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name)
+    if next_steps:
+        for step in next_steps:
+            print("  %s" % step)
+    else:
+        print("  set -a; . %s; set +a" % env_file)
+        print("  bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name)
     return 0
 
 
-def main(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(description="Interactive first-run mac fleet setup wizard.")
-    parser.add_argument(
-        "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
-        help="Path to the home-scoped multi-fleet registry.",
-    )
-    parser.add_argument(
-        "--env-file",
-        default=str(Path.home() / ".mac" / ".env"),
-        help="Path to write caller-machine deploy env/secrets.",
-    )
-    parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
-    parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
-    parser.add_argument("--new-hub", help="Create a one-node first-hub fleet non-interactively.")
-    parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
-    parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
-    parser.add_argument("--fleet-name", default="my-fleet", help="Fleet name for --new-hub.")
-    parser.add_argument("--hub-os", default="linux", choices=["linux", "darwin"], help="Hub OS for --new-hub.")
-    parser.add_argument("--control-port", type=int, default=8789, help="Hub control plane port for --new-hub.")
-    parser.add_argument("--hub-url", default="", help="Hub URL agents should use for --new-hub.")
-    parser.add_argument("--home-channel", default="", help="Slack home channel for --new-hub.")
-    parser.add_argument("--hub-model", default="", help="Hub Hermes model selector for --new-hub.")
-    parser.add_argument(
-        "--supervisor",
-        default="auto",
-        choices=["auto", "systemd", "launchd", "supervisord"],
-        help="Default supervisor for --new-hub.",
-    )
-    parser.add_argument(
-        "--network-provider",
-        default="tailscale",
-        choices=["tailscale", "headscale", "none"],
-        help="Fleet mesh provider for --new-hub.",
-    )
-    parser.add_argument("--headscale-login-server", default="", help="Headscale login server for --new-hub.")
-    parser.add_argument("--headscale-preauth-key", default="", help="Headscale preauth key to place in env file.")
-    args = parser.parse_args(argv)
+def _default_worker_capabilities() -> List[str]:
+    return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
 
-    fleets_config = Path(args.fleets_config).expanduser()
-    env_file = Path(args.env_file).expanduser()
 
-    noninteractive = bool(args.new_hub)
-    if not args.force and noninteractive and any(path.exists() for path in (fleets_config, env_file)):
-        print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
-        return 2
-    if not args.force and not noninteractive:
-        for path in (fleets_config, env_file):
-            if path.exists() and not prompt_bool("Overwrite %s after making a backup?" % path, default=False):
-                print("Aborted before writing %s" % path)
-                return 2
-
-    if args.new_hub:
-        if not args.target:
-            print("--new-hub requires --target", file=sys.stderr)
-            return 2
-        hub_name = args.new_hub.strip()
-        if not hub_name:
-            print("--new-hub requires a non-empty hub name", file=sys.stderr)
-            return 2
-        hub_target = normalize_ssh_target(args.target, port=args.ssh_port)
-        host = host_from_target(hub_target)
-        hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
-        qdrant_port = 6333
-        firecrawl_port = 3002
-        tokenhub_port = 8090
-        headscale_login_server = args.headscale_login_server.strip()
-        if args.network_provider == "headscale" and not headscale_login_server:
-            print("--network-provider headscale requires --headscale-login-server", file=sys.stderr)
-            return 2
-        headscale_preauth_key_env = "MAC_DEPLOY_HEADSCALE_PREAUTHKEY"
-        fleet_config = {
-            "sample": False,
-            "fleet_name": args.fleet_name,
-            "hub_agent": hub_name,
-            "hub_url": hub_url,
-            "control_port": args.control_port,
-            "shared_services_manager_agent": hub_name,
-            "defaults": {
-                "supervisor": args.supervisor,
-                "hermes": {
-                    "slack_home_channel_name": args.home_channel.strip().lstrip("#"),
-                    "gateway_provider": "custom",
-                    "gateway_base_url": "",
-                },
-                "worker": {
-                    "mode": "heartbeat",
-                    "capabilities": [
-                        "ops",
-                        "python",
-                        "hermes",
-                        "review",
-                        "web_search",
-                        "web_extract",
-                        "web_crawl",
-                        "firecrawl",
-                    ],
-                    "allowed_projects": "",
-                    "required_metadata": "",
-                    "require_canary": True,
-                },
-                "qdrant": {
-                    "install": "auto",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, qdrant_port),
-                    "bind_addr": "",
-                    "port": qdrant_port,
-                    "data_dir": "",
-                    "image": "docker.io/qdrant/qdrant:latest",
-                    "memory_limit": "2g",
-                },
-                "firecrawl": {
-                    "install": "auto",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, firecrawl_port),
-                    "bind_addr": "",
-                    "port": firecrawl_port,
-                },
-                "tokenhub": {
-                    "install": "auto",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
-                    "bind_addr": "",
-                    "port": tokenhub_port,
-                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                    "ref": "",
-                },
-                "network": {
-                    "provider": args.network_provider,
-                    "install": "auto",
-                    "hostname_prefix": "",
-                    "tailscale": {"auth_key_env": "MAC_DEPLOY_TAILSCALE_AUTH_KEY"},
-                    "headscale": {
-                        "manage": False,
-                        "login_server": headscale_login_server,
-                        "health_url": "%s/health" % headscale_login_server.rstrip("/") if headscale_login_server else "",
-                        "preauth_key_source": "env",
-                        "preauth_key_env": headscale_preauth_key_env,
-                        "port": 8080,
-                        "public_addr": "",
-                        "dns": "magicdns",
-                        "ip_prefix": "100.64.0.0/10",
-                    },
-                },
-            },
-            "agents": [
-                build_agent(
-                    name=hub_name,
-                    target=hub_target,
-                    os_kind=args.hub_os,
-                    model=args.hub_model,
-                    supervisor=args.supervisor,
-                    mode="loop",
-                    require_canary=False,
-                    control_bind_host="0.0.0.0",
-                )
-            ],
-        }
-        env_values = {
-            "MAC_DEPLOY_FLEET_CONFIG": str(ROOT / "deploy" / "fleet" / "config.yaml"),
-            "MAC_DEPLOY_FLEETS_CONFIG": str(fleets_config),
-            "MAC_DEPLOY_HUB_AGENT": hub_name,
-            "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
-            "MAC_SECRET_KEY": secrets.token_urlsafe(48),
-            "MAC_API_TOKEN": secrets.token_urlsafe(32),
-        }
-        if args.headscale_preauth_key:
-            env_values[headscale_preauth_key_env] = args.headscale_preauth_key
-        return write_generated_files(
-            args=args,
-            fleets_config=fleets_config,
-            env_file=env_file,
-            hub_name=hub_name,
-            fleet_config=fleet_config,
-            env_values=env_values,
-        )
-
-    print("mac fleet setup wizard")
-    print("Do not paste provider API keys here. Put upstream model/provider keys in TokenHub.")
+def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
     fleet_name = prompt("Fleet name", default="my-fleet")
     hub_name = prompt("Hub node name", required=True)
-    hub_target = prompt("Hub SSH target (user@host or host)", required=True)
+
+    if running_locally:
+        hub_target = "127.0.0.1"
+        print("  Hub SSH target: 127.0.0.1 (running locally)")
+    else:
+        hub_target = prompt("Hub SSH target (user@host or host)", required=True)
+
     hub_os = prompt("Hub OS", default="linux", choices=["linux", "darwin"])
     control_port_str = prompt("Hub control plane port", default="8789")
     control_port = int(control_port_str) if control_port_str.isdigit() else 8789
+
+    if running_locally:
+        default_hub_url = "http://127.0.0.1:%d" % control_port
+    else:
+        default_hub_url = "http://%s:%d" % (host_from_target(hub_target), control_port)
+
     hub_url = prompt(
-        "Hub URL agents should use",
-        default="http://%s:%d" % (host_from_target(hub_target), control_port),
+        "Hub URL agents should use to reach this hub",
+        default=default_hub_url,
         required=True,
     )
     supervisor = prompt("Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"])
@@ -582,16 +425,7 @@ def main(argv: List[str]) -> int:
             },
             "worker": {
                 "mode": "heartbeat",
-                "capabilities": [
-                    "ops",
-                    "python",
-                    "hermes",
-                    "review",
-                    "web_search",
-                    "web_extract",
-                    "web_crawl",
-                    "firecrawl",
-                ],
+                "capabilities": _default_worker_capabilities(),
                 "allowed_projects": "",
                 "required_metadata": "",
                 "require_canary": True,
@@ -663,46 +497,364 @@ def main(argv: List[str]) -> int:
     if headscale_preauth_key:
         env_values[headscale_preauth_key_env] = headscale_preauth_key
 
-    registry = load_fleet_registry(fleets_config)
-    fleets = registry.get("fleets")
-    if not isinstance(fleets, dict):
-        fleets = {}
-        registry["fleets"] = fleets
-    fleets[hub_name] = fleet_config
-    registry["version"] = registry.get("version") or 1
-    config_content = "\n".join(write_yaml_lines(registry)) + "\n"
-    env_content = "\n".join(
-        [
-            "# Generated by scripts/setup-fleet.py.",
-            "# Contains local deploy secrets; keep mode 0600.",
-            *[env_line(key, value) for key, value in env_values.items()],
-            "",
+    if running_locally:
+        next_steps = [
+            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
         ]
+    else:
+        next_steps = [
+            "set -a; . %s; set +a" % env_file,
+            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
+        ]
+
+    return write_generated_files(
+        args=args,
+        fleets_config=fleets_config,
+        env_file=env_file,
+        hub_name=hub_name,
+        fleet_config=fleet_config,
+        env_values=env_values,
+        next_steps=next_steps,
     )
 
-    if args.dry_run:
-        print("--- %s" % fleets_config)
-        print(config_content, end="")
-        print("--- %s" % env_file)
-        print(env_content, end="")
-        return 0
 
-    fleets_backup = backup_existing(fleets_config)
-    env_backup = backup_existing(env_file)
-    atomic_write(fleets_config, config_content, 0o600)
-    atomic_write(env_file, env_content, 0o600)
+def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
+    registry = load_fleet_registry(fleets_config)
+    fleets = registry.get("fleets") or {}
 
-    if fleets_backup:
-        print("Backed up previous fleet registry to %s" % fleets_backup)
-    if env_backup:
-        print("Backed up previous env file to %s" % env_backup)
-    print("Wrote %s" % fleets_config)
-    print("Wrote %s" % env_file)
+    if fleets:
+        print("Known fleets: %s" % ", ".join(sorted(fleets.keys())))
+
+    hub_name = prompt("Hub agent name (which fleet to join)", required=True)
+
+    existing_fleet = fleets.get(hub_name) if isinstance(fleets, dict) else None
+    if existing_fleet:
+        fleet_name = existing_fleet.get("fleet_name", "my-fleet")
+        hub_url = existing_fleet.get("hub_url", "")
+        control_port = existing_fleet.get("control_port", 8789)
+        defaults = existing_fleet.get("defaults", {})
+        supervisor = defaults.get("supervisor", "auto")
+        print("  Found fleet '%s' (hub_url: %s)" % (fleet_name, hub_url))
+    else:
+        print("  Fleet '%s' not found in %s — enter hub details." % (hub_name, fleets_config))
+        fleet_name = prompt("Fleet name", default="my-fleet")
+        control_port_str = prompt("Hub control plane port", default="8789")
+        control_port = int(control_port_str) if control_port_str.isdigit() else 8789
+        hub_url = prompt("Hub URL (how to reach the control plane)", required=True)
+        supervisor = prompt("Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"])
+        defaults = {}
+
     print("")
-    print("Next:")
-    print("  set -a; . %s; set +a" % env_file)
-    print("  bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name)
-    return 0
+    agent_name = prompt("Worker agent name", required=True)
+
+    if running_locally:
+        agent_target = "127.0.0.1"
+        print("  Worker SSH target: 127.0.0.1 (running locally)")
+    else:
+        agent_target = prompt("Worker SSH target (user@host or host)", required=True)
+
+    agent_os = prompt("Worker OS", default="linux", choices=["linux", "darwin"])
+    agent_supervisor = prompt(
+        "Worker supervisor",
+        default=supervisor,
+        choices=["auto", "systemd", "launchd", "supervisord"],
+    )
+    agent_model = prompt("Worker Hermes model selector (blank to configure later)", default="")
+    agent_mode = prompt("Worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
+    require_canary = prompt_bool("Require canary metadata on this worker?", default=False)
+
+    new_agent = build_agent(
+        name=agent_name,
+        target=agent_target,
+        os_kind=agent_os,
+        model=agent_model,
+        supervisor=agent_supervisor,
+        mode=agent_mode,
+        require_canary=require_canary,
+    )
+
+    if existing_fleet:
+        agents = list(existing_fleet.get("agents") or [])
+        existing_names = [a.get("name") for a in agents if isinstance(a, dict)]
+        if agent_name in existing_names:
+            if not prompt_bool("Agent '%s' already exists in fleet. Overwrite?" % agent_name, default=False):
+                print("Aborted.")
+                return 2
+            agents = [a for a in agents if not (isinstance(a, dict) and a.get("name") == agent_name)]
+        agents.append(new_agent)
+        fleet_config = dict(existing_fleet)
+        fleet_config["agents"] = agents
+    else:
+        qdrant_port = int(defaults.get("qdrant", {}).get("port", 6333))
+        firecrawl_port = int(defaults.get("firecrawl", {}).get("port", 3002))
+        tokenhub_port = int(defaults.get("tokenhub", {}).get("port", 8090))
+        fleet_config = {
+            "sample": False,
+            "fleet_name": fleet_name,
+            "hub_agent": hub_name,
+            "hub_url": hub_url,
+            "control_port": control_port,
+            "shared_services_manager_agent": hub_name,
+            "defaults": {
+                "supervisor": supervisor,
+                "hermes": {"slack_home_channel_name": "", "gateway_provider": "custom", "gateway_base_url": ""},
+                "worker": {
+                    "mode": "heartbeat",
+                    "capabilities": _default_worker_capabilities(),
+                    "allowed_projects": "",
+                    "required_metadata": "",
+                    "require_canary": True,
+                },
+                "qdrant": {
+                    "install": "none",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, qdrant_port),
+                    "bind_addr": "",
+                    "port": qdrant_port,
+                    "data_dir": "",
+                    "image": "docker.io/qdrant/qdrant:latest",
+                    "memory_limit": "2g",
+                },
+                "firecrawl": {
+                    "install": "none",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, firecrawl_port),
+                    "bind_addr": "",
+                    "port": firecrawl_port,
+                },
+                "tokenhub": {
+                    "install": "none",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
+                    "bind_addr": "",
+                    "port": tokenhub_port,
+                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
+                    "ref": "",
+                },
+            },
+            "agents": [new_agent],
+        }
+
+    env_values: Dict[str, str] = {
+        "MAC_DEPLOY_FLEET_CONFIG": str(ROOT / "deploy" / "fleet" / "config.yaml"),
+        "MAC_DEPLOY_FLEETS_CONFIG": str(fleets_config),
+        "MAC_DEPLOY_HUB_AGENT": hub_name,
+        "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
+    }
+    hub_token = prompt(
+        "Hub API token (MAC_API_TOKEN from the hub's ~/.mac/.env, blank to read at deploy time)",
+        default="",
+    )
+    if hub_token:
+        env_values["MAC_DEPLOY_HUB_TOKEN"] = hub_token
+
+    if running_locally:
+        next_steps = [
+            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+        ]
+    else:
+        next_steps = [
+            "set -a; . %s; set +a" % env_file,
+            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+        ]
+
+    return write_generated_files(
+        args=args,
+        fleets_config=fleets_config,
+        env_file=env_file,
+        hub_name=hub_name,
+        fleet_config=fleet_config,
+        env_values=env_values,
+        next_steps=next_steps,
+    )
+
+
+def main(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(description="Interactive first-run mac fleet setup wizard.")
+    parser.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        help="Path to the home-scoped multi-fleet registry.",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+        help="Path to write caller-machine deploy env/secrets.",
+    )
+    parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
+    parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
+    parser.add_argument("--new-hub", help="Create a one-node first-hub fleet non-interactively.")
+    parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
+    parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
+    parser.add_argument("--fleet-name", default="my-fleet", help="Fleet name for --new-hub.")
+    parser.add_argument("--hub-os", default="linux", choices=["linux", "darwin"], help="Hub OS for --new-hub.")
+    parser.add_argument("--control-port", type=int, default=8789, help="Hub control plane port for --new-hub.")
+    parser.add_argument("--hub-url", default="", help="Hub URL agents should use for --new-hub.")
+    parser.add_argument("--home-channel", default="", help="Slack home channel for --new-hub.")
+    parser.add_argument("--hub-model", default="", help="Hub Hermes model selector for --new-hub.")
+    parser.add_argument(
+        "--supervisor",
+        default="auto",
+        choices=["auto", "systemd", "launchd", "supervisord"],
+        help="Default supervisor for --new-hub.",
+    )
+    parser.add_argument(
+        "--network-provider",
+        default="tailscale",
+        choices=["tailscale", "headscale", "none"],
+        help="Fleet mesh provider for --new-hub.",
+    )
+    parser.add_argument("--headscale-login-server", default="", help="Headscale login server for --new-hub.")
+    parser.add_argument("--headscale-preauth-key", default="", help="Headscale preauth key to place in env file.")
+    args = parser.parse_args(argv)
+
+    fleets_config = Path(args.fleets_config).expanduser()
+    env_file = Path(args.env_file).expanduser()
+
+    noninteractive = bool(args.new_hub)
+    if not args.force and noninteractive and any(path.exists() for path in (fleets_config, env_file)):
+        print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
+        return 2
+    if not args.force and not noninteractive:
+        for path in (fleets_config, env_file):
+            if path.exists() and not prompt_bool("Overwrite %s after making a backup?" % path, default=False):
+                print("Aborted before writing %s" % path)
+                return 2
+
+    if args.new_hub:
+        if not args.target:
+            print("--new-hub requires --target", file=sys.stderr)
+            return 2
+        hub_name = args.new_hub.strip()
+        if not hub_name:
+            print("--new-hub requires a non-empty hub name", file=sys.stderr)
+            return 2
+        hub_target = normalize_ssh_target(args.target, port=args.ssh_port)
+        host = host_from_target(hub_target)
+        hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
+        qdrant_port = 6333
+        firecrawl_port = 3002
+        tokenhub_port = 8090
+        headscale_login_server = args.headscale_login_server.strip()
+        if args.network_provider == "headscale" and not headscale_login_server:
+            print("--network-provider headscale requires --headscale-login-server", file=sys.stderr)
+            return 2
+        headscale_preauth_key_env = "MAC_DEPLOY_HEADSCALE_PREAUTHKEY"
+        fleet_config = {
+            "sample": False,
+            "fleet_name": args.fleet_name,
+            "hub_agent": hub_name,
+            "hub_url": hub_url,
+            "control_port": args.control_port,
+            "shared_services_manager_agent": hub_name,
+            "defaults": {
+                "supervisor": args.supervisor,
+                "hermes": {
+                    "slack_home_channel_name": args.home_channel.strip().lstrip("#"),
+                    "gateway_provider": "custom",
+                    "gateway_base_url": "",
+                },
+                "worker": {
+                    "mode": "heartbeat",
+                    "capabilities": _default_worker_capabilities(),
+                    "allowed_projects": "",
+                    "required_metadata": "",
+                    "require_canary": True,
+                },
+                "qdrant": {
+                    "install": "auto",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, qdrant_port),
+                    "bind_addr": "",
+                    "port": qdrant_port,
+                    "data_dir": "",
+                    "image": "docker.io/qdrant/qdrant:latest",
+                    "memory_limit": "2g",
+                },
+                "firecrawl": {
+                    "install": "auto",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, firecrawl_port),
+                    "bind_addr": "",
+                    "port": firecrawl_port,
+                },
+                "tokenhub": {
+                    "install": "auto",
+                    "required": True,
+                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
+                    "bind_addr": "",
+                    "port": tokenhub_port,
+                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
+                    "ref": "",
+                },
+                "network": {
+                    "provider": args.network_provider,
+                    "install": "auto",
+                    "hostname_prefix": "",
+                    "tailscale": {"auth_key_env": "MAC_DEPLOY_TAILSCALE_AUTH_KEY"},
+                    "headscale": {
+                        "manage": False,
+                        "login_server": headscale_login_server,
+                        "health_url": "%s/health" % headscale_login_server.rstrip("/") if headscale_login_server else "",
+                        "preauth_key_source": "env",
+                        "preauth_key_env": headscale_preauth_key_env,
+                        "port": 8080,
+                        "public_addr": "",
+                        "dns": "magicdns",
+                        "ip_prefix": "100.64.0.0/10",
+                    },
+                },
+            },
+            "agents": [
+                build_agent(
+                    name=hub_name,
+                    target=hub_target,
+                    os_kind=args.hub_os,
+                    model=args.hub_model,
+                    supervisor=args.supervisor,
+                    mode="loop",
+                    require_canary=False,
+                    control_bind_host="0.0.0.0",
+                )
+            ],
+        }
+        env_values = {
+            "MAC_DEPLOY_FLEET_CONFIG": str(ROOT / "deploy" / "fleet" / "config.yaml"),
+            "MAC_DEPLOY_FLEETS_CONFIG": str(fleets_config),
+            "MAC_DEPLOY_HUB_AGENT": hub_name,
+            "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
+            "MAC_SECRET_KEY": secrets.token_urlsafe(48),
+            "MAC_API_TOKEN": secrets.token_urlsafe(32),
+        }
+        if args.headscale_preauth_key:
+            env_values[headscale_preauth_key_env] = args.headscale_preauth_key
+        return write_generated_files(
+            args=args,
+            fleets_config=fleets_config,
+            env_file=env_file,
+            hub_name=hub_name,
+            fleet_config=fleet_config,
+            env_values=env_values,
+        )
+
+    print("mac fleet setup wizard")
+    print("Do not paste provider API keys here. Put upstream model/provider keys in TokenHub.")
+    print("")
+
+    running_locally = prompt_bool(
+        "Are you running this script on the machine being configured (hub or worker)?",
+        default=False,
+    )
+    print("")
+    print("  hub    = the control plane node (first node in a new fleet)")
+    print("  worker = an additional agent that joins an existing fleet")
+    role = prompt("Setting up a hub or a worker?", required=True, choices=["hub", "worker"])
+    print("")
+
+    if role == "worker":
+        return _setup_worker(args, fleets_config, env_file, running_locally)
+    else:
+        return _setup_hub(args, fleets_config, env_file, running_locally)
 
 
 if __name__ == "__main__":
