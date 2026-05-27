@@ -5238,6 +5238,7 @@ EOF
   if ! launchctl bootstrap "gui/$uid" "$plist"; then
     launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
   fi
+  launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
   sleep 3
   launchctl list "$MAC_LAUNCHD_LABEL" || true
   install_darwin_hermes_service "$uid"
@@ -5278,6 +5279,7 @@ EOF
   if ! launchctl bootstrap "gui/$uid" "$plist"; then
     launchctl kickstart -k "gui/$uid/$HERMES_LAUNCHD_LABEL"
   fi
+  launchctl kickstart -k "gui/$uid/$HERMES_LAUNCHD_LABEL"
   sleep 5
   launchctl list "$HERMES_LAUNCHD_LABEL" || true
 }
@@ -5317,6 +5319,7 @@ EOF
   if ! launchctl bootstrap "gui/$uid" "$plist"; then
     launchctl kickstart -k "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
   fi
+  launchctl kickstart -k "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
   sleep 3
   launchctl list "$MAC_AGENT_LAUNCHD_LABEL" || true
 }
