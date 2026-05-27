@@ -23,6 +23,15 @@ SSH_PORT_OVERRIDE="${MAC_DEPLOY_SSH_PORT:-}"
 NEW_HUB_NAME=""
 NEW_HUB_TARGET=""
 NEW_HUB_OS="${MAC_DEPLOY_NEW_HUB_OS:-linux}"
+NEW_HUB_FLEET_NAME="${MAC_DEPLOY_NEW_HUB_FLEET_NAME:-}"
+NEW_HUB_CONTROL_PORT="${MAC_DEPLOY_NEW_HUB_CONTROL_PORT:-}"
+NEW_HUB_URL="${MAC_DEPLOY_NEW_HUB_URL:-}"
+NEW_HUB_HOME_CHANNEL="${MAC_DEPLOY_NEW_HUB_HOME_CHANNEL:-}"
+NEW_HUB_MODEL="${MAC_DEPLOY_NEW_HUB_MODEL:-}"
+NEW_HUB_SUPERVISOR="${MAC_DEPLOY_NEW_HUB_SUPERVISOR:-}"
+NEW_HUB_NETWORK_PROVIDER="${MAC_DEPLOY_NEW_HUB_NETWORK_PROVIDER:-}"
+NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
+NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 
 usage() {
@@ -30,6 +39,10 @@ usage() {
 Usage:
   deploy/deploy-mac-fleet.sh --hub <hub-node> [--ssh-port <port>] [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
+                            [--fleet-name <name>] [--control-port <port>]
+                            [--hub-url <url>] [--home-channel <channel>]
+                            [--hub-model <model>] [--supervisor <kind>]
+                            [--network-provider tailscale|headscale|none]
 
 Deploy mac as the local ACC replacement to a fleet declared in
 ~/.mac/fleets.yaml, or in MAC_DEPLOY_FLEETS_CONFIG. Real fleet topology must
@@ -134,6 +147,114 @@ while [ "$#" -gt 0 ]; do
       NEW_HUB_OS="${1#--hub-os=}"
       shift
       ;;
+    --fleet-name)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --fleet-name requires a name" >&2
+        exit 2
+      fi
+      NEW_HUB_FLEET_NAME="$2"
+      shift 2
+      ;;
+    --fleet-name=*)
+      NEW_HUB_FLEET_NAME="${1#--fleet-name=}"
+      shift
+      ;;
+    --control-port)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --control-port requires a port" >&2
+        exit 2
+      fi
+      NEW_HUB_CONTROL_PORT="$2"
+      shift 2
+      ;;
+    --control-port=*)
+      NEW_HUB_CONTROL_PORT="${1#--control-port=}"
+      shift
+      ;;
+    --hub-url)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --hub-url requires a URL" >&2
+        exit 2
+      fi
+      NEW_HUB_URL="$2"
+      shift 2
+      ;;
+    --hub-url=*)
+      NEW_HUB_URL="${1#--hub-url=}"
+      shift
+      ;;
+    --home-channel)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --home-channel requires a channel" >&2
+        exit 2
+      fi
+      NEW_HUB_HOME_CHANNEL="$2"
+      shift 2
+      ;;
+    --home-channel=*)
+      NEW_HUB_HOME_CHANNEL="${1#--home-channel=}"
+      shift
+      ;;
+    --hub-model)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --hub-model requires a model" >&2
+        exit 2
+      fi
+      NEW_HUB_MODEL="$2"
+      shift 2
+      ;;
+    --hub-model=*)
+      NEW_HUB_MODEL="${1#--hub-model=}"
+      shift
+      ;;
+    --supervisor)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --supervisor requires auto, systemd, launchd, or supervisord" >&2
+        exit 2
+      fi
+      NEW_HUB_SUPERVISOR="$2"
+      shift 2
+      ;;
+    --supervisor=*)
+      NEW_HUB_SUPERVISOR="${1#--supervisor=}"
+      shift
+      ;;
+    --network-provider)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --network-provider requires tailscale, headscale, or none" >&2
+        exit 2
+      fi
+      NEW_HUB_NETWORK_PROVIDER="$2"
+      shift 2
+      ;;
+    --network-provider=*)
+      NEW_HUB_NETWORK_PROVIDER="${1#--network-provider=}"
+      shift
+      ;;
+    --headscale-login-server)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --headscale-login-server requires a URL" >&2
+        exit 2
+      fi
+      NEW_HUB_HEADSCALE_LOGIN_SERVER="$2"
+      shift 2
+      ;;
+    --headscale-login-server=*)
+      NEW_HUB_HEADSCALE_LOGIN_SERVER="${1#--headscale-login-server=}"
+      shift
+      ;;
+    --headscale-preauth-key)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --headscale-preauth-key requires a key" >&2
+        exit 2
+      fi
+      NEW_HUB_HEADSCALE_PREAUTH_KEY="$2"
+      shift 2
+      ;;
+    --headscale-preauth-key=*)
+      NEW_HUB_HEADSCALE_PREAUTH_KEY="${1#--headscale-preauth-key=}"
+      shift
+      ;;
     --)
       shift
       REQUESTED_AGENTS+=("$@")
@@ -167,6 +288,33 @@ if [ -n "$NEW_HUB_NAME" ]; then
   )
   if [ -n "$SSH_PORT_OVERRIDE" ]; then
     setup_args+=(--ssh-port "$SSH_PORT_OVERRIDE")
+  fi
+  if [ -n "$NEW_HUB_FLEET_NAME" ]; then
+    setup_args+=(--fleet-name "$NEW_HUB_FLEET_NAME")
+  fi
+  if [ -n "$NEW_HUB_CONTROL_PORT" ]; then
+    setup_args+=(--control-port "$NEW_HUB_CONTROL_PORT")
+  fi
+  if [ -n "$NEW_HUB_URL" ]; then
+    setup_args+=(--hub-url "$NEW_HUB_URL")
+  fi
+  if [ -n "$NEW_HUB_HOME_CHANNEL" ]; then
+    setup_args+=(--home-channel "$NEW_HUB_HOME_CHANNEL")
+  fi
+  if [ -n "$NEW_HUB_MODEL" ]; then
+    setup_args+=(--hub-model "$NEW_HUB_MODEL")
+  fi
+  if [ -n "$NEW_HUB_SUPERVISOR" ]; then
+    setup_args+=(--supervisor "$NEW_HUB_SUPERVISOR")
+  fi
+  if [ -n "$NEW_HUB_NETWORK_PROVIDER" ]; then
+    setup_args+=(--network-provider "$NEW_HUB_NETWORK_PROVIDER")
+  fi
+  if [ -n "$NEW_HUB_HEADSCALE_LOGIN_SERVER" ]; then
+    setup_args+=(--headscale-login-server "$NEW_HUB_HEADSCALE_LOGIN_SERVER")
+  fi
+  if [ -n "$NEW_HUB_HEADSCALE_PREAUTH_KEY" ]; then
+    setup_args+=(--headscale-preauth-key "$NEW_HUB_HEADSCALE_PREAUTH_KEY")
   fi
   python3 "${setup_args[@]}"
   REQUESTED_AGENTS=("$NEW_HUB_NAME")

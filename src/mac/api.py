@@ -376,6 +376,7 @@ class AgentRegister(BaseModel):
     resources: Dict[str, Any] = Field(default_factory=dict)
     agent_id: Optional[str] = None
     hermes_instance_id: Optional[str] = None
+    fleet_id: Optional[str] = None
     actor: str = "human"
 
 
@@ -1266,6 +1267,26 @@ def _dashboard_task(
     return detail
 
 
+def _dashboard_session(principal: TokenPrincipal) -> Dict[str, Any]:
+    scopes = sorted(principal.scopes)
+    can_write = principal.has_scope("write")
+    return {
+        "scopes": scopes,
+        "tenant_id": principal.tenant_id,
+        "agent_id": principal.agent_id,
+        "is_admin": principal.is_admin,
+        "can_read": principal.has_scope("read"),
+        "can_write": can_write,
+        "mode": (
+            "admin"
+            if principal.is_admin
+            else "read-write"
+            if can_write
+            else "read-only"
+        ),
+    }
+
+
 def _dashboard_agent_base(
     cp: ControlPlane,
     agent: Any,
@@ -1994,9 +2015,13 @@ def create_app(
         return FileResponse(ui_dir / "index.html")
 
     @app.get("/dashboard/state")
-    def dashboard_state() -> Dict[str, Any]:
+    def dashboard_state(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
         app.state.hermes_startup = build_hermes_startup_report()
-        return _dashboard_state(cp, app.state.hermes_startup)
+        model = _dashboard_state(cp, app.state.hermes_startup)
+        model["session"] = _dashboard_session(principal)
+        return model
 
     @app.get("/dashboard/service-links/tokenhub/sso", include_in_schema=False)
     def tokenhub_sso(
@@ -2430,7 +2455,17 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.require_global_fleet()
         _ensure_payload_bounded(body.resources, "agent.resources")
-        agent = cp.register_agent(**_data(body))
+        data = _data(body)
+        fleet_id = data.pop("fleet_id", None)
+        actor = str(data.get("actor") or "human")
+        agent = cp.register_agent(**data)
+        if fleet_id:
+            fleet = cp.get_fleet(str(fleet_id))
+            cp.update_fleet(
+                fleet.id,
+                agent_ids=sorted(set(fleet.agent_ids + [agent.id])),
+                actor=actor,
+            )
         payload = agent.to_dict()
         # First-registration only: surface the freshly-minted
         # attestation key so the operator can deploy it to the worker.

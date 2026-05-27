@@ -28,12 +28,14 @@ interface ApiRecord {
 interface AgentRecord extends ApiRecord {
   name: string;
   machine_id: string;
+  role_id?: string | null;
   capabilities?: string[];
   resources?: JsonObject;
   status: string;
   health_status: string;
   current_task_id?: string | null;
   last_seen_at?: string;
+  hermes_instance_id?: string | null;
 }
 
 interface MachineRecord extends ApiRecord {
@@ -126,6 +128,10 @@ interface ProjectSummary {
   cross_project_edges: JsonObject[];
   bridge_item_count: number;
   repository_count: number;
+  description?: string;
+  status?: string;
+  metadata?: JsonObject;
+  project_id?: string | null;
   record?: JsonObject | null;
 }
 
@@ -341,6 +347,16 @@ interface ServiceLinkRecord extends ApiRecord {
   credentials?: ServiceCredentialRef[];
 }
 
+interface DashboardSession {
+  scopes: string[];
+  tenant_id?: string | null;
+  agent_id?: string | null;
+  is_admin: boolean;
+  can_read: boolean;
+  can_write: boolean;
+  mode: string;
+}
+
 interface DashboardData {
   overview: {
     counts: Record<string, number>;
@@ -391,6 +407,7 @@ interface DashboardData {
   eval_runs: ApiRecord[];
   observability: ObservabilitySummary;
   hermes_startup?: HermesStartup | null;
+  session?: DashboardSession;
 }
 
 interface DashboardState {
@@ -939,6 +956,7 @@ function renderWork(): string {
 
 function renderProjects(): string {
   const data = mustData();
+  const writable = canWrite(data);
   const projects = state.projectFilter === "all"
     ? data.project_summaries
     : data.project_summaries.filter((project) => project.project === state.projectFilter);
@@ -949,24 +967,26 @@ function renderProjects(): string {
         ${data.project_summaries.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
       </select>
       <button type="button" id="clearWorkScope">Clear Scope</button>
+      ${sessionAccessBadge(data)}
     </section>
+    ${writable ? "" : `<section class="action-status">Read-only token: project fields can be inspected but not edited.</section>`}
     <section class="split">
       <div class="surface">
         <h2>Create Project</h2>
-        <form class="action-form" data-action="projectCreate">
-          <label>Name <input name="name" required></label>
-          <label>Description <textarea name="description"></textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "archived"], "active")}</label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
-          <button type="submit">Create</button>
+        <form class="action-form aligned-form" data-action="projectCreate">
+          <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
+          <label>Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
+          <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
+          <label>Metadata JSON <textarea name="metadata" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
+          <button type="submit" ${disabledAttr(!writable)}>Create</button>
         </form>
       </div>
       <div class="surface">
         <h2>Project Metrics</h2>
         <section class="metric-grid compact-metrics">
-          ${metric("Projects", data.project_summaries.length, `${projects.length} in current scope`)}
+          ${metric("Total Projects", data.project_summaries.length, "all known project keys")}
+          ${metric("Visible Projects", projects.length, state.projectFilter === "all" ? "unfiltered" : `scope: ${state.projectFilter}`)}
           ${metric("Ready Stories", projects.reduce((sum, project) => sum + project.ready_count, 0), "available for dispatch")}
-          ${metric("Blocked Stories", projects.reduce((sum, project) => sum + project.blocked_count, 0), "waiting on dependencies")}
           ${metric("Active Agents", new Set(projects.flatMap((project) => project.active_agent_ids)).size, "working in scope")}
         </section>
       </div>
@@ -974,11 +994,12 @@ function renderProjects(): string {
     <section class="surface">
       <div class="surface-heading">
         <h2>Projects</h2>
-        ${chip(`${projects.length} visible`, "info")}
+        <div class="chip-row">
+          ${chip(`${projects.length} visible`, "info")}
+          ${state.projectFilter === "all" ? "" : chip(`scope ${state.projectFilter}`, "warn")}
+        </div>
       </div>
-      <div class="record-list">
-        ${projects.length ? projects.map(projectCrudRecord).join("") : `<div class="empty-state">No projects</div>`}
-      </div>
+      ${projectTable(projects, data)}
     </section>
   `;
 }
@@ -986,6 +1007,7 @@ function renderProjects(): string {
 function renderFleets(): string {
   const data = mustData();
   const activeFleets = data.fleets.filter((fleet) => fleet.status === "active").length;
+  const selectedFleet = selectedFleetRecord(data);
   return `
     <section class="metric-grid">
       ${metric("Fleets", data.fleets.length, `${activeFleets} active`)}
@@ -993,21 +1015,15 @@ function renderFleets(): string {
       ${metric("Agents", data.agents.length, "available to assign")}
       ${metric("Machines", data.machines.length, "registered hosts")}
     </section>
+    <section class="action-status">Fleet membership is derived from agent registration. Use the Agents view to inspect each agent's fleet.</section>
     <section class="split">
-      <div class="surface">
-        <h2>Create Fleet</h2>
-        <form class="action-form" data-action="fleetCreate">
-          <label>Name <input name="name" required></label>
-          <label>Description <textarea name="description"></textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "retired"], "active")}</label>
-          <label>Agent IDs <input name="agent_ids" placeholder="agent_a,agent_b"></label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
-          <button type="submit">Create</button>
-        </form>
-      </div>
       <div class="surface">
         <h2>Fleet Topology</h2>
         ${fleetMembershipSummary(data)}
+      </div>
+      <div class="surface">
+        <h2>Selected Fleet</h2>
+        ${selectedFleet ? fleetDetail(selectedFleet, data) : `<div class="empty-state">Select a fleet to inspect members</div>`}
       </div>
     </section>
     <section class="surface">
@@ -1033,12 +1049,18 @@ function renderMap(): string {
       ${metric("Dependencies", dependencyCount, "task dependency edges")}
       ${metric("AgentBus", data.agentbus_streams.length, "recent streams")}
     </section>
-    <section class="surface">
-      <div class="surface-heading">
-        <h2>Fleet Relationship Map</h2>
-        ${chip(state.selectedId || "nothing selected", state.selectedId ? "info" : "warn")}
+    <section class="split map-split">
+      <div class="surface">
+        <div class="surface-heading">
+          <h2>Fleet Relationship Map</h2>
+          ${chip(state.selectedId || "nothing selected", state.selectedId ? "info" : "warn")}
+        </div>
+        ${relationshipGraph(data)}
       </div>
-      ${relationshipGraph(data)}
+      <div class="surface">
+        <h2>Selection</h2>
+        ${topologySelectionDetail(data)}
+      </div>
     </section>
     <section class="split">
       <div class="surface">
@@ -1065,19 +1087,16 @@ function renderAgents(): string {
   const start = (state.agentPage - 1) * AGENT_PAGE_SIZE;
   const visible = agents.slice(start, start + AGENT_PAGE_SIZE);
   const visibleIds = visible.map((item) => item.agent.id);
+  const writable = canWrite(data);
   return `
     <section class="metric-grid">
-      ${metric("Visible Agents", agents.length, `${data.agents.length} total`)}
-      ${metric("Busy", agents.filter((item) => item.agent.status === "busy").length, "in current result")}
+      ${metric("Agents", agents.length, `${data.agents.length} inventory rows`)}
+      ${metric("Healthy", agents.filter((item) => item.agent.health_status === "healthy").length, "matching agents")}
       ${metric("Blocked", agents.filter((item) => !item.availability.eligible).length, "not dispatch eligible")}
       ${metric("Page", `${state.agentPage}/${pageCount}`, `${visible.length} rows shown`)}
     </section>
     <section class="toolbar">
-      <input id="agentSearch" type="search" placeholder="Search agents, hosts, capabilities" value="${escapeHtml(state.agentQuery)}">
-      <select id="agentProjectFilter">
-        ${option("all", "All projects", state.projectFilter)}
-        ${data.project_summaries.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
-      </select>
+      <input id="agentSearch" type="search" placeholder="Search agents, fleets, hosts, health, capabilities" value="${escapeHtml(state.agentQuery)}">
       <select id="agentFilter">
         ${option("all", "All agents", state.agentFilter)}
         ${option("eligible", "Eligible", state.agentFilter)}
@@ -1091,21 +1110,28 @@ function renderAgents(): string {
       </select>
       <select id="agentSort">
         ${option("name", "Sort by name", state.agentSort)}
+        ${option("fleet", "Sort by fleet", state.agentSort)}
         ${option("status", "Sort by status", state.agentSort)}
         ${option("project", "Sort by project", state.agentSort)}
         ${option("capacity", "Sort by capacity", state.agentSort)}
         ${option("last_seen", "Sort by last seen", state.agentSort)}
       </select>
       <button type="button" id="clearAgentFilters">Clear</button>
+      ${sessionAccessBadge(data)}
     </section>
+    ${writable ? "" : `<section class="action-status">Read-only token: agent records can be inspected but not changed.</section>`}
     <section class="surface">
       <h2>Create Agent</h2>
-      <form class="action-form compact" data-action="agentCreate">
-        <label>Machine ${machineSelect("machine_id", data.machines, "")}</label>
-        <label>Name <input name="name" required></label>
-        <label>Capabilities <input name="capabilities" placeholder="python,deploy"></label>
-        <label>Resources JSON <textarea name="resources" placeholder="{}"></textarea></label>
-        <button type="submit">Create</button>
+      <form class="action-form aligned-form" data-action="agentCreate">
+        <label>Machine ${machineSelect("machine_id", data.machines, "", !writable)}</label>
+        <label>Fleet ${fleetSelect("fleet_id", data.fleets, defaultFleetId(data), !writable)}</label>
+        <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
+        <label>Agent ID <input name="agent_id" placeholder="agent_rocky" ${disabledAttr(!writable)}></label>
+        <label>Hermes Instance ID <input name="hermes_instance_id" placeholder="hermes_rocky" ${disabledAttr(!writable)}></label>
+        <label>Capabilities <input name="capabilities" placeholder="ops,python,hermes,review" ${disabledAttr(!writable)}></label>
+        <label>Resources JSON <textarea name="resources" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
+        <label>Actor <input name="actor" value="human" ${disabledAttr(!writable)}></label>
+        <button type="submit" ${disabledAttr(!writable)}>Create</button>
       </form>
     </section>
     <section class="surface">
@@ -2048,37 +2074,59 @@ function projectFrontierRecord(project: ProjectSummary): string {
   `;
 }
 
-function projectCrudRecord(project: ProjectSummary): string {
-  const record = (project.record || {}) as JsonObject;
-  const description = String(record.description || "");
-  const status = String(record.status || "active");
-  const metadata = record.metadata && typeof record.metadata === "object" ? JSON.stringify(record.metadata) : "{}";
+function projectTable(projects: ProjectSummary[], data: DashboardData): string {
+  if (!projects.length) return `<div class="empty-state">No projects</div>`;
   return `
-    <article class="record ${state.projectFilter === project.project ? "is-selected" : ""}">
-      <div class="record-header">
-        <div><h3>${escapeHtml(project.project)}</h3><p class="muted small">${project.task_count} stories, ${project.repository_count} repositories</p></div>
-        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
-      </div>
-      <div class="chip-row">
-        ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
-        ${chip(`${project.active_count} active`, project.active_count ? "warn" : "info")}
-        ${chip(`${project.blocked_count} blocked`, project.blocked_count ? "warn" : "good")}
-        ${chip(status, status === "active" ? "good" : "warn")}
-      </div>
-      <div class="record-actions">
-        <details class="row-actions edit-disclosure">
-          <summary>Edit</summary>
-        <form class="action-form" data-action="projectUpdate" data-project="${escapeHtml(project.project)}">
-          <label>Name <input name="name" value="${escapeHtml(project.project)}"></label>
-          <label>Description <textarea name="description">${escapeHtml(description)}</textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "archived"], status)}</label>
-          <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Save</button>
-        </form>
-        </details>
-        <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}">Delete</button>
-      </div>
-    </article>
+    <div class="table-wrap">
+      <table class="data-table project-table">
+        <thead>
+          <tr><th>Project</th><th>Status</th><th>Description</th><th>Metadata</th><th>Stories</th><th>Agents</th><th></th></tr>
+        </thead>
+        <tbody>${projects.map((project) => projectTableRow(project, data)).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function projectTableRow(project: ProjectSummary, data: DashboardData): string {
+  const writable = canWrite(data);
+  const durable = !!project.project_id;
+  const editable = writable && durable;
+  const formId = `project-form-${safeDomId(project.project)}`;
+  const description = String(project.description || "");
+  const status = String(project.status || (durable ? "active" : "derived"));
+  const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
+  const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata) : "{}";
+  const disabled = disabledAttr(!editable);
+  return `
+    <tr class="${state.projectFilter === project.project ? "is-selected" : ""}">
+      <td>
+        <form id="${escapeHtml(formId)}" data-action="projectUpdate" data-project="${escapeHtml(project.project)}"></form>
+        <input form="${escapeHtml(formId)}" name="name" value="${escapeHtml(project.project)}" ${disabled}>
+        <div class="chip-row">
+          ${chip(durable ? "record" : "derived", durable ? "good" : "warn")}
+          ${chip(`${project.repository_count} repos`, project.repository_count ? "info" : "warn")}
+        </div>
+      </td>
+      <td>${select("status", ["active", "inactive", "archived"], statusValue, !editable, formId)}</td>
+      <td><textarea form="${escapeHtml(formId)}" name="description" ${disabled}>${escapeHtml(description)}</textarea></td>
+      <td><textarea form="${escapeHtml(formId)}" name="metadata" ${disabled}>${escapeHtml(metadata)}</textarea></td>
+      <td>
+        <span class="mono">${project.task_count}</span>
+        <div class="chip-row">
+          ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
+          ${chip(`${project.blocked_count} blocked`, project.blocked_count ? "warn" : "good")}
+        </div>
+      </td>
+      <td>${escapeHtml(project.active_agent_names.join(", ") || "none")}</td>
+      <td>
+        <div class="table-actions">
+          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+          <button form="${escapeHtml(formId)}" type="submit" ${disabled}>Save</button>
+          <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}" ${disabled}>Delete</button>
+        </div>
+      </td>
+    </tr>
   `;
 }
 
@@ -2104,7 +2152,6 @@ function fleetMembershipSummary(data: DashboardData): string {
 function fleetRecord(fleet: FleetRecord, data: DashboardData): string {
   const agentsById = new Map(data.agents.map((item) => [item.agent.id, item.agent.name]));
   const memberNames = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
-  const metadata = fleet.metadata && typeof fleet.metadata === "object" ? JSON.stringify(fleet.metadata) : "{}";
   return `
     <article class="record ${selectedClass(fleet.id)}">
       <div class="record-header">
@@ -2121,21 +2168,60 @@ function fleetRecord(fleet: FleetRecord, data: DashboardData): string {
         ${field("Members", memberNames.join(", ") || "none")}
         ${field("Metadata", jsonSummary(fleet.metadata))}
       </div>
-      <div class="record-actions">
-        <details class="row-actions edit-disclosure">
-          <summary>Edit</summary>
-        <form class="action-form" data-action="fleetUpdate" data-fleet-id="${escapeHtml(fleet.id)}">
-          <label>Name <input name="name" value="${escapeHtml(fleet.name)}"></label>
-          <label>Description <textarea name="description">${escapeHtml(fleet.description || "")}</textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "retired"], fleet.status)}</label>
-          <label>Agent IDs <input name="agent_ids" value="${escapeHtml((fleet.agent_ids || []).join(","))}"></label>
-          <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Save</button>
-        </form>
-        </details>
-        <button class="danger-button" type="button" data-fleet-delete="${escapeHtml(fleet.id)}">Delete</button>
+    </article>
+  `;
+}
+
+function selectedFleetRecord(data: DashboardData): FleetRecord | null {
+  return data.fleets.find((fleet) => fleet.id === state.selectedId || fleet.name === state.selectedId) || null;
+}
+
+function fleetDetail(fleet: FleetRecord, data: DashboardData): string {
+  const agentsById = new Map(data.agents.map((item) => [item.agent.id, item]));
+  const members = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId)).filter(Boolean) as AgentItem[];
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(fleet.name)}</h3><p class="muted small mono">${escapeHtml(fleet.id)}</p></div>
+        ${chip(fleet.status, fleet.status === "active" ? "good" : "warn")}
+      </div>
+      <div class="row-grid">
+        ${field("Tenant", fleet.tenant_id || "global")}
+        ${field("Members", String(members.length))}
+        ${field("Description", fleet.description || "none")}
+        ${field("Metadata", jsonSummary(fleet.metadata))}
+      </div>
+      <div class="agent-list">
+        ${members.length ? members.map((item) => agentPill(item, data)).join("") : `<div class="empty-state">No members</div>`}
       </div>
     </article>
+  `;
+}
+
+function agentFleetNames(data: DashboardData, agentId: string): string[] {
+  return data.fleets
+    .filter((fleet) => (fleet.agent_ids || []).includes(agentId))
+    .map((fleet) => fleet.name || fleet.id);
+}
+
+function agentFleetLabel(data: DashboardData, agentId: string): string {
+  return agentFleetNames(data, agentId).join(", ") || "unassigned";
+}
+
+function roleLabel(data: DashboardData, roleId?: string | null): string {
+  if (!roleId) return "unassigned";
+  const role = data.roles.find((item) => item.id === roleId || item.slug === roleId);
+  if (!role) return roleId;
+  return String(role.display_name || role.name || role.slug || role.id || roleId);
+}
+
+function agentPill(item: AgentItem, data: DashboardData): string {
+  return `
+    <button class="agent-pill ${selectedClass(item.agent.id)}" type="button" data-select-id="${escapeHtml(item.agent.id)}">
+      <span class="mono">${escapeHtml(item.agent.name)}</span>
+      <span>${escapeHtml(agentFleetLabel(data, item.agent.id))}</span>
+      <span>${escapeHtml(item.agent.status)} / ${escapeHtml(item.agent.health_status)}</span>
+    </button>
   `;
 }
 
@@ -2250,29 +2336,34 @@ function filteredAgents(data: DashboardData): AgentItem[] {
   const query = state.agentQuery.trim().toLowerCase();
   const agents = data.agents.filter((item) => {
     const projects = item.active_projects || [];
+    const fleetLabel = agentFleetLabel(data, item.agent.id);
+    const role = roleLabel(data, item.agent.role_id);
     const haystack = [
       item.agent.name,
       item.agent.id,
       item.machine?.hostname || "",
+      fleetLabel,
+      role,
       item.agent.status,
       item.agent.health_status,
       ...projects,
       ...(item.agent.capabilities || []),
     ].join(" ").toLowerCase();
     const matchesQuery = !query || haystack.includes(query);
-    const matchesProject = state.projectFilter === "all" || projects.includes(state.projectFilter);
     const matchesFilter =
       state.agentFilter === "all" ||
       (state.agentFilter === "eligible" && item.availability.eligible) ||
       (state.agentFilter === "blocked" && !item.availability.eligible) ||
       item.agent.status === state.agentFilter ||
       item.agent.health_status === state.agentFilter;
-    return matchesQuery && matchesProject && matchesFilter;
+    return matchesQuery && matchesFilter;
   });
   return agents.sort(agentSort);
 }
 
 function agentSort(left: AgentItem, right: AgentItem): number {
+  const data = mustData();
+  if (state.agentSort === "fleet") return compareText(agentFleetLabel(data, left.agent.id), agentFleetLabel(data, right.agent.id)) || compareText(left.agent.name, right.agent.name);
   if (state.agentSort === "status") return compareText(`${left.agent.status} ${left.agent.name}`, `${right.agent.status} ${right.agent.name}`);
   if (state.agentSort === "project") return compareText((left.active_projects || []).join(",") || "idle", (right.active_projects || []).join(",") || "idle") || compareText(left.agent.name, right.agent.name);
   if (state.agentSort === "capacity") return (right.capacity - right.active_lease_count) - (left.capacity - left.active_lease_count) || compareText(left.agent.name, right.agent.name);
@@ -2289,7 +2380,7 @@ function agentTable(agents: AgentItem[], data: DashboardData, compact = false): 
   return `
     <div class="table-wrap">
       <table class="data-table ${compact ? "compact-table" : ""}">
-        <thead><tr><th>Agent</th><th>Project</th><th>Status</th><th>Capacity</th><th>Machine</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
+        <thead><tr><th>Agent</th><th>Fleet</th><th>Role</th><th>Project</th><th>Status</th><th>Health</th><th>Capacity</th><th>Machine</th><th>Last Seen</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
         <tbody>
           ${agents.map((item) => agentRow(item, data)).join("")}
         </tbody>
@@ -2300,13 +2391,18 @@ function agentTable(agents: AgentItem[], data: DashboardData, compact = false): 
 
 function agentRow(item: AgentItem, data: DashboardData): string {
   const task = item.active_tasks[0];
+  const writable = canWrite(data);
   return `
     <tr class="${selectedClass(item.agent.id)}">
       <td><button class="link-button mono" type="button" data-select-id="${escapeHtml(item.agent.id)}">${escapeHtml(item.agent.name)}</button><br><span class="muted small">${escapeHtml(item.agent.id)}</span></td>
+      <td>${escapeHtml(agentFleetLabel(data, item.agent.id))}</td>
+      <td>${escapeHtml(roleLabel(data, item.agent.role_id))}</td>
       <td>${escapeHtml((item.active_projects || []).join(", ") || "idle")}</td>
-      <td>${chip(item.agent.status, statusTone(item.agent.status))} ${chip(item.agent.health_status, healthTone(item.agent.health_status))}</td>
+      <td>${chip(item.agent.status, statusTone(item.agent.status))}</td>
+      <td>${chip(item.agent.health_status, healthTone(item.agent.health_status))}</td>
       <td class="mono">${item.active_lease_count} / ${item.capacity}</td>
       <td>${escapeHtml(item.machine?.hostname || "missing")}</td>
+      <td>${escapeHtml(formatAge(item.agent.last_seen_at))}</td>
       <td>${escapeHtml((item.agent.capabilities || []).slice(0, 8).join(", ") || "none")}</td>
       <td>${task ? storyButton(task) : `<span class="muted small">none</span>`}</td>
       <td>
@@ -2314,20 +2410,21 @@ function agentRow(item: AgentItem, data: DashboardData): string {
           <form class="inline-form" data-action="agentBulkUpdate">
             <input type="hidden" name="agent_ids" value="${escapeHtml(item.agent.id)}">
             <input type="hidden" name="status" value="draining">
-            <button type="submit">Drain</button>
+            <button type="submit" ${disabledAttr(!writable)}>Drain</button>
           </form>
           <details class="row-actions edit-disclosure">
             <summary>Edit</summary>
             <form class="action-form compact" data-action="agentUpdate" data-agent-id="${escapeHtml(item.agent.id)}">
-              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}"></label>
-              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status)}</label>
-              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status)}</label>
-              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}"></label>
-              <label>Resources JSON <textarea name="resources">${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
-              <button type="submit">Save</button>
+              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}" ${disabledAttr(!writable)}></label>
+              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status, !writable)}</label>
+              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status, !writable)}</label>
+              <label>Hermes Instance ID <input name="hermes_instance_id" value="${escapeHtml(item.agent.hermes_instance_id || "")}" ${disabledAttr(!writable)}></label>
+              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}" ${disabledAttr(!writable)}></label>
+              <label>Resources JSON <textarea name="resources" ${disabledAttr(!writable)}>${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
+              <button type="submit" ${disabledAttr(!writable)}>Save</button>
             </form>
           </details>
-          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}">Delete</button>
+          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}" ${disabledAttr(!writable)}>Delete</button>
         </div>
       </td>
     </tr>
@@ -2350,7 +2447,7 @@ function swarmBuckets(items: Array<{ key: string; count: number }>): string {
   `;
 }
 
-function agentCard(item: AgentItem): string {
+function agentCard(item: AgentItem, data: DashboardData): string {
   const agent = item.agent;
   const machine = item.machine;
   const reasons = item.availability.eligible
@@ -2363,10 +2460,13 @@ function agentCard(item: AgentItem): string {
         <div class="chip-row">${chip(agent.status, statusTone(agent.status))}${chip(agent.health_status, healthTone(agent.health_status))}<button class="link-button" type="button" data-select-id="${escapeHtml(agent.id)}">Select</button></div>
       </div>
       <div class="row-grid">
+        ${field("Fleet", agentFleetLabel(data, agent.id))}
+        ${field("Role", roleLabel(data, agent.role_id))}
         ${field("Machine", machine?.hostname || "missing")}
         ${field("Trusted", machine?.trusted ? "yes" : "no")}
         ${field("Last seen", formatAge(agent.last_seen_at))}
         ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Hermes", agent.hermes_instance_id || "unbound")}
         ${field("Current task", item.active_tasks[0]?.title || agent.current_task_id || "none")}
         ${field("Capabilities", (agent.capabilities || []).join(", ") || "none")}
         ${field("Resources", jsonSummary(agent.resources))}
@@ -2830,13 +2930,6 @@ function bindViewControls(): void {
     updateUrlState();
     render();
   });
-  const agentProjectFilter = document.querySelector<HTMLSelectElement>("#agentProjectFilter");
-  if (agentProjectFilter) agentProjectFilter.addEventListener("change", (event) => {
-    state.projectFilter = (event.target as HTMLSelectElement).value;
-    state.agentPage = 1;
-    updateUrlState();
-    render();
-  });
   const agentFilter = document.querySelector<HTMLSelectElement>("#agentFilter");
   if (agentFilter) agentFilter.addEventListener("change", (event) => {
     state.agentFilter = (event.target as HTMLSelectElement).value;
@@ -2949,16 +3042,6 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
     });
     return;
   }
-  const fleetDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-fleet-delete]");
-  if (fleetDelete) {
-    event.preventDefault();
-    const fleetId = fleetDelete.dataset.fleetDelete || "";
-    if (!fleetId) return;
-    await runDirectDelete(fleetDelete, "Fleet", `/fleets/${encodeURIComponent(fleetId)}`, () => {
-      if (state.selectedId === fleetId) state.selectedId = "";
-    });
-    return;
-  }
   const agentDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-agent-delete]");
   if (agentDelete) {
     event.preventDefault();
@@ -2991,7 +3074,7 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
   if (bucketTarget) {
     const value = bucketTarget.dataset.agentFilterValue || "";
     if (value && value !== "idle") {
-      state.projectFilter = value;
+      state.agentQuery = value;
       state.activeView = "agents";
       state.agentPage = 1;
       updateUrlState();
@@ -3125,30 +3208,16 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       stale_after_seconds: optionalNumber(values.stale_after_seconds),
     });
   }
-  if (action === "fleetCreate") {
-    return postJSON("/fleets", {
-      name: requiredString(values.name),
-      description: String(values.description || ""),
-      status: requiredString(values.status),
-      agent_ids: csvList(values.agent_ids),
-      metadata: parseJsonObject(values.metadata),
-    });
-  }
-  if (action === "fleetUpdate") {
-    return putJSON(`/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}`, {
-      name: requiredString(values.name),
-      description: String(values.description || ""),
-      status: requiredString(values.status),
-      agent_ids: csvList(values.agent_ids),
-      metadata: parseJsonObject(values.metadata),
-    });
-  }
   if (action === "agentCreate") {
     return postJSON("/agents", {
       machine_id: requiredString(values.machine_id),
       name: requiredString(values.name),
+      agent_id: emptyToNull(values.agent_id),
+      hermes_instance_id: emptyToNull(values.hermes_instance_id),
+      fleet_id: emptyToNull(values.fleet_id),
       capabilities: csvList(values.capabilities),
       resources: parseJsonObject(values.resources),
+      actor: String(values.actor || "human"),
     });
   }
   if (action === "agentUpdate") {
@@ -3156,6 +3225,7 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       name: requiredString(values.name),
       status: requiredString(values.status),
       health_status: requiredString(values.health_status),
+      hermes_instance_id: emptyToNull(values.hermes_instance_id),
       capabilities: csvList(values.capabilities),
       resources: parseJsonObject(values.resources),
     });
@@ -3433,6 +3503,87 @@ function graphNode(id: string, label: string, kind: string, x: number, y: number
   return { id, label, kind, x, y };
 }
 
+function topologySelectionDetail(data: DashboardData): string {
+  const id = state.selectedId;
+  if (!id) return `<div class="empty-state">Select a topology node</div>`;
+  const fleet = data.fleets.find((item) => item.id === id || item.name === id);
+  if (fleet) return fleetDetail(fleet, data);
+  const machine = data.machines.find((item) => item.id === id || item.hostname === id);
+  if (machine) return machineSelectionDetail(machine, data);
+  const agent = data.agents.find((item) => item.agent.id === id || item.agent.name === id);
+  if (agent) return agentSelectionDetail(agent, data);
+  const task = data.tasks.find((item) => item.task.id === id);
+  if (task) return taskSelectionDetail(task, data);
+  return `<div class="empty-state">No dashboard record found for ${escapeHtml(id)}</div>`;
+}
+
+function machineSelectionDetail(machine: MachineRecord, data: DashboardData): string {
+  const agents = data.agents.filter((item) => item.agent.machine_id === machine.id);
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(machine.hostname)}</h3><p class="muted small mono">${escapeHtml(machine.id)}</p></div>
+        ${chip(machine.trusted ? "trusted" : "untrusted", machine.trusted ? "good" : "bad")}
+      </div>
+      <div class="row-grid">
+        ${field("Agents", String(agents.length))}
+        ${field("Labels", jsonSummary(machine.labels))}
+        ${field("Resources", jsonSummary(machine.resources))}
+      </div>
+      <div class="agent-list">
+        ${agents.length ? agents.map((item) => agentPill(item, data)).join("") : `<div class="empty-state">No agents on this machine</div>`}
+      </div>
+    </article>
+  `;
+}
+
+function agentSelectionDetail(item: AgentItem, data: DashboardData): string {
+  const agent = item.agent;
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(agent.name)}</h3><p class="muted small mono">${escapeHtml(agent.id)}</p></div>
+        <div class="chip-row">${chip(agent.status, statusTone(agent.status))}${chip(agent.health_status, healthTone(agent.health_status))}</div>
+      </div>
+      <div class="row-grid">
+        ${field("Type", "agent record")}
+        ${field("Fleet", agentFleetLabel(data, agent.id))}
+        ${field("Role", roleLabel(data, agent.role_id))}
+        ${field("Machine", item.machine?.hostname || "missing")}
+        ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Last seen", formatAge(agent.last_seen_at))}
+        ${field("Hermes", agent.hermes_instance_id || "unbound")}
+        ${field("Projects", (item.active_projects || []).join(", ") || "idle")}
+        ${field("Capabilities", (agent.capabilities || []).join(", ") || "none")}
+        ${field("Resources", jsonSummary(agent.resources))}
+      </div>
+      <div class="story-stack">
+        ${item.active_tasks.length ? item.active_tasks.map((task) => storyButton(task)).join("") : `<div class="empty-state">No active task</div>`}
+      </div>
+    </article>
+  `;
+}
+
+function taskSelectionDetail(detail: TaskDetail, data: DashboardData): string {
+  const task = detail.task;
+  const owner = task.owner_agent_id ? data.agents.find((item) => item.agent.id === task.owner_agent_id) : null;
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(task.title)}</h3><p class="muted small mono">${escapeHtml(task.id)}</p></div>
+        ${chip(task.state, statusTone(task.state))}
+      </div>
+      <div class="row-grid">
+        ${field("Project", taskProject(task))}
+        ${field("Priority", `P${task.priority || 0}`)}
+        ${field("Owner", owner?.agent.name || task.owner_agent_id || "unassigned")}
+        ${field("Dependencies", String((task.dependencies || []).length))}
+        ${field("Required", (task.required_capabilities || []).join(", ") || "none")}
+      </div>
+    </article>
+  `;
+}
+
 function metric(label: string, value: unknown, note: string): string {
   return `<div class="metric"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div><p class="metric-note">${escapeHtml(note)}</p></div>`;
 }
@@ -3511,6 +3662,25 @@ function commandAuditRecord(item: CommandAuditRecord): string {
   `;
 }
 
+function canWrite(data: DashboardData): boolean {
+  return !!data.session?.can_write || !!data.session?.is_admin;
+}
+
+function sessionAccessBadge(data: DashboardData): string {
+  const session = data.session;
+  if (!session) return `<div class="chip-row">${chip("access unknown", "warn")}</div>`;
+  const scopes = session.scopes.length ? session.scopes.join(",") : "open-dev";
+  return `<div class="chip-row">${chip(session.mode || "unknown", session.can_write ? "good" : "warn")}${chip(`scopes ${scopes}`, "info")}</div>`;
+}
+
+function disabledAttr(disabled: boolean): string {
+  return disabled ? "disabled" : "";
+}
+
+function safeDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_") || "item";
+}
+
 function uniqueObservations(items: ObservabilityEvent[]): ObservabilityEvent[] {
   const seen = new Set<number>();
   const unique: ObservabilityEvent[] = [];
@@ -3546,16 +3716,25 @@ function timelineItem(eventType: string, actor: string, createdAt: string): stri
   return `<div class="timeline-item"><span class="mono small">${escapeHtml(labelize(eventType))}</span><br><span class="muted small">${escapeHtml(actor)} ${escapeHtml(formatAge(createdAt))}</span></div>`;
 }
 
-function agentSelect(name: string, agents: AgentItem[], selected: string): string {
-  return `<select name="${escapeHtml(name)}"><option value="">Select agent</option>${agents.map((item) => option(item.agent.id, item.agent.name, selected)).join("")}</select>`;
+function agentSelect(name: string, agents: AgentItem[], selected: string, disabled = false): string {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select agent</option>${agents.map((item) => option(item.agent.id, item.agent.name, selected)).join("")}</select>`;
 }
 
-function machineSelect(name: string, machines: MachineRecord[], selected: string): string {
-  return `<select name="${escapeHtml(name)}"><option value="">Select machine</option>${machines.map((machine) => option(machine.id, machine.hostname, selected)).join("")}</select>`;
+function machineSelect(name: string, machines: MachineRecord[], selected: string, disabled = false): string {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select machine</option>${machines.map((machine) => option(machine.id, machine.hostname, selected)).join("")}</select>`;
 }
 
-function select(name: string, values: string[], selected: string): string {
-  return `<select name="${escapeHtml(name)}">${values.map((value) => option(value, labelize(value), selected)).join("")}</select>`;
+function fleetSelect(name: string, fleets: FleetRecord[], selected: string, disabled = false): string {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">No fleet</option>${fleets.map((fleet) => option(fleet.id, fleet.name, selected)).join("")}</select>`;
+}
+
+function defaultFleetId(data: DashboardData): string {
+  return data.fleets.length === 1 ? data.fleets[0].id : "";
+}
+
+function select(name: string, values: string[], selected: string, disabled = false, formId = ""): string {
+  const attrs = `${formId ? ` form="${escapeHtml(formId)}"` : ""}${disabled ? " disabled" : ""}`;
+  return `<select name="${escapeHtml(name)}"${attrs}>${values.map((value) => option(value, labelize(value), selected)).join("")}</select>`;
 }
 
 function option(value: string, label: string, selected: string): string {

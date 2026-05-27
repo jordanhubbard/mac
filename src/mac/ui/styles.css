@@ -406,6 +406,10 @@ h3 {
   gap: 18px;
 }
 
+.map-split {
+  grid-template-columns: minmax(520px, 1.35fr) minmax(320px, 0.65fr);
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -431,6 +435,11 @@ h3 {
 
 .action-form.compact {
   grid-template-columns: repeat(3, minmax(120px, 1fr));
+}
+
+.action-form.aligned-form {
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  align-items: end;
 }
 
 .action-form label {
@@ -640,8 +649,33 @@ details.action-box summary {
   text-transform: uppercase;
 }
 
+.data-table input,
+.data-table select,
+.data-table textarea {
+  width: 100%;
+  min-width: 140px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.data-table textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+.project-table {
+  min-width: 1180px;
+}
+
+.project-table td:first-child {
+  min-width: 190px;
+}
+
 .compact-table {
-  min-width: 760px;
+  min-width: 960px;
 }
 
 .inline-form {

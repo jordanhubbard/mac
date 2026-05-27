@@ -402,6 +402,35 @@ def test_default_review_tick_requires_admin_not_write():
     assert allowed.status_code == 200
 
 
+def test_dashboard_state_exposes_session_scope_capabilities():
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={"reader": ["read"], "writer": ["read", "write"], "admin": ["admin"]},
+        )
+    )
+
+    reader = client.get(
+        "/dashboard/state",
+        headers={"Authorization": "Bearer reader"},
+    ).json()
+    writer = client.get(
+        "/dashboard/state",
+        headers={"Authorization": "Bearer writer"},
+    ).json()
+    admin = client.get(
+        "/dashboard/state",
+        headers={"Authorization": "Bearer admin"},
+    ).json()
+
+    assert reader["session"]["mode"] == "read-only"
+    assert reader["session"]["can_write"] is False
+    assert writer["session"]["mode"] == "read-write"
+    assert writer["session"]["can_write"] is True
+    assert admin["session"]["mode"] == "admin"
+    assert admin["session"]["is_admin"] is True
+
+
 def test_auth_tokens_support_hashed_at_rest_form():
     """mac-glh0: operators can configure tokens as ``sha256:<hex>``
     digests of the live token so a leaked env file doesn't expose the
@@ -941,6 +970,29 @@ def test_registration_payloads_are_size_capped():
     assert task_response.status_code == 400
 
 
+def test_agent_registration_can_attach_created_agent_to_existing_fleet():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    machine = client.post("/machines", json={"hostname": "host-1"}).json()
+    fleet = client.post("/fleets", json={"name": "mac"}).json()
+    agent = client.post(
+        "/agents",
+        json={
+            "machine_id": machine["id"],
+            "name": "rocky",
+            "agent_id": "agent_rocky",
+            "hermes_instance_id": None,
+            "fleet_id": fleet["id"],
+            "capabilities": ["python", "review"],
+            "resources": {"workspace": "/home/rocky/.mac"},
+        },
+    ).json()
+
+    assert agent["id"] == "agent_rocky"
+    refreshed = client.get("/fleets/%s" % fleet["id"]).json()
+    assert refreshed["agent_ids"] == ["agent_rocky"]
+
+
 def test_fastapi_serves_dashboard_shell_without_api_token():
     client = TestClient(
         create_app(
@@ -1007,6 +1059,8 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     state = client.get("/dashboard/state").json()
     assert state["overview"]["counts"]["agents"] == 1
     assert state["dispatch"]["open_task_count"] == 1
+    assert state["session"]["mode"] == "admin"
+    assert state["session"]["can_write"] is True
     assert state["dispatch"]["tasks"][0]["eligible_agent_count"] == 1
     assert state["tasks"][0]["task"]["id"] == task["id"]
     assert state["hermes_startup"]["operator_health"]["status"] in {"healthy", "degraded"}
@@ -1774,19 +1828,21 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "[data-project-focus]" in app_js
     for delete_marker in [
         "data-project-delete",
-        "data-fleet-delete",
         "data-agent-delete",
         "data-task-delete",
         "[data-project-delete]",
-        "[data-fleet-delete]",
         "[data-agent-delete]",
         "[data-task-delete]",
     ]:
         assert delete_marker in app_js
+    assert "data-fleet-delete" not in app_js
+    assert "[data-fleet-delete]" not in app_js
     assert 'closest("[data-project]")' not in app_js
     assert "Project CRUD" not in app_js
-    assert 'data-action="fleetCreate"' in app_js
-    assert 'data-action="fleetUpdate"' in app_js
+    assert 'data-action="fleetCreate"' not in app_js
+    assert 'data-action="fleetUpdate"' not in app_js
+    assert "fleetCreate" not in app_js
+    assert "fleetUpdate" not in app_js
     assert 'data-action="agentCreate"' in app_js
     assert 'data-action="agentUpdate"' in app_js
     assert 'data-action="taskCreate"' in app_js
@@ -1795,6 +1851,11 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert 'data-action="projectUpdate"' in app_js
     assert "putJSON" in app_js
     assert "deleteJSON" in app_js
+    assert "sessionAccessBadge" in app_js
+    assert "agentFleetLabel" in app_js
+    assert "topologySelectionDetail" in app_js
+    assert "Hermes Instance ID" in app_js
+    assert "Read-only token" in app_js
     assert "renderWorkflows" in app_js
     assert "workflowGraph" in app_js
     assert "hermes_runtime_proofs" in app_js

@@ -636,6 +636,19 @@ def test_setup_fleet_wizard_new_hub_is_noninteractive_and_custom_port_aware(tmp_
     assert "MAC_SECRET_KEY=" in env_file.read_text(encoding="utf-8")
 
 
+def test_setup_sh_new_hub_path_delegates_to_deploy_wrapper():
+    script = (ROOT / "setup.sh").read_text(encoding="utf-8")
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    assert "deploy/deploy-mac-fleet.sh" in script
+    assert "--new-hub|--new-hub=*" in script
+    assert "--configure-only|--no-deploy" in script
+    assert "--fleet-name)" in deploy
+    assert "setup_args+=(--fleet-name" in deploy
+    assert "setup_args+=(--control-port" in deploy
+    assert "setup_args+=(--network-provider" in deploy
+
+
 def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     cleanup_plan = "\n".join(cleanup_path_strings(Path.home(), Path.home() / ".mac"))

@@ -1,431 +1,360 @@
 // Browser output for app.ts. Keep this file checked in so mac does not need a
 // Node.js/npm frontend toolchain to serve the dashboard.
 import { createDashboardApi } from "./dashboard_api.js";
-"use strict";
 const TOKEN_KEY = "mac.dashboard.token";
 const TASK_STATES = [
-    "open",
-    "blocked",
-    "claimed",
-    "running",
-    "needs_review",
-    "reviewing",
-    "completed",
-    "failed",
-    "cancelled",
+  "open",
+  "blocked",
+  "claimed",
+  "running",
+  "needs_review",
+  "reviewing",
+  "completed",
+  "failed",
+  "cancelled"
 ];
-const TERMINAL_TASK_STATES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_TASK_STATES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
 const AUDIT_SUBJECT_TYPES = [
-    "",
-    "task",
-    "agent",
-    "project",
-    "fleet",
-    "rollout",
-    "eval_set",
-    "secret",
-    "environment",
-    "conversation_thread",
-    "vector_ref",
+  "",
+  "task",
+  "agent",
+  "project",
+  "fleet",
+  "rollout",
+  "eval_set",
+  "secret",
+  "environment",
+  "conversation_thread",
+  "vector_ref"
 ];
 const OBSERVABILITY_LEVELS = ["", "debug", "info", "warning", "error", "critical"];
 const AGENT_PAGE_SIZE = 50;
 const VIEW_TITLES = {
-    overview: "Overview",
-    work: "Work",
-    projects: "Projects",
-    map: "Map",
-    fleets: "Fleets",
-    agents: "Agents",
-    tasks: "Tasks",
-    workflows: "Workflows",
-    hermes: "Hermes",
-    ops: "Operations",
-    integrations: "Integrations",
-    runtime: "Runtime",
-    observability: "Observability",
-    secrets: "Secrets",
+  overview: "Overview",
+  work: "Work",
+  projects: "Projects",
+  map: "Map",
+  fleets: "Fleets",
+  agents: "Agents",
+  tasks: "Tasks",
+  workflows: "Workflows",
+  hermes: "Hermes",
+  ops: "Operations",
+  integrations: "Integrations",
+  runtime: "Runtime",
+  observability: "Observability",
+  secrets: "Secrets"
 };
 const VIEW_KEYS = new Set(Object.keys(VIEW_TITLES));
 const DEFAULT_URL_STATE = readUrlState();
-// Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
 (function bootstrapTokenFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const t = params.get("t");
-    if (t) {
-        sessionStorage.setItem(TOKEN_KEY, t);
-        params.delete("t");
-        const newSearch = params.toString();
-        const newUrl = window.location.pathname + (newSearch ? "?" + newSearch : "") + window.location.hash;
-        history.replaceState(null, "", newUrl);
-    }
+  const params = new URLSearchParams(window.location.search);
+  const t = params.get("t");
+  if (t) {
+    sessionStorage.setItem(TOKEN_KEY, t);
+    params.delete("t");
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? "?" + newSearch : "") + window.location.hash;
+    history.replaceState(null, "", newUrl);
+  }
 })();
 const state = {
-    activeView: DEFAULT_URL_STATE.activeView,
-    token: sessionStorage.getItem(TOKEN_KEY) || "",
-    loading: false,
-    loadedAt: null,
-    data: null,
-    error: null,
-    actionMessage: null,
-    agentQuery: DEFAULT_URL_STATE.agentQuery,
-    agentFilter: DEFAULT_URL_STATE.agentFilter,
-    agentSort: DEFAULT_URL_STATE.agentSort,
-    agentPage: DEFAULT_URL_STATE.agentPage,
-    projectFilter: DEFAULT_URL_STATE.projectFilter,
-    taskFilter: DEFAULT_URL_STATE.taskFilter,
-    selectedId: DEFAULT_URL_STATE.selectedId,
-    auditSubjectType: DEFAULT_URL_STATE.auditSubjectType,
-    auditSubjectId: DEFAULT_URL_STATE.auditSubjectId,
-    auditEventPrefix: DEFAULT_URL_STATE.auditEventPrefix,
-    auditActor: DEFAULT_URL_STATE.auditActor,
-    auditLayer: DEFAULT_URL_STATE.auditLayer,
-    auditLevel: DEFAULT_URL_STATE.auditLevel,
-    auditAgentId: DEFAULT_URL_STATE.auditAgentId,
-    auditTaskId: DEFAULT_URL_STATE.auditTaskId,
-    auditProject: DEFAULT_URL_STATE.auditProject,
-    auditFleet: DEFAULT_URL_STATE.auditFleet,
-    auditSince: DEFAULT_URL_STATE.auditSince,
-    auditUntil: DEFAULT_URL_STATE.auditUntil,
-    observabilityLive: [],
-    observabilityStream: null,
-    observabilityStreamStatus: "idle",
+  activeView: DEFAULT_URL_STATE.activeView,
+  token: sessionStorage.getItem(TOKEN_KEY) || "",
+  loading: false,
+  loadedAt: null,
+  data: null,
+  error: null,
+  actionMessage: null,
+  agentQuery: DEFAULT_URL_STATE.agentQuery,
+  agentFilter: DEFAULT_URL_STATE.agentFilter,
+  agentSort: DEFAULT_URL_STATE.agentSort,
+  agentPage: DEFAULT_URL_STATE.agentPage,
+  projectFilter: DEFAULT_URL_STATE.projectFilter,
+  taskFilter: DEFAULT_URL_STATE.taskFilter,
+  selectedId: DEFAULT_URL_STATE.selectedId,
+  auditSubjectType: DEFAULT_URL_STATE.auditSubjectType,
+  auditSubjectId: DEFAULT_URL_STATE.auditSubjectId,
+  auditEventPrefix: DEFAULT_URL_STATE.auditEventPrefix,
+  auditActor: DEFAULT_URL_STATE.auditActor,
+  auditLayer: DEFAULT_URL_STATE.auditLayer,
+  auditLevel: DEFAULT_URL_STATE.auditLevel,
+  auditAgentId: DEFAULT_URL_STATE.auditAgentId,
+  auditTaskId: DEFAULT_URL_STATE.auditTaskId,
+  auditProject: DEFAULT_URL_STATE.auditProject,
+  auditFleet: DEFAULT_URL_STATE.auditFleet,
+  auditSince: DEFAULT_URL_STATE.auditSince,
+  auditUntil: DEFAULT_URL_STATE.auditUntil,
+  observabilityLive: [],
+  observabilityStream: null,
+  observabilityStreamStatus: "idle"
 };
 const nodes = {
-    nav: requiredElement("#viewNav"),
-    title: requiredElement("#viewTitle"),
-    banner: requiredElement("#banner"),
-    content: requiredElement("#content"),
-    refresh: requiredElement("#refreshButton"),
-    syncState: requiredElement("#syncState"),
-    tokenForm: requiredElement("#tokenForm"),
-    tokenInput: requiredElement("#tokenInput"),
-    clearToken: requiredElement("#clearTokenButton"),
-    loginScreen: requiredElement("#loginScreen"),
-    loginForm: requiredElement("#loginForm"),
-    loginTokenInput: requiredElement("#loginTokenInput"),
-    serviceLinks: requiredElement("#serviceLinks"),
+  nav: requiredElement("#viewNav"),
+  title: requiredElement("#viewTitle"),
+  banner: requiredElement("#banner"),
+  content: requiredElement("#content"),
+  refresh: requiredElement("#refreshButton"),
+  syncState: requiredElement("#syncState"),
+  tokenForm: requiredElement("#tokenForm"),
+  tokenInput: requiredElement("#tokenInput"),
+  clearToken: requiredElement("#clearTokenButton"),
+  loginScreen: requiredElement("#loginScreen"),
+  loginForm: requiredElement("#loginForm"),
+  loginTokenInput: requiredElement("#loginTokenInput"),
+  serviceLinks: requiredElement("#serviceLinks")
 };
 const api = createDashboardApi(() => state.token);
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
 bindEvents();
 if (state.token) {
-    hideLoginScreen();
-    loadDashboard();
-}
-else {
-    showLoginScreen(false);
+  hideLoginScreen();
+  loadDashboard();
+} else {
+  showLoginScreen(false);
 }
 function bindEvents() {
-    nodes.nav.addEventListener("click", (event) => {
-        const button = event.target?.closest("[data-view]");
-        if (!button)
-            return;
-        state.activeView = (button.dataset.view || "overview");
-        state.actionMessage = null;
-        updateUrlState();
-        render();
-    });
-    nodes.refresh.addEventListener("click", () => loadDashboard());
-    nodes.content.addEventListener("click", handleContentClick);
-    nodes.content.addEventListener("submit", handleActionSubmit);
-    nodes.loginForm.addEventListener("submit", (event) => {
-        event.preventDefault();
-        const token = nodes.loginTokenInput.value.trim();
-        if (!token)
-            return;
-        state.token = token;
-        sessionStorage.setItem(TOKEN_KEY, token);
-        nodes.tokenInput.value = token;
-        hideLoginScreen();
-        loadDashboard();
-    });
-    nodes.tokenForm.addEventListener("submit", (event) => {
-        event.preventDefault();
-        state.token = nodes.tokenInput.value.trim();
-        if (state.token)
-            sessionStorage.setItem(TOKEN_KEY, state.token);
-        else
-            sessionStorage.removeItem(TOKEN_KEY);
-        if (state.token)
-            hideLoginScreen();
-        else
-            showLoginScreen();
-        if (state.token)
-            loadDashboard();
-    });
-    nodes.clearToken.addEventListener("click", () => {
-        state.token = "";
-        nodes.tokenInput.value = "";
-        nodes.loginTokenInput.value = "";
-        sessionStorage.removeItem(TOKEN_KEY);
-        showLoginScreen();
-    });
-    nodes.serviceLinks.addEventListener("click", async (event) => {
-        const btn = event.target?.closest("[data-service-id]");
-        if (!btn || btn.hasAttribute("disabled"))
-            return;
-        const serviceId = btn.dataset.serviceId || "";
-        const directUrl = btn.dataset.url || "";
-        if (btn.dataset.passThrough === "1" && serviceId) {
-            btn.setAttribute("disabled", "");
-            try {
-                const result = (await requestJSON(`/dashboard/service-links/${serviceId}/navigate`));
-                window.open(result.url, "_blank", "noreferrer");
-            }
-            catch {
-                if (directUrl)
-                    window.open(directUrl, "_blank", "noreferrer");
-            }
-            finally {
-                btn.removeAttribute("disabled");
-            }
-        }
-        else if (directUrl) {
-            window.open(directUrl, "_blank", "noreferrer");
-        }
-    });
+  nodes.nav.addEventListener("click", (event) => {
+    const button = event.target?.closest("[data-view]");
+    if (!button) return;
+    state.activeView = button.dataset.view || "overview";
+    state.actionMessage = null;
+    updateUrlState();
+    render();
+  });
+  nodes.refresh.addEventListener("click", () => loadDashboard());
+  nodes.content.addEventListener("click", handleContentClick);
+  nodes.content.addEventListener("submit", handleActionSubmit);
+  nodes.loginForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const token = nodes.loginTokenInput.value.trim();
+    if (!token) return;
+    state.token = token;
+    sessionStorage.setItem(TOKEN_KEY, token);
+    nodes.tokenInput.value = token;
+    hideLoginScreen();
+    loadDashboard();
+  });
+  nodes.tokenForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.token = nodes.tokenInput.value.trim();
+    if (state.token) sessionStorage.setItem(TOKEN_KEY, state.token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+    if (state.token) hideLoginScreen();
+    else showLoginScreen();
+    if (state.token) loadDashboard();
+  });
+  nodes.clearToken.addEventListener("click", () => {
+    state.token = "";
+    nodes.tokenInput.value = "";
+    nodes.loginTokenInput.value = "";
+    sessionStorage.removeItem(TOKEN_KEY);
+    showLoginScreen();
+  });
+  nodes.serviceLinks.addEventListener("click", async (event) => {
+    const btn = event.target?.closest("[data-service-id]");
+    if (!btn || btn.hasAttribute("disabled")) return;
+    const serviceId = btn.dataset.serviceId || "";
+    const directUrl = btn.dataset.url || "";
+    if (btn.dataset.passThrough === "1" && serviceId) {
+      btn.setAttribute("disabled", "");
+      try {
+        const result = await requestJSON(`/dashboard/service-links/${serviceId}/navigate`);
+        window.open(result.url, "_blank", "noreferrer");
+      } catch {
+        if (directUrl) window.open(directUrl, "_blank", "noreferrer");
+      } finally {
+        btn.removeAttribute("disabled");
+      }
+    } else if (directUrl) {
+      window.open(directUrl, "_blank", "noreferrer");
+    }
+  });
 }
 async function loadDashboard() {
-    if (!state.token) {
-        state.error = "403 missing bearer token";
-        showLoginScreen();
-        render();
-        return;
+  if (!state.token) {
+    state.error = "403 missing bearer token";
+    showLoginScreen();
+    render();
+    return;
+  }
+  state.loading = true;
+  state.error = null;
+  renderSyncState();
+  try {
+    state.data = await requestJSON("/dashboard/state");
+    state.loadedAt = /* @__PURE__ */ new Date();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : String(error);
+    if (isAuthError(state.error)) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      showLoginScreen();
     }
-    state.loading = true;
-    state.error = null;
-    renderSyncState();
-    try {
-        state.data = (await requestJSON("/dashboard/state"));
-        state.loadedAt = new Date();
-    }
-    catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
-        if (isAuthError(state.error)) {
-            sessionStorage.removeItem(TOKEN_KEY);
-            showLoginScreen();
-        }
-    }
-    finally {
-        state.loading = false;
-        render();
-    }
+  } finally {
+    state.loading = false;
+    render();
+  }
 }
 async function requestJSON(path, init = {}) {
-    return api.request(path, init);
+  return api.request(path, init);
 }
 function renderServiceLinksSidebar(services) {
-    const visible = services.filter((s) => s.url || s.ui_url);
-    if (!visible.length)
-        return "";
-    return `
+  const visible = services.filter((s) => s.url || s.ui_url);
+  if (!visible.length) return "";
+  return `
     <span class="service-link-label">Services</span>
     ${visible.map((service) => {
-        const hasPassThrough = !!(service.auth?.credential_pass_through);
-        const directUrl = service.ui_url || service.url || "";
-        const tone = healthTone(service.status);
-        return `<button class="service-link-btn" type="button"
+    const hasPassThrough = !!service.auth?.credential_pass_through;
+    const directUrl = service.ui_url || service.url || "";
+    const tone = healthTone(service.status);
+    return `<button class="service-link-btn" type="button"
         data-service-id="${escapeHtml(service.id)}"
         data-url="${escapeHtml(directUrl)}"
         data-pass-through="${hasPassThrough ? "1" : "0"}"
         title="${escapeHtml(service.role)}"
       ><span>${escapeHtml(service.name)}</span>${chip(service.status || "unknown", tone)}</button>`;
-    }).join("")}
+  }).join("")}
   `;
 }
 function render() {
-    document.querySelectorAll("[data-view]").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.view === state.activeView);
-    });
-    nodes.title.textContent = VIEW_TITLES[state.activeView];
-    renderSyncState();
-    renderBanner();
-    if (state.data) {
-        nodes.serviceLinks.hidden = false;
-        nodes.serviceLinks.innerHTML = renderServiceLinksSidebar(state.data.service_links || []);
-    }
-    if (state.loading && !state.data) {
-        nodes.content.innerHTML = `<div class="empty-state">Loading</div>`;
-        return;
-    }
-    if (!state.data) {
-        nodes.content.innerHTML = `<div class="empty-state">No dashboard data</div>`;
-        return;
-    }
-    const action = state.actionMessage ? `<div class="action-status">${escapeHtml(state.actionMessage)}</div>` : "";
-    const body = state.activeView === "work"
-        ? renderWork()
-        : state.activeView === "projects"
-            ? renderProjects()
-        : state.activeView === "map"
-            ? renderMap()
-            : state.activeView === "fleets"
-                ? renderFleets()
-                : state.activeView === "agents"
-                    ? renderAgents()
-                    : state.activeView === "tasks"
-                        ? renderTasks()
-                        : state.activeView === "workflows"
-                            ? renderWorkflows()
-                            : state.activeView === "hermes"
-                                ? renderHermes()
-                                : state.activeView === "ops"
-                                    ? renderOperations()
-                                    : state.activeView === "integrations"
-                                        ? renderIntegrations()
-                                        : state.activeView === "runtime"
-                                            ? renderRuntime()
-                                            : state.activeView === "observability"
-                                                ? renderObservability()
-                                                : state.activeView === "secrets"
-                                                    ? renderSecrets()
-                                                    : renderOverview();
-    nodes.content.innerHTML = `${action}${body}`;
-    bindViewControls();
-    syncObservabilitySubscription();
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.view === state.activeView);
+  });
+  nodes.title.textContent = VIEW_TITLES[state.activeView];
+  renderSyncState();
+  renderBanner();
+  if (state.data) {
+    nodes.serviceLinks.hidden = false;
+    nodes.serviceLinks.innerHTML = renderServiceLinksSidebar(state.data.service_links || []);
+  }
+  if (state.loading && !state.data) {
+    nodes.content.innerHTML = `<div class="empty-state">Loading</div>`;
+    return;
+  }
+  if (!state.data) {
+    nodes.content.innerHTML = `<div class="empty-state">No dashboard data</div>`;
+    return;
+  }
+  const action = state.actionMessage ? `<div class="action-status">${escapeHtml(state.actionMessage)}</div>` : "";
+  const body = state.activeView === "work" ? renderWork() : state.activeView === "projects" ? renderProjects() : state.activeView === "map" ? renderMap() : state.activeView === "fleets" ? renderFleets() : state.activeView === "agents" ? renderAgents() : state.activeView === "tasks" ? renderTasks() : state.activeView === "workflows" ? renderWorkflows() : state.activeView === "hermes" ? renderHermes() : state.activeView === "ops" ? renderOperations() : state.activeView === "integrations" ? renderIntegrations() : state.activeView === "runtime" ? renderRuntime() : state.activeView === "observability" ? renderObservability() : state.activeView === "secrets" ? renderSecrets() : renderOverview();
+  nodes.content.innerHTML = `${action}${body}`;
+  bindViewControls();
+  syncObservabilitySubscription();
 }
 function renderSyncState() {
-    nodes.syncState.textContent = state.loading
-        ? "Loading"
-        : state.loadedAt
-            ? `Loaded ${formatTime(state.loadedAt)}`
-            : "Not loaded";
+  nodes.syncState.textContent = state.loading ? "Loading" : state.loadedAt ? `Loaded ${formatTime(state.loadedAt)}` : "Not loaded";
 }
 function renderBanner() {
-    if (!state.error) {
-        nodes.banner.hidden = true;
-        nodes.banner.textContent = "";
-        return;
-    }
-    nodes.banner.hidden = false;
-    nodes.banner.textContent = isAuthError(state.error)
-        ? "Dashboard data needs a token with read scope."
-        : state.error;
+  if (!state.error) {
+    nodes.banner.hidden = true;
+    nodes.banner.textContent = "";
+    return;
+  }
+  nodes.banner.hidden = false;
+  nodes.banner.textContent = isAuthError(state.error) ? "Dashboard data needs a token with read scope." : state.error;
 }
 function isAuthError(message) {
-    return /^403\b/.test(message);
+  return /^403\b/.test(message);
 }
 function showLoginScreen(focus = true) {
-    nodes.loginTokenInput.value = state.token || nodes.tokenInput.value.trim();
-    nodes.loginScreen.hidden = false;
-    if (focus)
-        window.setTimeout(() => nodes.loginTokenInput.focus(), 0);
+  nodes.loginTokenInput.value = state.token || nodes.tokenInput.value.trim();
+  nodes.loginScreen.hidden = false;
+  if (focus) window.setTimeout(() => nodes.loginTokenInput.focus(), 0);
 }
 function hideLoginScreen() {
-    nodes.loginScreen.hidden = true;
+  nodes.loginScreen.hidden = true;
 }
 function readUrlState() {
-    const params = new URLSearchParams(window.location.search);
-    const rawView = params.get("view") || "overview";
-    const page = Number(params.get("agent_page") || "1");
-    const subjectType = params.get("obs_subject_type") || "";
-    return {
-        activeView: VIEW_KEYS.has(rawView) ? rawView : "overview",
-        agentQuery: params.get("agent_q") || "",
-        agentFilter: params.get("agent_filter") || "all",
-        agentSort: params.get("agent_sort") || "name",
-        agentPage: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
-        projectFilter: params.get("project") || "all",
-        taskFilter: params.get("task_state") || "all",
-        selectedId: params.get("selected") || "",
-        auditSubjectType: AUDIT_SUBJECT_TYPES.includes(subjectType) ? subjectType : "",
-        auditSubjectId: params.get("obs_subject_id") || "",
-        auditEventPrefix: params.get("obs_event_prefix") || "",
-        auditActor: params.get("obs_actor") || "",
-        auditLayer: params.get("obs_layer") || "",
-        auditLevel: params.get("obs_level") || "",
-        auditAgentId: params.get("obs_agent") || "",
-        auditTaskId: params.get("obs_task") || "",
-        auditProject: params.get("obs_project") || "",
-        auditFleet: params.get("obs_fleet") || "",
-        auditSince: params.get("obs_since") || "",
-        auditUntil: params.get("obs_until") || "",
-    };
+  const params = new URLSearchParams(window.location.search);
+  const rawView = params.get("view") || "overview";
+  const page = Number(params.get("agent_page") || "1");
+  const subjectType = params.get("obs_subject_type") || "";
+  return {
+    activeView: VIEW_KEYS.has(rawView) ? rawView : "overview",
+    agentQuery: params.get("agent_q") || "",
+    agentFilter: params.get("agent_filter") || "all",
+    agentSort: params.get("agent_sort") || "name",
+    agentPage: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
+    projectFilter: params.get("project") || "all",
+    taskFilter: params.get("task_state") || "all",
+    selectedId: params.get("selected") || "",
+    auditSubjectType: AUDIT_SUBJECT_TYPES.includes(subjectType) ? subjectType : "",
+    auditSubjectId: params.get("obs_subject_id") || "",
+    auditEventPrefix: params.get("obs_event_prefix") || "",
+    auditActor: params.get("obs_actor") || "",
+    auditLayer: params.get("obs_layer") || "",
+    auditLevel: params.get("obs_level") || "",
+    auditAgentId: params.get("obs_agent") || "",
+    auditTaskId: params.get("obs_task") || "",
+    auditProject: params.get("obs_project") || "",
+    auditFleet: params.get("obs_fleet") || "",
+    auditSince: params.get("obs_since") || "",
+    auditUntil: params.get("obs_until") || ""
+  };
 }
 function applyUrlState() {
-    const next = readUrlState();
-    state.activeView = next.activeView;
-    state.agentQuery = next.agentQuery;
-    state.agentFilter = next.agentFilter;
-    state.agentSort = next.agentSort;
-    state.agentPage = next.agentPage;
-    state.projectFilter = next.projectFilter;
-    state.taskFilter = next.taskFilter;
-    state.selectedId = next.selectedId;
-    state.auditSubjectType = next.auditSubjectType;
-    state.auditSubjectId = next.auditSubjectId;
-    state.auditEventPrefix = next.auditEventPrefix;
-    state.auditActor = next.auditActor;
-    state.auditLayer = next.auditLayer;
-    state.auditLevel = next.auditLevel;
-    state.auditAgentId = next.auditAgentId;
-    state.auditTaskId = next.auditTaskId;
-    state.auditProject = next.auditProject;
-    state.auditFleet = next.auditFleet;
-    state.auditSince = next.auditSince;
-    state.auditUntil = next.auditUntil;
+  const next = readUrlState();
+  state.activeView = next.activeView;
+  state.agentQuery = next.agentQuery;
+  state.agentFilter = next.agentFilter;
+  state.agentSort = next.agentSort;
+  state.agentPage = next.agentPage;
+  state.projectFilter = next.projectFilter;
+  state.taskFilter = next.taskFilter;
+  state.selectedId = next.selectedId;
+  state.auditSubjectType = next.auditSubjectType;
+  state.auditSubjectId = next.auditSubjectId;
+  state.auditEventPrefix = next.auditEventPrefix;
+  state.auditActor = next.auditActor;
+  state.auditLayer = next.auditLayer;
+  state.auditLevel = next.auditLevel;
+  state.auditAgentId = next.auditAgentId;
+  state.auditTaskId = next.auditTaskId;
+  state.auditProject = next.auditProject;
+  state.auditFleet = next.auditFleet;
+  state.auditSince = next.auditSince;
+  state.auditUntil = next.auditUntil;
 }
 function updateUrlState(replace = false) {
-    const params = new URLSearchParams();
-    if (state.activeView !== "overview")
-        params.set("view", state.activeView);
-    if (state.agentQuery.trim())
-        params.set("agent_q", state.agentQuery.trim());
-    if (state.agentFilter !== "all")
-        params.set("agent_filter", state.agentFilter);
-    if (state.agentSort !== "name")
-        params.set("agent_sort", state.agentSort);
-    if (state.agentPage > 1)
-        params.set("agent_page", String(state.agentPage));
-    if (state.projectFilter !== "all")
-        params.set("project", state.projectFilter);
-    if (state.taskFilter !== "all")
-        params.set("task_state", state.taskFilter);
-    if (state.selectedId)
-        params.set("selected", state.selectedId);
-    if (state.auditSubjectType)
-        params.set("obs_subject_type", state.auditSubjectType);
-    if (state.auditSubjectId.trim())
-        params.set("obs_subject_id", state.auditSubjectId.trim());
-    if (state.auditEventPrefix.trim())
-        params.set("obs_event_prefix", state.auditEventPrefix.trim());
-    if (state.auditActor.trim())
-        params.set("obs_actor", state.auditActor.trim());
-    if (state.auditLayer.trim())
-        params.set("obs_layer", state.auditLayer.trim());
-    if (state.auditLevel.trim())
-        params.set("obs_level", state.auditLevel.trim());
-    if (state.auditAgentId.trim())
-        params.set("obs_agent", state.auditAgentId.trim());
-    if (state.auditTaskId.trim())
-        params.set("obs_task", state.auditTaskId.trim());
-    if (state.auditProject.trim())
-        params.set("obs_project", state.auditProject.trim());
-    if (state.auditFleet.trim())
-        params.set("obs_fleet", state.auditFleet.trim());
-    if (state.auditSince.trim())
-        params.set("obs_since", state.auditSince.trim());
-    if (state.auditUntil.trim())
-        params.set("obs_until", state.auditUntil.trim());
-    const query = params.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
-    const method = replace ? "replaceState" : "pushState";
-    window.history[method]({}, "", nextUrl);
+  const params = new URLSearchParams();
+  if (state.activeView !== "overview") params.set("view", state.activeView);
+  if (state.agentQuery.trim()) params.set("agent_q", state.agentQuery.trim());
+  if (state.agentFilter !== "all") params.set("agent_filter", state.agentFilter);
+  if (state.agentSort !== "name") params.set("agent_sort", state.agentSort);
+  if (state.agentPage > 1) params.set("agent_page", String(state.agentPage));
+  if (state.projectFilter !== "all") params.set("project", state.projectFilter);
+  if (state.taskFilter !== "all") params.set("task_state", state.taskFilter);
+  if (state.selectedId) params.set("selected", state.selectedId);
+  if (state.auditSubjectType) params.set("obs_subject_type", state.auditSubjectType);
+  if (state.auditSubjectId.trim()) params.set("obs_subject_id", state.auditSubjectId.trim());
+  if (state.auditEventPrefix.trim()) params.set("obs_event_prefix", state.auditEventPrefix.trim());
+  if (state.auditActor.trim()) params.set("obs_actor", state.auditActor.trim());
+  if (state.auditLayer.trim()) params.set("obs_layer", state.auditLayer.trim());
+  if (state.auditLevel.trim()) params.set("obs_level", state.auditLevel.trim());
+  if (state.auditAgentId.trim()) params.set("obs_agent", state.auditAgentId.trim());
+  if (state.auditTaskId.trim()) params.set("obs_task", state.auditTaskId.trim());
+  if (state.auditProject.trim()) params.set("obs_project", state.auditProject.trim());
+  if (state.auditFleet.trim()) params.set("obs_fleet", state.auditFleet.trim());
+  if (state.auditSince.trim()) params.set("obs_since", state.auditSince.trim());
+  if (state.auditUntil.trim()) params.set("obs_until", state.auditUntil.trim());
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  const method = replace ? "replaceState" : "pushState";
+  window.history[method]({}, "", nextUrl);
 }
 window.addEventListener("popstate", () => {
-    applyUrlState();
-    state.actionMessage = null;
-    render();
+  applyUrlState();
+  state.actionMessage = null;
+  render();
 });
 function renderOverview() {
-    const data = mustData();
-    const counts = data.overview.counts;
-    const startup = data.hermes_startup;
-    const startupStatus = startup?.operator_health?.status || (startup?.ready ? "healthy" : "degraded");
-    const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
-    return `
+  const data = mustData();
+  const counts = data.overview.counts;
+  const startup = data.hermes_startup;
+  const startupStatus = startup?.operator_health?.status || (startup?.ready ? "healthy" : "degraded");
+  const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
+  return `
     <section class="metric-grid">
       ${metric("Fleets", counts.fleets || 0, `${data.fleets.reduce((sum, fleet) => sum + (fleet.agent_ids || []).length, 0)} fleet memberships`)}
       ${metric("Agents", counts.agents || 0, `${counts.healthy_agents || 0} healthy, ${counts.busy_agents || 0} busy`)}
@@ -455,17 +384,15 @@ function renderOverview() {
   `;
 }
 function renderWork() {
-    const data = mustData();
-    const projects = data.project_summaries;
-    const selectedProject = selectedProjectSummary(data);
-    const scopedProjects = state.projectFilter === "all" ? projects : projects.filter((project) => project.project === state.projectFilter);
-    const selectedTask = selectedTaskDetail(data) || selectedProject?.frontier_tasks
-        .map((task) => taskDetailById(data, task.id))
-        .find(Boolean) || null;
-    const readyStories = scopedProjects.reduce((sum, project) => sum + project.ready_count, 0);
-    const blockedStories = scopedProjects.reduce((sum, project) => sum + project.blocked_count, 0);
-    const activeAgents = new Set(scopedProjects.flatMap((project) => project.active_agent_ids)).size;
-    return `
+  const data = mustData();
+  const projects = data.project_summaries;
+  const selectedProject = selectedProjectSummary(data);
+  const scopedProjects = state.projectFilter === "all" ? projects : projects.filter((project) => project.project === state.projectFilter);
+  const selectedTask = selectedTaskDetail(data) || selectedProject?.frontier_tasks.map((task) => taskDetailById(data, task.id)).find(Boolean) || null;
+  const readyStories = scopedProjects.reduce((sum, project) => sum + project.ready_count, 0);
+  const blockedStories = scopedProjects.reduce((sum, project) => sum + project.blocked_count, 0);
+  const activeAgents = new Set(scopedProjects.flatMap((project) => project.active_agent_ids)).size;
+  return `
     <section class="toolbar">
       <select id="projectFilter">
         ${option("all", "All projects", state.projectFilter)}
@@ -486,9 +413,7 @@ function renderWork() {
           ${chip(selectedProject?.project || "all projects", "info")}
         </div>
         <div class="project-frontier-list">
-          ${scopedProjects
-        .map(projectFrontierRecord)
-        .join("") || `<div class="empty-state">No projects</div>`}
+          ${scopedProjects.map(projectFrontierRecord).join("") || `<div class="empty-state">No projects</div>`}
         </div>
       </div>
       <div class="surface">
@@ -512,35 +437,36 @@ function renderWork() {
   `;
 }
 function renderProjects() {
-    const data = mustData();
-    const projects = state.projectFilter === "all"
-        ? data.project_summaries
-        : data.project_summaries.filter((project) => project.project === state.projectFilter);
-    return `
+  const data = mustData();
+  const writable = canWrite(data);
+  const projects = state.projectFilter === "all" ? data.project_summaries : data.project_summaries.filter((project) => project.project === state.projectFilter);
+  return `
     <section class="toolbar">
       <select id="projectFilter">
         ${option("all", "All projects", state.projectFilter)}
         ${data.project_summaries.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
       </select>
       <button type="button" id="clearWorkScope">Clear Scope</button>
+      ${sessionAccessBadge(data)}
     </section>
+    ${writable ? "" : `<section class="action-status">Read-only token: project fields can be inspected but not edited.</section>`}
     <section class="split">
       <div class="surface">
         <h2>Create Project</h2>
-        <form class="action-form" data-action="projectCreate">
-          <label>Name <input name="name" required></label>
-          <label>Description <textarea name="description"></textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "archived"], "active")}</label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
-          <button type="submit">Create</button>
+        <form class="action-form aligned-form" data-action="projectCreate">
+          <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
+          <label>Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
+          <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
+          <label>Metadata JSON <textarea name="metadata" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
+          <button type="submit" ${disabledAttr(!writable)}>Create</button>
         </form>
       </div>
       <div class="surface">
         <h2>Project Metrics</h2>
         <section class="metric-grid compact-metrics">
-          ${metric("Projects", data.project_summaries.length, `${projects.length} in current scope`)}
+          ${metric("Total Projects", data.project_summaries.length, "all known project keys")}
+          ${metric("Visible Projects", projects.length, state.projectFilter === "all" ? "unfiltered" : `scope: ${state.projectFilter}`)}
           ${metric("Ready Stories", projects.reduce((sum, project) => sum + project.ready_count, 0), "available for dispatch")}
-          ${metric("Blocked Stories", projects.reduce((sum, project) => sum + project.blocked_count, 0), "waiting on dependencies")}
           ${metric("Active Agents", new Set(projects.flatMap((project) => project.active_agent_ids)).size, "working in scope")}
         </section>
       </div>
@@ -548,39 +474,35 @@ function renderProjects() {
     <section class="surface">
       <div class="surface-heading">
         <h2>Projects</h2>
-        ${chip(`${projects.length} visible`, "info")}
+        <div class="chip-row">
+          ${chip(`${projects.length} visible`, "info")}
+          ${state.projectFilter === "all" ? "" : chip(`scope ${state.projectFilter}`, "warn")}
+        </div>
       </div>
-      <div class="record-list">
-        ${projects.length ? projects.map(projectCrudRecord).join("") : `<div class="empty-state">No projects</div>`}
-      </div>
+      ${projectTable(projects, data)}
     </section>
   `;
 }
 function renderFleets() {
-    const data = mustData();
-    const activeFleets = data.fleets.filter((fleet) => fleet.status === "active").length;
-    return `
+  const data = mustData();
+  const activeFleets = data.fleets.filter((fleet) => fleet.status === "active").length;
+  const selectedFleet = selectedFleetRecord(data);
+  return `
     <section class="metric-grid">
       ${metric("Fleets", data.fleets.length, `${activeFleets} active`)}
       ${metric("Members", data.fleets.reduce((sum, fleet) => sum + (fleet.agent_ids || []).length, 0), "agent memberships")}
       ${metric("Agents", data.agents.length, "available to assign")}
       ${metric("Machines", data.machines.length, "registered hosts")}
     </section>
+    <section class="action-status">Fleet membership is derived from agent registration. Use the Agents view to inspect each agent's fleet.</section>
     <section class="split">
-      <div class="surface">
-        <h2>Create Fleet</h2>
-        <form class="action-form" data-action="fleetCreate">
-          <label>Name <input name="name" required></label>
-          <label>Description <textarea name="description"></textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "retired"], "active")}</label>
-          <label>Agent IDs <input name="agent_ids" placeholder="agent_a,agent_b"></label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
-          <button type="submit">Create</button>
-        </form>
-      </div>
       <div class="surface">
         <h2>Fleet Topology</h2>
         ${fleetMembershipSummary(data)}
+      </div>
+      <div class="surface">
+        <h2>Selected Fleet</h2>
+        ${selectedFleet ? fleetDetail(selectedFleet, data) : `<div class="empty-state">Select a fleet to inspect members</div>`}
       </div>
     </section>
     <section class="surface">
@@ -595,22 +517,28 @@ function renderFleets() {
   `;
 }
 function renderMap() {
-    const data = mustData();
-    const activeTasks = data.tasks.filter((detail) => !TERMINAL_TASK_STATES.has(detail.task.state));
-    const dependencyCount = data.tasks.reduce((sum, detail) => sum + (detail.task.dependencies || []).length, 0);
-    return `
+  const data = mustData();
+  const activeTasks = data.tasks.filter((detail) => !TERMINAL_TASK_STATES.has(detail.task.state));
+  const dependencyCount = data.tasks.reduce((sum, detail) => sum + (detail.task.dependencies || []).length, 0);
+  return `
     <section class="metric-grid">
       ${metric("Topology Nodes", data.fleets.length + data.machines.length + data.agents.length + activeTasks.length, "fleets, machines, agents, active tasks")}
       ${metric("Dispatch Queue", data.dispatch.open_task_count || 0, "open tasks awaiting agents")}
       ${metric("Dependencies", dependencyCount, "task dependency edges")}
       ${metric("AgentBus", data.agentbus_streams.length, "recent streams")}
     </section>
-    <section class="surface">
-      <div class="surface-heading">
-        <h2>Fleet Relationship Map</h2>
-        ${chip(state.selectedId || "nothing selected", state.selectedId ? "info" : "warn")}
+    <section class="split map-split">
+      <div class="surface">
+        <div class="surface-heading">
+          <h2>Fleet Relationship Map</h2>
+          ${chip(state.selectedId || "nothing selected", state.selectedId ? "info" : "warn")}
+        </div>
+        ${relationshipGraph(data)}
       </div>
-      ${relationshipGraph(data)}
+      <div class="surface">
+        <h2>Selection</h2>
+        ${topologySelectionDetail(data)}
+      </div>
     </section>
     <section class="split">
       <div class="surface">
@@ -629,27 +557,23 @@ function renderMap() {
   `;
 }
 function renderAgents() {
-    const data = mustData();
-    const agents = filteredAgents(data);
-    const pageCount = Math.max(1, Math.ceil(agents.length / AGENT_PAGE_SIZE));
-    if (state.agentPage > pageCount)
-        state.agentPage = pageCount;
-    const start = (state.agentPage - 1) * AGENT_PAGE_SIZE;
-    const visible = agents.slice(start, start + AGENT_PAGE_SIZE);
-    const visibleIds = visible.map((item) => item.agent.id);
-    return `
+  const data = mustData();
+  const agents = filteredAgents(data);
+  const pageCount = Math.max(1, Math.ceil(agents.length / AGENT_PAGE_SIZE));
+  if (state.agentPage > pageCount) state.agentPage = pageCount;
+  const start = (state.agentPage - 1) * AGENT_PAGE_SIZE;
+  const visible = agents.slice(start, start + AGENT_PAGE_SIZE);
+  const visibleIds = visible.map((item) => item.agent.id);
+  const writable = canWrite(data);
+  return `
     <section class="metric-grid">
-      ${metric("Visible Agents", agents.length, `${data.agents.length} total`)}
-      ${metric("Busy", agents.filter((item) => item.agent.status === "busy").length, "in current result")}
+      ${metric("Agents", agents.length, `${data.agents.length} inventory rows`)}
+      ${metric("Healthy", agents.filter((item) => item.agent.health_status === "healthy").length, "matching agents")}
       ${metric("Blocked", agents.filter((item) => !item.availability.eligible).length, "not dispatch eligible")}
       ${metric("Page", `${state.agentPage}/${pageCount}`, `${visible.length} rows shown`)}
     </section>
     <section class="toolbar">
-      <input id="agentSearch" type="search" placeholder="Search agents, hosts, capabilities" value="${escapeHtml(state.agentQuery)}">
-      <select id="agentProjectFilter">
-        ${option("all", "All projects", state.projectFilter)}
-        ${data.project_summaries.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
-      </select>
+      <input id="agentSearch" type="search" placeholder="Search agents, fleets, hosts, health, capabilities" value="${escapeHtml(state.agentQuery)}">
       <select id="agentFilter">
         ${option("all", "All agents", state.agentFilter)}
         ${option("eligible", "Eligible", state.agentFilter)}
@@ -663,21 +587,28 @@ function renderAgents() {
       </select>
       <select id="agentSort">
         ${option("name", "Sort by name", state.agentSort)}
+        ${option("fleet", "Sort by fleet", state.agentSort)}
         ${option("status", "Sort by status", state.agentSort)}
         ${option("project", "Sort by project", state.agentSort)}
         ${option("capacity", "Sort by capacity", state.agentSort)}
         ${option("last_seen", "Sort by last seen", state.agentSort)}
       </select>
       <button type="button" id="clearAgentFilters">Clear</button>
+      ${sessionAccessBadge(data)}
     </section>
+    ${writable ? "" : `<section class="action-status">Read-only token: agent records can be inspected but not changed.</section>`}
     <section class="surface">
       <h2>Create Agent</h2>
-      <form class="action-form compact" data-action="agentCreate">
-        <label>Machine ${machineSelect("machine_id", data.machines, "")}</label>
-        <label>Name <input name="name" required></label>
-        <label>Capabilities <input name="capabilities" placeholder="python,deploy"></label>
-        <label>Resources JSON <textarea name="resources" placeholder="{}"></textarea></label>
-        <button type="submit">Create</button>
+      <form class="action-form aligned-form" data-action="agentCreate">
+        <label>Machine ${machineSelect("machine_id", data.machines, "", !writable)}</label>
+        <label>Fleet ${fleetSelect("fleet_id", data.fleets, defaultFleetId(data), !writable)}</label>
+        <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
+        <label>Agent ID <input name="agent_id" placeholder="agent_rocky" ${disabledAttr(!writable)}></label>
+        <label>Hermes Instance ID <input name="hermes_instance_id" placeholder="hermes_rocky" ${disabledAttr(!writable)}></label>
+        <label>Capabilities <input name="capabilities" placeholder="ops,python,hermes,review" ${disabledAttr(!writable)}></label>
+        <label>Resources JSON <textarea name="resources" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
+        <label>Actor <input name="actor" value="human" ${disabledAttr(!writable)}></label>
+        <button type="submit" ${disabledAttr(!writable)}>Create</button>
       </form>
     </section>
     <section class="surface">
@@ -711,11 +642,9 @@ function renderAgents() {
   `;
 }
 function renderTasks() {
-    const data = mustData();
-    const tasks = state.taskFilter === "all"
-        ? data.tasks
-        : data.tasks.filter((detail) => detail.task.state === state.taskFilter);
-    return `
+  const data = mustData();
+  const tasks = state.taskFilter === "all" ? data.tasks : data.tasks.filter((detail) => detail.task.state === state.taskFilter);
+  return `
     <section class="toolbar">
       <select id="taskFilter">
         ${option("all", "All states", state.taskFilter)}
@@ -737,17 +666,15 @@ function renderTasks() {
       </form>
     </section>
     <section class="task-lanes">
-      ${TASK_STATES.filter((taskState) => state.taskFilter === "all" || state.taskFilter === taskState)
-        .map((taskState) => taskLane(taskState, tasks, data.agents))
-        .join("")}
+      ${TASK_STATES.filter((taskState) => state.taskFilter === "all" || state.taskFilter === taskState).map((taskState) => taskLane(taskState, tasks, data.agents)).join("")}
     </section>
-    `;
+  `;
 }
 function renderWorkflows() {
-    const data = mustData();
-    const running = Number(data.workflow_runs.counts?.running || 0);
-    const pendingDrafts = data.workflow_drafts.filter((draft) => draft.status !== "compiled" && draft.status !== "cancelled");
-    return `
+  const data = mustData();
+  const running = Number(data.workflow_runs.counts?.running || 0);
+  const pendingDrafts = data.workflow_drafts.filter((draft) => draft.status !== "compiled" && draft.status !== "cancelled");
+  return `
     <section class="metric-grid">
       ${metric("Definitions", data.workflows.length, `${data.workflow_runs.total || 0} total runs`)}
       ${metric("Running", running, "active workflow runs")}
@@ -804,7 +731,7 @@ function renderWorkflows() {
   `;
 }
 function workflowRecord(workflow) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(workflow.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(workflow.name || workflow.slug || workflow.id)}</h3><p class="muted small mono">${escapeHtml(workflow.id)}</p></div>
@@ -829,7 +756,7 @@ function workflowRecord(workflow) {
   `;
 }
 function workflowDraftRecord(draft) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(draft.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(draft.goal)}</h3><p class="muted small mono">${escapeHtml(draft.id)}</p></div>
@@ -854,32 +781,30 @@ function workflowDraftRecord(draft) {
   `;
 }
 function workflowGraph(workflow) {
-    const definition = workflow?.definition;
-    const nodes = definition?.nodes || [];
-    const edges = definition?.edges || [];
-    if (!workflow || !nodes.length)
-        return `<div class="empty-state">No workflow graph</div>`;
-    const width = 720;
-    const height = Math.max(180, nodes.length * 70 + 60);
-    const nodePositions = new Map(nodes.map((node, index) => [String(node.node_key), { x: 120 + (index % 3) * 240, y: 70 + Math.floor(index / 3) * 110 }]));
-    const edgeSvg = edges.map((edge) => {
-        const from = nodePositions.get(String(edge.from_node_key || ""));
-        const to = nodePositions.get(String(edge.to_node_key || ""));
-        if (!from || !to)
-            return "";
-        return `<path class="graph-edge graph-edge-dependency" d="M${from.x + 82},${from.y} C${from.x + 150},${from.y} ${to.x - 150},${to.y} ${to.x - 82},${to.y}"></path>`;
-    }).join("");
-    const nodeSvg = nodes.map((node) => {
-        const pos = nodePositions.get(String(node.node_key)) || { x: 120, y: 70 };
-        return `
+  const definition = workflow?.definition;
+  const nodes2 = definition?.nodes || [];
+  const edges = definition?.edges || [];
+  if (!workflow || !nodes2.length) return `<div class="empty-state">No workflow graph</div>`;
+  const width = 720;
+  const height = Math.max(180, nodes2.length * 70 + 60);
+  const nodePositions = new Map(nodes2.map((node, index) => [String(node.node_key), { x: 120 + index % 3 * 240, y: 70 + Math.floor(index / 3) * 110 }]));
+  const edgeSvg = edges.map((edge) => {
+    const from = nodePositions.get(String(edge.from_node_key || ""));
+    const to = nodePositions.get(String(edge.to_node_key || ""));
+    if (!from || !to) return "";
+    return `<path class="graph-edge graph-edge-dependency" d="M${from.x + 82},${from.y} C${from.x + 150},${from.y} ${to.x - 150},${to.y} ${to.x - 82},${to.y}"></path>`;
+  }).join("");
+  const nodeSvg = nodes2.map((node) => {
+    const pos = nodePositions.get(String(node.node_key)) || { x: 120, y: 70 };
+    return `
       <g class="graph-node graph-node-task" transform="translate(${pos.x},${pos.y})">
         <rect x="-86" y="-24" width="172" height="48" rx="8"></rect>
         <text text-anchor="middle" y="-3">${escapeHtml(truncate(node.node_key, 20))}</text>
         <text class="graph-column-label" text-anchor="middle" y="15">${escapeHtml(truncate(node.role_required, 18))}</text>
       </g>
     `;
-    }).join("");
-    return `
+  }).join("");
+  return `
     <div class="graph-wrap">
       <svg class="relationship-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow graph">
         ${edgeSvg}
@@ -889,7 +814,7 @@ function workflowGraph(workflow) {
   `;
 }
 function notifierChannelRecord(channel) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header">
         <div><h3>${escapeHtml(channel.name)}</h3><p class="muted small mono">${escapeHtml(channel.id)}</p></div>
@@ -901,11 +826,11 @@ function notifierChannelRecord(channel) {
   `;
 }
 function renderHermes() {
-    const data = mustData();
-    const contexts = Object.values(data.hermes_work_contexts || {});
-    const proofs = Object.values(data.hermes_runtime_proofs || {});
-    const readyProofs = proofs.filter((proof) => proof.ready).length;
-    return `
+  const data = mustData();
+  const contexts = Object.values(data.hermes_work_contexts || {});
+  const proofs = Object.values(data.hermes_runtime_proofs || {});
+  const readyProofs = proofs.filter((proof) => proof.ready).length;
+  return `
     <section class="metric-grid">
       ${metric("Tenants", data.tenants.length, `${data.users.length} users`)}
       ${metric("Personas", data.personas.length, "soul refs only")}
@@ -921,18 +846,18 @@ function renderHermes() {
   `;
 }
 function hermesStartupPanel(startup) {
-    if (!startup) {
-        return `<section class="surface"><h2>Startup Health</h2><div class="empty-state">No startup report</div></section>`;
-    }
-    const operator = startup.operator_health || {};
-    const security = (startup.security?.secret_redaction || {});
-    const slack = startup.slack || {};
-    const logs = startup.logs || {};
-    const runtime = startup.task_project_runtime || {};
-    const runtimeAuthority = (runtime.authority || {});
-    const promptBridge = (runtime.prompt_bridge || {});
-    const warnings = startup.warnings || [];
-    return `
+  if (!startup) {
+    return `<section class="surface"><h2>Startup Health</h2><div class="empty-state">No startup report</div></section>`;
+  }
+  const operator = startup.operator_health || {};
+  const security = startup.security?.secret_redaction || {};
+  const slack = startup.slack || {};
+  const logs = startup.logs || {};
+  const runtime = startup.task_project_runtime || {};
+  const runtimeAuthority = runtime.authority || {};
+  const promptBridge = runtime.prompt_bridge || {};
+  const warnings = startup.warnings || [];
+  return `
     <section class="surface">
       <h2>Startup Health</h2>
       <div class="chip-row">
@@ -955,11 +880,11 @@ function hermesStartupPanel(startup) {
   `;
 }
 function renderOperations() {
-    const data = mustData();
-    const workflowCounts = data.workflow_runs.counts || {};
-    const pendingProvisioning = data.provisioning_requests.filter((item) => item.status === "pending");
-    const openStreams = data.agentbus_streams.filter((item) => item.status === "open");
-    return `
+  const data = mustData();
+  const workflowCounts = data.workflow_runs.counts || {};
+  const pendingProvisioning = data.provisioning_requests.filter((item) => item.status === "pending");
+  const openStreams = data.agentbus_streams.filter((item) => item.status === "open");
+  return `
     <section class="metric-grid">
       ${metric("Roles", data.roles.length, "agent personas and constraints")}
       ${metric("Provisioning", pendingProvisioning.length, "pending agent requests")}
@@ -999,17 +924,15 @@ function renderOperations() {
     <section class="surface">
       <h2>Nap Schedules</h2>
       <div class="record-list">
-        ${data.nap_schedules.length || data.nap_runs.length
-        ? [...data.nap_schedules.map(napScheduleRecord), ...data.nap_runs.slice(0, 20).map(napRunRecord)].join("")
-        : `<div class="empty-state">No nap activity</div>`}
+        ${data.nap_schedules.length || data.nap_runs.length ? [...data.nap_schedules.map(napScheduleRecord), ...data.nap_runs.slice(0, 20).map(napRunRecord)].join("") : `<div class="empty-state">No nap activity</div>`}
       </div>
     </section>
   `;
 }
 function renderIntegrations() {
-    const data = mustData();
-    const failingEvalRuns = data.eval_runs.filter((run) => run.passed === false);
-    return `
+  const data = mustData();
+  const failingEvalRuns = data.eval_runs.filter((run) => run.passed === false);
+  return `
     <section class="metric-grid">
       ${metric("Beads Repos", data.beads_repositories.length, "registered issue sources")}
       ${metric("Bridge Items", data.bridge_items.length, "imported project items")}
@@ -1054,8 +977,8 @@ function renderIntegrations() {
   `;
 }
 function renderRuntime() {
-    const data = mustData();
-    return `
+  const data = mustData();
+  return `
     <section class="split">
       <div class="surface">
         <h2>Runtime Environments</h2>
@@ -1073,8 +996,8 @@ function renderRuntime() {
   `;
 }
 function renderSecrets() {
-    const data = mustData();
-    return `
+  const data = mustData();
+  return `
     <section class="split">
       <div class="surface">
         <h2>Secrets</h2>
@@ -1092,25 +1015,25 @@ function renderSecrets() {
   `;
 }
 function renderObservability() {
-    const data = mustData();
-    const observability = data.observability || {
-        counts: {},
-        levels: {},
-        layers: {},
-        latest: [],
-        latest_metrics: [],
-    };
-    const counts = observability.counts || {};
-    const auditEvents = filterAuditEvents(data.events || []);
-    const commandAudit = filterCommandAudit(data.command_audit || []);
-    const notifications = data.notifications || [];
-    const integrationFindings = data.integration_findings || [];
-    const openIntegrationFindings = integrationFindings.filter((item) => item.status === "open");
-    const pendingNotifications = notifications.filter((item) => item.status === "pending").length;
-    const live = filterObservability(uniqueObservations([...state.observabilityLive, ...(observability.latest || [])]));
-    const layerTotal = Object.values(observability.layers || {}).reduce((sum, value) => sum + Number(value || 0), 0);
-    const levelTotal = Object.values(observability.levels || {}).reduce((sum, value) => sum + Number(value || 0), 0);
-    return `
+  const data = mustData();
+  const observability = data.observability || {
+    counts: {},
+    levels: {},
+    layers: {},
+    latest: [],
+    latest_metrics: []
+  };
+  const counts = observability.counts || {};
+  const auditEvents = filterAuditEvents(data.events || []);
+  const commandAudit = filterCommandAudit(data.command_audit || []);
+  const notifications = data.notifications || [];
+  const integrationFindings = data.integration_findings || [];
+  const openIntegrationFindings = integrationFindings.filter((item) => item.status === "open");
+  const pendingNotifications = notifications.filter((item) => item.status === "pending").length;
+  const live = filterObservability(uniqueObservations([...state.observabilityLive, ...observability.latest || []]));
+  const layerTotal = Object.values(observability.layers || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  const levelTotal = Object.values(observability.levels || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  return `
     <section class="metric-grid">
       ${metric("Observations", counts.events || 0, `${counts.logs || 0} logs, ${counts.metrics || 0} metrics`)}
       ${metric("Warnings", counts.warnings || 0, "warning observations")}
@@ -1124,9 +1047,7 @@ function renderObservability() {
       <div class="surface">
         <h2>Metric Snapshot</h2>
         <div class="metric-list">
-          ${(observability.latest_metrics || []).length
-        ? observability.latest_metrics.map(observationMetric).join("")
-        : `<div class="empty-state">No metrics</div>`}
+          ${(observability.latest_metrics || []).length ? observability.latest_metrics.map(observationMetric).join("") : `<div class="empty-state">No metrics</div>`}
         </div>
       </div>
       <div class="surface">
@@ -1150,9 +1071,7 @@ function renderObservability() {
         ${chip(`${openIntegrationFindings.length} open`, openIntegrationFindings.length ? "warn" : "good")}
       </div>
       <div class="observability-feed">
-        ${integrationFindings.length
-        ? integrationFindings.slice(0, 80).map(integrationFindingRecord).join("")
-        : `<div class="empty-state">No integration findings</div>`}
+        ${integrationFindings.length ? integrationFindings.slice(0, 80).map(integrationFindingRecord).join("") : `<div class="empty-state">No integration findings</div>`}
       </div>
     </section>
     <section class="surface">
@@ -1185,11 +1104,11 @@ function renderObservability() {
   `;
 }
 function auditFilterToolbar(data) {
-    const projectValues = ["", ...data.project_summaries.map((item) => item.project).filter((item) => item && item !== "unassigned")];
-    const fleetValues = ["", ...data.fleets.map((item) => item.name || item.id)];
-    const agentOptions = `<option value="">Any agent</option>${data.agents.map((item) => option(item.agent.id, item.agent.name, state.auditAgentId)).join("")}`;
-    const taskOptions = `<option value="">Any task</option>${data.tasks.map((item) => option(item.task.id, item.task.title, state.auditTaskId)).join("")}`;
-    return `
+  const projectValues = ["", ...data.project_summaries.map((item) => item.project).filter((item) => item && item !== "unassigned")];
+  const fleetValues = ["", ...data.fleets.map((item) => item.name || item.id)];
+  const agentOptions = `<option value="">Any agent</option>${data.agents.map((item) => option(item.agent.id, item.agent.name, state.auditAgentId)).join("")}`;
+  const taskOptions = `<option value="">Any task</option>${data.tasks.map((item) => option(item.task.id, item.task.title, state.auditTaskId)).join("")}`;
+  return `
     <section class="toolbar audit-toolbar">
       <select id="auditSubjectType">
         ${AUDIT_SUBJECT_TYPES.map((value) => option(value, value ? labelize(value) : "Any subject", state.auditSubjectType)).join("")}
@@ -1212,100 +1131,68 @@ function auditFilterToolbar(data) {
   `;
 }
 function filterAuditEvents(events) {
-    return events.filter((item) => {
-        if (state.auditSubjectType && item.subject_type !== state.auditSubjectType)
-            return false;
-        if (state.auditSubjectId && item.subject_id !== state.auditSubjectId.trim())
-            return false;
-        if (state.auditEventPrefix && !item.event_type.startsWith(state.auditEventPrefix.trim()))
-            return false;
-        if (state.auditActor && item.actor !== state.auditActor.trim())
-            return false;
-        if (state.auditAgentId && !eventReferences(item, state.auditAgentId))
-            return false;
-        if (state.auditTaskId && !eventReferences(item, state.auditTaskId))
-            return false;
-        if (state.auditProject && !eventReferences(item, state.auditProject))
-            return false;
-        if (state.auditFleet && !eventReferences(item, state.auditFleet))
-            return false;
-        if (state.auditSince && item.created_at < state.auditSince.trim())
-            return false;
-        if (state.auditUntil && item.created_at > state.auditUntil.trim())
-            return false;
-        return true;
-    });
+  return events.filter((item) => {
+    if (state.auditSubjectType && item.subject_type !== state.auditSubjectType) return false;
+    if (state.auditSubjectId && item.subject_id !== state.auditSubjectId.trim()) return false;
+    if (state.auditEventPrefix && !item.event_type.startsWith(state.auditEventPrefix.trim())) return false;
+    if (state.auditActor && item.actor !== state.auditActor.trim()) return false;
+    if (state.auditAgentId && !eventReferences(item, state.auditAgentId)) return false;
+    if (state.auditTaskId && !eventReferences(item, state.auditTaskId)) return false;
+    if (state.auditProject && !eventReferences(item, state.auditProject)) return false;
+    if (state.auditFleet && !eventReferences(item, state.auditFleet)) return false;
+    if (state.auditSince && item.created_at < state.auditSince.trim()) return false;
+    if (state.auditUntil && item.created_at > state.auditUntil.trim()) return false;
+    return true;
+  });
 }
 function filterCommandAudit(records) {
-    return records.filter((item) => {
-        if (state.auditAgentId && item.agent_id !== state.auditAgentId)
-            return false;
-        if (state.auditTaskId && item.task_id !== state.auditTaskId)
-            return false;
-        if (state.auditSubjectType === "agent" && state.auditSubjectId && item.agent_id !== state.auditSubjectId.trim())
-            return false;
-        if (state.auditSubjectType === "task" && state.auditSubjectId && item.task_id !== state.auditSubjectId.trim())
-            return false;
-        if (state.auditEventPrefix && !`command.${item.phase}`.startsWith(state.auditEventPrefix.trim()))
-            return false;
-        if (state.auditSince && item.created_at < state.auditSince.trim())
-            return false;
-        if (state.auditUntil && item.created_at > state.auditUntil.trim())
-            return false;
-        return true;
-    });
+  return records.filter((item) => {
+    if (state.auditAgentId && item.agent_id !== state.auditAgentId) return false;
+    if (state.auditTaskId && item.task_id !== state.auditTaskId) return false;
+    if (state.auditSubjectType === "agent" && state.auditSubjectId && item.agent_id !== state.auditSubjectId.trim()) return false;
+    if (state.auditSubjectType === "task" && state.auditSubjectId && item.task_id !== state.auditSubjectId.trim()) return false;
+    if (state.auditEventPrefix && !`command.${item.phase}`.startsWith(state.auditEventPrefix.trim())) return false;
+    if (state.auditSince && item.created_at < state.auditSince.trim()) return false;
+    if (state.auditUntil && item.created_at > state.auditUntil.trim()) return false;
+    return true;
+  });
 }
 function filterObservability(events) {
-    return events.filter((item) => {
-        if (state.auditLayer && item.layer !== state.auditLayer.trim())
-            return false;
-        if (state.auditLevel && item.level !== state.auditLevel.trim())
-            return false;
-        if (state.auditSubjectType && item.subject_type !== state.auditSubjectType)
-            return false;
-        if (state.auditSubjectId && item.subject_id !== state.auditSubjectId.trim())
-            return false;
-        if (state.auditEventPrefix && !item.name.startsWith(state.auditEventPrefix.trim()))
-            return false;
-        if (state.auditAgentId && !observationReferences(item, state.auditAgentId))
-            return false;
-        if (state.auditTaskId && !observationReferences(item, state.auditTaskId))
-            return false;
-        if (state.auditProject && !observationReferences(item, state.auditProject))
-            return false;
-        if (state.auditFleet && !observationReferences(item, state.auditFleet))
-            return false;
-        if (state.auditSince && item.created_at < state.auditSince.trim())
-            return false;
-        if (state.auditUntil && item.created_at > state.auditUntil.trim())
-            return false;
-        return true;
-    });
+  return events.filter((item) => {
+    if (state.auditLayer && item.layer !== state.auditLayer.trim()) return false;
+    if (state.auditLevel && item.level !== state.auditLevel.trim()) return false;
+    if (state.auditSubjectType && item.subject_type !== state.auditSubjectType) return false;
+    if (state.auditSubjectId && item.subject_id !== state.auditSubjectId.trim()) return false;
+    if (state.auditEventPrefix && !item.name.startsWith(state.auditEventPrefix.trim())) return false;
+    if (state.auditAgentId && !observationReferences(item, state.auditAgentId)) return false;
+    if (state.auditTaskId && !observationReferences(item, state.auditTaskId)) return false;
+    if (state.auditProject && !observationReferences(item, state.auditProject)) return false;
+    if (state.auditFleet && !observationReferences(item, state.auditFleet)) return false;
+    if (state.auditSince && item.created_at < state.auditSince.trim()) return false;
+    if (state.auditUntil && item.created_at > state.auditUntil.trim()) return false;
+    return true;
+  });
 }
 function eventReferences(item, value) {
-    const needle = value.trim();
-    if (!needle)
-        return true;
-    if (item.subject_id === needle || item.actor === needle)
-        return true;
-    return JSON.stringify(item.detail || {}).includes(needle);
+  const needle = value.trim();
+  if (!needle) return true;
+  if (item.subject_id === needle || item.actor === needle) return true;
+  return JSON.stringify(item.detail || {}).includes(needle);
 }
 function observationReferences(item, value) {
-    const needle = value.trim();
-    if (!needle)
-        return true;
-    if (item.subject_id === needle || item.source === needle)
-        return true;
-    return JSON.stringify(item.detail || {}).includes(needle);
+  const needle = value.trim();
+  if (!needle) return true;
+  if (item.subject_id === needle || item.source === needle) return true;
+  return JSON.stringify(item.detail || {}).includes(needle);
 }
 function integrationFindingRecord(item) {
-    const repo = item.detail?.repository;
-    const sourceLabel = typeof repo?.name === "string" ? repo.name : item.source_id;
-    return `
+  const repo = item.detail?.repository;
+  const sourceLabel = typeof repo?.name === "string" ? repo.name : item.source_id;
+  return `
     <article class="feed-item">
       <div>
         <strong>${escapeHtml(item.title)}</strong>
-        <p class="muted small">${escapeHtml(item.finding_type)} · ${escapeHtml(sourceLabel)} · ${escapeHtml(formatAge(item.last_seen_at))}</p>
+        <p class="muted small">${escapeHtml(item.finding_type)} \xB7 ${escapeHtml(sourceLabel)} \xB7 ${escapeHtml(formatAge(item.last_seen_at))}</p>
         <p class="muted small mono">${escapeHtml(item.fingerprint.slice(0, 16))}</p>
       </div>
       <div class="chip-row">
@@ -1316,10 +1203,10 @@ function integrationFindingRecord(item) {
   `;
 }
 function serviceLinksTable(services) {
-    if (!services.length) {
-        return `<div class="empty-state">No service UI links are configured</div>`;
-    }
-    return `
+  if (!services.length) {
+    return `<div class="empty-state">No service UI links are configured</div>`;
+  }
+  return `
     <div class="table-wrap">
       <table class="data-table compact-table">
         <thead><tr><th>Service</th><th>Open</th><th>Status</th><th>Auth</th><th>Credentials</th></tr></thead>
@@ -1331,12 +1218,12 @@ function serviceLinksTable(services) {
   `;
 }
 function serviceLinkRow(service) {
-    const auth = service.auth || {};
-    const openUrl = String(auth.credential_pass_through && auth.pass_through_url ? auth.pass_through_url : service.ui_url || service.url || "");
-    const healthUrl = String(service.health_url || "");
-    const openLabel = auth.credential_pass_through ? "Open SSO" : "Open";
-    const credentials = service.credentials || [];
-    return `
+  const auth = service.auth || {};
+  const openUrl = String(auth.credential_pass_through && auth.pass_through_url ? auth.pass_through_url : service.ui_url || service.url || "");
+  const healthUrl = String(service.health_url || "");
+  const openLabel = auth.credential_pass_through ? "Open SSO" : "Open";
+  const credentials = service.credentials || [];
+  return `
     <tr>
       <td><strong>${escapeHtml(service.name)}</strong><br><span class="muted small">${escapeHtml(service.role)}</span></td>
       <td>
@@ -1352,17 +1239,17 @@ function serviceLinkRow(service) {
   `;
 }
 function serviceCredentialLine(ref) {
-    const tone = ref.present ? "good" : "warn";
-    const redacted = ref.redacted_value ? ` ${ref.redacted_value}` : "";
-    return `${chip(ref.name || "credential", tone)} <span class="muted small mono">${escapeHtml(ref.source || "not_configured")}${escapeHtml(redacted)}</span>`;
+  const tone = ref.present ? "good" : "warn";
+  const redacted = ref.redacted_value ? ` ${ref.redacted_value}` : "";
+  return `${chip(ref.name || "credential", tone)} <span class="muted small mono">${escapeHtml(ref.source || "not_configured")}${escapeHtml(redacted)}</span>`;
 }
 function notificationRecord(item) {
-    return `
+  return `
     <article class="feed-item">
       <div>
         <strong>${escapeHtml(item.title)}</strong>
         <p>${escapeHtml(item.body)}</p>
-        <p class="muted small">${escapeHtml(item.event_type)} · ${escapeHtml(item.created_at)}</p>
+        <p class="muted small">${escapeHtml(item.event_type)} \xB7 ${escapeHtml(item.created_at)}</p>
       </div>
       <div class="chip-row">
         ${chip(item.status, item.status === "pending" ? "warn" : item.status === "failed" ? "bad" : "good")}
@@ -1372,7 +1259,7 @@ function notificationRecord(item) {
   `;
 }
 function dispatchRecord(item) {
-    return `
+  return `
     <article class="record compact ${selectedClass(item.task.id)}">
       <div class="record-header">
         <div><h3>${escapeHtml(item.task.title)}</h3><p class="muted small mono">${escapeHtml(item.task.id)}</p></div>
@@ -1386,11 +1273,12 @@ function dispatchRecord(item) {
   `;
 }
 function taskDependencyRecords(data) {
-    const tasksById = new Map(data.tasks.map((detail) => [detail.task.id, detail.task]));
-    const edges = data.tasks.flatMap((detail) => (detail.task.dependencies || []).map((dependencyId) => ({ task: detail.task, dependency: tasksById.get(dependencyId), dependencyId })));
-    if (!edges.length)
-        return `<div class="empty-state">No task dependencies</div>`;
-    return edges.slice(0, 40).map((edge) => `
+  const tasksById = new Map(data.tasks.map((detail) => [detail.task.id, detail.task]));
+  const edges = data.tasks.flatMap(
+    (detail) => (detail.task.dependencies || []).map((dependencyId) => ({ task: detail.task, dependency: tasksById.get(dependencyId), dependencyId }))
+  );
+  if (!edges.length) return `<div class="empty-state">No task dependencies</div>`;
+  return edges.slice(0, 40).map((edge) => `
     <article class="record compact">
       <div class="record-header">
         <div><h3>${escapeHtml(edge.dependency?.title || edge.dependencyId)}</h3><p class="muted small">blocks</p></div>
@@ -1402,7 +1290,7 @@ function taskDependencyRecords(data) {
   `).join("");
 }
 function roleRecord(role) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(role.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(role.display_name || role.name || role.slug || role.id)}</h3><p class="muted small mono">${escapeHtml(role.id)}</p></div>
@@ -1417,7 +1305,7 @@ function roleRecord(role) {
   `;
 }
 function provisioningRecord(item) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(item.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(item.reason || item.id)}</h3><p class="muted small mono">${escapeHtml(item.id)}</p></div>
@@ -1432,7 +1320,7 @@ function provisioningRecord(item) {
   `;
 }
 function workflowRunRecord(run) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(run.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(run.workflow_id || run.id)}</h3><p class="muted small mono">${escapeHtml(run.id)}</p></div>
@@ -1448,7 +1336,7 @@ function workflowRunRecord(run) {
   `;
 }
 function agentBusRecord(stream) {
-    return `
+  return `
     <article class="record compact ${selectedClass(String(stream.id))}">
       <div class="record-header">
         <div><h3>${escapeHtml(stream.topic || stream.content_type || stream.id)}</h3><p class="muted small mono">${escapeHtml(stream.id)}</p></div>
@@ -1459,7 +1347,7 @@ function agentBusRecord(stream) {
   `;
 }
 function messageRecord(message) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(message.message_type || message.id)}</h3><p class="muted small mono">${escapeHtml(message.id)}</p></div>${chip(message.status, message.status === "pending" ? "warn" : "good")}</div>
       <p class="muted small">${escapeHtml(message.sender_agent_id || "unknown")} -> ${escapeHtml(message.recipient_agent_id || "broadcast")}</p>
@@ -1467,7 +1355,7 @@ function messageRecord(message) {
   `;
 }
 function napScheduleRecord(schedule) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(schedule.agent_id)}</h3><p class="muted small mono">${escapeHtml(schedule.id)}</p></div>${chip(schedule.enabled ? "enabled" : "disabled", schedule.enabled ? "good" : "warn")}</div>
       <div class="row-grid compact-grid">
@@ -1480,7 +1368,7 @@ function napScheduleRecord(schedule) {
   `;
 }
 function napRunRecord(run) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(run.agent_id)}</h3><p class="muted small mono">${escapeHtml(run.id)}</p></div>${chip(run.status, run.status === "completed" ? "good" : run.status === "failed" ? "bad" : "info")}</div>
       <p class="muted small">${escapeHtml(formatAge(String(run.started_at || run.created_at || "")))}</p>
@@ -1488,10 +1376,10 @@ function napRunRecord(run) {
   `;
 }
 function beadsRepositoryRecord(repo) {
-    const health = repo.metadata && typeof repo.metadata === "object" ? repo.metadata.health : {};
-    const healthStatus = String(health.status || (repo.last_error ? "unhealthy" : "healthy"));
-    const healthReason = String(health.reason || repo.last_error || "canonical");
-    return `
+  const health = repo.metadata && typeof repo.metadata === "object" ? repo.metadata.health : {};
+  const healthStatus = String(health.status || (repo.last_error ? "unhealthy" : "healthy"));
+  const healthReason = String(health.reason || repo.last_error || "canonical");
+  return `
     <article class="record compact ${selectedClass(String(repo.id))}">
       <div class="record-header"><div><h3>${escapeHtml(repo.name)}</h3><p class="muted small mono">${escapeHtml(repo.id)}</p></div><div class="chip-row">${chip(repo.enabled ? "enabled" : "disabled", repo.enabled ? "good" : "warn")}${chip(healthStatus, healthTone(healthStatus))}</div></div>
       <div class="row-grid compact-grid">
@@ -1505,7 +1393,7 @@ function beadsRepositoryRecord(repo) {
   `;
 }
 function bridgeItemRecord(item) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(item.title || item.external_id)}</h3><p class="muted small mono">${escapeHtml(item.id)}</p></div>${chip(item.status || "imported", "info")}</div>
       <p class="muted small">${escapeHtml(item.source || "source")} / ${escapeHtml(item.project || "")}</p>
@@ -1513,7 +1401,7 @@ function bridgeItemRecord(item) {
   `;
 }
 function artifactRecord(artifact) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(artifact.kind || "artifact")}</h3><p class="muted small mono">${escapeHtml(artifact.id)}</p></div>${chip(shortHash(String(artifact.digest || "")), "good")}</div>
       <p class="muted small">${escapeHtml(artifact.uri || "")}</p>
@@ -1521,7 +1409,7 @@ function artifactRecord(artifact) {
   `;
 }
 function evalSetRecord(evalSet) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(evalSet.name)}</h3><p class="muted small mono">${escapeHtml(evalSet.id)}</p></div>${chip(evalSet.scoring || "eval", "info")}</div>
       <div class="row-grid compact-grid">
@@ -1534,7 +1422,7 @@ function evalSetRecord(evalSet) {
   `;
 }
 function evalRunRecord(run) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(run.target_kind || "target")} ${escapeHtml(run.target_id || "")}</h3><p class="muted small mono">${escapeHtml(run.id)}</p></div>${chip(run.passed ? "passed" : "failed", run.passed ? "good" : "bad")}</div>
       <div class="score-line"><span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, Math.min(100, Number(run.score || 0) * 100))}%"></span></span><span class="mono small">${escapeHtml(run.score ?? "n/a")}</span></div>
@@ -1542,7 +1430,7 @@ function evalRunRecord(run) {
   `;
 }
 function memoryRecord(memory) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(memory.record_type || "memory")}</h3><p class="muted small mono">${escapeHtml(memory.id)}</p></div>${chip(memory.subject_type || "memory", "info")}</div>
       <p>${escapeHtml(memory.content || "")}</p>
@@ -1551,48 +1439,44 @@ function memoryRecord(memory) {
   `;
 }
 function selectedProjectSummary(data) {
-    if (state.projectFilter !== "all") {
-        return data.project_summaries.find((project) => project.project === state.projectFilter) || null;
+  if (state.projectFilter !== "all") {
+    return data.project_summaries.find((project) => project.project === state.projectFilter) || null;
+  }
+  if (state.selectedId) {
+    const selectedTask = taskDetailById(data, state.selectedId);
+    if (selectedTask) {
+      const project = taskProject(selectedTask.task);
+      return data.project_summaries.find((item) => item.project === project) || null;
     }
-    if (state.selectedId) {
-        const selectedTask = taskDetailById(data, state.selectedId);
-        if (selectedTask) {
-            const project = taskProject(selectedTask.task);
-            return data.project_summaries.find((item) => item.project === project) || null;
-        }
-    }
-    return data.project_summaries[0] || null;
+  }
+  return data.project_summaries[0] || null;
 }
 function selectedTaskDetail(data) {
-    if (!state.selectedId)
-        return null;
-    return taskDetailById(data, state.selectedId);
+  if (!state.selectedId) return null;
+  return taskDetailById(data, state.selectedId);
 }
 function taskDetailById(data, taskId) {
-    return data.tasks.find((detail) => detail.task.id === taskId) || null;
+  return data.tasks.find((detail) => detail.task.id === taskId) || null;
 }
 function taskProject(task) {
-    if (task.project)
-        return String(task.project);
-    const metadata = task.metadata || {};
-    for (const key of ["project", "repository", "repo"]) {
-        const value = metadata[key];
-        if (value)
-            return String(value);
+  if (task.project) return String(task.project);
+  const metadata = task.metadata || {};
+  for (const key of ["project", "repository", "repo"]) {
+    const value = metadata[key];
+    if (value) return String(value);
+  }
+  const origin = metadata.origin;
+  if (origin) {
+    for (const key of ["project", "repository", "repo", "source"]) {
+      const value = origin[key];
+      if (value) return String(value);
     }
-    const origin = metadata.origin;
-    if (origin) {
-        for (const key of ["project", "repository", "repo", "source"]) {
-            const value = origin[key];
-            if (value)
-                return String(value);
-        }
-    }
-    return "unassigned";
+  }
+  return "unassigned";
 }
 function projectFrontierRecord(project) {
-    const ready = project.frontier_tasks.slice(0, 4);
-    return `
+  const ready = project.frontier_tasks.slice(0, 4);
+  return `
     <article class="project-row ${state.projectFilter === project.project ? "is-selected" : ""}">
       <div>
         <div class="record-header">
@@ -1612,63 +1496,82 @@ function projectFrontierRecord(project) {
     </article>
   `;
 }
-function projectCrudRecord(project) {
-    const record = (project.record || {});
-    const description = String(record.description || "");
-    const status = String(record.status || "active");
-    const metadata = record.metadata && typeof record.metadata === "object" ? JSON.stringify(record.metadata) : "{}";
-    return `
-    <article class="record ${state.projectFilter === project.project ? "is-selected" : ""}">
-      <div class="record-header">
-        <div><h3>${escapeHtml(project.project)}</h3><p class="muted small">${project.task_count} stories, ${project.repository_count} repositories</p></div>
-        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
-      </div>
-      <div class="chip-row">
-        ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
-        ${chip(`${project.active_count} active`, project.active_count ? "warn" : "info")}
-        ${chip(`${project.blocked_count} blocked`, project.blocked_count ? "warn" : "good")}
-        ${chip(status, status === "active" ? "good" : "warn")}
-      </div>
-      <div class="record-actions">
-        <details class="row-actions edit-disclosure">
-          <summary>Edit</summary>
-        <form class="action-form" data-action="projectUpdate" data-project="${escapeHtml(project.project)}">
-          <label>Name <input name="name" value="${escapeHtml(project.project)}"></label>
-          <label>Description <textarea name="description">${escapeHtml(description)}</textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "archived"], status)}</label>
-          <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Save</button>
-        </form>
-        </details>
-        <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}">Delete</button>
-      </div>
-    </article>
+function projectTable(projects, data) {
+  if (!projects.length) return `<div class="empty-state">No projects</div>`;
+  return `
+    <div class="table-wrap">
+      <table class="data-table project-table">
+        <thead>
+          <tr><th>Project</th><th>Status</th><th>Description</th><th>Metadata</th><th>Stories</th><th>Agents</th><th></th></tr>
+        </thead>
+        <tbody>${projects.map((project) => projectTableRow(project, data)).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+function projectTableRow(project, data) {
+  const writable = canWrite(data);
+  const durable = !!project.project_id;
+  const editable = writable && durable;
+  const formId = `project-form-${safeDomId(project.project)}`;
+  const description = String(project.description || "");
+  const status = String(project.status || (durable ? "active" : "derived"));
+  const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
+  const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata) : "{}";
+  const disabled = disabledAttr(!editable);
+  return `
+    <tr class="${state.projectFilter === project.project ? "is-selected" : ""}">
+      <td>
+        <form id="${escapeHtml(formId)}" data-action="projectUpdate" data-project="${escapeHtml(project.project)}"></form>
+        <input form="${escapeHtml(formId)}" name="name" value="${escapeHtml(project.project)}" ${disabled}>
+        <div class="chip-row">
+          ${chip(durable ? "record" : "derived", durable ? "good" : "warn")}
+          ${chip(`${project.repository_count} repos`, project.repository_count ? "info" : "warn")}
+        </div>
+      </td>
+      <td>${select("status", ["active", "inactive", "archived"], statusValue, !editable, formId)}</td>
+      <td><textarea form="${escapeHtml(formId)}" name="description" ${disabled}>${escapeHtml(description)}</textarea></td>
+      <td><textarea form="${escapeHtml(formId)}" name="metadata" ${disabled}>${escapeHtml(metadata)}</textarea></td>
+      <td>
+        <span class="mono">${project.task_count}</span>
+        <div class="chip-row">
+          ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
+          ${chip(`${project.blocked_count} blocked`, project.blocked_count ? "warn" : "good")}
+        </div>
+      </td>
+      <td>${escapeHtml(project.active_agent_names.join(", ") || "none")}</td>
+      <td>
+        <div class="table-actions">
+          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+          <button form="${escapeHtml(formId)}" type="submit" ${disabled}>Save</button>
+          <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}" ${disabled}>Delete</button>
+        </div>
+      </td>
+    </tr>
   `;
 }
 function fleetMembershipSummary(data) {
-    if (!data.fleets.length)
-        return `<div class="empty-state">No fleets</div>`;
-    const agentsById = new Map(data.agents.map((item) => [item.agent.id, item]));
-    return `
+  if (!data.fleets.length) return `<div class="empty-state">No fleets</div>`;
+  const agentsById = new Map(data.agents.map((item) => [item.agent.id, item]));
+  return `
     <div class="bucket-list">
       ${data.fleets.map((fleet) => {
-        const members = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId)?.agent.name || agentId);
-        return `
+    const members = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId)?.agent.name || agentId);
+    return `
           <button class="bucket-row" type="button" data-select-id="${escapeHtml(fleet.id)}">
             <span>${escapeHtml(fleet.name)}</span>
             <span class="bar-track"><span class="bar-fill" style="width:${Math.max(4, Math.min(100, members.length * 12))}%"></span></span>
             <span class="mono small">${members.length}</span>
           </button>
         `;
-    }).join("")}
+  }).join("")}
     </div>
   `;
 }
 function fleetRecord(fleet, data) {
-    const agentsById = new Map(data.agents.map((item) => [item.agent.id, item.agent.name]));
-    const memberNames = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
-    const metadata = fleet.metadata && typeof fleet.metadata === "object" ? JSON.stringify(fleet.metadata) : "{}";
-    return `
+  const agentsById = new Map(data.agents.map((item) => [item.agent.id, item.agent.name]));
+  const memberNames = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
+  return `
     <article class="record ${selectedClass(fleet.id)}">
       <div class="record-header">
         <div><h3>${escapeHtml(fleet.name)}</h3><p class="muted small mono">${escapeHtml(fleet.id)}</p></div>
@@ -1684,32 +1587,63 @@ function fleetRecord(fleet, data) {
         ${field("Members", memberNames.join(", ") || "none")}
         ${field("Metadata", jsonSummary(fleet.metadata))}
       </div>
-      <div class="record-actions">
-        <details class="row-actions edit-disclosure">
-          <summary>Edit</summary>
-        <form class="action-form" data-action="fleetUpdate" data-fleet-id="${escapeHtml(fleet.id)}">
-          <label>Name <input name="name" value="${escapeHtml(fleet.name)}"></label>
-          <label>Description <textarea name="description">${escapeHtml(fleet.description || "")}</textarea></label>
-          <label>Status ${select("status", ["active", "inactive", "retired"], fleet.status)}</label>
-          <label>Agent IDs <input name="agent_ids" value="${escapeHtml((fleet.agent_ids || []).join(","))}"></label>
-          <label>Metadata JSON <textarea name="metadata">${escapeHtml(metadata)}</textarea></label>
-          <button type="submit">Save</button>
-        </form>
-        </details>
-        <button class="danger-button" type="button" data-fleet-delete="${escapeHtml(fleet.id)}">Delete</button>
+    </article>
+  `;
+}
+function selectedFleetRecord(data) {
+  return data.fleets.find((fleet) => fleet.id === state.selectedId || fleet.name === state.selectedId) || null;
+}
+function fleetDetail(fleet, data) {
+  const agentsById = new Map(data.agents.map((item) => [item.agent.id, item]));
+  const members = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId)).filter(Boolean);
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(fleet.name)}</h3><p class="muted small mono">${escapeHtml(fleet.id)}</p></div>
+        ${chip(fleet.status, fleet.status === "active" ? "good" : "warn")}
+      </div>
+      <div class="row-grid">
+        ${field("Tenant", fleet.tenant_id || "global")}
+        ${field("Members", String(members.length))}
+        ${field("Description", fleet.description || "none")}
+        ${field("Metadata", jsonSummary(fleet.metadata))}
+      </div>
+      <div class="agent-list">
+        ${members.length ? members.map((item) => agentPill(item, data)).join("") : `<div class="empty-state">No members</div>`}
       </div>
     </article>
   `;
 }
+function agentFleetNames(data, agentId) {
+  return data.fleets.filter((fleet) => (fleet.agent_ids || []).includes(agentId)).map((fleet) => fleet.name || fleet.id);
+}
+function agentFleetLabel(data, agentId) {
+  return agentFleetNames(data, agentId).join(", ") || "unassigned";
+}
+function roleLabel(data, roleId) {
+  if (!roleId) return "unassigned";
+  const role = data.roles.find((item) => item.id === roleId || item.slug === roleId);
+  if (!role) return roleId;
+  return String(role.display_name || role.name || role.slug || role.id || roleId);
+}
+function agentPill(item, data) {
+  return `
+    <button class="agent-pill ${selectedClass(item.agent.id)}" type="button" data-select-id="${escapeHtml(item.agent.id)}">
+      <span class="mono">${escapeHtml(item.agent.name)}</span>
+      <span>${escapeHtml(agentFleetLabel(data, item.agent.id))}</span>
+      <span>${escapeHtml(item.agent.status)} / ${escapeHtml(item.agent.health_status)}</span>
+    </button>
+  `;
+}
 function storyButton(task) {
-    return `<button class="story-button ${selectedClass(task.id)}" type="button" data-select-id="${escapeHtml(task.id)}"><span>${escapeHtml(task.title)}</span><span class="mono small">${escapeHtml(task.id)}</span></button>`;
+  return `<button class="story-button ${selectedClass(task.id)}" type="button" data-select-id="${escapeHtml(task.id)}"><span>${escapeHtml(task.title)}</span><span class="mono small">${escapeHtml(task.id)}</span></button>`;
 }
 function storyScopePanel(data, detail) {
-    const task = detail.task;
-    const related = relatedAgentsForTask(data, detail);
-    const dependencyDetails = (task.dependencies || []).map((id) => taskDetailById(data, id)).filter(Boolean);
-    const dependents = data.tasks.filter((candidate) => (candidate.task.dependencies || []).includes(task.id));
-    return `
+  const task = detail.task;
+  const related = relatedAgentsForTask(data, detail);
+  const dependencyDetails = (task.dependencies || []).map((id) => taskDetailById(data, id)).filter(Boolean);
+  const dependents = data.tasks.filter((candidate) => (candidate.task.dependencies || []).includes(task.id));
+  return `
     <div class="story-scope">
       <div>
         <h3>${escapeHtml(task.title)}</h3>
@@ -1737,38 +1671,32 @@ function storyScopePanel(data, detail) {
   `;
 }
 function relatedAgentsForTask(data, detail) {
-    const relations = new Map();
-    const add = (agentId, relation) => {
-        const id = String(agentId || "").trim();
-        if (!id)
-            return;
-        if (!relations.has(id))
-            relations.set(id, new Set());
-        relations.get(id)?.add(relation);
-    };
-    add(detail.task.owner_agent_id, "writing");
-    for (const review of detail.reviews || [])
-        add(review.reviewer_agent_id, "reviewing");
-    for (const evidence of detail.evidence || []) {
-        const kind = String(evidence.kind || "");
-        add(evidence.created_by, kind === "test" ? "testing" : kind === "publication" ? "deploying" : "evidence");
-    }
-    for (const event of detail.history || [])
-        add(event.actor, "history");
-    for (const dependencyId of detail.task.dependencies || []) {
-        const dependency = taskDetailById(data, dependencyId);
-        add(dependency?.task.owner_agent_id, "dependency");
-    }
-    const byId = new Map(data.agents.map((item) => [item.agent.id, item]));
-    return Array.from(relations.entries())
-        .map(([agentId, relationSet]) => {
-        const item = byId.get(agentId);
-        return item ? { item, relation: Array.from(relationSet).join(", ") } : null;
-    })
-        .filter(Boolean);
+  const relations = /* @__PURE__ */ new Map();
+  const add = (agentId, relation) => {
+    const id = String(agentId || "").trim();
+    if (!id) return;
+    if (!relations.has(id)) relations.set(id, /* @__PURE__ */ new Set());
+    relations.get(id)?.add(relation);
+  };
+  add(detail.task.owner_agent_id, "writing");
+  for (const review of detail.reviews || []) add(review.reviewer_agent_id, "reviewing");
+  for (const evidence of detail.evidence || []) {
+    const kind = String(evidence.kind || "");
+    add(evidence.created_by, kind === "test" ? "testing" : kind === "publication" ? "deploying" : "evidence");
+  }
+  for (const event of detail.history || []) add(event.actor, "history");
+  for (const dependencyId of detail.task.dependencies || []) {
+    const dependency = taskDetailById(data, dependencyId);
+    add(dependency?.task.owner_agent_id, "dependency");
+  }
+  const byId = new Map(data.agents.map((item) => [item.agent.id, item]));
+  return Array.from(relations.entries()).map(([agentId, relationSet]) => {
+    const item = byId.get(agentId);
+    return item ? { item, relation: Array.from(relationSet).join(", ") } : null;
+  }).filter(Boolean);
 }
 function scopedAgentPill(item, relation) {
-    return `
+  return `
     <button class="agent-pill ${selectedClass(item.agent.id)}" type="button" data-select-id="${escapeHtml(item.agent.id)}">
       <span class="mono">${escapeHtml(item.agent.name)}</span>
       <span>${escapeHtml(relation)}</span>
@@ -1777,17 +1705,18 @@ function scopedAgentPill(item, relation) {
   `;
 }
 function projectAgentsPanel(data, project) {
-    const projectName = project?.project || "all";
-    const agents = data.agents.filter((item) => projectName === "all" ? item.active_tasks.length : (item.active_projects || []).includes(projectName));
-    if (!agents.length)
-        return `<div class="empty-state">No active agents in this scope</div>`;
-    return agentTable(agents.slice(0, 40), data, true);
+  const projectName = project?.project || "all";
+  const agents = data.agents.filter(
+    (item) => projectName === "all" ? item.active_tasks.length : (item.active_projects || []).includes(projectName)
+  );
+  if (!agents.length) return `<div class="empty-state">No active agents in this scope</div>`;
+  return agentTable(agents.slice(0, 40), data, true);
 }
 function dependencyOrderPanel(data, project) {
-    const projects = project ? [project] : data.project_summaries;
-    const waiting = projects.flatMap((item) => item.waiting_tasks.map((task) => ({ project: item.project, task }))).slice(0, 12);
-    const edges = projects.flatMap((item) => item.cross_project_edges.map((edge) => ({ project: item.project, edge }))).slice(0, 12);
-    return `
+  const projects = project ? [project] : data.project_summaries;
+  const waiting = projects.flatMap((item) => item.waiting_tasks.map((task) => ({ project: item.project, task }))).slice(0, 12);
+  const edges = projects.flatMap((item) => item.cross_project_edges.map((edge) => ({ project: item.project, edge }))).slice(0, 12);
+  return `
     <div class="record-list">
       ${waiting.map(({ project: projectName, task }) => `
         <article class="record compact">
@@ -1806,50 +1735,46 @@ function dependencyOrderPanel(data, project) {
   `;
 }
 function filteredAgents(data) {
-    const query = state.agentQuery.trim().toLowerCase();
-    const agents = data.agents.filter((item) => {
-        const projects = item.active_projects || [];
-        const haystack = [
-            item.agent.name,
-            item.agent.id,
-            item.machine?.hostname || "",
-            item.agent.status,
-            item.agent.health_status,
-            ...projects,
-            ...(item.agent.capabilities || []),
-        ].join(" ").toLowerCase();
-        const matchesQuery = !query || haystack.includes(query);
-        const matchesProject = state.projectFilter === "all" || projects.includes(state.projectFilter);
-        const matchesFilter = state.agentFilter === "all" ||
-            (state.agentFilter === "eligible" && item.availability.eligible) ||
-            (state.agentFilter === "blocked" && !item.availability.eligible) ||
-            item.agent.status === state.agentFilter ||
-            item.agent.health_status === state.agentFilter;
-        return matchesQuery && matchesProject && matchesFilter;
-    });
-    return agents.sort(agentSort);
+  const query = state.agentQuery.trim().toLowerCase();
+  const agents = data.agents.filter((item) => {
+    const projects = item.active_projects || [];
+    const fleetLabel = agentFleetLabel(data, item.agent.id);
+    const role = roleLabel(data, item.agent.role_id);
+    const haystack = [
+      item.agent.name,
+      item.agent.id,
+      item.machine?.hostname || "",
+      fleetLabel,
+      role,
+      item.agent.status,
+      item.agent.health_status,
+      ...projects,
+      ...item.agent.capabilities || []
+    ].join(" ").toLowerCase();
+    const matchesQuery = !query || haystack.includes(query);
+    const matchesFilter = state.agentFilter === "all" || state.agentFilter === "eligible" && item.availability.eligible || state.agentFilter === "blocked" && !item.availability.eligible || item.agent.status === state.agentFilter || item.agent.health_status === state.agentFilter;
+    return matchesQuery && matchesFilter;
+  });
+  return agents.sort(agentSort);
 }
 function agentSort(left, right) {
-    if (state.agentSort === "status")
-        return compareText(`${left.agent.status} ${left.agent.name}`, `${right.agent.status} ${right.agent.name}`);
-    if (state.agentSort === "project")
-        return compareText((left.active_projects || []).join(",") || "idle", (right.active_projects || []).join(",") || "idle") || compareText(left.agent.name, right.agent.name);
-    if (state.agentSort === "capacity")
-        return (right.capacity - right.active_lease_count) - (left.capacity - left.active_lease_count) || compareText(left.agent.name, right.agent.name);
-    if (state.agentSort === "last_seen")
-        return compareText(String(right.agent.last_seen_at || ""), String(left.agent.last_seen_at || ""));
-    return compareText(left.agent.name, right.agent.name);
+  const data = mustData();
+  if (state.agentSort === "fleet") return compareText(agentFleetLabel(data, left.agent.id), agentFleetLabel(data, right.agent.id)) || compareText(left.agent.name, right.agent.name);
+  if (state.agentSort === "status") return compareText(`${left.agent.status} ${left.agent.name}`, `${right.agent.status} ${right.agent.name}`);
+  if (state.agentSort === "project") return compareText((left.active_projects || []).join(",") || "idle", (right.active_projects || []).join(",") || "idle") || compareText(left.agent.name, right.agent.name);
+  if (state.agentSort === "capacity") return right.capacity - right.active_lease_count - (left.capacity - left.active_lease_count) || compareText(left.agent.name, right.agent.name);
+  if (state.agentSort === "last_seen") return compareText(String(right.agent.last_seen_at || ""), String(left.agent.last_seen_at || ""));
+  return compareText(left.agent.name, right.agent.name);
 }
 function compareText(left, right) {
-    return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
+  return left.localeCompare(right, void 0, { sensitivity: "base", numeric: true });
 }
 function agentTable(agents, data, compact = false) {
-    if (!agents.length)
-        return `<div class="empty-state">No matching agents</div>`;
-    return `
+  if (!agents.length) return `<div class="empty-state">No matching agents</div>`;
+  return `
     <div class="table-wrap">
       <table class="data-table ${compact ? "compact-table" : ""}">
-        <thead><tr><th>Agent</th><th>Project</th><th>Status</th><th>Capacity</th><th>Machine</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
+        <thead><tr><th>Agent</th><th>Fleet</th><th>Role</th><th>Project</th><th>Status</th><th>Health</th><th>Capacity</th><th>Machine</th><th>Last Seen</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
         <tbody>
           ${agents.map((item) => agentRow(item, data)).join("")}
         </tbody>
@@ -1858,14 +1783,19 @@ function agentTable(agents, data, compact = false) {
   `;
 }
 function agentRow(item, data) {
-    const task = item.active_tasks[0];
-    return `
+  const task = item.active_tasks[0];
+  const writable = canWrite(data);
+  return `
     <tr class="${selectedClass(item.agent.id)}">
       <td><button class="link-button mono" type="button" data-select-id="${escapeHtml(item.agent.id)}">${escapeHtml(item.agent.name)}</button><br><span class="muted small">${escapeHtml(item.agent.id)}</span></td>
+      <td>${escapeHtml(agentFleetLabel(data, item.agent.id))}</td>
+      <td>${escapeHtml(roleLabel(data, item.agent.role_id))}</td>
       <td>${escapeHtml((item.active_projects || []).join(", ") || "idle")}</td>
-      <td>${chip(item.agent.status, statusTone(item.agent.status))} ${chip(item.agent.health_status, healthTone(item.agent.health_status))}</td>
+      <td>${chip(item.agent.status, statusTone(item.agent.status))}</td>
+      <td>${chip(item.agent.health_status, healthTone(item.agent.health_status))}</td>
       <td class="mono">${item.active_lease_count} / ${item.capacity}</td>
       <td>${escapeHtml(item.machine?.hostname || "missing")}</td>
+      <td>${escapeHtml(formatAge(item.agent.last_seen_at))}</td>
       <td>${escapeHtml((item.agent.capabilities || []).slice(0, 8).join(", ") || "none")}</td>
       <td>${task ? storyButton(task) : `<span class="muted small">none</span>`}</td>
       <td>
@@ -1873,58 +1803,59 @@ function agentRow(item, data) {
           <form class="inline-form" data-action="agentBulkUpdate">
             <input type="hidden" name="agent_ids" value="${escapeHtml(item.agent.id)}">
             <input type="hidden" name="status" value="draining">
-            <button type="submit">Drain</button>
+            <button type="submit" ${disabledAttr(!writable)}>Drain</button>
           </form>
           <details class="row-actions edit-disclosure">
             <summary>Edit</summary>
             <form class="action-form compact" data-action="agentUpdate" data-agent-id="${escapeHtml(item.agent.id)}">
-              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}"></label>
-              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status)}</label>
-              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status)}</label>
-              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}"></label>
-              <label>Resources JSON <textarea name="resources">${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
-              <button type="submit">Save</button>
+              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}" ${disabledAttr(!writable)}></label>
+              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status, !writable)}</label>
+              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status, !writable)}</label>
+              <label>Hermes Instance ID <input name="hermes_instance_id" value="${escapeHtml(item.agent.hermes_instance_id || "")}" ${disabledAttr(!writable)}></label>
+              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}" ${disabledAttr(!writable)}></label>
+              <label>Resources JSON <textarea name="resources" ${disabledAttr(!writable)}>${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
+              <button type="submit" ${disabledAttr(!writable)}>Save</button>
             </form>
           </details>
-          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}">Delete</button>
+          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}" ${disabledAttr(!writable)}>Delete</button>
         </div>
       </td>
     </tr>
   `;
 }
 function swarmBuckets(items) {
-    if (!items.length)
-        return `<div class="empty-state">No data</div>`;
-    const total = items.reduce((sum, item) => sum + item.count, 0) || 1;
-    return `
+  if (!items.length) return `<div class="empty-state">No data</div>`;
+  const total = items.reduce((sum, item) => sum + item.count, 0) || 1;
+  return `
     <div class="bucket-list">
       ${items.slice(0, 16).map((item) => `
         <button class="bucket-row" type="button" data-agent-filter-value="${escapeHtml(item.key)}">
           <span>${escapeHtml(item.key)}</span>
-          <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item.count / total) * 100)}%"></span></span>
+          <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, item.count / total * 100)}%"></span></span>
           <span class="mono small">${item.count}</span>
         </button>
       `).join("")}
     </div>
   `;
 }
-function agentCard(item) {
-    const agent = item.agent;
-    const machine = item.machine;
-    const reasons = item.availability.eligible
-        ? chip("dispatch eligible", "good")
-        : item.availability.reasons.map((reason) => chip(reason, "bad")).join("");
-    return `
+function agentCard(item, data) {
+  const agent = item.agent;
+  const machine = item.machine;
+  const reasons = item.availability.eligible ? chip("dispatch eligible", "good") : item.availability.reasons.map((reason) => chip(reason, "bad")).join("");
+  return `
     <article class="agent-card ${item.availability.eligible ? "" : "is-blocked"} ${selectedClass(agent.id)}">
       <div class="agent-header">
         <div><h2 class="mono">${escapeHtml(agent.name)}</h2><p class="muted small">${escapeHtml(agent.id)}</p></div>
         <div class="chip-row">${chip(agent.status, statusTone(agent.status))}${chip(agent.health_status, healthTone(agent.health_status))}<button class="link-button" type="button" data-select-id="${escapeHtml(agent.id)}">Select</button></div>
       </div>
       <div class="row-grid">
+        ${field("Fleet", agentFleetLabel(data, agent.id))}
+        ${field("Role", roleLabel(data, agent.role_id))}
         ${field("Machine", machine?.hostname || "missing")}
         ${field("Trusted", machine?.trusted ? "yes" : "no")}
         ${field("Last seen", formatAge(agent.last_seen_at))}
         ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Hermes", agent.hermes_instance_id || "unbound")}
         ${field("Current task", item.active_tasks[0]?.title || agent.current_task_id || "none")}
         ${field("Capabilities", (agent.capabilities || []).join(", ") || "none")}
         ${field("Resources", jsonSummary(agent.resources))}
@@ -1935,8 +1866,8 @@ function agentCard(item) {
   `;
 }
 function taskLane(taskState, tasks, agents) {
-    const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
-    return `
+  const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
+  return `
     <div class="task-lane">
       <h2><span>${escapeHtml(labelize(taskState))}</span><span class="pill">${laneTasks.length}</span></h2>
       ${laneTasks.length ? laneTasks.map((detail) => taskCard(detail, agents)).join("") : `<div class="empty-state">Empty</div>`}
@@ -1944,12 +1875,12 @@ function taskLane(taskState, tasks, agents) {
   `;
 }
 function taskCard(detail, agents) {
-    const task = detail.task;
-    const owner = agents.find((item) => item.agent.id === task.owner_agent_id)?.agent;
-    const origin = taskOrigin(task);
-    const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
-    const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
-    return `
+  const task = detail.task;
+  const owner = agents.find((item) => item.agent.id === task.owner_agent_id)?.agent;
+  const origin = taskOrigin(task);
+  const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
+  const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
+  return `
     <article class="task-card ${selectedClass(task.id)}">
       <div class="record-header">
         <div><h3>${escapeHtml(task.title)}</h3><p class="muted small mono">${escapeHtml(task.id)}</p></div>
@@ -2049,37 +1980,37 @@ function taskCard(detail, agents) {
   `;
 }
 function hermesRecord(instance, data) {
-    const tenant = data.tenants.find((item) => item.id === instance.tenant_id);
-    const persona = data.personas.find((item) => item.id === instance.persona_id);
-    const bindings = data.platform_bindings.filter((binding) => binding.hermes_instance_id === instance.id);
-    const tasks = data.tasks.filter((detail) => taskOrigin(detail.task).hermes_instance_id === instance.id);
-    const context = data.hermes_work_contexts?.[String(instance.id)];
-    const proof = data.hermes_runtime_proofs?.[String(instance.id)];
-    const contextProjects = context?.projects || [];
-    const contextAgents = context?.agents || [];
-    const hermesBridgeCommands = context?.operations.mac_hermes_cli || [];
-    const operationCount = (context?.operations.api || []).length + hermesBridgeCommands.length;
-    const proofEvidence = (proof?.evidence || {});
-    const proofUi = (proofEvidence.ui || {});
-    const proofRuntime = (proofEvidence.hermes_runtime || {});
-    const proofWork = (proofEvidence.work_context || {});
-    const proofApi = (proofEvidence.api || {});
-    const liveAlignment = (proofEvidence.live_alignment || {});
-    const dashboardUrlContract = (proofUi.dashboard_url_contract || {});
-    const dashboardOperationContract = (proofUi.dashboard_operation_contract || {});
-    const proofObjects = (proofEvidence.first_class_objects || {});
-    const proofObjectEntries = Object.entries(proofObjects);
-    const readyObjectCount = proofObjectEntries.filter(([, value]) => Boolean(value.ready)).length;
-    const proofSessionCapabilities = (proofRuntime.session_capability_names || []);
-    const proofSessionAvailability = (proofRuntime.session_capability_availability || {});
-    const unavailableSessionCapabilities = (proofSessionAvailability.missing || []);
-    const unavailableSessionCapabilityNames = new Set(unavailableSessionCapabilities.map((item) => String(item)));
-    const availableSessionCapabilityCount = Math.max(0, proofSessionCapabilities.length - unavailableSessionCapabilities.length);
-    const taskOperationCount = (proofApi.task_operation_names || []).length;
-    const projectOperationCount = (proofApi.project_operation_names || []).length;
-    const agentOperationCount = (proofApi.agent_operation_names || []).length;
-    const proofMissing = proof?.missing || [];
-    return `
+  const tenant = data.tenants.find((item) => item.id === instance.tenant_id);
+  const persona = data.personas.find((item) => item.id === instance.persona_id);
+  const bindings = data.platform_bindings.filter((binding) => binding.hermes_instance_id === instance.id);
+  const tasks = data.tasks.filter((detail) => taskOrigin(detail.task).hermes_instance_id === instance.id);
+  const context = data.hermes_work_contexts?.[String(instance.id)];
+  const proof = data.hermes_runtime_proofs?.[String(instance.id)];
+  const contextProjects = context?.projects || [];
+  const contextAgents = context?.agents || [];
+  const hermesBridgeCommands = context?.operations.mac_hermes_cli || [];
+  const operationCount = (context?.operations.api || []).length + hermesBridgeCommands.length;
+  const proofEvidence = proof?.evidence || {};
+  const proofUi = proofEvidence.ui || {};
+  const proofRuntime = proofEvidence.hermes_runtime || {};
+  const proofWork = proofEvidence.work_context || {};
+  const proofApi = proofEvidence.api || {};
+  const liveAlignment = proofEvidence.live_alignment || {};
+  const dashboardUrlContract = proofUi.dashboard_url_contract || {};
+  const dashboardOperationContract = proofUi.dashboard_operation_contract || {};
+  const proofObjects = proofEvidence.first_class_objects || {};
+  const proofObjectEntries = Object.entries(proofObjects);
+  const readyObjectCount = proofObjectEntries.filter(([, value]) => Boolean(value.ready)).length;
+  const proofSessionCapabilities = proofRuntime.session_capability_names || [];
+  const proofSessionAvailability = proofRuntime.session_capability_availability || {};
+  const unavailableSessionCapabilities = proofSessionAvailability.missing || [];
+  const unavailableSessionCapabilityNames = new Set(unavailableSessionCapabilities.map((item) => String(item)));
+  const availableSessionCapabilityCount = Math.max(0, proofSessionCapabilities.length - unavailableSessionCapabilities.length);
+  const taskOperationCount = (proofApi.task_operation_names || []).length;
+  const projectOperationCount = (proofApi.project_operation_names || []).length;
+  const agentOperationCount = (proofApi.agent_operation_names || []).length;
+  const proofMissing = proof?.missing || [];
+  return `
     <article class="record">
       <div class="record-header"><div><h2>${escapeHtml(instance.name)}</h2><p class="muted small mono">${escapeHtml(instance.id)}</p></div>${chip(instance.status, instance.status === "active" ? "good" : "warn")}</div>
       <div class="row-grid">
@@ -2151,19 +2082,18 @@ function hermesRecord(instance, data) {
           <h4>Session Capabilities</h4>
           <div class="chip-row">
             ${proofSessionCapabilities.map((name) => {
-        const label = String(name);
-        return chip(label, unavailableSessionCapabilityNames.has(label) ? "bad" : "good");
-    }).join("") || chip("session capability proof missing", "warn")}
+    const label = String(name);
+    return chip(label, unavailableSessionCapabilityNames.has(label) ? "bad" : "good");
+  }).join("") || chip("session capability proof missing", "warn")}
           </div>
         </div>
       ` : ""}
     </article>
-    `;
+  `;
 }
 function firstClassCouplingMatrix(entries) {
-    if (!entries.length)
-        return `<div class="empty-state">First-class coupling proof missing</div>`;
-    return `
+  if (!entries.length) return `<div class="empty-state">First-class coupling proof missing</div>`;
+  return `
     <div class="table-wrap">
       <table class="data-table compact-table">
         <thead>
@@ -2184,11 +2114,11 @@ function firstClassCouplingMatrix(entries) {
   `;
 }
 function firstClassCouplingRow(name, proof) {
-    const dashboardProjection = (proof.dashboard_projection || {});
-    const dashboardFields = arrayOfStrings(dashboardProjection.fields).slice(0, 4);
-    const dashboardUrls = arrayOfStrings(dashboardProjection.urls).slice(0, 3);
-    const stateKey = String(dashboardProjection.state_key || "dashboard");
-    return `
+  const dashboardProjection = proof.dashboard_projection || {};
+  const dashboardFields = arrayOfStrings(dashboardProjection.fields).slice(0, 4);
+  const dashboardUrls = arrayOfStrings(dashboardProjection.urls).slice(0, 3);
+  const stateKey = String(dashboardProjection.state_key || "dashboard");
+  return `
     <tr>
       <td>${chip(name, proof.ready ? "good" : "bad")}</td>
       <td>${proofList(proof, "api_operations", "api")}</td>
@@ -2204,18 +2134,16 @@ function firstClassCouplingRow(name, proof) {
   `;
 }
 function proofList(proof, key, emptyLabel) {
-    const values = arrayOfStrings(proof[key]).slice(0, 4);
-    if (!values.length)
-        return chip(`${emptyLabel} missing`, "bad");
-    return `<div class="chip-row">${values.map((value) => chip(value, "info")).join("")}</div>`;
+  const values = arrayOfStrings(proof[key]).slice(0, 4);
+  if (!values.length) return chip(`${emptyLabel} missing`, "bad");
+  return `<div class="chip-row">${values.map((value) => chip(value, "info")).join("")}</div>`;
 }
 function dashboardUrlContractPanel(contract) {
-    if (!contract.schema)
-        return `<div class="empty-state">Dashboard URL proof missing</div>`;
-    const objectLinks = (contract.object_deep_links || {});
-    const params = dashboardParameterNames(contract);
-    const missing = arrayOfStrings(contract.missing);
-    return `
+  if (!contract.schema) return `<div class="empty-state">Dashboard URL proof missing</div>`;
+  const objectLinks = contract.object_deep_links || {};
+  const params = dashboardParameterNames(contract);
+  const missing = arrayOfStrings(contract.missing);
+  return `
     <div class="row-grid">
       ${field("Entrypoint", contract.entrypoint || "/ui")}
       ${field("Contract", contract.ready ? "ready" : "degraded")}
@@ -2229,9 +2157,9 @@ function dashboardUrlContractPanel(contract) {
   `;
 }
 function dashboardDeepLinkRecord(name, links) {
-    const templates = arrayOfStrings(links.templates).slice(0, 4);
-    const samples = arrayOfStrings(links.samples).slice(0, 4);
-    return `
+  const templates = arrayOfStrings(links.templates).slice(0, 4);
+  const samples = arrayOfStrings(links.samples).slice(0, 4);
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(labelize(name))}</h3><p class="muted small">${templates.length} templates, ${samples.length} samples</p></div>${chip(links.ready ? "ready" : "missing", links.ready ? "good" : "bad")}</div>
       <div class="chip-row">${dashboardLinkChips(samples, "samples missing")}</div>
@@ -2240,43 +2168,35 @@ function dashboardDeepLinkRecord(name, links) {
   `;
 }
 function dashboardParameterNames(contract) {
-    const params = contract.url_state_parameters;
-    if (!Array.isArray(params))
-        return [];
-    return params
-        .map((item) => {
-        if (typeof item === "string")
-            return item;
-        if (item && typeof item === "object" && "name" in item)
-            return String(item.name || "");
-        return "";
-    })
-        .filter((item) => item.trim());
+  const params = contract.url_state_parameters;
+  if (!Array.isArray(params)) return [];
+  return params.map((item) => {
+    if (typeof item === "string") return item;
+    if (item && typeof item === "object" && "name" in item) return String(item.name || "");
+    return "";
+  }).filter((item) => item.trim());
 }
 function dashboardLinkChips(urls, emptyLabel) {
-    if (!urls.length)
-        return chip(emptyLabel, "bad");
-    return urls.map((url) => dashboardLinkChip(url)).join("");
+  if (!urls.length) return chip(emptyLabel, "bad");
+  return urls.map((url) => dashboardLinkChip(url)).join("");
 }
 function dashboardLinkChip(url) {
-    return `<a class="chip tone-info" href="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(shortDashboardLink(url))}</a>`;
+  return `<a class="chip tone-info" href="${escapeHtml(url)}" title="${escapeHtml(url)}">${escapeHtml(shortDashboardLink(url))}</a>`;
 }
 function shortDashboardLink(url) {
-    const query = url.includes("?") ? url.split("?", 2)[1] : "";
-    const params = new URLSearchParams(query);
-    const view = params.get("view") || "ui";
-    const scope = params.get("project") || params.get("task_state") || params.get("selected") || "";
-    return scope ? truncate(`${view}:${scope}`, 42) : truncate(view, 42);
+  const query = url.includes("?") ? url.split("?", 2)[1] : "";
+  const params = new URLSearchParams(query);
+  const view = params.get("view") || "ui";
+  const scope = params.get("project") || params.get("task_state") || params.get("selected") || "";
+  return scope ? truncate(`${view}:${scope}`, 42) : truncate(view, 42);
 }
 function arrayOfStrings(value) {
-    return Array.isArray(value)
-        ? value.map((item) => String(item)).filter((item) => item.trim())
-        : [];
+  return Array.isArray(value) ? value.map((item) => String(item)).filter((item) => item.trim()) : [];
 }
 function runtimeRecord(runtime, data) {
-    const rollouts = data.rollouts.filter((item) => item.rollout.runtime_environment_id === runtime.id);
-    const runs = data.runtime_runs.filter((run) => run.environment_id === runtime.id);
-    return `
+  const rollouts = data.rollouts.filter((item) => item.rollout.runtime_environment_id === runtime.id);
+  const runs = data.runtime_runs.filter((run) => run.environment_id === runtime.id);
+  return `
     <article class="runtime-record">
       <div class="runtime-header"><div><h3>${escapeHtml(runtime.name)}</h3><p class="muted small mono">${escapeHtml(runtime.id)}</p></div>${chip(shortHash(runtime.digest), "good")}</div>
       <div class="row-grid">
@@ -2290,9 +2210,9 @@ function runtimeRecord(runtime, data) {
   `;
 }
 function rolloutRecord(status, data) {
-    const rollout = status.rollout;
-    const evalSet = data.eval_sets.find((item) => item.id === rollout.required_eval_set_id);
-    return `
+  const rollout = status.rollout;
+  const evalSet = data.eval_sets.find((item) => item.id === rollout.required_eval_set_id);
+  return `
     <article class="rollout-record">
       <div class="rollout-header"><div><h3>${escapeHtml(rollout.version)}</h3><p class="muted small mono">${escapeHtml(rollout.id)}</p></div>${chip(rollout.status, rolloutTone(String(rollout.status)))}</div>
       <div class="row-grid">
@@ -2329,7 +2249,7 @@ function rolloutRecord(status, data) {
   `;
 }
 function secretRecord(secret, agents) {
-    return `
+  return `
     <article class="record">
       <div class="record-header"><div><h3>${escapeHtml(secret.name)}</h3><p class="muted small mono">${escapeHtml(secret.id)}</p></div>${chip(secret.enabled ? "enabled" : "disabled", secret.enabled ? "good" : "bad")}</div>
       <div class="row-grid">
@@ -2348,7 +2268,7 @@ function secretRecord(secret, agents) {
   `;
 }
 function secretAuditRecord(audit) {
-    return `
+  return `
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(audit.result)}</h3><p class="muted small mono">${escapeHtml(audit.id)}</p></div>${chip(audit.result, audit.result === "granted" ? "good" : audit.result === "denied" ? "bad" : "warn")}</div>
       <div class="row-grid">
@@ -2363,631 +2283,553 @@ function secretAuditRecord(audit) {
   `;
 }
 function bindViewControls() {
-    const search = document.querySelector("#agentSearch");
-    if (search)
-        search.addEventListener("input", (event) => {
-            state.agentQuery = event.target.value;
-            state.agentPage = 1;
-            updateUrlState(true);
-            render();
-        });
-    const projectFilter = document.querySelector("#projectFilter");
-    if (projectFilter)
-        projectFilter.addEventListener("change", (event) => {
-            state.projectFilter = event.target.value;
-            state.agentPage = 1;
-            updateUrlState();
-            render();
-        });
-    const agentProjectFilter = document.querySelector("#agentProjectFilter");
-    if (agentProjectFilter)
-        agentProjectFilter.addEventListener("change", (event) => {
-            state.projectFilter = event.target.value;
-            state.agentPage = 1;
-            updateUrlState();
-            render();
-        });
-    const agentFilter = document.querySelector("#agentFilter");
-    if (agentFilter)
-        agentFilter.addEventListener("change", (event) => {
-            state.agentFilter = event.target.value;
-            state.agentPage = 1;
-            updateUrlState();
-            render();
-        });
-    const agentSort = document.querySelector("#agentSort");
-    if (agentSort)
-        agentSort.addEventListener("change", (event) => {
-            state.agentSort = event.target.value;
-            updateUrlState();
-            render();
-        });
-    const clearAgents = document.querySelector("#clearAgentFilters");
-    if (clearAgents)
-        clearAgents.addEventListener("click", () => {
-            state.agentQuery = "";
-            state.agentFilter = "all";
-            state.agentSort = "name";
-            state.agentPage = 1;
-            state.projectFilter = "all";
-            updateUrlState();
-            render();
-        });
-    const clearWorkScope = document.querySelector("#clearWorkScope");
-    if (clearWorkScope)
-        clearWorkScope.addEventListener("click", () => {
-            state.projectFilter = "all";
-            state.selectedId = "";
-            updateUrlState();
-            render();
-        });
-    const prevAgentPage = document.querySelector("#agentPrevPage");
-    if (prevAgentPage)
-        prevAgentPage.addEventListener("click", () => {
-            state.agentPage = Math.max(1, state.agentPage - 1);
-            updateUrlState();
-            render();
-        });
-    const nextAgentPage = document.querySelector("#agentNextPage");
-    if (nextAgentPage)
-        nextAgentPage.addEventListener("click", () => {
-            state.agentPage += 1;
-            updateUrlState();
-            render();
-        });
-    const taskFilter = document.querySelector("#taskFilter");
-    if (taskFilter)
-        taskFilter.addEventListener("change", (event) => {
-            state.taskFilter = event.target.value;
-            updateUrlState();
-            render();
-        });
-    const clearTasks = document.querySelector("#clearTaskFilter");
-    if (clearTasks)
-        clearTasks.addEventListener("click", () => {
-            state.taskFilter = "all";
-            updateUrlState();
-            render();
-        });
-    bindAuditControl("#auditSubjectType", "auditSubjectType");
-    bindAuditControl("#auditSubjectId", "auditSubjectId", true);
-    bindAuditControl("#auditEventPrefix", "auditEventPrefix", true);
-    bindAuditControl("#auditActor", "auditActor", true);
-    bindAuditControl("#auditLayer", "auditLayer", true);
-    bindAuditControl("#auditLevel", "auditLevel");
-    bindAuditControl("#auditAgentId", "auditAgentId");
-    bindAuditControl("#auditTaskId", "auditTaskId");
-    bindAuditControl("#auditProject", "auditProject");
-    bindAuditControl("#auditFleet", "auditFleet");
-    bindAuditControl("#auditSince", "auditSince", true);
-    bindAuditControl("#auditUntil", "auditUntil", true);
-    const clearAudit = document.querySelector("#clearAuditFilters");
-    if (clearAudit)
-        clearAudit.addEventListener("click", () => {
-            state.auditSubjectType = "";
-            state.auditSubjectId = "";
-            state.auditEventPrefix = "";
-            state.auditActor = "";
-            state.auditLayer = "";
-            state.auditLevel = "";
-            state.auditAgentId = "";
-            state.auditTaskId = "";
-            state.auditProject = "";
-            state.auditFleet = "";
-            state.auditSince = "";
-            state.auditUntil = "";
-            updateUrlState();
-            render();
-        });
-}
-function bindAuditControl(selector, key, replace = false) {
-    const control = document.querySelector(selector);
-    if (!control)
-        return;
-    control.addEventListener("input", (event) => {
-        state[key] = event.target.value;
-        updateUrlState(replace);
-        render();
-    });
-    control.addEventListener("change", (event) => {
-        state[key] = event.target.value;
-        updateUrlState(replace);
-        render();
-    });
-}
-async function handleContentClick(event) {
-    const projectDelete = event.target?.closest("[data-project-delete]");
-    if (projectDelete) {
-        event.preventDefault();
-        const project = projectDelete.dataset.projectDelete || "";
-        if (!project)
-            return;
-        await runDirectDelete(projectDelete, "Project", `/projects/${encodeURIComponent(project)}?actor=human`, () => {
-            if (state.projectFilter === project)
-                state.projectFilter = "all";
-            if (state.selectedId === project)
-                state.selectedId = "";
-        });
-        return;
-    }
-    const fleetDelete = event.target?.closest("[data-fleet-delete]");
-    if (fleetDelete) {
-        event.preventDefault();
-        const fleetId = fleetDelete.dataset.fleetDelete || "";
-        if (!fleetId)
-            return;
-        await runDirectDelete(fleetDelete, "Fleet", `/fleets/${encodeURIComponent(fleetId)}`, () => {
-            if (state.selectedId === fleetId)
-                state.selectedId = "";
-        });
-        return;
-    }
-    const agentDelete = event.target?.closest("[data-agent-delete]");
-    if (agentDelete) {
-        event.preventDefault();
-        const agentId = agentDelete.dataset.agentDelete || "";
-        if (!agentId)
-            return;
-        await runDirectDelete(agentDelete, "Agent", `/agents/${encodeURIComponent(agentId)}`, () => {
-            if (state.selectedId === agentId)
-                state.selectedId = "";
-        });
-        return;
-    }
-    const taskDelete = event.target?.closest("[data-task-delete]");
-    if (taskDelete) {
-        event.preventDefault();
-        const taskId = taskDelete.dataset.taskDelete || "";
-        if (!taskId)
-            return;
-        await runDirectDelete(taskDelete, "Task", `/tasks/${encodeURIComponent(taskId)}?actor=human`, () => {
-            if (state.selectedId === taskId)
-                state.selectedId = "";
-        });
-        return;
-    }
-    const projectTarget = event.target?.closest("[data-project-focus]");
-    if (projectTarget) {
-        state.projectFilter = projectTarget.dataset.projectFocus || "all";
-        state.agentPage = 1;
-        updateUrlState();
-        render();
-        return;
-    }
-    const bucketTarget = event.target?.closest("[data-agent-filter-value]");
-    if (bucketTarget) {
-        const value = bucketTarget.dataset.agentFilterValue || "";
-        if (value && value !== "idle") {
-            state.projectFilter = value;
-            state.activeView = "agents";
-            state.agentPage = 1;
-            updateUrlState();
-            render();
-        }
-        return;
-    }
-    const target = event.target?.closest("[data-select-id]");
-    if (!target)
-        return;
-    const selectedId = target.dataset.selectId || "";
-    if (!selectedId)
-        return;
-    state.selectedId = state.selectedId === selectedId ? "" : selectedId;
+  const search = document.querySelector("#agentSearch");
+  if (search) search.addEventListener("input", (event) => {
+    state.agentQuery = event.target.value;
+    state.agentPage = 1;
+    updateUrlState(true);
+    render();
+  });
+  const projectFilter = document.querySelector("#projectFilter");
+  if (projectFilter) projectFilter.addEventListener("change", (event) => {
+    state.projectFilter = event.target.value;
+    state.agentPage = 1;
     updateUrlState();
     render();
+  });
+  const agentFilter = document.querySelector("#agentFilter");
+  if (agentFilter) agentFilter.addEventListener("change", (event) => {
+    state.agentFilter = event.target.value;
+    state.agentPage = 1;
+    updateUrlState();
+    render();
+  });
+  const agentSort2 = document.querySelector("#agentSort");
+  if (agentSort2) agentSort2.addEventListener("change", (event) => {
+    state.agentSort = event.target.value;
+    updateUrlState();
+    render();
+  });
+  const clearAgents = document.querySelector("#clearAgentFilters");
+  if (clearAgents) clearAgents.addEventListener("click", () => {
+    state.agentQuery = "";
+    state.agentFilter = "all";
+    state.agentSort = "name";
+    state.agentPage = 1;
+    state.projectFilter = "all";
+    updateUrlState();
+    render();
+  });
+  const clearWorkScope = document.querySelector("#clearWorkScope");
+  if (clearWorkScope) clearWorkScope.addEventListener("click", () => {
+    state.projectFilter = "all";
+    state.selectedId = "";
+    updateUrlState();
+    render();
+  });
+  const prevAgentPage = document.querySelector("#agentPrevPage");
+  if (prevAgentPage) prevAgentPage.addEventListener("click", () => {
+    state.agentPage = Math.max(1, state.agentPage - 1);
+    updateUrlState();
+    render();
+  });
+  const nextAgentPage = document.querySelector("#agentNextPage");
+  if (nextAgentPage) nextAgentPage.addEventListener("click", () => {
+    state.agentPage += 1;
+    updateUrlState();
+    render();
+  });
+  const taskFilter = document.querySelector("#taskFilter");
+  if (taskFilter) taskFilter.addEventListener("change", (event) => {
+    state.taskFilter = event.target.value;
+    updateUrlState();
+    render();
+  });
+  const clearTasks = document.querySelector("#clearTaskFilter");
+  if (clearTasks) clearTasks.addEventListener("click", () => {
+    state.taskFilter = "all";
+    updateUrlState();
+    render();
+  });
+  bindAuditControl("#auditSubjectType", "auditSubjectType");
+  bindAuditControl("#auditSubjectId", "auditSubjectId", true);
+  bindAuditControl("#auditEventPrefix", "auditEventPrefix", true);
+  bindAuditControl("#auditActor", "auditActor", true);
+  bindAuditControl("#auditLayer", "auditLayer", true);
+  bindAuditControl("#auditLevel", "auditLevel");
+  bindAuditControl("#auditAgentId", "auditAgentId");
+  bindAuditControl("#auditTaskId", "auditTaskId");
+  bindAuditControl("#auditProject", "auditProject");
+  bindAuditControl("#auditFleet", "auditFleet");
+  bindAuditControl("#auditSince", "auditSince", true);
+  bindAuditControl("#auditUntil", "auditUntil", true);
+  const clearAudit = document.querySelector("#clearAuditFilters");
+  if (clearAudit) clearAudit.addEventListener("click", () => {
+    state.auditSubjectType = "";
+    state.auditSubjectId = "";
+    state.auditEventPrefix = "";
+    state.auditActor = "";
+    state.auditLayer = "";
+    state.auditLevel = "";
+    state.auditAgentId = "";
+    state.auditTaskId = "";
+    state.auditProject = "";
+    state.auditFleet = "";
+    state.auditSince = "";
+    state.auditUntil = "";
+    updateUrlState();
+    render();
+  });
 }
-async function runDirectDelete(button, label, path, onSuccess = () => { }) {
-    button.disabled = true;
-    try {
-        const result = await deleteJSON(path);
-        state.actionMessage = `${label} delete ok: ${redactedJson(result)}`;
-        onSuccess();
-        updateUrlState();
-        await loadDashboard();
+function bindAuditControl(selector, key, replace = false) {
+  const control = document.querySelector(selector);
+  if (!control) return;
+  control.addEventListener("input", (event) => {
+    state[key] = event.target.value;
+    updateUrlState(replace);
+    render();
+  });
+  control.addEventListener("change", (event) => {
+    state[key] = event.target.value;
+    updateUrlState(replace);
+    render();
+  });
+}
+async function handleContentClick(event) {
+  const projectDelete = event.target?.closest("[data-project-delete]");
+  if (projectDelete) {
+    event.preventDefault();
+    const project = projectDelete.dataset.projectDelete || "";
+    if (!project) return;
+    await runDirectDelete(projectDelete, "Project", `/projects/${encodeURIComponent(project)}?actor=human`, () => {
+      if (state.projectFilter === project) state.projectFilter = "all";
+      if (state.selectedId === project) state.selectedId = "";
+    });
+    return;
+  }
+  const agentDelete = event.target?.closest("[data-agent-delete]");
+  if (agentDelete) {
+    event.preventDefault();
+    const agentId = agentDelete.dataset.agentDelete || "";
+    if (!agentId) return;
+    await runDirectDelete(agentDelete, "Agent", `/agents/${encodeURIComponent(agentId)}`, () => {
+      if (state.selectedId === agentId) state.selectedId = "";
+    });
+    return;
+  }
+  const taskDelete = event.target?.closest("[data-task-delete]");
+  if (taskDelete) {
+    event.preventDefault();
+    const taskId = taskDelete.dataset.taskDelete || "";
+    if (!taskId) return;
+    await runDirectDelete(taskDelete, "Task", `/tasks/${encodeURIComponent(taskId)}?actor=human`, () => {
+      if (state.selectedId === taskId) state.selectedId = "";
+    });
+    return;
+  }
+  const projectTarget = event.target?.closest("[data-project-focus]");
+  if (projectTarget) {
+    state.projectFilter = projectTarget.dataset.projectFocus || "all";
+    state.agentPage = 1;
+    updateUrlState();
+    render();
+    return;
+  }
+  const bucketTarget = event.target?.closest("[data-agent-filter-value]");
+  if (bucketTarget) {
+    const value = bucketTarget.dataset.agentFilterValue || "";
+    if (value && value !== "idle") {
+      state.agentQuery = value;
+      state.activeView = "agents";
+      state.agentPage = 1;
+      updateUrlState();
+      render();
     }
-    catch (error) {
-        state.actionMessage = `${label} delete failed: ${error instanceof Error ? error.message : String(error)}`;
-        render();
-    }
-    finally {
-        button.disabled = false;
-    }
+    return;
+  }
+  const target = event.target?.closest("[data-select-id]");
+  if (!target) return;
+  const selectedId = target.dataset.selectId || "";
+  if (!selectedId) return;
+  state.selectedId = state.selectedId === selectedId ? "" : selectedId;
+  updateUrlState();
+  render();
+}
+async function runDirectDelete(button, label, path, onSuccess = () => {
+}) {
+  button.disabled = true;
+  try {
+    const result = await deleteJSON(path);
+    state.actionMessage = `${label} delete ok: ${redactedJson(result)}`;
+    onSuccess();
+    updateUrlState();
+    await loadDashboard();
+  } catch (error) {
+    state.actionMessage = `${label} delete failed: ${error instanceof Error ? error.message : String(error)}`;
+    render();
+  } finally {
+    button.disabled = false;
+  }
 }
 function syncObservabilitySubscription() {
-    if (state.activeView === "observability" && state.data) {
-        startObservabilityStream();
-    }
-    else {
-        stopObservabilityStream();
-    }
+  if (state.activeView === "observability" && state.data) {
+    startObservabilityStream();
+  } else {
+    stopObservabilityStream();
+  }
 }
 function startObservabilityStream() {
-    if (state.observabilityStream)
-        return;
-    const controller = new AbortController();
-    state.observabilityStream = controller;
-    state.observabilityStreamStatus = "connecting";
-    const latest = uniqueObservations([
-        ...state.observabilityLive,
-        ...(state.data?.observability.latest || []),
-    ]);
-    const after = latest.length ? latest[0].sequence : 0;
-    const headers = { Accept: "application/x-ndjson" };
-    if (state.token)
-        headers.Authorization = `Bearer ${state.token}`;
-    fetch(`/observability/stream?after_sequence=${encodeURIComponent(after)}&timeout_seconds=60&poll_interval_seconds=0.5`, {
-        headers,
-        signal: controller.signal,
-    })
-        .then(async (response) => {
-        if (!response.ok)
-            throw new Error(`${response.status} ${response.statusText}`);
-        state.observabilityStreamStatus = "connected";
-        renderSyncState();
-        const reader = response.body?.getReader();
-        if (!reader)
-            return;
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done)
-                break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-                const text = line.trim();
-                if (!text)
-                    continue;
-                state.observabilityLive = uniqueObservations([
-                    JSON.parse(text),
-                    ...state.observabilityLive,
-                ]).slice(0, 120);
-            }
-            if (state.activeView === "observability")
-                render();
-        }
-    })
-        .catch((error) => {
-        if (!controller.signal.aborted) {
-            state.observabilityStreamStatus = "error";
-            state.actionMessage = `Observability stream failed: ${error instanceof Error ? error.message : String(error)}`;
-            if (state.activeView === "observability")
-                render();
-        }
-    })
-        .finally(() => {
-        if (state.observabilityStream === controller)
-            state.observabilityStream = null;
-        if (!controller.signal.aborted && state.activeView === "observability") {
-            state.observabilityStreamStatus = "reconnecting";
-            window.setTimeout(startObservabilityStream, 1000);
-        }
-    });
+  if (state.observabilityStream) return;
+  const controller = new AbortController();
+  state.observabilityStream = controller;
+  state.observabilityStreamStatus = "connecting";
+  const latest = uniqueObservations([
+    ...state.observabilityLive,
+    ...state.data?.observability.latest || []
+  ]);
+  const after = latest.length ? latest[0].sequence : 0;
+  const headers = { Accept: "application/x-ndjson" };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  fetch(`/observability/stream?after_sequence=${encodeURIComponent(after)}&timeout_seconds=60&poll_interval_seconds=0.5`, {
+    headers,
+    signal: controller.signal
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    state.observabilityStreamStatus = "connected";
+    renderSyncState();
+    const reader = response.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const text = line.trim();
+        if (!text) continue;
+        state.observabilityLive = uniqueObservations([
+          JSON.parse(text),
+          ...state.observabilityLive
+        ]).slice(0, 120);
+      }
+      if (state.activeView === "observability") render();
+    }
+  }).catch((error) => {
+    if (!controller.signal.aborted) {
+      state.observabilityStreamStatus = "error";
+      state.actionMessage = `Observability stream failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (state.activeView === "observability") render();
+    }
+  }).finally(() => {
+    if (state.observabilityStream === controller) state.observabilityStream = null;
+    if (!controller.signal.aborted && state.activeView === "observability") {
+      state.observabilityStreamStatus = "reconnecting";
+      window.setTimeout(startObservabilityStream, 1e3);
+    }
+  });
 }
 function stopObservabilityStream() {
-    if (!state.observabilityStream)
-        return;
-    state.observabilityStream.abort();
-    state.observabilityStream = null;
-    state.observabilityStreamStatus = "idle";
+  if (!state.observabilityStream) return;
+  state.observabilityStream.abort();
+  state.observabilityStream = null;
+  state.observabilityStreamStatus = "idle";
 }
 async function handleActionSubmit(event) {
-    const form = event.target?.closest("form[data-action]");
-    if (!form)
-        return;
-    event.preventDefault();
-    const action = form.dataset.action || "";
-    const values = formValues(form);
-    try {
-        const result = await runAction(action, form, values);
-        state.actionMessage = `${labelize(action)} ok: ${redactedJson(result)}`;
-        await loadDashboard();
-    }
-    catch (error) {
-        state.actionMessage = `${labelize(action)} failed: ${error instanceof Error ? error.message : String(error)}`;
-        render();
-    }
+  const form = event.target?.closest("form[data-action]");
+  if (!form) return;
+  event.preventDefault();
+  const action = form.dataset.action || "";
+  const values = formValues(form);
+  try {
+    const result = await runAction(action, form, values);
+    state.actionMessage = `${labelize(action)} ok: ${redactedJson(result)}`;
+    await loadDashboard();
+  } catch (error) {
+    state.actionMessage = `${labelize(action)} failed: ${error instanceof Error ? error.message : String(error)}`;
+    render();
+  }
 }
 async function runAction(action, form, values) {
-    if (action === "dispatchTick") {
-        return postJSON("/dispatch/tick", {
-            lease_seconds: numberValue(values.lease_seconds, 900),
-            limit: numberValue(values.limit, 100),
-            stale_after_seconds: optionalNumber(values.stale_after_seconds),
-        });
+  if (action === "dispatchTick") {
+    return postJSON("/dispatch/tick", {
+      lease_seconds: numberValue(values.lease_seconds, 900),
+      limit: numberValue(values.limit, 100),
+      stale_after_seconds: optionalNumber(values.stale_after_seconds)
+    });
+  }
+  if (action === "agentCreate") {
+    return postJSON("/agents", {
+      machine_id: requiredString(values.machine_id),
+      name: requiredString(values.name),
+      agent_id: emptyToNull(values.agent_id),
+      hermes_instance_id: emptyToNull(values.hermes_instance_id),
+      fleet_id: emptyToNull(values.fleet_id),
+      capabilities: csvList(values.capabilities),
+      resources: parseJsonObject(values.resources),
+      actor: String(values.actor || "human")
+    });
+  }
+  if (action === "agentUpdate") {
+    return putJSON(`/agents/${encodeURIComponent(requiredDataset(form, "agentId"))}`, {
+      name: requiredString(values.name),
+      status: requiredString(values.status),
+      health_status: requiredString(values.health_status),
+      hermes_instance_id: emptyToNull(values.hermes_instance_id),
+      capabilities: csvList(values.capabilities),
+      resources: parseJsonObject(values.resources)
+    });
+  }
+  if (action === "projectCreate") {
+    return postJSON("/projects", {
+      name: requiredString(values.name),
+      description: String(values.description || ""),
+      status: requiredString(values.status),
+      metadata: parseJsonObject(values.metadata),
+      actor: "human"
+    });
+  }
+  if (action === "projectUpdate") {
+    return putJSON(`/projects/${encodeURIComponent(requiredDataset(form, "project"))}`, {
+      name: requiredString(values.name),
+      description: String(values.description || ""),
+      status: requiredString(values.status),
+      metadata: parseJsonObject(values.metadata),
+      actor: "human"
+    });
+  }
+  if (action === "taskCreate") {
+    return postJSON("/tasks", {
+      title: requiredString(values.title),
+      description: String(values.description || ""),
+      project: emptyToNull(values.project),
+      priority: numberValue(values.priority, 0),
+      required_capabilities: csvList(values.required_capabilities),
+      dependencies: csvList(values.dependencies),
+      metadata: parseJsonObject(values.metadata),
+      actor: "human"
+    });
+  }
+  if (action === "taskUpdate") {
+    return putJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}`, {
+      title: requiredString(values.title),
+      description: String(values.description || ""),
+      project: emptyToNull(values.project),
+      priority: numberValue(values.priority, 0),
+      required_capabilities: csvList(values.required_capabilities),
+      dependencies: csvList(values.dependencies),
+      metadata: parseJsonObject(values.metadata),
+      actor: "human"
+    });
+  }
+  if (action === "taskClaim") {
+    const taskId = requiredDataset(form, "taskId");
+    return postJSON(`/tasks/${encodeURIComponent(taskId)}/claim?agent_id=${encodeURIComponent(requiredString(values.agent_id))}&lease_seconds=${numberValue(values.lease_seconds, 900)}`, {});
+  }
+  if (action === "taskAddChild") {
+    const taskId = requiredDataset(form, "taskId");
+    return postJSON(`/tasks/${encodeURIComponent(taskId)}/children`, {
+      actor: requiredString(values.actor),
+      children: [{
+        title: requiredString(values.title),
+        description: String(values.description || ""),
+        project: emptyToNull(values.project),
+        required_capabilities: csvList(values.required_capabilities),
+        dependencies: csvList(values.dependencies),
+        metadata: {}
+      }]
+    });
+  }
+  if (action === "taskStart") {
+    const taskId = requiredDataset(form, "taskId");
+    return postJSON(`/tasks/${encodeURIComponent(taskId)}/start?agent_id=${encodeURIComponent(requiredString(values.agent_id))}`, {});
+  }
+  if (action === "taskSubmitReview") {
+    const taskId = requiredDataset(form, "taskId");
+    return postJSON(`/tasks/${encodeURIComponent(taskId)}/submit-for-review?agent_id=${encodeURIComponent(requiredString(values.agent_id))}`, {});
+  }
+  if (action === "taskTransition") {
+    return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/transition`, {
+      target_state: requiredString(values.target_state),
+      actor: requiredString(values.actor),
+      detail: parseJsonObject(values.detail)
+    });
+  }
+  if (action === "addEvidence") {
+    return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/evidence`, {
+      kind: requiredString(values.kind),
+      uri: requiredString(values.uri),
+      summary: requiredString(values.summary),
+      created_by: requiredString(values.created_by),
+      checksum: emptyToNull(values.checksum),
+      metadata: {}
+    });
+  }
+  if (action === "requestReview") {
+    return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/reviews`, {
+      reviewer_agent_id: requiredString(values.reviewer_agent_id),
+      actor: requiredString(values.actor)
+    });
+  }
+  if (action === "reviewDecision") {
+    return postJSON(`/reviews/${encodeURIComponent(requiredDataset(form, "reviewId"))}/decision`, {
+      status: requiredString(values.status),
+      reviewer_agent_id: requiredString(values.reviewer_agent_id),
+      reason: emptyToNull(values.reason),
+      evidence_id: emptyToNull(values.evidence_id)
+    });
+  }
+  if (action === "publishTask") {
+    return postJSON("/publications", {
+      task_id: requiredString(values.task_id),
+      target: requiredString(values.target),
+      created_by: requiredString(values.created_by),
+      evidence_id: emptyToNull(values.evidence_id)
+    });
+  }
+  if (action === "agentBulkUpdate") {
+    const body = {
+      agent_ids: String(values.agent_ids || "").split(",").map((item) => item.trim()).filter(Boolean)
+    };
+    if (String(values.status || "").trim()) body.status = String(values.status).trim();
+    if (String(values.health_status || "").trim()) body.health_status = String(values.health_status).trim();
+    if (String(values.capabilities || "").trim()) {
+      body.capabilities = String(values.capabilities).split(",").map((item) => item.trim()).filter(Boolean);
     }
-    if (action === "fleetCreate") {
-        return postJSON("/fleets", {
-            name: requiredString(values.name),
-            description: String(values.description || ""),
-            status: requiredString(values.status),
-            agent_ids: csvList(values.agent_ids),
-            metadata: parseJsonObject(values.metadata),
-        });
-    }
-    if (action === "fleetUpdate") {
-        return putJSON(`/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}`, {
-            name: requiredString(values.name),
-            description: String(values.description || ""),
-            status: requiredString(values.status),
-            agent_ids: csvList(values.agent_ids),
-            metadata: parseJsonObject(values.metadata),
-        });
-    }
-    if (action === "agentCreate") {
-        return postJSON("/agents", {
-            machine_id: requiredString(values.machine_id),
-            name: requiredString(values.name),
-            capabilities: csvList(values.capabilities),
-            resources: parseJsonObject(values.resources),
-        });
-    }
-    if (action === "agentUpdate") {
-        return putJSON(`/agents/${encodeURIComponent(requiredDataset(form, "agentId"))}`, {
-            name: requiredString(values.name),
-            status: requiredString(values.status),
-            health_status: requiredString(values.health_status),
-            capabilities: csvList(values.capabilities),
-            resources: parseJsonObject(values.resources),
-        });
-    }
-    if (action === "projectCreate") {
-        return postJSON("/projects", {
-            name: requiredString(values.name),
-            description: String(values.description || ""),
-            status: requiredString(values.status),
-            metadata: parseJsonObject(values.metadata),
-            actor: "human",
-        });
-    }
-    if (action === "projectUpdate") {
-        return putJSON(`/projects/${encodeURIComponent(requiredDataset(form, "project"))}`, {
-            name: requiredString(values.name),
-            description: String(values.description || ""),
-            status: requiredString(values.status),
-            metadata: parseJsonObject(values.metadata),
-            actor: "human",
-        });
-    }
-    if (action === "taskCreate") {
-        return postJSON("/tasks", {
-            title: requiredString(values.title),
-            description: String(values.description || ""),
-            project: emptyToNull(values.project),
-            priority: numberValue(values.priority, 0),
-            required_capabilities: csvList(values.required_capabilities),
-            dependencies: csvList(values.dependencies),
-            metadata: parseJsonObject(values.metadata),
-            actor: "human",
-        });
-    }
-    if (action === "taskUpdate") {
-        return putJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}`, {
-            title: requiredString(values.title),
-            description: String(values.description || ""),
-            project: emptyToNull(values.project),
-            priority: numberValue(values.priority, 0),
-            required_capabilities: csvList(values.required_capabilities),
-            dependencies: csvList(values.dependencies),
-            metadata: parseJsonObject(values.metadata),
-            actor: "human",
-        });
-    }
-    if (action === "taskClaim") {
-        const taskId = requiredDataset(form, "taskId");
-        return postJSON(`/tasks/${encodeURIComponent(taskId)}/claim?agent_id=${encodeURIComponent(requiredString(values.agent_id))}&lease_seconds=${numberValue(values.lease_seconds, 900)}`, {});
-    }
-    if (action === "taskAddChild") {
-        const taskId = requiredDataset(form, "taskId");
-        return postJSON(`/tasks/${encodeURIComponent(taskId)}/children`, {
-            actor: requiredString(values.actor),
-            children: [{
-                    title: requiredString(values.title),
-                    description: String(values.description || ""),
-                    project: emptyToNull(values.project),
-                    required_capabilities: csvList(values.required_capabilities),
-                    dependencies: csvList(values.dependencies),
-                    metadata: {},
-                }],
-        });
-    }
-    if (action === "taskStart") {
-        const taskId = requiredDataset(form, "taskId");
-        return postJSON(`/tasks/${encodeURIComponent(taskId)}/start?agent_id=${encodeURIComponent(requiredString(values.agent_id))}`, {});
-    }
-    if (action === "taskSubmitReview") {
-        const taskId = requiredDataset(form, "taskId");
-        return postJSON(`/tasks/${encodeURIComponent(taskId)}/submit-for-review?agent_id=${encodeURIComponent(requiredString(values.agent_id))}`, {});
-    }
-    if (action === "taskTransition") {
-        return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/transition`, {
-            target_state: requiredString(values.target_state),
-            actor: requiredString(values.actor),
-            detail: parseJsonObject(values.detail),
-        });
-    }
-    if (action === "addEvidence") {
-        return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/evidence`, {
-            kind: requiredString(values.kind),
-            uri: requiredString(values.uri),
-            summary: requiredString(values.summary),
-            created_by: requiredString(values.created_by),
-            checksum: emptyToNull(values.checksum),
-            metadata: {},
-        });
-    }
-    if (action === "requestReview") {
-        return postJSON(`/tasks/${encodeURIComponent(requiredDataset(form, "taskId"))}/reviews`, {
-            reviewer_agent_id: requiredString(values.reviewer_agent_id),
-            actor: requiredString(values.actor),
-        });
-    }
-    if (action === "reviewDecision") {
-        return postJSON(`/reviews/${encodeURIComponent(requiredDataset(form, "reviewId"))}/decision`, {
-            status: requiredString(values.status),
-            reviewer_agent_id: requiredString(values.reviewer_agent_id),
-            reason: emptyToNull(values.reason),
-            evidence_id: emptyToNull(values.evidence_id),
-        });
-    }
-    if (action === "publishTask") {
-        return postJSON("/publications", {
-            task_id: requiredString(values.task_id),
-            target: requiredString(values.target),
-            created_by: requiredString(values.created_by),
-            evidence_id: emptyToNull(values.evidence_id),
-        });
-    }
-    if (action === "agentBulkUpdate") {
-        const body = {
-            agent_ids: String(values.agent_ids || "").split(",").map((item) => item.trim()).filter(Boolean),
-        };
-        if (String(values.status || "").trim())
-            body.status = String(values.status).trim();
-        if (String(values.health_status || "").trim())
-            body.health_status = String(values.health_status).trim();
-        if (String(values.capabilities || "").trim()) {
-            body.capabilities = String(values.capabilities).split(",").map((item) => item.trim()).filter(Boolean);
-        }
-        return postJSON("/agents/bulk", body);
-    }
-    if (action === "rolloutAdvance") {
-        return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/advance`, {
-            action: requiredString(values.action),
-            actor: requiredString(values.actor),
-            detail: parseJsonObject(values.detail),
-        });
-    }
-    if (action === "rolloutHealth") {
-        return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/health`, {
-            actor: requiredString(values.actor),
-            checks: parseJsonObject(values.checks),
-        });
-    }
-    if (action === "rolloutRescue") {
-        return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/rescue`, {
-            actor: requiredString(values.actor),
-            reason: requiredString(values.reason),
-            detail: {},
-        });
-    }
-    if (action === "secretAccess") {
-        return postJSON(`/secrets/${encodeURIComponent(requiredDataset(form, "secretId"))}/access`, {
-            accessor_agent_id: requiredString(values.accessor_agent_id),
-            purpose: requiredString(values.purpose),
-            ttl_seconds: numberValue(values.ttl_seconds, 300),
-        });
-    }
-    if (action === "workflowDraftCreate") {
-        return postJSON("/workflows/drafts", {
-            goal: requiredString(values.goal),
-            proposed_steps: parseJsonArray(values.proposed_steps),
-            questions: parseJsonArray(values.questions),
-            answers: parseJsonObject(values.answers),
-        });
-    }
-    if (action === "workflowDraftPreview") {
-        return postJSON(`/workflows/drafts/${encodeURIComponent(requiredDataset(form, "draftId"))}/preview`, {
-            input: parseJsonObject(values.input),
-        });
-    }
-    if (action === "workflowDraftApprove") {
-        return postJSON(`/workflows/drafts/${encodeURIComponent(requiredDataset(form, "draftId"))}/approve`, {
-            slug: requiredString(values.slug),
-            name: requiredString(values.name),
-        });
-    }
-    if (action === "workflowPreview") {
-        return postJSON(`/workflows/${encodeURIComponent(requiredDataset(form, "workflowId"))}/preview`, {
-            input: parseJsonObject(values.input),
-        });
-    }
-    if (action === "workflowStart") {
-        return postJSON(`/workflows/${encodeURIComponent(requiredDataset(form, "workflowId"))}/start`, {
-            started_by: requiredString(values.started_by),
-            input: parseJsonObject(values.input),
-        });
-    }
-    if (action === "notifierConfigure") {
-        return postJSON("/notifier/channels", {
-            name: requiredString(values.name),
-            channel_type: requiredString(values.channel_type),
-            event_types: String(values.event_types || "").split(",").map((item) => item.trim()).filter(Boolean),
-            target: parseJsonObject(values.target),
-            enabled: true,
-        });
-    }
-    if (action === "notifierDeliver") {
-        return postJSON("/notifier/deliver", {
-            limit: numberValue(values.limit, 50),
-        });
-    }
-    throw new Error(`unsupported action: ${action}`);
+    return postJSON("/agents/bulk", body);
+  }
+  if (action === "rolloutAdvance") {
+    return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/advance`, {
+      action: requiredString(values.action),
+      actor: requiredString(values.actor),
+      detail: parseJsonObject(values.detail)
+    });
+  }
+  if (action === "rolloutHealth") {
+    return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/health`, {
+      actor: requiredString(values.actor),
+      checks: parseJsonObject(values.checks)
+    });
+  }
+  if (action === "rolloutRescue") {
+    return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/rescue`, {
+      actor: requiredString(values.actor),
+      reason: requiredString(values.reason),
+      detail: {}
+    });
+  }
+  if (action === "secretAccess") {
+    return postJSON(`/secrets/${encodeURIComponent(requiredDataset(form, "secretId"))}/access`, {
+      accessor_agent_id: requiredString(values.accessor_agent_id),
+      purpose: requiredString(values.purpose),
+      ttl_seconds: numberValue(values.ttl_seconds, 300)
+    });
+  }
+  if (action === "workflowDraftCreate") {
+    return postJSON("/workflows/drafts", {
+      goal: requiredString(values.goal),
+      proposed_steps: parseJsonArray(values.proposed_steps),
+      questions: parseJsonArray(values.questions),
+      answers: parseJsonObject(values.answers)
+    });
+  }
+  if (action === "workflowDraftPreview") {
+    return postJSON(`/workflows/drafts/${encodeURIComponent(requiredDataset(form, "draftId"))}/preview`, {
+      input: parseJsonObject(values.input)
+    });
+  }
+  if (action === "workflowDraftApprove") {
+    return postJSON(`/workflows/drafts/${encodeURIComponent(requiredDataset(form, "draftId"))}/approve`, {
+      slug: requiredString(values.slug),
+      name: requiredString(values.name)
+    });
+  }
+  if (action === "workflowPreview") {
+    return postJSON(`/workflows/${encodeURIComponent(requiredDataset(form, "workflowId"))}/preview`, {
+      input: parseJsonObject(values.input)
+    });
+  }
+  if (action === "workflowStart") {
+    return postJSON(`/workflows/${encodeURIComponent(requiredDataset(form, "workflowId"))}/start`, {
+      started_by: requiredString(values.started_by),
+      input: parseJsonObject(values.input)
+    });
+  }
+  if (action === "notifierConfigure") {
+    return postJSON("/notifier/channels", {
+      name: requiredString(values.name),
+      channel_type: requiredString(values.channel_type),
+      event_types: String(values.event_types || "").split(",").map((item) => item.trim()).filter(Boolean),
+      target: parseJsonObject(values.target),
+      enabled: true
+    });
+  }
+  if (action === "notifierDeliver") {
+    return postJSON("/notifier/deliver", {
+      limit: numberValue(values.limit, 50)
+    });
+  }
+  throw new Error(`unsupported action: ${action}`);
 }
 function postJSON(path, body) {
-    return requestJSON(path, { method: "POST", body: JSON.stringify(body) });
+  return requestJSON(path, { method: "POST", body: JSON.stringify(body) });
 }
 function putJSON(path, body) {
-    return requestJSON(path, { method: "PUT", body: JSON.stringify(body) });
+  return requestJSON(path, { method: "PUT", body: JSON.stringify(body) });
 }
 function deleteJSON(path) {
-    return requestJSON(path, { method: "DELETE" });
+  return requestJSON(path, { method: "DELETE" });
 }
 function formValues(form) {
-    const values = {};
-    new FormData(form).forEach((value, key) => {
-        values[key] = String(value);
-    });
-    return values;
+  const values = {};
+  new FormData(form).forEach((value, key) => {
+    values[key] = String(value);
+  });
+  return values;
 }
 function relationshipGraph(data) {
-    const fleets = data.fleets.slice(0, 6);
-    const machines = data.machines.slice(0, 8);
-    const agents = data.agents.slice(0, 12).map((item) => item.agent);
-    const activeTasks = data.tasks
-        .filter((detail) => !TERMINAL_TASK_STATES.has(detail.task.state))
-        .slice(0, 14)
-        .map((detail) => detail.task);
-    const nodes = [
-        ...fleets.map((fleet, index) => graphNode(fleet.id, fleet.name, "fleet", 70, 58 + index * 58)),
-        ...machines.map((machine, index) => graphNode(machine.id, machine.hostname, "machine", 235, 58 + index * 58)),
-        ...agents.map((agent, index) => graphNode(agent.id, agent.name, "agent", 430, 46 + index * 48)),
-        ...activeTasks.map((task, index) => graphNode(task.id, task.title, "task", 650, 44 + index * 46)),
-    ];
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    const edges = [];
-    for (const fleet of fleets) {
-        for (const agentId of fleet.agent_ids || []) {
-            edges.push({ from: fleet.id, to: agentId, tone: "fleet-agent" });
-        }
+  const fleets = data.fleets.slice(0, 6);
+  const machines = data.machines.slice(0, 8);
+  const agents = data.agents.slice(0, 12).map((item) => item.agent);
+  const activeTasks = data.tasks.filter((detail) => !TERMINAL_TASK_STATES.has(detail.task.state)).slice(0, 14).map((detail) => detail.task);
+  const nodes2 = [
+    ...fleets.map((fleet, index) => graphNode(fleet.id, fleet.name, "fleet", 70, 58 + index * 58)),
+    ...machines.map((machine, index) => graphNode(machine.id, machine.hostname, "machine", 235, 58 + index * 58)),
+    ...agents.map((agent, index) => graphNode(agent.id, agent.name, "agent", 430, 46 + index * 48)),
+    ...activeTasks.map((task, index) => graphNode(task.id, task.title, "task", 650, 44 + index * 46))
+  ];
+  const byId = new Map(nodes2.map((node) => [node.id, node]));
+  const edges = [];
+  for (const fleet of fleets) {
+    for (const agentId of fleet.agent_ids || []) {
+      edges.push({ from: fleet.id, to: agentId, tone: "fleet-agent" });
     }
-    for (const agent of agents) {
-        edges.push({ from: agent.machine_id, to: agent.id, tone: "machine-agent" });
+  }
+  for (const agent of agents) {
+    edges.push({ from: agent.machine_id, to: agent.id, tone: "machine-agent" });
+  }
+  for (const task of activeTasks) {
+    if (task.owner_agent_id) edges.push({ from: task.owner_agent_id, to: task.id, tone: "agent-task" });
+    for (const dependency of task.dependencies || []) {
+      edges.push({ from: dependency, to: task.id, tone: "dependency" });
     }
-    for (const task of activeTasks) {
-        if (task.owner_agent_id)
-            edges.push({ from: task.owner_agent_id, to: task.id, tone: "agent-task" });
-        for (const dependency of task.dependencies || []) {
-            edges.push({ from: dependency, to: task.id, tone: "dependency" });
-        }
-    }
-    const height = Math.max(360, 90 + Math.max(fleets.length * 58, machines.length * 58, agents.length * 48, activeTasks.length * 46));
-    const edgeSvg = edges.map((edge) => {
-        const from = byId.get(edge.from);
-        const to = byId.get(edge.to);
-        if (!from || !to)
-            return "";
-        return `<path class="graph-edge graph-edge-${edge.tone}" d="M${from.x + 90},${from.y} C${from.x + 170},${from.y} ${to.x - 170},${to.y} ${to.x - 90},${to.y}"></path>`;
-    }).join("");
-    const nodeSvg = nodes.map((node) => `
+  }
+  const height = Math.max(360, 90 + Math.max(fleets.length * 58, machines.length * 58, agents.length * 48, activeTasks.length * 46));
+  const edgeSvg = edges.map((edge) => {
+    const from = byId.get(edge.from);
+    const to = byId.get(edge.to);
+    if (!from || !to) return "";
+    return `<path class="graph-edge graph-edge-${edge.tone}" d="M${from.x + 90},${from.y} C${from.x + 170},${from.y} ${to.x - 170},${to.y} ${to.x - 90},${to.y}"></path>`;
+  }).join("");
+  const nodeSvg = nodes2.map((node) => `
     <g class="graph-node graph-node-${node.kind} ${selectedClass(node.id)}" data-select-id="${escapeHtml(node.id)}" transform="translate(${node.x},${node.y})">
       <rect x="-86" y="-18" width="172" height="36" rx="8"></rect>
       <text text-anchor="middle" y="4">${escapeHtml(truncate(node.label, 22))}</text>
     </g>
   `).join("");
-    return `
+  return `
     <div class="graph-wrap">
       <svg class="relationship-graph" viewBox="0 0 760 ${height}" role="img" aria-label="Fleet topology graph">
         <text class="graph-column-label" x="70" y="24">Fleets</text>
@@ -3001,34 +2843,110 @@ function relationshipGraph(data) {
   `;
 }
 function graphNode(id, label, kind, x, y) {
-    return { id, label, kind, x, y };
+  return { id, label, kind, x, y };
+}
+function topologySelectionDetail(data) {
+  const id = state.selectedId;
+  if (!id) return `<div class="empty-state">Select a topology node</div>`;
+  const fleet = data.fleets.find((item) => item.id === id || item.name === id);
+  if (fleet) return fleetDetail(fleet, data);
+  const machine = data.machines.find((item) => item.id === id || item.hostname === id);
+  if (machine) return machineSelectionDetail(machine, data);
+  const agent = data.agents.find((item) => item.agent.id === id || item.agent.name === id);
+  if (agent) return agentSelectionDetail(agent, data);
+  const task = data.tasks.find((item) => item.task.id === id);
+  if (task) return taskSelectionDetail(task, data);
+  return `<div class="empty-state">No dashboard record found for ${escapeHtml(id)}</div>`;
+}
+function machineSelectionDetail(machine, data) {
+  const agents = data.agents.filter((item) => item.agent.machine_id === machine.id);
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(machine.hostname)}</h3><p class="muted small mono">${escapeHtml(machine.id)}</p></div>
+        ${chip(machine.trusted ? "trusted" : "untrusted", machine.trusted ? "good" : "bad")}
+      </div>
+      <div class="row-grid">
+        ${field("Agents", String(agents.length))}
+        ${field("Labels", jsonSummary(machine.labels))}
+        ${field("Resources", jsonSummary(machine.resources))}
+      </div>
+      <div class="agent-list">
+        ${agents.length ? agents.map((item) => agentPill(item, data)).join("") : `<div class="empty-state">No agents on this machine</div>`}
+      </div>
+    </article>
+  `;
+}
+function agentSelectionDetail(item, data) {
+  const agent = item.agent;
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(agent.name)}</h3><p class="muted small mono">${escapeHtml(agent.id)}</p></div>
+        <div class="chip-row">${chip(agent.status, statusTone(agent.status))}${chip(agent.health_status, healthTone(agent.health_status))}</div>
+      </div>
+      <div class="row-grid">
+        ${field("Type", "agent record")}
+        ${field("Fleet", agentFleetLabel(data, agent.id))}
+        ${field("Role", roleLabel(data, agent.role_id))}
+        ${field("Machine", item.machine?.hostname || "missing")}
+        ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Last seen", formatAge(agent.last_seen_at))}
+        ${field("Hermes", agent.hermes_instance_id || "unbound")}
+        ${field("Projects", (item.active_projects || []).join(", ") || "idle")}
+        ${field("Capabilities", (agent.capabilities || []).join(", ") || "none")}
+        ${field("Resources", jsonSummary(agent.resources))}
+      </div>
+      <div class="story-stack">
+        ${item.active_tasks.length ? item.active_tasks.map((task) => storyButton(task)).join("") : `<div class="empty-state">No active task</div>`}
+      </div>
+    </article>
+  `;
+}
+function taskSelectionDetail(detail, data) {
+  const task = detail.task;
+  const owner = task.owner_agent_id ? data.agents.find((item) => item.agent.id === task.owner_agent_id) : null;
+  return `
+    <article class="record compact">
+      <div class="record-header">
+        <div><h3>${escapeHtml(task.title)}</h3><p class="muted small mono">${escapeHtml(task.id)}</p></div>
+        ${chip(task.state, statusTone(task.state))}
+      </div>
+      <div class="row-grid">
+        ${field("Project", taskProject(task))}
+        ${field("Priority", `P${task.priority || 0}`)}
+        ${field("Owner", owner?.agent.name || task.owner_agent_id || "unassigned")}
+        ${field("Dependencies", String((task.dependencies || []).length))}
+        ${field("Required", (task.required_capabilities || []).join(", ") || "none")}
+      </div>
+    </article>
+  `;
 }
 function metric(label, value, note) {
-    return `<div class="metric"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div><p class="metric-note">${escapeHtml(note)}</p></div>`;
+  return `<div class="metric"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div><p class="metric-note">${escapeHtml(note)}</p></div>`;
 }
 function stateBars(states, counts, total, emptyLabel = "No tasks") {
-    if (!total)
-        return `<div class="empty-state">${escapeHtml(emptyLabel)}</div>`;
-    return `<div class="state-bar">${states.map((name) => {
-        const count = counts[name] || 0;
-        const width = Math.max(2, Math.round((count / total) * 100));
-        return `<div class="state-row"><span>${escapeHtml(labelize(name))}</span><span class="bar-track"><span class="bar-fill" style="width:${width}%"></span></span><span class="mono small">${count}</span></div>`;
-    }).join("")}</div>`;
+  if (!total) return `<div class="empty-state">${escapeHtml(emptyLabel)}</div>`;
+  return `<div class="state-bar">${states.map((name) => {
+    const count = counts[name] || 0;
+    const width = Math.max(2, Math.round(count / total * 100));
+    return `<div class="state-row"><span>${escapeHtml(labelize(name))}</span><span class="bar-track"><span class="bar-fill" style="width:${width}%"></span></span><span class="mono small">${count}</span></div>`;
+  }).join("")}</div>`;
 }
 function observationMetric(item) {
-    return `
+  return `
     <article class="metric-observation">
       <div>
         <strong>${escapeHtml(item.name)}</strong>
-        <p class="muted small">${escapeHtml(item.layer)} / ${escapeHtml(item.source)} · ${escapeHtml(formatAge(item.created_at))}</p>
+        <p class="muted small">${escapeHtml(item.layer)} / ${escapeHtml(item.source)} \xB7 ${escapeHtml(formatAge(item.created_at))}</p>
       </div>
       <div class="metric-observation-value">${escapeHtml(formatMetricValue(item))}</div>
     </article>
   `;
 }
 function observationRecord(item) {
-    const subject = item.subject_type && item.subject_id ? `${item.subject_type}:${item.subject_id}` : "";
-    return `
+  const subject = item.subject_type && item.subject_id ? `${item.subject_type}:${item.subject_id}` : "";
+  return `
     <article class="observation-row tone-left-${observationTone(item.level)}">
       <div class="observation-main">
         <span class="mono small">#${escapeHtml(item.sequence)}</span>
@@ -3036,258 +2954,246 @@ function observationRecord(item) {
         ${chip(item.level, observationTone(item.level))}
         <strong>${escapeHtml(item.name)}</strong>
       </div>
-      <div class="muted small">${escapeHtml(item.layer)} / ${escapeHtml(item.source)} ${subject ? `· ${escapeHtml(subject)}` : ""} · ${escapeHtml(formatAge(item.created_at))}</div>
+      <div class="muted small">${escapeHtml(item.layer)} / ${escapeHtml(item.source)} ${subject ? `\xB7 ${escapeHtml(subject)}` : ""} \xB7 ${escapeHtml(formatAge(item.created_at))}</div>
       <div class="observation-detail">${escapeHtml(item.kind === "metric" ? formatMetricValue(item) : jsonSummary(item.detail))}</div>
     </article>
   `;
 }
 function auditEventRecord(item) {
-    const tone = item.event_type.includes("deleted") || item.event_type.includes("failed")
-        ? "warn"
-        : item.event_type.includes("error")
-            ? "bad"
-            : "info";
-    return `
+  const tone = item.event_type.includes("deleted") || item.event_type.includes("failed") ? "warn" : item.event_type.includes("error") ? "bad" : "info";
+  return `
     <article class="observation-row tone-left-${tone}">
       <div class="observation-main">
         ${chip(item.subject_type, "info")}
         <strong>${escapeHtml(item.event_type)}</strong>
       </div>
-      <div class="muted small">${escapeHtml(item.subject_id)} · ${escapeHtml(item.actor)} · ${escapeHtml(formatAge(item.created_at))}</div>
+      <div class="muted small">${escapeHtml(item.subject_id)} \xB7 ${escapeHtml(item.actor)} \xB7 ${escapeHtml(formatAge(item.created_at))}</div>
       <div class="observation-detail">${escapeHtml(jsonSummary(item.detail))}</div>
     </article>
   `;
 }
 function commandAuditRecord(item) {
-    const tone = item.phase === "completed" || item.phase === "started" ? "info" : "bad";
-    const subject = item.task_id ? `task:${item.task_id}` : `agent:${item.agent_id}`;
-    const argv = (item.argv || []).join(" ");
-    const result = item.returncode === null || item.returncode === undefined ? "" : ` rc=${item.returncode}`;
-    const duration = item.duration_ms === null || item.duration_ms === undefined ? "" : ` ${Math.round(item.duration_ms)}ms`;
-    return `
+  const tone = item.phase === "completed" || item.phase === "started" ? "info" : "bad";
+  const subject = item.task_id ? `task:${item.task_id}` : `agent:${item.agent_id}`;
+  const argv = (item.argv || []).join(" ");
+  const result = item.returncode === null || item.returncode === void 0 ? "" : ` rc=${item.returncode}`;
+  const duration = item.duration_ms === null || item.duration_ms === void 0 ? "" : ` ${Math.round(item.duration_ms)}ms`;
+  return `
     <article class="observation-row tone-left-${tone}">
       <div class="observation-main">
         ${chip(item.phase, tone)}
         <strong>${escapeHtml(item.command_id)}</strong>
       </div>
-      <div class="muted small">${escapeHtml(item.agent_id)} · ${escapeHtml(subject)} · ${escapeHtml(formatAge(item.created_at))}${escapeHtml(result)}${escapeHtml(duration)}</div>
+      <div class="muted small">${escapeHtml(item.agent_id)} \xB7 ${escapeHtml(subject)} \xB7 ${escapeHtml(formatAge(item.created_at))}${escapeHtml(result)}${escapeHtml(duration)}</div>
       <div class="observation-detail mono">${escapeHtml(argv)}</div>
       <div class="muted small">${escapeHtml(item.cwd)}</div>
     </article>
   `;
 }
+function canWrite(data) {
+  return !!data.session?.can_write || !!data.session?.is_admin;
+}
+function sessionAccessBadge(data) {
+  const session = data.session;
+  if (!session) return `<div class="chip-row">${chip("access unknown", "warn")}</div>`;
+  const scopes = session.scopes.length ? session.scopes.join(",") : "open-dev";
+  return `<div class="chip-row">${chip(session.mode || "unknown", session.can_write ? "good" : "warn")}${chip(`scopes ${scopes}`, "info")}</div>`;
+}
+function disabledAttr(disabled) {
+  return disabled ? "disabled" : "";
+}
+function safeDomId(value) {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_") || "item";
+}
 function uniqueObservations(items) {
-    const seen = new Set();
-    const unique = [];
-    for (const item of items.sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))) {
-        if (seen.has(item.sequence))
-            continue;
-        seen.add(item.sequence);
-        unique.push(item);
-    }
-    return unique;
+  const seen = /* @__PURE__ */ new Set();
+  const unique = [];
+  for (const item of items.sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))) {
+    if (seen.has(item.sequence)) continue;
+    seen.add(item.sequence);
+    unique.push(item);
+  }
+  return unique;
 }
 function attentionList(data) {
-    const items = [
-        ...data.agents.filter((item) => !item.availability.eligible).map((item) => `${item.agent.name}: ${item.availability.reasons.join(", ")}`),
-        ...data.dead_letters.map((task) => `Dead letter: ${task.title}`),
-        ...data.rollouts.filter((item) => ["rescuing", "failed"].includes(String(item.rollout.status))).map((item) => `Rollout ${item.rollout.version}: ${item.rollout.status}`),
-        ...data.dispatch.tasks.filter((item) => item.eligible_agent_count === 0).map((item) => `No eligible agent: ${item.task.title}`),
-    ];
-    return items.length
-        ? `<div class="record-list">${items.slice(0, 8).map((item) => `<div class="record compact">${escapeHtml(item)}</div>`).join("")}</div>`
-        : `<div class="empty-state">No attention items</div>`;
+  const items = [
+    ...data.agents.filter((item) => !item.availability.eligible).map((item) => `${item.agent.name}: ${item.availability.reasons.join(", ")}`),
+    ...data.dead_letters.map((task) => `Dead letter: ${task.title}`),
+    ...data.rollouts.filter((item) => ["rescuing", "failed"].includes(String(item.rollout.status))).map((item) => `Rollout ${item.rollout.version}: ${item.rollout.status}`),
+    ...data.dispatch.tasks.filter((item) => item.eligible_agent_count === 0).map((item) => `No eligible agent: ${item.task.title}`)
+  ];
+  return items.length ? `<div class="record-list">${items.slice(0, 8).map((item) => `<div class="record compact">${escapeHtml(item)}</div>`).join("")}</div>` : `<div class="empty-state">No attention items</div>`;
 }
 function field(label, value) {
-    return `<div class="field"><span class="field-label">${escapeHtml(label)}</span><span class="field-value">${escapeHtml(value == null || value === "" ? "none" : value)}</span></div>`;
+  return `<div class="field"><span class="field-label">${escapeHtml(label)}</span><span class="field-value">${escapeHtml(value == null || value === "" ? "none" : value)}</span></div>`;
 }
 function chip(value, tone = "info") {
-    return `<span class="chip tone-${tone}">${escapeHtml(labelize(value))}</span>`;
+  return `<span class="chip tone-${tone}">${escapeHtml(labelize(value))}</span>`;
 }
 function timelineItem(eventType, actor, createdAt) {
-    return `<div class="timeline-item"><span class="mono small">${escapeHtml(labelize(eventType))}</span><br><span class="muted small">${escapeHtml(actor)} ${escapeHtml(formatAge(createdAt))}</span></div>`;
+  return `<div class="timeline-item"><span class="mono small">${escapeHtml(labelize(eventType))}</span><br><span class="muted small">${escapeHtml(actor)} ${escapeHtml(formatAge(createdAt))}</span></div>`;
 }
-function agentSelect(name, agents, selected) {
-    return `<select name="${escapeHtml(name)}"><option value="">Select agent</option>${agents.map((item) => option(item.agent.id, item.agent.name, selected)).join("")}</select>`;
+function agentSelect(name, agents, selected, disabled = false) {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select agent</option>${agents.map((item) => option(item.agent.id, item.agent.name, selected)).join("")}</select>`;
 }
-function machineSelect(name, machines, selected) {
-    return `<select name="${escapeHtml(name)}"><option value="">Select machine</option>${machines.map((machine) => option(machine.id, machine.hostname, selected)).join("")}</select>`;
+function machineSelect(name, machines, selected, disabled = false) {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select machine</option>${machines.map((machine) => option(machine.id, machine.hostname, selected)).join("")}</select>`;
 }
-function select(name, values, selected) {
-    return `<select name="${escapeHtml(name)}">${values.map((value) => option(value, labelize(value), selected)).join("")}</select>`;
+function fleetSelect(name, fleets, selected, disabled = false) {
+  return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">No fleet</option>${fleets.map((fleet) => option(fleet.id, fleet.name, selected)).join("")}</select>`;
+}
+function defaultFleetId(data) {
+  return data.fleets.length === 1 ? data.fleets[0].id : "";
+}
+function select(name, values, selected, disabled = false, formId = "") {
+  const attrs = `${formId ? ` form="${escapeHtml(formId)}"` : ""}${disabled ? " disabled" : ""}`;
+  return `<select name="${escapeHtml(name)}"${attrs}>${values.map((value) => option(value, labelize(value), selected)).join("")}</select>`;
 }
 function option(value, label, selected) {
-    return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 function taskOrigin(task) {
-    const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {};
-    const origin = metadata.origin;
-    return origin && typeof origin === "object" ? origin : {};
+  const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {};
+  const origin = metadata.origin;
+  return origin && typeof origin === "object" ? origin : {};
 }
 function mustData() {
-    if (!state.data)
-        throw new Error("dashboard data is not loaded");
-    return state.data;
+  if (!state.data) throw new Error("dashboard data is not loaded");
+  return state.data;
 }
 function parseJsonObject(value) {
-    const text = String(value || "").trim();
-    if (!text)
-        return {};
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("expected a JSON object");
-    }
-    return parsed;
+  const text = String(value || "").trim();
+  if (!text) return {};
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("expected a JSON object");
+  }
+  return parsed;
 }
 function parseJsonArray(value) {
-    const text = String(value || "").trim();
-    if (!text)
-        return [];
-    const parsed = JSON.parse(text);
-    if (!Array.isArray(parsed)) {
-        throw new Error("expected a JSON array");
-    }
-    return parsed;
+  const text = String(value || "").trim();
+  if (!text) return [];
+  const parsed = JSON.parse(text);
+  if (!Array.isArray(parsed)) {
+    throw new Error("expected a JSON array");
+  }
+  return parsed;
 }
 function requiredString(value) {
-    const text = String(value || "").trim();
-    if (!text)
-        throw new Error("required field is blank");
-    return text;
+  const text = String(value || "").trim();
+  if (!text) throw new Error("required field is blank");
+  return text;
 }
 function requiredDataset(form, key) {
-    const value = form.dataset[key];
-    if (!value)
-        throw new Error(`missing action context: ${key}`);
-    return value;
+  const value = form.dataset[key];
+  if (!value) throw new Error(`missing action context: ${key}`);
+  return value;
 }
 function numberValue(value, fallback) {
-    const text = String(value || "").trim();
-    if (!text)
-        return fallback;
-    const parsed = Number(text);
-    if (!Number.isFinite(parsed))
-        throw new Error(`expected number: ${text}`);
-    return parsed;
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed)) throw new Error(`expected number: ${text}`);
+  return parsed;
 }
 function optionalNumber(value) {
-    const text = String(value || "").trim();
-    return text ? numberValue(text, 0) : null;
+  const text = String(value || "").trim();
+  return text ? numberValue(text, 0) : null;
 }
 function boolValue(value) {
-    return value === "on" || value === true || value === "true" ? "true" : "false";
+  return value === "on" || value === true || value === "true" ? "true" : "false";
 }
 function csvList(value) {
-    return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 function emptyToNull(value) {
-    const text = String(value || "").trim();
-    return text || null;
+  const text = String(value || "").trim();
+  return text || null;
 }
 function redactedJson(value) {
-    return JSON.stringify(value, (key, item) => key === "value" ? "***REDACTED***" : item);
+  return JSON.stringify(value, (key, item) => key === "value" ? "***REDACTED***" : item);
 }
 function jsonSummary(value) {
-    if (value == null || typeof value !== "object")
-        return value == null ? "none" : String(value);
-    const keys = Object.keys(value);
-    if (!keys.length)
-        return "none";
-    return keys.slice(0, 4).map((key) => `${key}:${compactValue(value[key])}`).join(", ");
+  if (value == null || typeof value !== "object") return value == null ? "none" : String(value);
+  const keys = Object.keys(value);
+  if (!keys.length) return "none";
+  return keys.slice(0, 4).map((key) => `${key}:${compactValue(value[key])}`).join(", ");
 }
 function compactValue(value) {
-    if (Array.isArray(value))
-        return `[${value.slice(0, 3).join("|")}${value.length > 3 ? "|..." : ""}]`;
-    if (value && typeof value === "object")
-        return "{...}";
-    return String(value);
+  if (Array.isArray(value)) return `[${value.slice(0, 3).join("|")}${value.length > 3 ? "|..." : ""}]`;
+  if (value && typeof value === "object") return "{...}";
+  return String(value);
 }
 function shortHash(value) {
-    const text = String(value || "");
-    return text.length > 16 ? `${text.slice(0, 12)}...` : text || "no digest";
+  const text = String(value || "");
+  return text.length > 16 ? `${text.slice(0, 12)}...` : text || "no digest";
 }
 function selectedClass(id) {
-    return state.selectedId && state.selectedId === id ? "is-selected" : "";
+  return state.selectedId && state.selectedId === id ? "is-selected" : "";
 }
 function truncate(value, limit) {
-    const text = String(value || "");
-    return text.length > limit ? `${text.slice(0, Math.max(0, limit - 1))}…` : text;
+  const text = String(value || "");
+  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 1))}\u2026` : text;
 }
 function statusTone(status) {
-    if (status === "idle")
-        return "good";
-    if (status === "busy")
-        return "info";
-    if (status === "draining")
-        return "warn";
-    return "bad";
+  if (status === "idle") return "good";
+  if (status === "busy") return "info";
+  if (status === "draining") return "warn";
+  return "bad";
 }
 function healthTone(status) {
-    if (["healthy", "ready", "configured"].includes(status))
-        return "good";
-    if (["degraded", "degraded_allowed", "unknown"].includes(status))
-        return "warn";
-    return "bad";
+  if (["healthy", "ready", "configured"].includes(status)) return "good";
+  if (["degraded", "degraded_allowed", "unknown"].includes(status)) return "warn";
+  return "bad";
 }
 function observationTone(level) {
-    if (level === "critical" || level === "error")
-        return "bad";
-    if (level === "warning")
-        return "warn";
-    if (level === "debug")
-        return "info";
-    return "good";
+  if (level === "critical" || level === "error") return "bad";
+  if (level === "warning") return "warn";
+  if (level === "debug") return "info";
+  return "good";
 }
 function formatMetricValue(item) {
-    if (item.value == null)
-        return "none";
-    const value = Math.abs(item.value) >= 100 ? Math.round(item.value) : Math.round(item.value * 100) / 100;
-    return `${value}${item.unit ? ` ${item.unit}` : ""}`;
+  if (item.value == null) return "none";
+  const value = Math.abs(item.value) >= 100 ? Math.round(item.value) : Math.round(item.value * 100) / 100;
+  return `${value}${item.unit ? ` ${item.unit}` : ""}`;
 }
 function rolloutTone(status) {
-    if (status === "promoted")
-        return "good";
-    if (["planned", "canarying", "paused"].includes(status))
-        return "info";
-    if (["rescuing", "rolled_back"].includes(status))
-        return "warn";
-    return "bad";
+  if (status === "promoted") return "good";
+  if (["planned", "canarying", "paused"].includes(status)) return "info";
+  if (["rescuing", "rolled_back"].includes(status)) return "warn";
+  return "bad";
 }
 function formatAge(value) {
-    const date = value ? new Date(value) : null;
-    if (!date || Number.isNaN(date.getTime()))
-        return "unknown";
-    const diffMs = Date.now() - date.getTime();
-    const suffix = diffMs >= 0 ? "ago" : "from now";
-    const minutes = Math.max(1, Math.round(Math.abs(diffMs) / 60000));
-    if (minutes < 60)
-        return `${minutes}m ${suffix}`;
-    const hours = Math.round(minutes / 60);
-    if (hours < 48)
-        return `${hours}h ${suffix}`;
-    return `${Math.round(hours / 24)}d ${suffix}`;
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "unknown";
+  const diffMs = Date.now() - date.getTime();
+  const suffix = diffMs >= 0 ? "ago" : "from now";
+  const minutes = Math.max(1, Math.round(Math.abs(diffMs) / 6e4));
+  if (minutes < 60) return `${minutes}m ${suffix}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ${suffix}`;
+  return `${Math.round(hours / 24)}d ${suffix}`;
 }
 function formatTime(value) {
-    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(value);
+  return new Intl.DateTimeFormat(void 0, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(value);
 }
 function labelize(value) {
-    return String(value == null || value === "" ? "none" : value).replaceAll("_", " ");
+  return String(value == null || value === "" ? "none" : value).replaceAll("_", " ");
 }
 function escapeHtml(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => {
-        const replacements = {
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-        };
-        return replacements[char];
-    });
+  return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => {
+    const replacements = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    };
+    return replacements[char];
+  });
 }
 function requiredElement(selector) {
-    const element = document.querySelector(selector);
-    if (!element)
-        throw new Error(`Missing dashboard element: ${selector}`);
-    return element;
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`Missing dashboard element: ${selector}`);
+  return element;
 }
