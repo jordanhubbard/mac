@@ -598,6 +598,7 @@ class ControlPlane:
             get_evidence=self.get_evidence,
             transition_task=self.transition_task,
             record_history=self._record_history,
+            find_verdict_evidence=self._find_review_verdict_evidence,
         )
         self.agent_state = AgentStateService(
             self.store,

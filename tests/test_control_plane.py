@@ -4505,6 +4505,10 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp):
 
 
 def test_publication_requires_verifiable_review_verdict_not_plain_approval(cp):
+    """mac-5u1f: submit_review used to accept any task evidence as the
+    approval verdict. The fix moves the verdict-shape + signature check
+    from publish-time into submit_review itself, so the bad call now
+    fails earlier (and never even reaches publish)."""
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task("work", required_capabilities=["python"])
@@ -4520,10 +4524,10 @@ def test_publication_requires_verifiable_review_verdict_not_plain_approval(cp):
     )
     cp.submit_for_review(task.id, worker.id)
     review = cp.request_review(task.id, reviewer.id)
-    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=evidence.id)
-
+    # mac-5u1f: passing the executor's own evidence as the verdict is now
+    # refused at submit_review time, not at publish time.
     with pytest.raises(ValidationError, match="review_verdict"):
-        cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=evidence.id)
+        cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=evidence.id)
 
 
 def test_publication_policy_requires_publication_evidence_with_hash(cp):
@@ -4695,6 +4699,36 @@ def test_command_audit_scrubs_argv_secrets(cp):
     # Non-secret args preserved
     assert "/usr/bin/curl" in record.argv
     assert "https://example.com/api" in record.argv
+
+
+def test_submit_review_refuses_executor_evidence_as_verdict(cp):
+    """mac-5u1f: submit_review now refuses to mark a review APPROVED
+    when the supplied evidence_id is the executor's own evidence (or
+    any non-verdict evidence). The verdict-shape + signature check
+    that previously only ran at publish time is now enforced here so
+    no compromised dispatcher can rubber-stamp executor work."""
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    with pytest.raises(ValidationError, match="review_verdict"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=evidence.id,
+        )
 
 
 def test_observability_record_truncates_oversized_detail(cp):

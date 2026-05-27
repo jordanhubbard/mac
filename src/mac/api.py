@@ -1797,6 +1797,21 @@ def create_app(
         if auth_tokens is not None
         else _load_auth_tokens_from_env()
     )
+    # mac-853j: refuse to fail-open when the API is bound to a non-loopback
+    # interface. Deployments that explicitly want a no-auth dev mode can
+    # set MAC_API_ALLOW_OPEN=1, but the default for a 0.0.0.0 hub is
+    # fail-closed (the alternative was: any tenant on the network could
+    # reach /secrets/{id}/reveal).
+    if not tokens:
+        bind_host = (os.environ.get("MAC_BIND_HOST") or "").strip()
+        allow_open = (os.environ.get("MAC_API_ALLOW_OPEN") or "").strip().lower() in {"1", "true", "yes", "on"}
+        is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
+        if not is_loopback and not allow_open:
+            raise ValidationError(
+                "auth fail-open refused: MAC_BIND_HOST=%r is non-loopback and "
+                "no MAC_API_TOKEN/MAC_API_TOKENS is set; set MAC_API_ALLOW_OPEN=1 "
+                "to override or configure tokens (mac-853j)" % bind_host
+            )
     record_http_obs = _resolve_record_http_observations(record_http_observations)
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp

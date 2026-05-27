@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
@@ -399,6 +400,26 @@ def test_default_review_tick_requires_admin_not_write():
         headers={"Authorization": "Bearer admin"},
     )
     assert allowed.status_code == 200
+
+
+def test_create_app_refuses_open_mode_on_non_loopback_bind(monkeypatch):
+    """mac-853j: a hub that's deployed without MAC_API_TOKEN and bound
+    to 0.0.0.0 used to leave /secrets/{id}/reveal open to the network.
+    Refuse to start in that combination unless MAC_API_ALLOW_OPEN is set.
+    """
+    from mac.models import ValidationError as _VE
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKENS", raising=False)
+    monkeypatch.setenv("MAC_BIND_HOST", "0.0.0.0")
+    with pytest.raises(_VE, match="mac-853j"):
+        create_app(control_plane=ControlPlane.in_memory(), auth_tokens={})
+    # Override permits open mode (dev opt-in).
+    monkeypatch.setenv("MAC_API_ALLOW_OPEN", "1")
+    create_app(control_plane=ControlPlane.in_memory(), auth_tokens={})
+    # Loopback bind also fine without tokens.
+    monkeypatch.delenv("MAC_API_ALLOW_OPEN", raising=False)
+    monkeypatch.setenv("MAC_BIND_HOST", "127.0.0.1")
+    create_app(control_plane=ControlPlane.in_memory(), auth_tokens={})
 
 
 def test_secret_routes_bind_actor_and_tenant_to_principal():

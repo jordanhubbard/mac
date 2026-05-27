@@ -54,6 +54,7 @@ class ReviewService:
         get_evidence: Callable[[str], Evidence],
         transition_task: Callable[..., Task],
         record_history: Callable[..., None],
+        find_verdict_evidence: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -63,6 +64,11 @@ class ReviewService:
         self._get_evidence = get_evidence
         self._transition_task = transition_task
         self._record_history = record_history
+        # mac-5u1f: optional verdict-evidence finder. When provided,
+        # submit_review uses it to enforce that an APPROVED status
+        # comes with a properly signed review_verdict authored by
+        # the reviewer themselves — not just any evidence row.
+        self._find_verdict_evidence = find_verdict_evidence
 
     # Reviews -----------------------------------------------------------
 
@@ -153,6 +159,43 @@ class ReviewService:
             evidence = self._get_evidence(evidence_id)
             if evidence.task_id != review.task_id:
                 raise ValidationError("review evidence must belong to reviewed task")
+            # mac-5u1f: an APPROVED review must point at a real signed
+            # review_verdict authored by the reviewer, not at any
+            # task-attached evidence (which would let the executor's
+            # own evidence be passed off as the verdict). Read the
+            # executor_evidence_id off the verdict's own manifest and
+            # ask the full verdict finder to verify shape + signature.
+            if (
+                status_value == ReviewStatus.APPROVED.value
+                and self._find_verdict_evidence is not None
+            ):
+                manifest = (
+                    evidence.metadata.get("verification")
+                    if isinstance(evidence.metadata, dict)
+                    else None
+                )
+                executor_evidence_id_from_manifest = None
+                if isinstance(manifest, dict):
+                    executor_evidence_id_from_manifest = str(
+                        manifest.get("reviewed_evidence_id") or ""
+                    ).strip() or None
+                if not executor_evidence_id_from_manifest:
+                    raise ValidationError(
+                        "review approval evidence %s is not a review_verdict "
+                        "(missing verification.reviewed_evidence_id)" % evidence_id
+                    )
+                verdict, problems = self._find_verdict_evidence(
+                    review.task_id,
+                    reviewer_agent_id,
+                    executor_evidence_id=executor_evidence_id_from_manifest,
+                    verdict_evidence_id=evidence_id,
+                    not_before=review.created_at,
+                )
+                if verdict is None:
+                    raise ValidationError(
+                        "review approval requires signed review_verdict evidence: %s"
+                        % ("; ".join(problems) if problems else "no verdict found")
+                    )
         now = utcnow()
         # mac-p5a4: the review status UPDATE and the task.review_completed
         # history row were two bare store.execute calls — a crash between
