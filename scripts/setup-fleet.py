@@ -190,6 +190,7 @@ def write_generated_files(
     fleet_config: Dict[str, Any],
     env_values: Dict[str, str],
     next_steps: Optional[List[str]] = None,
+    deploy_agents: Optional[List[str]] = None,
 ) -> int:
     registry = load_fleet_registry(fleets_config)
     fleets = registry.get("fleets")
@@ -219,6 +220,18 @@ def write_generated_files(
     env_backup = backup_existing(env_file)
     atomic_write(fleets_config, config_content, 0o600)
     atomic_write(env_file, env_content, 0o600)
+    if args.deploy_plan_file:
+        plan = {
+            "hub": hub_name,
+            "agents": deploy_agents or [hub_name],
+            "env_file": str(env_file),
+            "fleets_config": str(fleets_config),
+        }
+        atomic_write(
+            Path(args.deploy_plan_file).expanduser(),
+            json.dumps(plan, indent=2) + "\n",
+            0o600,
+        )
 
     if fleets_backup:
         print("Backed up previous fleet registry to %s" % fleets_backup)
@@ -551,6 +564,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         fleet_config=fleet_config,
         env_values=env_values,
         next_steps=next_steps,
+        deploy_agents=[hub_name],
     )
 
 
@@ -702,6 +716,7 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         fleet_config=fleet_config,
         env_values=env_values,
         next_steps=next_steps,
+        deploy_agents=[agent_name],
     )
 
 
@@ -719,6 +734,7 @@ def main(argv: List[str]) -> int:
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
     parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
+    parser.add_argument("--deploy-plan-file", default="", help="Write a setup.sh deployment plan JSON file.")
     parser.add_argument("--new-hub", help="Create a one-node first-hub fleet non-interactively.")
     parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
     parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
@@ -871,6 +887,7 @@ def main(argv: List[str]) -> int:
             hub_name=hub_name,
             fleet_config=fleet_config,
             env_values=env_values,
+            deploy_agents=[hub_name],
         )
 
     print("mac fleet setup wizard")

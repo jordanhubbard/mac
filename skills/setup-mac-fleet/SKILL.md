@@ -50,18 +50,21 @@ Use this skill when the user asks to set up or deploy a new mac fleet and
        the new worker's name, SSH target, OS, supervisor, mode, and canary
        policy.
 
-4. For hub setup on a remote machine, source the generated caller-machine env,
-   then deploy:
+4. `setup.sh` is the one-pass entrypoint. By default it writes the fleet
+   registry/env file, sources the generated env file, and deploys the selected
+   hub or worker immediately.
+
+   To configure without deploying:
 
    ```bash
-   set -a; . ~/.mac/.env; set +a
-   bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+   bash setup.sh --configure-only
    ```
 
-   For hub setup running locally on the hub machine:
+   Existing fleet deploy commands can still be run through `setup.sh`:
 
    ```bash
-   bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+   bash setup.sh --hub <hub-node> [agent ...]
+   bash setup.sh --new-hub <hub-node> --target user@host[:port]
    ```
 
    Provider keys in `~/.mac/.env` are forwarded through the SSH layer to

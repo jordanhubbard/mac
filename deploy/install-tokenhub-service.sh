@@ -324,33 +324,47 @@ bin_dir.mkdir(parents=True, exist_ok=True)
 
 def extract_bins(src):
     names = ["tokenhub", "tokenhubctl"]
+
+    def binary_name(member_name):
+        base = Path(member_name).name
+        if base in names:
+            return base
+        if base.startswith("tokenhubctl-"):
+            return "tokenhubctl"
+        if base.startswith("tokenhub-"):
+            return "tokenhub"
+        return ""
+
+    def write_bin(binary, data):
+        out = bin_dir / binary
+        out.write_bytes(data)
+        out.chmod(0o755)
+
     if src.suffix == ".gz" and src.stem.endswith(".tar"):
         with tarfile.open(src) as tf:
             for member in tf.getmembers():
-                base = Path(member.name).name
-                if base in names:
-                    out = bin_dir / base
-                    with tf.extractfile(member) as mf, open(out, "wb") as of:
-                        of.write(mf.read())
-                    out.chmod(0o755)
+                binary = binary_name(member.name)
+                if binary:
+                    mf = tf.extractfile(member)
+                    if mf is None:
+                        continue
+                    with mf:
+                        write_bin(binary, mf.read())
     elif src.suffix == ".zip":
         with zipfile.ZipFile(src) as zf:
             for info in zf.infolist():
-                base = Path(info.filename).name
-                if base in names:
-                    out = bin_dir / base
-                    out.write_bytes(zf.read(info.filename))
-                    out.chmod(0o755)
+                binary = binary_name(info.filename)
+                if binary:
+                    write_bin(binary, zf.read(info.filename))
     else:
-        # bare binary — assume it's tokenhub itself
-        out = bin_dir / "tokenhub"
-        out.write_bytes(src.read_bytes())
-        out.chmod(0o755)
+        # Bare binary asset.
+        binary = binary_name(src.name) or "tokenhub"
+        write_bin(binary, src.read_bytes())
 
 extract_bins(dest)
 
-# Verify at least tokenhub was installed
-if not (bin_dir / "tokenhub").exists():
+# Verify both command binaries were installed from the archive.
+if not all((bin_dir / name).exists() for name in names):
     raise SystemExit(1)
 
 print("installed", flush=True)

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 import sys
 
@@ -303,6 +304,9 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert "Before=${FLEET_NAME}.service" in tokenhub_installer
     assert 'TOKENHUB_VAULT_ENABLED="${TOKENHUB_VAULT_ENABLED:-true}"' in tokenhub_installer
     assert 'health_urls+=("http://${TOKENHUB_BIND_ADDR}:${TOKENHUB_PORT}/healthz")' in tokenhub_installer
+    assert 'base.startswith("tokenhubctl-")' in tokenhub_installer
+    assert 'base.startswith("tokenhub-")' in tokenhub_installer
+    assert 'all((bin_dir / name).exists() for name in names)' in tokenhub_installer
     assert "OPENAI_API_KEY" in tokenhub_installer
     assert "MAC_HERMES_GATEWAY_API_KEY" in tokenhub_installer
     assert env_example["MAC_REQUIRE_TOKENHUB"] == "1"
@@ -639,12 +643,48 @@ def test_setup_sh_new_hub_path_delegates_to_deploy_wrapper():
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 
     assert "deploy/deploy-mac-fleet.sh" in script
-    assert "--new-hub|--new-hub=*" in script
+    assert "--hub|--hub=*|--new-hub|--new-hub=*" in script
     assert "--configure-only|--no-deploy" in script
+    assert "--deploy-plan-file" in script
+    assert 'set -a' in script
     assert "--fleet-name)" in deploy
     assert "setup_args+=(--fleet-name" in deploy
     assert "setup_args+=(--control-port" in deploy
     assert "setup_args+=(--network-provider" in deploy
+
+
+def test_setup_fleet_writes_deploy_plan_for_new_hub(tmp_path):
+    fleets_config = tmp_path / "fleets.yaml"
+    env_file = tmp_path / ".env"
+    plan_file = tmp_path / "deploy-plan.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "setup-fleet.py"),
+            "--force",
+            "--new-hub",
+            "hub1",
+            "--target",
+            "ops@example.internal:2222",
+            "--fleets-config",
+            str(fleets_config),
+            "--env-file",
+            str(env_file),
+            "--deploy-plan-file",
+            str(plan_file),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    assert plan["hub"] == "hub1"
+    assert plan["agents"] == ["hub1"]
+    assert plan["env_file"] == str(env_file)
 
 
 def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene():
