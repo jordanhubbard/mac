@@ -830,13 +830,15 @@ def run(
     out = stdout or sys.stdout
     err = stderr or sys.stderr
     config = _load_config(Path(args.config).expanduser())
-    url = args.url or os.environ.get("HGMAC_URL") or os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or config.get("url")
+    env_defaults = _load_env_defaults()
+    env = {**env_defaults, **os.environ}
+    url = args.url or env.get("HGMAC_URL") or env.get("MAC_URL") or env.get("MAC_HUB_URL") or config.get("url")
     from mac.fleet_env import resolve as _resolve_env
 
     token = (
         args.token
-        or os.environ.get("HGMAC_TOKEN")
-        or _resolve_env("MAC_API_TOKEN", fleet=getattr(args, "fleet", None))
+        or env.get("HGMAC_TOKEN")
+        or _resolve_env("MAC_API_TOKEN", fleet=getattr(args, "fleet", None), env=env)
         or config.get("token")
     )
     if not url:
@@ -854,6 +856,13 @@ def run(
 
 def main(argv: Optional[List[str]] = None) -> int:
     return run(argv)
+
+
+def _load_env_defaults() -> JsonDict:
+    from mac.fleet_env import parse_env_file
+
+    path = Path(os.environ.get("MAC_DEPLOY_ENV_FILE") or Path.home() / ".mac" / ".env").expanduser()
+    return parse_env_file(path)
 
 
 def _load_config(path: Path) -> JsonDict:

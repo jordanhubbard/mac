@@ -68,6 +68,53 @@ def test_hgmac_agent_crud_commands_emit_json_and_use_api_paths(monkeypatch):
     assert calls[-1][0:2] == ("DELETE", "http://hub:8789/agents/agent_1")
 
 
+def test_hgmac_loads_fleet_scoped_token_from_home_env(monkeypatch, tmp_path):
+    for key in ("HGMAC_TOKEN", "MAC_API_TOKEN", "MAC_API_TOKEN__ROCKY"):
+        monkeypatch.delenv(key, raising=False)
+    home_env = tmp_path / ".mac" / ".env"
+    home_env.parent.mkdir(parents=True)
+    home_env.write_text("MAC_API_TOKEN__ROCKY=rocky-token\nMAC_API_TOKEN=legacy-token\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    calls = []
+
+    def transport(method, url, body, token):
+        calls.append((method, url, body, token))
+        return []
+
+    rc = run(
+        ["--url", "http://hub:8789", "--fleet", "rocky", "fleets", "list"],
+        transport=transport,
+        stdout=io.StringIO(),
+    )
+
+    assert rc == 0
+    assert calls == [("GET", "http://hub:8789/fleets", None, "rocky-token")]
+
+
+def test_hgmac_exported_env_overrides_home_env(monkeypatch, tmp_path):
+    home_env = tmp_path / ".mac" / ".env"
+    home_env.parent.mkdir(parents=True)
+    home_env.write_text("MAC_API_TOKEN__ROCKY=file-token\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAC_API_TOKEN__ROCKY", "exported-token")
+
+    calls = []
+
+    def transport(method, url, body, token):
+        calls.append((method, url, body, token))
+        return []
+
+    rc = run(
+        ["--url", "http://hub:8789", "--fleet", "rocky", "fleets", "list"],
+        transport=transport,
+        stdout=io.StringIO(),
+    )
+
+    assert rc == 0
+    assert calls[0][3] == "exported-token"
+
+
 def test_hgmac_covers_related_agent_operations(monkeypatch):
     calls = []
 
