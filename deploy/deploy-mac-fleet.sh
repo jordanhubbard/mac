@@ -5369,10 +5369,10 @@ ensure_local_github_review_key() {
   mkdir -p "$key_dir"
   chmod 700 "$key_dir"
   if [ ! -f "$key_file" ]; then
-    echo "==> generating GitHub read-only deploy key at $key_file"
+    echo "==> generating GitHub read-only deploy key at $key_file" >&2
     ssh-keygen -t ed25519 -f "$key_file" -N "" -C "mac-github-review-deploy-key" -q
-    echo "==> Add this public key as a read-only deploy key to your GitHub repos:"
-    cat "${key_file}.pub"
+    echo "==> Add this public key as a read-only deploy key to your GitHub repos:" >&2
+    cat "${key_file}.pub" >&2
   fi
   chmod 600 "$key_file"
   python3 -c "import base64, sys; print(base64.b64encode(open(sys.argv[1],'rb').read()).decode(), end='')" "$key_file"
@@ -5437,12 +5437,14 @@ uses_direct_mesh_hub() {
 
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_target_str hub_tunnel_pubkey tokenhub_api_key github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field
+  local spec agent hub_agent hub_token hub_target_str hub_tunnel_pubkey tokenhub_api_key github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="${MAC_DEPLOY_HUB_TOKEN:-}"
   hub_tunnel_pubkey="${MAC_DEPLOY_HUB_TUNNEL_PUBKEY:-}"
   tokenhub_api_key="${MAC_DEPLOY_TOKENHUB_API_KEY:-}"
+  deployed_count=0
+  echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
     hub_tunnel_pubkey="$(read_hub_tunnel_pubkey 2>/dev/null || true)"
@@ -5491,6 +5493,7 @@ main() {
       done
     fi
     deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$tokenhub_api_key" "$allow_degraded_services" "$github_review_key_b64"
+    deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
       if [ -z "$hub_token" ]; then
         hub_token="$(read_hub_token)"
@@ -5537,6 +5540,14 @@ main() {
       fi
     fi
   done < <(selected_hosts "${REQUESTED_AGENTS[@]}")
+  if [ "$deployed_count" -eq 0 ]; then
+    echo "ERROR: no agents were deployed. Check that the fleet config is valid and the requested agents exist." >&2
+    echo "  Fleet registry: ${FLEET_REGISTRY_CONFIG}" >&2
+    echo "  Fleet config:   ${FLEET_CONFIG}" >&2
+    echo "  Hub selector:   ${HUB_SELECTOR:-not set (use --hub <agent>)}" >&2
+    echo "  Requested agents: ${REQUESTED_AGENTS[*]:-all}" >&2
+    exit 1
+  fi
   rm -rf "$TMPDIR_LOCAL"
 }
 
