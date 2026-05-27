@@ -479,12 +479,48 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "agents": agents,
     }
 
+    # Provider credentials — at least one required for TokenHub to route requests.
+    _KNOWN_PROVIDERS: Dict[str, tuple] = {
+        "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://integrate.api.nvidia.com/v1"),
+        "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
+        "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
+        "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
+    }
+    provider_env_values: Dict[str, str] = {}
+    print("")
+    print("TokenHub requires at least one upstream LLM provider.")
+    print("Keys are written to %s (mode 0600, never committed to git)." % env_file)
+    print("Known providers: %s" % ", ".join(_KNOWN_PROVIDERS))
+    print("")
+    while True:
+        pid = input("Provider to add (blank when done): ").strip().lower()
+        if not pid:
+            if not provider_env_values:
+                print("At least one provider is required.")
+                continue
+            break
+        if pid not in _KNOWN_PROVIDERS:
+            print("Unknown provider '%s'. Known: %s" % (pid, ", ".join(_KNOWN_PROVIDERS)))
+            continue
+        key_var, base_var, default_base = _KNOWN_PROVIDERS[pid]
+        api_key = ""
+        while not api_key:
+            api_key = input("  %s API key: " % pid).strip()
+            if not api_key:
+                print("  Required.")
+        base_url = input("  %s base URL [%s]: " % (pid, default_base)).strip()
+        provider_env_values[key_var] = api_key
+        if base_url and base_url != default_base:
+            provider_env_values[base_var] = base_url
+        print("  Added %s." % pid)
+
     env_values = {
         "MAC_DEPLOY_FLEET_CONFIG": str(ROOT / "deploy" / "fleet" / "config.yaml"),
         "MAC_DEPLOY_FLEETS_CONFIG": str(fleets_config),
         "MAC_DEPLOY_HUB_AGENT": hub_name,
         "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
     }
+    env_values.update(provider_env_values)
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):
