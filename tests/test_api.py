@@ -401,6 +401,62 @@ def test_default_review_tick_requires_admin_not_write():
     assert allowed.status_code == 200
 
 
+def test_secret_routes_bind_actor_and_tenant_to_principal():
+    """mac-k30g + mac-01g0: an agent-bound token cannot reveal secrets
+    as another agent, and a tenant-bound token cannot reach a secret
+    scoped to a different tenant.
+    """
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("h")
+    agent_a = cp.register_agent(machine.id, "a", capabilities=["deploy"])
+    agent_b = cp.register_agent(machine.id, "b", capabilities=["deploy"])
+    # Seed a secret scoped to tenant-a (no agent_id binding).
+    secret = cp.create_secret(
+        "tok",
+        "supersecret",
+        {"capabilities": ["deploy"], "tenant_id": "tenant-a"},
+        created_by="human",
+    )
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                # Token bound to agent_a, scopes secret + write.
+                "tok-a": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-a"},
+                # Token bound to agent_b, also scoped to tenant-a — but agent_b is not the secret scope target.
+                "tok-b": {"scopes": ["secret", "write"], "agent_id": agent_b.id, "tenant_id": "tenant-a"},
+                # Tenant-b token: same secret-scope, different tenant.
+                "tok-c": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-b"},
+                "admin": ["admin"],
+            },
+        )
+    )
+
+    # tok-a requesting secret access AS agent_a is allowed.
+    ok = client.post(
+        "/secrets/%s/access" % secret.id,
+        headers={"Authorization": "Bearer tok-a"},
+        json={"accessor_agent_id": agent_a.id, "purpose": "deploy"},
+    )
+    assert ok.status_code == 200, ok.text
+
+    # tok-b trying to pose as agent_a is refused.
+    blocked = client.post(
+        "/secrets/%s/access" % secret.id,
+        headers={"Authorization": "Bearer tok-b"},
+        json={"accessor_agent_id": agent_a.id, "purpose": "deploy"},
+    )
+    assert blocked.status_code == 403, blocked.text
+
+    # tok-c (different tenant) is refused on the tenant gate.
+    cross = client.post(
+        "/secrets/%s/access" % secret.id,
+        headers={"Authorization": "Bearer tok-c"},
+        json={"accessor_agent_id": agent_a.id, "purpose": "deploy"},
+    )
+    assert cross.status_code == 403, cross.text
+
+
 def test_attestation_key_rotation_requires_global_fleet_token():
     client = TestClient(
         create_app(

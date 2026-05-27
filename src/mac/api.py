@@ -41,10 +41,17 @@ class TokenPrincipal:
     means cross-tenant (admin-like) and any other value means the token may
     only write resources scoped to that tenant. Reads currently ignore the
     tenant binding — that surface returns full fleet state by design today.
+
+    mac-rreh / mac-kgi5 / mac-wcfy: ``agent_id`` binds the token to a
+    specific agent. When set, the token may only impersonate that agent
+    for actor-bearing actions (heartbeat, claim-next, evidence,
+    AgentBus publish, messages, command-audit). When unset, the
+    principal is unbound (admin/operator) and may assert any actor.
     """
 
     scopes: frozenset = field(default_factory=frozenset)
     tenant_id: Optional[str] = None
+    agent_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
@@ -85,6 +92,25 @@ class TokenPrincipal:
             "token is bound to a tenant and cannot operate on global fleet resources"
         )
 
+    def assert_actor(self, claimed_agent_id: str) -> None:
+        """Bind a request's actor field to the bearer principal.
+
+        mac-rreh / mac-kgi5 / mac-wcfy: callers pass actor identifiers
+        (``agent_id``, ``sender_agent_id``, ``accessor_agent_id``,
+        ``created_by``) in request bodies / URL paths. When the token
+        is bound to a specific agent, the claimed actor MUST match the
+        binding. Admin tokens may impersonate freely; unbound
+        operator-style tokens (no agent_id) are treated like admin
+        here. This is the principal/payload binding from the audit.
+        """
+        if self.is_admin or self.agent_id is None:
+            return
+        if not claimed_agent_id or claimed_agent_id != self.agent_id:
+            raise AuthorizationError(
+                "token is bound to agent %s and cannot act as %r"
+                % (self.agent_id, claimed_agent_id)
+            )
+
 
 AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
 
@@ -95,7 +121,8 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
     if isinstance(value, dict):
         scopes = frozenset(str(s) for s in value.get("scopes", []))
         tenant = value.get("tenant_id")
-        return TokenPrincipal(scopes=scopes, tenant_id=tenant)
+        agent = value.get("agent_id")
+        return TokenPrincipal(scopes=scopes, tenant_id=tenant, agent_id=agent)
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
 
@@ -3327,8 +3354,39 @@ def create_app(
     def publish(body: PublicationCreate) -> Dict[str, Any]:
         return cp.publish_task(**_data(body)).to_dict()
 
+    def _assert_secret_tenant(principal: TokenPrincipal, secret_id: str) -> None:
+        # mac-01g0: every /secrets/* operation must be tenant-isolated.
+        # Derive the tenant set from the secret's scopes; refuse when
+        # the principal's tenant doesn't match. Admin / unbound tokens
+        # bypass the check.
+        if principal.is_admin or principal.tenant_id is None:
+            return
+        secret = cp.get_secret(secret_id)
+        scopes = secret.scopes if isinstance(secret.scopes, dict) else {}
+        tenant_ids = set(scopes.get("tenant_ids") or [])
+        if scopes.get("tenant_id"):
+            tenant_ids.add(str(scopes["tenant_id"]))
+        # An unscoped secret (no tenant) is "global" — tenant-bound
+        # tokens may not touch it.
+        if not tenant_ids or principal.tenant_id not in tenant_ids:
+            raise AuthorizationError(
+                "secret %s is not scoped to token tenant %s"
+                % (secret_id, principal.tenant_id)
+            )
+
     @app.post("/secrets")
-    def create_secret(body: SecretCreate) -> Dict[str, Any]:
+    def create_secret(
+        body: SecretCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-01g0: bind create_secret to the principal's tenant if any.
+        scopes = body.scopes if isinstance(body.scopes, dict) else {}
+        target_tenant = scopes.get("tenant_id")
+        if target_tenant is None and scopes.get("tenant_ids"):
+            tenants = list(scopes.get("tenant_ids") or [])
+            target_tenant = tenants[0] if tenants else None
+        if target_tenant is not None:
+            principal.assert_tenant(str(target_tenant))
         return cp.create_secret(**_data(body)).to_dict()
 
     @app.get("/secrets")
@@ -3336,7 +3394,16 @@ def create_app(
         return [secret.to_dict() for secret in cp.list_secrets()]
 
     @app.post("/secrets/{secret_id}/access")
-    def request_secret(secret_id: str, body: SecretAccessRequest) -> Dict[str, Any]:
+    def request_secret(
+        secret_id: str,
+        body: SecretAccessRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-k30g: accessor_agent_id was self-asserted in the body. A
+        # token bound to a specific agent must not be able to request
+        # secrets as a different agent.
+        principal.assert_actor(body.accessor_agent_id)
+        _assert_secret_tenant(principal, secret_id)
         return cp.request_secret(
             secret_id,
             body.accessor_agent_id,
@@ -3345,7 +3412,16 @@ def create_app(
         ).to_dict()
 
     @app.post("/secrets/{secret_id}/reveal")
-    def reveal_secret(secret_id: str, body: SecretRevealRequest) -> Dict[str, Any]:
+    def reveal_secret(
+        secret_id: str,
+        body: SecretRevealRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-k30g: same — reveal must be bound to the actor the token
+        # represents. With no agent_id binding the call still works
+        # (operator/admin), but a fleet token cannot impersonate a peer.
+        principal.assert_actor(body.accessor_agent_id)
+        _assert_secret_tenant(principal, secret_id)
         return {
             "secret_id": secret_id,
             "value": cp.reveal_secret(secret_id, body.audit_id, body.accessor_agent_id),
