@@ -69,6 +69,7 @@ class ProvisioningService:
         task_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         detail: Optional[Dict[str, Any]] = None,
+        requested_by: Optional[str] = None,
     ) -> AgentProvisioningRequest:
         """Emit a provisioning request and run any registered hook.
 
@@ -126,8 +127,8 @@ class ProvisioningService:
             INSERT INTO agent_provisioning_requests (
                 id, status, reason, role_slug, capabilities, hardware,
                 task_id, tenant_id, detail, fulfilled_agent_id,
-                created_at, updated_at, closed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+                requested_by, created_at, updated_at, closed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)
             """,
             (
                 rid,
@@ -139,6 +140,7 @@ class ProvisioningService:
                 task_id,
                 tenant_id,
                 json_dumps(detail_obj),
+                (requested_by or "").strip() or None,
                 now,
                 now,
             ),
@@ -176,7 +178,14 @@ class ProvisioningService:
                     detail={"reason": "exception in provisioner hook"},
                 )
             if fulfilled_agent_id:
-                request = self.fulfill_request(rid, fulfilled_agent_id)
+                # Provisioner hook is trusted by configuration; it ran
+                # in-process to satisfy the request it just observed.
+                # Skip the two-party check (the hook IS the second party
+                # by design) and the capability re-check (the hook just
+                # registered the agent and knows its shape).
+                request = self.fulfill_request(
+                    rid, fulfilled_agent_id, allow_self_fulfill=True
+                )
         return request
 
     def get_request(self, request_id: str) -> AgentProvisioningRequest:
@@ -217,13 +226,85 @@ class ProvisioningService:
         return self.list_requests(status=ProvisioningStatus.PENDING.value, **kwargs)
 
     def fulfill_request(
-        self, request_id: str, agent_id: str
+        self,
+        request_id: str,
+        agent_id: str,
+        *,
+        fulfilled_by: Optional[str] = None,
+        allow_self_fulfill: bool = False,
     ) -> AgentProvisioningRequest:
+        """Mark a provisioning request fulfilled by ``agent_id``.
+
+        mac-1oi4: ``fulfilled_by`` records who approved the request and is
+        compared against ``requested_by`` — same-actor fulfillment is
+        refused unless the caller passes ``allow_self_fulfill=True``
+        (intended for auto-fulfill hooks that drive both ends from the
+        same trusted control-plane process). The agent's capabilities
+        and role are also checked against the request requirements so a
+        compromised dispatcher cannot satisfy an arbitrary request with
+        an unrelated attacker-controlled agent.
+        """
+        request = self.get_request(request_id)
+        if not allow_self_fulfill:
+            requester = (request.requested_by or "").strip()
+            approver = (fulfilled_by or "").strip()
+            if requester and approver and requester == approver:
+                raise ValidationError(
+                    "two-party check: %s requested and may not also fulfill request %s"
+                    % (requester, request_id)
+                )
+        # Capability + role match. Skip when the caller opted into a
+        # self-fulfill flow (typically an auto-fulfill hook that just
+        # registered the agent).
+        if not allow_self_fulfill:
+            self._assert_agent_matches_request(request, agent_id)
         return self._close_request(
             request_id,
             ProvisioningStatus.FULFILLED.value,
             fulfilled_agent_id=agent_id,
+            detail_patch={"fulfilled_by": (fulfilled_by or "").strip() or None}
+            if fulfilled_by
+            else None,
         )
+
+    def _assert_agent_matches_request(
+        self, request: AgentProvisioningRequest, agent_id: str
+    ) -> None:
+        """Refuse to fulfill when the proposed agent doesn't satisfy the
+        declared role/capability requirements (mac-1oi4)."""
+        agent_row = self.store.query_one(
+            "SELECT capabilities, role_id FROM agents WHERE id = ?", (agent_id,)
+        )
+        if agent_row is None:
+            raise NotFoundError("agent not found: %s" % agent_id)
+        try:
+            agent_caps = set(json_loads(agent_row["capabilities"], []))
+        except Exception:
+            agent_caps = set()
+        missing = set(request.capabilities) - agent_caps
+        if missing:
+            raise ValidationError(
+                "agent %s lacks required capabilities: %s" % (agent_id, sorted(missing))
+            )
+        if request.role_slug:
+            assigned_role_id = agent_row["role_id"]
+            if not assigned_role_id:
+                raise ValidationError(
+                    "agent %s has no assigned role; request needs %r"
+                    % (agent_id, request.role_slug)
+                )
+            role_row = self.store.query_one(
+                "SELECT slug FROM agent_roles WHERE id = ?", (assigned_role_id,)
+            )
+            if role_row is None or role_row["slug"] != request.role_slug:
+                raise ValidationError(
+                    "agent %s role %r does not match required %r"
+                    % (
+                        agent_id,
+                        role_row["slug"] if role_row else None,
+                        request.role_slug,
+                    )
+                )
 
     def fail_request(self, request_id: str, *, reason: str) -> AgentProvisioningRequest:
         return self._close_request(
@@ -285,6 +366,12 @@ class ProvisioningService:
         return self.get_request(request.id)
 
     def _from_row(self, row: Any) -> AgentProvisioningRequest:
+        # sqlite Row supports .keys() — guard against migrated DBs where
+        # requested_by may not yet exist.
+        try:
+            requested_by = row["requested_by"]
+        except (IndexError, KeyError):
+            requested_by = None
         return AgentProvisioningRequest(
             id=row["id"],
             status=row["status"],
@@ -299,4 +386,5 @@ class ProvisioningService:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             closed_at=row["closed_at"],
+            requested_by=requested_by,
         )

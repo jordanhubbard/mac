@@ -231,6 +231,12 @@ class SQLiteStore:
                     ON leases (task_id, status);
                 CREATE INDEX IF NOT EXISTS idx_leases_agent_status
                     ON leases (agent_id, status);
+                -- mac-x5el: enforce "at most one ACTIVE lease per task"
+                -- at the DB layer so a Python bug or a manual UPDATE
+                -- cannot produce duplicate active leases that confuse
+                -- claim/release/expire.
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_leases_active_per_task
+                    ON leases (task_id) WHERE status = 'active';
 
                 CREATE TABLE IF NOT EXISTS machines (
                     id TEXT PRIMARY KEY,
@@ -943,6 +949,7 @@ class SQLiteStore:
                     tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
                     detail TEXT NOT NULL DEFAULT '{}',
                     fulfilled_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                    requested_by TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     closed_at TEXT
@@ -1075,6 +1082,11 @@ class SQLiteStore:
             self._conn.commit()
 
     def _migrate(self) -> None:
+        # mac-1oi4: capture who asked for an agent so fulfill can refuse
+        # a self-fulfill (the same actor approving its own request).
+        self._ensure_column(
+            "agent_provisioning_requests", "requested_by", "requested_by TEXT"
+        )
         self._ensure_column("secret_access_audit", "expires_at", "expires_at TEXT")
         self._ensure_column("secret_access_audit", "revealed_at", "revealed_at TEXT")
         self._ensure_column("publications", "content_hash", "content_hash TEXT")

@@ -4639,6 +4639,29 @@ def test_beads_binding_rejects_argv_smuggling_bead_ids(cp):
     assert cp._beads_binding_for_task(ok) is not None
 
 
+def test_failed_to_open_requeue_resets_attempt_count(cp):
+    """mac-d2xh: a dead-letter requeue (FAILED → OPEN) must reset
+    attempt_count, otherwise the next claim immediately re-fails because
+    attempt_count >= max_attempts. Without the reset, requeue is a no-op."""
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"], max_attempts=2)
+
+    # Burn both attempts.
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.transition_task(task.id, TaskState.FAILED.value, worker.id)
+    # Re-open and try once more.
+    cp.transition_task(task.id, TaskState.OPEN.value, "ops")
+    after_first_requeue = cp.get_task(task.id)
+    # The reset must zero attempt_count and clear completed_at so the
+    # next claim is permitted.
+    assert after_first_requeue.attempt_count == 0
+    assert after_first_requeue.completed_at is None
+    # Claim must succeed (would raise if attempt_count were still >= max).
+    cp.claim_task(task.id, worker.id)
+    assert cp.get_task(task.id).attempt_count == 1
+
+
 def test_release_lease_refuses_to_clobber_after_takeover(cp):
     """mac-79s1: if the lease has already been expired and the task
     reclaimed by another agent, a stale release_lease call from the
@@ -4674,36 +4697,32 @@ def test_expire_leases_does_not_clobber_a_reclaimed_task(cp):
     expiration, another path may have already released the lease and
     reclaimed the task. The UPDATE must be guarded so a stale expiration
     pass does not silently steal the task back from the new owner.
+
+    With the partial UNIQUE index added in mac-x5el, two simultaneously
+    ACTIVE leases for one task are impossible at the DB layer; the
+    remaining vulnerable window is when lease_a is in some non-active
+    state with a past expires_at while lease_b is the new active one.
+    The expire-leases pass loads lease_a, but its guarded UPDATE refuses
+    to alter the task row owned by lease_b.
     """
     worker_a = register_agent(cp, "wa", ["python"])
     worker_b = register_agent(cp, "wb", ["python"])
     task = cp.create_task("t", required_capabilities=["python"])
     _, lease_a = cp.claim_task(task.id, worker_a.id)
 
-    # Simulate the race: between expire_leases() finding lease_a as
-    # "expired" and writing the UPDATE, release+reclaim happens.
-    # We do this by manually flipping lease_a to RELEASED and
-    # re-claiming with worker_b, then call expire_leases with a future
-    # `now` so it sees lease_a as eligible for expiry.
-    cp.store.execute(
-        "UPDATE leases SET status = ? WHERE id = ?",
-        (LeaseStatus.RELEASED.value, lease_a.id),
-    )
-    cp.store.execute(
-        "UPDATE tasks SET state = ?, owner_agent_id = NULL, lease_id = NULL WHERE id = ?",
-        (TaskState.OPEN.value, task.id),
-    )
+    # Release lease_a properly, then have worker_b claim the now-OPEN task.
+    cp.release_lease(lease_a.id, worker_a.id)
     _, lease_b = cp.claim_task(task.id, worker_b.id)
 
-    # Now force-expire by setting lease_a's expires_at into the past AND
-    # status back to ACTIVE — mimicking the read-then-stale-state window.
-    # The guard on status='active' in the UPDATE then misses (rowcount=0)
-    # because lease_a is no longer ACTIVE in reality? Actually it IS
-    # ACTIVE now in our setup. Test what happens then: lease_a expires,
-    # but the task UPDATE guard misses because tasks.lease_id != lease_a.id.
+    # Backdate lease_a's expires_at to simulate a stale "expired"
+    # eligible-row visible to a concurrent expire_leases pass. Its
+    # status stays RELEASED (the UNIQUE-active index would otherwise
+    # forbid two active leases), so the guarded UPDATE in expire_leases
+    # should skip it cleanly. This exercises both the lease-status
+    # guard and the task lease_id guard.
     cp.store.execute(
-        "UPDATE leases SET status = ?, expires_at = ? WHERE id = ?",
-        (LeaseStatus.ACTIVE.value, "2000-01-01T00:00:00+00:00", lease_a.id),
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", lease_a.id),
     )
     cp.expire_leases()
 
@@ -4712,6 +4731,25 @@ def test_expire_leases_does_not_clobber_a_reclaimed_task(cp):
     refreshed = cp.get_task(task.id)
     assert refreshed.owner_agent_id == worker_b.id
     assert refreshed.lease_id == lease_b.id
+
+
+def test_unique_active_lease_per_task_enforced_at_db_layer(cp):
+    """mac-x5el: the partial UNIQUE index on leases (task_id WHERE
+    status='active') must block a buggy second INSERT that would
+    otherwise produce two simultaneously active leases on one task."""
+    import sqlite3
+
+    worker_a = register_agent(cp, "wa", ["python"])
+    worker_b = register_agent(cp, "wb", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker_a.id)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        cp.store.execute(
+            "INSERT INTO leases (id, task_id, agent_id, expires_at, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'active', ?, ?)",
+            ("lease_evil", task.id, worker_b.id, "2099-01-01T00:00:00+00:00", "2024-01-01", "2024-01-01"),
+        )
 
 
 def test_draining_heartbeat_pauses_claims_without_requeueing_active_lease(cp):

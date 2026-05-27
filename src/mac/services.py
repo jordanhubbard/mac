@@ -4145,30 +4145,50 @@ class ControlPlane:
             owner_agent_id = None
             lease_id = None
             leased_until = None
+        # mac-d2xh: a dead-letter requeue (FAILED→OPEN or CANCELLED→OPEN)
+        # must reset attempt_count and clear completed_at; otherwise the
+        # next claim immediately fails the cap check (attempt_count >=
+        # max_attempts) and the requeue is a no-op.
+        is_requeue_from_terminal = (
+            task.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}
+            and target == TaskState.OPEN.value
+        )
         with self.store.transaction() as conn:
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (LeaseStatus.RELEASED.value, now, release_lease_id, LeaseStatus.ACTIVE.value),
                 )
-            conn.execute(
-                """
-                UPDATE tasks
-                SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
-                    started_at = ?, completed_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    target,
-                    owner_agent_id,
-                    lease_id,
-                    leased_until,
-                    now if target == TaskState.RUNNING.value and not task.started_at else task.started_at,
-                    now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
-                    now,
-                    task_id,
-                ),
-            )
+            if is_requeue_from_terminal:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
+                        started_at = NULL, completed_at = NULL,
+                        attempt_count = 0, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (target, owner_agent_id, lease_id, leased_until, now, task_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
+                        started_at = ?, completed_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        target,
+                        owner_agent_id,
+                        lease_id,
+                        leased_until,
+                        now if target == TaskState.RUNNING.value and not task.started_at else task.started_at,
+                        now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
+                        now,
+                        task_id,
+                    ),
+                )
             if task.owner_agent_id and target in TERMINAL_TASK_STATES.union(
                 {TaskState.BLOCKED.value, TaskState.OPEN.value, TaskState.NEEDS_REVIEW.value}
             ):

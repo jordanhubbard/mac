@@ -599,6 +599,9 @@ class AgentProvisioningRequest:
     created_at: str
     updated_at: str
     closed_at: Optional[str]
+    # mac-1oi4: who requested this agent, so fulfill_request can enforce
+    # a two-party check (the same actor cannot both ask and approve).
+    requested_by: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

@@ -58,14 +58,67 @@ def test_request_is_idempotent_on_persistent_shortage(cp):
 
 def test_fulfill_marks_request_fulfilled(cp):
     machine = cp.register_machine("h")
-    agent = cp.register_agent(machine.id, "newcomer")
+    # mac-1oi4: agent must have the required role + capabilities to
+    # satisfy the request; assigning before fulfill is the legitimate
+    # operator workflow.
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    soul = bind_soul(cp, persona_name="qa-soul", allowed_role_slugs=["qa"])
+    agent = cp.register_agent(machine.id, "newcomer", capabilities=["python"], hermes_instance_id=soul)
+    cp.roles.assign_role(agent.id, "qa")
     request = cp.provisioning.request_agent(
-        reason="dispatch.no_eligible_agent", role_slug="qa"
+        reason="dispatch.no_eligible_agent",
+        role_slug="qa",
+        requested_by="dispatcher",
     )
-    fulfilled = cp.provisioning.fulfill_request(request.id, agent.id)
+    fulfilled = cp.provisioning.fulfill_request(
+        request.id, agent.id, fulfilled_by="operator"
+    )
     assert fulfilled.status == ProvisioningStatus.FULFILLED.value
     assert fulfilled.fulfilled_agent_id == agent.id
     assert fulfilled.closed_at is not None
+
+
+def test_fulfill_refuses_same_actor_request_and_approval(cp):
+    """mac-1oi4: a compromised dispatcher cannot request-then-fulfill its
+    own request — the two-party check must reject same-actor approval."""
+    machine = cp.register_machine("h")
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    soul = bind_soul(cp, persona_name="qa-soul", allowed_role_slugs=["qa"])
+    agent = cp.register_agent(machine.id, "a", capabilities=["python"], hermes_instance_id=soul)
+    cp.roles.assign_role(agent.id, "qa")
+    request = cp.provisioning.request_agent(
+        reason="r", role_slug="qa", requested_by="dispatcher"
+    )
+    with pytest.raises(ValidationError, match="two-party check"):
+        cp.provisioning.fulfill_request(request.id, agent.id, fulfilled_by="dispatcher")
+    # A different approver succeeds.
+    ok = cp.provisioning.fulfill_request(request.id, agent.id, fulfilled_by="operator")
+    assert ok.status == ProvisioningStatus.FULFILLED.value
+
+
+def test_fulfill_refuses_agent_lacking_required_role_or_capabilities(cp):
+    """mac-1oi4: don't let the operator satisfy a request with an
+    unrelated agent. Capabilities and role must match the request."""
+    machine = cp.register_machine("h")
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="ops", name="ops", description="d", system_prompt="p", level="ic")
+    ops_soul = bind_soul(cp, persona_name="ops-soul", allowed_role_slugs=["ops"])
+    qa_soul = bind_soul(cp, persona_name="qa-soul-2", allowed_role_slugs=["qa"])
+    wrong_role_agent = cp.register_agent(machine.id, "wrong", capabilities=["python"], hermes_instance_id=ops_soul)
+    cp.roles.assign_role(wrong_role_agent.id, "ops")
+    no_caps_agent = cp.register_agent(machine.id, "nocap", hermes_instance_id=qa_soul)
+    cp.roles.assign_role(no_caps_agent.id, "qa")
+
+    request = cp.provisioning.request_agent(
+        reason="r",
+        role_slug="qa",
+        capabilities=["python"],
+        requested_by="dispatcher",
+    )
+    with pytest.raises(ValidationError, match="role"):
+        cp.provisioning.fulfill_request(request.id, wrong_role_agent.id, fulfilled_by="ops")
+    with pytest.raises(ValidationError, match="capabilities"):
+        cp.provisioning.fulfill_request(request.id, no_caps_agent.id, fulfilled_by="ops")
 
 
 def test_provisioner_hook_runs_synchronously(cp):
