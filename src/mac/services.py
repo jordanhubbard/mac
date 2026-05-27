@@ -8020,6 +8020,21 @@ class ControlPlane:
                 "repository runtime contract project %s does not match registered project %s"
                 % (contract["project"], repo.project)
             )
+        # mac-xqn6.3: verify the declared toolchain.required_commands are
+        # actually available on this host. Run ``which <cmd>`` for each;
+        # missing commands surface as a ValidationError up the polling
+        # path, which mac-xqn6.1 turns into an integration finding +
+        # unhealthy-state for the beads_repository row.
+        toolchain = contract.get("toolchain") or {}
+        required_commands = list(toolchain.get("required_commands") or [])
+        if required_commands:
+            import shutil as _shutil
+            missing = [cmd for cmd in required_commands if not _shutil.which(cmd)]
+            if missing:
+                raise ValidationError(
+                    "repository runtime contract toolchain.required_commands missing on this host: %s"
+                    % ", ".join(missing)
+                )
         return contract
 
     def _beads_repository_registered_root(self, repo_path: Path, state: JsonDict) -> Path:
@@ -10659,9 +10674,45 @@ class ControlPlane:
     # where the Python sort cost becomes noticeable.
     _DISPATCH_TASK_WINDOW = 500
 
+    def _unhealthy_beads_projects(self) -> set:
+        """Return the set of human-project names whose beads_repository
+        currently reports health=unhealthy. Used by dispatch to refuse
+        running tasks whose source repo has failed preflight (mac-xqn6.5)."""
+        try:
+            rows = self.store.query_all(
+                """
+                SELECT project, metadata FROM beads_repositories
+                WHERE metadata IS NOT NULL
+                """
+            )
+        except Exception:  # noqa: BLE001 - schema might not be ready in tests
+            return set()
+        unhealthy: set = set()
+        for row in rows:
+            project = row["project"]
+            if not project:
+                continue
+            try:
+                meta = json_loads(row["metadata"], {})
+            except Exception:  # noqa: BLE001
+                continue
+            health = meta.get("health") if isinstance(meta, dict) else None
+            if isinstance(health, dict) and health.get("state") == "unhealthy":
+                unhealthy.add(project)
+            elif isinstance(health, str) and health == "unhealthy":
+                unhealthy.add(project)
+        return unhealthy
+
     def _dispatch_ordered_tasks(self) -> List[Task]:
         groups: Dict[str, List[Task]] = {}
+        # mac-xqn6.5: exclude tasks whose project is currently flagged
+        # unhealthy (e.g. invalid contract from mac-xqn6.1). The tasks
+        # stay OPEN in the ledger but cannot be claimed until the
+        # repository preflight passes again.
+        unhealthy = self._unhealthy_beads_projects()
         for task in self.list_tasks(TaskState.OPEN.value, limit=self._DISPATCH_TASK_WINDOW):
+            if task.project and task.project in unhealthy:
+                continue
             tenant_key = self._task_tenant_id(task) or ""
             groups.setdefault(tenant_key, []).append(task)
         for tenant_tasks in groups.values():
