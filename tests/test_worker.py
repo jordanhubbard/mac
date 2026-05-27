@@ -819,6 +819,62 @@ def test_mac_worker_audits_subprocess_commands(tmp_path: Path):
         assert "argv0" in detail
 
 
+def test_validate_git_remote_url_rejects_argv_smuggling():
+    """mac-raud: remote_url from worker-supplied evidence must not be
+    interpretable as a git option."""
+    from mac.worker import _validate_git_remote_url
+
+    # legitimate URLs pass
+    assert _validate_git_remote_url("https://github.com/foo/bar.git") == "https://github.com/foo/bar.git"
+    assert _validate_git_remote_url("git@github.com:foo/bar.git") == "git@github.com:foo/bar.git"
+    assert _validate_git_remote_url("ssh://git@host/repo") == "ssh://git@host/repo"
+    # file:// is allowed (used by test fixtures and legit local mirrors)
+    assert _validate_git_remote_url("file:///tmp/repo") == "file:///tmp/repo"
+
+    # smuggling attempts rejected
+    for hostile in [
+        "--upload-pack=/tmp/x",
+        "-c something",
+        "--config=user.name=evil",
+        "",  # empty
+        "x" * 3000,  # oversized
+        "http://host with space/repo",
+        "ftp://bad-scheme/repo",
+    ]:
+        with pytest.raises(ValueError):
+            _validate_git_remote_url(hostile)
+
+
+def test_worker_cli_has_default_executor_timeout():
+    """mac-ehch: without a default --timeout, a wedged executor keeps
+    renewing its lease forever because the renew thread only stops when
+    subprocess.run returns. Confirm the CLI default is now finite."""
+    from mac.worker import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "--url", "http://localhost:0",
+        "--agent-id", "agent_test",
+        "--workspace", "/tmp/wf",
+        "--executor", "/bin/true",
+    ])
+    assert args.timeout is not None
+    assert 60 <= args.timeout <= 24 * 3600, (
+        f"default --timeout {args.timeout} outside the reasonable 1m–24h window"
+    )
+
+
+def test_validate_git_ref_rejects_flags_and_meta_chars():
+    """mac-raud: remote_ref must look like a git ref, not a flag."""
+    from mac.worker import _validate_git_ref
+
+    assert _validate_git_ref("refs/heads/main") == "refs/heads/main"
+    assert _validate_git_ref("main") == "main"
+    for hostile in ["", "-flag", "--config", "branch with space", "a;b", "a$b", "$(injection)"]:
+        with pytest.raises(ValueError):
+            _validate_git_ref(hostile)
+
+
 def test_mac_worker_prepares_repository_task_in_git_worktree(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

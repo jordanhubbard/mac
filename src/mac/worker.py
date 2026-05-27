@@ -38,6 +38,38 @@ StatusUpdateSink = Callable[[JsonDict], JsonDict]
 SAFE_GIT_REF_RE = r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$"
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+# mac-raud: validate git remote URLs supplied by upstream evidence
+# before passing to ``git clone``. We accept https/http, ssh://, git://,
+# git@host:path forms; nothing that could be parsed as a flag.
+_GIT_REMOTE_URL_RE = re.compile(
+    r"^(?:https?://|ssh://|git://|file://|git@|/)[A-Za-z0-9._\-:/@%+~?=&]*$"
+)
+# Git ref name rules (simplified — see git-check-ref-format).
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
+
+
+def _validate_git_remote_url(value: str) -> str:
+    """Reject git remote URLs that could smuggle argv flags or escape
+    the URL shape entirely (mac-raud).
+    """
+    if not value or value.startswith("-"):
+        raise ValueError("git remote URL is empty or looks like a flag: %r" % value)
+    if len(value) > 2048:
+        raise ValueError("git remote URL exceeds 2048 byte limit")
+    if not _GIT_REMOTE_URL_RE.match(value):
+        raise ValueError("git remote URL does not match a recognised scheme: %r" % value)
+    return value
+
+
+def _validate_git_ref(value: str) -> str:
+    """Reject git refs that could be confused with argv flags."""
+    if not value or value.startswith("-"):
+        raise ValueError("git ref is empty or looks like a flag: %r" % value)
+    if len(value) > 512:
+        raise ValueError("git ref exceeds 512 byte limit")
+    if not _GIT_REF_RE.match(value):
+        raise ValueError("git ref contains disallowed characters: %r" % value)
+    return value
 REQUIRED_CHANGED_FILE_KEYS = (
     "required_changed_files",
     "required_files",
@@ -1441,11 +1473,24 @@ class MacWorker:
         if not remote_url:
             return None
 
+        # mac-raud: reject hostile remote_url before it reaches git argv.
+        try:
+            remote_url = _validate_git_remote_url(remote_url)
+        except ValueError as exc:
+            raise RuntimeError("refusing review clone: %s" % exc) from None
+        if remote_ref:
+            try:
+                remote_ref = _validate_git_ref(remote_ref)
+            except ValueError as exc:
+                raise RuntimeError("refusing review clone: %s" % exc) from None
+
         review_repo = task_dir / "review-repo"
         if review_repo.exists():
             shutil.rmtree(review_repo)
+        # `--` separator means a remote_url that survives validation
+        # still cannot be parsed as a git option.
         clone = subprocess.run(
-            ["git", "clone", "--no-checkout", remote_url, str(review_repo)],
+            ["git", "clone", "--no-checkout", "--", remote_url, str(review_repo)],
             capture_output=True,
             text=True,
             timeout=120,
@@ -1468,7 +1513,9 @@ class MacWorker:
                 ],
             )
         elif remote_ref:
-            fetch = _run_git(review_repo, ["fetch", "origin", remote_ref])
+            # remote_ref was validated above; `--` guards against any
+            # ref that pattern-matched a flag (mac-raud).
+            fetch = _run_git(review_repo, ["fetch", "origin", "--", remote_ref])
         else:
             fetch = _run_git(review_repo, ["fetch", "origin"])
         if fetch.returncode != 0:
@@ -2727,7 +2774,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--workspace", default=".mac-agent-workspaces")
     parser.add_argument("--lease-seconds", type=int, default=900)
-    parser.add_argument("--timeout", type=float)
+    # mac-ehch: hard-cap executor runtime so a wedged subprocess can't
+    # keep renewing its lease forever. One hour is well above the median
+    # claim duration in production and below the point where a stuck
+    # task should be visible to operators. Override with --timeout if a
+    # longer-running task is genuinely needed.
+    parser.add_argument("--timeout", type=float, default=3600.0)
     parser.add_argument(
         "--allowed-projects",
         default=os.environ.get("MAC_WORKER_ALLOWED_PROJECTS", ""),

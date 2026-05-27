@@ -4603,6 +4603,42 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_beads_binding_rejects_argv_smuggling_bead_ids(cp):
+    """mac-5xwh: bead_id is passed verbatim as an argv positional to
+    `bd comment <bead_id> ...`. A hostile bead_id like `--help` or
+    `-c <something>` becomes a flag. _beads_binding_for_task must
+    refuse anything that doesn't match the bead-id shape so no caller
+    ever sees a hostile binding."""
+    for hostile in ["--help", "-c something", "  ", "bead\n-id", "bead;rm -rf /", "?bad?"]:
+        task = cp.create_task(
+            "t",
+            metadata={
+                "origin": {
+                    "type": "beads",
+                    "bead_id": hostile,
+                    "repository_path": "/tmp/r",
+                },
+                "acc_metadata": {"beads_id": hostile},
+            },
+        )
+        binding = cp._beads_binding_for_task(task)
+        assert binding is None, f"hostile bead_id leaked through binding: {hostile!r}"
+
+    # Legitimate forms still bind.
+    ok = cp.create_task(
+        "t",
+        metadata={
+            "origin": {
+                "type": "beads",
+                "bead_id": "mac-azid",
+                "repository_path": "/tmp/r",
+            },
+            "acc_metadata": {"beads_id": "mac-azid"},
+        },
+    )
+    assert cp._beads_binding_for_task(ok) is not None
+
+
 def test_release_lease_refuses_to_clobber_after_takeover(cp):
     """mac-79s1: if the lease has already been expired and the task
     reclaimed by another agent, a stale release_lease call from the

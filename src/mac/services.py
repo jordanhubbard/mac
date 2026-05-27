@@ -307,6 +307,11 @@ REPOSITORY_CONTRACT_FILES = (
 )
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+# mac-5xwh: bd issue ids look like ``<prefix>-<slug>`` where the slug
+# may itself contain dashes (e.g. ``mac-defer-claim``). Reject anything
+# that could be misread as a CLI flag (leading ``-``) or that contains
+# whitespace, redirects, or quoting metacharacters.
+_BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_\-]*$")
 
 # Bytes of cleartext attestation key per agent. 256 bits of HMAC key is
 # overkill for the threat model but fits in one stretch of base64 and
@@ -7875,8 +7880,16 @@ class ControlPlane:
             state["error"] = "bridge checkout path exists but is not a git worktree: %s" % bridge_path
             return None
         if not bridge_path.exists():
+            # mac-raud: even though clone_url comes from a locally-registered
+            # repo's `git remote get-url`, treat it as untrusted argv — refuse
+            # anything that starts with `-` or contains shell separators that
+            # could be confused with a flag, and add `--` to be safe.
+            if not clone_url or clone_url.startswith("-"):
+                state["status"] = "error"
+                state["error"] = "refusing to clone: clone_url looks like a flag (%r)" % clone_url
+                return None
             clone = subprocess.run(
-                ["git", "clone", "--quiet", clone_url, str(bridge_path)],
+                ["git", "clone", "--quiet", "--", clone_url, str(bridge_path)],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -8908,6 +8921,20 @@ class ControlPlane:
         bead_id = str(origin.get("bead_id") or acc_metadata.get("beads_id") or "").strip()
         repo_path = str(origin.get("repository_path") or "").strip()
         if not bead_id or not repo_path:
+            return None
+        # mac-5xwh: refuse any bead_id that could smuggle argv flags into
+        # `bd comment <bead_id> ...`. Real bead ids match the format
+        # ``<prefix>-<slug>`` with alphanumerics + underscore only.
+        if not _BEAD_ID_RE.match(bead_id):
+            self.record_log(
+                "bridge.beads.bind.refused",
+                layer="control_plane",
+                source="control_plane",
+                level="warning",
+                subject_type="task",
+                subject_id=task.id,
+                detail={"bead_id": bead_id, "reason": "bead_id format rejected"},
+            )
             return None
         return {
             "bead_id": bead_id,
