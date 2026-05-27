@@ -7748,7 +7748,45 @@ class ControlPlane:
                     "skipped_count": 0,
                 }
             poll_path = Path(str(source_state.get("poll_path") or repo.path)).expanduser()
-            repository_contract = self._repository_contract_for_beads_repo_at_path(repo, poll_path)
+            try:
+                repository_contract = self._repository_contract_for_beads_repo_at_path(repo, poll_path)
+            except ValidationError as exc:
+                # mac-xqn6.1: a missing/malformed/mismatched contract is a
+                # first-class health-gate failure. Refuse to import any
+                # tasks and record an integration finding so the human
+                # (Hermes / dashboard / API) can see the project went
+                # unhealthy and why.
+                self.record_integration_finding(
+                    source_kind="beads_repository",
+                    source_id=repo.id,
+                    finding_type="project_contract_invalid",
+                    title="repository runtime contract is invalid for project %s" % repo.project,
+                    severity="error",
+                    detail={
+                        "repository_id": repo.id,
+                        "repository_name": repo.name,
+                        "repository_path": str(poll_path),
+                        "project": repo.project,
+                        "error": str(exc),
+                    },
+                )
+                self._update_beads_repository_poll_state(
+                    repo.id,
+                    now,
+                    last_imported_at=repo.last_imported_at,
+                    last_error="contract: %s" % exc,
+                    health={"state": "unhealthy", "reason": "contract_invalid"},
+                )
+                return {
+                    "repository_id": repo.id,
+                    "name": repo.name,
+                    "status": "contract_invalid",
+                    "health": "unhealthy",
+                    "error": str(exc),
+                    "imported_count": 0,
+                    "existing_count": 0,
+                    "skipped_count": 0,
+                }
             issues = self._ready_beads_issues(
                 repo,
                 poll_path=poll_path,
