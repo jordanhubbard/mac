@@ -361,13 +361,11 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     )[0]
 
     assert (
-        '. "$ENV_FILE"\n'
-        "set +a\n"
+        "reload_mac_env\n"
         "install_or_validate_tokenhub_service\n"
-        "set -a\n"
-        '. "$ENV_FILE"\n'
-        "set +a\n"
+        "reload_mac_env\n"
         "sync_hermes_tokenhub_client_env\n"
+        "reload_mac_env\n"
         "sync_hermes_slack_identity_env\n"
         '[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories'
     ) in script

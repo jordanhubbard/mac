@@ -391,6 +391,11 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
+def model_field(value: Any) -> str:
+    value = text_field(value)
+    return "" if value == "*" else value
+
+
 def require_no_pipe(fields: Iterable[str]) -> None:
     for field in fields:
         if "|" in field:
@@ -512,8 +517,8 @@ hub_url = os.environ.get("MAC_DEPLOY_HUB_URL") or text_field(cfg.get("hub_url"))
 fleet_name = os.environ.get("MAC_DEPLOY_FLEET_NAME") or text_field(cfg.get("fleet_name")) or "mac"
 control_port = os.environ.get("MAC_DEPLOY_CONTROL_PORT") or text_field(cfg.get("control_port")) or "8789"
 shared_services_manager = (
-    os.environ.get("MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT")
-    or text_field(cfg.get("shared_services_manager_agent"))
+    text_field(cfg.get("shared_services_manager_agent"))
+    or os.environ.get("MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT")
     or hub_agent
 )
 defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
@@ -575,7 +580,7 @@ for name in selected:
         target,
         os_kind,
         text_field(hermes.get("slack_home_channel_name")),
-        text_field(hermes.get("gateway_model")),
+        model_field(hermes.get("gateway_model")),
         text_field(hermes.get("gateway_provider") or "custom"),
         text_field(hermes.get("gateway_base_url")),
         hub_url,
@@ -696,6 +701,29 @@ env_value_or_empty() {
   printf '%s' "${!key-}"
 }
 
+fleet_scoped_name() {
+  local key="$1" fleet="$2"
+  "$PY" - "$key" "$fleet" <<'PY'
+import re
+import sys
+
+key = sys.argv[1]
+fleet = sys.argv[2]
+suffix = re.sub(r"[^A-Za-z0-9]+", "_", fleet.strip()).strip("_").upper()
+print("%s__%s" % (key, suffix) if suffix else key)
+PY
+}
+
+fleet_scoped_env() {
+  local key="$1" fleet="$2" scoped
+  scoped="$(fleet_scoped_name "$key" "$fleet")"
+  if [ -n "${!scoped+x}" ]; then
+    printf '%s' "${!scoped}"
+  elif [ -n "${!key+x}" ]; then
+    printf '%s' "${!key}"
+  fi
+}
+
 make_archive() {
   mkdir -p "$TMPDIR_LOCAL"
   git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" HEAD
@@ -781,6 +809,9 @@ DEPLOY_GIT_URL="${MAC_DEPLOY_GIT_URL:-}"
 DEPLOY_GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"
 HERMES_SLACK_HOME_CHANNEL_NAME="${MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME:-}"
 HERMES_GATEWAY_MODEL="${MAC_DEPLOY_HERMES_GATEWAY_MODEL:-}"
+if [ "$HERMES_GATEWAY_MODEL" = "*" ]; then
+  HERMES_GATEWAY_MODEL=""
+fi
 HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
 HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
@@ -1363,6 +1394,13 @@ validate_tokenhub_endpoint() {
   exit 1
 }
 
+reload_mac_env() {
+  unset MAC_HERMES_GATEWAY_MODEL ACC_HERMES_GATEWAY_MODEL HERMES_INFERENCE_MODEL ACC_LLM_MODEL
+  set -a
+  . "$ENV_FILE"
+  set +a
+}
+
 install_or_validate_tokenhub_service() {
   if tokenhub_install_enabled; then
     log "installing hub-managed TokenHub secret/model routing service"
@@ -1383,9 +1421,7 @@ install_or_validate_tokenhub_service() {
     export TOKENHUB_SUPERVISOR="${TOKENHUB_SUPERVISOR:-auto}"
     MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-tokenhub-service.sh"
-    set -a
-    . "$ENV_FILE"
-    set +a
+    reload_mac_env
   else
     log "using hub-managed TokenHub from $SHARED_SERVICES_MANAGER_AGENT"
   fi
@@ -1411,9 +1447,7 @@ install_or_validate_shared_services() {
     export QDRANT_SUPERVISOR="$SUPERVISOR_KIND"
     MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-qdrant-service.sh"
-    set -a
-    . "$ENV_FILE"
-    set +a
+    reload_mac_env
   else
     log "using hub-managed shared services from $SHARED_SERVICES_MANAGER_AGENT"
   fi
@@ -1433,9 +1467,7 @@ install_or_validate_web_search_service() {
     export FIRECRAWL_SUPERVISOR="$SUPERVISOR_KIND"
     MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-firecrawl-gateway.sh"
-    set -a
-    . "$ENV_FILE"
-    set +a
+    reload_mac_env
   else
     log "using hub-managed Firecrawl web search from $SHARED_SERVICES_MANAGER_AGENT"
   fi
@@ -2812,6 +2844,8 @@ model = (
     or source.get("ACC_LLM_MODEL")
     or ""
 ).strip()
+if model == "*":
+    model = ""
 updates["MAC_HERMES_GATEWAY_MODEL"] = model or None
 updates["ACC_HERMES_GATEWAY_MODEL"] = model or None
 updates["HERMES_INFERENCE_MODEL"] = model or None
@@ -2868,6 +2902,8 @@ model = (
     str(env.get("HERMES_INFERENCE_MODEL") or "").strip()
     or str(env.get("MAC_HERMES_GATEWAY_MODEL") or "").strip()
 )
+if model == "*":
+    model = ""
 
 model_config = config.get("model") if isinstance(config.get("model"), dict) else {}
 model_config = dict(model_config)
@@ -3568,6 +3604,8 @@ home = Path(sys.argv[3])
 port = sys.argv[4]
 configured_home_channel = sys.argv[5].strip().lstrip("#")
 configured_gateway_model = sys.argv[6].strip()
+if configured_gateway_model == "*":
+    configured_gateway_model = ""
 configured_gateway_provider = sys.argv[7].strip()
 configured_gateway_base_url = sys.argv[8].strip()
 configured_hub_url = sys.argv[9].strip()
@@ -3878,14 +3916,11 @@ PY
 
 normalize_hermes_redaction_env
 
-set -a
-. "$ENV_FILE"
-set +a
+reload_mac_env
 install_or_validate_tokenhub_service
-set -a
-. "$ENV_FILE"
-set +a
+reload_mac_env
 sync_hermes_tokenhub_client_env
+reload_mac_env
 sync_hermes_slack_identity_env
 [ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories || true
 [ -x "$MAC_HOME/bin/bd" ] && restore_beads_tracked_exports || true
@@ -5620,12 +5655,14 @@ uses_direct_mesh_hub() {
 
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_target_str hub_tunnel_pubkey tokenhub_api_key github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field deployed_count
+  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey tokenhub_api_key tokenhub_api_key_name github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
-  hub_token="${MAC_DEPLOY_HUB_TOKEN:-}"
-  hub_tunnel_pubkey="${MAC_DEPLOY_HUB_TUNNEL_PUBKEY:-}"
-  tokenhub_api_key="${MAC_DEPLOY_TOKENHUB_API_KEY:-}"
+  hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
+  hub_token_key="$(fleet_scoped_name MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
+  hub_tunnel_pubkey="$(fleet_scoped_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_agent")"
+  tokenhub_api_key="$(fleet_scoped_env MAC_DEPLOY_TOKENHUB_API_KEY "$hub_agent")"
+  tokenhub_api_key_name="$(fleet_scoped_name MAC_DEPLOY_TOKENHUB_API_KEY "$hub_agent")"
   deployed_count=0
   echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
   github_review_key_b64="$(ensure_local_github_review_key)"
@@ -5641,11 +5678,11 @@ main() {
     network_provider_field="${spec_fields[38]:-none}"
     if [ "$agent" != "$hub_agent" ] && [ -z "$hub_token" ]; then
       hub_token="$(read_hub_token)"
-      upsert_local_env "MAC_DEPLOY_HUB_TOKEN" "$hub_token"
+      upsert_local_env "$hub_token_key" "$hub_token"
     fi
     if [ "$agent" != "$hub_agent" ] && [ -z "$tokenhub_api_key" ]; then
       tokenhub_api_key="$(read_hub_tokenhub_api_key)"
-      upsert_local_env "MAC_DEPLOY_TOKENHUB_API_KEY" "$tokenhub_api_key"
+      upsert_local_env "$tokenhub_api_key_name" "$tokenhub_api_key"
     fi
     allow_degraded_services=0
     if [ "$agent" != "$hub_agent" ] && ! uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"; then
@@ -5679,14 +5716,14 @@ main() {
     deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"
-      upsert_local_env "MAC_DEPLOY_HUB_TOKEN" "$hub_token"
+      upsert_local_env "$hub_token_key" "$hub_token"
       tokenhub_api_key="$(read_hub_tokenhub_api_key)"
-      upsert_local_env "MAC_DEPLOY_TOKENHUB_API_KEY" "$tokenhub_api_key"
+      upsert_local_env "$tokenhub_api_key_name" "$tokenhub_api_key"
       echo "==> ${agent}: hub UI access:"
       echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
       echo "    2. open browser: http://localhost:8789/ui?t=${hub_token}"
       echo "       (token auto-populates from ?t= param and is stripped from the URL)"
-      echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as MAC_DEPLOY_HUB_TOKEN"
+      echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as $hub_token_key"
       hub_tunnel_pubkey="$(read_hub_tunnel_pubkey)"
     else
       if uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"; then

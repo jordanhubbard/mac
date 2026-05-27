@@ -860,6 +860,9 @@ write_client_env() {
     set_env_key "$env_file" ACC_HERMES_GATEWAY_PROVIDER "custom"
     set_env_key "$env_file" HERMES_INFERENCE_PROVIDER "custom"
     model="${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-${ACC_HERMES_GATEWAY_MODEL:-${ACC_LLM_MODEL:-}}}}"
+    if [ "$model" = "*" ]; then
+      model=""
+    fi
     if [ -n "$model" ]; then
       set_env_key "$env_file" MAC_HERMES_GATEWAY_MODEL "$model"
       set_env_key "$env_file" ACC_HERMES_GATEWAY_MODEL "$model"
