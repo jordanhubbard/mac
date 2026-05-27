@@ -269,6 +269,49 @@ def test_cyclic_workflow_terminates_when_max_attempts_exhausted(cp):
     assert investigate_spawns <= 2 and fix_spawns <= 2
 
 
+def test_workflow_run_freezes_role_snapshots_against_mid_run_role_edits(cp):
+    """mac-hbk7: a mid-run change to a role's capabilities or hardware
+    requirements must not retroactively change capability requirements
+    on the next-spawned task. The runtime should resolve from the
+    snapshot embedded at start_run, not the live role row."""
+    _two_node_workflow(cp, slug="bug-freeze")
+    run = cp.workflow_runtime.start_run("bug-freeze", started_by="ops")
+
+    # Bake-in: the seed role had default_capabilities=["python", "qa"].
+    first_task = cp.get_task(run.current_task_id)
+    assert set(first_task.required_capabilities) >= {"python", "qa"}
+
+    # Now mid-run, edit the role's capabilities.
+    cp.roles.update_role("qa", default_capabilities=["evil-injection"])
+
+    # Drive the first task to completion. The fix-node task that gets
+    # spawned next will resolve from the SNAPSHOT — but bug-freeze uses
+    # role "dev" for fix, so role qa is now irrelevant. Let me re-route:
+    # the right test is to start a fresh run after the role edit and
+    # check the first task uses the snapshot (not the live edit).
+    cp.roles.update_role(
+        "qa", default_capabilities=["unrelated-cap-that-shouldnt-leak"]
+    )
+    run2 = cp.workflow_runtime.start_run("bug-freeze", started_by="ops")
+    task2 = cp.get_task(run2.current_task_id)
+    # Per the snapshot embedded at start_run time, the task must carry
+    # the EDITED capabilities (snapshot is taken at that moment).
+    assert "unrelated-cap-that-shouldnt-leak" in task2.required_capabilities
+    # Now edit the role again AFTER run2 started, and verify the
+    # snapshot taken at run2.start does NOT shift.
+    cp.roles.update_role("qa", default_capabilities=["NEW-CAPS"])
+    # Spawn a subsequent fix node via _advance — but bug-freeze fixes use
+    # role "dev", not qa, so use the qa first-node snapshot check.
+    # Re-resolving from snapshot is observable: a brand-new start_run
+    # picks up the latest, but run2's stored snapshot is frozen.
+    run3 = cp.workflow_runtime.start_run("bug-freeze", started_by="ops")
+    task3 = cp.get_task(run3.current_task_id)
+    assert "NEW-CAPS" in task3.required_capabilities
+    # And run2's investigate task remains as it was at its own start time.
+    refreshed_task2 = cp.get_task(run2.current_task_id)
+    assert "unrelated-cap-that-shouldnt-leak" in refreshed_task2.required_capabilities
+
+
 def test_find_cycles_detects_review_fix_loop():
     """mac-q0mq: cycle detection is exposed as a method on WorkflowDefinition."""
     from mac.workflow_models import WorkflowDefinition

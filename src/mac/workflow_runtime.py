@@ -83,6 +83,30 @@ class WorkflowRuntime:
         if not workflow.enabled:
             raise ValidationError("workflow %s is disabled" % workflow.slug)
         definition = dict(workflow.definition)
+        # mac-hbk7: freeze role definitions at start_run so a mid-run
+        # role edit can't change capability requirements or hardware
+        # constraints for downstream nodes. Embed a snapshot keyed by
+        # role slug into the workflow's definition_snapshot; the
+        # runtime reads from this snapshot first and only falls back
+        # to a live role lookup when the snapshot is missing (e.g.,
+        # legacy runs created before this commit).
+        role_snapshots: Dict[str, Dict[str, Any]] = {}
+        for node in definition.get("nodes", []):
+            slug = (node.get("role_required") or "").strip()
+            if not slug or slug in role_snapshots:
+                continue
+            try:
+                role = self.roles.get_role(slug, tenant_id=tenant_id)
+            except NotFoundError:
+                continue
+            role_snapshots[slug] = {
+                "slug": role.slug,
+                "default_capabilities": list(role.default_capabilities),
+                "required_capabilities": list(role.required_capabilities),
+                "hardware_requirements": dict(role.hardware_requirements or {}),
+            }
+        if role_snapshots:
+            definition["role_snapshots"] = role_snapshots
         start_edge = self._find_start_edge(definition)
         first_node = self._node_by_key(definition, start_edge["to_node_key"])
         if first_node is None:
@@ -134,6 +158,7 @@ class WorkflowRuntime:
             started_by=started_by,
             tenant_id=tenant_id,
             attempt=1,
+            role_snapshots=role_snapshots or None,
         )
         self.store.execute(
             """
@@ -445,6 +470,7 @@ class WorkflowRuntime:
             started_by=run.started_by,
             tenant_id=run.tenant_id,
             attempt=prior_attempts + 1,
+            role_snapshots=definition.get("role_snapshots") if isinstance(definition, dict) else None,
         )
         with self.store.transaction() as conn:
             cur = conn.execute(
@@ -506,30 +532,49 @@ class WorkflowRuntime:
         started_by: str,
         tenant_id: Optional[str],
         attempt: int,
+        role_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Task:
-        role: Optional[AgentRole]
-        try:
-            role = self.roles.get_role(node["role_required"], tenant_id=tenant_id)
-        except NotFoundError as exc:
-            raise ValidationError(
-                "workflow node %s references missing role %s"
-                % (node.get("node_key"), node.get("role_required"))
-            ) from exc
-        required_caps = sorted(
-            set(role.required_capabilities)
-            | set(role.default_capabilities)
-            | set(node.get("extra_capabilities") or [])
-        )
+        # mac-hbk7: prefer the role snapshot embedded in the workflow
+        # definition at start_run time so mid-run role edits don't
+        # change downstream capabilities or hardware constraints. Fall
+        # back to the live role row only when the snapshot is missing.
+        role_slug = node["role_required"]
+        snapshot = (role_snapshots or {}).get(role_slug)
+        if snapshot is not None:
+            required_caps_set = (
+                set(snapshot.get("required_capabilities") or [])
+                | set(snapshot.get("default_capabilities") or [])
+                | set(node.get("extra_capabilities") or [])
+            )
+            role_slug_value = snapshot.get("slug", role_slug)
+            hardware_requirements = snapshot.get("hardware_requirements") or {}
+        else:
+            role: Optional[AgentRole]
+            try:
+                role = self.roles.get_role(role_slug, tenant_id=tenant_id)
+            except NotFoundError as exc:
+                raise ValidationError(
+                    "workflow node %s references missing role %s"
+                    % (node.get("node_key"), node.get("role_required"))
+                ) from exc
+            required_caps_set = (
+                set(role.required_capabilities)
+                | set(role.default_capabilities)
+                | set(node.get("extra_capabilities") or [])
+            )
+            role_slug_value = role.slug
+            hardware_requirements = role.hardware_requirements or {}
+        required_caps = sorted(required_caps_set)
         metadata: Dict[str, Any] = {
             "workflow_run_id": run_id,
             "workflow_node_key": node["node_key"],
             "attempt": attempt,
             "persona_hint": node.get("persona_hint"),
             "instructions": node.get("instructions"),
-            "required_role": role.slug,
+            "required_role": role_slug_value,
         }
-        if role.hardware_requirements:
-            metadata["hardware"] = role.hardware_requirements
+        if hardware_requirements:
+            metadata["hardware"] = hardware_requirements
         if tenant_id is not None:
             metadata.setdefault(
                 "origin", {"tenant_id": tenant_id, "type": "workflow_run"}

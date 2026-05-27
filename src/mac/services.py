@@ -2716,14 +2716,29 @@ class ControlPlane:
             raise NotFoundError("task not found: %s" % task_id)
         return self._task_from_row(row)
 
-    def list_tasks(self, state: Optional[str] = None, tenant_id: Optional[str] = None) -> List[Task]:
+    def list_tasks(
+        self,
+        state: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+    ) -> List[Task]:
+        # mac-5ayd: dispatch_once / claim_next used to pull EVERY open
+        # task into Python and sort in memory on every tick. Pass an
+        # explicit ``limit`` from those hot paths so the working set
+        # stays bounded; default None keeps full-list semantics for
+        # admin / CLI listings.
+        limit_clause = ""
+        params: list = []
         if state:
-            rows = self.store.query_all(
-                "SELECT * FROM tasks WHERE state = ? ORDER BY priority DESC, created_at",
-                (_state_value(state),),
-            )
+            sql = "SELECT * FROM tasks WHERE state = ? ORDER BY priority DESC, created_at"
+            params.append(_state_value(state))
         else:
-            rows = self.store.query_all("SELECT * FROM tasks ORDER BY priority DESC, created_at")
+            sql = "SELECT * FROM tasks ORDER BY priority DESC, created_at"
+        if limit is not None:
+            limit_clause = " LIMIT ?"
+            params.append(int(max(1, limit)))
+        rows = self.store.query_all(sql + limit_clause, tuple(params))
         tasks = [self._task_from_row(row) for row in rows]
         if tenant_id is not None:
             tasks = [task for task in tasks if self._task_tenant_id(task) == tenant_id]
@@ -10542,9 +10557,17 @@ class ControlPlane:
             if self._dependencies_satisfied(task):
                 self.transition_task(task.id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
 
+    # mac-5ayd: cap the working set per dispatch tick. The dispatcher
+    # only picks one task per call; loading 100k OPEN tasks into Python
+    # to sort+round-robin is wasteful and grows linearly with backlog.
+    # 500 is well above what any single dispatch tick can act on (the
+    # tick is bounded by lease-claim throughput) and below the point
+    # where the Python sort cost becomes noticeable.
+    _DISPATCH_TASK_WINDOW = 500
+
     def _dispatch_ordered_tasks(self) -> List[Task]:
         groups: Dict[str, List[Task]] = {}
-        for task in self.list_tasks(TaskState.OPEN.value):
+        for task in self.list_tasks(TaskState.OPEN.value, limit=self._DISPATCH_TASK_WINDOW):
             tenant_key = self._task_tenant_id(task) or ""
             groups.setdefault(tenant_key, []).append(task)
         for tenant_tasks in groups.values():
