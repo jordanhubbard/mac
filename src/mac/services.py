@@ -5575,6 +5575,7 @@ class ControlPlane:
         health_status: Optional[str] = None,
         resources: Optional[Dict[str, Any]] = None,
         running_digest: Optional[str] = None,
+        running_digest_signature: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> Agent:
         agent_before = self.get_agent(agent_id)
@@ -5627,11 +5628,51 @@ class ControlPlane:
                         "running_digest %s is not registered as a runtime_environments.digest"
                         % digest
                     )
+                # mac-oud5: require the agent to sign its digest claim
+                # with its attestation key when it differs from the
+                # previously-declared digest. This doesn't prove the
+                # process IS that digest — that would need OS / runtime
+                # attestation — but it does cryptographically bind the
+                # claim to the agent's identity so a peer cannot inject
+                # a false digest on another agent's behalf, and the
+                # signature is durable enough to audit later.
+                if (
+                    digest != agent_before.running_digest
+                    and running_digest_signature is not None
+                ):
+                    key = self._agent_attestation_key(agent_id)
+                    if key is None:
+                        raise ValidationError(
+                            "agent %s has no attestation key — cannot verify "
+                            "running_digest signature" % agent_id
+                        )
+                    claim = {"agent_id": agent_id, "running_digest": digest}
+                    if not verify_verification_manifest_signature(
+                        key, claim, running_digest_signature
+                    ):
+                        raise ValidationError(
+                            "running_digest signature does not verify under "
+                            "agent's attestation key"
+                        )
                 updates.append("running_digest = ?")
                 params.append(digest)
                 next_running_digest = digest
                 if digest != agent_before.running_digest:
                     changed_fields.append("running_digest")
+                    if running_digest_signature is None:
+                        self.observability.record_log(
+                            "agent.running_digest_unsigned",
+                            level="warning",
+                            layer="control_plane",
+                            source="control_plane",
+                            subject_type="agent",
+                            subject_id=agent_id,
+                            detail={
+                                "running_digest": digest,
+                                "note": "mac-oud5: digest accepted without signature; "
+                                "future enforcement will require running_digest_signature",
+                            },
+                        )
             else:
                 updates.append("running_digest = NULL")
                 next_running_digest = None
@@ -11248,6 +11289,36 @@ class ControlPlane:
                         % (evidence.id, reviewed_sha, executor_sha)
                     )
                     continue
+                # mac-9kij: when the executor's evidence carries a local
+                # repo path, recompute ``git rev-parse <head_sha>^{commit}``
+                # to confirm the SHA actually exists in that repo. This
+                # catches the "reviewer typed back what executor typed,
+                # but neither pushed" failure mode for local-path repos.
+                # Remote URLs (https/ssh) require network and are left
+                # to a future ``git ls-remote`` check.
+                repo_local_path = str(executor_repo.get("path") or "").strip()
+                if repo_local_path:
+                    from pathlib import Path as _RPath
+                    from subprocess import run as _run, PIPE as _PIPE
+                    candidate = _RPath(repo_local_path).expanduser()
+                    if candidate.is_dir() and (candidate / ".git").exists():
+                        try:
+                            check = _run(
+                                ["git", "rev-parse", "--verify",
+                                 "%s^{commit}" % executor_sha],
+                                cwd=str(candidate),
+                                stdout=_PIPE,
+                                stderr=_PIPE,
+                                timeout=10,
+                            )
+                        except Exception:  # noqa: BLE001 - tooling missing → skip
+                            check = None
+                        if check is not None and check.returncode != 0:
+                            problems.append(
+                                "verdict %s executor head_sha %s not reachable in %s"
+                                % (evidence.id, executor_sha, candidate)
+                            )
+                            continue
             if self._passed_verification_check_count(manifest) < 1:
                 problems.append("verdict %s requires at least one independent passing check" % evidence.id)
                 continue

@@ -105,6 +105,12 @@ class DeployService:
         if not uri:
             raise ValidationError("artifact uri is required")
         signer_list = coerce_list(signers)
+        # mac-0a8o: for local file:// URIs (or bare absolute paths) we
+        # can actually recompute the digest and reject mismatches. For
+        # remote schemes (https/ssh/git/registry) full verification
+        # requires fetching the artifact and is left for a follow-up;
+        # we log the gap so operators can audit it.
+        self._verify_artifact_digest_if_local(uri, digest)
         now = utcnow()
         # mac-vaze: re-register-with-new-signers used to do SELECT then
         # UPDATE outside a transaction, so two concurrent callers could
@@ -482,6 +488,67 @@ class DeployService:
             {"actor": actor, **detail},
             when,
         )
+
+    # mac-0a8o: recompute the artifact digest for local-file URIs so a
+    # caller-supplied digest can't lie about what's actually on disk.
+    # Remote URIs are out of scope for now (would require network IO
+    # and per-scheme handling); we log them so the gap is visible.
+    def _verify_artifact_digest_if_local(self, uri: str, declared_digest: str) -> None:
+        import hashlib as _hashlib
+        from pathlib import Path as _P
+
+        if not declared_digest.startswith("sha256:"):
+            # Unknown algo — caller will see the deeper rollout-side
+            # _validate_artifact_hash check; nothing to recompute here.
+            return
+        local_path: Optional[_P] = None
+        if uri.startswith("file://"):
+            local_path = _P(uri[len("file://"):])
+        elif uri.startswith("/"):
+            local_path = _P(uri)
+        if local_path is None:
+            # Remote scheme: log the gap and trust the caller.
+            self.observability.record_log(
+                "artifact.digest_unverified_remote",
+                level="warning",
+                layer="control_plane",
+                source="deploy",
+                subject_type="artifact",
+                subject_id=declared_digest,
+                detail={
+                    "uri": uri,
+                    "note": "mac-0a8o: remote artifact digests are not yet recomputed; "
+                    "operator-driven verification required",
+                },
+            )
+            return
+        if not local_path.exists() or not local_path.is_file():
+            # Path doesn't resolve. Don't reject (manifest may
+            # legitimately point at a not-yet-published artifact);
+            # just log.
+            self.observability.record_log(
+                "artifact.digest_unverified_missing",
+                level="warning",
+                layer="control_plane",
+                source="deploy",
+                subject_type="artifact",
+                subject_id=declared_digest,
+                detail={"uri": uri, "path": str(local_path)},
+            )
+            return
+        h = _hashlib.sha256()
+        with local_path.open("rb") as fh:
+            while True:
+                chunk = fh.read(1 << 16)
+                if not chunk:
+                    break
+                h.update(chunk)
+        actual = "sha256:" + h.hexdigest()
+        if actual != declared_digest:
+            raise ValidationError(
+                "artifact digest %s does not match recomputed %s for %s"
+                % (declared_digest, actual, uri)
+            )
 
     # Runtime manifest validation --------------------------------------
 

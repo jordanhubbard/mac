@@ -4733,6 +4733,75 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
         )
 
 
+def test_register_artifact_recomputes_local_digest_and_rejects_mismatch(cp, tmp_path):
+    """mac-0a8o: an artifact with a local file URI must have its digest
+    recomputed from the file contents. A caller-supplied digest that
+    doesn't match the real bytes is rejected."""
+    import hashlib
+
+    payload = tmp_path / "artifact.bin"
+    payload.write_bytes(b"hello mac")
+    real_digest = "sha256:" + hashlib.sha256(b"hello mac").hexdigest()
+    # Honest registration succeeds.
+    ok = cp.register_artifact(
+        kind="image",
+        digest=real_digest,
+        uri="file://%s" % payload,
+        created_by="ci",
+    )
+    assert ok.digest == real_digest
+    # Different digest → rejected because we recomputed against bytes.
+    bogus = "sha256:" + ("0" * 64)
+    with pytest.raises(ValidationError, match="recomputed"):
+        cp.register_artifact(
+            kind="image",
+            digest=bogus,
+            uri="file://%s" % payload,
+            created_by="ci",
+        )
+
+
+def test_heartbeat_verifies_running_digest_signature_when_supplied(cp):
+    """mac-oud5: an agent that supplies a digest signature must sign
+    the claim under its own attestation key. A signature signed by a
+    different agent or with a bad key is refused. (Unsigned claims
+    still go through with a warning log — full enforcement is a
+    follow-up.)"""
+    from mac.services import sign_verification_manifest
+
+    machine = cp.register_machine("h")
+    agent = cp.register_agent(machine.id, "a", capabilities=["python"])
+    cp.create_runtime(
+        name="r",
+        manifest={"image": "mac@sha256:" + ("a" * 64)},
+        created_by="ops",
+    )
+    runtime = cp.list_runtimes()[0]
+    agent_key = cp._agent_attestation_key(agent.id)
+    # Honest signature for our own claim → accepted.
+    sig = sign_verification_manifest(
+        agent_key, {"agent_id": agent.id, "running_digest": runtime.digest}
+    )
+    out = cp.heartbeat_agent(
+        agent.id, running_digest=runtime.digest, running_digest_signature=sig
+    )
+    assert out.running_digest == runtime.digest
+
+    # Now roll over to a second digest and submit a bad signature.
+    cp.create_runtime(
+        name="r2",
+        manifest={"image": "mac@sha256:" + ("b" * 64)},
+        created_by="ops",
+    )
+    runtime2 = [r for r in cp.list_runtimes() if r.name == "r2"][0]
+    with pytest.raises(ValidationError, match="signature"):
+        cp.heartbeat_agent(
+            agent.id,
+            running_digest=runtime2.digest,
+            running_digest_signature="v1:obviously-bad",
+        )
+
+
 def test_claim_task_enforces_tenant_policy_as_explicit_chokepoint(cp):
     """mac-1g3u: tenant isolation used to depend on whoever called
     ``_agent_available_for`` remembering to. The audit warned that a
