@@ -4788,7 +4788,7 @@ def main() -> int:
     hermes = Path.home() / ".mac" / "hermes-agent" / "hermes"
     audit_task_id = review_context.get("task_id") if isinstance(review_context, dict) else task.get("id")
     result = run_audited_command(
-        [str(hermes_py), str(hermes), "chat", "--query", prompt, "--quiet", "--accept-hooks"],
+        [str(hermes_py), str(hermes), "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"],
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if isinstance(review_context, dict) else "task"},
