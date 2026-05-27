@@ -1342,6 +1342,11 @@ class MacWorker:
                     "repository task worktree already exists for this lease: %s" % worktree_dir
                 )
             shutil.rmtree(worktree_dir)
+        # mac-3qv6: prune any orphaned worktree registration in
+        # source_root/.git/worktrees that points at the now-deleted
+        # directory. Without this, `git worktree add` below fails with
+        # "already exists" even though the on-disk directory is gone.
+        _run_git(source_root, ["worktree", "prune"])
 
         add = _run_git(
             source_root,

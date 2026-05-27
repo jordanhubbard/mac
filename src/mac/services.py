@@ -8834,12 +8834,63 @@ class ControlPlane:
             for row in rows
         }
 
+    # mac-3xpl: schema-validation limits for fields imported from bd
+    # ready --json. The bd CLI is upstream and effectively untrusted at
+    # the API surface; an oversized or control-char-laden title would
+    # otherwise flow into MAC project items unsanitised.
+    _BEAD_IMPORT_TITLE_MAX = 512
+    _BEAD_IMPORT_DESCRIPTION_MAX = 32 * 1024
+    _BEAD_IMPORT_TYPE_MAX = 64
+    _BEAD_IMPORT_PRIORITY_MIN = 0
+    _BEAD_IMPORT_PRIORITY_MAX = 4
+
+    @staticmethod
+    def _strip_control_chars(value: str) -> str:
+        """Strip ASCII control chars except \\t/\\n; reject ANSI escape
+        sequences. Used by bd import (mac-3xpl)."""
+        return "".join(
+            c
+            for c in value
+            if (c >= " " or c in ("\t", "\n"))
+        )
+
     def _bead_issue_is_importable(self, issue: Any) -> bool:
         if not isinstance(issue, dict):
             return False
-        if not str(issue.get("id") or "").strip():
+        bead_id = str(issue.get("id") or "").strip()
+        if not bead_id:
             return False
-        return str(issue.get("status") or "").strip().lower() == "open"
+        if not _BEAD_ID_RE.match(bead_id):
+            return False
+        if str(issue.get("status") or "").strip().lower() != "open":
+            return False
+        # Field-shape validation: titles/descriptions must be strings of
+        # bounded length, type must be a short slug.
+        title = issue.get("title")
+        if title is not None and not (
+            isinstance(title, str) and len(title) <= self._BEAD_IMPORT_TITLE_MAX
+        ):
+            return False
+        description = issue.get("description")
+        if description is not None and not (
+            isinstance(description, str)
+            and len(description) <= self._BEAD_IMPORT_DESCRIPTION_MAX
+        ):
+            return False
+        issue_type = issue.get("type")
+        if issue_type is not None and not (
+            isinstance(issue_type, str) and len(issue_type) <= self._BEAD_IMPORT_TYPE_MAX
+        ):
+            return False
+        # Priority, when present, must be in the bd-canonical 0-4 range.
+        if "priority" in issue:
+            try:
+                pr = int(issue["priority"])
+            except (TypeError, ValueError):
+                return False
+            if not (self._BEAD_IMPORT_PRIORITY_MIN <= pr <= self._BEAD_IMPORT_PRIORITY_MAX):
+                return False
+        return True
 
     def _import_bead_issue(
         self,
@@ -8881,13 +8932,21 @@ class ControlPlane:
             },
             "publication_target": "git://main",
         }
+        # mac-3xpl: scrub control chars / ANSI escapes from upstream
+        # title and description before they enter the task ledger.
+        clean_title = self._strip_control_chars(
+            str(issue.get("title") or issue_id)
+        )[: self._BEAD_IMPORT_TITLE_MAX]
+        clean_description = self._strip_control_chars(
+            str(issue.get("description") or "")
+        )[: self._BEAD_IMPORT_DESCRIPTION_MAX]
         return self.import_project_item(
             repo.source,
             issue_id,
-            str(issue.get("title") or issue_id),
+            clean_title,
             payload,
             required_capabilities=repo.required_capabilities,
-            description=str(issue.get("description") or ""),
+            description=clean_description,
             project=repo.project,
             priority=priority,
             metadata=metadata,
@@ -9156,12 +9215,45 @@ class ControlPlane:
                     _compact_beads_ledger_text(value, limit=160),
                 )
             )
-        return self._run_bd_for_task(
+        # mac-9jm2: tag the comment with a deterministic fingerprint so
+        # retries don't duplicate it. We check task_history for a prior
+        # ``task.beads_ledger_posted`` row with the same fingerprint
+        # before re-issuing the bd call.
+        fingerprint = hashlib.sha256(
+            ("\n".join(pieces) + "|" + binding["bead_id"]).encode("utf-8")
+        ).hexdigest()[:16]
+        pieces.append("fp=%s" % fingerprint)
+        existing = self.store.query_one(
+            """
+            SELECT id FROM task_history
+            WHERE task_id = ?
+              AND event_type = 'task.beads_ledger_posted'
+              AND json_extract(detail, '$.fingerprint') = ?
+            LIMIT 1
+            """,
+            (task.id, fingerprint),
+        )
+        if existing is not None:
+            return True
+        ok = self._run_bd_for_task(
             task,
             ["comment", binding["bead_id"], " | ".join(pieces)],
             actor,
             "ledger",
         )
+        if ok:
+            try:
+                self._record_history(
+                    task.id,
+                    "task.beads_ledger_posted",
+                    actor,
+                    task.state,
+                    task.state,
+                    {"fingerprint": fingerprint, "event": event},
+                )
+            except Exception:  # noqa: BLE001 - history insert failure is non-fatal here
+                pass
+        return ok
 
     def _latest_failure_context(
         self,

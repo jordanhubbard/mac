@@ -4603,6 +4603,53 @@ def test_idle_heartbeat_requires_no_active_lease(cp):
     assert refreshed.current_task_id is None
 
 
+def test_bead_issue_is_importable_strict_validation(cp):
+    """mac-3xpl: bd ready --json import must reject hostile/oversized
+    fields before they reach the project ledger."""
+    # legitimate issue
+    assert cp._bead_issue_is_importable({
+        "id": "mac-azid",
+        "status": "open",
+        "title": "fix the thing",
+        "description": "details",
+        "type": "bug",
+        "priority": 2,
+    })
+
+    # rejected: bad id shape
+    assert not cp._bead_issue_is_importable({"id": "--help", "status": "open"})
+    assert not cp._bead_issue_is_importable({"id": "", "status": "open"})
+    # rejected: closed
+    assert not cp._bead_issue_is_importable({"id": "mac-x", "status": "closed"})
+    # rejected: oversized title
+    assert not cp._bead_issue_is_importable({
+        "id": "mac-x", "status": "open", "title": "x" * 600,
+    })
+    # rejected: oversized description
+    assert not cp._bead_issue_is_importable({
+        "id": "mac-x", "status": "open", "description": "x" * (33 * 1024),
+    })
+    # rejected: priority out of canonical range
+    assert not cp._bead_issue_is_importable({
+        "id": "mac-x", "status": "open", "priority": 99,
+    })
+    # rejected: non-string title
+    assert not cp._bead_issue_is_importable({
+        "id": "mac-x", "status": "open", "title": ["not a string"],
+    })
+
+
+def test_strip_control_chars_keeps_normal_text(cp):
+    """mac-3xpl: ANSI escapes and ASCII control chars in upstream
+    issue fields must be stripped before reaching the ledger."""
+    assert cp._strip_control_chars("normal text") == "normal text"
+    assert cp._strip_control_chars("multi\nline\nok") == "multi\nline\nok"
+    # ANSI CSI sequence stripped
+    assert "\x1b" not in cp._strip_control_chars("foo\x1b[31m red \x1b[0m bar")
+    # NUL and other ctrl stripped
+    assert cp._strip_control_chars("a\x00b\x07c") == "abc"
+
+
 def test_beads_binding_rejects_argv_smuggling_bead_ids(cp):
     """mac-5xwh: bead_id is passed verbatim as an argv positional to
     `bd comment <bead_id> ...`. A hostile bead_id like `--help` or
