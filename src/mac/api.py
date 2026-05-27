@@ -142,12 +142,26 @@ def _resolve_principal(
     Iterates every registered token so timing does not leak which prefix
     matched; ``hmac.compare_digest`` short-circuits in constant time within
     each pair.
+
+    mac-glh0: also supports hashed registrations of the form
+    ``sha256:<hex>``. Hashes the candidate token with sha256 and
+    compares against the registered hash so a leaked env file with
+    only hashed values does not expose the live token.
     """
+    import hashlib as _hashlib
+
     candidate_bytes = token.encode("utf-8")
+    candidate_hash = "sha256:" + _hashlib.sha256(candidate_bytes).hexdigest()
+    candidate_hash_bytes = candidate_hash.encode("ascii")
     matched: Optional[TokenPrincipal] = None
     for registered, principal in tokens.items():
-        if hmac.compare_digest(candidate_bytes, registered.encode("utf-8")):
-            matched = principal
+        registered_bytes = registered.encode("utf-8")
+        if registered.startswith("sha256:") and len(registered) == 71:  # 7 + 64
+            if hmac.compare_digest(candidate_hash_bytes, registered_bytes):
+                matched = principal
+        else:
+            if hmac.compare_digest(candidate_bytes, registered_bytes):
+                matched = principal
     return matched
 
 
@@ -3446,6 +3460,34 @@ def create_app(
                 % (secret_id, principal.tenant_id)
             )
 
+    # mac-xc8u: simple per-principal sliding-window rate limit for
+    # secret-reveal/access calls. A compromised token cannot enumerate
+    # every (secret_id, audit_id) pair at line rate. The window is in
+    # memory and per-process; multi-process deployments will need a
+    # shared store, but for the current single-process hub this is the
+    # right blast-radius reduction with no schema change.
+    secret_rate_state: Dict[str, list] = {}
+
+    def _enforce_secret_rate_limit(principal: TokenPrincipal, route: str) -> None:
+        import collections
+        max_calls = 30
+        window_seconds = 60
+        # admin tokens are operator-driven and unlikely to enumerate
+        if principal.is_admin:
+            return
+        key = "%s::%s::%s" % (principal.tenant_id or "-", principal.agent_id or "-", route)
+        bucket = secret_rate_state.setdefault(key, [])
+        now_t = time.monotonic()
+        cutoff = now_t - window_seconds
+        # prune
+        secret_rate_state[key] = [t for t in bucket if t >= cutoff]
+        if len(secret_rate_state[key]) >= max_calls:
+            raise AuthorizationError(
+                "secret %s rate limit exceeded for token: %d calls in %ds"
+                % (route, max_calls, window_seconds)
+            )
+        secret_rate_state[key].append(now_t)
+
     @app.post("/secrets")
     def create_secret(
         body: SecretCreate,
@@ -3471,6 +3513,7 @@ def create_app(
         body: SecretAccessRequest,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        _enforce_secret_rate_limit(principal, "access")  # mac-xc8u
         # mac-k30g: accessor_agent_id was self-asserted in the body. A
         # token bound to a specific agent must not be able to request
         # secrets as a different agent.
@@ -3489,6 +3532,7 @@ def create_app(
         body: SecretRevealRequest,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        _enforce_secret_rate_limit(principal, "reveal")  # mac-xc8u
         # mac-k30g: same — reveal must be bound to the actor the token
         # represents. With no agent_id binding the call still works
         # (operator/admin), but a fleet token cannot impersonate a peer.

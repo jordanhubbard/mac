@@ -402,6 +402,71 @@ def test_default_review_tick_requires_admin_not_write():
     assert allowed.status_code == 200
 
 
+def test_auth_tokens_support_hashed_at_rest_form():
+    """mac-glh0: operators can configure tokens as ``sha256:<hex>``
+    digests of the live token so a leaked env file doesn't expose the
+    plaintext bearer credential. The live bearer token still works at
+    request time — mac hashes the incoming token and matches against
+    the stored hash."""
+    import hashlib
+
+    live = "live-token-1234567890abcdef"
+    hashed = "sha256:" + hashlib.sha256(live.encode("utf-8")).hexdigest()
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={hashed: ["admin"]},
+        )
+    )
+    # The live token still authenticates against the hashed registration.
+    ok = client.get("/agents", headers={"Authorization": "Bearer %s" % live})
+    assert ok.status_code == 200, ok.text
+    # The literal hash string does NOT authenticate.
+    spoofed = client.get("/agents", headers={"Authorization": "Bearer %s" % hashed})
+    assert spoofed.status_code in {401, 403}
+
+
+def test_secret_routes_rate_limit_per_principal():
+    """mac-xc8u: a compromised token must not be able to enumerate every
+    (secret_id, audit_id) pair at line rate. The route refuses after
+    the configured per-window cap is hit."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("h")
+    agent = cp.register_agent(machine.id, "a", capabilities=["deploy"])
+    secret = cp.create_secret(
+        "tok", "v", {"capabilities": ["deploy"], "tenant_id": "t-a"}, created_by="human"
+    )
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "tok": {"scopes": ["secret", "write"], "agent_id": agent.id, "tenant_id": "t-a"},
+            },
+        )
+    )
+    # First request should succeed.
+    first = client.post(
+        "/secrets/%s/access" % secret.id,
+        headers={"Authorization": "Bearer tok"},
+        json={"accessor_agent_id": agent.id, "purpose": "deploy"},
+    )
+    assert first.status_code == 200, first.text
+    # Burn through the rate-limit window with a tight loop. We don't
+    # care about each call's body — only that the limiter ultimately
+    # refuses one within the limit.
+    seen_refusal = False
+    for _ in range(200):
+        r = client.post(
+            "/secrets/%s/access" % secret.id,
+            headers={"Authorization": "Bearer tok"},
+            json={"accessor_agent_id": agent.id, "purpose": "deploy"},
+        )
+        if r.status_code == 403 and "rate limit" in r.json().get("detail", "").lower():
+            seen_refusal = True
+            break
+    assert seen_refusal, "expected rate-limit refusal within the burst window"
+
+
 def test_create_app_refuses_open_mode_on_non_loopback_bind(monkeypatch):
     """mac-853j: a hub that's deployed without MAC_API_TOKEN and bound
     to 0.0.0.0 used to leave /secrets/{id}/reveal open to the network.

@@ -4733,6 +4733,22 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
         )
 
 
+def test_rollout_complete_rescue_returns_to_paused(cp):
+    """mac-24f4: RESCUING used to be a one-way trap. ``complete_rescue``
+    returns the rollout to PAUSED so the operator can re-gate the
+    canary or roll back."""
+    rollout = create_verified_rollout(cp, "24.0")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    # Drive into RESCUING via a failing health gate.
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "bad"}, "monitor")
+    refreshed = cp.get_rollout(rollout.id)
+    assert refreshed.status == RolloutStatus.RESCUING.value
+    # Operator finishes the rescue; rollout returns to PAUSED so it
+    # can be resumed or rolled back from a clean state.
+    out = cp.advance_rollout(rollout.id, "complete_rescue", "human")
+    assert out.status == RolloutStatus.PAUSED.value
+
+
 def test_signature_includes_signed_by_in_mac(cp):
     """mac-wu3f: with signed_by now in the canonical form, a signature
     minted by agent A under their key cannot be replayed in a manifest

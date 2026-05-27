@@ -302,6 +302,15 @@ ROLLOUT_ACTIONS = {
         "to": RolloutStatus.ROLLED_BACK.value,
         "target_percent": 0,
     },
+    # mac-24f4: a successful rescue had no exit — RESCUING was a
+    # one-way trap that only allowed rollback. ``complete_rescue``
+    # returns the rollout to PAUSED so an operator can re-evaluate
+    # health, decide whether to resume the canary or roll back, and
+    # the rescue task closure can hook into a clean transition.
+    "complete_rescue": {
+        "from": {RolloutStatus.RESCUING.value},
+        "to": RolloutStatus.PAUSED.value,
+    },
 }
 
 
