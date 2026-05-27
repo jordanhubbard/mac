@@ -435,6 +435,9 @@ interface DashboardNodes {
   tokenForm: HTMLFormElement;
   tokenInput: HTMLInputElement;
   clearToken: HTMLButtonElement;
+  loginScreen: HTMLElement;
+  loginForm: HTMLFormElement;
+  loginTokenInput: HTMLInputElement;
 }
 
 const TOKEN_KEY = "mac.dashboard.token";
@@ -541,12 +544,16 @@ const nodes: DashboardNodes = {
   tokenForm: requiredElement("#tokenForm"),
   tokenInput: requiredElement("#tokenInput"),
   clearToken: requiredElement("#clearTokenButton"),
+  loginScreen: requiredElement("#loginScreen"),
+  loginForm: requiredElement<HTMLFormElement>("#loginForm"),
+  loginTokenInput: requiredElement<HTMLInputElement>("#loginTokenInput"),
 };
 const api = createDashboardApi(() => state.token);
 
 nodes.tokenInput.value = state.token;
+nodes.loginScreen.hidden = !!state.token;
 bindEvents();
-loadDashboard();
+if (state.token) loadDashboard();
 
 function bindEvents(): void {
   nodes.nav.addEventListener("click", (event) => {
@@ -560,18 +567,30 @@ function bindEvents(): void {
   nodes.refresh.addEventListener("click", () => loadDashboard());
   nodes.content.addEventListener("click", handleContentClick);
   nodes.content.addEventListener("submit", handleActionSubmit);
+  nodes.loginForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const token = nodes.loginTokenInput.value.trim();
+    if (!token) return;
+    state.token = token;
+    sessionStorage.setItem(TOKEN_KEY, token);
+    nodes.tokenInput.value = token;
+    nodes.loginScreen.hidden = true;
+    loadDashboard();
+  });
   nodes.tokenForm.addEventListener("submit", (event) => {
     event.preventDefault();
     state.token = nodes.tokenInput.value.trim();
     if (state.token) sessionStorage.setItem(TOKEN_KEY, state.token);
     else sessionStorage.removeItem(TOKEN_KEY);
-    loadDashboard();
+    nodes.loginScreen.hidden = !!state.token;
+    if (state.token) loadDashboard();
   });
   nodes.clearToken.addEventListener("click", () => {
     state.token = "";
     nodes.tokenInput.value = "";
+    nodes.loginTokenInput.value = "";
     sessionStorage.removeItem(TOKEN_KEY);
-    loadDashboard();
+    nodes.loginScreen.hidden = false;
   });
 }
 

@@ -7,6 +7,23 @@
     <link rel="stylesheet" href="/ui/assets/styles.css">
   </head>
   <body>
+    <div id="loginScreen" class="login-screen" hidden>
+      <div class="login-card">
+        <div class="brand">
+          <span class="brand-mark">mac</span>
+          <span class="brand-name">Control Plane</span>
+        </div>
+        <div>
+          <h2>Sign in</h2>
+          <p class="muted">Enter your API token to access the dashboard.</p>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label for="loginTokenInput">API Token</label>
+          <input id="loginTokenInput" name="token" type="password" autocomplete="off" placeholder="Paste your bearer token" required>
+          <button type="submit" class="primary-button">Sign in</button>
+        </form>
+      </div>
+    </div>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Primary">
         <div class="brand">

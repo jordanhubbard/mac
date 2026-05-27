@@ -101,11 +101,15 @@ const nodes = {
     tokenForm: requiredElement("#tokenForm"),
     tokenInput: requiredElement("#tokenInput"),
     clearToken: requiredElement("#clearTokenButton"),
+    loginScreen: requiredElement("#loginScreen"),
+    loginForm: requiredElement("#loginForm"),
+    loginTokenInput: requiredElement("#loginTokenInput"),
 };
 const api = createDashboardApi(() => state.token);
 nodes.tokenInput.value = state.token;
+nodes.loginScreen.hidden = !!state.token;
 bindEvents();
-loadDashboard();
+if (state.token) loadDashboard();
 function bindEvents() {
     nodes.nav.addEventListener("click", (event) => {
         const button = event.target?.closest("[data-view]");
@@ -119,6 +123,17 @@ function bindEvents() {
     nodes.refresh.addEventListener("click", () => loadDashboard());
     nodes.content.addEventListener("click", handleContentClick);
     nodes.content.addEventListener("submit", handleActionSubmit);
+    nodes.loginForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const token = nodes.loginTokenInput.value.trim();
+        if (!token)
+            return;
+        state.token = token;
+        sessionStorage.setItem(TOKEN_KEY, token);
+        nodes.tokenInput.value = token;
+        nodes.loginScreen.hidden = true;
+        loadDashboard();
+    });
     nodes.tokenForm.addEventListener("submit", (event) => {
         event.preventDefault();
         state.token = nodes.tokenInput.value.trim();
@@ -126,13 +141,16 @@ function bindEvents() {
             sessionStorage.setItem(TOKEN_KEY, state.token);
         else
             sessionStorage.removeItem(TOKEN_KEY);
-        loadDashboard();
+        nodes.loginScreen.hidden = !!state.token;
+        if (state.token)
+            loadDashboard();
     });
     nodes.clearToken.addEventListener("click", () => {
         state.token = "";
         nodes.tokenInput.value = "";
+        nodes.loginTokenInput.value = "";
         sessionStorage.removeItem(TOKEN_KEY);
-        loadDashboard();
+        nodes.loginScreen.hidden = false;
     });
 }
 async function loadDashboard() {

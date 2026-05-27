@@ -44,6 +44,65 @@ button {
   cursor: pointer;
 }
 
+.login-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--page);
+  z-index: 100;
+}
+
+.login-screen[hidden] {
+  display: none;
+}
+
+.login-card {
+  display: grid;
+  gap: 20px;
+  width: min(400px, 90vw);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 36px 40px;
+}
+
+.login-card h2 {
+  margin-bottom: 4px;
+}
+
+.login-card .muted {
+  margin-bottom: 0;
+}
+
+.login-form {
+  display: grid;
+  gap: 10px;
+}
+
+.login-form label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.login-form input {
+  width: 100%;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 12px;
+}
+
+.login-form .primary-button {
+  width: 100%;
+  height: 42px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -127,7 +186,7 @@ button {
 .toolbar input,
 .toolbar select {
   width: 100%;
-  min-height: 38px;
+  height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
@@ -145,7 +204,7 @@ button {
 .primary-button,
 .toolbar button,
 .link-button {
-  min-height: 38px;
+  height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
@@ -309,6 +368,7 @@ h3 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
+  align-items: center;
 }
 
 .action-strip {
@@ -344,29 +404,33 @@ h3 {
 .action-form select,
 .action-form textarea {
   width: 100%;
-  min-height: 36px;
+  height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
   color: var(--ink);
-  padding: 8px 10px;
+  padding: 0 10px;
   text-transform: none;
 }
 
 .action-form textarea {
+  height: auto;
   min-height: 74px;
+  padding: 8px 10px;
   resize: vertical;
 }
 
 .action-form button,
 .action-strip button {
-  min-height: 36px;
+  width: 100%;
+  height: 36px;
   border: 1px solid #2f6f63;
   border-radius: 8px;
   background: var(--accent);
   color: #ffffff;
   padding: 0 12px;
   font-weight: 800;
+  align-self: end;
 }
 
 .action-status {
