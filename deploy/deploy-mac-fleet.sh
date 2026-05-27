@@ -5617,6 +5617,31 @@ set -euo pipefail
 worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
+if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+  service="${fleet_name}-tunnel-${worker_agent}.service"
+  ssh_bin="$(command -v ssh)"
+  sudo tee "/etc/systemd/system/${service}" > /dev/null <<EOF
+[Unit]
+Description=mac reverse tunnel for ${worker_agent}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=$HOME
+ExecStart=${ssh_bin} -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 horde@${tunnel_host}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now "$service" >/dev/null 2>&1 || true
+  sudo systemctl restart "$service" >/dev/null 2>&1 || true
+  exit 0
+fi
 conf_dir="$(ls -d /etc/supervisor/conf.d 2>/dev/null || ls -d /etc/supervisord.d 2>/dev/null || echo '/etc/supervisor/conf.d')"
 sudo tee "$conf_dir/${fleet_name}-tunnel-${worker_agent}.conf" > /dev/null <<EOF
 [program:${fleet_name}-tunnel-${worker_agent}]
@@ -5653,9 +5678,24 @@ uses_direct_mesh_hub() {
   esac
 }
 
+worker_has_mesh_client() {
+  local raw_target="$1" provider="$2" ssh_parts=() ssh_args=() ssh_target item last_index
+  provider="$(printf '%s' "${provider:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$provider" in
+    tailscale|headscale) ;;
+    *) return 1 ;;
+  esac
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$raw_target")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${ssh_args[@]}" "$ssh_target" \
+    'command -v tailscale >/dev/null 2>&1 && tailscale status --self >/dev/null 2>&1' 2>/dev/null
+}
+
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey tokenhub_api_key tokenhub_api_key_name github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field deployed_count
+  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey tokenhub_api_key tokenhub_api_key_name github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
@@ -5676,6 +5716,12 @@ main() {
     hub_url_field="${spec_fields[7]:-}"
     fleet_name_field="${spec_fields[23]:-mac}"
     network_provider_field="${spec_fields[38]:-none}"
+    direct_mesh_hub=0
+    if [ "$agent" != "$hub_agent" ] \
+      && uses_direct_mesh_hub "$network_provider_field" "$hub_url_field" \
+      && worker_has_mesh_client "$local_target" "$network_provider_field"; then
+      direct_mesh_hub=1
+    fi
     if [ "$agent" != "$hub_agent" ] && [ -z "$hub_token" ]; then
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
@@ -5685,7 +5731,7 @@ main() {
       upsert_local_env "$tokenhub_api_key_name" "$tokenhub_api_key"
     fi
     allow_degraded_services=0
-    if [ "$agent" != "$hub_agent" ] && ! uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"; then
+    if [ "$agent" != "$hub_agent" ] && [ "$direct_mesh_hub" != "1" ]; then
       # Detect brand-new nodes: if the remote mac API is unreachable before deploy,
       # the hub tunnel key has not been authorized yet. Allow TokenHub to be
       # degraded for this first deploy; Qdrant and Firecrawl remain mandatory
@@ -5726,7 +5772,7 @@ main() {
       echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as $hub_token_key"
       hub_tunnel_pubkey="$(read_hub_tunnel_pubkey)"
     else
-      if uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"; then
+      if [ "$direct_mesh_hub" = "1" ]; then
         echo "==> ${agent}: using ${network_provider_field} hub URL ${hub_url_field}; skipping reverse tunnel"
       elif [ "${tunnel_ok:-0}" = "1" ]; then
         local agent_prog="${fleet_name_field}-agent"
