@@ -413,14 +413,18 @@ def _record_failure_evidence(
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     result = run_one_lease()
-    print(  # operator visibility in `kubectl logs`
-        "mac-task-runner: status=%s task=%s lease=%s returncode=%s evidence=%s"
+    # Always surface task_id with explicit quotes so `_` vs `-` confusion
+    # in log readers is obvious. Always include the error field — without
+    # it `status=no-evidence` is opaque to operators.
+    print(
+        "mac-task-runner: status=%s task=%r lease=%r returncode=%s evidence=%r error=%r"
         % (
             result.status,
             result.task_id,
             result.lease_id,
             result.returncode,
             result.evidence_id,
+            result.error,
         )
     )
     return result.exit_code()
