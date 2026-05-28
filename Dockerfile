@@ -30,10 +30,12 @@ RUN groupadd --system mac && \
     chown -R mac:mac /var/lib/mac
 
 COPY --from=builder /wheels/*.whl /tmp/
-# Install with the [postgres] extra so the same image works against both
-# SQLite (legacy single-host) and Postgres (K8s + CNPG topology).
-# Selection is driven at runtime by MAC_DATABASE_URL via make_store_from_env.
-RUN WHEEL=$(ls /tmp/*.whl) && pip install --no-cache-dir "${WHEEL}[postgres]" && rm -f /tmp/*.whl
+# Install with both optional extras so the single image serves every
+# console-script the K8s topology needs:
+#   [postgres]  PostgresStore (mac-api)
+#   [k8s]       kubernetes client (mac-k8s-runner, mac-k8s-controller)
+# Backend selection is runtime via MAC_DATABASE_URL / which entry point runs.
+RUN WHEEL=$(ls /tmp/*.whl) && pip install --no-cache-dir "${WHEEL}[postgres,k8s]" && rm -f /tmp/*.whl
 
 USER mac
 WORKDIR /var/lib/mac
