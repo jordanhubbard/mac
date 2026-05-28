@@ -66,7 +66,7 @@ RUNTIME_MARKDOWN_REQUIRED_SNIPPETS = (
     "mac-hermes-task-executor",
     "`shell_execution`",
     "`workspace_file_access`",
-    "bd prime",
+    "mac task ready",
     "git push",
 )
 
@@ -688,7 +688,8 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
         "shell_execution",
         "workspace_file_access",
         "hgmac_agent_ops_cli",
-        "beads_issue_tracker",
+        "ticket_mirror",
+        "mac_task_cli",
         "git_source_control",
         "quality_gate",
         "hermes_oneshot_executor",
@@ -1893,7 +1894,8 @@ def build_hermes_startup_report() -> Dict[str, Any]:
                 "shell_execution",
                 "workspace_file_access",
                 "hgmac_agent_ops_cli",
-                "beads_issue_tracker",
+                "ticket_mirror",
+        "mac_task_cli",
                 "git_source_control",
                 "quality_gate",
                 "hermes_oneshot_executor",

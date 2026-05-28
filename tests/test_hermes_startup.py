@@ -896,7 +896,8 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     assert "hgmac_agent_ops_cli" in report["task_project_runtime"]["session_capability_names"]
     assert "shell_execution" in report["task_project_runtime"]["session_capability_names"]
     assert "workspace_file_access" in report["task_project_runtime"]["session_capability_names"]
-    assert "beads_issue_tracker" in report["task_project_runtime"]["session_capability_names"]
+    assert "ticket_mirror" in report["task_project_runtime"]["session_capability_names"]
+    assert "mac_task_cli" in report["task_project_runtime"]["session_capability_names"]
     assert "hermes_oneshot_executor" in report["task_project_runtime"]["session_capability_names"]
     assert "command_audit" in report["task_project_runtime"]["session_capability_names"]
     availability = report["task_project_runtime"]["session_capability_availability"]
@@ -911,7 +912,8 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
         "shell_execution",
         "workspace_file_access",
         "hgmac_agent_ops_cli",
-        "beads_issue_tracker",
+        "ticket_mirror",
+        "mac_task_cli",
         "quality_gate",
         "hermes_oneshot_executor",
         "command_audit",

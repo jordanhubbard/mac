@@ -99,7 +99,8 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
         "shell_execution",
         "workspace_file_access",
         "hgmac_agent_ops_cli",
-        "beads_issue_tracker",
+        "ticket_mirror",
+        "mac_task_cli",
         "git_source_control",
         "quality_gate",
         "hermes_oneshot_executor",
@@ -138,7 +139,7 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "mac-hermes claim {task_id} agent_rocky_host" in markdown
     assert "mac-hermes add-child-task {task_id} <child-title>" in markdown
     assert "Direct Session Parity" in markdown
-    assert "`bd prime`" in markdown
+    assert "`mac task ready" in markdown
     assert "`hgmac agents list`" in markdown
     assert "`hgmac fleets list`" in markdown
     assert "`hgmac projects list`" in markdown
