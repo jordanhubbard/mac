@@ -4978,6 +4978,115 @@ def task_evidence_type(task: dict) -> str:
     return evidence_type if evidence_type in allowed else "operator_result"
 
 
+def _git(args, cwd):
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+def run_deterministic_git_finalizer(task_workspace: Path, task: dict) -> None:
+    """mac-jfns: enforce deterministic repo_change evidence for tasks
+    declaring publication_target=git://main. Runs after the LLM-driven
+    Hermes step. Commits any uncommitted work, pushes the lease branch,
+    runs the contract test suite, then writes an authoritative
+    mac-evidence.json that reflects real git state (overriding whatever
+    evidence_type / pushed / dirty flags the LLM proposed).
+    """
+    metadata = task.get("metadata") or {}
+    publication_target = str(metadata.get("publication_target") or "").strip()
+    if not publication_target.startswith("git://"):
+        return
+    worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    if not worktree:
+        # Some tasks ship the worktree path inside the task json
+        rt = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+        worktree = str(rt.get("repository_worktree") or "").strip()
+    worktree_path = Path(worktree).expanduser() if worktree else None
+    if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
+        return
+    # Auto-commit any uncommitted changes (the LLM may have edited files but skipped commit)
+    status = _git(["status", "--porcelain"], worktree_path)
+    if status.stdout.strip():
+        _git(["add", "-A"], worktree_path)
+        commit_msg = "auto-commit: %s" % task.get("id", "unknown")
+        _git(
+            [
+                "-c", "user.email=mac-fleet@nvidia.com",
+                "-c", "user.name=MAC fleet",
+                "commit",
+                "-m", commit_msg,
+            ],
+            worktree_path,
+        )
+    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    # Push the current branch to origin (idempotent on re-runs)
+    pushed = False
+    push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
+    push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
+    if push.returncode == 0:
+        pushed = True
+    # Run contract tests
+    contract = (metadata.get("origin") or {}).get("repository_contract") or {}
+    test_cmd = ((contract.get("test") or {}).get("command") or "scripts/run-contract-tests.sh").strip()
+    tests = None
+    if test_cmd:
+        tr = subprocess.run(
+            ["bash", "-lc", test_cmd],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+        )
+        tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
+        # Extract pytest summary if present
+        import re as _re
+        passed = failed = total = None
+        m = _re.search(r"(\d+) passed", tail)
+        if m:
+            passed = int(m.group(1))
+        m = _re.search(r"(\d+) failed", tail)
+        if m:
+            failed = int(m.group(1))
+        if passed is not None or failed is not None:
+            total = (passed or 0) + (failed or 0)
+        tests = {
+            "command": test_cmd,
+            "returncode": int(tr.returncode),
+            "passed": passed,
+            "failed": failed,
+            "total": total,
+            "status": "pass" if tr.returncode == 0 else "fail",
+        }
+    # Compute files_changed relative to origin/main
+    _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
+    diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
+    files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
+    final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "Deterministic finalizer: commit+push+test for %s" % task.get("id"),
+        "repo": {
+            "head_sha": head_sha,
+            "pushed": pushed,
+            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
+            "dirty": bool(final_status),
+            "files_changed": files_changed,
+        },
+        "tests": tests,
+        "checks": [
+            {
+                "name": "git_finalizer",
+                "returncode": 0 if pushed and (tests is None or tests.get("returncode") == 0) else 1,
+                "status": "pass" if pushed and (tests is None or tests.get("returncode") == 0) else "fail",
+            }
+        ],
+    }
+    manifest_path = task_workspace / "mac-evidence.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def write_fallback_evidence_manifest(
     task_workspace: Path,
     task: dict,
@@ -5067,6 +5176,15 @@ def main() -> int:
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if isinstance(review_context, dict) else "task"},
     )
+    # mac-jfns: deterministic post-LLM finalizer for repo tasks. Runs
+    # only for non-review tasks targeting git://main, and overrides
+    # whatever evidence the LLM emitted with a manifest derived from
+    # actual git state.
+    if not isinstance(review_context, dict):
+        try:
+            run_deterministic_git_finalizer(task_workspace, task)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("git finalizer failed: %s\n" % exc)
     write_fallback_evidence_manifest(task_workspace, task, result, review_context)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
