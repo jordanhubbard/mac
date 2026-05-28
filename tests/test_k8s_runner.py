@@ -136,6 +136,34 @@ class TestBuildJobSpec:
         tok = next(e for e in env if e["name"] == "MAC_WORKER_TOKEN")
         assert tok["valueFrom"]["secretKeyRef"]["name"] == "mac-api-config"
 
+    def test_env_secret_name_overrides_both_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The home-ops case: a single ExternalSecret target `mac-secret`
+        # provides both MAC_WORKER_TOKEN and MAC_SECRET_KEY. The runner
+        # must pick that up via MAC_RUNNER_TASK_SECRET_NAME without the
+        # operator having to set per-key vars.
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv("MAC_RUNNER_TASK_SECRET_NAME", "mac-secret")
+        cfg = RunnerConfig.from_env()
+        assert cfg.secret_name_for_token == "mac-secret"
+        assert cfg.secret_name_for_secret_key == "mac-secret"
+        spec = build_job_spec(_task(), _lease(), cfg)
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        for name in ("MAC_WORKER_TOKEN", "MAC_SECRET_KEY"):
+            ref = next(e for e in env if e["name"] == name)["valueFrom"]["secretKeyRef"]
+            assert ref["name"] == "mac-secret"
+
+    def test_env_per_key_secret_name_overrides_individually(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv("MAC_RUNNER_TASK_TOKEN_SECRET_NAME", "tok-secret")
+        monkeypatch.setenv("MAC_RUNNER_TASK_SECRET_KEY_SECRET_NAME", "key-secret")
+        cfg = RunnerConfig.from_env()
+        assert cfg.secret_name_for_token == "tok-secret"
+        assert cfg.secret_name_for_secret_key == "key-secret"
+
     def test_image_resolution_default(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
         assert (

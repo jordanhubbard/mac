@@ -76,6 +76,13 @@ class RunnerConfig:
 
     @classmethod
     def from_env(cls) -> "RunnerConfig":
+        # MAC_RUNNER_TASK_SECRET_NAME overrides BOTH defaults at once for
+        # the common case where MAC_WORKER_TOKEN + MAC_SECRET_KEY live in
+        # the same Kubernetes Secret (e.g. operator-supplied
+        # `mac-api-config` or an ExternalSecret target like `mac-secret`).
+        # Operators that need different Secrets per key can override each
+        # one individually via the per-key vars below.
+        unified_secret = os.environ.get("MAC_RUNNER_TASK_SECRET_NAME")
         return cls(
             mac_url=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL", ""),
             agent_id=os.environ.get("MAC_AGENT_ID", "mac-k8s-runner"),
@@ -85,6 +92,18 @@ class RunnerConfig:
             ),
             default_image=os.environ.get(
                 "MAC_RUNNER_DEFAULT_IMAGE", DEFAULT_TASK_IMAGE
+            ),
+            secret_name_for_token=os.environ.get(
+                "MAC_RUNNER_TASK_TOKEN_SECRET_NAME", unified_secret or "mac-api-config"
+            ),
+            secret_key_for_token=os.environ.get(
+                "MAC_RUNNER_TASK_TOKEN_SECRET_KEY", "MAC_WORKER_TOKEN"
+            ),
+            secret_name_for_secret_key=os.environ.get(
+                "MAC_RUNNER_TASK_SECRET_KEY_SECRET_NAME", unified_secret or "mac-api-config"
+            ),
+            secret_key_for_secret_key=os.environ.get(
+                "MAC_RUNNER_TASK_SECRET_KEY_SECRET_KEY", "MAC_SECRET_KEY"
             ),
             poll_interval_seconds=float(
                 os.environ.get("MAC_RUNNER_POLL_INTERVAL_SECONDS", "5")
