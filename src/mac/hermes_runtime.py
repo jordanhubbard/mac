@@ -244,7 +244,6 @@ def _session_capability_contract(
             "git add <files>",
             "git commit -m \"<message>\"",
             "git pull --rebase",
-            "bd dolt push",
             "git push",
         ],
         "rules": [
@@ -254,7 +253,7 @@ def _session_capability_contract(
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
             "Use mac-hermes-task-executor through mac-agent loop mode for production Hermes oneshot task execution.",
-            "Commit, pull/rebase, push Beads, and push Git before reporting completed code work.",
+            "Commit, pull/rebase, and push Git before reporting completed code work. Beads JSONL files travel with the repo via git; do not run `bd dolt push`.",
         ],
     }
 

@@ -2175,6 +2175,9 @@ def test_fastapi_serializes_beads_authority_drift_health(tmp_path: Path, monkeyp
     )
     fake_bd.chmod(0o755)
     monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+    # Dolt sync is off by default; this test exercises the dolt-sync
+    # code path explicitly, so opt it in.
+    monkeypatch.setenv("MAC_BEADS_DOLT_SYNC_ENABLED", "1")
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     registered = client.post(

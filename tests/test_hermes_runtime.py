@@ -148,8 +148,10 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "mac-hermes-task-executor" in markdown
     assert "mac-agent --loop --executor" in markdown
     assert "`git commit -m \"<message>\"`" in markdown
-    assert "`bd dolt push`" in markdown
     assert "`git push`" in markdown
+    # mac-dolt-off: bd dolt push was removed from the canonical
+    # workflow when dolt sync was disabled. Beads JSONL travels via git.
+    assert "`bd dolt push`" not in markdown
     assert env["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(context_path)
     assert env["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"] == str(markdown_path)
     assert env["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] == "1"

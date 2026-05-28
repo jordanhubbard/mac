@@ -132,6 +132,8 @@ def test_fleet_deploy_bootstraps_beads_cli_for_bridge():
     assert 'values.setdefault("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")' in script
     assert 'values.setdefault("MAC_BEADS_BRIDGE_ROOT", str(mac_home / "beads-checkouts"))' in script
     assert 'bootstrap --yes' in script
+    # Dolt pull is gated behind MAC_BEADS_DOLT_SYNC_ENABLED=1 (disabled by default).
+    assert 'MAC_BEADS_DOLT_SYNC_ENABLED' in script
     assert 'dolt pull' in script
     assert 'chmod 700 "$repo_path/.beads"' in script
     assert 'git -C "$repo_path" config beads.role maintainer' in script

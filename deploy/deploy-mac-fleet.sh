@@ -2581,8 +2581,15 @@ bootstrap_beads_repositories() {
       cat "$log_path"
       exit 1
     fi
-    if ! (cd "$repo_path" && "$MAC_BEADS_CLI" dolt pull) >> "$log_path" 2>&1; then
-      log "WARNING: Beads Dolt pull failed for $repo_path; bridge polling will report authority drift if the embedded DB is stale"
+    # Dolt pull is intentionally skipped: embedded dolt's migration
+    # rejects the issues table once any worker has touched it, and the
+    # JSONL files under .beads/ are already the source of truth (and
+    # travel with the repo via git). Re-enable here only if
+    # MAC_BEADS_DOLT_SYNC_ENABLED is set on the running fleet.
+    if [ "${MAC_BEADS_DOLT_SYNC_ENABLED:-}" = "1" ]; then
+      if ! (cd "$repo_path" && "$MAC_BEADS_CLI" dolt pull) >> "$log_path" 2>&1; then
+        log "WARNING: Beads Dolt pull failed for $repo_path; bridge polling will report authority drift if the embedded DB is stale"
+      fi
     fi
   done <<EOF
 ${raw//;/$'\n'}

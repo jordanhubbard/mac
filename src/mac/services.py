@@ -8402,6 +8402,18 @@ class ControlPlane:
         subject_id: str,
         state: JsonDict,
     ) -> None:
+        # mac-dolt-off: embedded dolt's migration consistently refuses
+        # the `issues` table once any worker touches it, producing
+        # `pending schema migrations alter pre-existing dirty tables`
+        # ~1,400 times/day and a rebuild every other tick that just
+        # reconstructs from .beads/*.jsonl (which is already the
+        # authority). The dolt sync is off by default; operators can
+        # re-enable with MAC_BEADS_DOLT_SYNC_ENABLED=1 if cross-host
+        # dolt sync is ever resurrected.
+        if not _truthy_env("MAC_BEADS_DOLT_SYNC_ENABLED"):
+            state["beads_dolt_pull"] = "skipped"
+            state["beads_dolt_pull_reason"] = "dolt_sync_disabled"
+            return
         completed = self._run_beads_dolt_pull(repo_path)
         self._record_beads_dolt_pull_result(
             completed,

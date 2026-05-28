@@ -9,8 +9,9 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
 ```
+
+> Do not run `bd dolt push` / `bd dolt pull`. Dolt sync is disabled (services.py:_sync_beads_database); `.beads/*.jsonl` is tracked in git and travels via `git push`.
 
 ## Non-Interactive Shell Commands
 
@@ -68,10 +69,10 @@ bd close <id>         # Complete work
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```
+   Do NOT run `bd dolt push`/`bd dolt pull` — dolt sync is disabled. Beads JSONL under `.beads/` is git-tracked; `git push` is sufficient.
 5. **Clean up** - Clear stashes, prune remote branches
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session

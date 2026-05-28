@@ -2361,6 +2361,7 @@ def test_beads_bridge_pulls_existing_embedded_dolt_database(cp, tmp_path, monkey
     fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_bd.chmod(0o755)
     monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+    monkeypatch.setenv("MAC_BEADS_DOLT_SYNC_ENABLED", "1")
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -2378,6 +2379,40 @@ def test_beads_bridge_pulls_existing_embedded_dolt_database(cp, tmp_path, monkey
     assert [str(fake_bd), "dolt", "pull"] in calls
 
 
+def test_beads_bridge_skips_dolt_sync_when_disabled(cp, tmp_path, monkeypatch):
+    # mac-dolt-off: with MAC_BEADS_DOLT_SYNC_ENABLED unset (default),
+    # the bridge must not invoke `bd dolt pull` or attempt a rebuild.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo)
+    beads_dir = repo / ".beads"
+    beads_dir.mkdir()
+    embedded = beads_dir / "embeddeddolt"
+    embedded.mkdir()
+    (embedded / "marker").write_text("db exists", encoding="utf-8")
+    fake_bd = tmp_path / "bd"
+    fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_bd.chmod(0o755)
+    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+    monkeypatch.delenv("MAC_BEADS_DOLT_SYNC_ENABLED", raising=False)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
+    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+    state = {}
+
+    cp._bootstrap_beads_bridge_checkout(repo_record, repo, "test", state)
+
+    assert state["beads_bootstrap"] == "already_exists"
+    assert state["beads_dolt_pull"] == "skipped"
+    assert state["beads_dolt_pull_reason"] == "dolt_sync_disabled"
+    assert [str(fake_bd), "dolt", "pull"] not in calls
+
+
 def test_beads_bridge_rebuilds_disposable_dolt_database_after_pull_failure(cp, tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -2391,6 +2426,7 @@ def test_beads_bridge_rebuilds_disposable_dolt_database_after_pull_failure(cp, t
     fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_bd.chmod(0o755)
     monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+    monkeypatch.setenv("MAC_BEADS_DOLT_SYNC_ENABLED", "1")
     calls = []
     pull_count = 0
 
