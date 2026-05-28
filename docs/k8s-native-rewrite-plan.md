@@ -270,19 +270,49 @@ the named task.
   role has a `runtime_environment_id` pointing at a manifest with a
   pinned `@sha256:...` digest.
 
-## Phase 5 — Operator/controller
+## Phase 5 — Operator/controller (shipped MVP)
 
-A controller (controller-runtime / kopf / pure-Python watcher — TBD) that:
+Implemented as `mac-k8s-controller`: a singleton-replica Deployment in
+the `mac` namespace running a periodic reconciliation loop. Two
+reconcilers:
 
-- Watches `agent_provisioning_requests` and scales worker pools to satisfy
-  unmet capacity.
-- Watches running Jobs and reconciles stuck/orphaned ones (expired lease,
-  evicted pod, OOMKilled — observed evidence should match table state).
-- Optionally promotes provisioning requests and rollouts to first-class CRDs
-  so they participate in standard `kubectl` workflows.
+- **`reconcile_stuck_jobs`** lists active K8s Jobs labelled
+  `app.kubernetes.io/managed-by=mac-k8s-runner`. For each Job it asks
+  mac-api for the corresponding task's current lease and state, and
+  deletes the Job when ANY of: the task is in a terminal state
+  (completed/failed/cancelled); the task's active lease id differs from
+  the Job's `mac.lease.id` label (re-claimed by another runner); the
+  task has no active lease; or the lease's `leased_until` is in the
+  past. This is the cleanup path for evicted/OOMKilled Jobs whose
+  parent task already moved on.
 
-Phase 5 scope and CRD choice are intentionally left open until Phase 4 lands
-and we know what controller surface is actually needed.
+- **`reconcile_provisioning_requests`** lists open
+  `agent_provisioning_requests` and dispatches each one to an injected
+  `WorkerPoolScaler`. The reference `K8sDeploymentScaler` bumps the
+  replica count of a Deployment named `mac-worker-<role-slug>` by
+  `delta_per_request` (default 1), capped by `max_replicas_per_role`.
+  Disabled by default (`MAC_CONTROLLER_SCALER_ENABLED=0`) so operators
+  opt in once their worker-pool Deployments follow the naming
+  convention.
+
+CRDs are intentionally NOT introduced in the MVP — the goal text says
+"optionally introduce CRDs" and the controller ships against any
+cluster without custom resources. A follow-up can promote
+`agent_provisioning_requests` and rollouts to first-class CRDs once
+the API surface stabilises.
+
+RBAC (`deploy/k8s/mac-controller/rbac.yaml`): scoped Role on the `mac`
+namespace with `batch.jobs` delete + `apps.deployments/scale` patch.
+No cluster-wide rights.
+
+### Phase 5 status
+
+| Goal item                       | Status            |
+|---------------------------------|-------------------|
+| Watch provisioning requests     | Done (poll-based) |
+| Scale worker pools              | Done (reference scaler, opt-in) |
+| Reconcile stuck Jobs            | Done              |
+| Optionally introduce CRDs       | Deferred (out of scope per "optionally") |
 
 ## Risk register (Phase 3)
 

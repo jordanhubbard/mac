@@ -22,10 +22,14 @@ dev = [
     "pytest>=8.0,<9.0",
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
+    "kubernetes>=30.1,<33",
 ]
 postgres = [
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
+]
+k8s = [
+    "kubernetes>=30.1,<33",
 ]
 
 [project.scripts]
@@ -34,6 +38,10 @@ hgmac = "mac.hgmac:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
+# K8s Phase 4/5 binaries (require the [k8s] optional extra at runtime).
+mac-k8s-runner = "mac.k8s.cli:runner_main"
+mac-k8s-controller = "mac.k8s.cli:controller_main"
+mac-task-runner = "mac.k8s.job_executor:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

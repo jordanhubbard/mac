@@ -33,14 +33,38 @@ deploy/k8s/
 ├── argocd/
 │   └── application.yaml                   ← one Application per kustomize tree
 ├── cnpg/
-│   ├── cluster.yaml                       ← CNPG Cluster CR
+│   ├── cluster.yaml                       ← CNPG Cluster CR (Phase 3)
 │   └── kustomization.yaml
-└── mac-api/
-    ├── namespace.yaml
-    ├── deployment.yaml
-    ├── service.yaml
-    ├── externalsecret.example.yaml        ← copy + edit per env
+├── mac-api/                               ← Phase 3: stateless coordinator
+│   ├── namespace.yaml
+│   ├── deployment.yaml                    ← replicas: 2, no PVC
+│   ├── service.yaml
+│   ├── externalsecret.example.yaml
+│   └── kustomization.yaml
+├── mac-runner/                            ← Phase 4: job-per-task runner
+│   ├── serviceaccount.yaml                ← mac-k8s-runner + mac-task-runner SAs
+│   ├── rbac.yaml                          ← batch.jobs CRUD in namespace
+│   ├── deployment.yaml                    ← replicas: 2, claims tasks → creates Jobs
+│   └── kustomization.yaml
+└── mac-controller/                        ← Phase 5: reconciler
+    ├── serviceaccount.yaml
+    ├── rbac.yaml                          ← Jobs delete + Deployments scale
+    ├── deployment.yaml                    ← singleton, recreates stuck Jobs
     └── kustomization.yaml
+```
+
+### How execution flows
+
+```
+  mac-api  ←─────── claim-next, lease renew, evidence/transition ────┐
+    ▲                                                                │
+    │                                                                │
+  mac-k8s-runner  ──── kubectl-create  ───►   batch/v1 Job  ───►  mac-task-runner
+    │                                            ▲
+    │                                            │  reconciler
+    └────────────────►  mac-k8s-controller  ─────┘
+                       (deletes stuck Jobs,
+                        scales worker pools)
 ```
 
 ## Prerequisites
@@ -71,6 +95,14 @@ kubectl apply -f /tmp/mac-api-es.yaml
 
 # 4. mac-api Deployment + Service.
 kubectl apply -k deploy/k8s/mac-api
+
+# 5. (Phase 4) mac-k8s-runner Deployment: claims tasks and creates
+#    one batch/v1 Job per claimed lease.
+kubectl apply -k deploy/k8s/mac-runner
+
+# 6. (Phase 5) mac-k8s-controller Deployment: reconciles stuck Jobs
+#    and (optionally) scales worker-pool Deployments.
+kubectl apply -k deploy/k8s/mac-controller
 ```
 
 Or let ArgoCD manage both:

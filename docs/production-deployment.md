@@ -728,6 +728,14 @@ kubectl -n mac wait --for=condition=Ready cluster/mac-pg --timeout=10m
 # 2. mac-api Deployment + Service (replicas: 2, no PVC, reads MAC_DATABASE_URL
 #    from the CNPG-managed `mac-pg-app` Secret).
 kubectl apply -k deploy/k8s/mac-api
+
+# 3. (Phase 4) mac-k8s-runner — claims ready tasks and creates one
+#    batch/v1 Job per claim (mac-task-runner runs inside each Job).
+kubectl apply -k deploy/k8s/mac-runner
+
+# 4. (Phase 5) mac-k8s-controller — reconciles stuck Jobs against
+#    mac-api lease state, optional worker-pool scaling.
+kubectl apply -k deploy/k8s/mac-controller
 ```
 
 The full apply order, ExternalSecret wiring, ArgoCD `Application`, and

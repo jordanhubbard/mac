@@ -53,3 +53,51 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mac-k8s-runner
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/CHANGE-ME/mac.git
+    targetRevision: main
+    path: deploy/k8s/mac-runner
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mac
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mac-k8s-controller
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/CHANGE-ME/mac.git
+    targetRevision: main
+    path: deploy/k8s/mac-controller
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mac
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
