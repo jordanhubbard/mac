@@ -32,6 +32,16 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote
+
+
+def _q(value: str) -> str:
+    """URL-encode a path segment. Defensive against any path-rewriting
+    layer between the Job pod and mac-api that might normalise `_` to
+    `-` or otherwise mangle unreserved characters. `_` IS in RFC 3986's
+    unreserved set so technically no encoding is needed, but a
+    misbehaving proxy can still touch it; `%5F` is unambiguous."""
+    return quote(value, safe="")
 
 JsonDict = Dict[str, Any]
 log = logging.getLogger(__name__)
@@ -117,7 +127,7 @@ def run_one_lease(
 
     # Fetch the task so the executor + evidence step has full context.
     try:
-        task = mac.get("/tasks/%s" % task_id)
+        task = mac.get("/tasks/%s" % _q(task_id))
     except Exception as exc:  # noqa: BLE001
         return JobExecutionResult(
             status="no-evidence",
@@ -130,7 +140,7 @@ def run_one_lease(
     # Transition open → running.
     try:
         mac.post(
-            "/tasks/%s/start" % task_id,
+            "/tasks/%s/start" % _q(task_id),
             {"agent_id": agent_id},
         )
     except Exception as exc:  # noqa: BLE001
@@ -192,7 +202,7 @@ def run_one_lease(
     if exec_result.returncode == 0:
         try:
             mac.post(
-                "/tasks/%s/submit-for-review" % task_id,
+                "/tasks/%s/submit-for-review" % _q(task_id),
                 {"actor": agent_id, "evidence_id": evidence.get("id")},
             )
             return JobExecutionResult(
@@ -218,7 +228,7 @@ def run_one_lease(
     # Non-zero executor exit -> transition to failed.
     try:
         mac.post(
-            "/tasks/%s/transition" % task_id,
+            "/tasks/%s/transition" % _q(task_id),
             {
                 "target_state": "failed",
                 "actor": agent_id,
@@ -311,7 +321,7 @@ def _lease_renewal_loop(
     """Renew the lease every LEASE_RENEW_INTERVAL_SECONDS until stop."""
     while not stop.is_set():
         try:
-            mac.post("/leases/%s/renew" % lease_id, {})
+            mac.post("/leases/%s/renew" % _q(lease_id), {})
         except Exception as exc:  # noqa: BLE001
             log.warning("lease renew failed: %s", exc)
         # Short-poll the stop event in 1s chunks so we exit promptly.
@@ -331,7 +341,7 @@ def _submit_execution_evidence(
 ) -> Optional[JsonDict]:
     try:
         return mac.post(
-            "/tasks/%s/evidence" % task_id,
+            "/tasks/%s/evidence" % _q(task_id),
             {
                 "kind": "log",
                 "uri": "stdout://mac-task-runner",
@@ -383,7 +393,7 @@ def _record_failure_evidence(
         )
     try:
         mac.post(
-            "/tasks/%s/transition" % task_id,
+            "/tasks/%s/transition" % _q(task_id),
             {
                 "target_state": "failed",
                 "actor": agent_id,
