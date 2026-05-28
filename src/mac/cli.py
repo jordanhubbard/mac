@@ -181,6 +181,33 @@ def cmd_interaction_task(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_task_migrate_beads(args: argparse.Namespace) -> None:
+    from pathlib import Path as _Path
+    from mac.beads_migrator import migrate, read_beads_memories_via_cli
+
+    cp = _plane(args)
+    repo_path = _Path(args.repo_path).expanduser().resolve()
+    memories = {} if args.no_memories else read_beads_memories_via_cli(repo_path)
+    report = migrate(
+        repo_path,
+        cp,
+        project=args.project,
+        actor=args.actor,
+        dry_run=args.dry_run,
+        emit_tickets=not args.no_tickets,
+        memories=memories,
+    )
+    _print(report.to_dict())
+
+
+def cmd_task_detect_beads(args: argparse.Namespace) -> None:
+    from pathlib import Path as _Path
+    from dataclasses import asdict
+    from mac.beads_migrator import detect
+
+    _print(asdict(detect(_Path(args.repo_path).expanduser().resolve())))
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     _print(
@@ -1119,6 +1146,27 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--checksum")
     evidence.add_argument("--metadata")
     _set(cmd_task_evidence, evidence)
+
+    detect_beads = task.add_parser(
+        "detect-beads",
+        help="inspect a repo for .beads/ artifacts (read-only)",
+    )
+    detect_beads.add_argument("repo_path")
+    _set(cmd_task_detect_beads, detect_beads)
+
+    migrate_beads = task.add_parser(
+        "migrate-beads",
+        help="import .beads/issues.jsonl into MAC tasks and emit .tickets/<id>.md",
+    )
+    migrate_beads.add_argument("repo_path")
+    migrate_beads.add_argument("--project", required=True)
+    migrate_beads.add_argument("--actor", default="beads-migrator")
+    migrate_beads.add_argument("--dry-run", action="store_true")
+    migrate_beads.add_argument("--no-tickets", action="store_true",
+                               help="skip writing .tickets/<id>.md files")
+    migrate_beads.add_argument("--no-memories", action="store_true",
+                               help="skip importing bd memories")
+    _set(cmd_task_migrate_beads, migrate_beads)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
     project_create = project.add_parser("create")
