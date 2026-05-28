@@ -120,7 +120,7 @@ from mac.review_service import ReviewService
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.store import SQLiteStore, Store
+from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
@@ -537,7 +537,11 @@ class ControlPlane:
         store: Optional[Store] = None,
         secret_key: Optional[str] = None,
     ) -> None:
-        self.store: Store = store or SQLiteStore()
+        # When no store is injected, pick a backend from the environment:
+        # MAC_DATABASE_URL -> PostgresStore, otherwise SQLiteStore at MAC_DB.
+        # This is what makes multi-replica mac-api stateless — every
+        # replica hits the shared CNPG cluster without any code change.
+        self.store: Store = store or make_store_from_env()
         raw_key = secret_key if secret_key is not None else os.environ.get("MAC_SECRET_KEY")
         if not raw_key:
             raise ValidationError(

@@ -27,7 +27,7 @@ from mac.agentbus_control import (
 from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, StoreError, default_db_path
+from mac.store import SQLiteStore, StoreError, make_store_from_env
 
 _log = logging.getLogger(__name__)
 
@@ -1895,9 +1895,15 @@ def create_app(
     auth_tokens: Optional[AuthTokenMapping] = None,
     record_http_observations: Optional[bool] = None,
 ) -> FastAPI:
-    cp = control_plane or ControlPlane(
-        SQLiteStore(db_path or default_db_path())
-    )
+    # db_path is the explicit SQLite override (e.g. for tests). When it is
+    # None, fall through to make_store_from_env so MAC_DATABASE_URL can
+    # switch the API process to Postgres for the stateless mac-api topology.
+    if control_plane is not None:
+        cp = control_plane
+    elif db_path is not None:
+        cp = ControlPlane(SQLiteStore(db_path))
+    else:
+        cp = ControlPlane(make_store_from_env())
     tokens: Dict[str, TokenPrincipal] = (
         _normalize_auth_tokens(auth_tokens)
         if auth_tokens is not None

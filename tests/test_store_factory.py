@@ -1,0 +1,109 @@
+"""Tests for `make_store_from_env` backend selection."""
+
+from __future__ import annotations
+
+import pytest
+
+from mac.store import SQLiteStore, make_store_from_env
+
+
+def test_factory_returns_sqlite_when_env_unset(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "explicit.db"))
+    s = make_store_from_env()
+    try:
+        assert isinstance(s, SQLiteStore)
+        assert s.path.endswith("explicit.db")
+    finally:
+        s.close()
+
+
+def test_factory_uses_passed_sqlite_path(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
+    monkeypatch.delenv("MAC_DB", raising=False)
+    target = tmp_path / "passed.db"
+    s = make_store_from_env(sqlite_path=str(target))
+    try:
+        assert isinstance(s, SQLiteStore)
+        assert s.path == str(target)
+    finally:
+        s.close()
+
+
+def test_factory_ignores_blank_database_url(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MAC_DATABASE_URL", "   ")
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "blank-url.db"))
+    s = make_store_from_env()
+    try:
+        assert isinstance(s, SQLiteStore)
+    finally:
+        s.close()
+
+
+def test_factory_ignores_non_postgres_url(monkeypatch, tmp_path) -> None:
+    # A `sqlite://` or `mysql://` URL is not Postgres — fall through to SQLite.
+    monkeypatch.setenv("MAC_DATABASE_URL", "mysql://user@host/db")
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "non-pg.db"))
+    s = make_store_from_env()
+    try:
+        assert isinstance(s, SQLiteStore)
+    finally:
+        s.close()
+
+
+def test_factory_takes_postgres_branch(monkeypatch) -> None:
+    """Verify the factory dispatches to PostgresStore for postgres URLs
+    without standing up a live database. We patch PostgresStore with a
+    test double so the assertion is fast and deterministic."""
+    pytest.importorskip("psycopg")
+    import mac.store_postgres as pg_mod
+
+    seen: list = []
+
+    class _FakePG:
+        def __init__(self, dsn: str, *, pool_size: int = 10) -> None:
+            seen.append({"dsn": dsn, "pool_size": pool_size})
+            self.path = dsn
+
+        def initialize(self) -> None:
+            seen.append({"initialize": True})
+
+    monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
+    monkeypatch.setenv(
+        "MAC_DATABASE_URL", "postgresql://user@host:5432/macdb"
+    )
+    monkeypatch.setenv("MAC_PG_POOL_SIZE", "7")
+
+    s = make_store_from_env()
+
+    assert isinstance(s, _FakePG)
+    assert seen[0] == {
+        "dsn": "postgresql://user@host:5432/macdb",
+        "pool_size": 7,
+    }
+    assert {"initialize": True} in seen
+
+
+def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
+    """Both ``postgresql://`` and the legacy ``postgres://`` alias work."""
+    pytest.importorskip("psycopg")
+    import mac.store_postgres as pg_mod
+
+    class _FakePG:
+        def __init__(self, dsn: str, *, pool_size: int = 10) -> None:
+            self.path = dsn
+
+        def initialize(self) -> None:
+            pass
+
+    monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
+    monkeypatch.setenv("MAC_DATABASE_URL", "postgres://h/d")
+    s = make_store_from_env()
+    assert isinstance(s, _FakePG)
+
+
+def test_module_exports_factory() -> None:
+    import mac
+
+    assert hasattr(mac, "make_store_from_env")
+    assert mac.make_store_from_env is make_store_from_env

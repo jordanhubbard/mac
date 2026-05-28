@@ -61,6 +61,29 @@ class Store(Protocol):
     ) -> list: ...
 
 
+def make_store_from_env(
+    sqlite_path: Optional[str] = None,
+) -> "Store":
+    """Backend-selecting store factory.
+
+    Returns a `PostgresStore` when ``MAC_DATABASE_URL`` is set to a
+    ``postgres://`` or ``postgresql://`` DSN; otherwise a `SQLiteStore`
+    at ``sqlite_path`` (falling back to ``MAC_DB`` / `default_db_path()`).
+    The Postgres backend auto-applies the bundled schema on first
+    construction so a fresh CNPG cluster comes up ready; SQLite already
+    runs `_initialize` from its constructor for the same effect.
+    """
+    dsn = os.environ.get("MAC_DATABASE_URL", "").strip()
+    if dsn and dsn.startswith(("postgres://", "postgresql://")):
+        from mac.store_postgres import PostgresStore
+
+        pool_size = int(os.environ.get("MAC_PG_POOL_SIZE", "10") or "10")
+        store = PostgresStore(dsn, pool_size=pool_size)
+        store.initialize()
+        return store
+    return SQLiteStore(sqlite_path)
+
+
 def default_db_path() -> str:
     """Resolve the canonical SQLite path.
 
