@@ -44,13 +44,62 @@ def _ensure_args(args: Any) -> dict | None:
     return dict(args)
 
 
+def _shape_create_task_body(args: dict) -> dict:
+    """Translate LLM-friendly fields (summary/snippets/links) into the
+    API body shape that POST /hermes-instances/{id}/tasks accepts.
+
+    Mirrors what `mac.hermes_adapter.HermesMacAdapter
+    .create_task_from_conversation` does (and what
+    `ConversationTaskInput.description()` produces), so the LLM keeps
+    a natural conversation-shaped tool surface while the underlying
+    POST satisfies the mac-api Pydantic schema (which only knows about
+    `description`, not summary/snippets/links).
+    """
+    title = (args.get("title") or "").strip()
+    summary = (args.get("summary") or "").strip()
+    snippets = [s.strip() for s in (args.get("snippets") or []) if str(s).strip()]
+    links = [l.strip() for l in (args.get("links") or []) if str(l).strip()]
+
+    sections: list[str] = []
+    if summary:
+        sections.append(f"Summary:\n{summary}")
+    if snippets:
+        sections.append("Relevant excerpts:\n" + "\n".join(f"- {s}" for s in snippets))
+    if links:
+        sections.append("References:\n" + "\n".join(f"- {l}" for l in links))
+
+    body: dict = {
+        "title": title,
+        "description": "\n\n".join(sections),
+        "actor": "hermes",
+    }
+    # Optional passthrough fields — only set when the LLM gave a value
+    # so we don't override mac-api server-side defaults.
+    for key in (
+        "priority",
+        "project",
+        "required_capabilities",
+        "dependencies",
+        "metadata",
+        "max_attempts",
+        "platform_binding_id",
+        "conversation_ref",
+        "user_id",
+    ):
+        if args.get(key) is not None:
+            body[key] = args[key]
+
+    # hermes_instance_id is a path param — keep it in the body for
+    # _expand_path to strip into the URL.
+    body["hermes_instance_id"] = args.get("hermes_instance_id") or hermes_instance_id()
+    return body
+
+
 def _resolve_body_for(tool: ToolSpec, args: dict) -> dict:
     """Apply per-tool body normalisation before the HTTP call."""
     if tool.name == "mac_create_task":
-        # hermes_instance_id is a path param — the plugin always
-        # provides it from env so the LLM doesn't have to remember.
-        args.setdefault("hermes_instance_id", hermes_instance_id())
-    elif tool.name == "mac_work_brief":
+        return _shape_create_task_body(args)
+    if tool.name == "mac_work_brief":
         args.setdefault("hermes_instance_id", hermes_instance_id())
     elif tool.name == "mac_cancel_task":
         # The cancel tool is a thin wrapper: the LLM provides
