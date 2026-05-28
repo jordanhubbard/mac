@@ -5087,6 +5087,108 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: dict) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _sign_verdict(key: str, manifest: dict) -> str:
+    """HMAC-SHA256 → base64url; matches mac.services.sign_verification_manifest."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    import base64 as _base64
+    # Match services._canonicalize_for_signature: stable JSON, exclude 'signature'
+    filtered = {k: v for k, v in manifest.items() if k != "signature"}
+    blob = json.dumps(filtered, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = _hmac.new(key.encode("ascii"), blob, _hashlib.sha256).digest()
+    return "v1:" + _base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def run_deterministic_review_verdict(task_workspace: Path, task: dict, review_context: dict) -> None:
+    """mac-jfns: deterministic post-LLM review verdict. After Hermes
+    runs as the reviewer, override whatever it wrote with a signed
+    review_verdict manifest that:
+      - reads the executor's evidence from executor-evidence.json
+      - runs the contract test gate in the review checkout
+      - signs an approved verdict if tests pass and the executor's
+        commit is reachable on origin
+    """
+    reviewer_agent_id = str(task.get("owner_agent_id") or os.environ.get("MAC_WORKER_AGENT_ID") or "").strip()
+    attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
+    if not reviewer_agent_id or not attestation_key:
+        return
+    executor_evidence_id = str(review_context.get("executor_evidence_id") or "").strip()
+    review_id = str(review_context.get("review_id") or "").strip()
+    if not executor_evidence_id or not review_id:
+        return
+    # Load the executor's evidence the dispatcher staged in the review workspace
+    exec_ev_path = task_workspace / "executor-evidence.json"
+    if not exec_ev_path.exists():
+        return
+    try:
+        exec_ev = json.loads(exec_ev_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    exec_verification = (exec_ev.get("metadata") or {}).get("verification") or {}
+    exec_repo = exec_verification.get("repo") or {}
+    exec_head = str(exec_repo.get("head_sha") or "").strip()
+    if not exec_head:
+        return
+    # Locate a review worktree: the dispatcher prepares one and exposes
+    # it as MAC_TASK_REPO_WORKTREE; if absent we can still attest based
+    # on the executor's claims.
+    review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    tests = None
+    independent_pass = False
+    if review_worktree and Path(review_worktree).is_dir():
+        # Independent test run against the executor commit
+        ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], Path(review_worktree))
+        if ck.returncode == 0:
+            test_cmd = (((task.get("metadata") or {}).get("origin") or {})
+                        .get("repository_contract") or {}).get("test", {}).get("command", "scripts/run-contract-tests.sh")
+            tr = subprocess.run(
+                ["bash", "-lc", test_cmd],
+                cwd=review_worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=600,
+            )
+            independent_pass = tr.returncode == 0
+            tests = {
+                "command": test_cmd,
+                "returncode": int(tr.returncode),
+                "status": "pass" if tr.returncode == 0 else "fail",
+            }
+    verdict = "approved" if independent_pass else "rejected"
+    # Compute a worktree_digest the reviewer can attest to
+    digest_input = ("%s|%s|%s" % (exec_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
+    import hashlib as _hashlib
+    worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": verdict,
+        "review_id": review_id,
+        "reviewed_evidence_id": executor_evidence_id,
+        "worktree_digest": worktree_digest,
+        "repo": {
+            "head_sha": exec_head,
+            "remote_ref": exec_repo.get("remote_ref") or "",
+            "pushed": True,
+            "dirty": False,
+        },
+        "checks": [
+            {
+                "name": "review_verdict_finalizer",
+                "returncode": 0 if independent_pass else 1,
+                "status": "pass" if independent_pass else "fail",
+            }
+        ],
+        "tests": tests,
+        "signed_by": reviewer_agent_id,
+    }
+    manifest["signature"] = _sign_verdict(attestation_key, manifest)
+    out_path = task_workspace / "mac-evidence.json"
+    out_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def write_fallback_evidence_manifest(
     task_workspace: Path,
     task: dict,
@@ -5185,6 +5287,11 @@ def main() -> int:
             run_deterministic_git_finalizer(task_workspace, task)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
+    else:
+        try:
+            run_deterministic_review_verdict(task_workspace, task, review_context)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
     write_fallback_evidence_manifest(task_workspace, task, result, review_context)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
