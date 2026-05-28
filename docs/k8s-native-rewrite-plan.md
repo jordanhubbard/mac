@@ -163,20 +163,112 @@ caveat for the Postgres topology, add a "Kubernetes + CNPG" section, document
 
 ## Phase 4 — Job-per-task execution
 
-Each claimed lease becomes a Kubernetes `Job`. The worker process inside the
-Job handles exactly one task and records evidence before exiting. Crash
-recovery is delegated to the Job controller + the existing lease-expiry
-retry path.
+Each claimed lease becomes a Kubernetes `Job`. The worker process inside
+the Job handles exactly one task and records evidence before exiting.
+Crash recovery is delegated to the Job controller + the existing
+lease-expiry retry path already implemented in `mac-api`.
 
-Open questions to resolve before implementation:
+### Chosen approach: new `mac-k8s-runner` Deployment
 
-- Does `mac-agent` keep its long-running role and spawn child Jobs, or does a
-  new `mac-k8s-runner` Deployment watch the lease/task tables and create the
-  Jobs directly? Trade-off: shorter blast radius vs. one less moving part.
-- How is the executor (`mac-hermes-task-executor`) shipped into the Job? Init
-  container that pulls a pinned digest, or baked into the worker image?
-- How does the Job authenticate to `mac-api`? Short-lived token per Job
-  (preferred — ties evidence signature to the Job's identity).
+Recommended over extending `mac-agent` because:
+
+- `mac-agent` is designed to run tasks itself (executor + loop in one
+  process). Repurposing it as a Job-launcher is a deeper rewrite than
+  starting fresh.
+- K8s-idiomatic: one workload type per responsibility. Runner watches +
+  creates Jobs; Jobs run executors; controllers reconcile failures.
+- Permissions surface is smaller: runner needs `batch.Job` create/list;
+  individual mac-agent images don't need cluster API rights.
+- Independent scaling: a single runner Deployment serves many concurrent
+  Jobs; runner replicas only need to grow with API/dispatch throughput.
+
+### 4.1 — `mac-k8s-runner` Deployment (skeleton)
+
+New binary entry point `mac-k8s-runner` that:
+
+1. Polls `mac-api /dispatch/candidates` for ready tasks the runner is
+   configured to handle (filtered by capability label).
+2. For each candidate, calls `POST /tasks/{id}/claim` to atomically
+   acquire the lease (the same call workers use today).
+3. Creates a `batch/v1` Job in the configured namespace:
+   - One container per Job
+   - Image: `mac:<runtime-env-digest>` (resolved from
+     `runtime_environments.manifest` for the task)
+   - Env: `MAC_TASK_ID`, `MAC_LEASE_ID`, `MAC_URL`, `MAC_WORKER_TOKEN`
+     (short-lived bearer token minted per-Job via `POST /tokens/mint`)
+   - `backoffLimit: 0` — retries are owned by mac-api's lease-expiry +
+     `max_attempts`, not the Job controller, so Job restart semantics
+     stay simple.
+   - `activeDeadlineSeconds`: matches the lease TTL so a stuck Job is
+     killed before its lease expires.
+4. Records the `Job` UID in `task.metadata.k8s_job_uid` so reconciliation
+   can correlate.
+
+Runner is multi-replica. Each replica leases tasks independently; the
+existing `uniq_leases_active_per_task` partial unique index prevents two
+runners from launching duplicate Jobs.
+
+### 4.2 — In-Job executor: `mac task run` single-shot
+
+Add a CLI subcommand `mac task run --lease <id>` that:
+
+1. Reads `MAC_TASK_ID`, `MAC_LEASE_ID`, `MAC_WORKER_TOKEN` from env.
+2. Renews the lease while running (every `lease_ttl/3`).
+3. Invokes the task executor (existing
+   `mac-hermes-task-executor` path or a per-role override).
+4. Submits evidence + transitions the task to `needs_review` / `failed`
+   *before* exiting (the K8s Job controller treats a 0 exit as success;
+   evidence must be persisted before that signal so we never lose work
+   on a clean exit race).
+5. Exits 0 on successful submission, non-zero on failure to submit
+   (lease-expiry path then reopens the task).
+
+This is the "single-shot" mode of the existing worker loop. Most of the
+code already exists in `src/mac/worker.py`; the change is to make the
+loop wrapper optional so a Job can call the inner one-task function
+directly.
+
+### 4.3 — Token minting endpoint
+
+New endpoint `POST /tokens/mint` that issues a short-lived bearer token
+scoped to one task/lease. Used by the runner to give each Job a
+least-privilege credential. Token includes:
+
+- `task_id` and `lease_id` claims
+- `exp` matching the Job's `activeDeadlineSeconds`
+- `agent_id` of the runner replica (for command-audit attribution)
+
+Validated by `mac-api`'s existing auth middleware with a new scope
+`task:execute` that allows only evidence/lease/transition writes for
+the named task.
+
+### 4.4 — Manifests
+
+- `deploy/k8s/mac-runner/deployment.yaml` — runner Deployment with the
+  smallest ServiceAccount that has `batch.jobs` create/get/list/watch
+  in its own namespace.
+- `deploy/k8s/mac-runner/rbac.yaml` — Role + RoleBinding.
+- `deploy/k8s/mac-runner/serviceaccount.yaml`.
+- ArgoCD `Application` entry.
+
+### 4.5 — Tests
+
+- Unit: runner's "candidate -> claim -> Job spec" pure function tested
+  with a fake K8s client + mocked mac-api.
+- `pytest.mark.k8s` integration test using kind/k3d that spins up the
+  full stack (CNPG, mac-api, mac-runner) and runs one canary task.
+
+### Open questions for Phase 4
+
+- Per-tenant Job namespaces, or one shared namespace with labels?
+  Likely shared namespace + `app.kubernetes.io/instance` labels —
+  simpler RBAC, and tenant isolation already exists at the mac-api auth
+  layer.
+- How are role-specific images selected? Today the
+  `runtime_environments` table holds a `manifest` JSON with the image
+  digest; the runner reads that field. Pre-Phase-4 work: ensure every
+  role has a `runtime_environment_id` pointing at a manifest with a
+  pinned `@sha256:...` digest.
 
 ## Phase 5 — Operator/controller
 
