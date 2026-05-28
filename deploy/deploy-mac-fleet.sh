@@ -2978,6 +2978,35 @@ print("TokenHub runtime config: synced to %s" % config_path)
 PY
 }
 
+fetch_slack_secrets_from_vault() {
+  # Pull this agent's Slack tokens from TokenHub vault (centralized
+  # secret store). Replaces per-host .env scattering. Idempotent;
+  # writes ~/.hermes/slack_accounts.json and updates SLACK_BOT_TOKEN /
+  # SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
+  local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
+  if [ ! -f "$fetcher" ]; then
+    log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
+    return 0
+  fi
+  local th_env="$HOME/.tokenhub/env"
+  local th_admin="${TOKENHUB_ADMIN_TOKEN:-}"
+  if [ -z "$th_admin" ] && [ -f "$th_env" ]; then
+    th_admin="$(awk -F= '/^TOKENHUB_ADMIN_TOKEN=/{print $2}' "$th_env" | head -1)"
+  fi
+  local th_url="${TOKENHUB_URL:-${MAC_DEPLOY_TOKENHUB_URL:-http://127.0.0.1:${MAC_DEPLOY_TOKENHUB_PORT:-8090}}}"
+  if [ -z "$th_admin" ]; then
+    log "skipping Slack vault fetch: TOKENHUB_ADMIN_TOKEN unavailable on $HOME"
+    return 0
+  fi
+  log "fetching Slack secrets for ${AGENT} from TokenHub vault ($th_url)"
+  MAC_AGENT_NAME="$AGENT" \
+    TOKENHUB_URL="$th_url" \
+    TOKENHUB_ADMIN_TOKEN="$th_admin" \
+    HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+    "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
+      log "WARNING: Slack vault fetch failed for ${AGENT}; will fall back to existing files"
+}
+
 sync_hermes_slack_identity_env() {
   log "syncing Hermes Slack identity/routing environment"
   "$PY" - "$ENV_FILE" "$HOME/.hermes/.env" <<'PY'
@@ -3937,6 +3966,8 @@ reload_mac_env
 install_or_validate_tokenhub_service
 reload_mac_env
 sync_hermes_tokenhub_client_env
+reload_mac_env
+fetch_slack_secrets_from_vault
 reload_mac_env
 sync_hermes_slack_identity_env
 [ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories || true
