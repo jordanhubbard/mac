@@ -4312,6 +4312,136 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     assert published[0].detail["final_sha"] == final_head
 
 
+def _setup_publishable_repo(tmp_path, name="remote"):
+    def git(repo, *args):
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    remote = tmp_path / ("%s.git" % name)
+    source = tmp_path / ("source-%s" % name)
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(remote), str(source)], check=True, capture_output=True)
+    git(source, "config", "user.email", "mac-test@example.com")
+    git(source, "config", "user.name", "MAC Test")
+    (source / "base.txt").write_text("base\n", encoding="utf-8")
+    git(source, "add", "base.txt")
+    git(source, "commit", "-m", "base")
+    git(source, "branch", "-M", "main")
+    git(source, "push", "-u", "origin", "main")
+    git(source, "checkout", "-b", "task/feature")
+    (source / "feature.txt").write_text("feature\n", encoding="utf-8")
+    git(source, "add", "feature.txt")
+    git(source, "commit", "-m", "feature branch")
+    task_head = git(source, "rev-parse", "HEAD")
+    git(source, "push", "origin", "task/feature")
+    git(source, "checkout", "main")
+    return source, remote, task_head, git
+
+
+def _publishable_task_and_evidence(cp, source, task_head, *, canonical_remote_url=None):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    contract = {"schema": "mac.repository_contract.v1"}
+    if canonical_remote_url is not None:
+        contract["canonical_remote_url"] = canonical_remote_url
+    task = cp.create_task(
+        "publish with origin guard",
+        required_capabilities=["python"],
+        metadata={
+            "origin": {
+                "type": "direct_task",
+                "repository_path": str(source),
+                "repository_contract": contract,
+            },
+            "publication_target": "git://main",
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "repo": {
+                "head_sha": task_head,
+                "pushed": True,
+                "remote_ref": "refs/heads/task/feature",
+                "dirty": False,
+                "files_changed": ["feature.txt"],
+            },
+            "tests": [{"command": "make smoke", "returncode": 0}],
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://feature",
+        "feature branch tested",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
+    return task, evidence, reviewer
+
+
+def test_git_publication_rejects_worktree_origin_mismatch(cp, tmp_path):
+    # mac-y7ha: when the contract pins canonical_remote_url, a worktree
+    # whose origin points elsewhere (e.g. a private mirror) must fail
+    # publish-time validation instead of silently pushing to the wrong
+    # remote.
+    source, _remote, task_head, _git = _setup_publishable_repo(tmp_path)
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp,
+        source,
+        task_head,
+        canonical_remote_url="git@github.com:example/elsewhere.git",
+    )
+    with pytest.raises(ValidationError, match="does not match the project's registered remote"):
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+
+def test_git_publication_accepts_equivalent_ssh_https_origin(cp, tmp_path):
+    # mac-y7ha: ssh and https forms of the same GitHub URL must compare
+    # equal so the registered remote can be set once and worktrees can
+    # be cloned via either form.
+    source, _remote, task_head, git = _setup_publishable_repo(tmp_path, name="equiv")
+    git(source, "remote", "set-url", "origin", "git@github.com:example/equiv.git")
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp,
+        source,
+        task_head,
+        canonical_remote_url="https://github.com/example/equiv.git",
+    )
+    # The merge step still tries to push to git@github.com which we
+    # cannot reach in the test env; expect a network/push failure, but
+    # crucially NOT the origin-mismatch validation error.
+    with pytest.raises(ValidationError) as excinfo:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+    assert "does not match the project's registered remote" not in str(excinfo.value)
+
+
+def test_git_publication_skips_origin_check_when_contract_unset(cp, tmp_path):
+    # mac-y7ha back-compat: contracts without canonical_remote_url retain
+    # the previous behavior (no origin validation).
+    source, _remote, task_head, _git = _setup_publishable_repo(tmp_path, name="noguard")
+    task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+    assert publication.status == "published"
+
+
 def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])

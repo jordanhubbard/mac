@@ -1,5 +1,6 @@
 schema: mac.repository_contract.v1
 project: repo-beads-mac
+canonical_remote_url: git@github.com:jordanhubbard/mac.git
 platforms:
   - darwin
   - linux

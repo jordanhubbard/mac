@@ -300,6 +300,40 @@ def _remote_branch_from_ref(remote_ref: str) -> str:
     return ""
 
 
+_SCP_GIT_URL_RE = re.compile(r"^(?P<user>[^@]+@)?(?P<host>[^:/]+):(?P<path>.+)$")
+
+
+def _canonicalize_git_url(url: str) -> Optional[Tuple[str, str]]:
+    """Canonicalize a git remote URL to ``(host, path)`` for equivalence
+    comparisons across ``git@host:path``, ``ssh://host/path``,
+    ``https://host/path``, and ``git://host/path`` forms.
+
+    Trailing ``.git`` and surrounding slashes are stripped from the path;
+    the host is lowercased. Returns ``None`` if the URL is unparseable so
+    callers can choose to fail-closed without crashing.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return None
+    if "://" in raw:
+        parsed = urllib.parse.urlsplit(raw)
+        host = parsed.hostname or ""
+        path = parsed.path or ""
+    else:
+        m = _SCP_GIT_URL_RE.match(raw)
+        if not m:
+            return None
+        host = m.group("host") or ""
+        path = m.group("path") or ""
+    host = host.lower().strip()
+    path = path.strip().strip("/")
+    if path.endswith(".git"):
+        path = path[: -len(".git")]
+    if not host or not path:
+        return None
+    return (host, path)
+
+
 REPOSITORY_CONTRACT_SCHEMA = "mac.repository_contract.v1"
 REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yaml",
@@ -406,10 +440,23 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
     bootstrap = _contract_mapping(data.get("bootstrap"), "repository runtime contract.bootstrap")
     test = _contract_mapping(data.get("test"), "repository runtime contract.test")
     evidence = _contract_mapping(data.get("evidence"), "repository runtime contract.evidence")
+    canonical_remote_url_raw = data.get("canonical_remote_url")
+    canonical_remote_url: Optional[str] = None
+    if canonical_remote_url_raw is not None:
+        canonical_remote_url = _contract_string(
+            canonical_remote_url_raw,
+            "repository runtime contract.canonical_remote_url",
+        )
+        if _canonicalize_git_url(canonical_remote_url) is None:
+            raise ValidationError(
+                "repository runtime contract.canonical_remote_url is not a parseable git URL: %r"
+                % canonical_remote_url
+            )
     return {
         "schema": schema,
         "project": project,
         "contract_path": contract_path,
+        "canonical_remote_url": canonical_remote_url,
         "platforms": platforms,
         "toolchain": {
             "required_commands": _contract_string_list(
@@ -6669,6 +6716,33 @@ class ControlPlane:
             )
         if dirty.get("stdout"):
             raise ValidationError("git publication requires clean worktree: %s" % root)
+
+        # mac-y7ha: when the task's registered project pins a canonical
+        # remote URL, refuse to publish unless the worktree's origin
+        # actually points there. Without this check, a worktree cloned
+        # from a private mirror happily accepts ``git push origin main``
+        # and the publication record claims a merge into main that
+        # nothing downstream of the mirror will ever see. URL forms are
+        # canonicalised to ``(host, path)`` so equivalent ssh/https
+        # variants match.
+        contract = ensure_json_object(origin.get("repository_contract"))
+        canonical_remote_url = str(contract.get("canonical_remote_url") or "").strip()
+        if canonical_remote_url:
+            origin_url_probe = self._git_output(root, ["remote", "get-url", "origin"])
+            if origin_url_probe["returncode"] != 0:
+                raise ValidationError(
+                    "git publication could not read worktree origin: %s"
+                    % (origin_url_probe.get("stderr") or origin_url_probe.get("stdout") or root)
+                )
+            worktree_origin = str(origin_url_probe.get("stdout") or "").strip()
+            expected = _canonicalize_git_url(canonical_remote_url)
+            actual = _canonicalize_git_url(worktree_origin)
+            if expected is None or actual is None or expected != actual:
+                raise ValidationError(
+                    "git publication worktree origin %r does not match the project's "
+                    "registered remote %r"
+                    % (worktree_origin, canonical_remote_url)
+                )
 
         commands: List[JsonDict] = []
 
