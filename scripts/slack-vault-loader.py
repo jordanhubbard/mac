@@ -51,6 +51,23 @@ def auth_test(token: str) -> dict:
         return json.loads(resp.read())
 
 
+def apps_connections_open(token: str) -> dict:
+    """App-level tokens (xapp-) are valid only for Socket Mode; verify
+    by opening a WSS URL — Slack returns ok=false / invalid_auth if
+    the app token has been rotated or the app's Socket Mode is off."""
+    req = urllib.request.Request(
+        "https://slack.com/api/apps.connections.open",
+        method="POST",
+        headers={
+            "Authorization": "Bearer %s" % token,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        data=b"",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
 def vault_put(key: str, value: str) -> dict:
     safe_key = urllib.parse.quote(key, safe="")
     req = urllib.request.Request(
@@ -127,6 +144,22 @@ def main() -> int:
                             "user": result.get("user"),
                             "team_id": result.get("team_id"),
                         }
+                if verification.get("status") != "ok":
+                    report.append({"file": str(f), "key": key, "verify": verification})
+                    continue
+            elif kind == "app":
+                try:
+                    result = apps_connections_open(value)
+                except Exception as exc:
+                    verification = {"status": "apps_connections_open_error", "error": str(exc)}
+                else:
+                    if not result.get("ok"):
+                        verification = {
+                            "status": "apps_connections_open_failed",
+                            "error": result.get("error"),
+                        }
+                    else:
+                        verification = {"status": "ok"}
                 if verification.get("status") != "ok":
                     report.append({"file": str(f), "key": key, "verify": verification})
                     continue
