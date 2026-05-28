@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+import os
+import uuid
+from typing import Iterable, Iterator, Optional
 
 import pytest
 from mac.services import ControlPlane
@@ -18,6 +20,56 @@ def pytest_collection_modifyitems(items: list) -> None:
             item.add_marker(pytest.mark.cli)
         elif "/tests/ui/" in path:
             item.add_marker(pytest.mark.ui)
+
+
+# ----------------------------------------------------------------------
+# Live-Postgres fixtures (K8s Phase 3.6).
+#
+# Opt-in via MAC_TEST_PG_URL. Tests marked `pytest.mark.postgres` skip
+# cleanly when the env var is unset, so the default `pytest` run stays
+# fast and SQLite-only. CI provisions a Postgres service container,
+# sets MAC_TEST_PG_URL, and runs `pytest -m postgres` separately.
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def pg_dsn() -> str:
+    dsn = os.environ.get("MAC_TEST_PG_URL", "").strip()
+    if not dsn:
+        pytest.skip(
+            "MAC_TEST_PG_URL is unset; live-Postgres tests are opt-in. "
+            "Example: MAC_TEST_PG_URL=postgresql://postgres:test@127.0.0.1:5432/mac"
+        )
+    return dsn
+
+
+@pytest.fixture()
+def postgres_store(pg_dsn: str) -> Iterator[object]:
+    """`PostgresStore` against a per-test schema with DDL applied.
+
+    Each test runs inside an isolated PostgreSQL SCHEMA inside the shared
+    MAC_TEST_PG_URL database. The schema is dropped on teardown so a
+    re-run sees a clean namespace. Using schemas (not separate
+    databases) keeps fixture cost low and the pool warm.
+    """
+    pytest.importorskip("psycopg")
+    import psycopg
+
+    from mac.store_postgres import PostgresStore
+
+    schema = "mac_test_" + uuid.uuid4().hex[:12]
+    with psycopg.connect(pg_dsn, autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    sep = "&" if "?" in pg_dsn else "?"
+    scoped_dsn = f"{pg_dsn}{sep}options=-csearch_path%3D{schema}"
+    store = PostgresStore(scoped_dsn, pool_size=2, min_size=1)
+    try:
+        store.initialize()
+        yield store
+    finally:
+        store.close()
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 def submit_review_verdict(

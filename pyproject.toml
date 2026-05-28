@@ -42,6 +42,7 @@ markers = [
     "api: FastAPI HTTP endpoint tests (tests/api/)",
     "cli: CLI command tests — mac, hgmac (tests/cli/)",
     "ui: UI asset-serving and dashboard tests (tests/ui/)",
+    "postgres: live-Postgres tests; need MAC_TEST_PG_URL pointing at a writable test DB",
 ]
 
 [tool.hatch.build.targets.wheel]
