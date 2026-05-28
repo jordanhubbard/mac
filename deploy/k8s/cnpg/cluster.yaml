@@ -1,0 +1,76 @@
+# CloudNativePG Cluster for the mac control plane.
+#
+# Requires the CNPG operator already installed in the cluster
+# (https://cloudnative-pg.io/). Operator install is intentionally out of
+# scope here — that is a cluster-admin one-shot, not application config.
+#
+# Bootstrap creates database `mac` owned by role `mac` whose credentials
+# come from `mac-pg-superuser` (created by the ExternalSecret in
+# ../mac-api/externalsecret.example.yaml). The schema itself is applied
+# at mac-api startup via PostgresStore.initialize() — every statement in
+# src/mac/data/postgres/schema.sql is idempotent (IF NOT EXISTS / OR
+# REPLACE) so concurrent replicas racing each other is safe.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mac-pg
+  namespace: mac
+spec:
+  description: "Durable coordinator state for mac-api (K8s Phase 3)."
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "1GB"
+      work_mem: "8MB"
+      maintenance_work_mem: "128MB"
+      wal_compression: "on"
+      # Service-layer SQL is sqlite-dialect-shaped; pg_stat_statements
+      # is invaluable for finding hot translated queries.
+      shared_preload_libraries: "pg_stat_statements"
+  bootstrap:
+    initdb:
+      database: mac
+      owner: mac
+      secret:
+        name: mac-pg-app
+      postInitSQL:
+        # Mac stores ciphertext blobs (secrets) and JSON-as-text columns.
+        # Force C collation on the text columns we never compare in
+        # locale-aware ways to avoid OS-specific collation drift between
+        # replicas after an upgrade.
+        - "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+  storage:
+    size: 20Gi
+    storageClass: ""  # set to your cluster's default SSD class, e.g. "fast-ssd"
+  monitoring:
+    enablePodMonitor: true
+  # Backup config — point at object storage of your choice. Disabled by
+  # default so an unconfigured cluster comes up green; uncomment + fill
+  # in before going to production.
+  # backup:
+  #   barmanObjectStore:
+  #     destinationPath: s3://YOUR-BUCKET/mac-pg
+  #     s3Credentials:
+  #       accessKeyId:
+  #         name: mac-pg-backup-creds
+  #         key: ACCESS_KEY_ID
+  #       secretAccessKey:
+  #         name: mac-pg-backup-creds
+  #         key: SECRET_ACCESS_KEY
+  #     wal:
+  #       compression: gzip
+  #   retentionPolicy: "30d"
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: "2"
+  affinity:
+    enablePodAntiAffinityForPrimary: true
+    topologyKey: kubernetes.io/hostname

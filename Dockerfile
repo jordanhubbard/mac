@@ -30,7 +30,10 @@ RUN groupadd --system mac && \
     chown -R mac:mac /var/lib/mac
 
 COPY --from=builder /wheels/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
+# Install with the [postgres] extra so the same image works against both
+# SQLite (legacy single-host) and Postgres (K8s + CNPG topology).
+# Selection is driven at runtime by MAC_DATABASE_URL via make_store_from_env.
+RUN WHEEL=$(ls /tmp/*.whl) && pip install --no-cache-dir "${WHEEL}[postgres]" && rm -f /tmp/*.whl
 
 USER mac
 WORKDIR /var/lib/mac

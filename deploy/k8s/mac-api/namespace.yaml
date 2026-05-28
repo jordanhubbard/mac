@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mac
+  labels:
+    app.kubernetes.io/name: mac
+    app.kubernetes.io/managed-by: argocd
