@@ -86,6 +86,20 @@ deploy/k8s/
    already installs it; tag and push to your registry, then replace the
    `image:` placeholder in `mac-api/deployment.yaml`,
    `mac-runner/deployment.yaml`, and `mac-controller/deployment.yaml`.
+   The helper script `scripts/build-and-push-image.sh` handles the
+   common case (Apple Silicon dev machine → linux/amd64 K8s nodes via
+   `docker buildx`, optional `--push` and `--update-manifests`):
+
+   ```bash
+   # build only, into the local daemon (no push):
+   scripts/build-and-push-image.sh --registry ghcr.io/your-org
+
+   # build + push + pin the digest in all three deployment.yaml files:
+   scripts/build-and-push-image.sh \
+     --registry ghcr.io/your-org \
+     --tag v0.1.0 \
+     --update-manifests
+   ```
 
 ## Apply order
 
