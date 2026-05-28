@@ -290,12 +290,19 @@ class ObservabilityService:
                     "_keys": list(ensure_json_object(detail).keys())[:50],
                 }
             )
-        cursor = conn.execute(
+        # RETURNING is supported by both SQLite (>=3.35, 2021) and Postgres.
+        # Replaces an earlier `cursor.lastrowid` read that worked under
+        # SQLite but broke on Postgres because the PostgresStore _Result
+        # adapter does not expose lastrowid (Postgres has no implicit
+        # last-row-id concept — the sequence value is only available via
+        # RETURNING or LASTVAL(), and RETURNING is portable).
+        result = conn.execute(
             """
             INSERT INTO observability_events (
                 id, kind, layer, source, level, name, subject_type, subject_id,
                 value, unit, detail, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING sequence
             """,
             (
                 obs_id,
@@ -312,8 +319,12 @@ class ObservabilityService:
                 when,
             ),
         )
+        sequence_row = result.fetchone()
+        if sequence_row is None:
+            raise RuntimeError("INSERT ... RETURNING sequence yielded no row")
+        sequence_value = sequence_row[0] if not hasattr(sequence_row, "keys") else sequence_row["sequence"]
         return ObservabilityEvent(
-            int(cursor.lastrowid),
+            int(sequence_value),
             obs_id,
             kind_value,
             layer_value,
