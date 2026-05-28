@@ -17,9 +17,14 @@ connection is safe to release before the caller fetches them. Inside a
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from mac.store import StoreConnection, StoreError
+
+SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "data" / "postgres" / "schema.sql"
+)
 
 try:
     import psycopg
@@ -185,6 +190,21 @@ class _Transaction:
             raise StoreError(str(exc)) from exc
 
 
+def _load_packaged_schema() -> str:
+    """Read the bundled Postgres schema DDL from `src/mac/data/postgres/`.
+
+    Matches the path-based loader pattern used by `roles_service.SEED_CATALOG`.
+    Apply it once per fresh database via `PostgresStore.initialize()`.
+    """
+    if not SCHEMA_PATH.exists():  # pragma: no cover - packaging guard
+        raise StoreError(
+            "Postgres schema.sql is missing at %s; the wheel's "
+            "force-include for src/mac/data may be misconfigured."
+            % SCHEMA_PATH
+        )
+    return SCHEMA_PATH.read_text()
+
+
 class PostgresStore:
     """Postgres backend implementing the `Store` protocol.
 
@@ -207,6 +227,45 @@ class PostgresStore:
             max_size=pool_size,
             open=True,
         )
+
+    def initialize(self) -> None:
+        """Apply the bundled Postgres schema (idempotent).
+
+        Equivalent to `SQLiteStore._initialize()` for the Postgres backend:
+        creates all tables, indexes, triggers, the `events` view, and the
+        `json_extract` SQL-function dialect shim. Safe to call on an
+        already-initialised database — every statement uses
+        `IF NOT EXISTS` or `OR REPLACE`.
+        """
+        schema = _load_packaged_schema()
+        try:
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(schema)
+        except psycopg.Error as exc:
+            raise StoreError(str(exc)) from exc
+
+    def ensure_column(
+        self, table: str, column: str, definition: str
+    ) -> None:
+        """Additive migration helper — matches SQLiteStore._ensure_column.
+
+        ``definition`` includes the column name + type clause as in the
+        existing call sites: ``ensure_column("agents", "role_id",
+        "role_id TEXT")``. Postgres 9.6+ supports ``ADD COLUMN IF NOT
+        EXISTS`` so the operation is naturally idempotent.
+        """
+        # `column` is unused server-side because `definition` already
+        # carries it; keep the parameter so SQLiteStore and PostgresStore
+        # have identical signatures.
+        _ = column
+        sql = "ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s" % (table, definition)
+        try:
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+        except psycopg.Error as exc:
+            raise StoreError(str(exc)) from exc
 
     def close(self) -> None:
         self._pool.close()
