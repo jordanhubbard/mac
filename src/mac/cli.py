@@ -239,6 +239,80 @@ def cmd_task_show(args: argparse.Namespace) -> None:
     _print(_plane(args).task_detail(args.task_id))
 
 
+def cmd_task_ready(args: argparse.Namespace) -> None:
+    """List tasks ready to work — state=open, no unfinished dependencies,
+    unclaimed. Matches the ergonomics of `bd ready`."""
+    cp = _plane(args)
+    from mac.models import TERMINAL_TASK_STATES, TaskState
+
+    rows = cp.store.query_all(
+        """
+        SELECT * FROM tasks
+        WHERE state = ?
+          AND owner_agent_id IS NULL
+          AND lease_id IS NULL
+        ORDER BY priority DESC, created_at
+        """,
+        (TaskState.OPEN.value,),
+    )
+    out = []
+    for row in rows:
+        task = cp._task_from_row(row)
+        deps = task.dependencies or []
+        unfinished = []
+        for dep_id in deps:
+            try:
+                dep = cp.get_task(dep_id)
+            except Exception:  # noqa: BLE001 - missing dep blocks readiness
+                unfinished.append(dep_id)
+                continue
+            if dep.state not in TERMINAL_TASK_STATES:
+                unfinished.append(dep_id)
+        if not unfinished:
+            out.append(task.to_dict())
+        if args.limit and len(out) >= args.limit:
+            break
+    _print(out)
+
+
+def cmd_task_claim(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    task, lease = cp.claim_task(args.task_id, args.agent_id)
+    _print({"task": task.to_dict(), "lease_id": lease.id if lease else None})
+
+
+def cmd_task_close(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    from mac.models import TaskState
+
+    detail = {"reason": args.reason} if args.reason else {}
+    target = TaskState.COMPLETED.value if args.success else TaskState.CANCELLED.value
+    _print(cp.transition_task(args.task_id, target, args.actor, detail).to_dict())
+
+
+def cmd_task_search(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    like = "%" + args.query + "%"
+    rows = cp.store.query_all(
+        """
+        SELECT * FROM tasks
+        WHERE title LIKE ? OR description LIKE ?
+        ORDER BY priority DESC, created_at DESC
+        LIMIT ?
+        """,
+        (like, like, int(args.limit)),
+    )
+    _print([cp._task_from_row(row).to_dict() for row in rows])
+
+
+def cmd_task_stats(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    rows = cp.store.query_all(
+        "SELECT state, COUNT(*) AS n FROM tasks GROUP BY state ORDER BY state"
+    )
+    _print({row["state"]: int(row["n"]) for row in rows})
+
+
 def cmd_project_list(args: argparse.Namespace) -> None:
     _print(_plane(args).list_projects())
 
@@ -803,6 +877,66 @@ def cmd_memory_search(args: argparse.Namespace) -> None:
     _print([record.to_dict() for record in _plane(args).search_memory(args.task_id, args.subject_type, args.subject_id)])
 
 
+def cmd_memory_remember(args: argparse.Namespace) -> None:
+    """`bd remember` equivalent — store an ambient project-scoped fact
+    keyed by name. Subsequent calls with the same key overwrite."""
+    cp = _plane(args)
+    project = args.project or "default"
+    key = args.key
+    # Delete any prior record with the same key under this project so
+    # the value is updateable in place.
+    cp.store.execute(
+        "DELETE FROM memory_records WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?",
+        (project, "beads_memory:%s" % key),
+    )
+    _print(
+        cp.add_memory(
+            None,
+            "project",
+            project,
+            "beads_memory:%s" % key,
+            args.content,
+            None,
+            args.actor,
+        )
+    )
+
+
+def cmd_memory_list(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    project = args.project or "default"
+    rows = cp.store.query_all(
+        """
+        SELECT * FROM memory_records
+        WHERE subject_type = 'project' AND subject_id = ?
+          AND record_type LIKE 'beads_memory:%'
+        ORDER BY created_at
+        """,
+        (project,),
+    )
+    _print(
+        [
+            {
+                "key": row["record_type"].split(":", 1)[1] if ":" in row["record_type"] else row["record_type"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+                "id": row["id"],
+            }
+            for row in rows
+        ]
+    )
+
+
+def cmd_memory_forget(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    project = args.project or "default"
+    cursor = cp.store.execute(
+        "DELETE FROM memory_records WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?",
+        (project, "beads_memory:%s" % args.key),
+    )
+    _print({"deleted": cursor.rowcount, "key": args.key, "project": project})
+
+
 def cmd_rollout_create(args: argparse.Namespace) -> None:
     _print(
         _plane(args).create_rollout(
@@ -1131,6 +1265,32 @@ def build_parser() -> argparse.ArgumentParser:
     show = task.add_parser("show")
     show.add_argument("task_id")
     _set(cmd_task_show, show)
+
+    ready = task.add_parser("ready", help="list open tasks ready to work (no unfinished deps, unclaimed)")
+    ready.add_argument("--limit", type=int, default=0)
+    _set(cmd_task_ready, ready)
+
+    claim = task.add_parser("claim", help="atomically claim a task for an agent")
+    claim.add_argument("task_id")
+    claim.add_argument("agent_id")
+    _set(cmd_task_claim, claim)
+
+    close = task.add_parser("close", help="transition a task to completed/cancelled with an optional reason")
+    close.add_argument("task_id")
+    close.add_argument("--reason", default="")
+    close.add_argument("--actor", default="human")
+    close.add_argument("--cancelled", dest="success", action="store_false",
+                       help="close as CANCELLED instead of COMPLETED")
+    close.set_defaults(success=True)
+    _set(cmd_task_close, close)
+
+    search = task.add_parser("search", help="keyword search across task title and description")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=50)
+    _set(cmd_task_search, search)
+
+    stats = task.add_parser("stats", help="count tasks by state")
+    _set(cmd_task_stats, stats)
 
     start = task.add_parser("start")
     start.add_argument("task_id")
@@ -1591,6 +1751,31 @@ def build_parser() -> argparse.ArgumentParser:
     memory_search.add_argument("--subject-type")
     memory_search.add_argument("--subject-id")
     _set(cmd_memory_search, memory_search)
+
+    memory_remember = memory.add_parser(
+        "remember",
+        help="store an ambient project-scoped fact (bd remember equivalent)",
+    )
+    memory_remember.add_argument("key")
+    memory_remember.add_argument("content")
+    memory_remember.add_argument("--project", default="default")
+    memory_remember.add_argument("--actor", default="human")
+    _set(cmd_memory_remember, memory_remember)
+
+    memory_list = memory.add_parser(
+        "list",
+        help="list project-scoped memories (bd memories equivalent)",
+    )
+    memory_list.add_argument("--project", default="default")
+    _set(cmd_memory_list, memory_list)
+
+    memory_forget = memory.add_parser(
+        "forget",
+        help="delete a project-scoped memory by key (bd forget equivalent)",
+    )
+    memory_forget.add_argument("key")
+    memory_forget.add_argument("--project", default="default")
+    _set(cmd_memory_forget, memory_forget)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
     rollout_create = rollout.add_parser("create")
