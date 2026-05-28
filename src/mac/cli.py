@@ -185,9 +185,13 @@ def cmd_task_migrate_beads(args: argparse.Namespace) -> None:
     from pathlib import Path as _Path
     from mac.beads_migrator import migrate, read_beads_memories_via_cli
 
-    cp = _plane(args)
     repo_path = _Path(args.repo_path).expanduser().resolve()
-    memories = {} if args.no_memories else read_beads_memories_via_cli(repo_path)
+    if args.tickets_only:
+        cp = None
+        memories = None
+    else:
+        cp = _plane(args)
+        memories = {} if args.no_memories else read_beads_memories_via_cli(repo_path)
     report = migrate(
         repo_path,
         cp,
@@ -196,6 +200,7 @@ def cmd_task_migrate_beads(args: argparse.Namespace) -> None:
         dry_run=args.dry_run,
         emit_tickets=not args.no_tickets,
         memories=memories,
+        tickets_only=args.tickets_only,
     )
     _print(report.to_dict())
 
@@ -1166,6 +1171,9 @@ def build_parser() -> argparse.ArgumentParser:
                                help="skip writing .tickets/<id>.md files")
     migrate_beads.add_argument("--no-memories", action="store_true",
                                help="skip importing bd memories")
+    migrate_beads.add_argument("--tickets-only", action="store_true",
+                               help="write .tickets/<id>.md mirror only; skip MAC db writes "
+                                    "(useful for repos not registered with a MAC hub)")
     _set(cmd_task_migrate_beads, migrate_beads)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)

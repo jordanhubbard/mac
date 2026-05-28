@@ -100,20 +100,26 @@ def detect(repo_path: Path) -> DetectionReport:
 
 def migrate(
     repo_path: Path,
-    cp: Any,
+    cp: Optional[Any],
     *,
     project: str,
     actor: str = "beads-migrator",
     dry_run: bool = False,
     emit_tickets: bool = True,
     memories: Optional[Dict[str, str]] = None,
+    tickets_only: bool = False,
 ) -> MigrationReport:
     """Migrate a beads repo into MAC tasks + .tickets/ mirror.
 
     ``cp`` is a ControlPlane instance. The migrator only calls
     ``cp.create_task`` and the underlying store for state fix-ups; it
-    never invokes ``bd`` itself.
+    never invokes ``bd`` itself. When ``tickets_only=True``, ``cp`` may
+    be ``None`` — only the .tickets/<id>.md mirror is produced.
     """
+    if tickets_only and not emit_tickets:
+        raise ValueError("tickets_only=True requires emit_tickets=True")
+    if not tickets_only and cp is None:
+        raise ValueError("cp is required unless tickets_only=True")
     repo_path = Path(repo_path).expanduser()
     detected = detect(repo_path)
     report = MigrationReport(
@@ -138,35 +144,46 @@ def migrate(
             report.issues_failed += 1
             report.errors.append("issue missing id: %r" % issue)
             continue
-        try:
-            existing = _find_task_by_beads_id(cp, beads_id)
-        except Exception as exc:  # noqa: BLE001 - migration is best-effort
-            report.issues_failed += 1
-            report.errors.append("lookup failed for %s: %s" % (beads_id, exc))
-            continue
-        if existing is not None:
-            report.issues_skipped_existing += 1
-            bead_id_to_task_id[beads_id] = existing.id
-            if emit_tickets and not dry_run:
-                _write_ticket(tickets_dir, issue, existing.id)
+        existing_task_id: Optional[str] = None
+        if not tickets_only:
+            try:
+                existing = _find_task_by_beads_id(cp, beads_id)
+            except Exception as exc:  # noqa: BLE001 - migration is best-effort
+                report.issues_failed += 1
+                report.errors.append("lookup failed for %s: %s" % (beads_id, exc))
+                continue
+            if existing is not None:
+                report.issues_skipped_existing += 1
+                existing_task_id = existing.id
+                bead_id_to_task_id[beads_id] = existing.id
+                if emit_tickets and not dry_run:
+                    _write_ticket(tickets_dir, issue, existing.id)
+                    report.tickets_written += 1
+                continue
+            try:
+                task_id = _create_task_from_bead(
+                    cp, issue, project=project, actor=actor, dry_run=dry_run
+                )
+            except Exception as exc:  # noqa: BLE001 - migration is best-effort
+                report.issues_failed += 1
+                report.errors.append("create failed for %s: %s" % (beads_id, exc))
+                continue
+            if task_id is not None:
+                bead_id_to_task_id[beads_id] = task_id
+            report.issues_migrated += 1
+            if emit_tickets and not dry_run and task_id is not None:
+                _write_ticket(tickets_dir, issue, task_id)
                 report.tickets_written += 1
-            continue
-        try:
-            task_id = _create_task_from_bead(
-                cp, issue, project=project, actor=actor, dry_run=dry_run
-            )
-        except Exception as exc:  # noqa: BLE001 - migration is best-effort
-            report.issues_failed += 1
-            report.errors.append("create failed for %s: %s" % (beads_id, exc))
-            continue
-        if task_id is not None:
-            bead_id_to_task_id[beads_id] = task_id
-        report.issues_migrated += 1
-        if emit_tickets and not dry_run and task_id is not None:
-            _write_ticket(tickets_dir, issue, task_id)
-            report.tickets_written += 1
+        else:
+            # tickets-only path: skip DB entirely; use the beads id as
+            # the mac-task-id placeholder so the frontmatter still
+            # round-trips against future DB-aware imports.
+            report.issues_migrated += 1
+            if not dry_run:
+                _write_ticket(tickets_dir, issue, "pending:%s" % beads_id)
+                report.tickets_written += 1
 
-    if memories:
+    if memories and not tickets_only:
         for key, value in memories.items():
             if key == "schema_version":
                 continue

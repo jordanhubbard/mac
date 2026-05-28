@@ -3,24 +3,40 @@
 This file provides instructions and context for AI coding agents working on this project.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
+## Issue Tracking
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+This project is migrating off **beads** (`bd`). Issues now live as one
+markdown file per ticket in `.tickets/<id>.md` (wedow/ticket compatible
+format: YAML frontmatter + body with optional Design / Acceptance
+Criteria / Notes sections). The MAC hub task ledger remains the
+canonical execution store; `.tickets/<id>.md` is the git-trackable
+human/IDE mirror that travels with the repo.
 
-### Quick Reference
+### Quick reference (transitional — beads still works locally)
 
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work
 bd close <id>         # Complete work
+bd export -o .beads/issues.jsonl   # Refresh JSONL before re-migrating
+
+mac task migrate-beads <repo> --project=<name>          # full import: JSONL + memories + MAC tasks + .tickets/
+mac task migrate-beads <repo> --project=<name> --tickets-only   # .tickets/ files only (no DB writes)
+mac task detect-beads <repo>                            # read-only inspection of .beads/ state
 ```
 
 ### Rules
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Read issues from `.tickets/<id>.md` whenever possible; the file IS authoritative for the issue's text.
+- `bd` remains available for issue lifecycle until the replacement CLI lands — DO NOT use TodoWrite / TaskCreate / markdown TODO lists.
+- `bd dolt push/pull` is disabled (see services.py:_sync_beads_database). Issues travel via git, not dolt.
+- After `bd create` / `bd close` / etc., refresh the JSONL + ticket mirror before pushing:
+  ```bash
+  bd export -o .beads/issues.jsonl
+  mac task migrate-beads . --project=mac --tickets-only
+  ```
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files (the bd memory store will be migrated alongside issues).
 
 ## Session Completion
 

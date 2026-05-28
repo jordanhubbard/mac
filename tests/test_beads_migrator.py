@@ -145,6 +145,24 @@ def test_migrate_dry_run_creates_nothing(tmp_path):
     assert not (tmp_path / ".tickets").exists()
 
 
+def test_tickets_only_writes_files_without_db(tmp_path):
+    _write_beads_repo(
+        tmp_path,
+        [
+            {"id": "x-9", "status": "open", "title": "no db needed"},
+            {"id": "x-10", "status": "closed", "title": "also no db"},
+        ],
+    )
+    report = migrate(tmp_path, None, project="standalone", tickets_only=True)
+    assert report.issues_migrated == 2
+    assert report.tickets_written == 2
+    assert report.issues_skipped_existing == 0
+    files = sorted(p.name for p in (tmp_path / ".tickets").iterdir())
+    assert files == ["x-10.md", "x-9.md"]
+    body = (tmp_path / ".tickets" / "x-9.md").read_text(encoding="utf-8")
+    assert "mac-task-id: pending:x-9" in body
+
+
 def test_migrate_memories_imports_under_project_subject(tmp_path):
     _write_beads_repo(tmp_path, [{"id": "x-1", "status": "open", "title": "t"}])
     cp = ControlPlane.in_memory()

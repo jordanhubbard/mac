@@ -1,17 +1,33 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This project is migrating off **beads** (`bd`). Issue text lives in
+`.tickets/<id>.md` (one markdown file per ticket, wedow/ticket-compatible
+YAML frontmatter). The MAC hub task ledger remains the canonical
+execution store; `.tickets/` is the git-trackable mirror.
 
 ## Quick Reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
+# Read issues
+ls .tickets/                         # all issues
+cat .tickets/mac-y7ha.md             # one issue (the file IS authoritative for text)
+
+# Issue lifecycle (transitional, until the replacement CLI lands)
+bd ready                             # Find available work
+bd show <id>                         # View issue details
+bd update <id> --claim               # Claim work atomically
+bd close <id>                        # Complete work
+
+# Refresh JSONL + .tickets/ mirror after lifecycle changes
+bd export -o .beads/issues.jsonl
+mac task migrate-beads . --project=mac --tickets-only
+
+# Inspect or migrate other repos
+mac task detect-beads <repo>
+mac task migrate-beads <repo> --project=<name>
 ```
 
-> Do not run `bd dolt push` / `bd dolt pull`. Dolt sync is disabled (services.py:_sync_beads_database); `.beads/*.jsonl` is tracked in git and travels via `git push`.
+> Do not run `bd dolt push` / `bd dolt pull`. Dolt sync is disabled (services.py:_sync_beads_database). Issues travel via git, not dolt.
 
 ## Non-Interactive Shell Commands
 
