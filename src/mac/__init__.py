@@ -1,6 +1,13 @@
 """Multi-agent coordinator control plane."""
 
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, Store, StoreError
 
-__all__ = ["ControlPlane", "SQLiteStore"]
+__all__ = ["ControlPlane", "SQLiteStore", "Store", "StoreError"]
+
+try:  # psycopg is an optional install ('mac[postgres]')
+    from mac.store_postgres import PostgresStore  # noqa: F401
+except ImportError:  # pragma: no cover - exercised when extra is absent
+    pass
+else:
+    __all__.append("PostgresStore")

@@ -120,7 +120,7 @@ from mac.review_service import ReviewService
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, Store
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
@@ -534,10 +534,10 @@ class ControlPlane:
 
     def __init__(
         self,
-        store: Optional[SQLiteStore] = None,
+        store: Optional[Store] = None,
         secret_key: Optional[str] = None,
     ) -> None:
-        self.store = store or SQLiteStore()
+        self.store: Store = store or SQLiteStore()
         raw_key = secret_key if secret_key is not None else os.environ.get("MAC_SECRET_KEY")
         if not raw_key:
             raise ValidationError(

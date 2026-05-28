@@ -27,7 +27,7 @@ from mac.agentbus_control import (
 from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, default_db_path
+from mac.store import SQLiteStore, StoreError, default_db_path
 
 _log = logging.getLogger(__name__)
 
@@ -1969,7 +1969,7 @@ def create_app(
                 level=level,
                 detail=detail,
             )
-        except (MACError, sqlite3.Error):
+        except (MACError, StoreError, sqlite3.Error):
             _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
 
     @app.middleware("http")

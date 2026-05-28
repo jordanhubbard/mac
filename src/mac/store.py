@@ -5,7 +5,60 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Sequence
+from typing import (
+    Any,
+    ContextManager,
+    Iterable,
+    Iterator,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
+
+
+class StoreError(Exception):
+    """Backend-neutral persistence error.
+
+    SQLiteStore continues to surface ``sqlite3.Error`` subclasses directly
+    so existing callers that catch ``sqlite3.IntegrityError`` keep working.
+    Non-SQLite backends (e.g. PostgresStore) wrap their driver-native
+    errors in ``StoreError``. Code that must handle either backend should
+    catch ``(StoreError, sqlite3.Error)``.
+    """
+
+
+@runtime_checkable
+class StoreConnection(Protocol):
+    """Connection-like object yielded by ``Store.transaction()``."""
+
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Any: ...
+
+
+@runtime_checkable
+class Store(Protocol):
+    """Backend-agnostic persistence interface used by the control plane.
+
+    Implementations accept SQL written in SQLite dialect. Non-SQLite
+    backends translate placeholders and dialect-specific functions
+    internally so service-layer SQL stays SQLite-shaped across the ~50
+    service modules.
+    """
+
+    path: str
+
+    def close(self) -> None: ...
+    def transaction(self) -> ContextManager[StoreConnection]: ...
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Any: ...
+    def executemany(
+        self, sql: str, params: Iterable[Sequence[Any]]
+    ) -> Any: ...
+    def query_one(
+        self, sql: str, params: Sequence[Any] = ()
+    ) -> Optional[Any]: ...
+    def query_all(
+        self, sql: str, params: Sequence[Any] = ()
+    ) -> list: ...
 
 
 def default_db_path() -> str:
