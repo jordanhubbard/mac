@@ -30,6 +30,51 @@ def _csv(value: Optional[str]) -> Iterable[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _read_text_arg(
+    inline: Optional[str],
+    file_path: Optional[str],
+    *,
+    label: str,
+    default: str = "",
+) -> str:
+    """Resolve a text-bearing CLI argument from one of: inline string,
+    file path, or '-' for stdin. Lets callers avoid shell-quoting
+    hazards on multi-line / metacharacter-heavy values (parens, braces,
+    backticks, ``$``).
+
+    Inline value wins when both are supplied. ``--<arg>-file -`` reads
+    from stdin so pipes and heredocs work without quoting.
+    """
+    import sys
+    if inline is not None and inline != "":
+        return inline
+    if file_path:
+        if file_path == "-":
+            return sys.stdin.read()
+        try:
+            with open(file_path, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except OSError as exc:
+            raise SystemExit("failed to read %s from %s: %s" % (label, file_path, exc))
+    return default
+
+
+def _read_json_arg(
+    inline: Optional[str],
+    file_path: Optional[str],
+    *,
+    label: str,
+    default: Any,
+) -> Any:
+    raw = _read_text_arg(inline, file_path, label=label, default="")
+    if not raw or not raw.strip():
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit("invalid JSON in %s: %s" % (label, exc))
+
+
 def _print(value: Any) -> None:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
@@ -215,15 +260,27 @@ def cmd_task_detect_beads(args: argparse.Namespace) -> None:
 
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
+    description = _read_text_arg(
+        args.description,
+        getattr(args, "description_file", None),
+        label="--description",
+        default="",
+    )
+    metadata = _read_json_arg(
+        args.metadata,
+        getattr(args, "metadata_file", None),
+        label="--metadata",
+        default={},
+    )
     _print(
         cp.create_task(
             args.title,
-            description=args.description or "",
+            description=description,
             project=args.project,
             priority=args.priority,
             required_capabilities=_csv(args.required_capabilities),
             dependencies=_csv(args.dependencies),
-            metadata=_json_arg(args.metadata, {}),
+            metadata=metadata,
             max_attempts=args.max_attempts,
             actor=args.actor,
         )
@@ -1248,12 +1305,18 @@ def build_parser() -> argparse.ArgumentParser:
     task = sub.add_parser("task", help="task ledger commands").add_subparsers(dest="task_command", required=True)
     create = task.add_parser("create")
     create.add_argument("title")
-    create.add_argument("--description", default="")
+    create.add_argument("--description", default="",
+                        help="task description (use --description-file for multi-line / shell-hostile content)")
+    create.add_argument("--description-file", dest="description_file",
+                        help="read description from file path (or '-' for stdin); avoids shell-quoting hazards")
     create.add_argument("--project")
     create.add_argument("--priority", type=int, default=0)
     create.add_argument("--required-capabilities")
     create.add_argument("--dependencies")
-    create.add_argument("--metadata")
+    create.add_argument("--metadata",
+                        help="JSON metadata (use --metadata-file for shell-hostile content)")
+    create.add_argument("--metadata-file", dest="metadata_file",
+                        help="read JSON metadata from file path (or '-' for stdin)")
     create.add_argument("--max-attempts", type=int, default=3)
     create.add_argument("--actor", default="human")
     _set(cmd_task_create, create)
