@@ -52,13 +52,15 @@ spec:
               containerPort: 8000
               protocol: TCP
           env:
-            # Make mac-api stateless by pointing at the shared CNPG
-            # cluster. CNPG publishes the rw service at <cluster>-rw.
+            # All credentials come from the operator-supplied
+            # `mac-api-config` Secret. The Postgres cluster itself is
+            # not managed from this repo; bring your own and put the
+            # DSN here. See deploy/k8s/README.md.
             - name: MAC_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: mac-pg-app
-                  key: uri
+                  name: mac-api-config
+                  key: MAC_DATABASE_URL
             - name: MAC_PG_POOL_SIZE
               value: "20"
             - name: MAC_SECRET_KEY

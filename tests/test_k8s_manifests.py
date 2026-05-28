@@ -25,28 +25,6 @@ def _load(path: Path) -> List[dict]:
     return docs
 
 
-def test_cnpg_cluster_uses_postgres17_image() -> None:
-    docs = _load(ROOT / "cnpg" / "cluster.yaml")
-    assert len(docs) == 1
-    spec = docs[0]
-    assert spec["kind"] == "Cluster"
-    assert spec["apiVersion"].startswith("postgresql.cnpg.io")
-    image = spec["spec"]["imageName"]
-    assert ":17" in image, "CNPG cluster must be Postgres 17 per K8s Phase 3 goal"
-
-
-def test_cnpg_cluster_has_three_instances() -> None:
-    spec = _load(ROOT / "cnpg" / "cluster.yaml")[0]
-    assert spec["spec"]["instances"] >= 3, "HA needs at least 3 replicas"
-
-
-def test_cnpg_cluster_bootstraps_mac_database() -> None:
-    spec = _load(ROOT / "cnpg" / "cluster.yaml")[0]
-    initdb = spec["spec"]["bootstrap"]["initdb"]
-    assert initdb["database"] == "mac"
-    assert initdb["owner"] == "mac"
-
-
 def test_mac_api_deployment_is_stateless() -> None:
     """Phase 3 mac-api must have no PVC and >= 2 replicas — that's what
     'stateless' means architecturally."""
@@ -76,8 +54,11 @@ def test_mac_api_env_wires_database_url_from_secret() -> None:
     db_url = next(e for e in env if e["name"] == "MAC_DATABASE_URL")
     assert "valueFrom" in db_url, "MAC_DATABASE_URL must come from a Secret"
     secret_ref = db_url["valueFrom"]["secretKeyRef"]
-    # CNPG creates `mac-pg-app` from its bootstrap.initdb.secret config.
-    assert secret_ref["name"] == "mac-pg-app"
+    # All credentials live in the single operator-supplied Secret —
+    # the Postgres cluster is externally managed and its DSN is
+    # provided alongside MAC_SECRET_KEY/MAC_WORKER_TOKEN.
+    assert secret_ref["name"] == "mac-api-config"
+    assert secret_ref["key"] == "MAC_DATABASE_URL"
 
 
 def test_mac_api_env_wires_secret_key() -> None:
@@ -108,23 +89,15 @@ def test_mac_api_runs_as_nonroot() -> None:
 
 
 def test_kustomization_tree_includes_expected_resources() -> None:
-    cnpg_kust = _load(ROOT / "cnpg" / "kustomization.yaml")[0]
-    assert "cluster.yaml" in cnpg_kust["resources"]
-
     api_kust = _load(ROOT / "mac-api" / "kustomization.yaml")[0]
     for res in ("namespace.yaml", "deployment.yaml", "service.yaml"):
         assert res in api_kust["resources"]
-
-
-def test_argocd_application_targets_repo_paths() -> None:
-    docs = _load(ROOT / "argocd" / "application.yaml")
-    # Four Applications: CNPG, mac-api, mac-runner (Phase 4), mac-controller (Phase 5).
-    assert len(docs) == 4
-    paths = [d["spec"]["source"]["path"] for d in docs]
-    assert "deploy/k8s/cnpg" in paths
-    assert "deploy/k8s/mac-api" in paths
-    assert "deploy/k8s/mac-runner" in paths
-    assert "deploy/k8s/mac-controller" in paths
+    runner_kust = _load(ROOT / "mac-runner" / "kustomization.yaml")[0]
+    for res in ("serviceaccount.yaml", "rbac.yaml", "deployment.yaml"):
+        assert res in runner_kust["resources"]
+    controller_kust = _load(ROOT / "mac-controller" / "kustomization.yaml")[0]
+    for res in ("serviceaccount.yaml", "rbac.yaml", "deployment.yaml"):
+        assert res in controller_kust["resources"]
 
 
 # ----------------------------------------------------------------------

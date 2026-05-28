@@ -1,8 +1,18 @@
-# mac on Kubernetes (Phase 3 topology)
+# mac on Kubernetes
 
-Stateless `mac-api` Deployment backed by a CloudNativePG (CNPG) Postgres 17
-cluster. Designed for the K8s-native rewrite Phases 3-5 in
-[`docs/k8s-native-rewrite-plan.md`](../../docs/k8s-native-rewrite-plan.md).
+Stateless `mac-api` Deployment backed by an externally-managed Postgres
+17 database, plus the Phase 4 `mac-k8s-runner` and Phase 5
+`mac-k8s-controller`. Designed for the K8s-native rewrite Phases 3-5
+in [`docs/k8s-native-rewrite-plan.md`](../../docs/k8s-native-rewrite-plan.md).
+
+The Postgres cluster itself is **not** managed from this repo. Bring
+your own — CloudNativePG, RDS, Cloud SQL, a vendor-managed cluster,
+whatever your platform team owns — and supply the DSN via the
+`mac-api-config` Secret (key `MAC_DATABASE_URL`). Likewise, ArgoCD
+`Application` manifests are not shipped here; if you sync with ArgoCD,
+point one Application per kustomize tree from your platform-config
+repo at `deploy/k8s/mac-api`, `deploy/k8s/mac-runner`, and
+`deploy/k8s/mac-controller`.
 
 ## Architecture
 
@@ -13,10 +23,10 @@ cluster. Designed for the K8s-native rewrite Phases 3-5 in
                           │                │                │
                           └────────┬───────┴────────┬───────┘
                                    ▼                ▼
-                            ┌─────────────────────────────┐
-                            │     mac-pg (CNPG)           │
-                            │  3 instances · postgres:17  │
-                            └─────────────────────────────┘
+                        ┌─────────────────────────────────────┐
+                        │   Postgres 17 (externally managed)  │
+                        │   DSN: mac-api-config / MAC_DATABASE_URL
+                        └─────────────────────────────────────┘
 ```
 
 Every `mac-api` replica is interchangeable — there is no leader and no
@@ -30,11 +40,6 @@ horizontally without an application-level lock.
 ```
 deploy/k8s/
 ├── README.md                              ← you are here
-├── argocd/
-│   └── application.yaml                   ← one Application per kustomize tree
-├── cnpg/
-│   ├── cluster.yaml                       ← CNPG Cluster CR (Phase 3)
-│   └── kustomization.yaml
 ├── mac-api/                               ← Phase 3: stateless coordinator
 │   ├── namespace.yaml
 │   ├── deployment.yaml                    ← replicas: 2, no PVC
@@ -69,46 +74,42 @@ deploy/k8s/
 
 ## Prerequisites
 
-1. **CloudNativePG operator** installed in the cluster:
-   `kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.1.yaml`
-2. **ExternalSecrets Operator** (optional but recommended) for `MAC_SECRET_KEY` / `MAC_API_TOKENS`.
+1. **A Postgres 17 cluster** reachable from the `mac` namespace. The
+   DSN goes into the `mac-api-config` Secret under key
+   `MAC_DATABASE_URL`. Cluster provisioning is out of scope here.
+2. **ExternalSecrets Operator** (optional but recommended) for
+   `MAC_DATABASE_URL`, `MAC_SECRET_KEY`, and `MAC_API_TOKENS` — see
+   `mac-api/externalsecret.example.yaml`.
 3. A built `mac` image with the `[postgres]` extra. The repo Dockerfile
    already installs it; tag and push to your registry, then replace the
-   `image:` placeholder in `mac-api/deployment.yaml`.
+   `image:` placeholder in `mac-api/deployment.yaml`,
+   `mac-runner/deployment.yaml`, and `mac-controller/deployment.yaml`.
 
 ## Apply order
 
-CNPG bootstrap must complete before `mac-api` pods start (the deployment
-will CrashLoop on connect errors otherwise).
+`mac-api` will CrashLoop on connect errors until the `mac-api-config`
+Secret contains a working `MAC_DATABASE_URL`. Create the Secret first.
 
 ```bash
-# 1. CNPG cluster (creates database `mac`, role `mac`, secret `mac-pg-app`).
-kubectl apply -k deploy/k8s/cnpg
+# 1. (Once) create the Secret with MAC_DATABASE_URL + MAC_SECRET_KEY
+#    [+ MAC_API_TOKENS]. Use your ExternalSecrets backend or create
+#    it imperatively:
+kubectl create namespace mac
+kubectl -n mac create secret generic mac-api-config \
+  --from-literal=MAC_DATABASE_URL='postgresql://user:pass@host:5432/mac' \
+  --from-literal=MAC_SECRET_KEY="$(openssl rand -base64 48)" \
+  --from-literal=MAC_WORKER_TOKEN="$(openssl rand -hex 32)"
 
-# 2. Wait for the cluster to be healthy.
-kubectl -n mac wait --for=condition=Ready cluster/mac-pg --timeout=10m
-
-# 3. (Once) create the ExternalSecret for MAC_SECRET_KEY / MAC_API_TOKENS:
-cp deploy/k8s/mac-api/externalsecret.example.yaml /tmp/mac-api-es.yaml
-$EDITOR /tmp/mac-api-es.yaml      # set your SecretStore + remoteRef keys
-kubectl apply -f /tmp/mac-api-es.yaml
-
-# 4. mac-api Deployment + Service.
+# 2. mac-api Deployment + Service.
 kubectl apply -k deploy/k8s/mac-api
 
-# 5. (Phase 4) mac-k8s-runner Deployment: claims tasks and creates
+# 3. (Phase 4) mac-k8s-runner Deployment: claims tasks and creates
 #    one batch/v1 Job per claimed lease.
 kubectl apply -k deploy/k8s/mac-runner
 
-# 6. (Phase 5) mac-k8s-controller Deployment: reconciles stuck Jobs
+# 4. (Phase 5) mac-k8s-controller Deployment: reconciles stuck Jobs
 #    and (optionally) scales worker-pool Deployments.
 kubectl apply -k deploy/k8s/mac-controller
-```
-
-Or let ArgoCD manage both:
-
-```bash
-kubectl apply -f deploy/k8s/argocd/application.yaml
 ```
 
 ## Schema bootstrap
@@ -116,25 +117,19 @@ kubectl apply -f deploy/k8s/argocd/application.yaml
 `PostgresStore.initialize()` runs the bundled
 [`src/mac/data/postgres/schema.sql`](../../src/mac/data/postgres/schema.sql)
 at process startup. Every statement uses `IF NOT EXISTS` /
-`CREATE OR REPLACE`, so replicas racing each other on first boot is
-safe — Postgres internal locking serialises the DDL.
-
-## Backups
-
-Backup config is commented out in `cnpg/cluster.yaml` so the manifest
-applies clean to a fresh cluster without object-storage credentials.
-Before going to production:
-
-1. Create object-storage credentials and a Secret (`mac-pg-backup-creds`).
-2. Uncomment the `backup:` section in `cluster.yaml`.
-3. Verify the first WAL archive lands in the target bucket.
+`CREATE OR REPLACE`, so multiple `mac-api` replicas racing each other
+on first boot is safe — Postgres internal locking serialises the DDL.
+The cluster owner role pointed to by `MAC_DATABASE_URL` must have
+permission to create tables, functions, triggers, and views in its
+default schema.
 
 ## Watching the rollout
 
 ```bash
 kubectl -n mac get pods
 kubectl -n mac logs -l app.kubernetes.io/name=mac-api -f
-kubectl -n mac exec -it mac-pg-1 -- psql -U postgres -d mac -c '\dt'
+kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-runner -f
+kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-controller -f
 ```
 
 ## Health

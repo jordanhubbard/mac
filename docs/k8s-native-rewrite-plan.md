@@ -14,9 +14,9 @@
 | `mac-api`                | Durable coordinator (stateless, multi-replica) |
 | `mac-agent-worker`       | Role-specific workers                          |
 | Task `Job`s              | Isolated per-task execution                    |
-| Postgres (CNPG)          | Source of truth                                |
+| Postgres (externally managed) | Source of truth                           |
 | ExternalSecrets          | Credential injection                           |
-| ArgoCD                   | Deployment authority                           |
+| ArgoCD (operator-supplied) | Deployment authority                         |
 
 "Kubernetes-native" does NOT mean baking everything into the Hermes pod. It
 means each role above runs as its own workload with its own scaling and
@@ -25,7 +25,7 @@ failure boundary.
 ## Phase 3 — Postgres
 
 Make `mac-api` survivable as multiple stateless replicas by replacing the
-single-writer SQLite store with CNPG-managed Postgres 17.
+single-writer SQLite store with an externally-managed Postgres 17 cluster.
 
 ### 3.1 — Extract `Store` protocol (zero behavior change)
 
@@ -126,18 +126,21 @@ session context) to call the factory:
 `production-deployment.md`'s env table gets `MAC_DATABASE_URL` and
 `MAC_PG_POOL_SIZE`.
 
-### 3.5 — CNPG manifest + stateless `mac-api` Deployment
+### 3.5 — Stateless `mac-api` Deployment
 
-`deploy/k8s/` (new directory):
+`deploy/k8s/mac-api/` (new directory):
 
-- `cnpg/cluster.yaml` — `Cluster` CR (CloudNativePG), `postgres:17`, 3
-  instances, backup config (Barman to object storage), ExternalSecret-sourced
-  superuser password.
-- `cnpg/database.yaml` — `Database` CR for the `mac` logical DB.
-- `mac-api/deployment.yaml` — multi-replica `Deployment`, no PVC, env from
-  ExternalSecret pointing at the CNPG `mac-rw` service.
-- `mac-api/service.yaml`, `mac-api/ingress.yaml`.
-- ArgoCD `Application` manifest in `deploy/k8s/argocd/`.
+- `deployment.yaml` — multi-replica `Deployment`, no PVC, env from the
+  operator-supplied `mac-api-config` Secret which carries
+  `MAC_DATABASE_URL` (DSN of an externally-managed Postgres 17 cluster),
+  `MAC_SECRET_KEY`, `MAC_WORKER_TOKEN`.
+- `service.yaml`, `namespace.yaml`, `externalsecret.example.yaml`.
+
+The Postgres cluster itself is **not** managed from this repo. Bring
+your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.); the
+DSN is supplied via Secret. ArgoCD `Application` manifests are
+operator-supplied for the same reason — sync from your
+platform-config repo, one Application per kustomize tree.
 
 ### 3.6 — Tests
 
@@ -158,7 +161,7 @@ re-run (UPSERT by primary key). For operators upgrading existing deployments.
 ### 3.8 — Docs
 
 Update `docs/production-deployment.md`: remove the "single-writer SQLite"
-caveat for the Postgres topology, add a "Kubernetes + CNPG" section, document
+caveat for the Postgres topology, add a "Kubernetes + Postgres" section, document
 `MAC_DATABASE_URL`. Update `README.md` topology summary.
 
 ## Phase 4 — Job-per-task execution
@@ -249,14 +252,15 @@ the named task.
   in its own namespace.
 - `deploy/k8s/mac-runner/rbac.yaml` — Role + RoleBinding.
 - `deploy/k8s/mac-runner/serviceaccount.yaml`.
-- ArgoCD `Application` entry.
+- ArgoCD `Application` entry — supplied by operators from their
+  platform-config repo, not shipped here.
 
 ### 4.5 — Tests
 
 - Unit: runner's "candidate -> claim -> Job spec" pure function tested
   with a fake K8s client + mocked mac-api.
 - `pytest.mark.k8s` integration test using kind/k3d that spins up the
-  full stack (CNPG, mac-api, mac-runner) and runs one canary task.
+  full stack (Postgres, mac-api, mac-runner) and runs one canary task.
 
 ### Open questions for Phase 4
 

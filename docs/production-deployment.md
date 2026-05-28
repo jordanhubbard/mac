@@ -9,10 +9,12 @@ Three supported topologies:
    topology, but lifecycle is managed by the container runtime (Docker,
    Podman, k8s as a single-replica deployment). See the container section
    below.
-3. **Kubernetes, multi-replica, CNPG-backed** — stateless `mac-api`
-   Deployment in front of a CloudNativePG Postgres 17 cluster. Multiple
-   `mac-api` replicas share the same durable state via `MAC_DATABASE_URL`.
-   This is the K8s-native target topology — see
+3. **Kubernetes, multi-replica, Postgres-backed** — stateless `mac-api`
+   Deployment in front of an externally-managed Postgres 17 cluster.
+   Multiple `mac-api` replicas share the same durable state via
+   `MAC_DATABASE_URL`. The cluster itself (CloudNativePG, RDS, Cloud
+   SQL, vendor-managed, etc.) is provisioned outside this repo and its
+   DSN is supplied via the `mac-api-config` Secret. See
    [`deploy/k8s/README.md`](../deploy/k8s/README.md) and
    [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md).
 
@@ -20,7 +22,7 @@ Three supported topologies:
 concurrent reads well and serializes writes through filesystem locks — so
 `uvicorn --workers > 1` against the same SQLite DB *works*, but every write
 call contends on the same lock. For multi-host, multi-replica, or
-write-heavy fleets, use topology (3) (Postgres via CNPG) instead.
+write-heavy fleets, use topology (3) (Postgres) instead.
 
 The backend selection is runtime: setting `MAC_DATABASE_URL` to a
 `postgresql://...` DSN switches `mac-api` to `PostgresStore` without any
@@ -716,17 +718,25 @@ notification outbox.
 If a migration fails, restore the snapshot and pin the prior version. The
 project does not yet support downgrades through schema deletes.
 
-## Kubernetes + CNPG (K8s-native topology)
+## Kubernetes (K8s-native topology)
 
-For multi-replica `mac-api`, deploy the manifests under `deploy/k8s/`:
+For multi-replica `mac-api`, deploy the manifests under `deploy/k8s/`.
+The Postgres cluster itself is **not** managed from this repo — bring
+your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.) and
+supply the DSN via the `mac-api-config` Secret. Likewise, ArgoCD
+`Application` manifests are not shipped here; point one Application
+per kustomize tree from your platform-config repo if you sync with ArgoCD.
 
 ```bash
-# 1. CloudNativePG cluster (3 instances of postgres:17, bootstraps db `mac`).
-kubectl apply -k deploy/k8s/cnpg
-kubectl -n mac wait --for=condition=Ready cluster/mac-pg --timeout=10m
+# 1. Create the namespace + operator-supplied Secret carrying the DSN
+#    and bearer tokens (or apply your ExternalSecret).
+kubectl create namespace mac
+kubectl -n mac create secret generic mac-api-config \
+  --from-literal=MAC_DATABASE_URL='postgresql://user:pass@host:5432/mac' \
+  --from-literal=MAC_SECRET_KEY="$(openssl rand -base64 48)" \
+  --from-literal=MAC_WORKER_TOKEN="$(openssl rand -hex 32)"
 
-# 2. mac-api Deployment + Service (replicas: 2, no PVC, reads MAC_DATABASE_URL
-#    from the CNPG-managed `mac-pg-app` Secret).
+# 2. mac-api Deployment + Service (replicas: 2, no PVC).
 kubectl apply -k deploy/k8s/mac-api
 
 # 3. (Phase 4) mac-k8s-runner — claims ready tasks and creates one
@@ -738,8 +748,7 @@ kubectl apply -k deploy/k8s/mac-runner
 kubectl apply -k deploy/k8s/mac-controller
 ```
 
-The full apply order, ExternalSecret wiring, ArgoCD `Application`, and
-backup config are documented in
+The full apply order and ExternalSecret wiring are documented in
 [`deploy/k8s/README.md`](../deploy/k8s/README.md). The persistence layer
 is portable across SQLite and Postgres because every `mac-api` SQL
 string is in SQLite dialect; the `PostgresStore` translates placeholders
@@ -750,11 +759,12 @@ Phase 3-5 roadmap.
 
 ## Known limitations
 
-- SQLite topology is single-writer. Use the Kubernetes + CNPG topology
-  for multi-replica deployments.
+- SQLite topology is single-writer. Use the Kubernetes + Postgres
+  topology for multi-replica deployments.
 - No built-in TLS. Put a reverse proxy in front.
 - `MAC_SECRET_KEY` rotation is manual.
 - Live SQLite → Postgres data migration tool is not yet shipped (K8s
-  Phase 3.7 — pending). Greenfield CNPG deploys start with an empty
-  Postgres schema applied automatically; existing SQLite deployments
-  upgrading to the K8s topology must currently re-create state.
+  Phase 3.7 — pending). Greenfield Postgres deploys start with an
+  empty schema applied automatically by `PostgresStore.initialize()`;
+  existing SQLite deployments upgrading to the K8s topology must
+  currently re-create state.
