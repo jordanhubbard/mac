@@ -134,7 +134,9 @@ session context) to call the factory:
   operator-supplied `mac-api-config` Secret which carries
   `MAC_DATABASE_URL` (DSN of an externally-managed Postgres 17 cluster),
   `MAC_SECRET_KEY`, `MAC_WORKER_TOKEN`.
-- `service.yaml`, `namespace.yaml`, `externalsecret.example.yaml`.
+- `service.yaml`, `namespace.yaml`, `secret.example.yaml` (generic
+  `v1/Secret` template; operators replace placeholder values and apply
+  out-of-band, or convert into their preferred secret-store object).
 
 The Postgres cluster itself is **not** managed from this repo. Bring
 your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.); the

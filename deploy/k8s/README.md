@@ -44,7 +44,7 @@ deploy/k8s/
 │   ├── namespace.yaml
 │   ├── deployment.yaml                    ← replicas: 2, no PVC
 │   ├── service.yaml
-│   ├── externalsecret.example.yaml
+│   ├── secret.example.yaml                ← copy + fill + apply out-of-band
 │   └── kustomization.yaml
 ├── mac-runner/                            ← Phase 4: job-per-task runner
 │   ├── serviceaccount.yaml                ← mac-k8s-runner + mac-task-runner SAs
@@ -77,9 +77,11 @@ deploy/k8s/
 1. **A Postgres 17 cluster** reachable from the `mac` namespace. The
    DSN goes into the `mac-api-config` Secret under key
    `MAC_DATABASE_URL`. Cluster provisioning is out of scope here.
-2. **ExternalSecrets Operator** (optional but recommended) for
-   `MAC_DATABASE_URL`, `MAC_SECRET_KEY`, and `MAC_API_TOKENS` — see
-   `mac-api/externalsecret.example.yaml`.
+2. The operator-supplied `mac-api-config` Secret carrying
+   `MAC_DATABASE_URL`, `MAC_SECRET_KEY`, `MAC_WORKER_TOKEN`, and
+   optionally `MAC_API_TOKENS` — see `mac-api/secret.example.yaml` for
+   the schema. Use whichever delivery mechanism you prefer (`kubectl
+   create secret`, Sealed Secrets, ExternalSecrets, SOPS).
 3. A built `mac` image with the `[postgres]` extra. The repo Dockerfile
    already installs it; tag and push to your registry, then replace the
    `image:` placeholder in `mac-api/deployment.yaml`,
