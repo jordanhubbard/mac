@@ -2032,6 +2032,7 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
 
 
 def test_claim_next_can_defer_beads_claim_side_effects(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3023,6 +3024,7 @@ def test_beads_bridge_failed_task_reopen_limit_is_bounded(cp, tmp_path, monkeypa
 
 
 def test_hub_heartbeat_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3084,6 +3086,7 @@ def test_hub_heartbeat_schedules_beads_poll_async_by_default(cp, monkeypatch):
 
 
 def test_hub_lease_renewal_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3235,6 +3238,7 @@ def test_task_claim_records_history_and_outbox_in_same_transaction(cp):
 
 
 def test_beads_bridge_syncs_claim_and_failure_to_beads(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3319,6 +3323,7 @@ def test_beads_bridge_syncs_claim_and_failure_to_beads(cp, tmp_path, monkeypatch
 def test_beads_bridge_backfills_retry_exhausted_failure_summary_to_beads(
     cp, tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3460,6 +3465,7 @@ def test_beads_bridge_backfills_retry_exhausted_failure_summary_to_beads(
 def test_beads_sync_falls_back_to_registered_checkout_when_bridge_db_is_broken(
     cp, tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     bridge = tmp_path / "bridge"
     repo.mkdir()
@@ -3548,6 +3554,7 @@ def test_beads_sync_falls_back_to_registered_checkout_when_bridge_db_is_broken(
 
 
 def test_beads_sync_returns_false_when_writeback_push_fails(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3645,6 +3652,7 @@ def test_beads_export_noise_can_be_restored_after_sync(cp, tmp_path, monkeypatch
 
 
 def test_beads_bridge_reconciles_existing_active_task_claim(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3722,6 +3730,7 @@ def test_beads_bridge_reconciles_existing_active_task_claim(cp, tmp_path, monkey
 
 
 def test_beads_bridge_tolerates_preclaimed_bead_during_reconcile(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3790,6 +3799,7 @@ def test_beads_bridge_tolerates_preclaimed_bead_during_reconcile(cp, tmp_path, m
 
 
 def test_beads_bridge_syncs_publication_close_to_beads(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
@@ -3880,6 +3890,7 @@ def test_beads_bridge_syncs_publication_close_to_beads(cp, tmp_path, monkeypatch
 
 
 def test_review_claim_records_bead_metadata_and_slack_notification(cp, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(
