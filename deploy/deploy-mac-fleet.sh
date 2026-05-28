@@ -1701,7 +1701,7 @@ required = [
     "shell_execution",
     "workspace_file_access",
     "hgmac agents list",
-    "bd prime",
+    "mac task ready",
     "git push",
 ]
 runtime_context = prompt_builder._load_mac_runtime_context()
