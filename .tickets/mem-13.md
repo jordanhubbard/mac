@@ -7,7 +7,7 @@ created: 2026-05-29T02:58:04Z
 type: feature
 priority: 2
 assignee:
-mac-task-id: task_fabe41d17902432d989cfc12973484e3
+mac-task-id: task_267e376dc8da49b1b45b5c9672942c27
 audit: memory-tier-2026-05-28
 discovered_via: mem-01
 ---

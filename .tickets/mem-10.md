@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:17Z
 type: feature
 priority: 3
 assignee:
-mac-task-id: task_a30cd07e8ede4d90a4e9fac5860f3db6
+mac-task-id: task_64acb39f8bd5432584fde34e5caa3d12
 audit: memory-tier-2026-05-28
 ---
 # Memory-tier health check + alerts (regression detector for silent consolidator)

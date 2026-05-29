@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:01Z
 type: bug
 priority: 1
 assignee:
-mac-task-id: task_addf7e07a9d04e819c5cab323dd6bdc7
+mac-task-id: task_3ce1a43eaeb34631b4f26e8ce2e033b4
 audit: memory-tier-2026-05-28
 ---
 # Schedule observability_events prune (no caller wired)

@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:05Z
 type: bug
 priority: 1
 assignee:
-mac-task-id: task_fbddb899317542bd8290b42f10e64770
+mac-task-id: task_044b133397314b169dfff76a864f3845
 audit: memory-tier-2026-05-28
 ---
 # Demote polling chatter from log to metric kind (1.83M of 2.09M rows)

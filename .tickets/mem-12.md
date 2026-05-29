@@ -7,7 +7,7 @@ created: 2026-05-29T02:58:02Z
 type: bug
 priority: 1
 assignee:
-mac-task-id: task_8130d3811ffd475baf376424c422da87
+mac-task-id: task_cba0c4b6add74f2e9bf1c9e495170b7e
 audit: memory-tier-2026-05-28
 discovered_via: mem-01
 ---

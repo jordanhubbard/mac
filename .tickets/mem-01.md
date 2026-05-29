@@ -7,7 +7,7 @@ created: 2026-05-29T02:20:59Z
 type: bug
 priority: 1
 assignee:
-mac-task-id: task_298a522d9b5e4a9b8d988cfd5c47d05b
+mac-task-id: task_51286c7e3de043be813176a610590270
 audit: memory-tier-2026-05-28
 ---
 # Stop runaway task.review_claimed loop (executor finalizer regression)

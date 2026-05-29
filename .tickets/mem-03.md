@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:03Z
 type: bug
 priority: 1
 assignee:
-mac-task-id: task_53d651f749154b41bb49b174b939d3a5
+mac-task-id: task_0565125ae3dc464286dcf1876e8bb637
 audit: memory-tier-2026-05-28
 ---
 # Silence beads bridge log spam (66K+ events with bridge disabled)

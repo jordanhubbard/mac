@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:09Z
 type: feature
 priority: 2
 assignee:
-mac-task-id: task_5aa816eefa834b1580b462300fdafdf5
+mac-task-id: task_7f819939cf1e4c659b439c78b2da7b29
 audit: memory-tier-2026-05-28
 ---
 # Define vector memory tier schema: Qdrant collections, embedding model, TTLs

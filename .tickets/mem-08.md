@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:13Z
 type: feature
 priority: 2
 assignee:
-mac-task-id: task_72b2e45526fc4026b00d71fc89daa1b1
+mac-task-id: task_e97da0c99de041cf8dc9823f86ab8993
 audit: memory-tier-2026-05-28
 ---
 # Activate nap consolidator: begin_nap rolls up daily memory into summaries

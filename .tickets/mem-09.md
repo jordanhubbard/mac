@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:15Z
 type: feature
 priority: 3
 assignee:
-mac-task-id: task_9620b1d4622749a086d5595395d205f2
+mac-task-id: task_905a6a44466049e2a3a3374f12268c91
 audit: memory-tier-2026-05-28
 ---
 # Recall API: mac memory recall + hermes tool for vector tier read path

@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:07Z
 type: feature
 priority: 2
 assignee:
-mac-task-id: task_f99c67acf00b42a7880cc508ca333f0e
+mac-task-id: task_a83dec1a3a4d435bb6a3b22bb072289f
 audit: memory-tier-2026-05-28
 ---
 # Make task_history.review_claimed writes idempotent (schema-level dedupe)

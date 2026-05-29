@@ -7,7 +7,7 @@ created: 2026-05-29T02:21:11Z
 type: feature
 priority: 2
 assignee:
-mac-task-id: task_706b71ea6ba64b139d188b1f817da1fe
+mac-task-id: task_bce9643d87f84ebe8f37661fc364bc42
 audit: memory-tier-2026-05-28
 ---
 # Build vector writer: memory_records to vector_refs to Qdrant
