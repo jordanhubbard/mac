@@ -20,7 +20,7 @@
 # diagnostics so PR2b can validate the wiring end-to-end. PR3 wires
 # real codex invocations.
 
-ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:4f8eb79f021c
+ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:f94e69629690
 FROM ${MAC_BASE_IMAGE}
 
 USER root
