@@ -196,6 +196,194 @@ def test_resolve_dispatch_errors_when_nothing_configured(monkeypatch, capsys):
     assert "MAC_API_URL" in captured.err
 
 
+class _FakeTransport:
+    """Records HTTP calls and returns canned responses for cli end-to-end tests."""
+
+    def __init__(self, response_for=None):
+        self.response_for = response_for or {}
+        self.calls: List[Tuple[str, str, Optional[Dict[str, Any]], Optional[str]]] = []
+
+    def __call__(self, method: str, url: str, body, token):
+        self.calls.append((method, url, body, token))
+        # Match by exact (method, path) or method-only fallback.
+        from urllib.parse import urlsplit
+
+        path = urlsplit(url).path
+        for (m, p), resp in self.response_for.items():
+            if m == method and p == path:
+                return resp
+        return self.response_for.get(method, {})
+
+
+def test_remote_dispatch_create_task_via_cli(monkeypatch):
+    """End-to-end: `mac --hub-url ... task create` posts to /tasks."""
+    import io
+    import json as _json
+    import sys
+
+    from mac.cli import main
+    from mac.hgmac import HgMacClient
+    import mac.dispatch as dispatch_mod
+
+    monkeypatch.delenv("MAC_API_URL", raising=False)
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/tasks"): {
+                "id": "task_remote_1",
+                "title": "Stop the runaway loop",
+                "state": "open",
+                "project": "mac",
+            }
+        }
+    )
+    orig_init = HgMacClient.__init__
+
+    def init_with_fake_transport(self, base_url, *, token=None, transport=None):
+        orig_init(self, base_url, token=token, transport=fake)
+
+    monkeypatch.setattr(HgMacClient, "__init__", init_with_fake_transport)
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "--token",
+                "tok",
+                "task",
+                "create",
+                "Stop the runaway loop",
+                "--project",
+                "mac",
+                "--actor",
+                "jordanh",
+            ]
+        )
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    body = _json.loads(out.getvalue())
+    assert body["id"] == "task_remote_1"
+    # Verify we actually went over HTTP, not into SQLite.
+    assert len(fake.calls) == 1
+    method, url, payload, token = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://hub.example:8789/tasks"
+    assert payload["title"] == "Stop the runaway loop"
+    assert payload["project"] == "mac"
+    assert payload["actor"] == "jordanh"
+    assert token == "tok"
+
+
+def test_remote_dispatch_task_show_via_cli(monkeypatch):
+    import io
+    import json as _json
+    import sys
+
+    from mac.cli import main
+    from mac.hgmac import HgMacClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/tasks/task_xyz"): {"id": "task_xyz", "state": "reviewing"}
+        }
+    )
+    orig_init = HgMacClient.__init__
+    monkeypatch.setattr(
+        HgMacClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(["--hub-url", "http://hub.example:8789", "task", "show", "task_xyz"])
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    assert _json.loads(out.getvalue()) == {"id": "task_xyz", "state": "reviewing"}
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "http://hub.example:8789/tasks/task_xyz"
+
+
+def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
+    """`task claim` reads `task` and `lease.id` from a two-field response."""
+    import io
+    import json as _json
+    import sys
+
+    from mac.cli import main
+    from mac.hgmac import HgMacClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/tasks/task_xyz/claim"): {
+                "task": {"id": "task_xyz", "state": "claimed"},
+                "lease": {"id": "lease_42", "agent_id": "agent_natasha"},
+            }
+        }
+    )
+    orig_init = HgMacClient.__init__
+    monkeypatch.setattr(
+        HgMacClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "task",
+                "claim",
+                "task_xyz",
+                "agent_natasha",
+            ]
+        )
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    body = _json.loads(out.getvalue())
+    # cli.cmd_task_claim builds {"task": ..., "lease_id": lease.id if lease else None}
+    assert body["task"]["id"] == "task_xyz"
+    assert body["lease_id"] == "lease_42"
+
+
+def test_dictish_supports_attribute_access():
+    d = _Dictish({"id": "lease_42", "agent_id": "agent_x"})
+    assert d.id == "lease_42"  # noqa: E501 — matches typed-object access pattern
+    assert d.agent_id == "agent_x"
+
+
+def test_dictish_attribute_missing_raises_attribute_error():
+    d = _Dictish({"id": "x"})
+    with pytest.raises(AttributeError):
+        _ = d.does_not_exist
+
+
+def test_dictish_falsy_when_empty():
+    assert not _Dictish({})
+    assert _Dictish({"x": 1})
+
+
 def test_resolve_dispatch_emits_local_banner(tmp_path, monkeypatch, capsys):
     # Reset banner-once state so this test sees the message.
     import mac.dispatch as dispatch_mod

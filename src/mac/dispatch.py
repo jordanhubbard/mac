@@ -82,6 +82,17 @@ class _Dictish:
     def __contains__(self, key: str) -> bool:
         return key in self._data
 
+    def __getattr__(self, name: str) -> Any:
+        # Lets CLI handlers do `lease.id` the same as on a typed object.
+        # `__slots__` keeps real attributes (`_data`) off this path.
+        try:
+            return self._data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __bool__(self) -> bool:
+        return bool(self._data)
+
     def __repr__(self) -> str:
         return "_Dictish(%r)" % self._data
 
@@ -185,6 +196,152 @@ class RemoteDispatch:
 
     def _delete(self, path: str) -> Any:
         return self._client.request("DELETE", path)
+
+    # -- Task surface --------------------------------------------------------
+
+    def create_task(
+        self,
+        title: str,
+        *,
+        description: str = "",
+        project: Optional[str] = None,
+        priority: Optional[int] = None,
+        required_capabilities: Optional[List[str]] = None,
+        dependencies: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        max_attempts: Optional[int] = None,
+        actor: Optional[str] = None,
+        **extra: Any,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "title": title,
+                "description": description,
+                "project": project,
+                "priority": priority,
+                "required_capabilities": required_capabilities or None,
+                "dependencies": dependencies or None,
+                "metadata": metadata,
+                "max_attempts": max_attempts,
+                "actor": actor,
+                **extra,
+            }
+        )
+        return _Dictish(self._post("/tasks", body))
+
+    def list_tasks(
+        self,
+        state: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(self._get("/tasks", state=state, tenant_id=tenant_id))
+
+    def task_detail(self, task_id: str) -> _Dictish:
+        return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))
+
+    def claim_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        lease_seconds: Optional[int] = None,
+        sync_beads: Optional[bool] = None,
+    ) -> tuple:  # type: ignore[type-arg]
+        body = _drop_none(
+            {
+                "agent_id": agent_id,
+                "lease_seconds": lease_seconds,
+                "sync_beads": sync_beads,
+            }
+        )
+        resp = self._post("/tasks/%s/claim" % quote(task_id, safe=""), body)
+        task_payload = resp.get("task") if isinstance(resp, dict) else None
+        lease_payload = resp.get("lease") if isinstance(resp, dict) else None
+        return _Dictish(task_payload or {}), _Dictish(lease_payload or {})
+
+    def transition_task(
+        self,
+        task_id: str,
+        to_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "to_state": to_state,
+                "actor": actor,
+                "detail": detail or {},
+            }
+        )
+        return _Dictish(self._post("/tasks/%s/transition" % quote(task_id, safe=""), body))
+
+    def start_task(self, task_id: str, agent_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/start" % quote(task_id, safe=""),
+                {"agent_id": agent_id},
+            )
+        )
+
+    def submit_for_review(self, task_id: str, agent_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/submit-for-review" % quote(task_id, safe=""),
+                {"agent_id": agent_id},
+            )
+        )
+
+    def add_evidence(
+        self,
+        task_id: str,
+        kind: str,
+        uri: str,
+        summary: str,
+        created_by: str,
+        *,
+        checksum: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "kind": kind,
+                "uri": uri,
+                "summary": summary,
+                "created_by": created_by,
+                "checksum": checksum,
+                "metadata": metadata,
+            }
+        )
+        return _Dictish(self._post("/tasks/%s/evidence" % quote(task_id, safe=""), body))
+
+    # -- Project surface -----------------------------------------------------
+
+    def list_projects(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/projects"))
+
+    def create_project(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+        status: Optional[str] = None,
+        actor: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "name": name,
+                "description": description,
+                "metadata": metadata,
+                "status": status,
+                "actor": actor,
+                "project_id": project_id,
+            }
+        )
+        return _Dictish(self._post("/projects", body))
+
+    def get_project(self, project: str) -> _Dictish:
+        return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
     # -- Unknown methods ----------------------------------------------------
 
