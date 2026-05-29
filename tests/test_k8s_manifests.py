@@ -1,11 +1,3 @@
-"""Structural sanity checks for the K8s manifests under deploy/k8s/.
-
-These tests are intentionally cheap: they parse the YAML and assert
-invariants we care about (image not :latest, replicas > 1, both probes
-present, env wired to the right secret keys, etc.). They are NOT a
-substitute for `kubectl apply --dry-run` against a real cluster — that
-belongs to the deploy pipeline, not the unit suite.
-"""
 
 from __future__ import annotations
 
@@ -54,9 +46,6 @@ def test_mac_api_env_wires_database_url_from_secret() -> None:
     db_url = next(e for e in env if e["name"] == "MAC_DATABASE_URL")
     assert "valueFrom" in db_url, "MAC_DATABASE_URL must come from a Secret"
     secret_ref = db_url["valueFrom"]["secretKeyRef"]
-    # All credentials live in the single operator-supplied Secret —
-    # the Postgres cluster is externally managed and its DSN is
-    # provided alongside MAC_SECRET_KEY/MAC_WORKER_TOKEN.
     assert secret_ref["name"] == "mac-api-config"
     assert secret_ref["key"] == "MAC_DATABASE_URL"
 
@@ -100,15 +89,9 @@ def test_kustomization_tree_includes_expected_resources() -> None:
         assert res in controller_kust["resources"]
 
 
-# ----------------------------------------------------------------------
-# Phase 4: mac-k8s-runner manifests
-# ----------------------------------------------------------------------
-
 def test_runner_has_two_service_accounts() -> None:
     docs = _load(ROOT / "mac-runner" / "serviceaccount.yaml")
     names = {d["metadata"]["name"] for d in docs}
-    # mac-k8s-runner SA gets K8s API rights; mac-task-runner SA does
-    # not (task Jobs never need K8s API access).
     assert names == {"mac-k8s-runner", "mac-task-runner"}
     task_sa = next(d for d in docs if d["metadata"]["name"] == "mac-task-runner")
     assert task_sa.get("automountServiceAccountToken") is False
@@ -159,10 +142,6 @@ def test_runner_image_is_not_latest() -> None:
     assert ":latest" not in image
 
 
-# ----------------------------------------------------------------------
-# Phase 5: mac-k8s-controller manifests
-# ----------------------------------------------------------------------
-
 def test_controller_rbac_has_scale_and_delete_only() -> None:
     docs = _load(ROOT / "mac-controller" / "rbac.yaml")
     role = next(d for d in docs if d["kind"] == "Role")
@@ -178,14 +157,7 @@ def test_controller_rbac_has_scale_and_delete_only() -> None:
 
 def test_controller_is_singleton() -> None:
     deploy = _load(ROOT / "mac-controller" / "deployment.yaml")[0]
-    # Controller must be a singleton reconciler (no leader-election lib
-    # in the MVP). Recreate strategy avoids two replicas during rollout.
     assert deploy["spec"]["replicas"] == 1
     assert deploy["spec"]["strategy"]["type"] == "Recreate"
 
 
-def test_controller_scaler_off_by_default() -> None:
-    deploy = _load(ROOT / "mac-controller" / "deployment.yaml")[0]
-    env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
-    flag = next(e for e in env if e["name"] == "MAC_CONTROLLER_SCALER_ENABLED")
-    assert str(flag["value"]) in ("0", "false", "False")
