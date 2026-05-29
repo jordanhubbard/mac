@@ -81,8 +81,16 @@ def _print(value: Any) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
 
 
-def _plane(args: argparse.Namespace) -> ControlPlane:
-    return ControlPlane(SQLiteStore(args.db))
+def _plane(args: argparse.Namespace) -> Any:
+    """Return a Dispatch (LocalDispatch or RemoteDispatch).
+
+    Kept under the historical name so existing handlers (``_plane(args).foo()``)
+    are unchanged. The actual transport is chosen by
+    :func:`mac.dispatch.resolve_dispatch`.
+    """
+    from mac.dispatch import resolve_dispatch
+
+    return resolve_dispatch(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -1200,7 +1208,35 @@ def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentPa
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mac", description="Multi-agent coordinator control plane")
-    parser.add_argument("--db", default=os.environ.get("MAC_DB", "mac.db"), help="SQLite database path")
+    # Transport selection (see mac.dispatch.resolve_dispatch for resolution).
+    # --db is no longer auto-defaulted: the CLI either targets a hub (default
+    # when MAC_API_URL or fleets.yaml is configured) or an explicit SQLite
+    # path. Silent fallback to ./mac.db is gone.
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database path (local mode). Use this for offline work, "
+        "`init`, and `migrate`. When unset and no hub is configured, mac "
+        "refuses to run rather than writing to ./mac.db silently.",
+    )
+    parser.add_argument(
+        "--hub-url",
+        default=None,
+        help="MAC hub URL (hub mode). Falls back to $MAC_API_URL / "
+        "$MAC_URL / $MAC_HUB_URL, then ~/.mac/fleets.yaml for --fleet.",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Bearer token for hub mode. Falls back to $MAC_API_TOKEN "
+        "(or $MAC_API_TOKEN__<FLEET> when --fleet is set).",
+    )
+    parser.add_argument(
+        "--fleet",
+        default=None,
+        help="Fleet name; selects MAC_API_TOKEN__<FLEET> and "
+        "~/.mac/fleets.yaml entry.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
