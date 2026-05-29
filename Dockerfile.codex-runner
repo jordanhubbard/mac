@@ -1,4 +1,4 @@
-ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:657211dad639
+ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:cff1f37ddbc7
 FROM ${MAC_BASE_IMAGE}
 
 USER root
