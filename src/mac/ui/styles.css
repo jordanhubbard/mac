@@ -1254,6 +1254,118 @@ details.action-box summary {
   margin: 0 0 2px 0;
 }
 
+/* wf-05 part 3: stepped draft form. Row editors for Steps + Questions
+   with auto-rendered Answer inputs, plus an "advanced" JSON escape
+   hatch under a `<details>` for power users / scripted authoring. */
+.workflow-draft-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-draft-rows {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.workflow-draft-rows legend {
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.workflow-draft-row {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.workflow-draft-row:last-of-type {
+  border-bottom: none;
+}
+
+.workflow-draft-row > label,
+.workflow-draft-row > .row-grid {
+  margin: 4px 0;
+}
+
+.workflow-draft-checkbox {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.workflow-draft-checkbox input[type="checkbox"] {
+  width: auto;
+}
+
+.workflow-draft-remove,
+.workflow-draft-add {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.workflow-draft-remove:hover {
+  color: #b6443c;
+  border-color: #e0b3ae;
+}
+
+.workflow-draft-add {
+  margin-top: 8px;
+  color: var(--ink);
+}
+
+.workflow-draft-add:hover {
+  background: #f6f8fb;
+}
+
+.workflow-draft-answers {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.workflow-draft-answers legend {
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.workflow-draft-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.workflow-draft-answer span {
+  font-size: 13px;
+}
+
+.workflow-draft-raw {
+  background: #f9fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.workflow-draft-raw summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.workflow-draft-raw label {
+  margin: 6px 0;
+}
+
 .graph-node.is-selected rect {
   stroke: var(--blue);
   stroke-width: 2.4;

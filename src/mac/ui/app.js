@@ -1106,28 +1106,237 @@ function workflowDraftQuestionsForNode(workflow, nodeKey) {
     }));
 }
 function draftCreationForm() {
-    // wf-05 part 3: replace the three JSON textareas with a stepped form.
-    // For now we still ship the JSON-textarea form as a fallback (the
-    // backend accepts both shapes). A future iteration upgrades this to
-    // repeating row editors.
+    // wf-05 part 3: stepped form with repeating-row editors for Steps
+    // and Questions, and auto-rendered Answer inputs for required
+    // questions. Hidden `proposed_steps` / `questions` / `answers`
+    // textareas are populated by JS at submit time so the existing
+    // runAction("workflowDraftCreate") handler reads them unchanged.
+    // The whole form keeps the JSON-tape escape hatch under a "Raw JSON"
+    // details block so power users (and AI agents) can paste full
+    // payloads if a row editor doesn't fit their case.
     return `
-    <form class="action-form" data-action="workflowDraftCreate">
+    <form class="action-form workflow-draft-form" data-action="workflowDraftCreate" data-draft-builder>
       <label>Goal <textarea name="goal" required></textarea></label>
-      <details>
-        <summary>Steps (JSON)</summary>
-        <textarea name="proposed_steps" placeholder='[{"node_key":"step_1","role_required":"dev","instructions":"Do the work"}]'></textarea>
+
+      <fieldset class="workflow-draft-rows" data-rows="steps">
+        <legend>Steps</legend>
+        <div class="workflow-draft-row" data-row>
+          <div class="row-grid compact-grid">
+            <label>Key <input name="step_node_key" placeholder="step_1"></label>
+            <label>Role <input name="step_role_required" placeholder="dev"></label>
+            <label>Type
+              <select name="step_node_type">
+                <option value="task" selected>task</option>
+                <option value="approval">approval</option>
+                <option value="plan">plan</option>
+                <option value="commit">commit</option>
+                <option value="verify">verify</option>
+              </select>
+            </label>
+          </div>
+          <label>Instructions <textarea name="step_instructions" rows="2"></textarea></label>
+          <button type="button" class="workflow-draft-remove" data-action="draftRowRemove">Remove step</button>
+        </div>
+        <button type="button" class="workflow-draft-add" data-action="draftRowAdd" data-rows-target="steps">+ Add step</button>
+      </fieldset>
+
+      <fieldset class="workflow-draft-rows" data-rows="questions">
+        <legend>Questions (front-loaded human input)</legend>
+        <div class="workflow-draft-row" data-row>
+          <label>Question text <input name="question_text" placeholder="What scope?"></label>
+          <div class="row-grid compact-grid">
+            <label>Binds to step <input name="question_binds_to_node" placeholder="step_1" list="workflow-draft-step-keys"></label>
+            <label>Binds to param <input name="question_binds_to_param" placeholder="(default = appended to instructions)"></label>
+            <label class="workflow-draft-checkbox">
+              <input type="checkbox" name="question_required"> Required
+            </label>
+          </div>
+          <button type="button" class="workflow-draft-remove" data-action="draftRowRemove">Remove question</button>
+        </div>
+        <button type="button" class="workflow-draft-add" data-action="draftRowAdd" data-rows-target="questions">+ Add question</button>
+      </fieldset>
+
+      <datalist id="workflow-draft-step-keys"></datalist>
+
+      <fieldset class="workflow-draft-answers" data-rows="answers">
+        <legend>Answers</legend>
+        <p class="muted small">Auto-rendered from required questions above. Fill before approving.</p>
+        <div class="workflow-draft-answer-list" data-answer-list>
+          <p class="muted small">(no required questions yet)</p>
+        </div>
+      </fieldset>
+
+      <details class="workflow-draft-raw">
+        <summary>Raw JSON (advanced)</summary>
+        <p class="muted small">These hidden fields are populated automatically on submit. You can also paste a full payload here to override the row editors above.</p>
+        <label>Steps JSON <textarea name="proposed_steps" placeholder="[]"></textarea></label>
+        <label>Questions JSON <textarea name="questions" placeholder="[]"></textarea></label>
+        <label>Answers JSON <textarea name="answers" placeholder="{}"></textarea></label>
       </details>
-      <details>
-        <summary>Questions (JSON, wf-01 shape: {id, text, required, binds_to_node})</summary>
-        <textarea name="questions" placeholder='[{"id":"scope","text":"Scope?","required":true,"binds_to_node":"step_1"}]'></textarea>
-      </details>
-      <details>
-        <summary>Answers (JSON keyed by question id)</summary>
-        <textarea name="answers" placeholder='{"scope":"API only"}'></textarea>
-      </details>
+
       <button type="submit">Create Draft</button>
     </form>
   `;
+}
+// wf-05 part 3: row-editor lifecycle. We render the form once via the
+// template, then DOM-mutate to add/remove rows. On submit, we walk the
+// rows and serialize into the JSON shape the existing
+// workflowDraftCreate handler expects.
+function draftBuilderCollectSteps(form) {
+    const rows = form.querySelectorAll("[data-rows='steps'] [data-row]");
+    const out = [];
+    rows.forEach((row, index) => {
+        const get = (name) => {
+            const el = row.querySelector(`[name='${name}']`);
+            return (el?.value || "").trim();
+        };
+        const key = get("step_node_key") || `step_${index + 1}`;
+        const role = get("step_role_required");
+        const instructions = get("step_instructions");
+        const nodeType = get("step_node_type") || "task";
+        if (!role && !instructions)
+            return; // skip blank rows
+        const node = { node_key: key };
+        if (role)
+            node.role_required = role;
+        if (instructions)
+            node.instructions = instructions;
+        if (nodeType && nodeType !== "task")
+            node.node_type = nodeType;
+        out.push(node);
+    });
+    return out;
+}
+function draftBuilderCollectQuestions(form) {
+    const rows = form.querySelectorAll("[data-rows='questions'] [data-row]");
+    const out = [];
+    rows.forEach((row, index) => {
+        const get = (name) => {
+            const el = row.querySelector(`[name='${name}']`);
+            return (el?.value || "").trim();
+        };
+        const required = row.querySelector("[name='question_required']")?.checked ||
+            false;
+        const text = get("question_text");
+        const bindsToNode = get("question_binds_to_node");
+        const bindsToParam = get("question_binds_to_param");
+        if (!text)
+            return;
+        const id = slugifyQuestion(text, index);
+        const question = { id, text };
+        if (required)
+            question.required = true;
+        if (bindsToNode)
+            question.binds_to_node = bindsToNode;
+        if (bindsToParam)
+            question.binds_to_param = bindsToParam;
+        out.push(question);
+    });
+    return out;
+}
+function draftBuilderCollectAnswers(form) {
+    const result = {};
+    form.querySelectorAll("[data-answer-input]").forEach((input) => {
+        const id = input.dataset.questionId || "";
+        const value = (input.value || "").trim();
+        if (id && value)
+            result[id] = value;
+    });
+    return result;
+}
+function slugifyQuestion(text, index) {
+    const cleaned = text
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 32);
+    return cleaned || `q_${index + 1}`;
+}
+function draftBuilderRefreshDerived(form) {
+    // Refresh the binds_to_node `<datalist>` to reflect the current step
+    // keys, and re-render the Answers section to mirror current
+    // questions. Called after any row add/remove or text change in the
+    // step-key or question-text inputs.
+    const datalist = form.querySelector("#workflow-draft-step-keys");
+    if (datalist) {
+        const stepKeys = draftBuilderCollectSteps(form).map((s) => String(s.node_key));
+        datalist.innerHTML = stepKeys
+            .map((k) => `<option value="${escapeHtml(k)}"></option>`)
+            .join("");
+    }
+    const answerList = form.querySelector("[data-answer-list]");
+    if (!answerList)
+        return;
+    const questions = draftBuilderCollectQuestions(form);
+    // Preserve in-progress answer values keyed by id across re-renders.
+    const existingValues = new Map();
+    answerList
+        .querySelectorAll("[data-answer-input]")
+        .forEach((input) => {
+        const id = input.dataset.questionId || "";
+        if (id)
+            existingValues.set(id, input.value);
+    });
+    const renderable = questions.filter((q) => q.required);
+    if (!renderable.length) {
+        answerList.innerHTML = `<p class="muted small">(no required questions yet)</p>`;
+        return;
+    }
+    answerList.innerHTML = renderable
+        .map((q) => {
+        const id = String(q.id || "");
+        const value = existingValues.get(id) || "";
+        return `
+        <label class="workflow-draft-answer">
+          <span>${escapeHtml(String(q.text))} <span class="chip warn">required</span></span>
+          <input type="text" data-answer-input data-question-id="${escapeHtml(id)}" value="${escapeHtml(value)}">
+        </label>
+      `;
+    })
+        .join("");
+}
+function draftBuilderAddRow(button) {
+    const target = button.dataset.rowsTarget || "";
+    const form = button.closest("form");
+    if (!form)
+        return;
+    const fieldset = form.querySelector(`[data-rows='${target}']`);
+    if (!fieldset)
+        return;
+    const existing = fieldset.querySelector("[data-row]");
+    if (!existing)
+        return;
+    const clone = existing.cloneNode(true);
+    clone.querySelectorAll("input, textarea").forEach((el) => {
+        if (el.type === "checkbox")
+            el.checked = false;
+        else
+            el.value = "";
+    });
+    fieldset.insertBefore(clone, button);
+    draftBuilderRefreshDerived(form);
+}
+function draftBuilderRemoveRow(button) {
+    const row = button.closest("[data-row]");
+    const form = button.closest("form");
+    if (!row || !form)
+        return;
+    const fieldset = row.parentElement;
+    if (fieldset && fieldset.querySelectorAll("[data-row]").length <= 1) {
+        // Don't allow removing the last row — leave it blank instead.
+        row
+            .querySelectorAll("input, textarea")
+            .forEach((el) => {
+            if (el.type === "checkbox")
+                el.checked = false;
+            else
+                el.value = "";
+        });
+    }
+    else {
+        row.remove();
+    }
+    draftBuilderRefreshDerived(form);
 }
 function notifierChannelRecord(channel) {
     return `
@@ -2812,6 +3021,14 @@ function handleContentChange(event) {
         render();
         return;
     }
+    // wf-05 part 3: refresh the draft builder's derived UI (step-key
+    // datalist, required-answer inputs) on any input/select change
+    // inside a draft form.
+    const draftForm = target.closest("form[data-draft-builder]");
+    if (draftForm) {
+        draftBuilderRefreshDerived(draftForm);
+        return;
+    }
 }
 async function handleContentClick(event) {
     const projectDelete = event.target?.closest("[data-project-delete]");
@@ -2873,6 +3090,19 @@ async function handleContentClick(event) {
         return;
     }
     // wf-05: open the inspector when a workflow-graph node is clicked.
+    // wf-05 part 3: draft-builder row management.
+    const draftAddBtn = event.target?.closest("[data-action='draftRowAdd']");
+    if (draftAddBtn) {
+        event.preventDefault();
+        draftBuilderAddRow(draftAddBtn);
+        return;
+    }
+    const draftRemoveBtn = event.target?.closest("[data-action='draftRowRemove']");
+    if (draftRemoveBtn) {
+        event.preventDefault();
+        draftBuilderRemoveRow(draftRemoveBtn);
+        return;
+    }
     const nodeOpen = event.target?.closest("[data-action='workflowNodeOpen']");
     if (nodeOpen) {
         const key = nodeOpen.dataset.nodeKey || "";
@@ -3188,11 +3418,25 @@ async function runAction(action, form, values) {
         });
     }
     if (action === "workflowDraftCreate") {
+        // wf-05 part 3: if the row editors are populated, prefer them
+        // over the hidden raw-JSON textareas. The textareas remain as an
+        // escape hatch (and the values dict already carries them too).
+        const stepsFromRows = draftBuilderCollectSteps(form);
+        const questionsFromRows = draftBuilderCollectQuestions(form);
+        const answersFromRows = draftBuilderCollectAnswers(form);
+        const proposedSteps = stepsFromRows.length > 0
+            ? stepsFromRows
+            : parseJsonArray(values.proposed_steps);
+        const questions = questionsFromRows.length > 0
+            ? questionsFromRows
+            : parseJsonArray(values.questions);
+        const fromRawAnswers = parseJsonObject(values.answers);
+        const answers = { ...fromRawAnswers, ...answersFromRows };
         return postJSON("/workflows/drafts", {
             goal: requiredString(values.goal),
-            proposed_steps: parseJsonArray(values.proposed_steps),
-            questions: parseJsonArray(values.questions),
-            answers: parseJsonObject(values.answers),
+            proposed_steps: proposedSteps,
+            questions,
+            answers,
         });
     }
     if (action === "workflowDraftPreview") {
