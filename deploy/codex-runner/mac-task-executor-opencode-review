@@ -16,6 +16,11 @@ REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-opencode-r
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
 
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/etc}"
+export HOME="${HOME:-/tmp/opencode-home}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
+mkdir -p "${HOME}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
 export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

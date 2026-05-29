@@ -18,7 +18,15 @@ EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
 
 # opencode reads $XDG_CONFIG_HOME/opencode/opencode.json — point at the
 # ConfigMap mount baked into the Job pod by src/mac/k8s/runner.py.
+# opencode also writes state (~/.local, ~/.cache) — readOnlyRootFilesystem
+# blocks the default $HOME=/, so point all xdg paths + HOME at /tmp (which
+# is an emptyDir mounted writable).
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/etc}"
+export HOME="${HOME:-/tmp/opencode-home}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
+mkdir -p "${HOME}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
 export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
