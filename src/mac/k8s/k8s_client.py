@@ -1,10 +1,3 @@
-"""Thin adapters over the ``kubernetes`` Python client.
-
-Production code in ``runner`` and ``controller`` types against the small
-protocols defined alongside them (``K8sJobsProtocol``,
-``K8sDeploymentsProtocol``); this module provides the live
-implementations. Tests inject fakes.
-"""
 
 from __future__ import annotations
 
@@ -23,10 +16,6 @@ JsonDict = Dict[str, Any]
 
 
 def load_in_cluster_config() -> None:
-    """Load the in-cluster service-account credentials.
-
-    Falls back to ``~/.kube/config`` for local development.
-    """
     try:
         k8s_config.load_incluster_config()
     except k8s_config.ConfigException:
@@ -40,8 +29,6 @@ class K8sJobsClient:
         self._batch = k8s_client.BatchV1Api()
 
     def create(self, namespace: str, manifest: JsonDict) -> JsonDict:
-        # BatchV1Api.create_namespaced_job accepts a dict and parses it
-        # into a V1Job object server-side.
         result = self._batch.create_namespaced_job(
             namespace=namespace, body=manifest
         )
@@ -56,8 +43,6 @@ class K8sJobsClient:
         for item in result.items:
             j = _to_dict(item)
             status = j.get("status") or {}
-            # Skip Jobs that are already Complete or Failed — those are
-            # cleaned up by ttlSecondsAfterFinished or the user.
             conditions = status.get("conditions") or []
             terminal = any(
                 (c.get("type") in ("Complete", "Failed") and c.get("status") == "True")
@@ -81,14 +66,6 @@ class K8sJobsClient:
             raise
 
     def read(self, namespace: str, name: str) -> JsonDict:
-        """Return the current state of a Job as a plain dict.
-
-        Used by the runner's per-Job lease-renewal loop to learn when a
-        Job has hit terminal status (``status.succeeded`` or
-        ``status.failed`` ≥ 1). Returns an empty dict on 404 so a
-        deleted Job is treated as "no longer present" rather than
-        bubbling an exception that could kill the renewal thread.
-        """
         try:
             result = self._batch.read_namespaced_job(
                 name=name, namespace=namespace
@@ -125,12 +102,6 @@ class K8sDeploymentsClient:
 
 
 def _to_dict(obj: Any) -> JsonDict:
-    """Recursively convert a kubernetes-client model into a plain dict.
-
-    The official client exposes ``.to_dict()`` on V1* objects; we add a
-    layer that strips ``None`` leaves so the result roughly matches what
-    a YAML round-trip would produce.
-    """
     if hasattr(obj, "to_dict"):
         return _strip_none(obj.to_dict())
     if isinstance(obj, dict):

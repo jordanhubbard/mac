@@ -1,0 +1,217 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+import yaml
+
+JsonDict = Dict[str, Any]
+
+DEFAULT_CONFIG_PATH = "/etc/mac/config.yaml"
+
+@dataclass
+class RoleConfig:
+    slug: str
+    agent_id: str
+    name: str
+    machine_id: str
+    capabilities: List[str]
+    image: str
+    executor: str
+    attestation_key_secret: Dict[str, str]
+
+@dataclass
+class MacConfigFile:
+    mac_url: str
+    dispatcher: JsonDict
+    role_machines: List[JsonDict] = field(default_factory=list)
+    roles: Dict[str, RoleConfig] = field(default_factory=dict)
+    capability_role_aliases: Dict[str, str] = field(default_factory=dict)
+    attestation_keys: Optional[JsonDict] = None
+
+    def role_agents(self) -> List[JsonDict]:
+        return [
+            {
+                "agent_id": role.agent_id,
+                "name": role.name,
+                "machine_id": role.machine_id,
+                "capabilities": list(role.capabilities),
+            }
+            for role in self.roles.values()
+        ]
+
+    def attestation_keys_block(self) -> Optional[JsonDict]:
+        if self.attestation_keys is None:
+            return None
+        if not self.roles:
+            return None
+        roles_map = {slug: role.agent_id for slug, role in self.roles.items()}
+        return {
+            "namespace": self.attestation_keys["namespace"],
+            "secret_name": self.attestation_keys["secret_name"],
+            "roles": roles_map,
+        }
+
+    def role_images(self) -> Dict[str, str]:
+        return {slug: role.image for slug, role in self.roles.items()}
+
+    def role_agent_ids(self) -> Dict[str, str]:
+        return {slug: role.agent_id for slug, role in self.roles.items()}
+
+    def role_executors(self) -> Dict[str, str]:
+        return {slug: role.executor for slug, role in self.roles.items()}
+
+    def role_attestation_key_secrets(self) -> Dict[str, Dict[str, str]]:
+        return {
+            slug: dict(role.attestation_key_secret)
+            for slug, role in self.roles.items()
+        }
+
+def _require_str(obj: JsonDict, key: str, *, path: str) -> str:
+    """Return ``obj[key]`` as a non-empty stripped string or SystemExit."""
+    val = obj.get(key)
+    if not isinstance(val, str) or not val.strip():
+        raise SystemExit(
+            "%s requires a non-empty string at %s" % (path, key)
+        )
+    return val.strip()
+
+def _require_dict(obj: JsonDict, key: str, *, path: str) -> JsonDict:
+    val = obj.get(key)
+    if not isinstance(val, dict) or not val:
+        raise SystemExit(
+            "%s requires a non-empty object at %s" % (path, key)
+        )
+    return dict(val)
+
+def _require_list(obj: JsonDict, key: str, *, path: str) -> List[Any]:
+    val = obj.get(key)
+    if not isinstance(val, list):
+        raise SystemExit(
+            "%s requires a list at %s (got %s)"
+            % (path, key, type(val).__name__)
+        )
+    return list(val)
+
+def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
+    """Validate + coerce one ``roles.<slug>`` block."""
+    if not isinstance(raw, dict):
+        raise SystemExit(
+            "roles.%s must be a mapping (got %s)" % (slug, type(raw).__name__)
+        )
+    path = "roles.%s" % slug
+    capabilities = _require_list(raw, "capabilities", path=path)
+    if not capabilities:
+        raise SystemExit("%s.capabilities must be non-empty" % path)
+    att_path = "%s.attestation_key_secret" % path
+    att_raw = _require_dict(raw, "attestation_key_secret", path=path)
+    att_name = _require_str(att_raw, "name", path=att_path)
+    att_key = _require_str(att_raw, "key", path=att_path)
+    return RoleConfig(
+        slug=slug,
+        agent_id=_require_str(raw, "agent_id", path=path),
+        name=_require_str(raw, "name", path=path),
+        machine_id=_require_str(raw, "machine_id", path=path),
+        capabilities=[str(c) for c in capabilities],
+        image=_require_str(raw, "image", path=path),
+        executor=_require_str(raw, "executor", path=path),
+        attestation_key_secret={"name": att_name, "key": att_key},
+    )
+
+def load_config_file(path: Optional[str] = None) -> MacConfigFile:
+    resolved = path or os.environ.get("MAC_CONFIG_FILE") or DEFAULT_CONFIG_PATH
+    try:
+        with open(resolved, "r", encoding="utf-8") as fh:
+            raw_text = fh.read()
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "MAC_CONFIG_FILE %s is missing: %s" % (resolved, exc)
+        ) from exc
+    except OSError as exc:
+        raise SystemExit(
+            "MAC_CONFIG_FILE %s could not be read: %s" % (resolved, exc)
+        ) from exc
+
+    try:
+        data = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise SystemExit(
+            "MAC_CONFIG_FILE %s is not valid YAML: %s" % (resolved, exc)
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise SystemExit(
+            "MAC_CONFIG_FILE %s must decode to a mapping (got %s)"
+            % (resolved, type(data).__name__)
+        )
+
+    mac_url = _require_str(data, "mac_url", path="mac_url").rstrip("/")
+
+    dispatcher_raw = _require_dict(data, "dispatcher", path="dispatcher")
+    machine = dispatcher_raw.get("machine")
+    agent = dispatcher_raw.get("agent")
+    if not isinstance(machine, dict) or not isinstance(agent, dict):
+        raise SystemExit(
+            "dispatcher requires {machine, agent} mappings"
+        )
+
+    role_machines_raw = data.get("role_machines") or []
+    if not isinstance(role_machines_raw, list):
+        raise SystemExit(
+            "role_machines must be a list (got %s)"
+            % type(role_machines_raw).__name__
+        )
+    role_machines: List[JsonDict] = []
+    for i, m in enumerate(role_machines_raw):
+        if not isinstance(m, dict):
+            raise SystemExit(
+                "role_machines[%d] must be a mapping (got %s)"
+                % (i, type(m).__name__)
+            )
+        role_machines.append(dict(m))
+
+    roles_raw = data.get("roles") or {}
+    if not isinstance(roles_raw, dict):
+        raise SystemExit(
+            "roles must be a mapping (got %s)" % type(roles_raw).__name__
+        )
+    roles: Dict[str, RoleConfig] = {}
+    for slug, role_raw in roles_raw.items():
+        roles[str(slug)] = _parse_role(str(slug), role_raw)
+
+    aliases_raw = data.get("capability_role_aliases") or {}
+    if not isinstance(aliases_raw, dict):
+        raise SystemExit(
+            "capability_role_aliases must be a mapping (got %s)"
+            % type(aliases_raw).__name__
+        )
+    aliases = {str(k): str(v) for k, v in aliases_raw.items()}
+
+    attestation_raw = data.get("attestation_keys")
+    if attestation_raw is not None and not isinstance(attestation_raw, dict):
+        raise SystemExit(
+            "attestation_keys must be a mapping or omitted (got %s)"
+            % type(attestation_raw).__name__
+        )
+    attestation: Optional[JsonDict] = None
+    if attestation_raw is not None:
+        att_namespace = _require_str(
+            attestation_raw, "namespace", path="attestation_keys"
+        )
+        att_secret = _require_str(
+            attestation_raw, "secret_name", path="attestation_keys"
+        )
+        attestation = {
+            "namespace": att_namespace,
+            "secret_name": att_secret,
+        }
+
+    return MacConfigFile(
+        mac_url=mac_url,
+        dispatcher={"machine": dict(machine), "agent": dict(agent)},
+        role_machines=role_machines,
+        roles=roles,
+        capability_role_aliases=aliases,
+        attestation_keys=attestation,
+    )

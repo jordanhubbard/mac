@@ -92,9 +92,6 @@ def test_happy_path_submits_evidence_then_submit_for_review() -> None:
     assert result.returncode == 0
     assert result.evidence_id == "ev-1"
     assert result.exit_code() == 0
-    # Strip query strings — /start and /submit-for-review pass
-    # agent_id via the query (matches mac-api signatures at api.py:2393
-    # and 2409); the path-without-query is what the test cares about.
     paths = [p["path"].split("?", 1)[0] for p in mac.posts]
     assert "/tasks/task-1/start" in paths
     assert "/tasks/task-1/evidence" in paths
@@ -103,9 +100,6 @@ def test_happy_path_submits_evidence_then_submit_for_review() -> None:
     ev_idx = paths.index("/tasks/task-1/evidence")
     submit_idx = paths.index("/tasks/task-1/submit-for-review")
     assert ev_idx < submit_idx
-    # Per spec §6.3, the Job pod NO LONGER renews the lease — the
-    # runner Deployment owns renewal. No /leases/{id}/renew calls
-    # should appear in the Job's POST traffic.
     assert not any("/renew" in p for p in paths), (
         "Job pod must not renew the lease; runner Deployment owns renewal"
     )
@@ -211,13 +205,6 @@ def test_exit_code_table() -> None:
     ).exit_code() != 0
 
 
-# ----------------------------------------------------------------------
-# PR3: verification manifest file → metadata.verification plumbing.
-# Without this hook, the review-readiness gate at services.py:4749
-# rejects every Job-produced evidence as "missing_verification_manifest".
-# ----------------------------------------------------------------------
-
-
 class TestReadVerificationManifest:
     def test_missing_file_returns_none_with_error(self, tmp_path: Path) -> None:
         manifest, err = _read_verification_manifest(str(tmp_path / "absent.json"))
@@ -262,9 +249,6 @@ class TestReadVerificationManifest:
 
 
 class TestEvidenceSubmissionMergesManifest:
-    """The Job executor MUST merge the manifest read from disk into
-    `metadata.verification` of the POST /tasks/{id}/evidence body so
-    mac's review-readiness gate sees a signed manifest."""
 
     def test_manifest_present_is_merged_into_metadata(self) -> None:
         manifest = {
@@ -315,17 +299,10 @@ class TestEvidenceSubmissionMergesManifest:
         )
         ev_post = next(p for p in mac.posts if p["path"].endswith("/evidence"))
         md = ev_post["body"]["metadata"]
-        # `verification` is NOT set so the gate rejects with
-        # "missing_verification_manifest" — the operator-debuggable
-        # outcome documented in PR3.
         assert "verification" not in md
         assert "not found" in md["verification_manifest_error"]
 
     def test_manifest_absent_does_not_emit_verification_key(self) -> None:
-        # Today's behaviour for a non-codex executor that doesn't drop
-        # a manifest file. metadata.verification stays unset; the gate
-        # still rejects (as before this PR), but no spurious key is
-        # written.
         mac = _FakeMac()
         result = _ExecResult(returncode=0, stdout="x", stdout_sha256="h")
         _submit_execution_evidence(
@@ -350,11 +327,6 @@ class TestSubprocessExecutorReadsManifest:
         self, tmp_path: Path
     ) -> None:
         manifest_path = tmp_path / "mac-evidence.json"
-        # Build a tiny one-shot "executor" that copies a pre-staged
-        # manifest into the path the executor told it to use. Avoid
-        # embedding the JSON in the subprocess command — that would
-        # require shell-escaping a dict repr and is fragile across
-        # python repr formats.
         manifest = {
             "schema": "mac.worker_evidence.v1",
             "status": "complete",
@@ -400,16 +372,8 @@ class TestSubprocessExecutorReadsManifest:
         assert "not found" in result.manifest_error
 
     def test_executor_default_path_is_constant(self) -> None:
-        # Sanity check: the default path matches the constant the role
-        # executor scripts (deploy/codex-runner/mac-task-executor-codex)
-        # use as their default. Drift here means the file the script
-        # writes is not the file the executor reads.
         env = {"MAC_TASK_EXECUTOR_COMMAND": "true"}
         executor = _default_subprocess_executor(env)
-        # We can't test the result.manifest_path directly without
-        # writing a file in the well-known location (which would be a
-        # bad test). Instead: just assert the constant exists at the
-        # expected name and value.
         assert DEFAULT_EVIDENCE_MANIFEST_PATH == "/tmp/mac-evidence.json"
 
 

@@ -1,10 +1,3 @@
-"""JSON schemas for each mac Hermes tool.
-
-Each schema describes the args the LLM may pass and what it MUST pass.
-Mac-api itself does the deeper validation; these schemas only protect
-the obvious shape so the LLM doesn't waste a call on a clearly-malformed
-invocation.
-"""
 
 from __future__ import annotations
 

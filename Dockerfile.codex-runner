@@ -1,33 +1,8 @@
-# mac-codex-runner — role-specialised Job image for python-coder /
-# python-reviewer agents. Per docs/job-per-task-roles-spec.md §6.1,
-# this image is referenced by MAC_RUNNER_ROLE_IMAGES and runs inside
-# the batch/v1 Job spawned by mac-k8s-runner for any task whose
-# resolved role maps to it.
-#
-# Layered on the mac base image so it inherits the mac-task-runner
-# console-script (the binary that actually drives lease-renew /
-# evidence flow). This image adds:
-#   - git           (so codex can interact with repos)
-#   - nodejs + npm  (codex CLI is distributed via npm)
-#   - @openai/codex (the codex CLI itself)
-#   - uv            (fast Python installer — used by codex for repo
-#                    bootstrapping when needed)
-#   - stub executor scripts at /usr/local/bin/mac-task-executor-codex
-#     and /usr/local/bin/mac-task-executor-codex-review
-#
-# Per spec §16 the executor SCRIPT internals (what they do with the
-# task) are a separate workstream — these stubs exit 0 after echoing
-# diagnostics so PR2b can validate the wiring end-to-end. PR3 wires
-# real codex invocations.
-
 ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:f94e69629690
 FROM ${MAC_BASE_IMAGE}
 
 USER root
 
-# git + ca-certs + curl (curl needed by uv installer) + nodejs/npm
-# for the codex CLI. Pruning npm caches at the end to keep the
-# image lean.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git ca-certificates curl nodejs npm && \
@@ -37,16 +12,10 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
-# uv (Python package installer; codex shells out to it for repo
-# Python bootstraps). Install to /usr/local/bin so it's on PATH
-# for both root and the mac user.
 RUN curl -LsSf https://astral.sh/uv/install.sh | \
         UV_INSTALL_DIR=/usr/local/bin sh && \
     chmod a+rx /usr/local/bin/uv* 2>/dev/null || true
 
-# Stub executor scripts. These are PATH-resolvable so
-# MAC_RUNNER_ROLE_EXECUTORS can name them by absolute path
-# (matches the spec's example).
 COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
 COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review
 RUN chmod a+rx /usr/local/bin/mac-task-executor-codex \
@@ -55,7 +24,4 @@ RUN chmod a+rx /usr/local/bin/mac-task-executor-codex \
 USER mac
 WORKDIR /var/lib/mac
 
-# Default to a sleep so the image is debuggable interactively if
-# someone exec's into it. Real Jobs override the command via
-# mac-k8s-runner's build_job_spec (it sets command=["mac-task-runner"]).
 CMD ["sleep", "infinity"]

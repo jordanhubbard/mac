@@ -39,8 +39,12 @@ mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
 # K8s Phase 4/5 binaries (require the [k8s] optional extra at runtime).
-mac-k8s-runner = "mac.k8s.cli:runner_main"
-mac-k8s-controller = "mac.k8s.cli:controller_main"
+# `mac-k8s-orchestrator` is the long-running dispatcher: it folds the
+# former mac-k8s-runner (claim+launch loop) and mac-k8s-controller
+# (stuck-Job + provisioning reconciler) into one process with two
+# loops, served by a single Deployment + ServiceAccount.
+mac-k8s-orchestrator = "mac.k8s.orchestrator:main"
+mac-k8s-bootstrap = "mac.k8s.bootstrap:main"
 mac-task-runner = "mac.k8s.job_executor:main"
 
 [tool.pytest.ini_options]

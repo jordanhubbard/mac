@@ -1,9 +1,3 @@
-"""Mac Hermes plugin tool registry.
-
-One declarative table — TOOLS — that pairs each Hermes tool name with the
-mac-api HTTP call it dispatches to. ``__init__.py`` walks this list to
-register handlers at plugin load time.
-"""
 
 from __future__ import annotations
 
@@ -17,17 +11,6 @@ TOOLSET = "mac"
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """One Hermes-callable tool wired to one mac-api HTTP route.
-
-    ``method``    HTTP verb, GET/POST/etc.
-    ``path``      mac-api path. Substrings of the form ``{name}`` are
-                  replaced with the same-named arg from the LLM-supplied
-                  body before the call. Path-params consumed this way
-                  are stripped from the JSON body / query string.
-    ``description`` is the help string the LLM reads when deciding
-                  whether to call this tool. Keep it brief, plain, and
-                  oriented around the user's intent.
-    """
 
     name: str
     method: str

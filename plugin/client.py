@@ -1,10 +1,3 @@
-"""Async HTTP client for the mac-api control plane.
-
-Used by the Hermes plugin to dispatch tool calls into mac. Designed to
-be tiny: one request method, path-parameter expansion, bearer auth,
-2x retry on 5xx with jittered backoff, OpenAI-tool-style error JSON on
-failure. No file upload/download — mac's tool surface is JSON only.
-"""
 
 from __future__ import annotations
 
@@ -121,11 +114,6 @@ class MacClient:
 
 
 def _expand_path(path: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Replace `{name}` segments in the path from `args` and strip them out.
-
-    Pulls path parameters out of the JSON body / query string so the same
-    argument map can carry both routing and payload values.
-    """
     while "{" in path and "}" in path:
         start = path.index("{")
         end = path.index("}", start)
@@ -188,10 +176,6 @@ def env_ready() -> bool:
 
 
 def check_mac_available() -> bool:
-    """Used by Hermes to decide whether to load mac tools at all.
-
-    A 200 from /health is sufficient; the endpoint is public.
-    """
     if not env_ready():
         return False
     base = (os.environ.get(MAC_URL_ENV) or os.environ.get(MAC_HUB_URL_ENV, "")).rstrip("/")

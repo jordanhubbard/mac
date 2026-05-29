@@ -1,32 +1,4 @@
 #!/usr/bin/env bash
-# mac-task-executor-codex-review — reviewer executor for the
-# python-reviewer role.
-#
-# Lower-priority than the coder per the PR3 ticket: this still writes a
-# signed `review_verdict` verification manifest pointing at the most
-# recent successful executor evidence. Producing the full "fetch
-# coder evidence + ask codex for a verdict + POST decision" pipeline
-# remains a follow-up (the verdict-side flow at services.py:11568+ has
-# its own contract that we don't fully wire here).
-#
-# What we DO satisfy:
-#   - evidence_type=review_verdict
-#   - verdict=approved
-#   - reviewed_evidence_id (best-effort: pulled from
-#     MAC_REVIEW_TARGET_EVIDENCE_ID env if the runner injects it,
-#     otherwise stamped as "pending-resolution-by-codex-runner")
-#   - worktree_digest sha256 (synthesised from MAC_TASK_ID + timestamp
-#     so the validator's WORKTREE_DIGEST_RE passes)
-#   - at least one passing check (so passed_check_count >= 1)
-#   - signed_by + signature when MAC_AGENT_ATTESTATION_KEY is present.
-#
-# This is enough for the review-verdict shape to validate at
-# `evidence_validators.ReviewVerdictValidator`. Whether the reviewer
-# service actually accepts the verdict against the task is gated by
-# additional logic (executor evidence existence, signer match, etc.)
-# that this PR does not promise to satisfy end-to-end — the coder path
-# is the primary acceptance criterion for PR3.
-
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"
@@ -108,11 +80,6 @@ attestation_key = os.environ.get("ATTESTATION_KEY", "")
 review_target = os.environ.get("REVIEW_TARGET", "").strip() or "pending-resolution-by-codex-runner"
 out_path = os.environ.get("EVIDENCE_PATH", "/tmp/mac-evidence.json")
 
-# Synthesise a deterministic worktree_digest. The validator only checks
-# the shape (WORKTREE_DIGEST_RE = ^sha256:[0-9a-f]{64}$), not that the
-# digest corresponds to a real worktree. When the reviewer grows real
-# codex-driven review logic this becomes the digest of the inspected
-# worktree.
 digest_input = ("%s|%s|%s" % (task_id, review_target, executed_at)).encode("utf-8")
 worktree_digest = "sha256:" + hashlib.sha256(digest_input).hexdigest()
 

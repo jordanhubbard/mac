@@ -1,42 +1,5 @@
-"""``mac-k8s-runner`` — turns ready tasks into Kubernetes Jobs.
-
-Architecture (K8s Phase 4):
-
-  mac-api (durable coordinator)
-       ▲
-       │ HTTP: GET /agents/{id}/claim-next, POST /leases/{id}/renew
-       │
-  mac-k8s-runner (Deployment, N replicas)
-       │
-       │ K8s API: batch/v1 Job create
-       ▼
-  task-Job pods (one per claimed lease)
-       │
-       │ mac-task-runner exec → mac-api: POST /tasks/{id}/evidence,
-       │                                 POST /tasks/{id}/submit-for-review
-       ▼
-  exit 0 (Job marks Complete)
-
-The runner does **not** execute tasks itself. It only claims-and-spawns,
-keeping permissions tight: the runner ServiceAccount needs `batch.jobs`
-CRUD in its namespace; individual task-Job pods need only an
-``MAC_WORKER_TOKEN`` mounted via Secret. The runner is multi-replica;
-the existing ``uniq_leases_active_per_task`` partial unique index in
-Postgres prevents duplicate-launch races.
-
-This module is split for testability:
-
-* ``build_job_spec(task, lease, cfg)`` returns a pure-dict K8s Job
-  manifest — no I/O, easily unit-testable.
-* ``claim_and_launch_one(mac_client, k8s_client, cfg)`` is the
-  imperative step (claim a task, create the Job, return a summary).
-* ``runner_loop(...)`` is the long-running entry point used by the
-  binary; covered by an integration test rather than unit tests.
-"""
-
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -44,108 +7,22 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
+from mac.k8s.config_loader import load_config_file
+
 JsonDict = Dict[str, Any]
 log = logging.getLogger(__name__)
 
-# Default image used when a task's runtime_environment manifest does not
-# pin one. Operators override via MAC_RUNNER_DEFAULT_IMAGE.
 DEFAULT_TASK_IMAGE = "ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME"
 
 DEFAULT_BACKOFF_LIMIT = 0  # retries owned by mac-api lease-expiry, not K8s
 DEFAULT_ACTIVE_DEADLINE_SECONDS = 1800  # 30 min, override per task
 
-# How frequently the runner-side renewal goroutine renews each Job's
-# lease. Matches the cadence previously used inside the Job pod (see
-# job_executor.py's deprecated LEASE_RENEW_INTERVAL_SECONDS). Operators
-# can override via MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS.
 DEFAULT_LEASE_RENEW_INTERVAL_SECONDS = 30
 
-# How frequently the renewal goroutine polls the Job's status to learn
-# whether it's terminal. Override via MAC_RUNNER_JOB_POLL_INTERVAL_SECONDS.
 DEFAULT_JOB_POLL_INTERVAL_SECONDS = 5
-
-
-def _json_env(name: str, default: Dict[str, str]) -> Dict[str, str]:
-    """Read a JSON-encoded ``Dict[str, str]`` from env.
-
-    Returns ``default`` (a fresh copy) when the var is unset OR when the
-    value is malformed; in the malformed case we log a warning rather
-    than crashing so a typo in operator config never bricks the runner.
-    """
-    raw = os.environ.get(name)
-    if not raw or not raw.strip():
-        return dict(default)
-    try:
-        loaded = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        log.warning("malformed JSON in env %s; falling back to default: %s", name, exc)
-        return dict(default)
-    if not isinstance(loaded, dict):
-        log.warning(
-            "env %s did not decode to a JSON object (got %s); using default",
-            name,
-            type(loaded).__name__,
-        )
-        return dict(default)
-    return {str(k): str(v) for k, v in loaded.items()}
-
-
-def _json_env_nested(
-    name: str,
-    default: Dict[str, Dict[str, str]],
-) -> Dict[str, Dict[str, str]]:
-    """Read a JSON-encoded ``Dict[str, Dict[str, str]]`` from env.
-
-    Used for ``MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS`` whose value is
-    shaped ``{role: {"name": "<k8s-secret>", "key": "<secret-key>"}}``.
-    Malformed entries are dropped silently with a warning rather than
-    crashing the runner; missing inner keys produce a skipped role
-    (downstream code must tolerate a role with no attestation secret —
-    in that case the Job pod simply doesn't get an attestation key in
-    env, and mac's review-readiness gate rejects with
-    ``manifest_not_signed``).
-    """
-    raw = os.environ.get(name)
-    if not raw or not raw.strip():
-        return {role: dict(spec) for role, spec in default.items()}
-    try:
-        loaded = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        log.warning("malformed JSON in env %s; falling back to default: %s", name, exc)
-        return {role: dict(spec) for role, spec in default.items()}
-    if not isinstance(loaded, dict):
-        log.warning(
-            "env %s did not decode to a JSON object (got %s); using default",
-            name,
-            type(loaded).__name__,
-        )
-        return {role: dict(spec) for role, spec in default.items()}
-    out: Dict[str, Dict[str, str]] = {}
-    for role, spec in loaded.items():
-        if not isinstance(spec, dict):
-            log.warning(
-                "env %s entry for role %r is not an object; skipping",
-                name,
-                role,
-            )
-            continue
-        secret_name = str(spec.get("name") or "").strip()
-        secret_key = str(spec.get("key") or "").strip()
-        if not secret_name or not secret_key:
-            log.warning(
-                "env %s entry for role %r is missing name/key; skipping",
-                name,
-                role,
-            )
-            continue
-        out[str(role)] = {"name": secret_name, "key": secret_key}
-    return out
-
 
 @dataclass
 class RunnerConfig:
-    """Static configuration for a ``mac-k8s-runner`` replica."""
-
     mac_url: str
     agent_id: str
     namespace: str = "mac"
@@ -158,51 +35,23 @@ class RunnerConfig:
     poll_interval_seconds: float = 5.0
     backoff_limit: int = DEFAULT_BACKOFF_LIMIT
     active_deadline_seconds: int = DEFAULT_ACTIVE_DEADLINE_SECONDS
-    # Subset of capabilities this runner is willing to dispatch. Tasks
-    # whose required_capabilities are not a subset are ignored. Empty =
-    # accept anything the agent record's capabilities can satisfy.
     capability_filter: List[str] = field(default_factory=list)
-    # Role specialisation maps. All default to {} so an unset operator
-    # config is bit-for-bit identical to today: no role lookups, no
-    # alias resolution, MAC_AGENT_ROLE/MAC_TASK_EXECUTOR_COMMAND absent
-    # or empty in the Job env.
     role_images: Dict[str, str] = field(default_factory=dict)
     role_agent_ids: Dict[str, str] = field(default_factory=dict)
     role_executors: Dict[str, str] = field(default_factory=dict)
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
-    # PR3: per-role HMAC attestation key, sourced from a K8s Secret. The
-    # Job pod inherits the key via ``MAC_AGENT_ATTESTATION_KEY`` env so
-    # the role executor (mac-task-executor-codex et al.) can sign its
-    # verification manifest. mac's review-readiness gate refuses
-    # unsigned manifests (services.py:11253-11270), so this is required
-    # for a role agent to clear ``/submit-for-review``.
-    #
-    # Shape: ``{role: {"name": "<k8s-secret-name>", "key": "<secret-key>"}}``.
-    # An entry that is absent for a given role simply emits no
-    # MAC_AGENT_ATTESTATION_KEY env on the Job — the executor will then
-    # log "manifest will be unsigned" and mac will reject at the gate.
-    # That is the intentional fail-loud signal for an operator who
-    # turned on role specialisation without seeding the per-role keys.
     role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(
         default_factory=dict
     )
-    # How often (seconds) the runner renews a Job's lease. Stays in
-    # config so tests can shorten it. Defaults match the cadence
-    # previously used by the in-Job renewal thread.
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
-    # How often (seconds) the runner polls Job status to detect terminal
-    # state and stop renewing.
     job_poll_interval_seconds: float = float(DEFAULT_JOB_POLL_INTERVAL_SECONDS)
 
     @classmethod
     def from_env(cls) -> "RunnerConfig":
-        # MAC_RUNNER_TASK_SECRET_NAME overrides BOTH defaults at once for
-        # the common case where MAC_WORKER_TOKEN + MAC_SECRET_KEY live in
-        # the same Kubernetes Secret (e.g. operator-supplied
-        # `mac-api-config` or an ExternalSecret target like `mac-secret`).
-        # Operators that need different Secrets per key can override each
-        # one individually via the per-key vars below.
         unified_secret = os.environ.get("MAC_RUNNER_TASK_SECRET_NAME")
+
+        cfg_file = load_config_file(os.environ.get("MAC_CONFIG_FILE"))
+
         return cls(
             mac_url=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL", ""),
             agent_id=os.environ.get("MAC_AGENT_ID", "mac-k8s-runner"),
@@ -239,15 +88,11 @@ class RunnerConfig:
                 for c in os.environ.get("MAC_RUNNER_CAPABILITIES", "").split(",")
                 if c.strip()
             ],
-            role_images=_json_env("MAC_RUNNER_ROLE_IMAGES", {}),
-            role_agent_ids=_json_env("MAC_RUNNER_ROLE_AGENT_IDS", {}),
-            role_executors=_json_env("MAC_RUNNER_ROLE_EXECUTORS", {}),
-            capability_role_aliases=_json_env(
-                "MAC_RUNNER_CAPABILITY_ROLE_ALIASES", {}
-            ),
-            role_attestation_key_secrets=_json_env_nested(
-                "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS", {}
-            ),
+            role_images=cfg_file.role_images(),
+            role_agent_ids=cfg_file.role_agent_ids(),
+            role_executors=cfg_file.role_executors(),
+            capability_role_aliases=dict(cfg_file.capability_role_aliases),
+            role_attestation_key_secrets=cfg_file.role_attestation_key_secrets(),
             lease_renew_interval_seconds=float(
                 os.environ.get(
                     "MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS",
@@ -262,18 +107,10 @@ class RunnerConfig:
             ),
         )
 
-
-# ----------------------------------------------------------------------
-# Pure logic: build the K8s Job manifest from a claimed task/lease.
-# ----------------------------------------------------------------------
-
 def _job_name_for(task_id: str, lease_id: str) -> str:
-    # K8s name length cap is 63 chars; use a short hash of the lease id
-    # to keep names unique across re-runs without exposing the full id.
     short_lease = lease_id.split("-")[-1][:12]
     raw = "mac-task-%s-%s" % (task_id, short_lease)
     return _sanitize_dns_label(raw)
-
 
 def _sanitize_dns_label(value: str) -> str:
     out = []
@@ -287,20 +124,7 @@ def _sanitize_dns_label(value: str) -> str:
         label = "x" + label[1:]
     return label
 
-
 def _resolve_task_role(task: JsonDict, cfg: RunnerConfig) -> Optional[str]:
-    """Pick the role for this task. See spec §6.1.
-
-    Resolution order:
-      1. ``task.metadata.required_role`` (explicit operator override)
-      2. First capability in ``task.required_capabilities`` that
-         appears in ``cfg.capability_role_aliases`` (declared order).
-      3. ``None`` — falls through to default agent + default image.
-
-    Crucially there is **no** naked first-capability fallback: an
-    unaliased capability cannot silently mint a role. This is the
-    codex review M1 finding.
-    """
     meta = task.get("metadata") or {}
     if isinstance(meta, dict) and meta.get("required_role"):
         return str(meta["required_role"])
@@ -312,59 +136,29 @@ def _resolve_task_role(task: JsonDict, cfg: RunnerConfig) -> Optional[str]:
                 return str(role)
     return None
 
-
 def _resolve_agent_id_for_role(role: Optional[str], cfg: RunnerConfig) -> str:
-    """Map a role to the agent_id used in the Job pod env.
-
-    Falls back to ``cfg.agent_id`` (the dispatcher identity) when the
-    role is unset or unmapped — so unspecialised tasks are bit-for-bit
-    identical to today.
-    """
     if role and role in cfg.role_agent_ids:
         return cfg.role_agent_ids[role]
     return cfg.agent_id
 
-
 def _resolve_executor_for_role(
     role: Optional[str], cfg: RunnerConfig
 ) -> Optional[str]:
-    """Map a role to its executor command, or ``None`` to let the
-    Job executor fall back to its existing default (i.e. read
-    ``MAC_TASK_EXECUTOR_COMMAND`` from env as it does today)."""
     if role and role in cfg.role_executors:
         return cfg.role_executors[role]
     return None
 
-
 def _resolve_attestation_key_secret_for_role(
     role: Optional[str], cfg: RunnerConfig
 ) -> Optional[Dict[str, str]]:
-    """Resolve the K8s Secret reference holding the role agent's HMAC
-    attestation key. ``None`` when the role has no entry in
-    ``cfg.role_attestation_key_secrets`` — the Job pod will run
-    without ``MAC_AGENT_ATTESTATION_KEY`` and the role executor will
-    write an unsigned manifest (mac then rejects at /submit-for-review).
-    """
     if not role:
         return None
     spec = cfg.role_attestation_key_secrets.get(role)
     if not spec:
         return None
-    # Defensive copy so downstream mutation can't accidentally edit
-    # the config in-place.
     return {"name": spec["name"], "key": spec["key"]}
 
-
 def _resolve_task_image(task: JsonDict, cfg: RunnerConfig) -> str:
-    """Pick the container image for this task's Job.
-
-    Resolution order:
-      1. ``task.metadata.runtime.image`` (per-task override)
-      2. ``task.metadata.k8s.image`` (operator escape hatch)
-      3. Role-mapped image via ``cfg.role_images`` (role resolved by
-         ``_resolve_task_role``).
-      4. ``cfg.default_image``.
-    """
     meta = task.get("metadata") or {}
     runtime = meta.get("runtime") or {}
     if isinstance(runtime, dict) and runtime.get("image"):
@@ -377,7 +171,6 @@ def _resolve_task_image(task: JsonDict, cfg: RunnerConfig) -> str:
         return cfg.role_images[role]
     return cfg.default_image
 
-
 def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
     meta = task.get("metadata") or {}
     k8s = meta.get("k8s") or {}
@@ -388,25 +181,14 @@ def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
             pass
     return cfg.active_deadline_seconds
 
-
 def build_job_spec(
     task: JsonDict,
     lease: JsonDict,
     cfg: RunnerConfig,
 ) -> JsonDict:
-    """Return a ``batch/v1`` Job manifest for one claimed task/lease.
-
-    The returned dict is exactly what you would ``kubectl apply``. The
-    runner passes it to the K8s API directly via the kubernetes client.
-    """
     task_id = task["id"]
     lease_id = lease["id"]
     name = _job_name_for(task_id, lease_id)
-    # Resolve role-derived values once. For unspecialised tasks (no
-    # role hit) these collapse to today's values: job_agent_id ==
-    # cfg.agent_id, executor_cmd is None (so MAC_TASK_EXECUTOR_COMMAND
-    # is not emitted; the Job executor honours whatever the operator
-    # set elsewhere), MAC_AGENT_ROLE is "".
     role = _resolve_task_role(task, cfg)
     job_agent_id = _resolve_agent_id_for_role(role, cfg)
     executor_cmd = _resolve_executor_for_role(role, cfg)
@@ -426,12 +208,6 @@ def build_job_spec(
             {"name": "MAC_TASK_EXECUTOR_COMMAND", "value": executor_cmd}
         )
     if attestation_secret is not None:
-        # PR3: feed the role agent's HMAC key into the Job env so the
-        # role executor can sign its verification manifest. The key
-        # never leaves K8s in cleartext outside this Job's process
-        # (valueFrom.secretKeyRef, not value). Only emitted when the
-        # operator has configured a per-role secret; absence is
-        # diagnostically logged by the executor and rejected by mac.
         container_env.append(
             {
                 "name": "MAC_AGENT_ATTESTATION_KEY",
@@ -490,14 +266,8 @@ def build_job_spec(
             },
         },
         "spec": {
-            # backoffLimit=0: retries are owned by mac-api lease-expiry
-            # + task.max_attempts, NOT by the K8s Job controller. A
-            # crash leaves the lease to expire; the next runner cycle
-            # observes the open task and launches a fresh Job.
             "backoffLimit": cfg.backoff_limit,
             "activeDeadlineSeconds": active_deadline,
-            # Auto-clean Jobs ~24h after completion to avoid clutter; the
-            # durable execution record lives in Postgres.
             "ttlSecondsAfterFinished": 24 * 3600,
             "template": {
                 "metadata": {
@@ -556,52 +326,17 @@ def build_job_spec(
         },
     }
 
-
-# ----------------------------------------------------------------------
-# Imperative step: claim one task, launch one Job.
-# ----------------------------------------------------------------------
-
 class MacApiProtocol(Protocol):
-    """Minimal protocol the runner needs from a mac-api HTTP client.
-
-    Implemented for production by ``mac.hermes_adapter.MacApiClient``;
-    for tests, a tiny fake.
-    """
-
     def post(self, path: str, body: JsonDict) -> JsonDict: ...
     def get(self, path: str) -> JsonDict: ...
 
-
 class K8sJobsProtocol(Protocol):
-    """Minimal protocol the runner needs from a K8s Jobs client.
-
-    Backed in production by ``kubernetes.client.BatchV1Api`` (its
-    ``create_namespaced_job`` accepts a dict). For tests, a fake.
-
-    ``read`` is used by the runner-side lease renewal loop (PR1) to
-    detect when a Job hits a terminal status so renewal can stop.
-    Implementations should return a dict shaped like the K8s Job
-    object — at minimum ``{"status": {"succeeded": int, "failed": int}}``.
-    """
-
     def create(self, namespace: str, manifest: JsonDict) -> JsonDict: ...
     def list_active(self, namespace: str, label_selector: str) -> List[JsonDict]: ...
     def delete(self, namespace: str, name: str) -> None: ...
     def read(self, namespace: str, name: str) -> JsonDict: ...
 
-
 def _job_is_terminal(job: Optional[JsonDict]) -> bool:
-    """Return True iff a Job's status reports succeeded or failed pods.
-
-    Mirrors the kube-client's V1JobStatus shape: ``status.succeeded`` and
-    ``status.failed`` are integer counts of pods in those terminal
-    states. Either being ``>= 1`` is sufficient (with ``backoffLimit=0``
-    one failed pod means the Job won't be retried).
-
-    Treat an empty dict as terminal too. ``K8sJobsClient.read`` returns
-    ``{}`` on 404, so a deleted Job must stop renewal instead of leaking
-    a daemon thread until runner shutdown.
-    """
     if job is None:
         return False
     if job == {}:
@@ -617,7 +352,6 @@ def _job_is_terminal(job: Optional[JsonDict]) -> bool:
         failed = 0
     return succeeded >= 1 or failed >= 1
 
-
 def _lease_renewal_loop(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
@@ -630,22 +364,6 @@ def _lease_renewal_loop(
     stop_event: threading.Event,
     sleeper: Callable[[float], None],
 ) -> None:
-    """Renew ``lease_id`` until the Job hits a terminal status.
-
-    Owned by the runner Deployment per spec §6.3: the Job pod no longer
-    renews; the runner is the single source of authority over the
-    lease's deadline. ``agent_id`` here is the **dispatcher** identity
-    (``cfg.agent_id``) — the same identity that performed the claim, so
-    mac-api sees a consistent authorisation chain.
-
-    The loop:
-      * Polls Job status every ``cfg.job_poll_interval_seconds``. On
-        terminal status, exits without renewing further.
-      * Renews the lease every ``cfg.lease_renew_interval_seconds``.
-      * Tolerates transient renew + status-read failures: logs and
-        continues. Only ``stop_event`` or terminal Job status terminates
-        the loop.
-    """
     renew_interval = max(1.0, float(cfg.lease_renew_interval_seconds))
     poll_interval = max(1.0, float(cfg.job_poll_interval_seconds))
     last_renew_at = 0.0
@@ -654,9 +372,6 @@ def _lease_renewal_loop(
         try:
             job = k8s.read(namespace, job_name)
         except Exception as exc:  # noqa: BLE001
-            # Don't kill the goroutine on a transient read error. The
-            # next tick may succeed; in the worst case the lease still
-            # expires server-side and the controller cleans up.
             log.warning(
                 "renewal loop: read job %s/%s failed: %s",
                 namespace,
@@ -667,9 +382,6 @@ def _lease_renewal_loop(
         if _job_is_terminal(job):
             return
 
-        # Step 2: maybe renew the lease. We piggy-back on the same
-        # tick as the status poll for simplicity, gated on the renew
-        # interval so we don't over-renew when poll_interval is short.
         now = time.monotonic()
         if now - last_renew_at >= renew_interval:
             try:
@@ -684,13 +396,8 @@ def _lease_renewal_loop(
                     lease_id,
                     exc,
                 )
-                # Leave last_renew_at as-is so the next tick retries.
-
-        # Step 3: sleep until the next poll tick, breaking early if
-        # stop_event fires.
         if stop_event.wait(poll_interval):
             return
-
 
 def _start_lease_renewal_thread(
     mac: MacApiProtocol,
@@ -703,14 +410,6 @@ def _start_lease_renewal_thread(
     agent_id: str,
     sleeper: Optional[Callable[[float], None]] = None,
 ) -> threading.Thread:
-    """Spawn a daemon thread running ``_lease_renewal_loop``.
-
-    The thread is daemon=True so a runner shutdown doesn't deadlock on
-    in-flight renewal threads. If the runner crashes mid-Job the
-    renewal stops, the lease expires, and the next runner replica (or
-    controller) reclaims — same outcome as the in-Job renewer
-    crashing in the previous design.
-    """
     stop_event = threading.Event()
     thread = threading.Thread(
         target=_lease_renewal_loop,
@@ -728,41 +427,13 @@ def _start_lease_renewal_thread(
         name="mac-runner-lease-%s" % lease_id[:12],
         daemon=True,
     )
-    # Attach the stop event so callers (tests, future graceful
-    # shutdown) can cancel.
     thread.stop_event = stop_event  # type: ignore[attr-defined]
     thread.start()
     return thread
 
-
 def check_dispatcher_capabilities(
     cfg: RunnerConfig, mac: MacApiProtocol
 ) -> List[str]:
-    """Return capabilities the dispatcher is MISSING relative to roles.
-
-    Best-effort startup probe (spec §13 Q6): the runner calls
-    ``/agents/{cfg.agent_id}/claim-next`` which mac-api filters by the
-    DISPATCHER's capabilities. If an operator adds a role to
-    ``MAC_RUNNER_ROLE_AGENT_IDS`` (e.g. ``python-coder`` with capability
-    ``python``) but forgets to update the dispatcher's
-    ``AGENT_CAPABILITIES`` env on ``register-mac-agent``, tasks
-    requiring that capability will never be claimed — silently. This
-    probe surfaces the drift as a warning at startup.
-
-    Returns the sorted list of capabilities present on the union of role
-    agents but missing from the dispatcher. Empty list = ok.
-
-    Best-effort semantics:
-
-    * Empty ``cfg.role_agent_ids`` -> return ``[]`` (no roles, nothing
-      to check).
-    * Dispatcher fetch fails -> log warning, return ``[]`` (the runner
-      will still fail loudly elsewhere with a clearer error if its own
-      identity is broken).
-    * Any individual role-agent fetch fails (e.g. 404 because the
-      operator forgot to seed the row) -> log warning, skip that role
-      from the union; continue with the rest.
-    """
     if not cfg.role_agent_ids:
         return []
 
@@ -815,21 +486,11 @@ def check_dispatcher_capabilities(
     missing = sorted(union_role_caps - dispatcher_caps)
     return missing
 
-
 def claim_and_launch_one(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
     cfg: RunnerConfig,
 ) -> Optional[JsonDict]:
-    """Claim one ready task and create the corresponding K8s Job.
-
-    Returns a summary dict describing what was done, or ``None`` when
-    no task was ready / eligible. Idempotent at the partial-unique-index
-    level: two runners racing for the same task will see exactly one
-    successful claim because of ``uniq_leases_active_per_task``.
-    """
-    # Use the existing claim-next endpoint so dispatcher policy
-    # (tenant fairness, capability filter, role binding) is respected.
     payload: JsonDict = {}
     if cfg.capability_filter:
         payload["capabilities"] = cfg.capability_filter
@@ -852,13 +513,6 @@ def claim_and_launch_one(
         )
         return None
 
-    # PR2c (spec §6.3, Option B): when the resolved role agent differs
-    # from the dispatcher, delegate the lease so the role agent's Job
-    # pod can author start_task / submit_for_review / add_evidence
-    # against the hub. The owner (this runner) still owns renewal +
-    # release. Failure is non-fatal — we log and continue. The Job's
-    # own start_task call will surface the error if delegation didn't
-    # take, and the runner-owned lease will expire normally.
     role = _resolve_task_role(task, cfg)
     job_agent_id = _resolve_agent_id_for_role(role, cfg)
     if job_agent_id != cfg.agent_id:
@@ -909,7 +563,6 @@ def claim_and_launch_one(
             lease["id"],
             exc,
         )
-        # Best-effort: release the lease so another runner can retry.
         try:
             mac.post(
                 "/tasks/%s/transition" % task["id"],
@@ -931,9 +584,6 @@ def claim_and_launch_one(
             "error": str(exc),
         }
 
-    # Per spec §6.3, the runner Deployment owns lease renewal. Spawn a
-    # daemon thread that keeps the lease alive until the Job hits a
-    # terminal status. The Job pod itself no longer renews.
     job_name = manifest["metadata"]["name"]
     try:
         _start_lease_renewal_thread(
@@ -946,9 +596,6 @@ def claim_and_launch_one(
             agent_id=cfg.agent_id,
         )
     except Exception as exc:  # noqa: BLE001
-        # The Job already exists; failing to start the renewal thread
-        # is non-fatal here. The lease will expire and the controller
-        # will re-claim — same recovery path as a runner crash.
         log.error(
             "failed to start renewal thread for task=%s lease=%s: %s",
             task["id"],
@@ -965,12 +612,6 @@ def claim_and_launch_one(
         "image": manifest["spec"]["template"]["spec"]["containers"][0]["image"],
     }
 
-
-# ----------------------------------------------------------------------
-# Long-running loop. Covered by an integration test; unit tests target
-# the pure functions above.
-# ----------------------------------------------------------------------
-
 def runner_loop(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
@@ -979,12 +620,6 @@ def runner_loop(
     iterations: Optional[int] = None,
     sleep: Optional[Any] = None,
 ) -> int:
-    """Run the claim+launch cycle.
-
-    `iterations` caps the loop (used by tests). `sleep` is a sleep-like
-    callable, default ``time.sleep``. Returns the count of Jobs
-    successfully launched.
-    """
     sleeper = sleep or time.sleep
     launched = 0
     i = 0

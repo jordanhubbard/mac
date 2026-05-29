@@ -1,11 +1,3 @@
-"""mac Hermes plugin.
-
-Exposes six tools the LLM can call to drive the mac task ledger. The
-plugin is loaded by hermes-agent from /opt/data/plugins/mac/ (dropped
-there by the install-mac-plugin init container in home-ops).
-
-Entry point: register(ctx) — called once by Hermes at startup.
-"""
 
 from __future__ import annotations
 
@@ -45,16 +37,6 @@ def _ensure_args(args: Any) -> dict | None:
 
 
 def _shape_create_task_body(args: dict) -> dict:
-    """Translate LLM-friendly fields (summary/snippets/links) into the
-    API body shape that POST /hermes-instances/{id}/tasks accepts.
-
-    Mirrors what `mac.hermes_adapter.HermesMacAdapter
-    .create_task_from_conversation` does (and what
-    `ConversationTaskInput.description()` produces), so the LLM keeps
-    a natural conversation-shaped tool surface while the underlying
-    POST satisfies the mac-api Pydantic schema (which only knows about
-    `description`, not summary/snippets/links).
-    """
     title = (args.get("title") or "").strip()
     summary = (args.get("summary") or "").strip()
     snippets = [s.strip() for s in (args.get("snippets") or []) if str(s).strip()]
@@ -73,8 +55,6 @@ def _shape_create_task_body(args: dict) -> dict:
         "description": "\n\n".join(sections),
         "actor": "hermes",
     }
-    # Optional passthrough fields — only set when the LLM gave a value
-    # so we don't override mac-api server-side defaults.
     for key in (
         "priority",
         "project",
@@ -89,8 +69,6 @@ def _shape_create_task_body(args: dict) -> dict:
         if args.get(key) is not None:
             body[key] = args[key]
 
-    # hermes_instance_id is a path param — keep it in the body for
-    # _expand_path to strip into the URL.
     body["hermes_instance_id"] = args.get("hermes_instance_id") or hermes_instance_id()
     return body
 
@@ -102,8 +80,6 @@ def _resolve_body_for(tool: ToolSpec, args: dict) -> dict:
     if tool.name == "mac_work_brief":
         args.setdefault("hermes_instance_id", hermes_instance_id())
     elif tool.name == "mac_cancel_task":
-        # The cancel tool is a thin wrapper: the LLM provides
-        # task_id/actor/detail; we fill the transition target.
         args["target_state"] = "cancelled"
     return args
 
@@ -142,12 +118,6 @@ def _make_handler(tool: ToolSpec):
 
 
 def register(ctx) -> None:
-    """Hermes plugin entry point.
-
-    ``ctx`` is the Hermes plugin context (provided by hermes-agent at
-    plugin-load time). It supports ``register_tool(name, toolset,
-    schema, handler, check_fn, requires_env, is_async, description)``.
-    """
     for tool in TOOLS:
         ctx.register_tool(
             name=tool.name,
