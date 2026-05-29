@@ -34,7 +34,6 @@ k8s = [
 
 [project.scripts]
 mac = "mac.cli:main"
-hgmac = "mac.hgmac:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
@@ -52,7 +51,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "api: FastAPI HTTP endpoint tests (tests/api/)",
-    "cli: CLI command tests — mac, hgmac (tests/cli/)",
+    "cli: CLI command tests — mac (tests/cli/)",
     "ui: UI asset-serving and dashboard tests (tests/ui/)",
     "postgres: live-Postgres tests; need MAC_TEST_PG_URL pointing at a writable test DB",
 ]

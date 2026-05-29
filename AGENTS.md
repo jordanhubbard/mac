@@ -1,33 +1,42 @@
 # Agent Instructions
 
-This project is migrating off **beads** (`bd`). Issue text lives in
-`.tickets/<id>.md` (one markdown file per ticket, wedow/ticket-compatible
-YAML frontmatter). The MAC hub task ledger remains the canonical
-execution store; `.tickets/` is the git-trackable mirror.
+Issues live as one markdown file per ticket under `.tickets/<id>.md`
+(wedow/ticket-compatible YAML frontmatter + markdown body). The MAC
+hub task ledger (`mac task`) is the canonical execution store;
+`.tickets/` is the git-trackable mirror.
+
+The legacy beads (`bd`) integration is shut off — dolt sync is
+disabled, the beads bridge is gated off by default
+(`MAC_BEADS_BRIDGE_ENABLED`), and `.beads/` has been removed from this
+repo. Do not run `bd`.
 
 ## Quick Reference
 
 ```bash
 # Read issues
-ls .tickets/                         # all issues
-cat .tickets/mac-y7ha.md             # one issue (the file IS authoritative for text)
+ls .tickets/                                 # all issues
+cat .tickets/mac-y7ha.md                     # one issue (the file IS authoritative for text)
+mac task ready --limit 10                    # ledger view: open + no unfinished deps + unclaimed
+mac task stats                               # counts by state
+mac task search <keyword>                    # title/description match
 
-# Issue lifecycle (transitional, until the replacement CLI lands)
-bd ready                             # Find available work
-bd show <id>                         # View issue details
-bd update <id> --claim               # Claim work atomically
-bd close <id>                        # Complete work
+# Lifecycle
+mac task create "title" --description-file=desc.txt --metadata-file=meta.json
+mac task claim <task_id> <agent_id>
+mac task show <task_id>                      # detail + history
+mac task close <task_id> --reason="..."
 
-# Refresh JSONL + .tickets/ mirror after lifecycle changes
-bd export -o .beads/issues.jsonl
-mac task migrate-beads . --project=mac --tickets-only
+# Memories (cross-session knowledge)
+mac memory remember <key> "<content>" --project=mac
+mac memory list --project=mac
+mac memory forget <key> --project=mac
 
-# Inspect or migrate other repos
+# Inspect or migrate other repos that still have legacy beads state
 mac task detect-beads <repo>
-mac task migrate-beads <repo> --project=<name>
+mac task migrate-beads <repo> --project=<name> --tickets-only
 ```
 
-> Do not run `bd dolt push` / `bd dolt pull`. Dolt sync is disabled (services.py:_sync_beads_database). Issues travel via git, not dolt.
+> Pass multi-line / shell-hostile content (parens, backticks, `$VAR`, newlines) via the `--<name>-file` variants instead of inline quotes. `--<name>-file -` reads from stdin.
 
 ## Non-Interactive Shell Commands
 
@@ -53,49 +62,27 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
 ## Session Completion
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+1. **File follow-up issues** via `mac task create` for anything that needs follow-up
+2. **Run quality gates** (if code changed) — `scripts/run-contract-tests.sh`
+3. **Update issue status** via `mac task close`
+4. **PUSH TO REMOTE** — MANDATORY:
    ```bash
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
    ```
-   Do NOT run `bd dolt push`/`bd dolt pull` — dolt sync is disabled. Beads JSONL under `.beads/` is git-tracked; `git push` is sufficient.
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+5. **Clean up** — clear stashes, prune remote branches
+6. **Verify** all changes committed AND pushed
+7. **Hand off** context for next session
 
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
+- NEVER stop before pushing — that leaves work stranded locally
+- NEVER say "ready to push when you are" — YOU must push
 - If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->

@@ -380,9 +380,13 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
         "reload_mac_env\n"
         "sync_hermes_tokenhub_client_env\n"
         "reload_mac_env\n"
+        "fetch_slack_secrets_from_vault\n"
+        "reload_mac_env\n"
         "sync_hermes_slack_identity_env\n"
         '[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories'
     ) in script
+    assert "fetch_slack_secrets_from_vault()" in script
+    assert "scripts/mac-fetch-slack-secrets.py" in script
     assert 'unset TOKENHUB_URL' in script
     assert "provider_secret_keys" in script
     assert 'values["TOKENHUB_URL"] = derived_tokenhub_url' in script

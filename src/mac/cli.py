@@ -30,14 +30,67 @@ def _csv(value: Optional[str]) -> Iterable[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _read_text_arg(
+    inline: Optional[str],
+    file_path: Optional[str],
+    *,
+    label: str,
+    default: str = "",
+) -> str:
+    """Resolve a text-bearing CLI argument from one of: inline string,
+    file path, or '-' for stdin. Lets callers avoid shell-quoting
+    hazards on multi-line / metacharacter-heavy values (parens, braces,
+    backticks, ``$``).
+
+    Inline value wins when both are supplied. ``--<arg>-file -`` reads
+    from stdin so pipes and heredocs work without quoting.
+    """
+    import sys
+    if inline is not None and inline != "":
+        return inline
+    if file_path:
+        if file_path == "-":
+            return sys.stdin.read()
+        try:
+            with open(file_path, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except OSError as exc:
+            raise SystemExit("failed to read %s from %s: %s" % (label, file_path, exc))
+    return default
+
+
+def _read_json_arg(
+    inline: Optional[str],
+    file_path: Optional[str],
+    *,
+    label: str,
+    default: Any,
+) -> Any:
+    raw = _read_text_arg(inline, file_path, label=label, default="")
+    if not raw or not raw.strip():
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit("invalid JSON in %s: %s" % (label, exc))
+
+
 def _print(value: Any) -> None:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
     print(json.dumps(value, indent=2, sort_keys=True))
 
 
-def _plane(args: argparse.Namespace) -> ControlPlane:
-    return ControlPlane(SQLiteStore(args.db))
+def _plane(args: argparse.Namespace) -> Any:
+    """Return a Dispatch (LocalDispatch or RemoteDispatch).
+
+    Kept under the historical name so existing handlers (``_plane(args).foo()``)
+    are unchanged. The actual transport is chosen by
+    :func:`mac.dispatch.resolve_dispatch`.
+    """
+    from mac.dispatch import resolve_dispatch
+
+    return resolve_dispatch(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -215,15 +268,27 @@ def cmd_task_detect_beads(args: argparse.Namespace) -> None:
 
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
+    description = _read_text_arg(
+        args.description,
+        getattr(args, "description_file", None),
+        label="--description",
+        default="",
+    )
+    metadata = _read_json_arg(
+        args.metadata,
+        getattr(args, "metadata_file", None),
+        label="--metadata",
+        default={},
+    )
     _print(
         cp.create_task(
             args.title,
-            description=args.description or "",
+            description=description,
             project=args.project,
             priority=args.priority,
             required_capabilities=_csv(args.required_capabilities),
             dependencies=_csv(args.dependencies),
-            metadata=_json_arg(args.metadata, {}),
+            metadata=metadata,
             max_attempts=args.max_attempts,
             actor=args.actor,
         )
@@ -1051,6 +1116,14 @@ def cmd_observability_list(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_observability_prune(args: argparse.Namespace) -> None:
+    removed = _plane(args).prune_observability(
+        older_than=args.older_than,
+        keep_last=args.keep_last,
+    )
+    _print({"removed": removed})
+
+
 def cmd_notifier_configure(args: argparse.Namespace) -> None:
     _print(
         _plane(args).configure_notifier_channel(
@@ -1135,7 +1208,35 @@ def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentPa
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mac", description="Multi-agent coordinator control plane")
-    parser.add_argument("--db", default=os.environ.get("MAC_DB", "mac.db"), help="SQLite database path")
+    # Transport selection (see mac.dispatch.resolve_dispatch for resolution).
+    # --db is no longer auto-defaulted: the CLI either targets a hub (default
+    # when MAC_API_URL or fleets.yaml is configured) or an explicit SQLite
+    # path. Silent fallback to ./mac.db is gone.
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database path (local mode). Use this for offline work, "
+        "`init`, and `migrate`. When unset and no hub is configured, mac "
+        "refuses to run rather than writing to ./mac.db silently.",
+    )
+    parser.add_argument(
+        "--hub-url",
+        default=None,
+        help="MAC hub URL (hub mode). Falls back to $MAC_API_URL / "
+        "$MAC_URL / $MAC_HUB_URL, then ~/.mac/fleets.yaml for --fleet.",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Bearer token for hub mode. Falls back to $MAC_API_TOKEN "
+        "(or $MAC_API_TOKEN__<FLEET> when --fleet is set).",
+    )
+    parser.add_argument(
+        "--fleet",
+        default=None,
+        help="Fleet name; selects MAC_API_TOKEN__<FLEET> and "
+        "~/.mac/fleets.yaml entry.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
@@ -1248,12 +1349,18 @@ def build_parser() -> argparse.ArgumentParser:
     task = sub.add_parser("task", help="task ledger commands").add_subparsers(dest="task_command", required=True)
     create = task.add_parser("create")
     create.add_argument("title")
-    create.add_argument("--description", default="")
+    create.add_argument("--description", default="",
+                        help="task description (use --description-file for multi-line / shell-hostile content)")
+    create.add_argument("--description-file", dest="description_file",
+                        help="read description from file path (or '-' for stdin); avoids shell-quoting hazards")
     create.add_argument("--project")
     create.add_argument("--priority", type=int, default=0)
     create.add_argument("--required-capabilities")
     create.add_argument("--dependencies")
-    create.add_argument("--metadata")
+    create.add_argument("--metadata",
+                        help="JSON metadata (use --metadata-file for shell-hostile content)")
+    create.add_argument("--metadata-file", dest="metadata_file",
+                        help="read JSON metadata from file path (or '-' for stdin)")
     create.add_argument("--max-attempts", type=int, default=3)
     create.add_argument("--actor", default="human")
     _set(cmd_task_create, create)
@@ -1887,6 +1994,21 @@ def build_parser() -> argparse.ArgumentParser:
     observability_list.add_argument("--after-sequence", type=int)
     observability_list.add_argument("--limit", type=int, default=100)
     _set(cmd_observability_list, observability_list)
+    observability_prune = observability.add_parser(
+        "prune",
+        help="delete observability_events older than --older-than (ISO timestamp) "
+        "or keep only --keep-last rows; returns the number removed",
+    )
+    observability_prune.add_argument(
+        "--older-than",
+        help="ISO timestamp; rows with created_at < this are deleted",
+    )
+    observability_prune.add_argument(
+        "--keep-last",
+        type=int,
+        help="keep only the most recent N rows by sequence",
+    )
+    _set(cmd_observability_prune, observability_prune)
 
     notifier = sub.add_parser(
         "notifier", help="operator notification channel configuration"

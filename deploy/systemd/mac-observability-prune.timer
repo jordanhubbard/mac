@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily trigger for mac observability_events prune
+Documentation=https://github.com/jordanh/mac
+
+[Timer]
+# Run shortly after midnight UTC; randomize so a fleet doesn't stampede.
+OnCalendar=*-*-* 00:17:00 UTC
+RandomizedDelaySec=900
+Persistent=true
+Unit=mac-observability-prune.service
+
+[Install]
+WantedBy=timers.target

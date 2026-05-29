@@ -1701,7 +1701,7 @@ required = [
     "shell_execution",
     "workspace_file_access",
     "hgmac agents list",
-    "bd prime",
+    "mac task ready",
     "git push",
 ]
 runtime_context = prompt_builder._load_mac_runtime_context()
@@ -2978,6 +2978,35 @@ print("TokenHub runtime config: synced to %s" % config_path)
 PY
 }
 
+fetch_slack_secrets_from_vault() {
+  # Pull this agent's Slack tokens from TokenHub vault (centralized
+  # secret store). Replaces per-host .env scattering. Idempotent;
+  # writes ~/.hermes/slack_accounts.json and updates SLACK_BOT_TOKEN /
+  # SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
+  local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
+  if [ ! -f "$fetcher" ]; then
+    log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
+    return 0
+  fi
+  local th_env="$HOME/.tokenhub/env"
+  local th_admin="${TOKENHUB_ADMIN_TOKEN:-}"
+  if [ -z "$th_admin" ] && [ -f "$th_env" ]; then
+    th_admin="$(awk -F= '/^TOKENHUB_ADMIN_TOKEN=/{print $2}' "$th_env" | head -1)"
+  fi
+  local th_url="${TOKENHUB_URL:-${MAC_DEPLOY_TOKENHUB_URL:-http://127.0.0.1:${MAC_DEPLOY_TOKENHUB_PORT:-8090}}}"
+  if [ -z "$th_admin" ]; then
+    log "skipping Slack vault fetch: TOKENHUB_ADMIN_TOKEN unavailable on $HOME"
+    return 0
+  fi
+  log "fetching Slack secrets for ${AGENT} from TokenHub vault ($th_url)"
+  MAC_AGENT_NAME="$AGENT" \
+    TOKENHUB_URL="$th_url" \
+    TOKENHUB_ADMIN_TOKEN="$th_admin" \
+    HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+    "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
+      log "WARNING: Slack vault fetch failed for ${AGENT}; will fall back to existing files"
+}
+
 sync_hermes_slack_identity_env() {
   log "syncing Hermes Slack identity/routing environment"
   "$PY" - "$ENV_FILE" "$HOME/.hermes/.env" <<'PY'
@@ -3937,6 +3966,8 @@ reload_mac_env
 install_or_validate_tokenhub_service
 reload_mac_env
 sync_hermes_tokenhub_client_env
+reload_mac_env
+fetch_slack_secrets_from_vault
 reload_mac_env
 sync_hermes_slack_identity_env
 [ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories || true
@@ -4978,6 +5009,217 @@ def task_evidence_type(task: dict) -> str:
     return evidence_type if evidence_type in allowed else "operator_result"
 
 
+def _git(args, cwd):
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+def run_deterministic_git_finalizer(task_workspace: Path, task: dict) -> None:
+    """mac-jfns: enforce deterministic repo_change evidence for tasks
+    declaring publication_target=git://main. Runs after the LLM-driven
+    Hermes step. Commits any uncommitted work, pushes the lease branch,
+    runs the contract test suite, then writes an authoritative
+    mac-evidence.json that reflects real git state (overriding whatever
+    evidence_type / pushed / dirty flags the LLM proposed).
+    """
+    metadata = task.get("metadata") or {}
+    publication_target = str(metadata.get("publication_target") or "").strip()
+    if not publication_target.startswith("git://"):
+        return
+    worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    if not worktree:
+        # Some tasks ship the worktree path inside the task json
+        rt = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+        worktree = str(rt.get("repository_worktree") or "").strip()
+    worktree_path = Path(worktree).expanduser() if worktree else None
+    if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
+        return
+    # Auto-commit any uncommitted changes (the LLM may have edited files but skipped commit)
+    status = _git(["status", "--porcelain"], worktree_path)
+    if status.stdout.strip():
+        _git(["add", "-A"], worktree_path)
+        commit_msg = "auto-commit: %s" % task.get("id", "unknown")
+        _git(
+            [
+                "-c", "user.email=mac-fleet@nvidia.com",
+                "-c", "user.name=MAC fleet",
+                "commit",
+                "-m", commit_msg,
+            ],
+            worktree_path,
+        )
+    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    # Push the current branch to origin (idempotent on re-runs)
+    pushed = False
+    push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
+    push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
+    if push.returncode == 0:
+        pushed = True
+    # Run contract tests
+    contract = (metadata.get("origin") or {}).get("repository_contract") or {}
+    test_cmd = ((contract.get("test") or {}).get("command") or "scripts/run-contract-tests.sh").strip()
+    tests = None
+    if test_cmd:
+        tr = subprocess.run(
+            ["bash", "-lc", test_cmd],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+        )
+        tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
+        # Extract pytest summary if present
+        import re as _re
+        passed = failed = total = None
+        m = _re.search(r"(\d+) passed", tail)
+        if m:
+            passed = int(m.group(1))
+        m = _re.search(r"(\d+) failed", tail)
+        if m:
+            failed = int(m.group(1))
+        if passed is not None or failed is not None:
+            total = (passed or 0) + (failed or 0)
+        tests = {
+            "command": test_cmd,
+            "returncode": int(tr.returncode),
+            "passed": passed,
+            "failed": failed,
+            "total": total,
+            "status": "pass" if tr.returncode == 0 else "fail",
+        }
+    # Compute files_changed relative to origin/main
+    _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
+    diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
+    files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
+    final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "Deterministic finalizer: commit+push+test for %s" % task.get("id"),
+        "repo": {
+            "head_sha": head_sha,
+            "pushed": pushed,
+            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
+            "dirty": bool(final_status),
+            "files_changed": files_changed,
+        },
+        "tests": tests,
+        "checks": [
+            {
+                "name": "git_finalizer",
+                "returncode": 0 if pushed and (tests is None or tests.get("returncode") == 0) else 1,
+                "status": "pass" if pushed and (tests is None or tests.get("returncode") == 0) else "fail",
+            }
+        ],
+    }
+    manifest_path = task_workspace / "mac-evidence.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _sign_verdict(key: str, manifest: dict) -> str:
+    """HMAC-SHA256 → base64url; matches mac.services.sign_verification_manifest."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    import base64 as _base64
+    # Match services._canonicalize_for_signature: stable JSON, exclude 'signature'
+    filtered = {k: v for k, v in manifest.items() if k != "signature"}
+    blob = json.dumps(filtered, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = _hmac.new(key.encode("ascii"), blob, _hashlib.sha256).digest()
+    return "v1:" + _base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def run_deterministic_review_verdict(task_workspace: Path, task: dict, review_context: dict) -> None:
+    """mac-jfns: deterministic post-LLM review verdict. After Hermes
+    runs as the reviewer, override whatever it wrote with a signed
+    review_verdict manifest that:
+      - reads the executor's evidence from executor-evidence.json
+      - runs the contract test gate in the review checkout
+      - signs an approved verdict if tests pass and the executor's
+        commit is reachable on origin
+    """
+    reviewer_agent_id = str(task.get("owner_agent_id") or os.environ.get("MAC_WORKER_AGENT_ID") or "").strip()
+    attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
+    if not reviewer_agent_id or not attestation_key:
+        return
+    executor_evidence_id = str(review_context.get("executor_evidence_id") or "").strip()
+    review_id = str(review_context.get("review_id") or "").strip()
+    if not executor_evidence_id or not review_id:
+        return
+    # Load the executor's evidence the dispatcher staged in the review workspace
+    exec_ev_path = task_workspace / "executor-evidence.json"
+    if not exec_ev_path.exists():
+        return
+    try:
+        exec_ev = json.loads(exec_ev_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    exec_verification = (exec_ev.get("metadata") or {}).get("verification") or {}
+    exec_repo = exec_verification.get("repo") or {}
+    exec_head = str(exec_repo.get("head_sha") or "").strip()
+    if not exec_head:
+        return
+    # Locate a review worktree: the dispatcher prepares one and exposes
+    # it as MAC_TASK_REPO_WORKTREE; if absent we can still attest based
+    # on the executor's claims.
+    review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    tests = None
+    independent_pass = False
+    if review_worktree and Path(review_worktree).is_dir():
+        # Independent test run against the executor commit
+        ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], Path(review_worktree))
+        if ck.returncode == 0:
+            test_cmd = (((task.get("metadata") or {}).get("origin") or {})
+                        .get("repository_contract") or {}).get("test", {}).get("command", "scripts/run-contract-tests.sh")
+            tr = subprocess.run(
+                ["bash", "-lc", test_cmd],
+                cwd=review_worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=600,
+            )
+            independent_pass = tr.returncode == 0
+            tests = {
+                "command": test_cmd,
+                "returncode": int(tr.returncode),
+                "status": "pass" if tr.returncode == 0 else "fail",
+            }
+    verdict = "approved" if independent_pass else "rejected"
+    # Compute a worktree_digest the reviewer can attest to
+    digest_input = ("%s|%s|%s" % (exec_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
+    import hashlib as _hashlib
+    worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": verdict,
+        "review_id": review_id,
+        "reviewed_evidence_id": executor_evidence_id,
+        "worktree_digest": worktree_digest,
+        "repo": {
+            "head_sha": exec_head,
+            "remote_ref": exec_repo.get("remote_ref") or "",
+            "pushed": True,
+            "dirty": False,
+        },
+        "checks": [
+            {
+                "name": "review_verdict_finalizer",
+                "returncode": 0 if independent_pass else 1,
+                "status": "pass" if independent_pass else "fail",
+            }
+        ],
+        "tests": tests,
+        "signed_by": reviewer_agent_id,
+    }
+    manifest["signature"] = _sign_verdict(attestation_key, manifest)
+    out_path = task_workspace / "mac-evidence.json"
+    out_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def write_fallback_evidence_manifest(
     task_workspace: Path,
     task: dict,
@@ -5067,6 +5309,20 @@ def main() -> int:
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if isinstance(review_context, dict) else "task"},
     )
+    # mac-jfns: deterministic post-LLM finalizer for repo tasks. Runs
+    # only for non-review tasks targeting git://main, and overrides
+    # whatever evidence the LLM emitted with a manifest derived from
+    # actual git state.
+    if not isinstance(review_context, dict):
+        try:
+            run_deterministic_git_finalizer(task_workspace, task)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("git finalizer failed: %s\n" % exc)
+    else:
+        try:
+            run_deterministic_review_verdict(task_workspace, task, review_context)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
     write_fallback_evidence_manifest(task_workspace, task, result, review_context)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

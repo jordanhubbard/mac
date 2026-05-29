@@ -7657,6 +7657,23 @@ class ControlPlane:
         force: bool = False,
         actor: str = "beads-bridge",
     ) -> JsonDict:
+        # mac-bridge-off: the beads bridge polling import is gated
+        # behind MAC_BEADS_BRIDGE_ENABLED. Explicit poll calls from the
+        # API/CLI bypass the gate when force=True so an operator can
+        # still trigger a one-off poll for migration / debugging.
+        if not force and not _truthy_env("MAC_BEADS_BRIDGE_ENABLED"):
+            return {
+                "schema": "mac.beads_bridge.poll.v1",
+                "actor": actor,
+                "repository_count": 0,
+                "imported_count": 0,
+                "existing_count": 0,
+                "reopened_count": 0,
+                "retry_exhausted_count": 0,
+                "skipped_count": 0,
+                "status": "disabled",
+                "reason": "MAC_BEADS_BRIDGE_ENABLED is unset; bridge polling skipped",
+            }
         if repo_id_or_name:
             repos = [self.get_beads_repository(repo_id_or_name)]
         else:
@@ -9520,6 +9537,15 @@ class ControlPlane:
         }
 
     def _run_bd_for_task(self, task: Task, args: List[str], actor: str, action: str) -> bool:
+        # mac-bridge-off: the beads bridge is being phased out in favor
+        # of native MAC tickets (.tickets/<id>.md + mac task CLI). To
+        # turn off bd CLI invocations on workflow events (claim/close
+        # ledger comments, claim sync) without deleting the bridge code
+        # yet, gate the entire helper behind MAC_BEADS_BRIDGE_ENABLED.
+        # Default off; operators who still need cross-system parity can
+        # set it to "1".
+        if not _truthy_env("MAC_BEADS_BRIDGE_ENABLED"):
+            return False
         binding = self._beads_binding_for_task(task)
         if binding is None:
             return False
@@ -11527,6 +11553,49 @@ class ControlPlane:
         review: Review,
         evidence: Evidence,
     ) -> Optional[AgentMessage]:
+        # mac-ykkc: cap the number of times this review can be
+        # re-nudged. Without the cap a reviewer that keeps failing to
+        # produce a verdict (e.g. because the executor's lease branch
+        # never made it to origin) ends up with hundreds of
+        # task.review_claimed rows as the dispatcher recreates the
+        # nudge on every tick. After the cap, retract the review with
+        # a clear reason so the parent task transitions back to OPEN
+        # or FAILED instead of spinning forever.
+        try:
+            attempt_count = int(os.environ.get("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "10"))
+        except ValueError:
+            attempt_count = 10
+        claim_row = self.store.query_one(
+            """
+            SELECT COUNT(*) AS n FROM task_history
+            WHERE task_id = ?
+              AND event_type = 'task.review_claimed'
+              AND json_extract(detail, '$.review_id') = ?
+            """,
+            (task_id, review.id),
+        )
+        prior_claims = int(claim_row["n"]) if claim_row else 0
+        if prior_claims >= attempt_count:
+            self._retract_default_review(
+                review,
+                "dispatcher",
+                "reviewer_unable_to_produce_verdict_after_%d_attempts" % prior_claims,
+            )
+            self.record_log(
+                "workflow.default_review.nudge_capped",
+                layer="control_plane",
+                source="dispatcher",
+                level="warning",
+                subject_type="task",
+                subject_id=task_id,
+                detail={
+                    "review_id": review.id,
+                    "reviewer_agent_id": review.reviewer_agent_id,
+                    "attempt_count": prior_claims,
+                    "cap": attempt_count,
+                },
+            )
+            return None
         payload = self._review_verdict_nudge_payload(task_id, review, evidence)
         if self.messaging.has_queued_message(
             recipient_agent_id=review.reviewer_agent_id,

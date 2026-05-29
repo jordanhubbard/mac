@@ -120,6 +120,45 @@ def test_mac_cli_task_show(tmp_path):
     assert detail["task"]["title"] == "Show me"
 
 
+def test_mac_cli_task_create_description_file(tmp_path):
+    """Multi-line description with shell metacharacters round-trips via
+    --description-file without any shell-quoting hazards."""
+    body = (
+        "Step 1: append a line\n"
+        "  printf -- '- foo bar (baz) {x}' >> file.md\n"
+        "Step 2: git commit -m \"msg with $var and `backticks`\"\n"
+        "Step 3: push to refs/heads/branch\n"
+    )
+    desc_file = tmp_path / "desc.txt"
+    desc_file.write_text(body, encoding="utf-8")
+    metadata_file = tmp_path / "meta.json"
+    metadata_file.write_text('{"publication_target": "git://main"}', encoding="utf-8")
+
+    rc, task = _run(
+        tmp_path,
+        "task", "create", "Mechanical task",
+        "--description-file", str(desc_file),
+        "--metadata-file", str(metadata_file),
+    )
+    assert rc == 0
+    assert task["title"] == "Mechanical task"
+    assert task["description"] == body
+    assert task["metadata"]["publication_target"] == "git://main"
+
+
+def test_mac_cli_task_create_metadata_invalid_json_errors_cleanly(tmp_path):
+    """A malformed --metadata value must raise SystemExit, not crash with
+    a raw json.JSONDecodeError traceback."""
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        _run(
+            tmp_path,
+            "task", "create", "x",
+            "--metadata", "{not: valid json",
+        )
+    assert "invalid JSON" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # project
 # ---------------------------------------------------------------------------

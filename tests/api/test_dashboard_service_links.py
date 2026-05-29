@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
@@ -10,6 +11,18 @@ from mac.services import ControlPlane
 
 def _client() -> TestClient:
     return TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_service_env(monkeypatch):
+    """`_lookup_config_value` falls back to ~/.mac/mac.env, ~/.hermes/.env,
+    ~/.tokenhub/*.env, /etc/<fleet>/*.env when an env var is unset. On a
+    deployed host those files actually contain the service URLs, which
+    makes ``monkeypatch.delenv(TOKENHUB_URL)`` ineffective and breaks
+    the "absent when not configured" assertions. Force the lookup to
+    return an empty file list so the tests really do see "unconfigured".
+    """
+    monkeypatch.setattr("mac.api._service_env_files", lambda: [])
 
 
 # ---------------------------------------------------------------------------
