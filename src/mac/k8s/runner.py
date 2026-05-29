@@ -16,6 +16,7 @@ DEFAULT_TASK_IMAGE = "ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME"
 
 DEFAULT_BACKOFF_LIMIT = 0  # retries owned by mac-api lease-expiry, not K8s
 DEFAULT_ACTIVE_DEADLINE_SECONDS = 1800  # 30 min, override per task
+DEFAULT_TTL_SECONDS_AFTER_FINISHED = 3600  # 1h post-finish before TTL GC
 
 DEFAULT_LEASE_RENEW_INTERVAL_SECONDS = 30
 
@@ -37,6 +38,7 @@ class RunnerConfig:
     poll_interval_seconds: float = 5.0
     backoff_limit: int = DEFAULT_BACKOFF_LIMIT
     active_deadline_seconds: int = DEFAULT_ACTIVE_DEADLINE_SECONDS
+    ttl_seconds_after_finished: int = DEFAULT_TTL_SECONDS_AFTER_FINISHED
     capability_filter: List[str] = field(default_factory=list)
     role_images: Dict[str, str] = field(default_factory=dict)
     role_agent_ids: Dict[str, str] = field(default_factory=dict)
@@ -84,6 +86,12 @@ class RunnerConfig:
                 os.environ.get(
                     "MAC_RUNNER_ACTIVE_DEADLINE_SECONDS",
                     str(DEFAULT_ACTIVE_DEADLINE_SECONDS),
+                )
+            ),
+            ttl_seconds_after_finished=int(
+                os.environ.get(
+                    "MAC_RUNNER_TTL_SECONDS_AFTER_FINISHED",
+                    str(DEFAULT_TTL_SECONDS_AFTER_FINISHED),
                 )
             ),
             capability_filter=[
@@ -317,7 +325,7 @@ def build_job_spec(
         "spec": {
             "backoffLimit": cfg.backoff_limit,
             "activeDeadlineSeconds": active_deadline,
-            "ttlSecondsAfterFinished": 24 * 3600,
+            "ttlSecondsAfterFinished": cfg.ttl_seconds_after_finished,
             "template": {
                 "metadata": {
                     "labels": {
