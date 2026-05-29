@@ -22,6 +22,7 @@ class BootstrapConfig:
     dispatcher: JsonDict
     role_machines: List[JsonDict] = field(default_factory=list)
     role_agents: List[JsonDict] = field(default_factory=list)
+    role_definitions: List[JsonDict] = field(default_factory=list)
     attestation_keys: Optional[JsonDict] = None
     projects: List[JsonDict] = field(default_factory=list)
 
@@ -37,6 +38,7 @@ class BootstrapConfig:
             dispatcher=dict(cfg_file.dispatcher),
             role_machines=[dict(m) for m in cfg_file.role_machines],
             role_agents=cfg_file.role_agents(),
+            role_definitions=cfg_file.role_definitions(),
             attestation_keys=cfg_file.attestation_keys_block(),
             projects=[
                 {
@@ -189,6 +191,35 @@ def seed_role_machines_and_agents(
             resp.get("name"),
             resp.get("capabilities"),
         )
+
+def register_role_definitions(
+    mac: MacApiProtocol, cfg: BootstrapConfig
+) -> None:
+    """POST /roles for each role declared in config.yaml.
+
+    Required so that mac's role-gate
+    (``_agent_available_for`` at services.py:11030+) can resolve
+    ``task.metadata.required_role`` against a real ``agent_roles``
+    row. mac's ``create_role`` returns the existing row if a role
+    with the same slug + tenant already exists, so re-rolls are
+    no-ops.
+    """
+    for role in cfg.role_definitions:
+        body = dict(role)
+        body["actor"] = "mac-k8s-bootstrap"
+        resp = mac.post("/roles", body)
+        if not isinstance(resp, dict):
+            raise SystemExit(
+                "POST /roles returned non-object: %r" % (resp,)
+            )
+        log.info(
+            "role: slug=%s id=%s level=%s required_capabilities=%s",
+            resp.get("slug"),
+            resp.get("id"),
+            resp.get("level"),
+            resp.get("required_capabilities"),
+        )
+
 
 def register_projects(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     for spec in cfg.projects:
@@ -399,6 +430,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logger.info("mac-k8s-bootstrap starting: mac_url=%s", cfg.mac_url)
     wait_for_mac_api(mac)
     register_dispatcher(mac, cfg)
+    register_role_definitions(mac, cfg)
     seed_role_machines_and_agents(mac, cfg)
     register_projects(mac, cfg)
 

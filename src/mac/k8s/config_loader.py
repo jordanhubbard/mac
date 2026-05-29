@@ -20,6 +20,10 @@ class RoleConfig:
     image: str
     executor: str
     attestation_key_secret: Dict[str, str]
+    description: str = ""
+    system_prompt: str = ""
+    level: str = "ic"
+    required_capabilities: List[str] = field(default_factory=list)
 
 @dataclass
 class ProjectConfig:
@@ -38,6 +42,28 @@ class MacConfigFile:
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
     attestation_keys: Optional[JsonDict] = None
     projects: List[ProjectConfig] = field(default_factory=list)
+
+    def role_definitions(self) -> List[JsonDict]:
+        """Returns one ``RoleCreate``-shaped dict per role for /roles POST.
+
+        The result feeds ``mac-k8s-bootstrap.register_role_definitions``
+        which registers each role in mac's ``agent_roles`` table so the
+        dispatcher's ``_agent_available_for`` role-gate can resolve a
+        task's ``metadata.required_role`` against a real row.
+        """
+        out: List[JsonDict] = []
+        for slug, role in self.roles.items():
+            required = role.required_capabilities or list(role.capabilities)
+            out.append({
+                "slug": slug,
+                "name": role.name or slug,
+                "description": role.description or "auto-registered role %s" % slug,
+                "system_prompt": role.system_prompt or "You are a %s." % (role.name or slug),
+                "level": role.level or "ic",
+                "default_capabilities": list(role.capabilities),
+                "required_capabilities": required,
+            })
+        return out
 
     def role_agents(self) -> List[JsonDict]:
         return [
@@ -117,6 +143,12 @@ def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
     att_raw = _require_dict(raw, "attestation_key_secret", path=path)
     att_name = _require_str(att_raw, "name", path=att_path)
     att_key = _require_str(att_raw, "key", path=att_path)
+    required_caps_raw = raw.get("required_capabilities") or []
+    if not isinstance(required_caps_raw, list):
+        raise SystemExit(
+            "%s.required_capabilities must be a list (got %s)"
+            % (path, type(required_caps_raw).__name__)
+        )
     return RoleConfig(
         slug=slug,
         agent_id=_require_str(raw, "agent_id", path=path),
@@ -126,6 +158,10 @@ def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
         image=_require_str(raw, "image", path=path),
         executor=_require_str(raw, "executor", path=path),
         attestation_key_secret={"name": att_name, "key": att_key},
+        description=str(raw.get("description") or ""),
+        system_prompt=str(raw.get("system_prompt") or ""),
+        level=str(raw.get("level") or "ic"),
+        required_capabilities=[str(c) for c in required_caps_raw],
     )
 
 def load_config_file(path: Optional[str] = None) -> MacConfigFile:
