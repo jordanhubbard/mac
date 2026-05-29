@@ -30,6 +30,7 @@ re-opens the task for another runner cycle.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -55,6 +56,13 @@ log = logging.getLogger(__name__)
 # How long the executor subprocess is allowed to run before SIGKILL.
 # Operators override per task via task.metadata.k8s.executor_timeout_seconds.
 DEFAULT_EXECUTOR_TIMEOUT_SECONDS = 1500  # 25 min < default activeDeadline 30 min
+
+# Default on-disk path the role executor writes a signed verification
+# manifest to. Picked up by ``_submit_execution_evidence`` and merged
+# into ``metadata.verification`` of the POST /tasks/{id}/evidence body,
+# which is what mac's ``_assess_default_review_evidence`` (services.py
+# 11204) verifies. Override via MAC_TASK_EVIDENCE_MANIFEST_PATH.
+DEFAULT_EVIDENCE_MANIFEST_PATH = "/tmp/mac-evidence.json"
 
 
 @dataclass
@@ -259,6 +267,17 @@ class _ExecResult:
     stdout: str
     stderr: str = ""
     stdout_sha256: Optional[str] = None
+    # Verification manifest produced by the role executor (e.g. the
+    # codex coder/reviewer scripts in deploy/codex-runner). When set,
+    # ``_submit_execution_evidence`` merges it into
+    # ``metadata.verification`` so the review-readiness gate at
+    # services.py:4749 sees a signed manifest. ``None`` when the
+    # executor produced no file or the file failed to parse — the
+    # evidence is still POSTed (with a clear log line) so operators
+    # can debug from the durable history.
+    verification_manifest: Optional[Dict[str, Any]] = None
+    manifest_path: Optional[str] = None
+    manifest_error: Optional[str] = None
 
 
 def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _ExecResult]:
@@ -267,6 +286,10 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
     timeout = int(
         env.get("MAC_TASK_EXECUTOR_TIMEOUT_SECONDS")
         or DEFAULT_EXECUTOR_TIMEOUT_SECONDS
+    )
+    manifest_path = (
+        env.get("MAC_TASK_EVIDENCE_MANIFEST_PATH")
+        or DEFAULT_EVIDENCE_MANIFEST_PATH
     )
     if not cmd:
         def _noop(_task: JsonDict) -> _ExecResult:
@@ -282,6 +305,20 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
         proc_env = dict(env)
         proc_env.setdefault("MAC_TASK_ID", str(task.get("id") or ""))
         proc_env.setdefault("MAC_TASK_TITLE", str(task.get("title") or ""))
+        # Tell the executor where to drop the verification manifest. The
+        # default matches DEFAULT_EVIDENCE_MANIFEST_PATH so role
+        # executors that don't read this env (legacy stubs) still land
+        # in the expected place.
+        proc_env.setdefault("MAC_TASK_EVIDENCE_MANIFEST_PATH", manifest_path)
+        # Best-effort: pre-clean any stale manifest from a previous run
+        # so a crashed executor does not leak its predecessor's
+        # signature into the next evidence body. Failure is ignored
+        # because /tmp may be readonly on some test fixtures.
+        try:
+            if os.path.exists(manifest_path):
+                os.unlink(manifest_path)
+        except OSError:
+            pass
         proc = subprocess.run(  # noqa: S602 — explicit operator-supplied cmd
             cmd,
             shell=True,
@@ -291,14 +328,48 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
             env=proc_env,
         )
         stdout = proc.stdout or ""
+        manifest, manifest_error = _read_verification_manifest(manifest_path)
         return _ExecResult(
             returncode=proc.returncode,
             stdout=stdout,
             stderr=proc.stderr or "",
             stdout_sha256=hashlib.sha256(stdout.encode("utf-8", "replace")).hexdigest(),
+            verification_manifest=manifest,
+            manifest_path=manifest_path,
+            manifest_error=manifest_error,
         )
 
     return _run
+
+
+def _read_verification_manifest(
+    path: str,
+) -> "tuple[Optional[Dict[str, Any]], Optional[str]]":
+    """Best-effort load of a manifest file written by the role executor.
+
+    Returns ``(manifest, error)``. ``manifest`` is ``None`` whenever the
+    file is missing OR the JSON is not a dict OR parsing failed; the
+    caller surfaces both into the evidence metadata so operators can
+    debug why the review-readiness gate rejected a given run.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        return None, "manifest file not found at %s" % path
+    except OSError as exc:
+        return None, "manifest file read failed: %s" % exc
+    if not raw.strip():
+        return None, "manifest file is empty"
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, "manifest is not valid JSON: %s" % exc
+    if not isinstance(loaded, dict):
+        return None, (
+            "manifest must be a JSON object, got %s" % type(loaded).__name__
+        )
+    return loaded, None
 
 
 def _default_mac_client(mac_url: str, token: str) -> Any:
@@ -317,6 +388,30 @@ def _submit_execution_evidence(
     exec_result: _ExecResult,
     duration_ms: float,
 ) -> Optional[JsonDict]:
+    metadata: JsonDict = {
+        "returncode": exec_result.returncode,
+        "stdout_sha256": exec_result.stdout_sha256,
+        "stdout_bytes": len(exec_result.stdout.encode("utf-8", "replace")),
+        "duration_ms": duration_ms,
+        "k8s_job": True,
+    }
+    # When the role executor wrote a verification manifest, merge it
+    # into ``metadata.verification``. mac's review-readiness gate
+    # (services.py:4749 → _assess_default_review_evidence) reads this
+    # exact key to validate the signed manifest. Without this hook the
+    # gate rejects every Job-produced evidence with
+    # "missing_verification_manifest" — which is exactly what PR2c hit
+    # at /submit-for-review.
+    if exec_result.verification_manifest is not None:
+        metadata["verification"] = exec_result.verification_manifest
+    if exec_result.manifest_path:
+        metadata["verification_manifest_path"] = exec_result.manifest_path
+    if exec_result.manifest_error:
+        # Recorded so operators inspecting the durable history can tell
+        # "executor crashed before writing" from "executor wrote bad
+        # JSON". The review-readiness gate doesn't read this key — it
+        # only checks for `verification`.
+        metadata["verification_manifest_error"] = exec_result.manifest_error
     try:
         return mac.post(
             "/tasks/%s/evidence" % _q(task_id),
@@ -326,13 +421,7 @@ def _submit_execution_evidence(
                 "summary": "executor returncode=%d duration_ms=%.1f"
                 % (exec_result.returncode, duration_ms),
                 "created_by": agent_id,
-                "metadata": {
-                    "returncode": exec_result.returncode,
-                    "stdout_sha256": exec_result.stdout_sha256,
-                    "stdout_bytes": len(exec_result.stdout.encode("utf-8", "replace")),
-                    "duration_ms": duration_ms,
-                    "k8s_job": True,
-                },
+                "metadata": metadata,
             },
         )
     except Exception as exc:  # noqa: BLE001

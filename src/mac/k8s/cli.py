@@ -24,7 +24,11 @@ def runner_main(argv: Optional[List[str]] = None) -> int:
 
     from mac.hermes_adapter import MacApiClient
     from mac.k8s.k8s_client import K8sJobsClient, load_in_cluster_config
-    from mac.k8s.runner import RunnerConfig, runner_loop
+    from mac.k8s.runner import (
+        RunnerConfig,
+        check_dispatcher_capabilities,
+        runner_loop,
+    )
 
     cfg = RunnerConfig.from_env()
     if not cfg.mac_url:
@@ -46,6 +50,15 @@ def runner_main(argv: Optional[List[str]] = None) -> int:
         cfg.mac_url,
         cfg.capability_filter or "<any>",
     )
+    missing = check_dispatcher_capabilities(cfg, mac)
+    if missing:
+        log.warning(
+            "dispatcher capability drift: dispatcher %s is missing %s. "
+            "Tasks requiring these capabilities will never claim. "
+            "Update AGENT_CAPABILITIES on register-mac-agent.",
+            cfg.agent_id,
+            missing,
+        )
     try:
         runner_loop(mac, k8s, cfg)
     except KeyboardInterrupt:

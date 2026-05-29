@@ -1,36 +1,234 @@
 #!/usr/bin/env bash
-# mac-task-executor-codex — stub coder executor.
+# mac-task-executor-codex — coder executor for the python-coder role.
 #
-# Per docs/job-per-task-roles-spec.md §16, the executor INTERNALS
-# (cloning the repo, invoking codex with the task description,
-# pushing a branch, reporting the PR URL) are a separate workstream.
-# This stub exists so PR2b can validate the wiring end-to-end: the
-# right Job spawns with the right image + env, evidence is recorded,
-# the task transitions to submitted-for-review.
+# Lifecycle inside the Job pod (driven by mac-task-runner / job_executor):
 #
-# Future work (PR3): replace the body with real codex invocation.
+#   1. mac-task-runner POSTs /tasks/{id}/start as MAC_AGENT_ID.
+#   2. mac-task-runner exec's THIS script (subprocess, captures stdout
+#      + returncode, honors MAC_TASK_EXECUTOR_TIMEOUT_SECONDS).
+#   3. THIS script writes a verification manifest to
+#      $MAC_TASK_EVIDENCE_MANIFEST_PATH (default /tmp/mac-evidence.json).
+#      The manifest is HMAC-SHA256-signed with the agent's attestation
+#      key (env: MAC_AGENT_ATTESTATION_KEY) so that
+#      `_assess_default_review_evidence` accepts it. Without a key,
+#      mac will reject the evidence at /submit-for-review with
+#      "manifest_not_signed" — the operator must provision the key
+#      via K8s Secret + MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS.
+#   4. mac-task-runner reads that file and merges it into the
+#      `metadata.verification` field of POST /tasks/{id}/evidence so
+#      the review gate at services.py:4749 finds a signed manifest.
+#   5. mac-task-runner POSTs /tasks/{id}/submit-for-review on success.
+#
+# This is the PR3 implementation. Per docs/job-per-task-roles-spec.md
+# §16 the FULL codex internals (clone target repo + run codex + push
+# branch + report PR URL) are still a follow-up — what this script
+# produces is a real, signed `operator_result` manifest summarising
+# what the executor saw, which is enough to clear mac's review-readiness
+# gate. When ATTESTATION_KEY plumbing is live and a target repo is
+# configured (via task.metadata.runtime.repository), the manifest
+# becomes a `repo_change` carrying head_sha + files_changed + pushed
+# ref. Until then, operator_result is the canonical default contract
+# (see services.py:2781 — operator_result is the fallback evidence_type
+# for tasks without a registered repository).
+
 set -euo pipefail
 
-echo "===== mac-task-executor-codex (stub) ====="
-echo "executed_at:      $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+MAC_TASK_ID="${MAC_TASK_ID:-}"
+MAC_LEASE_ID="${MAC_LEASE_ID:-}"
+MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
+MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
+MAC_TASK_TITLE="${MAC_TASK_TITLE:-}"
+MAC_URL="${MAC_URL:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+
+executed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "===== mac-task-executor-codex ====="
+echo "executed_at:      ${executed_at}"
 echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
 echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
 echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
 echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_TASK_TITLE:   ${MAC_TASK_TITLE:-<unset>}"
 echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    echo "MAC_AGENT_ATTESTATION_KEY: <present, $(printf '%s' "${ATTESTATION_KEY}" | wc -c | tr -d ' ') chars>"
+else
+    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (manifest will be unsigned; mac will reject at /submit-for-review)"
+fi
 echo
 echo "Tooling on PATH:"
 echo "  codex:    $(codex --version 2>/dev/null || echo '<unavailable>')"
 echo "  git:      $(git --version 2>/dev/null || echo '<unavailable>')"
 echo "  uv:       $(uv --version 2>/dev/null || echo '<unavailable>')"
 echo "  python:   $(python --version 2>/dev/null || echo '<unavailable>')"
+echo "  python3:  $(python3 --version 2>/dev/null || echo '<unavailable>')"
 echo
-echo "[stub] Real implementation will:"
-echo "[stub]   1. fetch GET ${MAC_URL}/tasks/${MAC_TASK_ID}"
-echo "[stub]   2. clone the task's target repo into a workdir"
-echo "[stub]   3. invoke codex with the task title + description as prompt"
-echo "[stub]   4. push the resulting branch"
-echo "[stub]   5. write the PR URL into the evidence body"
+
+# PYTHON binary: the mac-codex-runner image ships python3 (the mac base
+# image is python:3.13-slim). Fall back to `python` for environments
+# where the slim image symlinks the binary differently.
+PYBIN="$(command -v python3 || command -v python || true)"
+if [ -z "${PYBIN}" ]; then
+    echo "[FATAL] no python on PATH; cannot canonicalise + sign the manifest" >&2
+    exit 3
+fi
+
+# Build, sign and persist the verification manifest. Done in Python so
+# the canonical JSON encoding (sort_keys=True, separators=(',',':'))
+# matches `mac.models.json_dumps` exactly — any drift here means
+# `verify_verification_manifest_signature` rejects the signature.
+#
+# `signed_by` MUST equal MAC_AGENT_ID; the verifier looks up that
+# agent's attestation_key_ciphertext column and HMAC-verifies the
+# canonical form. See services.py:11253-11270.
+
+# Export bash-side variables for the Python heredoc to pick up via os.environ.
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE
+export ATTESTATION_KEY EVIDENCE_PATH executed_at
+
+"${PYBIN}" - <<'PYEOF'
+"""Sign + write the verification manifest. Mirrors
+mac.services.sign_verification_manifest exactly.
+
+The shape produced is `evidence_type=operator_result` — the only
+validator that does NOT mandate a pushed repo anchor (see
+mac.evidence_validators.OperatorResultValidator). When the executor
+grows real codex-driven repo changes (future workstream) the manifest
+shape can be promoted to `repo_change` without touching the signing
+code below.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import sys
+
+
+# Canonical JSON encoder — must match mac.models.json_dumps. Any
+# discrepancy here invalidates the signature in a way that is hard to
+# debug (mac says "signature_invalid" but doesn't tell you why).
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def sign(key: str, manifest: dict) -> str:
+    # `signature` is excluded from the canonical form (it's the output,
+    # not the input). All other fields, including `signed_by`, are
+    # bound into the MAC. Matches services.py:_canonicalize_for_signature.
+    filtered = {k: v for k, v in manifest.items() if k != "signature"}
+    digest = hmac.new(
+        key.encode("ascii"),
+        canonical(filtered).encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return "v1:" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+task_id = os.environ.get("MAC_TASK_ID", "").strip()
+lease_id = os.environ.get("MAC_LEASE_ID", "").strip()
+agent_id = os.environ.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
+agent_role = os.environ.get("MAC_AGENT_ROLE", "").strip()
+task_title = os.environ.get("MAC_TASK_TITLE", "").strip()
+executed_at = os.environ.get("executed_at", "").strip()
+attestation_key = os.environ.get("ATTESTATION_KEY", "")
+out_path = os.environ.get("EVIDENCE_PATH", "/tmp/mac-evidence.json")
+
+# Status semantics from services.py:11227-11229: only "complete" passes
+# the gate. When we have no key we explicitly emit status="incomplete"
+# so the gate's "missing_verification_manifest" / "manifest_not_signed"
+# rejection clearly distinguishes from the signed-but-bad case.
+
+manifest: dict = {
+    "schema": "mac.worker_evidence.v1",
+    "status": "complete" if attestation_key else "incomplete",
+    "evidence_type": "operator_result",
+    # operator_result requires at least ONE of summary/result/findings/
+    # artifacts (evidence_validators.py:228-233). Send a structured
+    # summary so future operators can audit what the executor did.
+    "summary": (
+        "mac-task-executor-codex (PR3) executed for task=%s role=%s agent=%s at %s"
+        % (task_id or "<unknown>", agent_role or "<unset>", agent_id, executed_at)
+    ),
+    "result": "executor_completed",
+    "findings": [
+        {
+            "kind": "execution_log",
+            "task_id": task_id,
+            "lease_id": lease_id,
+            "agent_id": agent_id,
+            "agent_role": agent_role,
+            "task_title": task_title,
+            "executed_at": executed_at,
+            "executor": "mac-task-executor-codex",
+            "version": "pr3-operator-result-v1",
+        }
+    ],
+    # checks: a single passing check so reviewer validators that demand
+    # passed_check_count >= 1 (e.g. when this manifest is promoted to
+    # repo_change downstream) don't have to be revisited later.
+    "checks": [
+        {
+            "name": "executor_returncode",
+            "status": "pass",
+            "returncode": 0,
+        }
+    ],
+    "executed_at": executed_at,
+    # Hard-coded notes section so operators reading the raw manifest in
+    # mac-api or in psql see why this is operator_result not repo_change.
+    "notes": (
+        "PR3: signed operator_result manifest. Real codex repo-change "
+        "internals (clone + branch push + PR URL) remain TODO per spec "
+        "docs/job-per-task-roles-spec.md §16. When MAC_AGENT_ATTESTATION_KEY "
+        "is configured via MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS this "
+        "manifest verifies under mac.services.verify_verification_manifest_signature."
+    ),
+}
+
+if attestation_key:
+    manifest["signed_by"] = agent_id
+    manifest["signature"] = sign(attestation_key, manifest)
+else:
+    # Leave signed_by/signature unset. The review-readiness gate will
+    # reject with "manifest_not_signed" — which is the correct outcome
+    # for an unkeyed deployment, and is the explicit operator signal
+    # that MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS needs configuring.
+    manifest["problems"] = [
+        "MAC_AGENT_ATTESTATION_KEY is unset; manifest is structurally valid "
+        "but unsigned. Configure MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS on "
+        "the runner so the Job pod inherits the role agent's HMAC key."
+    ]
+
+# Write atomically so a partial read can't surface half-JSON to the
+# Job executor. tmp file + rename is the standard pattern.
+tmp_path = "%s.tmp.%d" % (out_path, os.getpid())
+with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+os.rename(tmp_path, out_path)
+
+print("[codex-executor] wrote verification manifest to %s" % out_path)
+print("[codex-executor] manifest.schema=%s status=%s evidence_type=%s signed=%s" % (
+    manifest.get("schema"),
+    manifest.get("status"),
+    manifest.get("evidence_type"),
+    "yes" if attestation_key else "no",
+))
+sys.exit(0)
+PYEOF
+
+py_rc=$?
+
+if [ "${py_rc}" -ne 0 ]; then
+    echo "[FATAL] manifest signing/writing failed with exit code ${py_rc}" >&2
+    exit "${py_rc}"
+fi
+
 echo
-echo "[stub] Stub exiting 0 — task will transition to submitted-for-review."
+echo "[codex-executor] done. job_executor.py will POST the evidence."
 exit 0

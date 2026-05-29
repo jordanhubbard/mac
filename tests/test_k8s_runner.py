@@ -20,11 +20,13 @@ from mac.k8s.runner import (
     _lease_renewal_loop,
     _resolve_active_deadline,
     _resolve_agent_id_for_role,
+    _resolve_attestation_key_secret_for_role,
     _resolve_executor_for_role,
     _resolve_task_image,
     _resolve_task_role,
     _sanitize_dns_label,
     build_job_spec,
+    check_dispatcher_capabilities,
     claim_and_launch_one,
 )
 
@@ -397,8 +399,7 @@ def test_claim_and_launch_skips_delegate_when_role_agent_is_dispatcher() -> None
 
 
 def test_claim_and_launch_proceeds_when_delegate_fails() -> None:
-    """Delegation failure must NOT crash the runner; the Job is still
-    launched and the hub-side lease-expiry path handles cleanup."""
+    """Delegation failure must not launch a Job that cannot start."""
 
     class _FailDelegateMac(_FakeMac):
         def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -418,12 +419,16 @@ def test_claim_and_launch_proceeds_when_delegate_fails() -> None:
 
     result = claim_and_launch_one(mac, jobs, cfg)
     assert result is not None
-    assert result["status"] == "launched"
-    assert len(jobs.created) == 1  # Job still created
+    assert result["status"] == "lease_delegation_failed"
+    assert jobs.created == []
     delegate_posts = [
         p for p in mac.posted if p["path"].endswith("/delegate")
     ]
     assert len(delegate_posts) == 1  # delegation was attempted
+    release_posts = [p for p in mac.posted if p["path"].endswith("/transition")]
+    assert release_posts, "lease should be released to open on delegation failure"
+    assert release_posts[0]["body"]["target_state"] == "open"
+    assert release_posts[0]["body"]["detail"]["reason"] == "lease_delegation_failed"
 
 
 # ----------------------------------------------------------------------
@@ -533,6 +538,59 @@ class TestResolveExecutorForRole:
         assert _resolve_executor_for_role("ghost-role", _role_cfg()) is None
 
 
+# ----------------------------------------------------------------------
+# PR3: per-role attestation key secret resolution.
+# ----------------------------------------------------------------------
+
+
+def _role_cfg_with_attestation_secrets(**overrides: Any) -> RunnerConfig:
+    """Role config with the PR3 attestation key secrets map populated."""
+    base = _role_cfg()
+    base.role_attestation_key_secrets = {
+        "python-coder": {
+            "name": "mac-agent-keys",
+            "key": "python-coder.attestation",
+        },
+        "python-reviewer": {
+            "name": "mac-agent-keys",
+            "key": "python-reviewer.attestation",
+        },
+    }
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+class TestResolveAttestationKeySecretForRole:
+    def test_role_hit_returns_secret_ref(self) -> None:
+        cfg = _role_cfg_with_attestation_secrets()
+        spec = _resolve_attestation_key_secret_for_role("python-coder", cfg)
+        assert spec == {
+            "name": "mac-agent-keys",
+            "key": "python-coder.attestation",
+        }
+
+    def test_no_role_returns_none(self) -> None:
+        cfg = _role_cfg_with_attestation_secrets()
+        assert _resolve_attestation_key_secret_for_role(None, cfg) is None
+
+    def test_unmapped_role_returns_none(self) -> None:
+        # Role known to the runner but no attestation secret configured.
+        # The Job pod will run without MAC_AGENT_ATTESTATION_KEY and the
+        # executor will produce an unsigned manifest. This is the
+        # explicit fail-loud signal documented in RunnerConfig.
+        cfg = _role_cfg()  # no role_attestation_key_secrets entries
+        assert _resolve_attestation_key_secret_for_role("python-coder", cfg) is None
+
+    def test_returns_copy_so_caller_mutation_does_not_leak(self) -> None:
+        cfg = _role_cfg_with_attestation_secrets()
+        spec = _resolve_attestation_key_secret_for_role("python-coder", cfg)
+        assert spec is not None
+        spec["name"] = "hijacked"
+        # Original config unchanged.
+        assert cfg.role_attestation_key_secrets["python-coder"]["name"] == "mac-agent-keys"
+
+
 class TestRoleAwareBuildJobSpec:
     def test_no_role_preserves_default_behaviour(self) -> None:
         # Default _cfg has empty role maps; behaviour must be
@@ -619,6 +677,65 @@ class TestRoleAwareBuildJobSpec:
         assert _env_value(env, "MAC_AGENT_ROLE") == "python-coder"
 
 
+# ----------------------------------------------------------------------
+# PR3: attestation key plumbing into the Job env.
+# ----------------------------------------------------------------------
+
+
+def _env_entry(env: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    for e in env:
+        if e.get("name") == name:
+            return e
+    return None
+
+
+class TestAttestationKeyJobEnv:
+    def test_no_role_does_not_emit_attestation_env(self) -> None:
+        # Default cfg with no role maps -> no MAC_AGENT_ATTESTATION_KEY
+        # env entry. (The Job pod will produce unsigned evidence; that's
+        # mac-api's pre-PR3 behaviour and is unchanged.)
+        spec = build_job_spec(_task(), _lease(), _cfg())
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert "MAC_AGENT_ATTESTATION_KEY" not in _env_names(env)
+
+    def test_role_without_attestation_secret_does_not_emit_env(self) -> None:
+        # Role IS configured (image/agent_id/executor) but no
+        # attestation key secret -> no env entry. The executor will
+        # log "manifest will be unsigned" and mac will reject at
+        # /submit-for-review, which is the documented fail-loud signal.
+        task = _task(metadata={"required_role": "python-coder"})
+        spec = build_job_spec(task, _lease(), _role_cfg())
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        assert "MAC_AGENT_ATTESTATION_KEY" not in _env_names(env)
+
+    def test_role_with_attestation_secret_emits_secret_ref_env(self) -> None:
+        # PR3 happy path: role has a secretKeyRef -> the Job env carries
+        # MAC_AGENT_ATTESTATION_KEY sourced from a K8s Secret. The
+        # cleartext key NEVER lands in the Job manifest itself; only the
+        # reference does.
+        task = _task(metadata={"required_role": "python-coder"})
+        spec = build_job_spec(task, _lease(), _role_cfg_with_attestation_secrets())
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        entry = _env_entry(env, "MAC_AGENT_ATTESTATION_KEY")
+        assert entry is not None
+        assert "value" not in entry, "key must be sourced from a Secret, never embedded"
+        assert entry["valueFrom"]["secretKeyRef"] == {
+            "name": "mac-agent-keys",
+            "key": "python-coder.attestation",
+        }
+
+    def test_capability_alias_routes_to_correct_attestation_key(self) -> None:
+        # A task with required_capabilities=["review"] aliases to
+        # python-reviewer in _role_cfg; the attestation key must
+        # match python-reviewer's, not python-coder's.
+        task = _task(required_capabilities=["review"])
+        spec = build_job_spec(task, _lease(), _role_cfg_with_attestation_secrets())
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        entry = _env_entry(env, "MAC_AGENT_ATTESTATION_KEY")
+        assert entry is not None
+        assert entry["valueFrom"]["secretKeyRef"]["key"] == "python-reviewer.attestation"
+
+
 class TestRunnerConfigFromEnvRoles:
     def test_json_envs_decoded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MAC_URL", "http://x")
@@ -664,6 +781,61 @@ class TestRunnerConfigFromEnvRoles:
         assert cfg.role_agent_ids == {}
         assert cfg.role_executors == {}
         assert cfg.capability_role_aliases == {}
+        assert cfg.role_attestation_key_secrets == {}
+
+    def test_attestation_key_secrets_env_decoded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PR3: the nested attestation-secrets env wires per-role keys.
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv(
+            "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS",
+            (
+                '{'
+                '"python-coder": {"name": "mac-agent-keys", "key": "coder.attestation"},'
+                '"python-reviewer": {"name": "mac-agent-keys", "key": "reviewer.attestation"}'
+                '}'
+            ),
+        )
+        cfg = RunnerConfig.from_env()
+        assert cfg.role_attestation_key_secrets == {
+            "python-coder": {"name": "mac-agent-keys", "key": "coder.attestation"},
+            "python-reviewer": {
+                "name": "mac-agent-keys",
+                "key": "reviewer.attestation",
+            },
+        }
+
+    def test_attestation_key_secrets_env_drops_invalid_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Entries missing name or key are dropped (with a warning),
+        # not allowed to crash the runner. The valid entry survives.
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv(
+            "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS",
+            (
+                '{'
+                '"good": {"name": "n", "key": "k"},'
+                '"bad-no-key": {"name": "n"},'
+                '"bad-not-obj": "oops"'
+                '}'
+            ),
+        )
+        cfg = RunnerConfig.from_env()
+        assert cfg.role_attestation_key_secrets == {
+            "good": {"name": "n", "key": "k"}
+        }
+
+    def test_attestation_key_secrets_env_malformed_json_falls_back_to_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv(
+            "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS", "{not-json"
+        )
+        cfg = RunnerConfig.from_env()
+        assert cfg.role_attestation_key_secrets == {}
 
 
 # ----------------------------------------------------------------------
@@ -680,8 +852,10 @@ class TestJobIsTerminal:
     def test_zero_counts_are_not_terminal(self) -> None:
         assert _job_is_terminal({"status": {"succeeded": 0, "failed": 0}}) is False
 
+    def test_missing_job_is_terminal(self) -> None:
+        assert _job_is_terminal({}) is True
+
     def test_missing_status_is_not_terminal(self) -> None:
-        assert _job_is_terminal({}) is False
         assert _job_is_terminal({"status": None}) is False
 
 
@@ -926,3 +1100,152 @@ def test_claim_and_launch_spawns_renewal_thread() -> None:
         ev = getattr(t, "stop_event", None)
         if ev is not None:
             ev.set()
+
+
+# ----------------------------------------------------------------------
+# check_dispatcher_capabilities: startup probe warns when the dispatcher
+# can't cover the union of role capabilities (spec §13 Q6).
+# ----------------------------------------------------------------------
+
+
+class _AgentsMac(_FakeMac):
+    """Variant of _FakeMac with a configurable GET /agents/{id} response.
+
+    ``agents`` maps agent_id -> response payload (a dict shaped like
+    Agent.to_dict). Any agent_id not in the map raises a RuntimeError to
+    simulate a hub 404 / fetch failure.
+    """
+
+    def __init__(
+        self,
+        agents: Dict[str, Any],
+        *,
+        fetch_error: Optional[Exception] = None,
+    ) -> None:
+        super().__init__(claim_response=None)
+        self._agents = agents
+        self._fetch_error = fetch_error
+
+    def get(self, path: str) -> Dict[str, Any]:
+        self.gotten.append(path)
+        if self._fetch_error is not None:
+            raise self._fetch_error
+        # Expect "/agents/{id}".
+        prefix = "/agents/"
+        if not path.startswith(prefix):
+            raise RuntimeError("unexpected GET path: %s" % path)
+        agent_id = path[len(prefix):]
+        if agent_id not in self._agents:
+            raise RuntimeError("agent not found: %s" % agent_id)
+        return self._agents[agent_id]
+
+
+def test_check_dispatcher_capabilities_returns_empty_when_no_roles_configured() -> None:
+    cfg = _cfg()  # role_agent_ids defaults to {}
+    mac = _AgentsMac(agents={})
+    assert check_dispatcher_capabilities(cfg, mac) == []
+    # Probe should short-circuit without any GETs.
+    assert mac.gotten == []
+
+
+def test_check_dispatcher_capabilities_returns_empty_when_dispatcher_covers_all() -> None:
+    cfg = _cfg(
+        role_agent_ids={
+            "python-coder": "mac-worker-python-coder",
+            "python-reviewer": "mac-worker-python-reviewer",
+        },
+    )
+    mac = _AgentsMac(
+        agents={
+            "runner-1": {"id": "runner-1", "capabilities": ["python", "review", "ops"]},
+            "mac-worker-python-coder": {
+                "id": "mac-worker-python-coder",
+                "capabilities": ["python"],
+            },
+            "mac-worker-python-reviewer": {
+                "id": "mac-worker-python-reviewer",
+                "capabilities": ["review"],
+            },
+        }
+    )
+    assert check_dispatcher_capabilities(cfg, mac) == []
+
+
+def test_check_dispatcher_capabilities_returns_missing_when_dispatcher_underprovisioned() -> None:
+    # Dispatcher has only "python"; role agents collectively require
+    # "python" + "review" + "ops". Missing should be sorted.
+    cfg = _cfg(
+        role_agent_ids={
+            "python-coder": "mac-worker-python-coder",
+            "python-reviewer": "mac-worker-python-reviewer",
+        },
+    )
+    mac = _AgentsMac(
+        agents={
+            "runner-1": {"id": "runner-1", "capabilities": ["python"]},
+            "mac-worker-python-coder": {
+                "id": "mac-worker-python-coder",
+                "capabilities": ["python", "ops"],
+            },
+            "mac-worker-python-reviewer": {
+                "id": "mac-worker-python-reviewer",
+                "capabilities": ["review"],
+            },
+        }
+    )
+    missing = check_dispatcher_capabilities(cfg, mac)
+    assert missing == ["ops", "review"]
+
+
+def test_check_dispatcher_capabilities_warns_but_does_not_raise_on_404(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``mac-worker-python-reviewer`` is not seeded → its GET raises.
+    # The probe must log a warning, skip that role, and still report
+    # the union of the role agents we COULD fetch.
+    cfg = _cfg(
+        role_agent_ids={
+            "python-coder": "mac-worker-python-coder",
+            "python-reviewer": "mac-worker-python-reviewer",
+        },
+    )
+    mac = _AgentsMac(
+        agents={
+            "runner-1": {"id": "runner-1", "capabilities": []},
+            "mac-worker-python-coder": {
+                "id": "mac-worker-python-coder",
+                "capabilities": ["python"],
+            },
+            # No mac-worker-python-reviewer entry → simulated 404.
+        }
+    )
+    with caplog.at_level("WARNING", logger="mac.k8s.runner"):
+        missing = check_dispatcher_capabilities(cfg, mac)
+    # The probe must NOT raise.
+    # Coverage check still runs against the role agents we could fetch.
+    assert missing == ["python"]
+    # And it logged a warning about the failed fetch.
+    assert any(
+        "mac-worker-python-reviewer" in rec.getMessage()
+        for rec in caplog.records
+    ), "expected a warning naming the un-fetchable role agent"
+
+
+def test_check_dispatcher_capabilities_tolerates_dispatcher_fetch_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Network-level failure on the dispatcher GET should return [] (no
+    # claim that wouldn't fail elsewhere) and log a warning rather than
+    # crash the runner.
+    cfg = _cfg(
+        role_agent_ids={"python-coder": "mac-worker-python-coder"},
+    )
+    mac = _AgentsMac(agents={}, fetch_error=RuntimeError("hub unreachable"))
+    with caplog.at_level("WARNING", logger="mac.k8s.runner"):
+        missing = check_dispatcher_capabilities(cfg, mac)
+    assert missing == []
+    assert any(
+        "dispatcher" in rec.getMessage().lower()
+        and "hub unreachable" in rec.getMessage()
+        for rec in caplog.records
+    ), "expected a warning naming the dispatcher fetch failure"

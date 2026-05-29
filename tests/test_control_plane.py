@@ -5575,6 +5575,32 @@ def test_start_task_still_rejects_unrelated_agent(cp):
         cp.start_task(task.id, other.id)
 
 
+def test_add_evidence_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    cp.start_task(task.id, delegate.id)
+
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "tests passed",
+        delegate.id,
+        metadata=verified_repo_metadata(cp, delegate.id),
+    )
+
+    assert evidence.created_by == delegate.id
+
+
+def test_add_evidence_rejects_unrelated_agent_on_active_lease(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    other = register_agent(cp, "other", ["python"])
+
+    with pytest.raises(AuthorizationError):
+        cp.add_evidence(task.id, "test", "artifact://pytest", "tests passed", other.id)
+
+
 def test_renew_and_release_remain_owner_only(cp):
     """Spec §6.3: renewal + release stay strictly owner-only even
     after delegation. The delegate may transition state but cannot

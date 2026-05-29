@@ -90,6 +90,58 @@ def _json_env(name: str, default: Dict[str, str]) -> Dict[str, str]:
     return {str(k): str(v) for k, v in loaded.items()}
 
 
+def _json_env_nested(
+    name: str,
+    default: Dict[str, Dict[str, str]],
+) -> Dict[str, Dict[str, str]]:
+    """Read a JSON-encoded ``Dict[str, Dict[str, str]]`` from env.
+
+    Used for ``MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS`` whose value is
+    shaped ``{role: {"name": "<k8s-secret>", "key": "<secret-key>"}}``.
+    Malformed entries are dropped silently with a warning rather than
+    crashing the runner; missing inner keys produce a skipped role
+    (downstream code must tolerate a role with no attestation secret —
+    in that case the Job pod simply doesn't get an attestation key in
+    env, and mac's review-readiness gate rejects with
+    ``manifest_not_signed``).
+    """
+    raw = os.environ.get(name)
+    if not raw or not raw.strip():
+        return {role: dict(spec) for role, spec in default.items()}
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        log.warning("malformed JSON in env %s; falling back to default: %s", name, exc)
+        return {role: dict(spec) for role, spec in default.items()}
+    if not isinstance(loaded, dict):
+        log.warning(
+            "env %s did not decode to a JSON object (got %s); using default",
+            name,
+            type(loaded).__name__,
+        )
+        return {role: dict(spec) for role, spec in default.items()}
+    out: Dict[str, Dict[str, str]] = {}
+    for role, spec in loaded.items():
+        if not isinstance(spec, dict):
+            log.warning(
+                "env %s entry for role %r is not an object; skipping",
+                name,
+                role,
+            )
+            continue
+        secret_name = str(spec.get("name") or "").strip()
+        secret_key = str(spec.get("key") or "").strip()
+        if not secret_name or not secret_key:
+            log.warning(
+                "env %s entry for role %r is missing name/key; skipping",
+                name,
+                role,
+            )
+            continue
+        out[str(role)] = {"name": secret_name, "key": secret_key}
+    return out
+
+
 @dataclass
 class RunnerConfig:
     """Static configuration for a ``mac-k8s-runner`` replica."""
@@ -118,6 +170,22 @@ class RunnerConfig:
     role_agent_ids: Dict[str, str] = field(default_factory=dict)
     role_executors: Dict[str, str] = field(default_factory=dict)
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
+    # PR3: per-role HMAC attestation key, sourced from a K8s Secret. The
+    # Job pod inherits the key via ``MAC_AGENT_ATTESTATION_KEY`` env so
+    # the role executor (mac-task-executor-codex et al.) can sign its
+    # verification manifest. mac's review-readiness gate refuses
+    # unsigned manifests (services.py:11253-11270), so this is required
+    # for a role agent to clear ``/submit-for-review``.
+    #
+    # Shape: ``{role: {"name": "<k8s-secret-name>", "key": "<secret-key>"}}``.
+    # An entry that is absent for a given role simply emits no
+    # MAC_AGENT_ATTESTATION_KEY env on the Job — the executor will then
+    # log "manifest will be unsigned" and mac will reject at the gate.
+    # That is the intentional fail-loud signal for an operator who
+    # turned on role specialisation without seeding the per-role keys.
+    role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(
+        default_factory=dict
+    )
     # How often (seconds) the runner renews a Job's lease. Stays in
     # config so tests can shorten it. Defaults match the cadence
     # previously used by the in-Job renewal thread.
@@ -176,6 +244,9 @@ class RunnerConfig:
             role_executors=_json_env("MAC_RUNNER_ROLE_EXECUTORS", {}),
             capability_role_aliases=_json_env(
                 "MAC_RUNNER_CAPABILITY_ROLE_ALIASES", {}
+            ),
+            role_attestation_key_secrets=_json_env_nested(
+                "MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS", {}
             ),
             lease_renew_interval_seconds=float(
                 os.environ.get(
@@ -265,6 +336,25 @@ def _resolve_executor_for_role(
     return None
 
 
+def _resolve_attestation_key_secret_for_role(
+    role: Optional[str], cfg: RunnerConfig
+) -> Optional[Dict[str, str]]:
+    """Resolve the K8s Secret reference holding the role agent's HMAC
+    attestation key. ``None`` when the role has no entry in
+    ``cfg.role_attestation_key_secrets`` — the Job pod will run
+    without ``MAC_AGENT_ATTESTATION_KEY`` and the role executor will
+    write an unsigned manifest (mac then rejects at /submit-for-review).
+    """
+    if not role:
+        return None
+    spec = cfg.role_attestation_key_secrets.get(role)
+    if not spec:
+        return None
+    # Defensive copy so downstream mutation can't accidentally edit
+    # the config in-place.
+    return {"name": spec["name"], "key": spec["key"]}
+
+
 def _resolve_task_image(task: JsonDict, cfg: RunnerConfig) -> str:
     """Pick the container image for this task's Job.
 
@@ -320,6 +410,7 @@ def build_job_spec(
     role = _resolve_task_role(task, cfg)
     job_agent_id = _resolve_agent_id_for_role(role, cfg)
     executor_cmd = _resolve_executor_for_role(role, cfg)
+    attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
     image = _resolve_task_image(task, cfg)
     active_deadline = _resolve_active_deadline(task, cfg)
 
@@ -333,6 +424,24 @@ def build_job_spec(
     if executor_cmd is not None:
         container_env.append(
             {"name": "MAC_TASK_EXECUTOR_COMMAND", "value": executor_cmd}
+        )
+    if attestation_secret is not None:
+        # PR3: feed the role agent's HMAC key into the Job env so the
+        # role executor can sign its verification manifest. The key
+        # never leaves K8s in cleartext outside this Job's process
+        # (valueFrom.secretKeyRef, not value). Only emitted when the
+        # operator has configured a per-role secret; absence is
+        # diagnostically logged by the executor and rejected by mac.
+        container_env.append(
+            {
+                "name": "MAC_AGENT_ATTESTATION_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": attestation_secret["name"],
+                        "key": attestation_secret["key"],
+                    }
+                },
+            }
         )
     container_env.extend(
         [
@@ -481,14 +590,22 @@ class K8sJobsProtocol(Protocol):
     def read(self, namespace: str, name: str) -> JsonDict: ...
 
 
-def _job_is_terminal(job: JsonDict) -> bool:
+def _job_is_terminal(job: Optional[JsonDict]) -> bool:
     """Return True iff a Job's status reports succeeded or failed pods.
 
     Mirrors the kube-client's V1JobStatus shape: ``status.succeeded`` and
     ``status.failed`` are integer counts of pods in those terminal
     states. Either being ``>= 1`` is sufficient (with ``backoffLimit=0``
     one failed pod means the Job won't be retried).
+
+    Treat an empty dict as terminal too. ``K8sJobsClient.read`` returns
+    ``{}`` on 404, so a deleted Job must stop renewal instead of leaking
+    a daemon thread until runner shutdown.
     """
+    if job is None:
+        return False
+    if job == {}:
+        return True
     status = (job.get("status") or {}) if isinstance(job, dict) else {}
     try:
         succeeded = int(status.get("succeeded") or 0)
@@ -546,8 +663,8 @@ def _lease_renewal_loop(
                 job_name,
                 exc,
             )
-            job = {}
-        if job and _job_is_terminal(job):
+            job = None
+        if _job_is_terminal(job):
             return
 
         # Step 2: maybe renew the lease. We piggy-back on the same
@@ -618,6 +735,87 @@ def _start_lease_renewal_thread(
     return thread
 
 
+def check_dispatcher_capabilities(
+    cfg: RunnerConfig, mac: MacApiProtocol
+) -> List[str]:
+    """Return capabilities the dispatcher is MISSING relative to roles.
+
+    Best-effort startup probe (spec §13 Q6): the runner calls
+    ``/agents/{cfg.agent_id}/claim-next`` which mac-api filters by the
+    DISPATCHER's capabilities. If an operator adds a role to
+    ``MAC_RUNNER_ROLE_AGENT_IDS`` (e.g. ``python-coder`` with capability
+    ``python``) but forgets to update the dispatcher's
+    ``AGENT_CAPABILITIES`` env on ``register-mac-agent``, tasks
+    requiring that capability will never be claimed — silently. This
+    probe surfaces the drift as a warning at startup.
+
+    Returns the sorted list of capabilities present on the union of role
+    agents but missing from the dispatcher. Empty list = ok.
+
+    Best-effort semantics:
+
+    * Empty ``cfg.role_agent_ids`` -> return ``[]`` (no roles, nothing
+      to check).
+    * Dispatcher fetch fails -> log warning, return ``[]`` (the runner
+      will still fail loudly elsewhere with a clearer error if its own
+      identity is broken).
+    * Any individual role-agent fetch fails (e.g. 404 because the
+      operator forgot to seed the row) -> log warning, skip that role
+      from the union; continue with the rest.
+    """
+    if not cfg.role_agent_ids:
+        return []
+
+    try:
+        dispatcher = mac.get("/agents/%s" % cfg.agent_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "dispatcher capability probe: failed to fetch dispatcher %s: %s; "
+            "skipping check",
+            cfg.agent_id,
+            exc,
+        )
+        return []
+    if not isinstance(dispatcher, dict):
+        log.warning(
+            "dispatcher capability probe: unexpected response shape for %s "
+            "(got %s); skipping check",
+            cfg.agent_id,
+            type(dispatcher).__name__,
+        )
+        return []
+    dispatcher_caps = {
+        str(c) for c in (dispatcher.get("capabilities") or [])
+    }
+
+    union_role_caps: set = set()
+    for role, role_agent_id in cfg.role_agent_ids.items():
+        try:
+            role_agent = mac.get("/agents/%s" % role_agent_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "dispatcher capability probe: failed to fetch role agent "
+                "role=%s agent=%s: %s; skipping role in coverage check",
+                role,
+                role_agent_id,
+                exc,
+            )
+            continue
+        if not isinstance(role_agent, dict):
+            log.warning(
+                "dispatcher capability probe: unexpected response shape for "
+                "role agent %s (got %s); skipping role in coverage check",
+                role_agent_id,
+                type(role_agent).__name__,
+            )
+            continue
+        for cap in role_agent.get("capabilities") or []:
+            union_role_caps.add(str(cap))
+
+    missing = sorted(union_role_caps - dispatcher_caps)
+    return missing
+
+
 def claim_and_launch_one(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
@@ -670,13 +868,36 @@ def claim_and_launch_one(
                 {"agent_id": cfg.agent_id, "to_agent_id": job_agent_id},
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning(
+            log.error(
                 "lease delegation failed for task=%s lease=%s to=%s: %s",
                 task.get("id"),
                 lease.get("id"),
                 job_agent_id,
                 exc,
             )
+            try:
+                mac.post(
+                    "/tasks/%s/transition" % task["id"],
+                    {
+                        "target_state": "open",
+                        "actor": cfg.agent_id,
+                        "detail": {
+                            "reason": "lease_delegation_failed",
+                            "lease_id": lease["id"],
+                            "to_agent_id": job_agent_id,
+                            "error": str(exc),
+                        },
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {
+                "status": "lease_delegation_failed",
+                "task_id": task.get("id"),
+                "lease_id": lease.get("id"),
+                "to_agent_id": job_agent_id,
+                "error": str(exc),
+            }
 
     manifest = build_job_spec(task, lease, cfg)
     try:
