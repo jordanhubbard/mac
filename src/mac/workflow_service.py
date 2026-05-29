@@ -262,15 +262,20 @@ class WorkflowService:
         parsed_definition = self._validate_definition(definition, tenant_id=tenant_id)
         normalized_definition = parsed_definition.to_dict()
 
-        existing = self.store.query_all(
-            """
-            SELECT * FROM workflows
-            WHERE slug = ? AND (tenant_id IS ? OR tenant_id = ?)
-            ORDER BY version DESC
-            LIMIT 1
-            """,
-            (slug_value, tenant_id, tenant_id),
-        )
+        # ``tenant_id IS ?`` works on SQLite but errors on Postgres
+        # (``syntax error at or near $N``). Split into IS NULL / = ?.
+        if tenant_id is None:
+            existing = self.store.query_all(
+                "SELECT * FROM workflows WHERE slug = ? AND tenant_id IS NULL "
+                "ORDER BY version DESC LIMIT 1",
+                (slug_value,),
+            )
+        else:
+            existing = self.store.query_all(
+                "SELECT * FROM workflows WHERE slug = ? AND tenant_id = ? "
+                "ORDER BY version DESC LIMIT 1",
+                (slug_value, tenant_id),
+            )
         existing_row = existing[0] if existing else None
         version = 1
         if existing_row is not None:
