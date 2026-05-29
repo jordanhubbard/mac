@@ -85,27 +85,26 @@ class ProvisioningService:
         hardware_obj = ensure_json_object(hardware)
         detail_obj = ensure_json_object(detail)
 
+        # SQLite accepts ``col IS ?`` (matches NULL or value); Postgres
+        # rejects it ("syntax error at or near $N"). Split into IS NULL
+        # vs = ? branches so the SQL works on both backends.
+        clauses = ["status = ?", "reason = ?"]
+        params: List[Any] = [ProvisioningStatus.PENDING.value, reason_value]
+        for col, value in (
+            ("role_slug", role_slug),
+            ("task_id", task_id),
+            ("tenant_id", tenant_id),
+        ):
+            if value is None:
+                clauses.append("%s IS NULL" % col)
+            else:
+                clauses.append("%s = ?" % col)
+                params.append(value)
         existing = self.store.query_one(
-            """
-            SELECT * FROM agent_provisioning_requests
-            WHERE status = ?
-              AND reason = ?
-              AND (role_slug IS ? OR role_slug = ?)
-              AND (task_id IS ? OR task_id = ?)
-              AND (tenant_id IS ? OR tenant_id = ?)
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            (
-                ProvisioningStatus.PENDING.value,
-                reason_value,
-                role_slug,
-                role_slug,
-                task_id,
-                task_id,
-                tenant_id,
-                tenant_id,
-            ),
+            "SELECT * FROM agent_provisioning_requests WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at DESC, id DESC LIMIT 1",
+            tuple(params),
         )
         if existing is not None:
             # Refresh updated_at + detail so subsequent ticks show the
