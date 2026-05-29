@@ -21,6 +21,24 @@ SERVICE_DEST="/etc/systemd/system/${FLEET_NAME}-observability-prune.service"
 TIMER_DEST="/etc/systemd/system/${FLEET_NAME}-observability-prune.timer"
 ENV_DEST="/etc/${FLEET_NAME}/observability-prune.env"
 
+# Detect the user mac.service runs as (the deploy convention bakes
+# User=<user> into the unit; we mirror it so the prune timer runs as the
+# same user and can read ~/.mac/mac.env and call ~/.mac/venv/bin/mac).
+MAC_USER="${MAC_USER:-}"
+MAC_HOME_DIR="${MAC_HOME_DIR:-}"
+if [ -z "$MAC_USER" ]; then
+  if [ -f "/etc/systemd/system/${FLEET_NAME}.service" ]; then
+    MAC_USER="$(awk -F= '/^User=/{print $2; exit}' "/etc/systemd/system/${FLEET_NAME}.service" 2>/dev/null || true)"
+  fi
+fi
+if [ -z "$MAC_USER" ]; then
+  echo "[observability-prune] ERROR: could not detect MAC_USER from ${FLEET_NAME}.service; set MAC_USER explicitly." >&2
+  exit 1
+fi
+if [ -z "$MAC_HOME_DIR" ]; then
+  MAC_HOME_DIR="$(getent passwd "$MAC_USER" | cut -d: -f6)/.mac"
+fi
+
 if [ ! -f "$SERVICE_TEMPLATE" ] || [ ! -f "$TIMER_TEMPLATE" ]; then
   echo "[observability-prune] ERROR: unit templates not found under $UNIT_DIR" >&2
   exit 1
@@ -41,13 +59,16 @@ ENV
   sudo chmod 0644 "$ENV_DEST"
 fi
 
-# When FLEET_NAME != "mac", rewrite the unit's user-home reference (%h) is
-# resolved by systemd at run-time; nothing template-specific to rewrite here.
-sudo install -m 0644 "$SERVICE_TEMPLATE" "$SERVICE_DEST"
+# Render the service template with the deploy-time user / home.
+rendered="$(mktemp)"
+sed -e "s|__MAC_USER__|${MAC_USER}|g" -e "s|__MAC_HOME__|${MAC_HOME_DIR}|g" \
+    "$SERVICE_TEMPLATE" > "$rendered"
+sudo install -m 0644 "$rendered" "$SERVICE_DEST"
+rm -f "$rendered"
 sudo install -m 0644 "$TIMER_TEMPLATE" "$TIMER_DEST"
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$(basename "$TIMER_DEST")"
 
-echo "[observability-prune] installed; next run:"
+echo "[observability-prune] installed (User=${MAC_USER}, mac home=${MAC_HOME_DIR}); next run:"
 sudo systemctl list-timers --no-pager "$(basename "$TIMER_DEST")" || true
