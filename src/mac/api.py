@@ -569,6 +569,7 @@ class AgentClaimNextRequest(BaseModel):
     required_metadata: Dict[str, Any] = Field(default_factory=dict)
     require_canary: bool = False
     dry_run: bool = False
+    capabilities: List[str] = Field(default_factory=list)
 
 
 class CommandAuditCreate(BaseModel):
@@ -3009,6 +3010,7 @@ def create_app(
             required_metadata=body.required_metadata,
             require_canary=body.require_canary,
             dry_run=body.dry_run,
+            capabilities=body.capabilities,
             sync_beads=False,
         )
         if assignment and not body.dry_run:

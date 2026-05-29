@@ -6258,6 +6258,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]] = None,
         require_canary: bool = False,
         dry_run: bool = False,
+        capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
     ) -> Optional[JsonDict]:
         return self.dispatch.claim_next_for_agent(
@@ -6267,6 +6268,7 @@ class ControlPlane:
             required_metadata=required_metadata,
             require_canary=require_canary,
             dry_run=dry_run,
+            capabilities=capabilities,
             sync_beads=sync_beads,
         )
 
@@ -6278,6 +6280,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]] = None,
         require_canary: bool = False,
         dry_run: bool = False,
+        capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
     ) -> Optional[JsonDict]:
         """Claim the next dispatch-eligible task for one worker.
@@ -6298,6 +6301,7 @@ class ControlPlane:
             required_metadata=required_metadata,
             require_canary=require_canary,
             dry_run=dry_run,
+            capabilities=capabilities,
         )
         rejected_policy: Dict[str, int] = {}
         rejected_dispatch = 0
@@ -11066,6 +11070,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]],
         require_canary: bool,
         dry_run: bool,
+        capabilities: Optional[Iterable[str]] = None,
     ) -> JsonDict:
         return {
             "allowed_projects": sorted(
@@ -11078,12 +11083,24 @@ class ControlPlane:
             "required_metadata": ensure_json_object(required_metadata or {}),
             "require_canary": bool(require_canary),
             "dry_run": bool(dry_run),
+            "capabilities": sorted(
+                {
+                    str(cap).strip()
+                    for cap in (capabilities or [])
+                    if str(cap).strip()
+                }
+            ),
         }
 
     def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"
+        capabilities = set(policy.get("capabilities") or [])
+        if capabilities:
+            required = set(getattr(task, "required_capabilities", None) or [])
+            if required and not required.issubset(capabilities):
+                return False, "capability_not_allowed"
         metadata = ensure_json_object(task.metadata)
         if policy.get("require_canary") and not (
             metadata.get("canary") is True

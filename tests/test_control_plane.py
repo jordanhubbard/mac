@@ -2031,6 +2031,40 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     )
 
 
+def test_claim_next_capabilities_filter_narrows_dispatch(cp):
+    """``capabilities=[...]`` lets a worker narrow which tasks it claims
+    below what its agent record's capabilities would otherwise allow.
+
+    Regression for the silent no-op bug where mac-k8s-runner sent
+    ``capabilities`` in the claim-next body but ``AgentClaimNextRequest``
+    didn't declare the field, so pydantic dropped it.
+    """
+    worker = register_agent(cp, "worker", ["python", "review"])
+    python_task = cp.create_task(
+        "python-task", required_capabilities=["python"]
+    )
+    review_task = cp.create_task(
+        "review-task", required_capabilities=["review"]
+    )
+
+    # Narrow to python only — review task must be skipped.
+    claimed = cp.claim_next_for_agent(worker.id, capabilities=["python"])
+    assert claimed is not None
+    assert claimed["task"]["id"] == python_task.id
+
+    # The review task stays open (it was filtered out, not consumed).
+    assert cp.get_task(review_task.id).state == TaskState.OPEN.value
+
+
+def test_claim_next_capabilities_filter_empty_is_noop(cp):
+    """An empty capabilities list does NOT narrow — preserves old
+    behaviour for callers that pass [] or omit the field."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("any", required_capabilities=["python"])
+    claimed = cp.claim_next_for_agent(worker.id, capabilities=[])
+    assert claimed is not None and claimed["task"]["id"] == task.id
+
+
 def test_claim_next_can_defer_beads_claim_side_effects(cp, tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"
