@@ -8745,6 +8745,13 @@ class ControlPlane:
         state: JsonDict,
         level: str,
     ) -> None:
+        # mem-03: silence the bridge.beads.repository_source emitter
+        # when the bridge is disabled (the default per CLAUDE.md). The
+        # original audit found 31,833 rows of this log on rocky despite
+        # MAC_BEADS_BRIDGE_ENABLED being unset — _refresh_beads_repository_source
+        # is reachable from non-poll paths that don't gate themselves.
+        if not _truthy_env("MAC_BEADS_BRIDGE_ENABLED"):
+            return
         self.record_log(
             "bridge.beads.repository_source",
             layer="control_plane",

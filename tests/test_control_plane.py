@@ -709,6 +709,77 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
+def test_beads_source_state_log_suppressed_when_bridge_disabled(cp, monkeypatch, tmp_path):
+    """mem-03: bridge.beads.repository_source must NOT fire when
+    MAC_BEADS_BRIDGE_ENABLED is unset (the default per CLAUDE.md).
+    The original audit found 31K rows of this log on rocky despite
+    the bridge being supposedly off."""
+    monkeypatch.delenv("MAC_BEADS_BRIDGE_ENABLED", raising=False)
+    # Build a minimal BeadsRepository directly instead of registering a
+    # real on-disk one — the .mac/project.yaml requirement at registration
+    # time is unrelated to this gate test.
+    from mac.models import BeadsRepository
+    repo = BeadsRepository(
+        id="repo_fake",
+        name="acme",
+        path=str(tmp_path / "acme"),
+        source="file://acme",
+        project="acme-project",
+        required_capabilities=[],
+        enabled=True,
+        poll_interval_seconds=300,
+        last_polled_at=None,
+        last_imported_at=None,
+        last_error=None,
+        metadata={},
+        created_at="2026-05-29T00:00:00Z",
+        updated_at="2026-05-29T00:00:00Z",
+    )
+    cp._record_beads_source_state(
+        actor="test",
+        repo=repo,
+        state={"status": "error", "error": "anything"},
+        level="warning",
+    )
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "bridge.beads.repository_source" not in names
+
+
+def test_beads_source_state_log_writes_when_bridge_enabled(cp, monkeypatch, tmp_path):
+    """mem-03 (negative): when MAC_BEADS_BRIDGE_ENABLED is true, the
+    log fires normally — operators who actually use the bridge keep
+    the audit trail."""
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
+    # Build a minimal BeadsRepository directly instead of registering a
+    # real on-disk one — the .mac/project.yaml requirement at registration
+    # time is unrelated to this gate test.
+    from mac.models import BeadsRepository
+    repo = BeadsRepository(
+        id="repo_fake",
+        name="acme",
+        path=str(tmp_path / "acme"),
+        source="file://acme",
+        project="acme-project",
+        required_capabilities=[],
+        enabled=True,
+        poll_interval_seconds=300,
+        last_polled_at=None,
+        last_imported_at=None,
+        last_error=None,
+        metadata={},
+        created_at="2026-05-29T00:00:00Z",
+        updated_at="2026-05-29T00:00:00Z",
+    )
+    cp._record_beads_source_state(
+        actor="test",
+        repo=repo,
+        state={"status": "error", "error": "anything"},
+        level="warning",
+    )
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "bridge.beads.repository_source" in names
+
+
 def test_record_log_suppresses_verbose_poll_names_by_default(cp):
     """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
     by default. The 1.83M-of-2.09M-row bloat on rocky was these six
