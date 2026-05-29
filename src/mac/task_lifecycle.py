@@ -64,7 +64,11 @@ class TaskLedgerService:
         sql = (
             "SELECT * FROM task_transition_outbox WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY created_at, rowid LIMIT ?"
+            # ``rowid`` is a SQLite implicit column; Postgres doesn't
+            # expose it. Both backends have a ``id TEXT PRIMARY KEY`` —
+            # use that as the secondary tiebreaker so ordering is stable
+            # across stores.
+            + " ORDER BY created_at, id LIMIT ?"
         )
         params.append(min(max(1, int(limit)), 1000))
         return [self._from_row(row) for row in self.store.query_all(sql, tuple(params))]
