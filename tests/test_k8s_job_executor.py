@@ -83,7 +83,10 @@ def test_happy_path_submits_evidence_then_submit_for_review() -> None:
     assert result.returncode == 0
     assert result.evidence_id == "ev-1"
     assert result.exit_code() == 0
-    paths = [p["path"] for p in mac.posts]
+    # Strip query strings — /start and /submit-for-review pass
+    # agent_id via the query (matches mac-api signatures at api.py:2393
+    # and 2409); the path-without-query is what the test cares about.
+    paths = [p["path"].split("?", 1)[0] for p in mac.posts]
     assert "/tasks/task-1/start" in paths
     assert "/tasks/task-1/evidence" in paths
     assert "/tasks/task-1/submit-for-review" in paths
@@ -116,7 +119,7 @@ def test_executor_exception_records_failure_evidence() -> None:
     assert result.evidence_id == "ev-1"
     assert result.exit_code() == 0
     # Both evidence + failed-transition POSTs were made.
-    paths = [p["path"] for p in mac.posts]
+    paths = [p["path"].split("?", 1)[0] for p in mac.posts]
     assert "/tasks/task-1/evidence" in paths
     assert "/tasks/task-1/transition" in paths
 

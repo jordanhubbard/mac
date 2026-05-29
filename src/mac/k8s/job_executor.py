@@ -137,11 +137,13 @@ def run_one_lease(
             error="GET /tasks/{id} failed: %s" % exc,
         )
 
-    # Transition open → running.
+    # Transition open → running.  mac-api's /tasks/{id}/start expects
+    # `agent_id` as a QUERY parameter, not a JSON body (api.py:2393).
+    # Same convention as src/mac/worker.py:420.
     try:
         mac.post(
-            "/tasks/%s/start" % _q(task_id),
-            {"agent_id": agent_id},
+            "/tasks/%s/start?agent_id=%s" % (_q(task_id), _q(agent_id)),
+            {},
         )
     except Exception as exc:  # noqa: BLE001
         # Already running is fine; anything else is a real failure.
@@ -158,7 +160,7 @@ def run_one_lease(
     stop_event = threading.Event()
     renewer = threading.Thread(
         target=_lease_renewal_loop,
-        args=(mac, lease_id, stop_event, sleeper),
+        args=(mac, lease_id, agent_id, stop_event, sleeper),
         name="mac-task-runner-lease",
         daemon=True,
     )
@@ -200,10 +202,13 @@ def run_one_lease(
         )
 
     if exec_result.returncode == 0:
+        # mac-api's /tasks/{id}/submit-for-review takes `agent_id` as a
+        # query param (api.py:2409), same as /start.
         try:
             mac.post(
-                "/tasks/%s/submit-for-review" % _q(task_id),
-                {"actor": agent_id, "evidence_id": evidence.get("id")},
+                "/tasks/%s/submit-for-review?agent_id=%s"
+                % (_q(task_id), _q(agent_id)),
+                {},
             )
             return JobExecutionResult(
                 status="submitted-for-review",
@@ -315,13 +320,21 @@ def _default_mac_client(mac_url: str, token: str) -> Any:
 def _lease_renewal_loop(
     mac: Any,
     lease_id: str,
+    agent_id: str,
     stop: threading.Event,
     sleeper: Callable[[float], None],
 ) -> None:
-    """Renew the lease every LEASE_RENEW_INTERVAL_SECONDS until stop."""
+    """Renew the lease every LEASE_RENEW_INTERVAL_SECONDS until stop.
+
+    `LeaseRenewRequest` (api.py:548) requires `agent_id` in the body;
+    the previous empty-body call silently failed every tick.
+    """
     while not stop.is_set():
         try:
-            mac.post("/leases/%s/renew" % _q(lease_id), {})
+            mac.post(
+                "/leases/%s/renew" % _q(lease_id),
+                {"agent_id": agent_id},
+            )
         except Exception as exc:  # noqa: BLE001
             log.warning("lease renew failed: %s", exc)
         # Short-poll the stop event in 1s chunks so we exit promptly.
