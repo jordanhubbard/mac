@@ -51,6 +51,25 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 - Use `mac memory remember` for persistent project knowledge — do NOT use MEMORY.md files.
 - After `mac task create` / `mac task close`, refresh the .tickets mirror if you want a markdown copy of newly-created tasks (auto-emit is on the roadmap).
 
+### How `mac task` finds the hub
+
+The `mac` CLI is hub-aware. Resolution order (highest priority first):
+
+1. `--db <path>` (or `$MAC_DB`) → local SQLite. Prints a stderr banner
+   showing the absolute path, so silent local writes are impossible.
+2. `--hub-url URL` (+ optional `--token`) → HTTP to that hub.
+3. `$MAC_API_URL` / `$MAC_URL` / `$MAC_HUB_URL` → HTTP to that hub.
+4. `--fleet <name>` (or `$MAC_FLEET`) → reads `~/.mac/fleets.yaml`
+   for the named fleet's `hub_url` and selects `MAC_API_TOKEN__<FLEET>`.
+5. Nothing configured → **error** with help text. No silent fallback.
+
+The legacy `hgmac` CLI is deprecated; it now prints a stderr warning
+pointing at `mac`. Use `mac` for everything.
+
+A small set of commands still requires `--db` because they reach into
+SQLite directly: `task ready/search/stats`, `memory list/forget`,
+`observability prune`. Running these in hub mode emits a clear error.
+
 ## Session Completion
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

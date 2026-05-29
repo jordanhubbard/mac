@@ -855,6 +855,22 @@ def run(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Deprecated entry point — use `mac` instead.
+
+    `hgmac` is now an alias for `mac`'s hub-mode behavior. The `mac` CLI
+    has full feature parity (and a superset of the verb surface). This
+    binary remains so existing tooling/scripts don't break, but it
+    prints a one-time deprecation warning on each invocation.
+
+    See mem-14 for the merge motivation.
+    """
+    if os.environ.get("MAC_HGMAC_DEPRECATION_QUIET") != "1":
+        print(
+            "hgmac: DEPRECATED — use `mac` instead. The `mac` CLI now talks "
+            "to a hub when MAC_API_URL or --hub-url is set. Set "
+            "MAC_HGMAC_DEPRECATION_QUIET=1 to silence.",
+            file=sys.stderr,
+        )
     return run(argv)
 
 
