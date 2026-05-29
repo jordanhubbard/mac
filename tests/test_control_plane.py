@@ -709,6 +709,127 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
+def test_default_review_workflow_caps_retractions(cp, monkeypatch):
+    """mem-12: after N consecutive retractions for a task, the workflow
+    refuses to spawn another review and transitions the task to FAILED."""
+    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    register_agent(cp, "reviewer-b", ["review"])
+    task = cp.create_task("Loopy", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    # Pre-plant N retracted reviews so we land exactly at the cap on
+    # the next advance() call.
+    from mac.models import ReviewStatus, new_id, utcnow
+
+    now = utcnow()
+    for label in ("a", "b"):
+        cp.store.execute(
+            """
+            INSERT INTO reviews (
+                id, task_id, reviewer_agent_id, status, reason, evidence_id,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                new_id("review"),
+                task.id,
+                "agent_" + label,
+                ReviewStatus.RETRACTED.value,
+                "reviewer_unable_to_produce_verdict_after_10_attempts",
+                now,
+                now,
+            ),
+        )
+
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "review_retraction_exhausted"
+    assert result["cap"] == 2
+    assert result["retracted_count"] >= 2
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    # Confirm an observability row was written so operators can see why.
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.exhausted" in names
+
+
+def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
+    """mem-12: the cap is scoped to retractions AFTER the latest evidence.
+    Submitting fresh evidence implicitly resets the counter."""
+    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    task = cp.create_task("Resettable", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    # Old evidence, then 2 retracted reviews against it.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo1",
+        "first try",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    from mac.models import ReviewStatus, new_id, utcnow
+    old_now = "2026-05-29T00:00:00+00:00"
+    for label in ("a", "b"):
+        cp.store.execute(
+            """
+            INSERT INTO reviews (
+                id, task_id, reviewer_agent_id, status, reason, evidence_id,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                new_id("review"),
+                task.id,
+                "agent_" + label,
+                ReviewStatus.RETRACTED.value,
+                "stale",
+                old_now,
+                old_now,
+            ),
+        )
+    # Reset the task back to NEEDS_REVIEW manually (in the real flow,
+    # submitting new evidence + submit_for_review walks the state
+    # machine; we shortcut here for the test).
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
+        (TaskState.NEEDS_REVIEW.value, utcnow(), task.id),
+    )
+    # New evidence at a NEWER timestamp → cap counter should reset.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo2",
+        "second try",
+        worker.id,
+        metadata=verified_repo_metadata(
+            cp,
+            worker.id,
+            head_sha="0123456789abcdef0123456789abcdef01234567",
+            files_changed=["src/example.py"],
+        ),
+    )
+    result = cp.advance_default_review_workflow(task.id)
+    # Should advance normally (assigning a new reviewer) rather than
+    # failing on the cap.
+    assert result["status"] != "review_retraction_exhausted", result
+    assert cp.get_task(task.id).state != TaskState.FAILED.value
+
+
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
     from tests.conftest import submit_review_verdict
 

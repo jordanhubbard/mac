@@ -7095,6 +7095,85 @@ class ControlPlane:
                 )
                 review = None
         if review is None:
+            # mem-12: bound review retraction. Before creating a fresh
+            # review for the same executor evidence, count how many
+            # reviews for this task have already retracted *since the
+            # latest evidence was recorded*. If we've hit the cap, fail
+            # the task — looping forever is what bit task_d7c51a0b
+            # with 503 retracted reviews in the original incident.
+            try:
+                retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
+            except ValueError:
+                retraction_cap = 3
+            evidence_threshold = self.store.query_one(
+                """
+                SELECT created_at FROM evidence
+                WHERE task_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+            threshold_at = (
+                evidence_threshold["created_at"] if evidence_threshold else ""
+            )
+            retracted_count_row = self.store.query_one(
+                """
+                SELECT COUNT(*) AS n FROM reviews
+                WHERE task_id = ? AND status = ?
+                  AND created_at >= ?
+                """,
+                (task_id, ReviewStatus.RETRACTED.value, threshold_at),
+            )
+            retracted_count = (
+                int(retracted_count_row["n"]) if retracted_count_row else 0
+            )
+            if retracted_count >= retraction_cap:
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.exhausted",
+                    "error",
+                    {
+                        "reason": "review_retraction_cap_hit",
+                        "cap": retraction_cap,
+                        "retracted_count": retracted_count,
+                        "executor_evidence_id": evidence.id,
+                    },
+                    actor,
+                )
+                self._record_history(
+                    task_id,
+                    "task.review_exhausted",
+                    actor,
+                    None,
+                    None,
+                    {
+                        "cap": retraction_cap,
+                        "retracted_count": retracted_count,
+                        "executor_evidence_id": evidence.id,
+                    },
+                )
+                try:
+                    self.transition_task(
+                        task_id,
+                        TaskState.FAILED.value,
+                        actor,
+                        {
+                            "reason": "review_retraction_cap_hit",
+                            "cap": retraction_cap,
+                            "retracted_count": retracted_count,
+                            "executor_evidence_id": evidence.id,
+                        },
+                    )
+                except TransitionError:
+                    # Already terminal: nothing more to do.
+                    pass
+                return {
+                    "task_id": task_id,
+                    "status": "review_retraction_exhausted",
+                    "cap": retraction_cap,
+                    "retracted_count": retracted_count,
+                }
             reviewer = self._select_default_reviewer(
                 task,
                 executor_agent_id=evidence.created_by,
