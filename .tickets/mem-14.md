@@ -56,3 +56,32 @@ pointer.
 Discovered while filing [mem-01..mem-13] for the memory-tier audit.
 The 13 orphan local tickets were moved to rocky and the local versions
 cancelled in 37d4d9c → 2fbd370.
+
+## Status update (2026-05-29, post-shipping)
+
+Work is **merged on main** but the rocky ticket is still in fleet
+review; closing it requires a proper review verdict (the ledger
+correctly refuses `mac task close` without one).
+
+Resolution chosen (option a from the original proposal): merge `mac` +
+`hgmac`. Implementation shipped across these commits:
+
+- `309c0d9` — foundation: `src/mac/dispatch.py` with `LocalDispatch`,
+  `RemoteDispatch`, `resolve_dispatch`, `_Dictish`. cli.py `--db`
+  default is now `None`; new top-level `--hub-url` / `--token`
+  / `--fleet` args. Wraps the task + project verbs. 17 unit tests +
+  3 end-to-end remote-mode CLI tests.
+- `6798328` — full surface: 94 of 95 cli-called ControlPlane methods
+  now route over HTTP in hub mode. The one unwrapped method
+  (`get_task`) is only called inside `cmd_task_ready`, which is
+  SQLite-only by design (`cp.store.query_all`).
+- `f43cd11` — `hgmac` prints a stderr deprecation notice; CLAUDE.md
+  gains a "How `mac task` finds the hub" subsection documenting the
+  resolution order.
+
+The five SQL-direct verbs (`task ready/search/stats`,
+`memory list/forget`, `observability prune`) remain `--db`-required
+and emit a clear `DispatchError` in hub mode. Surfacing those over
+HTTP is tracked separately as a follow-up.
+
+All 575 non-e2e tests pass.
