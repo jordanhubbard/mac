@@ -83,6 +83,8 @@ print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
 ' || true)"
     fi
     # If task didn't carry the repo URL, fall back to project metadata.
+    # GET /projects/{name} returns a wrapper {project, summary, record, tasks,...};
+    # the project record (with its metadata) is nested under `record`.
     if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then
         project_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
             "${MAC_URL}/projects/${PROJECT}" 2>/dev/null || true)"
@@ -90,7 +92,8 @@ print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
             eval "$(printf '%s' "${project_json}" | python3 -c '
 import json, shlex, sys
 d = json.load(sys.stdin)
-meta = d.get("metadata") or {}
+rec = d.get("record") or d.get("project") or d
+meta = rec.get("metadata") or {}
 print("REPO_URL=%s" % shlex.quote(meta.get("repository") or ""))
 print("REPO_BRANCH=%s" % shlex.quote(meta.get("default_branch") or "main"))
 ' || true)"
