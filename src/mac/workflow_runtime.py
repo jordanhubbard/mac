@@ -26,6 +26,7 @@ from mac.models import (
     Tenant,
     TransitionError,
     ValidationError,
+    NodeType,
     Workflow,
     WORKFLOW_TERMINAL_STATES,
     WorkflowRun,
@@ -209,6 +210,7 @@ class WorkflowRuntime:
             attempt=1,
             role_snapshots=role_snapshots or None,
             pre_decisions=pre_decisions,
+            run_input=input_obj,
         )
         self.store.execute(
             """
@@ -386,10 +388,82 @@ class WorkflowRuntime:
         run = self.get_run(run_id)
         if run.state in WORKFLOW_TERMINAL_STATES:
             return run
+        task_metadata = json_loads(row["metadata"], {})
+        node_key = row["workflow_node_key"]
         condition = self._terminal_to_condition(
-            terminal_state, metadata=json_loads(row["metadata"], {})
+            terminal_state, metadata=task_metadata
         )
-        return self._advance(run, row["workflow_node_key"], condition, task_id)
+        # wf-04: if this was a plan-type node, harvest its evidence's
+        # plan_payloads and store them on the run's context so the
+        # subsequent _spawn_node_task calls can use them to parameterize
+        # downstream node tasks.
+        if (
+            terminal_state == TaskState.COMPLETED.value
+            and self._is_plan_node(run.definition_snapshot, node_key)
+        ):
+            self._merge_plan_payloads_from_evidence(run.id, task_id)
+            run = self.get_run(run.id)
+        return self._advance(run, node_key, condition, task_id)
+
+    def _is_plan_node(self, definition: Dict[str, Any], node_key: Optional[str]) -> bool:
+        if not node_key:
+            return False
+        for node in (definition or {}).get("nodes") or []:
+            if node.get("node_key") == node_key:
+                return (
+                    str(node.get("node_type") or "task").strip().lower()
+                    == NodeType.PLAN.value
+                )
+        return False
+
+    def _merge_plan_payloads_from_evidence(self, run_id: str, task_id: str) -> None:
+        """Read the most recent evidence for ``task_id`` and merge its
+        ``metadata.plan_payloads`` into ``WorkflowRun.context.plan_payloads``.
+
+        Best-effort: if the plan task's evidence isn't there or is
+        malformed, the downstream nodes simply use their static
+        definition (just like they did before wf-04).
+        """
+        row = self.store.query_one(
+            "SELECT metadata FROM evidence WHERE task_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (task_id,),
+        )
+        if row is None:
+            return
+        evidence_meta = json_loads(row["metadata"], {}) or {}
+        # Accept either metadata.plan_payloads (flat) or
+        # metadata.verification.plan_payloads (nested) — agents may use
+        # the same verification envelope as other evidence types.
+        payloads = (
+            evidence_meta.get("plan_payloads")
+            or (evidence_meta.get("verification") or {}).get("plan_payloads")
+        )
+        if not isinstance(payloads, dict) or not payloads:
+            return
+        # Filter to dict-of-dicts (each value must be node-payload-shaped).
+        clean: Dict[str, Dict[str, Any]] = {}
+        for key, value in payloads.items():
+            if isinstance(value, dict):
+                clean[str(key)] = {
+                    k: v for k, v in value.items()
+                    if k in {"instructions", "metadata", "required_capabilities"}
+                }
+        if not clean:
+            return
+        run_row = self.store.query_one(
+            "SELECT context FROM workflow_runs WHERE id = ?", (run_id,)
+        )
+        context = json_loads(run_row["context"] if run_row else None, {}) or {}
+        existing = context.get("plan_payloads") or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(clean)
+        context["plan_payloads"] = existing
+        self.store.execute(
+            "UPDATE workflow_runs SET context = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(context), utcnow(), run_id),
+        )
 
     # Internals --------------------------------------------------------
 
@@ -556,6 +630,11 @@ class WorkflowRuntime:
         # opens its own transaction and SQLite cannot nest). If the
         # subsequent guarded UPDATE finds the run has moved on, we cancel
         # the freshly-spawned task to avoid an orphan.
+        plan_payloads = (
+            (run.context or {}).get("plan_payloads")
+            if isinstance(run.context, dict)
+            else None
+        )
         new_task = self._spawn_node_task(
             run.id,
             target,
@@ -565,6 +644,8 @@ class WorkflowRuntime:
             attempt=prior_attempts + 1,
             role_snapshots=definition.get("role_snapshots") if isinstance(definition, dict) else None,
             pre_decisions=pre_decisions,
+            plan_payloads=plan_payloads,
+            run_input=run.input if isinstance(run.input, dict) else None,
         )
         with self.store.transaction() as conn:
             cur = conn.execute(
@@ -628,7 +709,24 @@ class WorkflowRuntime:
         attempt: int,
         role_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
         pre_decisions: Optional[Dict[str, str]] = None,
+        plan_payloads: Optional[Dict[str, Dict[str, Any]]] = None,
+        run_input: Optional[Dict[str, Any]] = None,
     ) -> Task:
+        # wf-04: if a plan node already ran and emitted a payload for
+        # this node, apply the override on a *local copy* of the node
+        # dict before reading any fields. Static definition wins for
+        # fields the plan didn't touch.
+        plan_override_metadata: Dict[str, Any] = {}
+        if plan_payloads:
+            override = plan_payloads.get(node.get("node_key") or "")
+            if isinstance(override, dict) and override:
+                node = dict(node)
+                if "instructions" in override:
+                    node["instructions"] = override["instructions"]
+                if "required_capabilities" in override:
+                    node["required_capabilities"] = override["required_capabilities"]
+                if isinstance(override.get("metadata"), dict):
+                    plan_override_metadata = dict(override["metadata"])
         # mac-hbk7: prefer the role snapshot embedded in the workflow
         # definition at start_run time so mid-run role edits don't
         # change downstream capabilities or hardware constraints. Fall
@@ -676,6 +774,21 @@ class WorkflowRuntime:
             )
         if node.get("node_type") == "approval":
             metadata["requires_approval"] = True
+        # wf-04: a plan-typed node is just a task that produces a
+        # plan_payloads evidence; surface the run's input so the
+        # executor can see the free-form description it should plan
+        # against.
+        if str(node.get("node_type") or "").strip().lower() == NodeType.PLAN.value:
+            metadata["is_plan_node"] = True
+            if run_input is not None:
+                metadata["plan_input"] = run_input
+        # wf-04 (cont.): merge plan-payload metadata onto the task's
+        # metadata so downstream executors see whatever the planner
+        # resolved (preferred stack, owner, etc.). Static run metadata
+        # keys take precedence so a malformed plan can't overwrite
+        # things like workflow_run_id.
+        for key, value in plan_override_metadata.items():
+            metadata.setdefault(key, value)
         task = self._create_task(
             "%s :: %s" % (workflow.slug if workflow else "workflow", node["node_key"]),
             description=(node.get("instructions") or "").strip(),

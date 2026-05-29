@@ -744,6 +744,13 @@ class NodeType(StrEnum):
     APPROVAL = "approval"
     COMMIT = "commit"
     VERIFY = "verify"
+    # wf-04: a `plan` node runs an agent task that translates the
+    # workflow's free-form input description into structured payloads
+    # for downstream nodes. The task's evidence carries
+    # ``metadata.plan_payloads = { <node_key>: { instructions?, metadata? } }``;
+    # the runtime injects each payload into the matching downstream
+    # node before its task spawns.
+    PLAN = "plan"
 
 
 class EdgeCondition(StrEnum):

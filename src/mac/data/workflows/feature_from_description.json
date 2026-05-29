@@ -1,0 +1,69 @@
+{
+  "slug": "wf-feature-from-description",
+  "name": "Feature From Description Workflow",
+  "description": "Start with a free-form feature description; a planner node translates it into structured payloads for the rest of the workflow.",
+  "workflow_type": "feature",
+  "is_default": false,
+  "definition": {
+    "nodes": [
+      {
+        "node_key": "plan",
+        "node_type": "plan",
+        "role_required": "product-manager",
+        "persona_hint": "default/product-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 120,
+        "instructions": "Translate the free-form description in metadata.plan_input into a structured plan. Emit evidence whose metadata.plan_payloads maps each downstream node_key to {instructions, metadata?} so the run executes against concrete specs.\n\nExpected downstream keys: pm_approve, implement, commit_and_push, qa_verify.\n\nExample payload shape:\n{\n  \"pm_approve\": {\"instructions\": \"Approve scope: ...\"},\n  \"implement\":  {\"instructions\": \"Build it in src/...\", \"metadata\": {\"preferred_stack\": \"FastAPI\"}},\n  \"commit_and_push\": {\"instructions\": \"Commit on branch feature/...\"},\n  \"qa_verify\": {\"instructions\": \"Verify against ...\"}\n}"
+      },
+      {
+        "node_key": "pm_approve",
+        "node_type": "approval",
+        "role_required": "product-manager",
+        "persona_hint": "default/product-manager",
+        "max_attempts": 1,
+        "timeout_minutes": 60,
+        "instructions": "(replaced by plan node payload at runtime — falls back to: review the plan and approve or reject.)"
+      },
+      {
+        "node_key": "implement",
+        "node_type": "task",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 3,
+        "timeout_minutes": 240,
+        "instructions": "(replaced by plan node payload at runtime — falls back to: implement the feature, write tests, ensure quality.)"
+      },
+      {
+        "node_key": "commit_and_push",
+        "node_type": "commit",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 15,
+        "instructions": "(replaced by plan node payload at runtime — falls back to: stage, commit with a descriptive message, push.)"
+      },
+      {
+        "node_key": "qa_verify",
+        "node_type": "verify",
+        "role_required": "qa-engineer",
+        "persona_hint": "default/qa-engineer",
+        "max_attempts": 2,
+        "timeout_minutes": 60,
+        "instructions": "(replaced by plan node payload at runtime — falls back to: verify against acceptance criteria, run regression, approve or reject.)"
+      }
+    ],
+    "edges": [
+      {"from_node_key": "", "to_node_key": "plan", "condition": "success", "priority": 100},
+      {"from_node_key": "plan", "to_node_key": "pm_approve", "condition": "success", "priority": 100},
+      {"from_node_key": "plan", "to_node_key": "plan", "condition": "failure", "priority": 90},
+      {"from_node_key": "pm_approve", "to_node_key": "implement", "condition": "approved", "priority": 100},
+      {"from_node_key": "pm_approve", "to_node_key": "plan", "condition": "rejected", "priority": 100},
+      {"from_node_key": "implement", "to_node_key": "commit_and_push", "condition": "success", "priority": 100},
+      {"from_node_key": "implement", "to_node_key": "plan", "condition": "failure", "priority": 100},
+      {"from_node_key": "commit_and_push", "to_node_key": "qa_verify", "condition": "success", "priority": 100},
+      {"from_node_key": "commit_and_push", "to_node_key": "implement", "condition": "failure", "priority": 100},
+      {"from_node_key": "qa_verify", "to_node_key": "", "condition": "approved", "priority": 100},
+      {"from_node_key": "qa_verify", "to_node_key": "implement", "condition": "rejected", "priority": 100}
+    ]
+  }
+}
