@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Review-verdict executor that delegates the review to opencode's `review`
+# agent. Mirrors mac-task-executor-codex-review: builds a verdict manifest
+# (mac.worker_evidence.v1, evidence_type=review_verdict) and signs via
+# `mac-evidence sign`. NO inline HMAC.
+set -euo pipefail
+
+MAC_TASK_ID="${MAC_TASK_ID:-}"
+MAC_LEASE_ID="${MAC_LEASE_ID:-}"
+MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
+MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
+MAC_URL="${MAC_URL:-}"
+MAC_WORKER_TOKEN="${MAC_WORKER_TOKEN:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-opencode-runner}"
+EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/etc}"
+export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
+
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "===== mac-task-executor-opencode-review ====="
+echo "started_at:       ${started_at}"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "REVIEW_TARGET:    ${REVIEW_TARGET}"
+echo "XDG_CONFIG_HOME:  ${XDG_CONFIG_HOME}"
+echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    echo "MAC_AGENT_ATTESTATION_KEY: <present>"
+else
+    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (verdict will be unsigned)"
+fi
+echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
+
+if command -v mac-evidence >/dev/null 2>&1; then
+    MAC_EVIDENCE_CMD=("mac-evidence")
+else
+    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-$(command -v python3 || command -v python || true)}"
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
+        exit 3
+    fi
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
+fi
+
+PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET})"
+if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
+    task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
+        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
+    if [ -n "${task_json}" ]; then
+        PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+print("Review task: %s\n\n%s" % (d.get("title","") or "", d.get("description","") or ""))' || echo "${PROMPT}")"
+    fi
+fi
+
+opencode_stdout="$(mktemp)"
+set +e
+opencode run --agent review --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
+opencode_rc=$?
+set -e
+finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "[opencode-review] rc=${opencode_rc}"
+sed -n '1,40p' "${opencode_stdout}" || true
+
+tmp_path="${EVIDENCE_PATH}.tmp.$$"
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE REVIEW_TARGET
+export started_at finished_at opencode_rc opencode_stdout
+python3 - "${tmp_path}" <<'PYEOF'
+import hashlib, json, os, sys
+out_path = sys.argv[1]
+rc = int(os.environ.get("opencode_rc", "1"))
+try:
+    with open(os.environ["opencode_stdout"], "r", encoding="utf-8") as fh:
+        stdout = fh.read()
+except Exception:
+    stdout = ""
+task_id = os.environ.get("MAC_TASK_ID", "")
+review_target = os.environ.get("REVIEW_TARGET", "")
+finished_at = os.environ.get("finished_at", "")
+worktree_digest = "sha256:" + hashlib.sha256(
+    ("%s|%s|%s" % (task_id, review_target, finished_at)).encode("utf-8")
+).hexdigest()
+status = "complete" if rc == 0 else "incomplete"
+verdict = "approved" if rc == 0 else "needs_changes"
+manifest = {
+    "schema": "mac.worker_evidence.v1",
+    "status": status,
+    "evidence_type": "review_verdict",
+    "executor": "mac-task-executor-opencode-review",
+    "verdict": verdict,
+    "reviewed_evidence_id": review_target,
+    "worktree_digest": worktree_digest,
+    "summary": "opencode review agent ran for task=%s rc=%d verdict=%s" % (task_id, rc, verdict),
+    "result": "review_completed" if rc == 0 else "review_failed",
+    "returncode": rc,
+    "started_at": os.environ.get("started_at", ""),
+    "finished_at": finished_at,
+    "executed_at": finished_at,
+    "findings": [{"kind": "opencode_stdout", "preview": stdout[:2000]}],
+    "checks": [{"name": "review_completed", "status": "pass" if rc == 0 else "fail", "returncode": rc}],
+    "notes": "opencode review executor; signing handled by mac-evidence sign.",
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+PYEOF
+
+if [ -n "${ATTESTATION_KEY}" ]; then
+    "${MAC_EVIDENCE_CMD[@]}" sign \
+        --manifest "${tmp_path}" \
+        --key-env MAC_AGENT_ATTESTATION_KEY \
+        --signed-by "${MAC_AGENT_ID}"
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-review] manifest signed -> ${EVIDENCE_PATH}"
+else
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-review] manifest unsigned -> ${EVIDENCE_PATH}"
+fi
+rm -f "${opencode_stdout}"
+exit "${opencode_rc}"

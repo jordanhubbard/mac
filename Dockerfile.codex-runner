@@ -7,6 +7,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git ca-certificates curl nodejs npm && \
     npm install -g @openai/codex && \
+    npm install -g opencode-ai && \
     npm cache clean --force && \
     apt-get purge -y npm && \
     apt-get autoremove -y && \
@@ -18,8 +19,12 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \
 
 COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
 COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review
+COPY deploy/codex-runner/mac-task-executor-opencode-build /usr/local/bin/mac-task-executor-opencode-build
+COPY deploy/codex-runner/mac-task-executor-opencode-review /usr/local/bin/mac-task-executor-opencode-review
 RUN chmod a+rx /usr/local/bin/mac-task-executor-codex \
-               /usr/local/bin/mac-task-executor-codex-review
+               /usr/local/bin/mac-task-executor-codex-review \
+               /usr/local/bin/mac-task-executor-opencode-build \
+               /usr/local/bin/mac-task-executor-opencode-review
 
 USER mac
 WORKDIR /var/lib/mac

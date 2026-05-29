@@ -21,6 +21,8 @@ DEFAULT_LEASE_RENEW_INTERVAL_SECONDS = 30
 
 DEFAULT_JOB_POLL_INTERVAL_SECONDS = 5
 
+DEFAULT_OPENCODE_CONFIGMAP_NAME = "mac-opencode-config"
+
 @dataclass
 class RunnerConfig:
     mac_url: str
@@ -45,6 +47,7 @@ class RunnerConfig:
     )
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
     job_poll_interval_seconds: float = float(DEFAULT_JOB_POLL_INTERVAL_SECONDS)
+    opencode_configmap_name: str = DEFAULT_OPENCODE_CONFIGMAP_NAME
 
     @classmethod
     def from_env(cls) -> "RunnerConfig":
@@ -104,6 +107,10 @@ class RunnerConfig:
                     "MAC_RUNNER_JOB_POLL_INTERVAL_SECONDS",
                     str(DEFAULT_JOB_POLL_INTERVAL_SECONDS),
                 )
+            ),
+            opencode_configmap_name=os.environ.get(
+                "MAC_RUNNER_OPENCODE_CONFIGMAP_NAME",
+                DEFAULT_OPENCODE_CONFIGMAP_NAME,
             ),
         )
 
@@ -195,6 +202,38 @@ def build_job_spec(
     attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
     image = _resolve_task_image(task, cfg)
     active_deadline = _resolve_active_deadline(task, cfg)
+
+    opencode_cm = (cfg.opencode_configmap_name or "").strip()
+    mount_opencode = bool(opencode_cm)
+
+    container_volume_mounts: List[JsonDict] = [
+        {"name": "task-tmp", "mountPath": "/tmp"},
+        {
+            "name": "task-workspace",
+            "mountPath": "/var/lib/mac/workspaces",
+        },
+    ]
+    pod_volumes: List[JsonDict] = [
+        {"name": "task-tmp", "emptyDir": {}},
+        {
+            "name": "task-workspace",
+            "emptyDir": {"sizeLimit": "5Gi"},
+        },
+    ]
+    if mount_opencode:
+        container_volume_mounts.append(
+            {
+                "name": "opencode-config",
+                "mountPath": "/etc/opencode",
+                "readOnly": True,
+            }
+        )
+        pod_volumes.append(
+            {
+                "name": "opencode-config",
+                "configMap": {"name": opencode_cm},
+            }
+        )
 
     container_env: List[JsonDict] = [
         {"name": "MAC_URL", "value": cfg.mac_url},
@@ -305,22 +344,10 @@ def build_job_spec(
                                 "readOnlyRootFilesystem": True,
                                 "capabilities": {"drop": ["ALL"]},
                             },
-                            "volumeMounts": [
-                                {"name": "task-tmp", "mountPath": "/tmp"},
-                                {
-                                    "name": "task-workspace",
-                                    "mountPath": "/var/lib/mac/workspaces",
-                                },
-                            ],
+                            "volumeMounts": container_volume_mounts,
                         }
                     ],
-                    "volumes": [
-                        {"name": "task-tmp", "emptyDir": {}},
-                        {
-                            "name": "task-workspace",
-                            "emptyDir": {"sizeLimit": "5Gi"},
-                        },
-                    ],
+                    "volumes": pod_volumes,
                 },
             },
         },

@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Operator-result executor that delegates the actual code work to opencode.
+#
+# Mirrors mac-task-executor-codex in shape: builds a mac.worker_evidence.v1
+# manifest, captures opencode's stdout + returncode, and signs the manifest
+# via `mac-evidence sign` (defined in src/mac/evidence_cli.py). NO inline
+# HMAC; signing invariants live in tests/test_evidence_cli.py.
+set -euo pipefail
+
+MAC_TASK_ID="${MAC_TASK_ID:-}"
+MAC_LEASE_ID="${MAC_LEASE_ID:-}"
+MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
+MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
+MAC_URL="${MAC_URL:-}"
+MAC_WORKER_TOKEN="${MAC_WORKER_TOKEN:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+
+# opencode reads $XDG_CONFIG_HOME/opencode/opencode.json — point at the
+# ConfigMap mount baked into the Job pod by src/mac/k8s/runner.py.
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/etc}"
+export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
+
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "===== mac-task-executor-opencode-build ====="
+echo "started_at:       ${started_at}"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "XDG_CONFIG_HOME:  ${XDG_CONFIG_HOME}"
+echo "opencode config:  ${XDG_CONFIG_HOME}/opencode/opencode.json"
+echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    echo "MAC_AGENT_ATTESTATION_KEY: <present>"
+else
+    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (manifest will be unsigned)"
+fi
+echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
+
+if command -v mac-evidence >/dev/null 2>&1; then
+    MAC_EVIDENCE_CMD=("mac-evidence")
+else
+    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-$(command -v python3 || command -v python || true)}"
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
+        exit 3
+    fi
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
+fi
+
+# Fetch task title + description from the hub so opencode has context.
+PROMPT="Task ${MAC_TASK_ID}"
+if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
+    task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
+        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
+    if [ -n "${task_json}" ]; then
+        PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+print("Title: %s\n\n%s" % (d.get("title","") or "", d.get("description","") or ""))' || echo "${PROMPT}")"
+    fi
+fi
+
+# Run opencode build agent. Capture stdout + returncode without aborting on
+# non-zero (we want the rc in the manifest).
+opencode_stdout="$(mktemp)"
+set +e
+opencode run --agent build --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
+opencode_rc=$?
+set -e
+finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "[opencode-build] rc=${opencode_rc}"
+sed -n '1,40p' "${opencode_stdout}" || true
+
+tmp_path="${EVIDENCE_PATH}.tmp.$$"
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE
+export started_at finished_at opencode_rc opencode_stdout
+python3 - "${tmp_path}" <<'PYEOF'
+import json, os, sys
+out_path = sys.argv[1]
+rc = int(os.environ.get("opencode_rc", "1"))
+try:
+    with open(os.environ["opencode_stdout"], "r", encoding="utf-8") as fh:
+        stdout = fh.read()
+except Exception:
+    stdout = ""
+status = "complete" if rc == 0 else "incomplete"
+manifest = {
+    "schema": "mac.worker_evidence.v1",
+    "status": status,
+    "evidence_type": "operator_result",
+    "executor": "mac-task-executor-opencode-build",
+    "summary": "opencode build agent ran for task=%s role=%s rc=%d" % (
+        os.environ.get("MAC_TASK_ID", ""),
+        os.environ.get("MAC_AGENT_ROLE", ""),
+        rc,
+    ),
+    "result": "executor_completed" if rc == 0 else "executor_failed",
+    "returncode": rc,
+    "started_at": os.environ.get("started_at", ""),
+    "finished_at": os.environ.get("finished_at", ""),
+    "executed_at": os.environ.get("finished_at", ""),
+    "findings": [{"kind": "opencode_stdout", "preview": stdout[:2000]}],
+    "checks": [{"name": "executor_returncode", "status": "pass" if rc == 0 else "fail", "returncode": rc}],
+    "notes": "opencode build executor; signing handled by mac-evidence sign.",
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+PYEOF
+
+if [ -n "${ATTESTATION_KEY}" ]; then
+    "${MAC_EVIDENCE_CMD[@]}" sign \
+        --manifest "${tmp_path}" \
+        --key-env MAC_AGENT_ATTESTATION_KEY \
+        --signed-by "${MAC_AGENT_ID}"
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-build] manifest signed -> ${EVIDENCE_PATH}"
+else
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-build] manifest unsigned -> ${EVIDENCE_PATH}"
+fi
+rm -f "${opencode_stdout}"
+exit "${opencode_rc}"

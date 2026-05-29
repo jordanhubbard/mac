@@ -264,6 +264,44 @@ class TestBuildJobSpec:
         cmd = spec["spec"]["template"]["spec"]["containers"][0]["command"]
         assert cmd == ["mac-task-runner"]
 
+class TestOpencodeConfigMapMount:
+    def test_build_job_spec_mounts_opencode_configmap_by_default(self) -> None:
+        spec = build_job_spec(_task(), _lease(), _cfg())
+        pod_spec = spec["spec"]["template"]["spec"]
+        # Volume present on pod.
+        volumes = pod_spec["volumes"]
+        opencode_vol = next(
+            (v for v in volumes if v.get("name") == "opencode-config"), None
+        )
+        assert opencode_vol is not None, "opencode-config volume must be on the pod by default"
+        assert opencode_vol["configMap"] == {"name": "mac-opencode-config"}
+        # VolumeMount present on container.
+        mounts = pod_spec["containers"][0]["volumeMounts"]
+        opencode_mount = next(
+            (m for m in mounts if m.get("name") == "opencode-config"), None
+        )
+        assert opencode_mount is not None
+        assert opencode_mount["mountPath"] == "/etc/opencode"
+        assert opencode_mount.get("readOnly") is True
+
+    def test_build_job_spec_skips_opencode_mount_when_env_is_empty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_config_file: Path,
+    ) -> None:
+        monkeypatch.setenv("MAC_URL", "http://x")
+        monkeypatch.setenv("MAC_RUNNER_OPENCODE_CONFIGMAP_NAME", "")
+        cfg = RunnerConfig.from_env()
+        assert cfg.opencode_configmap_name == ""
+        spec = build_job_spec(_task(), _lease(), cfg)
+        pod_spec = spec["spec"]["template"]["spec"]
+        vol_names = {v.get("name") for v in pod_spec["volumes"]}
+        mount_names = {
+            m.get("name") for m in pod_spec["containers"][0]["volumeMounts"]
+        }
+        assert "opencode-config" not in vol_names
+        assert "opencode-config" not in mount_names
+
 class TestSanitizeDnsLabel:
     @pytest.mark.parametrize(
         ("inp", "expected_prefix"),
