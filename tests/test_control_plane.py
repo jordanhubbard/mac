@@ -709,6 +709,32 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
+def test_record_log_suppresses_verbose_poll_names_by_default(cp):
+    """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
+    by default. The 1.83M-of-2.09M-row bloat on rocky was these six
+    names firing per-poll regardless of state change."""
+    # Default: suppressed → record_log returns None and no row lands.
+    result = cp.record_log(
+        "worker.no_task", level="debug", source="worker-1"
+    )
+    assert result is None
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "worker.no_task" not in names
+    # A non-suppressed name still records as normal.
+    cp.record_log("task.evidence_added", level="info", source="control")
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "task.evidence_added" in names
+
+
+def test_record_log_writes_verbose_poll_names_when_env_set(cp, monkeypatch):
+    """mem-04: operators flip MAC_OBSERVABILITY_VERBOSE_POLL=1 to
+    re-enable the chatter for debugging."""
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
+    cp.record_log("worker.no_task", level="debug", source="worker-1")
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "worker.no_task" in names
+
+
 def test_add_evidence_rejects_operator_result_for_repo_coupled_task(cp):
     """mem-11: repo-coupled tasks (execution_contract.type=repository
     or repository_required=true) must not accept operator_result
@@ -3362,6 +3388,10 @@ def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
     cp.submit_for_review(task.id, worker.id)
     monkeypatch.setenv("MAC_REVIEW_TICK_ON_HEARTBEAT", "1")
     monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", "rocky")
+    # mem-04: workflow.default_review.heartbeat_tick is one of the
+    # high-volume poll-log names suppressed by default; enable verbose
+    # poll logging for this assertion.
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
 
     cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
 
