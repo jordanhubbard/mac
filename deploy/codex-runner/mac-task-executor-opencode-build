@@ -166,6 +166,8 @@ sed -n '1,40p' "${opencode_stdout}" || true
 HEAD_SHA=""
 PUSHED="false"
 FILES_CHANGED=""
+PR_URL=""
+PR_NUMBER=""
 if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
     cd "${WORKDIR}"
     if [ -n "$(git status --porcelain)" ]; then
@@ -181,6 +183,37 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         if [ "$push_rc" -eq 0 ]; then
             PUSHED="true"
             echo "[opencode-build] pushed ${TASK_BRANCH}"
+            # Open a PR/MR. Host (github/gitea) is detected from the URL.
+            PR_TITLE="mac: $(echo "${PROMPT}" | head -1 | cut -c1-72)"
+            PR_BODY="task=${MAC_TASK_ID}
+agent=${MAC_AGENT_ID}
+role=${MAC_AGENT_ROLE}
+
+${PROMPT}"
+            set +e
+            pr_json="$(mac pull-request open \
+                --repo-url "${REPO_URL}" \
+                --head "${TASK_BRANCH}" \
+                --base "${REPO_BRANCH}" \
+                --title "${PR_TITLE}" \
+                --body "${PR_BODY}" \
+                --task-id "${MAC_TASK_ID}" 2>&1)"
+            pr_rc=$?
+            set -e
+            if [ "$pr_rc" -eq 0 ]; then
+                eval "$(printf '%s' "${pr_json}" | python3 -c '
+import json, shlex, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print("PR_URL=%s" % shlex.quote(str(d.get("url") or "")))
+    print("PR_NUMBER=%s" % shlex.quote(str(d.get("number") or "")))
+except Exception:
+    pass
+' 2>/dev/null || true)"
+                echo "[opencode-build] PR opened: #${PR_NUMBER} ${PR_URL}"
+            else
+                echo "[opencode-build] PR open failed rc=${pr_rc}: ${pr_json}"
+            fi
         else
             echo "[opencode-build] push failed rc=$push_rc"
         fi
@@ -188,7 +221,7 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         echo "[opencode-build] opencode made no file changes"
     fi
 fi
-export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR
+export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE
@@ -227,6 +260,10 @@ manifest = {
             "head_sha": os.environ.get("HEAD_SHA", ""),
             "pushed": os.environ.get("PUSHED", "false") == "true",
             "files_changed": [f for f in (os.environ.get("FILES_CHANGED", "") or "").split(",") if f],
+            # PR URL is recorded as an integration_finding by
+            # `mac pull-request open --task-id`; query via
+            # GET /integrations/findings?source_kind=github|gitea
+            # &finding_type=pull_request_opened.
         },
     ],
     "checks": [{"name": "executor_returncode", "status": "pass" if rc == 0 else "fail", "returncode": rc}],

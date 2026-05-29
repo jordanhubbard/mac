@@ -714,6 +714,50 @@ def cmd_publish(args: argparse.Namespace) -> None:
     _print(_plane(args).publish_task(args.task_id, args.target, args.created_by, evidence_id=args.evidence_id))
 
 
+def cmd_pull_request_open(args: argparse.Namespace) -> None:
+    from mac.gitops import open_pull_request
+
+    repo_url = args.repo_url
+    if not repo_url:
+        raise SystemExit("--repo-url is required (or pipe the URL via $MAC_TASK_REPO_URL)")
+    result = open_pull_request(
+        repo_url,
+        args.head,
+        base=args.base,
+        title=args.title,
+        body=args.body,
+    )
+    output: Dict[str, Any] = {
+        "host": result.host,
+        "number": result.number,
+        "url": result.url,
+        "state": result.state,
+        "head": args.head,
+        "base": args.base or "(default)",
+    }
+    if args.task_id:
+        try:
+            finding = _plane(args).record_integration_finding(
+                source_kind=result.host,
+                source_id="%s#%d" % (result.url, result.number),
+                finding_type="pull_request_opened",
+                title="PR #%d opened for task %s" % (result.number, args.task_id),
+                detail={
+                    "task_id": args.task_id,
+                    "pull_request_url": result.url,
+                    "pull_request_number": result.number,
+                    "head": args.head,
+                    "base": args.base or "",
+                    "repo_url": repo_url,
+                },
+                severity="info",
+            )
+            output["finding_id"] = finding.id if hasattr(finding, "id") else None
+        except Exception as exc:  # noqa: BLE001
+            output["finding_error"] = str(exc)
+    _print(output)
+
+
 def cmd_secret_set(args: argparse.Namespace) -> None:
     value = _resolve_secret_value(args)
     _print(_plane(args).create_secret(args.name, value, _json_arg(args.scopes, {}), args.created_by))
@@ -1704,6 +1748,23 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("created_by")
     publish.add_argument("--evidence-id")
     _set(cmd_publish, publish)
+
+    pr = sub.add_parser(
+        "pull-request",
+        help="open or inspect pull/merge requests on the task's git host",
+    ).add_subparsers(dest="pull_request_command", required=True)
+    pr_open = pr.add_parser("open", help="open a PR/MR on github or gitea")
+    pr_open.add_argument("--repo-url", required=True, help="https URL of the git repository")
+    pr_open.add_argument("--head", required=True, help="branch name with the change")
+    pr_open.add_argument("--base", default=None, help="target branch (default: repo default branch)")
+    pr_open.add_argument("--title", default=None)
+    pr_open.add_argument("--body", default="")
+    pr_open.add_argument(
+        "--task-id",
+        default=None,
+        help="if set, also record a pull_request_opened integration finding",
+    )
+    _set(cmd_pull_request_open, pr_open)
 
     secret = sub.add_parser("secret", help="secret boundary commands").add_subparsers(dest="secret_command", required=True)
     secret_set = secret.add_parser("set")

@@ -76,6 +76,24 @@ class MacConfigFile:
             for role in self.roles.values()
         ]
 
+    def reviewer_role_slugs(self) -> List[str]:
+        """Roles tagged as reviewers via a ``review`` capability.
+
+        Orchestrator polls these roles' agent mailboxes for verdict
+        nudges. Control-plane writes nudges into the reviewer's mailbox
+        after auto-assigning a review; without this drain in K8s the
+        nudges accumulate and the review never advances.
+        """
+        out: List[str] = []
+        for slug, role in self.roles.items():
+            caps = {str(c).lower() for c in role.capabilities}
+            if "review" in caps or any(c.endswith("-review") or c.endswith("-reviewer") for c in caps):
+                out.append(slug)
+        return out
+
+    def reviewer_agent_ids(self) -> Dict[str, str]:
+        return {slug: self.roles[slug].agent_id for slug in self.reviewer_role_slugs()}
+
     def attestation_keys_block(self) -> Optional[JsonDict]:
         if self.attestation_keys is None:
             return None

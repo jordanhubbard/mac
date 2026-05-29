@@ -703,6 +703,19 @@ class PublicationCreate(BaseModel):
     evidence_id: Optional[str] = None
 
 
+class IntegrationFindingCreate(BaseModel):
+    source_kind: str
+    source_id: str
+    finding_type: str
+    title: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    severity: str = "info"
+    fingerprint: Optional[str] = None
+    notify: bool = False
+    channels: Optional[List[str]] = None
+    notification_body: Optional[str] = None
+
+
 class SecretCreate(BaseModel):
     name: str
     value: str
@@ -3215,6 +3228,26 @@ def create_app(
                 limit=limit,
             )
         ]
+
+    @app.post("/integrations/findings")
+    def record_integration_finding_endpoint(
+        body: IntegrationFindingCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        finding = cp.record_integration_finding(
+            body.source_kind,
+            body.source_id,
+            body.finding_type,
+            body.title,
+            body.detail,
+            severity=body.severity,
+            fingerprint=body.fingerprint,
+            notify=body.notify,
+            channels=body.channels,
+            notification_body=body.notification_body,
+        )
+        return finding.to_dict()
 
     @app.get("/integrations/findings")
     def list_integration_findings(

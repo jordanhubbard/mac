@@ -682,6 +682,9 @@ class RemoteDispatch:
     def list_integration_findings(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/integrations/findings", **kw))
 
+    def record_integration_finding(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/integrations/findings", _drop_none(kw)))
+
     def list_integration_observations(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/integrations/observations", **kw))
 
@@ -901,7 +904,13 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     if explicit:
         return explicit
     fleet = getattr(args, "fleet", None) or env.get("MAC_FLEET")
-    return resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
+    token = resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
+    if token:
+        return token
+    # K8s Job pods carry MAC_WORKER_TOKEN (set by the runner); accept it
+    # as a fallback so wrappers can call ``mac pull-request open`` etc.
+    # without an extra env-export shim.
+    return env.get("MAC_WORKER_TOKEN") or None
 
 
 def _fleet_url_from_yaml(fleet: str) -> Optional[str]:

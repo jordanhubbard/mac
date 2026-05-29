@@ -22,8 +22,10 @@ from mac.k8s.runner import (
     _resolve_task_role,
     _sanitize_dns_label,
     build_job_spec,
+    build_review_job_spec,
     check_dispatcher_capabilities,
     claim_and_launch_one,
+    claim_and_launch_review_one,
 )
 
 def _task(id_: str = "task-abc", **overrides: Any) -> Dict[str, Any]:
@@ -1182,3 +1184,144 @@ def test_check_dispatcher_capabilities_tolerates_dispatcher_fetch_failure(
         and "hub unreachable" in rec.getMessage()
         for rec in caplog.records
     ), "expected a warning naming the dispatcher fetch failure"
+
+
+def _review_cfg(**overrides: Any) -> RunnerConfig:
+    base = _cfg()
+    base.role_images = {"python-reviewer": "ghcr.io/x/reviewer:latest"}
+    base.role_executors = {
+        "python-reviewer": "/usr/local/bin/mac-task-executor-opencode-review",
+    }
+    base.role_attestation_key_secrets = {
+        "python-reviewer": {"name": "mac-attn", "key": "python-reviewer"},
+    }
+    base.reviewer_agent_ids = {"python-reviewer": "mac-worker-python-reviewer"}
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+def test_build_review_job_spec_sets_required_env() -> None:
+    spec = build_review_job_spec(
+        "review-1",
+        "task-abc",
+        "mac-worker-python-reviewer",
+        "ev-target",
+        _review_cfg(),
+    )
+    envs = {
+        e["name"]: e
+        for e in spec["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert envs["MAC_REVIEW_ID"]["value"] == "review-1"
+    assert envs["MAC_REVIEW_TARGET_EVIDENCE_ID"]["value"] == "ev-target"
+    assert envs["MAC_TASK_ID"]["value"] == "task-abc"
+    assert envs["MAC_AGENT_ID"]["value"] == "mac-worker-python-reviewer"
+    assert envs["MAC_AGENT_ROLE"]["value"] == "python-reviewer"
+    assert (
+        envs["MAC_TASK_EXECUTOR_COMMAND"]["value"]
+        == "/usr/local/bin/mac-task-executor-opencode-review"
+    )
+    assert "MAC_LEASE_ID" not in envs, "review Jobs are not lease-bound"
+    assert spec["metadata"]["labels"]["mac.review.id"]
+    assert spec["metadata"]["labels"]["app.kubernetes.io/component"] == "review-executor"
+
+
+def test_build_review_job_spec_uses_reviewer_image() -> None:
+    spec = build_review_job_spec("r1", "t1", "mac-worker-python-reviewer", "ev1", _review_cfg())
+    image = spec["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "ghcr.io/x/reviewer:latest"
+
+
+class _FakeMacForReview:
+    def __init__(self, deliver_responses: Dict[str, List[Dict[str, Any]]],
+                 claim_response: Optional[Dict[str, Any]] = None) -> None:
+        self._deliver = deliver_responses
+        self._claim = claim_response or {"status": "claimed"}
+        self.posted: List[Dict[str, Any]] = []
+
+    def post(self, path: str, body: Dict[str, Any]) -> Any:
+        self.posted.append({"path": path, "body": body})
+        if "/messages/deliver" in path:
+            for agent_id, msgs in self._deliver.items():
+                if "/agents/%s/" % agent_id in path:
+                    return msgs
+            return []
+        if "/reviews/" in path and path.endswith("/claim"):
+            return self._claim
+        return {}
+
+    def get(self, path: str) -> Dict[str, Any]:
+        return {}
+
+
+def test_claim_and_launch_review_returns_none_when_no_reviewers() -> None:
+    cfg = _cfg()  # no reviewer_agent_ids
+    mac = _FakeMacForReview({})
+    jobs = _FakeJobs()
+    assert claim_and_launch_review_one(mac, jobs, cfg) is None
+    assert jobs.created == []
+
+
+def test_claim_and_launch_review_returns_none_when_no_nudges() -> None:
+    cfg = _review_cfg()
+    mac = _FakeMacForReview({"mac-worker-python-reviewer": []})
+    jobs = _FakeJobs()
+    assert claim_and_launch_review_one(mac, jobs, cfg) is None
+    assert jobs.created == []
+
+
+def test_claim_and_launch_review_happy_path() -> None:
+    cfg = _review_cfg()
+    nudge = {
+        "id": "msg-1",
+        "message_type": "nudge",
+        "payload": {
+            "reason": "produce_review_verdict",
+            "task_id": "task-abc",
+            "review_id": "review-1",
+            "executor_evidence_id": "ev-target",
+        },
+    }
+    mac = _FakeMacForReview({"mac-worker-python-reviewer": [nudge]})
+    jobs = _FakeJobs()
+    result = claim_and_launch_review_one(mac, jobs, cfg)
+    assert result is not None
+    assert result["status"] == "launched"
+    assert result["review_id"] == "review-1"
+    assert result["task_id"] == "task-abc"
+    assert result["reviewer_agent_id"] == "mac-worker-python-reviewer"
+    assert result["role"] == "python-reviewer"
+    assert len(jobs.created) == 1
+    claim_posts = [p for p in mac.posted if p["path"].endswith("/claim")]
+    assert claim_posts and claim_posts[0]["body"]["reviewer_agent_id"] == "mac-worker-python-reviewer"
+
+
+def test_claim_and_launch_review_skips_when_claim_rejected() -> None:
+    cfg = _review_cfg()
+    nudge = {
+        "id": "msg-1",
+        "message_type": "nudge",
+        "payload": {
+            "reason": "produce_review_verdict",
+            "task_id": "task-abc",
+            "review_id": "review-1",
+            "executor_evidence_id": "ev-target",
+        },
+    }
+    mac = _FakeMacForReview(
+        {"mac-worker-python-reviewer": [nudge]},
+        claim_response={"status": "not_claimable", "reason": "already_claimed"},
+    )
+    jobs = _FakeJobs()
+    assert claim_and_launch_review_one(mac, jobs, cfg) is None
+    assert jobs.created == []
+
+
+def test_claim_and_launch_review_ignores_non_verdict_messages() -> None:
+    cfg = _review_cfg()
+    other = {"id": "m1", "message_type": "status_update", "payload": {}}
+    mac = _FakeMacForReview({"mac-worker-python-reviewer": [other]})
+    jobs = _FakeJobs()
+    assert claim_and_launch_review_one(mac, jobs, cfg) is None
+    assert jobs.created == []

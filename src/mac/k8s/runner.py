@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from mac.k8s.config_loader import load_config_file
 
@@ -47,6 +47,7 @@ class RunnerConfig:
     role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(
         default_factory=dict
     )
+    reviewer_agent_ids: Dict[str, str] = field(default_factory=dict)
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
     job_poll_interval_seconds: float = float(DEFAULT_JOB_POLL_INTERVAL_SECONDS)
     opencode_configmap_name: str = DEFAULT_OPENCODE_CONFIGMAP_NAME
@@ -104,6 +105,7 @@ class RunnerConfig:
             role_executors=cfg_file.role_executors(),
             capability_role_aliases=dict(cfg_file.capability_role_aliases),
             role_attestation_key_secrets=cfg_file.role_attestation_key_secrets(),
+            reviewer_agent_ids=cfg_file.reviewer_agent_ids(),
             lease_renew_interval_seconds=float(
                 os.environ.get(
                     "MAC_RUNNER_LEASE_RENEW_INTERVAL_SECONDS",
@@ -196,6 +198,137 @@ def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
             pass
     return cfg.active_deadline_seconds
 
+_OPTIONAL_SECRET_ENV_KEYS = (
+    "INFERENCE_HUB_API_KEY",
+    "GH_TOKEN",
+    "GITEA_TOKEN",
+    "GITEA_USER",
+)
+
+
+def _build_executor_container_env(
+    cfg: RunnerConfig,
+    *,
+    base_env: List[JsonDict],
+    executor_cmd: Optional[str],
+    attestation_secret: Optional[Dict[str, str]],
+    include_secret_key: bool,
+    optional_secret_keys: Tuple[str, ...] = _OPTIONAL_SECRET_ENV_KEYS,
+) -> List[JsonDict]:
+    env: List[JsonDict] = list(base_env)
+    if executor_cmd is not None:
+        env.append({"name": "MAC_TASK_EXECUTOR_COMMAND", "value": executor_cmd})
+    if attestation_secret is not None:
+        env.append(
+            {
+                "name": "MAC_AGENT_ATTESTATION_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": attestation_secret["name"],
+                        "key": attestation_secret["key"],
+                    }
+                },
+            }
+        )
+    env.append(
+        {
+            "name": "MAC_WORKER_TOKEN",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": cfg.secret_name_for_token,
+                    "key": cfg.secret_key_for_token,
+                }
+            },
+        }
+    )
+    if include_secret_key:
+        env.append(
+            {
+                "name": "MAC_SECRET_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_secret_key,
+                        "key": cfg.secret_key_for_secret_key,
+                    }
+                },
+            }
+        )
+    for key in optional_secret_keys:
+        env.append(
+            {
+                "name": key,
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": key,
+                        "optional": True,
+                    }
+                },
+            }
+        )
+    return env
+
+
+def _build_executor_pod_template(
+    cfg: RunnerConfig,
+    *,
+    image: str,
+    container_env: List[JsonDict],
+    template_labels: JsonDict,
+) -> JsonDict:
+    opencode_cm = (cfg.opencode_configmap_name or "").strip()
+    container_volume_mounts: List[JsonDict] = [
+        {"name": "task-tmp", "mountPath": "/tmp"},
+        {"name": "task-workspace", "mountPath": "/var/lib/mac/workspaces"},
+    ]
+    pod_volumes: List[JsonDict] = [
+        {"name": "task-tmp", "emptyDir": {}},
+        {"name": "task-workspace", "emptyDir": {"sizeLimit": "5Gi"}},
+    ]
+    if opencode_cm:
+        container_volume_mounts.append(
+            {"name": "opencode-config", "mountPath": "/etc/opencode", "readOnly": True}
+        )
+        pod_volumes.append(
+            {"name": "opencode-config", "configMap": {"name": opencode_cm}}
+        )
+    return {
+        "metadata": {"labels": template_labels},
+        "spec": {
+            "restartPolicy": "Never",
+            "serviceAccountName": cfg.service_account,
+            "automountServiceAccountToken": False,
+            "securityContext": {
+                "runAsUser": 1000,
+                "runAsGroup": 1000,
+                "runAsNonRoot": True,
+                "fsGroup": 1000,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
+            "containers": [
+                {
+                    "name": "mac-task-runner",
+                    "image": image,
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["mac-task-runner"],
+                    "env": container_env,
+                    "resources": {
+                        "requests": {"cpu": "100m", "memory": "256Mi"},
+                        "limits": {"cpu": "2", "memory": "2Gi"},
+                    },
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "volumeMounts": container_volume_mounts,
+                }
+            ],
+            "volumes": pod_volumes,
+        },
+    }
+
+
 def build_job_spec(
     task: JsonDict,
     lease: JsonDict,
@@ -211,140 +344,44 @@ def build_job_spec(
     image = _resolve_task_image(task, cfg)
     active_deadline = _resolve_active_deadline(task, cfg)
 
-    opencode_cm = (cfg.opencode_configmap_name or "").strip()
-    mount_opencode = bool(opencode_cm)
-
-    container_volume_mounts: List[JsonDict] = [
-        {"name": "task-tmp", "mountPath": "/tmp"},
-        {
-            "name": "task-workspace",
-            "mountPath": "/var/lib/mac/workspaces",
-        },
-    ]
-    pod_volumes: List[JsonDict] = [
-        {"name": "task-tmp", "emptyDir": {}},
-        {
-            "name": "task-workspace",
-            "emptyDir": {"sizeLimit": "5Gi"},
-        },
-    ]
-    if mount_opencode:
-        container_volume_mounts.append(
-            {
-                "name": "opencode-config",
-                "mountPath": "/etc/opencode",
-                "readOnly": True,
-            }
-        )
-        pod_volumes.append(
-            {
-                "name": "opencode-config",
-                "configMap": {"name": opencode_cm},
-            }
-        )
-
-    container_env: List[JsonDict] = [
+    base_env: List[JsonDict] = [
         {"name": "MAC_URL", "value": cfg.mac_url},
         {"name": "MAC_TASK_ID", "value": task_id},
         {"name": "MAC_LEASE_ID", "value": lease_id},
         {"name": "MAC_AGENT_ID", "value": job_agent_id},
         {"name": "MAC_AGENT_ROLE", "value": role or ""},
     ]
-    if executor_cmd is not None:
-        container_env.append(
-            {"name": "MAC_TASK_EXECUTOR_COMMAND", "value": executor_cmd}
-        )
-    if attestation_secret is not None:
-        container_env.append(
-            {
-                "name": "MAC_AGENT_ATTESTATION_KEY",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": attestation_secret["name"],
-                        "key": attestation_secret["key"],
-                    }
-                },
-            }
-        )
-    container_env.extend(
-        [
-            {
-                "name": "MAC_WORKER_TOKEN",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_token,
-                        "key": cfg.secret_key_for_token,
-                    }
-                },
-            },
-            {
-                "name": "MAC_SECRET_KEY",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_secret_key,
-                        "key": cfg.secret_key_for_secret_key,
-                    }
-                },
-            },
-            {
-                "name": "INFERENCE_HUB_API_KEY",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_token,
-                        "key": "INFERENCE_HUB_API_KEY",
-                        "optional": True,
-                    }
-                },
-            },
-            {
-                "name": "GH_TOKEN",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_token,
-                        "key": "GH_TOKEN",
-                        "optional": True,
-                    }
-                },
-            },
-            {
-                "name": "GITEA_TOKEN",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_token,
-                        "key": "GITEA_TOKEN",
-                        "optional": True,
-                    }
-                },
-            },
-            {
-                "name": "GITEA_USER",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": cfg.secret_name_for_token,
-                        "key": "GITEA_USER",
-                        "optional": True,
-                    }
-                },
-            },
-        ]
+    container_env = _build_executor_container_env(
+        cfg,
+        base_env=base_env,
+        executor_cmd=executor_cmd,
+        attestation_secret=attestation_secret,
+        include_secret_key=True,
     )
 
+    job_labels = {
+        "app.kubernetes.io/name": "mac-task",
+        "app.kubernetes.io/component": "task-executor",
+        "app.kubernetes.io/managed-by": "mac-k8s-runner",
+        "mac.task.id": _sanitize_dns_label(task_id),
+        "mac.lease.id": _sanitize_dns_label(lease_id),
+        "mac.runner.agent": _sanitize_dns_label(cfg.agent_id),
+        "mac.role": _sanitize_dns_label(role or "default"),
+        "mac.agent.id": _sanitize_dns_label(job_agent_id),
+    }
+    template_labels = {
+        "app.kubernetes.io/name": "mac-task",
+        "app.kubernetes.io/component": "task-executor",
+        "mac.task.id": _sanitize_dns_label(task_id),
+        "mac.lease.id": _sanitize_dns_label(lease_id),
+    }
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
             "name": name,
             "namespace": cfg.namespace,
-            "labels": {
-                "app.kubernetes.io/name": "mac-task",
-                "app.kubernetes.io/component": "task-executor",
-                "app.kubernetes.io/managed-by": "mac-k8s-runner",
-                "mac.task.id": _sanitize_dns_label(task_id),
-                "mac.lease.id": _sanitize_dns_label(lease_id),
-                "mac.runner.agent": _sanitize_dns_label(cfg.agent_id),
-                "mac.role": _sanitize_dns_label(role or "default"),
-                "mac.agent.id": _sanitize_dns_label(job_agent_id),
-            },
+            "labels": job_labels,
             "annotations": {
                 "mac.task/title": str(task.get("title") or "")[:240],
                 "mac.task/required-capabilities": ",".join(
@@ -356,48 +393,12 @@ def build_job_spec(
             "backoffLimit": cfg.backoff_limit,
             "activeDeadlineSeconds": active_deadline,
             "ttlSecondsAfterFinished": cfg.ttl_seconds_after_finished,
-            "template": {
-                "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": "mac-task",
-                        "app.kubernetes.io/component": "task-executor",
-                        "mac.task.id": _sanitize_dns_label(task_id),
-                        "mac.lease.id": _sanitize_dns_label(lease_id),
-                    }
-                },
-                "spec": {
-                    "restartPolicy": "Never",
-                    "serviceAccountName": cfg.service_account,
-                    "automountServiceAccountToken": False,
-                    "securityContext": {
-                        "runAsUser": 1000,
-                        "runAsGroup": 1000,
-                        "runAsNonRoot": True,
-                        "fsGroup": 1000,
-                        "seccompProfile": {"type": "RuntimeDefault"},
-                    },
-                    "containers": [
-                        {
-                            "name": "mac-task-runner",
-                            "image": image,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": ["mac-task-runner"],
-                            "env": container_env,
-                            "resources": {
-                                "requests": {"cpu": "100m", "memory": "256Mi"},
-                                "limits": {"cpu": "2", "memory": "2Gi"},
-                            },
-                            "securityContext": {
-                                "allowPrivilegeEscalation": False,
-                                "readOnlyRootFilesystem": True,
-                                "capabilities": {"drop": ["ALL"]},
-                            },
-                            "volumeMounts": container_volume_mounts,
-                        }
-                    ],
-                    "volumes": pod_volumes,
-                },
-            },
+            "template": _build_executor_pod_template(
+                cfg,
+                image=image,
+                container_env=container_env,
+                template_labels=template_labels,
+            ),
         },
     }
 
@@ -686,6 +687,216 @@ def claim_and_launch_one(
         "job_uid": (created.get("metadata") or {}).get("uid"),
         "image": manifest["spec"]["template"]["spec"]["containers"][0]["image"],
     }
+
+def _resolve_role_for_reviewer_agent(
+    reviewer_agent_id: str, cfg: RunnerConfig
+) -> Optional[str]:
+    for role, agent_id in cfg.reviewer_agent_ids.items():
+        if agent_id == reviewer_agent_id:
+            return role
+    return None
+
+
+def _review_job_name(review_id: str, reviewer_agent_id: str) -> str:
+    short_review = review_id.split("_")[-1][:12] if "_" in review_id else review_id[:12]
+    raw = "mac-review-%s-%s" % (_sanitize_dns_label(reviewer_agent_id), short_review)
+    return _sanitize_dns_label(raw)
+
+
+def build_review_job_spec(
+    review_id: str,
+    task_id: str,
+    reviewer_agent_id: str,
+    executor_evidence_id: str,
+    cfg: RunnerConfig,
+) -> JsonDict:
+    """Job spec for a reviewer agent running mac-task-executor-*-review.
+
+    Differs from :func:`build_job_spec` only by env (MAC_REVIEW_ID +
+    MAC_REVIEW_TARGET_EVIDENCE_ID), labels (review-executor component,
+    mac.review.id), and the absence of MAC_LEASE_ID — review claims
+    are gated by ``/reviews/{id}/claim``, not leases. Everything else
+    (pod template, secret env block) flows through the shared helpers.
+    """
+    role = _resolve_role_for_reviewer_agent(reviewer_agent_id, cfg)
+    executor_cmd = _resolve_executor_for_role(role, cfg)
+    attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
+    image = cfg.role_images.get(role) if role else None
+    if not image:
+        image = cfg.default_image
+    name = _review_job_name(review_id, reviewer_agent_id)
+
+    base_env: List[JsonDict] = [
+        {"name": "MAC_URL", "value": cfg.mac_url},
+        {"name": "MAC_TASK_ID", "value": task_id},
+        {"name": "MAC_REVIEW_ID", "value": review_id},
+        {"name": "MAC_REVIEW_TARGET_EVIDENCE_ID", "value": executor_evidence_id},
+        {"name": "MAC_AGENT_ID", "value": reviewer_agent_id},
+        {"name": "MAC_AGENT_ROLE", "value": role or ""},
+    ]
+    # Reviewer doesn't push to remotes — exclude the git-host token block.
+    container_env = _build_executor_container_env(
+        cfg,
+        base_env=base_env,
+        executor_cmd=executor_cmd,
+        attestation_secret=attestation_secret,
+        include_secret_key=False,
+        optional_secret_keys=("INFERENCE_HUB_API_KEY",),
+    )
+
+    job_labels = {
+        "app.kubernetes.io/name": "mac-task",
+        "app.kubernetes.io/component": "review-executor",
+        "app.kubernetes.io/managed-by": "mac-k8s-runner",
+        "mac.task.id": _sanitize_dns_label(task_id),
+        "mac.review.id": _sanitize_dns_label(review_id),
+        "mac.runner.agent": _sanitize_dns_label(cfg.agent_id),
+        "mac.role": _sanitize_dns_label(role or "default"),
+        "mac.agent.id": _sanitize_dns_label(reviewer_agent_id),
+    }
+    template_labels = {
+        "app.kubernetes.io/name": "mac-task",
+        "app.kubernetes.io/component": "review-executor",
+        "mac.task.id": _sanitize_dns_label(task_id),
+        "mac.review.id": _sanitize_dns_label(review_id),
+    }
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": name,
+            "namespace": cfg.namespace,
+            "labels": job_labels,
+        },
+        "spec": {
+            "backoffLimit": cfg.backoff_limit,
+            "activeDeadlineSeconds": cfg.active_deadline_seconds,
+            "ttlSecondsAfterFinished": cfg.ttl_seconds_after_finished,
+            "template": _build_executor_pod_template(
+                cfg,
+                image=image,
+                container_env=container_env,
+                template_labels=template_labels,
+            ),
+        },
+    }
+
+
+def claim_and_launch_review_one(
+    mac: MacApiProtocol,
+    k8s: K8sJobsProtocol,
+    cfg: RunnerConfig,
+) -> Optional[JsonDict]:
+    """Poll each registered reviewer agent's mailbox for verdict nudges.
+
+    On the first claimable nudge: POST ``/reviews/{id}/claim`` (so the
+    review is committed to this reviewer before we spend the Job), then
+    create the K8s Job. Returns ``None`` when no nudge was found.
+    """
+    if not cfg.reviewer_agent_ids:
+        return None
+    for role, reviewer_agent_id in cfg.reviewer_agent_ids.items():
+        try:
+            messages = mac.post(
+                "/agents/%s/messages/deliver?limit=5" % reviewer_agent_id,
+                {},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "review-dispatch: deliver failed for reviewer=%s: %s",
+                reviewer_agent_id,
+                exc,
+            )
+            continue
+        if not isinstance(messages, list):
+            continue
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("message_type") or "") != "nudge":
+                continue
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            if str(payload.get("reason") or "") != "produce_review_verdict":
+                continue
+            review_id = str(payload.get("review_id") or "")
+            task_id = str(payload.get("task_id") or "")
+            executor_evidence_id = str(payload.get("executor_evidence_id") or "")
+            if not review_id or not task_id or not executor_evidence_id:
+                log.warning(
+                    "review-dispatch: nudge missing fields review=%s task=%s evid=%s",
+                    review_id, task_id, executor_evidence_id,
+                )
+                continue
+            try:
+                claim = mac.post(
+                    "/reviews/%s/claim" % review_id,
+                    {
+                        "reviewer_agent_id": reviewer_agent_id,
+                        "executor_evidence_id": executor_evidence_id,
+                        "actor": cfg.agent_id,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "review-dispatch: claim_review failed review=%s reviewer=%s: %s",
+                    review_id, reviewer_agent_id, exc,
+                )
+                continue
+            if isinstance(claim, dict) and claim.get("status") != "claimed":
+                log.info(
+                    "review-dispatch: review=%s not claimable (%s) — skipping",
+                    review_id,
+                    claim.get("reason") or claim.get("status"),
+                )
+                continue
+            manifest = build_review_job_spec(
+                review_id, task_id, reviewer_agent_id, executor_evidence_id, cfg
+            )
+            try:
+                created = k8s.create(cfg.namespace, manifest)
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "review-dispatch: k8s Job create failed review=%s: %s",
+                    review_id, exc,
+                )
+                continue
+            log.info(
+                "review-dispatch: launched review=%s task=%s reviewer=%s role=%s job=%s",
+                review_id, task_id, reviewer_agent_id, role,
+                manifest["metadata"]["name"],
+            )
+            return {
+                "status": "launched",
+                "review_id": review_id,
+                "task_id": task_id,
+                "reviewer_agent_id": reviewer_agent_id,
+                "role": role,
+                "job_name": manifest["metadata"]["name"],
+                "job_uid": (created.get("metadata") or {}).get("uid"),
+            }
+    return None
+
+
+def review_loop(
+    mac: MacApiProtocol,
+    k8s: K8sJobsProtocol,
+    cfg: RunnerConfig,
+    *,
+    iterations: Optional[int] = None,
+    sleep: Optional[Any] = None,
+) -> int:
+    sleeper = sleep or time.sleep
+    launched = 0
+    i = 0
+    while iterations is None or i < iterations:
+        i += 1
+        result = claim_and_launch_review_one(mac, k8s, cfg)
+        if result and result.get("status") == "launched":
+            launched += 1
+        else:
+            sleeper(cfg.poll_interval_seconds)
+    return launched
+
 
 def runner_loop(
     mac: MacApiProtocol,

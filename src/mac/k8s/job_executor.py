@@ -37,6 +37,47 @@ class JobExecutionResult:
             return 0
         return 2
 
+def _resolve_mac_and_executor(
+    env: Dict[str, str],
+    mac: Optional[Any],
+    executor: Optional[Callable[[JsonDict], "_ExecResult"]],
+) -> "tuple[Any, Callable[[JsonDict], _ExecResult]]":
+    mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
+    token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN", "")
+    if mac is None:
+        mac = _default_mac_client(mac_url, token)
+    if executor is None:
+        executor = _default_subprocess_executor(env)
+    return mac, executor
+
+
+def _fetch_task_or_fail(
+    mac: Any,
+    task_id: str,
+    *,
+    lease_id: Optional[str],
+) -> "tuple[Optional[JsonDict], Optional[JobExecutionResult]]":
+    try:
+        return mac.get("/tasks/%s" % _q(task_id)), None
+    except Exception as exc:  # noqa: BLE001
+        return None, JobExecutionResult(
+            status="no-evidence",
+            task_id=task_id,
+            lease_id=lease_id,
+            returncode=None,
+            error="GET /tasks/{id} failed: %s" % exc,
+        )
+
+
+def _execute_timed(
+    executor: Callable[[JsonDict], "_ExecResult"], task: JsonDict
+) -> "tuple[_ExecResult, float]":
+    started = time.monotonic()
+    exec_result = executor(task)
+    duration_ms = (time.monotonic() - started) * 1000.0
+    return exec_result, duration_ms
+
+
 def run_one_lease(
     *,
     mac: Optional[Any] = None,
@@ -45,11 +86,12 @@ def run_one_lease(
     sleeper: Optional[Callable[[float], None]] = None,
 ) -> JobExecutionResult:
     env = env if env is not None else os.environ
+    review_id = env.get("MAC_REVIEW_ID", "").strip()
+    if review_id:
+        return _run_one_review(mac=mac, executor=executor, env=env, sleeper=sleeper)
     task_id = env.get("MAC_TASK_ID", "").strip()
     lease_id = env.get("MAC_LEASE_ID", "").strip()
     agent_id = env.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
-    mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
-    token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN", "")
 
     if not task_id or not lease_id:
         return JobExecutionResult(
@@ -60,24 +102,11 @@ def run_one_lease(
             error="MAC_TASK_ID and MAC_LEASE_ID are required in the Job env",
         )
 
-    if mac is None:
-        mac = _default_mac_client(mac_url, token)
+    mac, executor = _resolve_mac_and_executor(env, mac, executor)
 
-    if executor is None:
-        executor = _default_subprocess_executor(env)
-
-    sleeper = sleeper or time.sleep
-
-    try:
-        task = mac.get("/tasks/%s" % _q(task_id))
-    except Exception as exc:  # noqa: BLE001
-        return JobExecutionResult(
-            status="no-evidence",
-            task_id=task_id,
-            lease_id=lease_id,
-            returncode=None,
-            error="GET /tasks/{id} failed: %s" % exc,
-        )
+    task, early = _fetch_task_or_fail(mac, task_id, lease_id=lease_id)
+    if early is not None:
+        return early
 
     try:
         mac.post(
@@ -95,15 +124,12 @@ def run_one_lease(
                 error="POST /tasks/{id}/start failed: %s" % exc,
             )
 
-    started = time.monotonic()
     try:
-        exec_result = executor(task)
+        exec_result, duration_ms = _execute_timed(executor, task)
     except Exception as exc:  # noqa: BLE001
         return _record_failure_evidence(
             mac, task_id, lease_id, agent_id, returncode=-1, error=str(exc)
         )
-
-    duration_ms = (time.monotonic() - started) * 1000.0
 
     evidence = _submit_execution_evidence(
         mac,
@@ -185,6 +211,114 @@ class _ExecResult:
     verification_manifest: Optional[Dict[str, Any]] = None
     manifest_path: Optional[str] = None
     manifest_error: Optional[str] = None
+
+def _run_one_review(
+    *,
+    mac: Optional[Any],
+    executor: Optional[Callable[[JsonDict], "_ExecResult"]],
+    env: Dict[str, str],
+    sleeper: Optional[Callable[[float], None]],
+) -> JobExecutionResult:
+    """Review-mode counterpart to the task flow.
+
+    The reviewer Job runs the review wrapper which produces a
+    ``mac.worker_evidence.v1`` manifest. We POST it as ``kind="review"``
+    and tick the default review workflow so the verdict applies.
+    Mirrors host worker.py:1862 ``_record_review_execution`` +
+    worker.py:961 ``_advance_review_workflow_after_verdict``.
+    """
+    task_id = env.get("MAC_TASK_ID", "").strip()
+    review_id = env.get("MAC_REVIEW_ID", "").strip()
+    target_evidence_id = env.get("MAC_REVIEW_TARGET_EVIDENCE_ID", "").strip()
+    agent_id = env.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
+    if not task_id or not review_id:
+        return JobExecutionResult(
+            status="missing-env",
+            task_id=task_id or None,
+            lease_id=None,
+            returncode=None,
+            error="MAC_TASK_ID and MAC_REVIEW_ID are required for review mode",
+        )
+
+    mac, executor = _resolve_mac_and_executor(env, mac, executor)
+    task, early = _fetch_task_or_fail(mac, task_id, lease_id=None)
+    if early is not None:
+        return early
+
+    try:
+        exec_result, duration_ms = _execute_timed(executor, task)
+    except Exception as exc:  # noqa: BLE001
+        return JobExecutionResult(
+            status="failed",
+            task_id=task_id,
+            lease_id=None,
+            returncode=-1,
+            error="review executor raised: %s" % exc,
+        )
+
+    metadata: JsonDict = {
+        "returncode": exec_result.returncode,
+        "stdout_sha256": exec_result.stdout_sha256,
+        "stdout_bytes": len(exec_result.stdout.encode("utf-8", "replace")),
+        "duration_ms": duration_ms,
+        "review_id": review_id,
+        "executor_evidence_id": target_evidence_id,
+        "k8s_review_job": True,
+    }
+    if exec_result.verification_manifest is not None:
+        metadata["verification"] = exec_result.verification_manifest
+    if exec_result.manifest_path:
+        metadata["verification_manifest_path"] = exec_result.manifest_path
+    if exec_result.manifest_error:
+        metadata["verification_manifest_error"] = exec_result.manifest_error
+
+    try:
+        evidence = mac.post(
+            "/tasks/%s/evidence" % _q(task_id),
+            {
+                "kind": "review",
+                "uri": "stdout://mac-review-runner/%s" % review_id,
+                "summary": "review executor returncode=%d duration_ms=%.1f"
+                % (exec_result.returncode, duration_ms),
+                "created_by": agent_id,
+                "metadata": metadata,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("review evidence POST failed for review=%s: %s", review_id, exc)
+        return JobExecutionResult(
+            status="no-evidence",
+            task_id=task_id,
+            lease_id=None,
+            returncode=exec_result.returncode,
+            duration_ms=duration_ms,
+            stdout_sha256=exec_result.stdout_sha256,
+            error="review evidence POST failed: %s" % exc,
+        )
+
+    if exec_result.returncode == 0:
+        try:
+            mac.post(
+                "/reviews/default/tick?limit=10&actor=%s" % _q(agent_id),
+                {},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "post-review tick failed for review=%s (evidence already recorded): %s",
+                review_id, exc,
+            )
+
+    status = "submitted-for-review" if exec_result.returncode == 0 else "failed"
+    return JobExecutionResult(
+        status=status,
+        task_id=task_id,
+        lease_id=None,
+        returncode=exec_result.returncode,
+        evidence_id=evidence.get("id") if isinstance(evidence, dict) else None,
+        duration_ms=duration_ms,
+        stdout_sha256=exec_result.stdout_sha256,
+    )
+
 
 def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _ExecResult]:
     """Returns a callable that runs the configured task executor command."""

@@ -4932,6 +4932,7 @@ class ControlPlane:
         heartbeat_agent = self.get_agent(agent_id)
         self._maybe_poll_beads_bridge_on_heartbeat(heartbeat_agent)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
+        self._maybe_drain_notifications_on_heartbeat(heartbeat_agent)
         return self.get_lease(lease_id)
 
     def get_lease(self, lease_id: str) -> Lease:
@@ -5959,6 +5960,7 @@ class ControlPlane:
         agent = self.get_agent(agent_id)
         self._maybe_poll_beads_bridge_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
+        self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
 
     def _maybe_poll_beads_bridge_on_heartbeat(self, agent: Agent) -> None:
@@ -6010,6 +6012,59 @@ class ControlPlane:
                 pass
         finally:
             self._beads_heartbeat_poll_lock.release()
+
+    def _maybe_drain_notifications_on_heartbeat(self, agent: Agent) -> None:
+        """Drain ``pending`` operator notifications on hub-agent heartbeat.
+
+        Mirrors :meth:`_maybe_advance_reviews_on_heartbeat`: only the
+        designated hub agent triggers the drain so a fleet of N agents
+        doesn't make N concurrent delivery attempts. Without this, the
+        ``deliver_pending`` method would sit idle — no other code path
+        runs it periodically.
+        """
+        if not _truthy_env("MAC_NOTIFIER_DRAIN_ON_HEARTBEAT", "1"):
+            return
+        hub_agent = os.environ.get(
+            "MAC_NOTIFIER_DRAIN_HUB_AGENT",
+            os.environ.get(
+                "MAC_REVIEW_TICK_HUB_AGENT",
+                os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
+            ),
+        ).strip()
+        if not hub_agent:
+            return
+        if agent.name != hub_agent and agent.id != hub_agent:
+            return
+        try:
+            limit = int(os.environ.get("MAC_NOTIFIER_DRAIN_LIMIT", "100"))
+        except ValueError:
+            limit = 100
+        if limit <= 0:
+            return
+        try:
+            result = self.deliver_pending_notifications(limit=limit)
+            delivered = (
+                int(result.get("delivered", 0)) if isinstance(result, dict) else 0
+            )
+            if delivered:
+                self.record_log(
+                    "notifier.heartbeat_drain",
+                    layer="control_plane",
+                    source=agent.id,
+                    level="info",
+                    detail={"delivered": delivered, "limit": limit},
+                )
+        except Exception as exc:  # noqa: BLE001 - heartbeat liveness must survive delivery failures.
+            try:
+                self.record_log(
+                    "notifier.heartbeat_drain_failed",
+                    layer="control_plane",
+                    source=agent.id,
+                    level="warning",
+                    detail={"error": str(exc)},
+                )
+            except Exception:
+                pass
 
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):

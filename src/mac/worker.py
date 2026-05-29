@@ -2749,59 +2749,8 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _inject_git_remote_auth(url: str) -> str:
-    """Inject an auth token into ``url`` for known forge hosts.
-
-    Used by the K8s-mode clone path so the Job pod can pull from
-    private gitea / github remotes without an SSH key. The token
-    is read from the environment so we never log it:
-
-    * ``gitea.omv.*`` hosts -> ``GITEA_TOKEN``
-    * ``github.com`` / ``api.github.com`` -> ``GH_TOKEN`` (or ``GITHUB_TOKEN``)
-    * any other host -> ``MAC_TASK_GIT_TOKEN`` if set
-
-    Non-https URLs (ssh://, git@, file://, /...) are returned
-    unchanged — auth there flows through SSH keys or the file system.
-    """
-    if not url:
-        return url
-    if not url.startswith(("https://", "http://")):
-        return url
-
-    try:
-        from urllib.parse import urlsplit, urlunsplit
-    except ImportError:  # pragma: no cover - stdlib always present
-        return url
-
-    parts = urlsplit(url)
-    if not parts.hostname:
-        return url
-    if parts.username:
-        # caller already encoded credentials — don't double-inject.
-        return url
-
-    host = parts.hostname.lower()
-    token = ""
-    if "gitea.omv" in host:
-        token = os.environ.get("GITEA_TOKEN", "").strip()
-    elif host in {"github.com", "api.github.com"} or host.endswith(".github.com"):
-        token = (
-            os.environ.get("GH_TOKEN", "").strip()
-            or os.environ.get("GITHUB_TOKEN", "").strip()
-        )
-    if not token:
-        token = os.environ.get("MAC_TASK_GIT_TOKEN", "").strip()
-    if not token:
-        return url
-
-    # Standard "x-access-token:<pat>" style auth works for both
-    # gitea-personal-access tokens and github fine-grained PATs.
-    from urllib.parse import quote as _quote
-
-    user = "x-access-token"
-    netloc = "%s:%s@%s" % (user, _quote(token, safe=""), parts.hostname)
-    if parts.port:
-        netloc = "%s:%d" % (netloc, parts.port)
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    from mac.gitops import inject_git_remote_auth as _impl
+    return _impl(url)
 
 
 def _stable_id(prefix: str, value: str) -> str:
