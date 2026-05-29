@@ -278,6 +278,16 @@ def build_job_spec(
                     }
                 },
             },
+            {
+                "name": "INFERENCE_HUB_API_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": "INFERENCE_HUB_API_KEY",
+                        "optional": True,
+                    }
+                },
+            },
         ]
     )
 
