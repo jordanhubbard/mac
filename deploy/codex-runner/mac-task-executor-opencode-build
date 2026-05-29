@@ -148,7 +148,14 @@ fi
 # sees the repo as cwd (it does NOT have an explicit --cwd flag).
 opencode_stdout="$(mktemp)"
 set +e
-opencode run --agent build --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
+if [ -n "${WORKDIR}" ]; then
+    FULL_PROMPT="You are working in the git repository at \`${WORKDIR}\` (current directory). Use your edit tools to make the code changes requested below, then stop. Do not just describe the changes — actually edit the files.
+
+${PROMPT}"
+else
+    FULL_PROMPT="${PROMPT}"
+fi
+opencode run --agent build --format json "${FULL_PROMPT}" > "${opencode_stdout}" 2>&1
 opencode_rc=$?
 set -e
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -212,7 +219,7 @@ manifest = {
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
     "findings": [
-        {"kind": "opencode_stdout", "preview": stdout[:8000]},
+        {"kind": "opencode_stdout", "preview": stdout[:48000]},
         {
             "kind": "repo_change_summary",
             "repo_url": os.environ.get("REPO_URL", ""),
