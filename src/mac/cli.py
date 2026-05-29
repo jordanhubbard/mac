@@ -1108,6 +1108,14 @@ def cmd_observability_list(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_observability_prune(args: argparse.Namespace) -> None:
+    removed = _plane(args).prune_observability(
+        older_than=args.older_than,
+        keep_last=args.keep_last,
+    )
+    _print({"removed": removed})
+
+
 def cmd_notifier_configure(args: argparse.Namespace) -> None:
     _print(
         _plane(args).configure_notifier_channel(
@@ -1950,6 +1958,21 @@ def build_parser() -> argparse.ArgumentParser:
     observability_list.add_argument("--after-sequence", type=int)
     observability_list.add_argument("--limit", type=int, default=100)
     _set(cmd_observability_list, observability_list)
+    observability_prune = observability.add_parser(
+        "prune",
+        help="delete observability_events older than --older-than (ISO timestamp) "
+        "or keep only --keep-last rows; returns the number removed",
+    )
+    observability_prune.add_argument(
+        "--older-than",
+        help="ISO timestamp; rows with created_at < this are deleted",
+    )
+    observability_prune.add_argument(
+        "--keep-last",
+        type=int,
+        help="keep only the most recent N rows by sequence",
+    )
+    _set(cmd_observability_prune, observability_prune)
 
     notifier = sub.add_parser(
         "notifier", help="operator notification channel configuration"

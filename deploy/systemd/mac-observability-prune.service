@@ -1,0 +1,31 @@
+[Unit]
+Description=mac observability_events daily prune
+Documentation=https://github.com/jordanh/mac
+After=mac.service
+Requires=mac.service
+
+[Service]
+Type=oneshot
+
+# Overridable via /etc/mac/observability-prune.env. Defaults: keep log rows
+# for 7 days, keep at most 500K rows of any kind, to bound mac.db growth.
+Environment=MAC_PRUNE_LOG_DAYS=7
+Environment=MAC_PRUNE_KEEP_LAST=500000
+EnvironmentFile=-/etc/mac/observability-prune.env
+
+# Resolve the cutoff timestamp at run-time and call the mac CLI. The mac
+# binary is installed under ~/.mac/venv/bin per the deploy script; use the
+# same env the mac.service uses so MAC_API_URL / MAC_API_TOKEN are picked up.
+EnvironmentFile=-%h/.mac/mac.env
+ExecStart=/bin/bash -lc '\
+  set -euo pipefail; \
+  cutoff="$(date -u -d "${MAC_PRUNE_LOG_DAYS} days ago" +%%Y-%%m-%%dT%%H:%%M:%%SZ)"; \
+  echo "[observability-prune] cutoff=$cutoff keep_last=${MAC_PRUNE_KEEP_LAST}"; \
+  %h/.mac/venv/bin/mac observability prune --older-than "$cutoff"; \
+  %h/.mac/venv/bin/mac observability prune --keep-last "${MAC_PRUNE_KEEP_LAST}"'
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
