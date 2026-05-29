@@ -60,20 +60,86 @@ else
     MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
 fi
 
-# Fetch task title + description from the hub so opencode has context.
+# Fetch task title + description + repo URL from the hub.
 PROMPT="Task ${MAC_TASK_ID}"
+REPO_URL=""
+REPO_BRANCH="main"
+PROJECT=""
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
     task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
         "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
     if [ -n "${task_json}" ]; then
-        PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
-d=json.load(sys.stdin)
-print("Title: %s\n\n%s" % (d.get("title","") or "", d.get("description","") or ""))' || echo "${PROMPT}")"
+        eval "$(printf '%s' "${task_json}" | python3 -c '
+import json, shlex, sys
+d = json.load(sys.stdin)
+title = (d.get("title") or "").strip()
+desc = (d.get("description") or "").strip()
+prompt = "Title: %s\n\n%s" % (title, desc)
+print("PROMPT=%s" % shlex.quote(prompt))
+print("PROJECT=%s" % shlex.quote(d.get("project") or ""))
+origin = (d.get("metadata") or {}).get("origin") or {}
+print("REPO_URL=%s" % shlex.quote(origin.get("repository_url") or ""))
+print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
+' || true)"
+    fi
+    # If task didn't carry the repo URL, fall back to project metadata.
+    if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then
+        project_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
+            "${MAC_URL}/projects/${PROJECT}" 2>/dev/null || true)"
+        if [ -n "${project_json}" ]; then
+            eval "$(printf '%s' "${project_json}" | python3 -c '
+import json, shlex, sys
+d = json.load(sys.stdin)
+meta = d.get("metadata") or {}
+print("REPO_URL=%s" % shlex.quote(meta.get("repository") or ""))
+print("REPO_BRANCH=%s" % shlex.quote(meta.get("default_branch") or "main"))
+' || true)"
+        fi
     fi
 fi
 
-# Run opencode build agent. Capture stdout + returncode without aborting on
-# non-zero (we want the rc in the manifest).
+echo "PROJECT:          ${PROJECT:-<unset>}"
+echo "REPO_URL:         ${REPO_URL:-<none — opencode runs without working tree>}"
+echo "REPO_BRANCH:      ${REPO_BRANCH}"
+
+# Rewrite https://... to https://<user>:<token>@... for gitea/github.
+authed_url() {
+    local u="$1"
+    case "$u" in
+        https://gitea.omv.*)
+            if [ -n "${GITEA_USER:-}" ] && [ -n "${GITEA_TOKEN:-}" ]; then
+                echo "${u/https:\/\//https:\/\/${GITEA_USER}:${GITEA_TOKEN}@}"
+            else
+                echo "$u"
+            fi
+            ;;
+        https://github.com/*)
+            if [ -n "${GH_TOKEN:-}" ]; then
+                echo "${u/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}"
+            else
+                echo "$u"
+            fi
+            ;;
+        *) echo "$u" ;;
+    esac
+}
+
+WORKDIR=""
+TASK_BRANCH="mac/${MAC_AGENT_ID}/${MAC_TASK_ID}"
+if [ -n "${REPO_URL}" ]; then
+    WORKDIR="/tmp/work-${MAC_TASK_ID}"
+    rm -rf "${WORKDIR}"
+    echo "[opencode-build] git clone --depth=1 --branch=${REPO_BRANCH} ${REPO_URL} ${WORKDIR}"
+    git clone --depth=1 --branch "${REPO_BRANCH}" "$(authed_url "${REPO_URL}")" "${WORKDIR}"
+    cd "${WORKDIR}"
+    git config user.email "${MAC_AGENT_ID}@mac.local"
+    git config user.name "${MAC_AGENT_ID}"
+    git checkout -b "${TASK_BRANCH}"
+    echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH}"
+fi
+
+# Run opencode build agent. If we have a working tree, cd into it so opencode
+# sees the repo as cwd (it does NOT have an explicit --cwd flag).
 opencode_stdout="$(mktemp)"
 set +e
 opencode run --agent build --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
@@ -82,6 +148,34 @@ set -e
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "[opencode-build] rc=${opencode_rc}"
 sed -n '1,40p' "${opencode_stdout}" || true
+
+# Commit + push any changes opencode made.
+HEAD_SHA=""
+PUSHED="false"
+FILES_CHANGED=""
+if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
+    cd "${WORKDIR}"
+    if [ -n "$(git status --porcelain)" ]; then
+        FILES_CHANGED="$(git diff --name-only HEAD | head -50 | tr '\n' ',' | sed 's/,$//')"
+        git add -A
+        git commit -m "mac: $(echo "${PROMPT}" | head -1)" -m "task=${MAC_TASK_ID} agent=${MAC_AGENT_ID}" || true
+        HEAD_SHA="$(git rev-parse HEAD)"
+        echo "[opencode-build] head=${HEAD_SHA} files=${FILES_CHANGED}"
+        set +e
+        git push origin "${TASK_BRANCH}" 2>&1
+        push_rc=$?
+        set -e
+        if [ "$push_rc" -eq 0 ]; then
+            PUSHED="true"
+            echo "[opencode-build] pushed ${TASK_BRANCH}"
+        else
+            echo "[opencode-build] push failed rc=$push_rc"
+        fi
+    else
+        echo "[opencode-build] opencode made no file changes"
+    fi
+fi
+export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE
@@ -111,7 +205,17 @@ manifest = {
     "started_at": os.environ.get("started_at", ""),
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
-    "findings": [{"kind": "opencode_stdout", "preview": stdout[:2000]}],
+    "findings": [
+        {"kind": "opencode_stdout", "preview": stdout[:8000]},
+        {
+            "kind": "repo_change_summary",
+            "repo_url": os.environ.get("REPO_URL", ""),
+            "branch": os.environ.get("TASK_BRANCH", ""),
+            "head_sha": os.environ.get("HEAD_SHA", ""),
+            "pushed": os.environ.get("PUSHED", "false") == "true",
+            "files_changed": [f for f in (os.environ.get("FILES_CHANGED", "") or "").split(",") if f],
+        },
+    ],
     "checks": [{"name": "executor_returncode", "status": "pass" if rc == 0 else "fail", "returncode": rc}],
     "notes": "opencode build executor; signing handled by mac-evidence sign.",
 }

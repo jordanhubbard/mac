@@ -296,6 +296,36 @@ def build_job_spec(
                     }
                 },
             },
+            {
+                "name": "GH_TOKEN",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": "GH_TOKEN",
+                        "optional": True,
+                    }
+                },
+            },
+            {
+                "name": "GITEA_TOKEN",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": "GITEA_TOKEN",
+                        "optional": True,
+                    }
+                },
+            },
+            {
+                "name": "GITEA_USER",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": "GITEA_USER",
+                        "optional": True,
+                    }
+                },
+            },
         ]
     )
 
