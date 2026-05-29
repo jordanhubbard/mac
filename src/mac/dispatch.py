@@ -2,14 +2,14 @@
 
 The CLI handlers historically called ``_plane(args).method(...)`` against
 a directly-instantiated ``ControlPlane(SQLiteStore(args.db))``. That made
-``mac`` SQLite-only: it could never talk to a hub, while ``hgmac`` was a
-separate HTTP CLI with different verb shapes. This module merges the two.
+``mac`` SQLite-only: it could never talk to a hub. The merged CLI has
+two transports, picked by :func:`resolve_dispatch`.
 
 A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
 * ``LocalDispatch`` — a pass-through to an in-process ``ControlPlane``.
 * ``RemoteDispatch`` — translates each call to an HTTP request against a
-  hub URL using :class:`mac.hgmac.HgMacClient`.
+  hub URL using :class:`mac.http_client.HubClient`.
 
 ``resolve_dispatch(args)`` decides which flavor to use:
 
@@ -44,7 +44,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
-from mac.hgmac import HgMacClient, HgMacError
+from mac.http_client import HubClient, HubClientError
 from mac.models import json_dumps
 
 
@@ -173,12 +173,12 @@ class RemoteDispatch:
 
     The wrapped methods mirror the ControlPlane surface that ``cli.py``
     handlers invoke. Each method makes a single HTTP request via
-    :class:`mac.hgmac.HgMacClient` and wraps JSON responses in
+    :class:`mac.http_client.HubClient` and wraps JSON responses in
     :class:`_Dictish` so the ``_print`` helper's ``to_dict()`` contract
     keeps working.
     """
 
-    def __init__(self, client: HgMacClient) -> None:
+    def __init__(self, client: HubClient) -> None:
         self._client = client
         self.store = _RemoteStore()
 
@@ -971,7 +971,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
     url = _resolve_hub_url(args, env)
     if url:
         token = _resolve_hub_token(args, env)
-        client = HgMacClient(url, token=token)
+        client = HubClient(url, token=token)
         return RemoteDispatch(client)
 
     # Nothing configured.
@@ -986,7 +986,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
 
 
 # ---------------------------------------------------------------------------
-# Query-string helper (mirrors hgmac._query / _query_value)
+# Query-string helper
 # ---------------------------------------------------------------------------
 
 

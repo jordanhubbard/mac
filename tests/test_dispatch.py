@@ -222,7 +222,7 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
     import sys
 
     from mac.cli import main
-    from mac.hgmac import HgMacClient
+    from mac.http_client import HubClient
     import mac.dispatch as dispatch_mod
 
     monkeypatch.delenv("MAC_API_URL", raising=False)
@@ -239,12 +239,12 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
             }
         }
     )
-    orig_init = HgMacClient.__init__
+    orig_init = HubClient.__init__
 
     def init_with_fake_transport(self, base_url, *, token=None, transport=None):
         orig_init(self, base_url, token=token, transport=fake)
 
-    monkeypatch.setattr(HgMacClient, "__init__", init_with_fake_transport)
+    monkeypatch.setattr(HubClient, "__init__", init_with_fake_transport)
 
     out = io.StringIO()
     old = sys.stdout
@@ -287,7 +287,7 @@ def test_remote_dispatch_task_show_via_cli(monkeypatch):
     import sys
 
     from mac.cli import main
-    from mac.hgmac import HgMacClient
+    from mac.http_client import HubClient
 
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
@@ -297,9 +297,9 @@ def test_remote_dispatch_task_show_via_cli(monkeypatch):
             ("GET", "/tasks/task_xyz"): {"id": "task_xyz", "state": "reviewing"}
         }
     )
-    orig_init = HgMacClient.__init__
+    orig_init = HubClient.__init__
     monkeypatch.setattr(
-        HgMacClient,
+        HubClient,
         "__init__",
         lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
     )
@@ -324,7 +324,7 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
     import sys
 
     from mac.cli import main
-    from mac.hgmac import HgMacClient
+    from mac.http_client import HubClient
 
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
@@ -337,9 +337,9 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
             }
         }
     )
-    orig_init = HgMacClient.__init__
+    orig_init = HubClient.__init__
     monkeypatch.setattr(
-        HgMacClient,
+        HubClient,
         "__init__",
         lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
     )

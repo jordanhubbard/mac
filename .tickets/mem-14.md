@@ -75,9 +75,14 @@ Resolution chosen (option a from the original proposal): merge `mac` +
   now route over HTTP in hub mode. The one unwrapped method
   (`get_task`) is only called inside `cmd_task_ready`, which is
   SQLite-only by design (`cp.store.query_all`).
-- `f43cd11` — `hgmac` prints a stderr deprecation notice; CLAUDE.md
-  gains a "How `mac task` finds the hub" subsection documenting the
-  resolution order.
+- `f43cd11` — initial hgmac deprecation notice + CLAUDE.md "How
+  `mac task` finds the hub" subsection.
+- `3383145` — this status note.
+- (final) — `hgmac` deleted outright. The HTTP client was moved to
+  `src/mac/http_client.py` as `HubClient` (the only piece anything
+  needed from `hgmac.py`); the CLI/parser/cmd_* functions and the
+  `hgmac` console script are gone. tests/cli/test_hgmac_cli.py is
+  also deleted. `mac` is now the only documented and supported CLI.
 
 The five SQL-direct verbs (`task ready/search/stats`,
 `memory list/forget`, `observability prune`) remain `--db`-required

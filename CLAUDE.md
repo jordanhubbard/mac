@@ -63,8 +63,8 @@ The `mac` CLI is hub-aware. Resolution order (highest priority first):
    for the named fleet's `hub_url` and selects `MAC_API_TOKEN__<FLEET>`.
 5. Nothing configured → **error** with help text. No silent fallback.
 
-The legacy `hgmac` CLI is deprecated; it now prints a stderr warning
-pointing at `mac`. Use `mac` for everything.
+`mac` is the only documented CLI. The legacy `hgmac` binary is gone —
+all of its functionality lives under `mac` now.
 
 A small set of commands still requires `--db` because they reach into
 SQLite directly: `task ready/search/stats`, `memory list/forget`,
