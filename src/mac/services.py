@@ -4711,7 +4711,10 @@ class ControlPlane:
 
     def start_task(self, task_id: str, agent_id: str, *, drain_outbox: bool = True) -> Task:
         task = self.get_task(task_id)
-        if task.owner_agent_id != agent_id:
+        # PR2c (spec §6.3): accept either the lease owner OR a delegated
+        # actor (recorded via delegate_lease). Renewal / release stay
+        # strictly owner-only and are unchanged.
+        if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
         return self.transition_task(
             task_id,
@@ -4729,7 +4732,9 @@ class ControlPlane:
         drain_outbox: bool = True,
     ) -> Task:
         task = self.get_task(task_id)
-        if task.owner_agent_id != agent_id:
+        # PR2c (spec §6.3): accept either the lease owner OR a delegated
+        # actor (recorded via delegate_lease).
+        if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
         self._require_review_ready(task)
         reviewed = self.transition_task(
@@ -4931,6 +4936,71 @@ class ControlPlane:
         if row is None:
             raise NotFoundError("lease not found: %s" % lease_id)
         return self._lease_from_row(row)
+
+    def delegate_lease(
+        self,
+        lease_id: str,
+        owner_agent_id: str,
+        to_agent_id: str,
+    ) -> Lease:
+        """Delegate lifecycle authorship on a lease's task to another agent.
+
+        Per spec §6.3 (Option B), the dispatcher (``mac-runner``) holds
+        the lease but the role-specialised Job pod authors lifecycle
+        transitions and evidence. This call records the delegation so
+        ``start_task`` / ``submit_for_review`` / ``add_evidence`` accept
+        the delegate as a legitimate actor.
+
+        Renewal and release stay strictly owner-only — see the spec.
+        """
+        lease = self.get_lease(lease_id)
+        if lease.agent_id != owner_agent_id:
+            raise AuthorizationError("only the lease owner can delegate")
+        # Verify the target agent exists; this also implicitly enforces
+        # the agents-table FK that the schema declares so SQLite (no FK
+        # enforcement by default) matches Postgres semantics.
+        self.get_agent(to_agent_id)
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE leases
+                SET delegated_agent_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (to_agent_id, now, lease_id),
+            )
+            self._record_history(
+                lease.task_id,
+                "task.lease_delegated",
+                owner_agent_id,
+                None,
+                None,
+                {"lease_id": lease_id, "delegated_agent_id": to_agent_id},
+                conn=conn,
+            )
+        return self.get_lease(lease_id)
+
+    def _lease_actor_allowed(self, task: Task, agent_id: str) -> bool:
+        """Return True if ``agent_id`` may author lifecycle transitions
+        on ``task`` per spec §6.3 (Option B).
+
+        Allowed actors:
+          * the task's current owner (``task.owner_agent_id``); or
+          * the agent recorded in the task's active lease's
+            ``delegated_agent_id`` (set via :meth:`delegate_lease`).
+        """
+        if task.owner_agent_id and task.owner_agent_id == agent_id:
+            return True
+        if not task.lease_id:
+            return False
+        try:
+            lease = self.get_lease(task.lease_id)
+        except NotFoundError:
+            return False
+        if lease.status != LeaseStatus.ACTIVE.value:
+            return False
+        return bool(lease.delegated_agent_id) and lease.delegated_agent_id == agent_id
 
     def expire_leases(
         self, now: Optional[str] = None, *, grace_seconds: Optional[int] = None
@@ -10507,7 +10577,22 @@ class ControlPlane:
         )
 
     def _lease_from_row(self, row: Any) -> Lease:
-        return Lease(row["id"], row["task_id"], row["agent_id"], row["expires_at"], row["status"], row["created_at"], row["updated_at"])
+        # PR2c: ``delegated_agent_id`` is the additive column added by
+        # the lease-delegation migration. Older DBs (pre-migration) or
+        # row mappings that do not surface the column still resolve to
+        # None, keeping legacy call sites bit-for-bit compatible.
+        keys = row.keys() if hasattr(row, "keys") else []
+        delegated = row["delegated_agent_id"] if "delegated_agent_id" in keys else None
+        return Lease(
+            row["id"],
+            row["task_id"],
+            row["agent_id"],
+            row["expires_at"],
+            row["status"],
+            row["created_at"],
+            row["updated_at"],
+            delegated,
+        )
 
     def _machine_from_row(self, row: Any) -> Machine:
         keys = row.keys() if hasattr(row, "keys") else []

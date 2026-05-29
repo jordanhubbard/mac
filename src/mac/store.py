@@ -330,7 +330,12 @@ class SQLiteStore:
                     expires_at TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    -- PR2c (spec §6.3, Option B): dispatcher (lease owner)
+                    -- may delegate lifecycle authorship to the role agent
+                    -- spawned in the task Job. NULL = no delegation; the
+                    -- owner is the sole authoriser.
+                    delegated_agent_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_leases_task_status
                     ON leases (task_id, status);
@@ -1220,6 +1225,9 @@ class SQLiteStore:
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")
         self._ensure_column("tasks", "workflow_run_id", "workflow_run_id TEXT")
         self._ensure_column("tasks", "workflow_node_key", "workflow_node_key TEXT")
+        # PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
+        # lifecycle authorship to the role agent spawned in the task Job.
+        self._ensure_column("leases", "delegated_agent_id", "delegated_agent_id TEXT")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}

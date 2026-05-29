@@ -5494,6 +5494,99 @@ def test_failed_to_open_requeue_resets_attempt_count(cp):
     assert cp.get_task(task.id).attempt_count == 1
 
 
+# ----------------------------------------------------------------------
+# PR2c: lease delegation. The dispatcher (runner) owns the lease, but
+# the role-specialised Job pod is the actor that calls start_task /
+# submit_for_review / add_evidence. delegate_lease records the
+# delegation so the hub accepts the delegate; renew/release stay
+# strictly owner-only.
+# ----------------------------------------------------------------------
+
+
+def _claim_with_delegate(cp):
+    """Set up: a dispatcher claims, then delegates to a separate role agent."""
+    dispatcher = register_agent(cp, "dispatcher", ["python"])
+    delegate = register_agent(cp, "delegate", ["python"])
+    task = cp.create_task("Build widget", required_capabilities=["python"])
+    _task, lease = cp.claim_task(task.id, dispatcher.id)
+    return task, dispatcher, delegate, lease
+
+
+def test_delegate_lease_happy_path(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    updated = cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    assert updated.id == lease.id
+    assert updated.agent_id == dispatcher.id
+    assert updated.delegated_agent_id == delegate.id
+
+
+def test_delegate_lease_rejects_non_owner_caller(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    # Caller claims to be the delegate (or any non-owner) — must be refused.
+    with pytest.raises(AuthorizationError):
+        cp.delegate_lease(lease.id, delegate.id, delegate.id)
+    # And the lease must be unchanged.
+    fresh = cp.get_lease(lease.id)
+    assert fresh.delegated_agent_id is None
+
+
+def test_delegate_lease_rejects_unknown_to_agent_id(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    with pytest.raises(NotFoundError):
+        cp.delegate_lease(lease.id, dispatcher.id, "agent-does-not-exist")
+    fresh = cp.get_lease(lease.id)
+    assert fresh.delegated_agent_id is None
+
+
+def test_start_task_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    # The delegate (not the owner) can now author start_task. Before
+    # PR2c this raised AuthorizationError.
+    started = cp.start_task(task.id, delegate.id)
+    assert started.state == TaskState.RUNNING.value
+
+
+def test_submit_for_review_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    cp.start_task(task.id, delegate.id)
+    # Delegate adds evidence + submits — both must accept the delegate.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "tests passed",
+        delegate.id,
+        metadata=verified_repo_metadata(cp, delegate.id),
+    )
+    reviewed = cp.submit_for_review(task.id, delegate.id)
+    assert reviewed.state == TaskState.NEEDS_REVIEW.value
+
+
+def test_start_task_still_rejects_unrelated_agent(cp):
+    """Negative: an agent that is neither the owner nor the delegate
+    must still be refused — delegation does not open the door for
+    arbitrary callers."""
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    other = register_agent(cp, "other", ["python"])
+    with pytest.raises(AuthorizationError):
+        cp.start_task(task.id, other.id)
+
+
+def test_renew_and_release_remain_owner_only(cp):
+    """Spec §6.3: renewal + release stay strictly owner-only even
+    after delegation. The delegate may transition state but cannot
+    touch lease lifecycle."""
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    with pytest.raises(AuthorizationError):
+        cp.renew_lease(lease.id, delegate.id)
+    with pytest.raises(AuthorizationError):
+        cp.release_lease(lease.id, delegate.id)
+
+
 def test_release_lease_refuses_to_clobber_after_takeover(cp):
     """mac-79s1: if the lease has already been expired and the task
     reclaimed by another agent, a stale release_lease call from the

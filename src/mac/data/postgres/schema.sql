@@ -239,8 +239,19 @@ CREATE TABLE IF NOT EXISTS leases (
     expires_at TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
+    -- lifecycle authorship to the role agent spawned in the task Job.
+    -- NULL = no delegation; the owner is the sole authoriser.
+    delegated_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL
 );
+-- Additive migration for existing deployments: schema.sql is run on every
+-- mac-api startup, and CREATE TABLE IF NOT EXISTS skips already-present
+-- tables, so the column would never appear on a live DB without this
+-- explicit ALTER. Postgres 9.6+ supports `ADD COLUMN IF NOT EXISTS`, so
+-- this is idempotent and safe to re-run.
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS delegated_agent_id TEXT
+    REFERENCES agents(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_leases_task_status ON leases (task_id, status);
 CREATE INDEX IF NOT EXISTS idx_leases_agent_status ON leases (agent_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_leases_active_per_task

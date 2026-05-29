@@ -550,6 +550,13 @@ class LeaseRenewRequest(BaseModel):
     lease_seconds: int = 900
 
 
+class LeaseDelegateRequest(BaseModel):
+    # PR2c: the OWNER agent_id (caller) — must match lease.agent_id.
+    agent_id: str
+    # The role/worker agent to which lifecycle authorship is delegated.
+    to_agent_id: str
+
+
 class DispatchRequest(BaseModel):
     lease_seconds: int = 900
     limit: int = 100
@@ -2388,6 +2395,15 @@ def create_app(
     @app.post("/leases/{lease_id}/renew")
     def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:
         return cp.renew_lease(lease_id, body.agent_id, body.lease_seconds).to_dict()
+
+    @app.post("/leases/{lease_id}/delegate")
+    def delegate_lease(lease_id: str, body: LeaseDelegateRequest) -> Dict[str, Any]:
+        # PR2c (spec §6.3, Option B): the dispatcher holds the lease but
+        # the role agent spawned in the task Job authors start /
+        # submit_for_review / evidence. This endpoint records the
+        # delegation so those calls accept the delegate as a valid
+        # actor. Owner remains the sole renew/release authority.
+        return cp.delegate_lease(lease_id, body.agent_id, body.to_agent_id).to_dict()
 
     @app.post("/tasks/{task_id}/start")
     def start_task(

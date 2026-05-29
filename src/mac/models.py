@@ -480,6 +480,11 @@ class Lease:
     status: str
     created_at: str
     updated_at: str
+    # PR2c (spec §6.3, Option B): when set, the named agent is allowed to
+    # author task lifecycle transitions (start/submit_for_review) and
+    # evidence on the lease's task. The lease owner (``agent_id``) still
+    # owns renewal and release.
+    delegated_agent_id: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

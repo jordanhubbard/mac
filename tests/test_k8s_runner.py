@@ -330,6 +330,103 @@ def test_claim_and_launch_refuses_assignment_without_lease() -> None:
 
 
 # ----------------------------------------------------------------------
+# PR2c: lease delegation. claim_and_launch_one delegates the lease to
+# the resolved role agent so the Job pod's start_task /
+# submit_for_review calls satisfy the hub's authorisation check.
+# ----------------------------------------------------------------------
+
+def _role_runner_cfg() -> Any:
+    """Variant of _cfg with role maps populated so the resolved role
+    agent differs from the dispatcher (cfg.agent_id == 'runner-1')."""
+    base = _cfg()
+    base.role_images = {"python-coder": "ghcr.io/x/coder:latest"}
+    base.role_agent_ids = {"python-coder": "mac-worker-python-coder"}
+    base.role_executors = {
+        "python-coder": "/usr/local/bin/mac-task-executor-codex"
+    }
+    base.capability_role_aliases = {"python": "python-coder"}
+    return base
+
+
+def test_claim_and_launch_delegates_lease_when_role_agent_differs() -> None:
+    mac = _FakeMac(
+        claim_response={
+            "task": _task(required_capabilities=["python"]),
+            "lease": _lease(),
+        }
+    )
+    jobs = _FakeJobs()
+    cfg = _role_runner_cfg()
+
+    result = claim_and_launch_one(mac, jobs, cfg)
+    assert result is not None
+    assert result["status"] == "launched"
+
+    delegate_posts = [
+        p for p in mac.posted if p["path"].endswith("/delegate")
+    ]
+    assert len(delegate_posts) == 1, "exactly one delegate call expected"
+    body = delegate_posts[0]["body"]
+    assert body == {
+        "agent_id": cfg.agent_id,
+        "to_agent_id": "mac-worker-python-coder",
+    }
+    # Path includes the lease id.
+    assert delegate_posts[0]["path"] == "/leases/lease-xyz/delegate"
+
+
+def test_claim_and_launch_skips_delegate_when_role_agent_is_dispatcher() -> None:
+    # Unaliased capability ⇒ no role hit ⇒ job_agent_id == cfg.agent_id
+    # ⇒ no delegation needed (and none should be issued).
+    mac = _FakeMac(
+        claim_response={
+            "task": _task(required_capabilities=["unknown-cap"]),
+            "lease": _lease(),
+        }
+    )
+    jobs = _FakeJobs()
+    cfg = _role_runner_cfg()  # has aliases but not for "unknown-cap"
+
+    result = claim_and_launch_one(mac, jobs, cfg)
+    assert result is not None
+    assert result["status"] == "launched"
+    delegate_posts = [
+        p for p in mac.posted if p["path"].endswith("/delegate")
+    ]
+    assert delegate_posts == []
+
+
+def test_claim_and_launch_proceeds_when_delegate_fails() -> None:
+    """Delegation failure must NOT crash the runner; the Job is still
+    launched and the hub-side lease-expiry path handles cleanup."""
+
+    class _FailDelegateMac(_FakeMac):
+        def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+            if path.endswith("/delegate"):
+                self.posted.append({"path": path, "body": body})
+                raise RuntimeError("simulated hub 500")
+            return super().post(path, body)
+
+    mac = _FailDelegateMac(
+        claim_response={
+            "task": _task(required_capabilities=["python"]),
+            "lease": _lease(),
+        }
+    )
+    jobs = _FakeJobs()
+    cfg = _role_runner_cfg()
+
+    result = claim_and_launch_one(mac, jobs, cfg)
+    assert result is not None
+    assert result["status"] == "launched"
+    assert len(jobs.created) == 1  # Job still created
+    delegate_posts = [
+        p for p in mac.posted if p["path"].endswith("/delegate")
+    ]
+    assert len(delegate_posts) == 1  # delegation was attempted
+
+
+# ----------------------------------------------------------------------
 # Role specialisation: _resolve_task_role / _resolve_agent_id_for_role /
 # _resolve_executor_for_role / role-aware build_job_spec.
 # ----------------------------------------------------------------------

@@ -154,6 +154,28 @@ def test_partial_unique_index_on_active_lease(schema_sql: str) -> None:
     )
 
 
+def test_leases_has_delegated_agent_id_column(schema_sql: str) -> None:
+    """PR2c (spec §6.3, Option B): the dispatcher (lease owner)
+    delegates lifecycle authorship to the role agent. The column must
+    appear both in the CREATE TABLE (fresh installs) and in an
+    additive ALTER TABLE IF NOT EXISTS (live deployments) since
+    CREATE TABLE IF NOT EXISTS skips already-present tables.
+    """
+    # Column is declared in CREATE TABLE leases ( ... ).
+    create_block = re.search(
+        r"CREATE TABLE IF NOT EXISTS leases\s*\((?P<body>.*?)\);",
+        schema_sql,
+        re.DOTALL,
+    )
+    assert create_block, "leases CREATE TABLE not found"
+    assert "delegated_agent_id" in create_block.group("body")
+    # Additive ALTER ensures pre-existing tables also pick it up.
+    assert re.search(
+        r"ALTER TABLE leases\s+ADD COLUMN IF NOT EXISTS\s+delegated_agent_id",
+        schema_sql,
+    )
+
+
 def test_packaged_loader_reads_schema() -> None:
     psycopg = pytest.importorskip("psycopg")  # noqa: F841
     from mac.store_postgres import _load_packaged_schema

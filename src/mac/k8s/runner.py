@@ -654,6 +654,30 @@ def claim_and_launch_one(
         )
         return None
 
+    # PR2c (spec §6.3, Option B): when the resolved role agent differs
+    # from the dispatcher, delegate the lease so the role agent's Job
+    # pod can author start_task / submit_for_review / add_evidence
+    # against the hub. The owner (this runner) still owns renewal +
+    # release. Failure is non-fatal — we log and continue. The Job's
+    # own start_task call will surface the error if delegation didn't
+    # take, and the runner-owned lease will expire normally.
+    role = _resolve_task_role(task, cfg)
+    job_agent_id = _resolve_agent_id_for_role(role, cfg)
+    if job_agent_id != cfg.agent_id:
+        try:
+            mac.post(
+                "/leases/%s/delegate" % lease["id"],
+                {"agent_id": cfg.agent_id, "to_agent_id": job_agent_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "lease delegation failed for task=%s lease=%s to=%s: %s",
+                task.get("id"),
+                lease.get("id"),
+                job_agent_id,
+                exc,
+            )
+
     manifest = build_job_spec(task, lease, cfg)
     try:
         created = k8s.create(cfg.namespace, manifest)
