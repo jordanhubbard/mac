@@ -4779,13 +4779,22 @@ class ControlPlane:
         *,
         sync_beads: bool = True,
     ) -> Evidence:
-        self.get_task(task_id)
+        task = self.get_task(task_id)
         if not kind or not uri or not summary:
             raise ValidationError("evidence requires kind, uri, and summary")
         if kind not in EVIDENCE_KINDS:
             raise ValidationError("unsupported evidence kind: %s" % kind)
         if kind == "publication" and not checksum:
             raise ValidationError("publication evidence requires a checksum")
+        # mem-11: reject `operator_result` evidence_type when the task's
+        # execution contract declared a repository contract (or set
+        # repository_required=true). The original `task_d7c51a0b`
+        # incident hinged on bullwinkle emitting operator_result evidence
+        # for a code task; the validator accepted it because
+        # OperatorResultValidator only requires *any* summary string,
+        # which then sent the review loop hunting a remote_ref that was
+        # never pushed.
+        self._enforce_repo_coupled_evidence_type(task, metadata)
         now = utcnow()
         evidence_id = new_id("ev")
         with self.store.transaction() as conn:
@@ -4819,6 +4828,53 @@ class ControlPlane:
         if sync_beads:
             self.sync_evidence_side_effects(evidence_id)
         return evidence
+
+    def _enforce_repo_coupled_evidence_type(
+        self,
+        task: Task,
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
+        """mem-11: refuse to accept operator_result evidence for a task
+        that the dispatcher staged with a repository contract.
+
+        The verification block inside metadata carries the proposed
+        evidence_type. Tasks whose execution_contract.type='repository'
+        or whose execution_contract.repository_required is True are
+        "repo-coupled" — they must use one of the strict evidence types
+        (repo_change / documentation / test / artifact / no_change /
+        review_verdict) that exercises `require_pushed_repo_anchor()`
+        downstream. The soft `operator_result` type bypasses that
+        anchor check and was the bug that produced the runaway review
+        loop on `task_d7c51a0b04bd...`.
+        """
+        if not isinstance(metadata, dict):
+            return
+        verification = metadata.get("verification")
+        if not isinstance(verification, dict):
+            return
+        evidence_type = str(verification.get("evidence_type") or "").strip().lower()
+        if evidence_type != "operator_result":
+            return
+        contract = (
+            task.metadata.get("execution_contract")
+            if isinstance(task.metadata, dict)
+            else None
+        )
+        if not isinstance(contract, dict):
+            return
+        is_repo_coupled = (
+            str(contract.get("type") or "").strip().lower() == "repository"
+            or contract.get("repository_required") is True
+        )
+        if not is_repo_coupled:
+            return
+        raise ValidationError(
+            "operator_result evidence cannot be recorded for a repo-coupled "
+            "task (execution_contract.type=repository or "
+            "repository_required=true); use repo_change / test / documentation "
+            "/ artifact / no_change / review_verdict instead. Task: %s"
+            % task.id
+        )
 
     def sync_evidence_side_effects(self, evidence_id: str) -> None:
         try:

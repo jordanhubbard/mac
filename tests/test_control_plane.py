@@ -709,6 +709,107 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
+def test_add_evidence_rejects_operator_result_for_repo_coupled_task(cp):
+    """mem-11: repo-coupled tasks (execution_contract.type=repository
+    or repository_required=true) must not accept operator_result
+    evidence — that was the validator gap that let bullwinkle's
+    fake-merge evidence trigger the runaway review loop."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "Repo-coupled task",
+        required_capabilities=["python"],
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+                "source": "test_fixture",
+                "repository_required": True,
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    # The poison-pill evidence: operator_result for a repo task.
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "hello hello hello",
+        },
+    )
+    with pytest.raises(ValidationError, match="operator_result evidence cannot be recorded"):
+        cp.add_evidence(
+            task.id,
+            "log",
+            "artifact://hello",
+            "hello hello hello",
+            worker.id,
+            metadata={"returncode": 0, "verification": manifest},
+        )
+
+
+def test_add_evidence_accepts_repo_change_evidence_for_repo_coupled_task(cp):
+    """mem-11 (negative): the repo-coupled gate must not block legitimate
+    repo_change evidence on the same task class."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "Repo task",
+        required_capabilities=["python"],
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+                "repository_required": True,
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "file://t",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    assert evidence.task_id == task.id
+
+
+def test_add_evidence_accepts_operator_result_for_non_repo_task(cp):
+    """mem-11 (negative): pure-operator tasks (no repository contract)
+    must keep accepting operator_result. Only repo-coupled tasks
+    enforce the strict subset."""
+    worker = register_agent(cp, "worker", ["ops"])
+    task = cp.create_task("Plan something", required_capabilities=["ops"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "plan produced",
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://plan",
+        "plan produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    assert evidence.task_id == task.id
+
+
 def test_default_review_workflow_caps_retractions(cp, monkeypatch):
     """mem-12: after N consecutive retractions for a task, the workflow
     refuses to spawn another review and transitions the task to FAILED."""
