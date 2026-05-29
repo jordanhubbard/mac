@@ -72,12 +72,15 @@ if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" 
         eval "$(printf '%s' "${task_json}" | python3 -c '
 import json, shlex, sys
 d = json.load(sys.stdin)
-title = (d.get("title") or "").strip()
-desc = (d.get("description") or "").strip()
+# GET /tasks/{id} returns a wrapper {task, evidence, history, ...};
+# the actual task fields live under .task. Same shape for /projects/{id}.
+t = d.get("task") or d.get("record") or d
+title = (t.get("title") or "").strip()
+desc = (t.get("description") or "").strip()
 prompt = "Title: %s\n\n%s" % (title, desc)
 print("PROMPT=%s" % shlex.quote(prompt))
-print("PROJECT=%s" % shlex.quote(d.get("project") or ""))
-origin = (d.get("metadata") or {}).get("origin") or {}
+print("PROJECT=%s" % shlex.quote(t.get("project") or ""))
+origin = (t.get("metadata") or {}).get("origin") or {}
 print("REPO_URL=%s" % shlex.quote(origin.get("repository_url") or ""))
 print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
 ' || true)"
