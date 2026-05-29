@@ -15,12 +15,13 @@ ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
 REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-opencode-runner}"
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
 
-export XDG_CONFIG_HOME=/etc
 export HOME=/tmp/opencode-home
+export XDG_CONFIG_HOME="${HOME}/.config"
 export XDG_DATA_HOME="${HOME}/.local/share"
 export XDG_CACHE_HOME="${HOME}/.cache"
 export XDG_STATE_HOME="${HOME}/.local/state"
-mkdir -p "${HOME}/.local" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
+mkdir -p "${HOME}/.local" "${XDG_CONFIG_HOME}/opencode" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
+cp /etc/opencode/opencode.json "${XDG_CONFIG_HOME}/opencode/opencode.json"
 export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
