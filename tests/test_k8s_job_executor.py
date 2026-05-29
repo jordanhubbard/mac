@@ -94,6 +94,27 @@ def test_happy_path_submits_evidence_then_submit_for_review() -> None:
     ev_idx = paths.index("/tasks/task-1/evidence")
     submit_idx = paths.index("/tasks/task-1/submit-for-review")
     assert ev_idx < submit_idx
+    # Per spec §6.3, the Job pod NO LONGER renews the lease — the
+    # runner Deployment owns renewal. No /leases/{id}/renew calls
+    # should appear in the Job's POST traffic.
+    assert not any("/renew" in p for p in paths), (
+        "Job pod must not renew the lease; runner Deployment owns renewal"
+    )
+
+
+def test_job_pod_does_not_renew_lease() -> None:
+    """Regression guard for spec §6.3 — even on a long-running executor
+    we must never see a /renew call from the Job pod itself."""
+
+    def _slow_exec(_task: Dict[str, Any]) -> _ExecResult:
+        return _ExecResult(returncode=0, stdout="ok", stdout_sha256="z")
+
+    mac = _FakeMac()
+    run_one_lease(env=_env(), mac=mac, executor=_slow_exec, sleeper=_no_sleep)
+    for p in mac.posts:
+        assert "/renew" not in p["path"], (
+            "Job pod made an unexpected /renew call: %s" % p
+        )
 
 
 def test_nonzero_executor_transitions_to_failed() -> None:

@@ -80,6 +80,25 @@ class K8sJobsClient:
                 return
             raise
 
+    def read(self, namespace: str, name: str) -> JsonDict:
+        """Return the current state of a Job as a plain dict.
+
+        Used by the runner's per-Job lease-renewal loop to learn when a
+        Job has hit terminal status (``status.succeeded`` or
+        ``status.failed`` ≥ 1). Returns an empty dict on 404 so a
+        deleted Job is treated as "no longer present" rather than
+        bubbling an exception that could kill the renewal thread.
+        """
+        try:
+            result = self._batch.read_namespaced_job(
+                name=name, namespace=namespace
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                return {}
+            raise
+        return _to_dict(result)
+
 
 class K8sDeploymentsClient:
     """Adapter satisfying ``K8sDeploymentsProtocol``."""

@@ -9,16 +9,22 @@ entry point) with ``MAC_TASK_ID``, ``MAC_LEASE_ID``, ``MAC_URL``,
 Lifecycle inside the Job:
 
   1. POST /tasks/{id}/start            (transition open→running)
-  2. spawn lease-renewal thread        (POST /leases/{id}/renew every TTL/3)
-  3. run the configured executor       (subprocess; honors timeout)
-  4. POST /tasks/{id}/evidence         (record stdout digest + returncode)
-  5. POST /tasks/{id}/submit-for-review   on success
+  2. run the configured executor       (subprocess; honors timeout)
+  3. POST /tasks/{id}/evidence         (record stdout digest + returncode)
+  4. POST /tasks/{id}/submit-for-review   on success
      OR POST /tasks/{id}/transition target=failed   on non-zero exit
-  6. stop renewal thread; sys.exit(0)  iff evidence was submitted
+  5. sys.exit(0) iff evidence was submitted
+
+Lease renewal is **not** performed inside the Job pod. Per spec §6.3
+(Job-per-task Role Specialisation), the runner Deployment that
+created this Job owns the per-claim renewal goroutine. The Job pod
+authors evidence + lifecycle records as the role agent
+(``MAC_AGENT_ID``), but never holds authority over the lease.
 
 Evidence is recorded BEFORE the process exits. A clean Job exit means
 mac-api saw the evidence; a crashed Job means the lease will expire
-and mac-api re-opens the task for another runner cycle.
+(the runner's renewal stops on the next Job-status poll) and mac-api
+re-opens the task for another runner cycle.
 """
 
 from __future__ import annotations
@@ -28,7 +34,6 @@ import logging
 import os
 import subprocess
 import sys
-import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -50,9 +55,6 @@ log = logging.getLogger(__name__)
 # How long the executor subprocess is allowed to run before SIGKILL.
 # Operators override per task via task.metadata.k8s.executor_timeout_seconds.
 DEFAULT_EXECUTOR_TIMEOUT_SECONDS = 1500  # 25 min < default activeDeadline 30 min
-
-# How frequently to renew the lease (fraction of remaining TTL).
-LEASE_RENEW_INTERVAL_SECONDS = 30
 
 
 @dataclass
@@ -156,28 +158,18 @@ def run_one_lease(
                 error="POST /tasks/{id}/start failed: %s" % exc,
             )
 
-    # Start lease-renewal background thread.
-    stop_event = threading.Event()
-    renewer = threading.Thread(
-        target=_lease_renewal_loop,
-        args=(mac, lease_id, agent_id, stop_event, sleeper),
-        name="mac-task-runner-lease",
-        daemon=True,
-    )
-    renewer.start()
-
+    # Per spec §6.3, the runner Deployment renews the lease; the Job
+    # pod does NOT. If the Job runs long enough for the lease to
+    # expire (e.g. runner pod evicted mid-Job), mac-api will reopen
+    # the task and another runner replica will reclaim it. Idempotency
+    # on evidence + transitions handles the duplicate-execution case.
     started = time.monotonic()
     try:
         exec_result = executor(task)
     except Exception as exc:  # noqa: BLE001
-        stop_event.set()
         return _record_failure_evidence(
             mac, task_id, lease_id, agent_id, returncode=-1, error=str(exc)
         )
-    finally:
-        stop_event.set()
-        # Best-effort join; don't block exit on a stuck renewer.
-        renewer.join(timeout=2.0)
 
     duration_ms = (time.monotonic() - started) * 1000.0
 
@@ -315,33 +307,6 @@ def _default_mac_client(mac_url: str, token: str) -> Any:
     from mac.hermes_adapter import MacApiClient
 
     return MacApiClient(mac_url, token=token)
-
-
-def _lease_renewal_loop(
-    mac: Any,
-    lease_id: str,
-    agent_id: str,
-    stop: threading.Event,
-    sleeper: Callable[[float], None],
-) -> None:
-    """Renew the lease every LEASE_RENEW_INTERVAL_SECONDS until stop.
-
-    `LeaseRenewRequest` (api.py:548) requires `agent_id` in the body;
-    the previous empty-body call silently failed every tick.
-    """
-    while not stop.is_set():
-        try:
-            mac.post(
-                "/leases/%s/renew" % _q(lease_id),
-                {"agent_id": agent_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("lease renew failed: %s", exc)
-        # Short-poll the stop event in 1s chunks so we exit promptly.
-        for _ in range(int(LEASE_RENEW_INTERVAL_SECONDS)):
-            if stop.is_set():
-                return
-            sleeper(1.0)
 
 
 def _submit_execution_evidence(
