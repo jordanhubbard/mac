@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# mac-task-executor-codex-review — stub reviewer executor.
+#
+# Per docs/job-per-task-roles-spec.md §16, the executor INTERNALS
+# (fetching the coder's evidence, asking codex for an independent
+# verdict, POSTing approve/reject to mac-api) are a separate
+# workstream. This stub exists so PR2b can validate the wiring
+# end-to-end.
+#
+# Future work (PR3): replace the body with real review invocation.
+set -euo pipefail
+
+echo "===== mac-task-executor-codex-review (stub) ====="
+echo "executed_at:      $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo
+echo "Tooling on PATH:"
+echo "  codex:    $(codex --version 2>/dev/null || echo '<unavailable>')"
+echo "  git:      $(git --version 2>/dev/null || echo '<unavailable>')"
+echo
+echo "[stub] Real implementation will:"
+echo "[stub]   1. GET ${MAC_URL}/tasks/${MAC_TASK_ID}/evidence"
+echo "[stub]   2. ask codex to evaluate the coder's evidence"
+echo "[stub]   3. POST ${MAC_URL}/tasks/${MAC_TASK_ID}/review with"
+echo "[stub]      {decision: approve|reject, rationale: ...}"
+echo
+echo "[stub] Stub exiting 0 — Job succeeds but no review decision is recorded."
+echo "[stub] Task will stay in 'under_review' until PR3 lands real logic."
+exit 0

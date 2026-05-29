@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# mac-task-executor-codex — stub coder executor.
+#
+# Per docs/job-per-task-roles-spec.md §16, the executor INTERNALS
+# (cloning the repo, invoking codex with the task description,
+# pushing a branch, reporting the PR URL) are a separate workstream.
+# This stub exists so PR2b can validate the wiring end-to-end: the
+# right Job spawns with the right image + env, evidence is recorded,
+# the task transitions to submitted-for-review.
+#
+# Future work (PR3): replace the body with real codex invocation.
+set -euo pipefail
+
+echo "===== mac-task-executor-codex (stub) ====="
+echo "executed_at:      $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo
+echo "Tooling on PATH:"
+echo "  codex:    $(codex --version 2>/dev/null || echo '<unavailable>')"
+echo "  git:      $(git --version 2>/dev/null || echo '<unavailable>')"
+echo "  uv:       $(uv --version 2>/dev/null || echo '<unavailable>')"
+echo "  python:   $(python --version 2>/dev/null || echo '<unavailable>')"
+echo
+echo "[stub] Real implementation will:"
+echo "[stub]   1. fetch GET ${MAC_URL}/tasks/${MAC_TASK_ID}"
+echo "[stub]   2. clone the task's target repo into a workdir"
+echo "[stub]   3. invoke codex with the task title + description as prompt"
+echo "[stub]   4. push the resulting branch"
+echo "[stub]   5. write the PR URL into the evidence body"
+echo
+echo "[stub] Stub exiting 0 — task will transition to submitted-for-review."
+exit 0
