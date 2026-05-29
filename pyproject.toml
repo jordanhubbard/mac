@@ -45,6 +45,10 @@ mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
 mac-k8s-orchestrator = "mac.k8s.orchestrator:main"
 mac-k8s-bootstrap = "mac.k8s.bootstrap:main"
 mac-task-runner = "mac.k8s.job_executor:main"
+# Thin CLI shared by host-mode workers and the Job-pod codex stubs to
+# sign worker_evidence manifests without re-implementing the canonical
+# HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
+mac-evidence = "mac.evidence_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

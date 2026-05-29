@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -86,6 +87,12 @@ def _run_executor(
             "MAC_TASK_TITLE": task_title,
             "MAC_URL": "http://mac-api.svc:80",
             "MAC_TASK_EVIDENCE_MANIFEST_PATH": str(manifest_path),
+            # Bash stubs delegate signing to `mac-evidence` (the new
+            # console-script installed by the wheel). When tests run
+            # against a src checkout without the venv on PATH, point the
+            # script at the running interpreter so it can do
+            # `python -m mac.evidence_cli`.
+            "MAC_EVIDENCE_PYTHON": sys.executable,
         }
     )
     if attestation_key is not None:

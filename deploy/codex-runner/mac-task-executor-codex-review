@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Review-verdict stub executor invoked by the K8s Job pod.
+#
+# Constructs a mac.worker_evidence.v1 manifest with evidence_type=review_verdict
+# and signs it via `mac-evidence sign` (defined in src/mac/evidence_cli.py).
+# No inline HMAC — see tests/test_evidence_cli.py for the byte-for-byte
+# invariant against mac.services.sign_verification_manifest.
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"
@@ -27,65 +33,43 @@ if [ -n "${ATTESTATION_KEY}" ]; then
 else
     echo "MAC_AGENT_ATTESTATION_KEY: <unset> (verdict manifest will be unsigned)"
 fi
+if command -v mac-evidence >/dev/null 2>&1; then
+    MAC_EVIDENCE_CMD=("mac-evidence")
+else
+    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-}"
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        MAC_EVIDENCE_PY="$(command -v python3 || command -v python || true)"
+    fi
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
+        exit 3
+    fi
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
+fi
+echo "mac-evidence: ${MAC_EVIDENCE_CMD[*]}"
 echo
 
-PYBIN="$(command -v python3 || command -v python || true)"
-if [ -z "${PYBIN}" ]; then
-    echo "[FATAL] no python on PATH; cannot canonicalise + sign the manifest" >&2
-    exit 3
-fi
-
+# Export the values the inline python heredoc reads from os.environ.
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE
-export ATTESTATION_KEY EVIDENCE_PATH executed_at REVIEW_TARGET
+export executed_at REVIEW_TARGET
 
-"${PYBIN}" - <<'PYEOF'
-"""Sign + write a review_verdict verification manifest.
-
-The shape MUST match ReviewVerdictValidator (evidence_validators.py:198):
-  * verdict in {approved, rejected}
-  * reviewed_evidence_id (non-empty)
-  * worktree_digest matching sha256:[64 hex]
-  * checks: at least one passing entry (verdict=approved branch)
-"""
-from __future__ import annotations
-
-import base64
-import hashlib
-import hmac
-import json
-import os
-import sys
-
-
-def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def sign(key: str, manifest: dict) -> str:
-    filtered = {k: v for k, v in manifest.items() if k != "signature"}
-    digest = hmac.new(
-        key.encode("ascii"),
-        canonical(filtered).encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    return "v1:" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-
+tmp_path="${EVIDENCE_PATH}.tmp.$$"
+python3 - "${tmp_path}" <<'PYEOF'
+import hashlib, json, os, sys
 
 task_id = os.environ.get("MAC_TASK_ID", "").strip()
-lease_id = os.environ.get("MAC_LEASE_ID", "").strip()
 agent_id = os.environ.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
-agent_role = os.environ.get("MAC_AGENT_ROLE", "").strip()
 executed_at = os.environ.get("executed_at", "").strip()
-attestation_key = os.environ.get("ATTESTATION_KEY", "")
-review_target = os.environ.get("REVIEW_TARGET", "").strip() or "pending-resolution-by-codex-runner"
-out_path = os.environ.get("EVIDENCE_PATH", "/tmp/mac-evidence.json")
+review_target = (
+    os.environ.get("REVIEW_TARGET", "").strip() or "pending-resolution-by-codex-runner"
+)
 
 digest_input = ("%s|%s|%s" % (task_id, review_target, executed_at)).encode("utf-8")
 worktree_digest = "sha256:" + hashlib.sha256(digest_input).hexdigest()
 
-manifest: dict = {
+manifest = {
     "schema": "mac.worker_evidence.v1",
-    "status": "complete" if attestation_key else "incomplete",
+    "status": "complete",
     "evidence_type": "review_verdict",
     "verdict": "approved",
     "reviewed_evidence_id": review_target,
@@ -95,49 +79,39 @@ manifest: dict = {
         "task=%s review_target=%s at %s" % (task_id, review_target, executed_at)
     ),
     "result": "review_completed_no_findings",
-    "checks": [
-        {
-            "name": "review_completed",
-            "status": "pass",
-            "returncode": 0,
-        }
-    ],
+    "checks": [{"name": "review_completed", "status": "pass", "returncode": 0}],
     "executed_at": executed_at,
-    "notes": (
-        "PR3: signed review_verdict manifest. Real codex-driven review "
-        "(fetch coder evidence + ask codex for verdict + POST decision) "
-        "remains a follow-up per spec §16."
-    ),
+    "notes": "PR3: review_verdict manifest. Signing handled by mac-evidence sign.",
 }
 
-if attestation_key:
-    manifest["signed_by"] = agent_id
-    manifest["signature"] = sign(attestation_key, manifest)
-else:
-    manifest["problems"] = [
-        "MAC_AGENT_ATTESTATION_KEY is unset; verdict is structurally valid "
-        "but unsigned."
-    ]
-
-tmp_path = "%s.tmp.%d" % (out_path, os.getpid())
-with open(tmp_path, "w", encoding="utf-8") as fh:
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, sort_keys=True)
-os.rename(tmp_path, out_path)
-
-print("[codex-review] wrote verification manifest to %s" % out_path)
-print("[codex-review] manifest.evidence_type=review_verdict verdict=approved signed=%s" % (
-    "yes" if attestation_key else "no",
-))
-sys.exit(0)
 PYEOF
 
-py_rc=$?
-
-if [ "${py_rc}" -ne 0 ]; then
-    echo "[FATAL] manifest signing/writing failed with exit code ${py_rc}" >&2
-    exit "${py_rc}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    "${MAC_EVIDENCE_CMD[@]}" sign \
+        --manifest "${tmp_path}" \
+        --key-env MAC_AGENT_ATTESTATION_KEY \
+        --signed-by "${MAC_AGENT_ID}"
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    signed_state="yes"
+else
+    python3 - "${tmp_path}" "${EVIDENCE_PATH}" <<'PYEOF'
+import json, os, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+manifest["status"] = "incomplete"
+manifest["problems"] = [
+    "MAC_AGENT_ATTESTATION_KEY is unset; verdict is structurally valid "
+    "but unsigned."
+]
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+os.unlink(sys.argv[1])
+PYEOF
+    signed_state="no"
 fi
 
-echo
+echo "[codex-review] wrote verification manifest to ${EVIDENCE_PATH} (signed=${signed_state})"
 echo "[codex-review] done."
 exit 0
