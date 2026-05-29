@@ -37,6 +37,187 @@ from mac.workflow_models import WorkflowDefinition
 SEED_DIR = Path(__file__).resolve().parent / "data" / "workflows"
 
 
+# ---------------------------------------------------------------------------
+# Draft question handling (wf-01)
+# ---------------------------------------------------------------------------
+#
+# Each question on a draft has this normalized shape:
+#
+#   {
+#     "id":              "<unique-within-draft>",   # required; auto-assigned
+#     "text":            "<human-readable prompt>",  # required
+#     "required":        true | false,               # default false
+#     "binds_to_node":   "<node_key>" | None,        # which node consumes the
+#                                                    # answer at compile time
+#     "binds_to_param":  "instructions" | "metadata.<k>" | None,
+#                                                    # default: append the
+#                                                    # answer to the node's
+#                                                    # instructions as a
+#                                                    # "## Pre-supplied
+#                                                    # answer:" block.
+#   }
+#
+# Answers are stored as `{question_id: <value>}` on the draft. At
+# `approve_draft` time, `_validate_answers` refuses if any required
+# question has no answer. `definition_from_draft` then injects each
+# answered question's value into the matching node.
+
+
+def _slug_from_text(text: str, fallback: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    return cleaned[:40] or fallback
+
+
+def _normalize_questions(raw: List[JsonDict]) -> List[JsonDict]:
+    """Coerce a list of questions to the canonical shape (assigns ids,
+    fills defaults). Idempotent — calling twice yields the same list."""
+    seen: set = set()
+    out: List[JsonDict] = []
+    for index, item in enumerate(raw or []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("prompt") or item.get("question") or "").strip()
+        qid = str(item.get("id") or "").strip()
+        if not qid:
+            qid = _slug_from_text(text, fallback="q_%d" % (index + 1))
+        # Disambiguate collisions when normalizing legacy drafts.
+        base = qid
+        bump = 2
+        while qid in seen:
+            qid = "%s_%d" % (base, bump)
+            bump += 1
+        seen.add(qid)
+        question: JsonDict = {
+            "id": qid,
+            "text": text,
+            "required": bool(item.get("required", False)),
+        }
+        if item.get("binds_to_node"):
+            question["binds_to_node"] = str(item["binds_to_node"]).strip()
+        if item.get("binds_to_param"):
+            question["binds_to_param"] = str(item["binds_to_param"]).strip()
+        # Preserve any extra annotation fields the caller added.
+        for key, value in item.items():
+            if key in {"id", "text", "prompt", "question", "required",
+                      "binds_to_node", "binds_to_param"}:
+                continue
+            question[key] = value
+        out.append(question)
+    return out
+
+
+def _migrate_answers_to_ids(
+    questions: List[JsonDict],
+    answers: JsonDict,
+) -> JsonDict:
+    """Map legacy text-keyed answers onto the normalized question ids.
+
+    Best-effort: if an answer's key matches a question's `text` we move
+    it under that question's `id`. Untouched keys pass through (so
+    callers that already key by id keep working).
+    """
+    if not answers:
+        return {}
+    by_text = {q["text"]: q["id"] for q in questions if q.get("text")}
+    migrated: JsonDict = {}
+    for key, value in dict(answers).items():
+        if key in {q["id"] for q in questions}:
+            migrated[key] = value
+        elif key in by_text:
+            migrated[by_text[key]] = value
+        else:
+            # No matching question — carry the entry as-is so we don't
+            # silently drop user data, but it won't satisfy any required
+            # question check.
+            migrated[key] = value
+    return migrated
+
+
+def _validate_answers(
+    questions: List[JsonDict],
+    answers: JsonDict,
+    *,
+    node_keys: Optional[Iterable[str]] = None,
+) -> None:
+    """Raise ValidationError if any required question lacks an answer.
+
+    Also validates that any `binds_to_node` references a real node_key
+    (when ``node_keys`` is supplied — it isn't at draft-edit time, only
+    at compile time).
+    """
+    answer_ids = set(answers or {})
+    missing = [
+        q for q in questions
+        if q.get("required") and q["id"] not in answer_ids
+    ]
+    if missing:
+        labels = ", ".join("%s (%s)" % (q["id"], q.get("text") or "?") for q in missing)
+        raise ValidationError(
+            "workflow draft cannot be approved: required questions unanswered: %s" % labels
+        )
+    if node_keys is not None:
+        valid = set(node_keys)
+        bad_bindings = [
+            q for q in questions
+            if q.get("binds_to_node") and q["binds_to_node"] not in valid
+        ]
+        if bad_bindings:
+            labels = ", ".join(
+                "%s -> %s" % (q["id"], q.get("binds_to_node")) for q in bad_bindings
+            )
+            raise ValidationError(
+                "workflow draft questions reference unknown node_keys: %s" % labels
+            )
+
+
+def _apply_question_bindings(
+    node: JsonDict,
+    questions: List[JsonDict],
+    answers: JsonDict,
+) -> JsonDict:
+    """Stamp question answers onto a compiled node payload.
+
+    For each question with `binds_to_node == node["node_key"]`:
+      * stash the answer in ``node.metadata["answers"][question_id]``
+        (always — useful for programmatic consumers)
+      * unless ``binds_to_param`` says otherwise, also append a
+        ``## Pre-supplied answer: <text>\\n<answer>`` block to the
+        node's ``instructions`` so an LLM-driven executor sees it
+        without needing to read metadata.
+    """
+    node_key = node.get("node_key")
+    relevant = [q for q in questions if q.get("binds_to_node") == node_key]
+    if not relevant:
+        return node
+    metadata = dict(node.get("metadata") or {})
+    answers_bucket = dict(metadata.get("answers") or {})
+    instructions_blocks: List[str] = []
+    for q in relevant:
+        if q["id"] not in (answers or {}):
+            continue  # required-ness already enforced; optional + absent = skip
+        answer = answers[q["id"]]
+        answers_bucket[q["id"]] = answer
+        param = q.get("binds_to_param") or ""
+        if param.startswith("metadata."):
+            path = param.split(".", 1)[1]
+            metadata[path] = answer
+        elif param == "instructions":
+            # Replace instructions entirely (template-style use).
+            node["instructions"] = str(answer)
+        else:
+            # Default: append a readable answer block to instructions.
+            instructions_blocks.append(
+                "## Pre-supplied answer: %s\n%s" % (q.get("text") or q["id"], answer)
+            )
+    if instructions_blocks:
+        existing = str(node.get("instructions") or "").rstrip()
+        node["instructions"] = (existing + "\n\n" if existing else "") + "\n\n".join(instructions_blocks)
+    metadata["answers"] = answers_bucket
+    node["metadata"] = metadata
+    return node
+
+
 class WorkflowService:
     def __init__(
         self,
@@ -281,6 +462,11 @@ class WorkflowService:
             self._get_tenant(tenant_id)
         now = utcnow()
         did = draft_id or new_id("wfdraft")
+        normalized_questions = _normalize_questions(list(questions or []))
+        normalized_answers = _migrate_answers_to_ids(
+            normalized_questions,
+            ensure_json_object(answers),
+        )
         self.store.execute(
             """
             INSERT INTO workflow_drafts (
@@ -294,8 +480,8 @@ class WorkflowService:
                 tenant_id,
                 goal_value,
                 json_dumps(list(proposed_steps or [])),
-                json_dumps(list(questions or [])),
-                json_dumps(ensure_json_object(answers)),
+                json_dumps(normalized_questions),
+                json_dumps(normalized_answers),
                 created_by,
                 now,
                 now,
@@ -326,9 +512,19 @@ class WorkflowService:
         if proposed_steps is not None:
             patch["proposed_steps"] = list(proposed_steps)
         if questions is not None:
-            patch["questions"] = list(questions)
+            patch["questions"] = _normalize_questions(list(questions))
         if answers is not None:
-            patch["answers"] = ensure_json_object(answers)
+            # Migrate answers against the *new* question set if the caller
+            # is updating both, otherwise the existing draft's questions.
+            effective_questions = (
+                patch.get("questions")
+                if "questions" in patch
+                else list(draft.questions)
+            )
+            patch["answers"] = _migrate_answers_to_ids(
+                effective_questions,
+                ensure_json_object(answers),
+            )
         if status is not None:
             patch["status"] = status_value
         history.append({"actor": actor, "at": now, "patch": patch})
@@ -428,6 +624,11 @@ class WorkflowService:
         is_default: bool = False,
     ) -> Workflow:
         draft = self.get_draft(draft_id)
+        node_keys = [
+            str(step.get("node_key") or step.get("key") or "step_%d" % (i + 1)).strip()
+            for i, step in enumerate(draft.proposed_steps or [])
+        ]
+        _validate_answers(draft.questions, draft.answers, node_keys=node_keys)
         definition = self.definition_from_draft(draft, workflow_type=workflow_type)
         workflow = self.create_workflow(
             slug=slug,
@@ -492,6 +693,7 @@ class WorkflowService:
             }
             if step.get("required_capabilities"):
                 node["required_capabilities"] = list(step.get("required_capabilities") or [])
+            node = _apply_question_bindings(node, draft.questions, draft.answers)
             nodes.append(node)
             edges.append(
                 {
@@ -648,14 +850,20 @@ class WorkflowService:
         )
 
     def _draft_from_row(self, row: Any) -> WorkflowDraft:
+        # Normalize on read so older drafts (which may have free-form
+        # questions without ids) present the canonical shape to callers.
+        raw_questions = json_loads(row["questions"], [])
+        raw_answers = json_loads(row["answers"], {})
+        normalized_questions = _normalize_questions(raw_questions)
+        normalized_answers = _migrate_answers_to_ids(normalized_questions, raw_answers)
         return WorkflowDraft(
             id=row["id"],
             tenant_id=row["tenant_id"],
             goal=row["goal"],
             status=row["status"],
             proposed_steps=json_loads(row["proposed_steps"], []),
-            questions=json_loads(row["questions"], []),
-            answers=json_loads(row["answers"], {}),
+            questions=normalized_questions,
+            answers=normalized_answers,
             edit_history=json_loads(row["edit_history"], []),
             compiled_workflow_id=row["compiled_workflow_id"],
             created_by=row["created_by"],

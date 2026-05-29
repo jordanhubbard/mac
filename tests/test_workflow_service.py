@@ -208,6 +208,142 @@ def test_workflow_draft_can_be_previewed_and_approved(cp):
     assert cp.get_workflow_draft(draft.id).status == "compiled"
 
 
+def test_draft_questions_are_normalized_with_assigned_ids(cp):
+    """wf-01: questions without explicit ids get slugged ones; idempotent."""
+    draft = cp.create_workflow_draft(
+        "Add feature",
+        proposed_steps=[
+            {"node_key": "design", "role_required": "qa", "instructions": "Design"},
+        ],
+        # Legacy shape: no `id`, uses `prompt` (or `text`) for the question text.
+        questions=[
+            {"prompt": "Which database driver?"},
+            {"text": "Which auth provider?", "required": True},
+        ],
+    )
+    ids = [q["id"] for q in draft.questions]
+    assert all(ids), "every question must have an id"
+    assert len(set(ids)) == len(ids), "ids must be unique"
+    # Slugs should be derived from the question text where possible.
+    assert any("driver" in qid or "database" in qid for qid in ids)
+    # Re-reading the draft is idempotent — ids don't shift.
+    again = cp.get_workflow_draft(draft.id)
+    assert [q["id"] for q in again.questions] == ids
+
+
+def test_approve_draft_refuses_required_unanswered_questions(cp):
+    """wf-01: required questions block approval until answered."""
+    draft = cp.create_workflow_draft(
+        "Add feature",
+        proposed_steps=[
+            {"node_key": "design", "role_required": "qa", "instructions": "Design"},
+        ],
+        questions=[
+            {"id": "scope", "text": "What scope?", "required": True},
+        ],
+        # answers omitted on purpose
+    )
+    with pytest.raises(ValidationError, match="required questions unanswered"):
+        cp.approve_workflow_draft(
+            draft.id, slug="gated", name="Gated", approved_by="human"
+        )
+    # Answer the question and approval succeeds.
+    cp.update_workflow_draft(draft.id, answers={"scope": "API only"}, actor="human")
+    wf = cp.approve_workflow_draft(
+        draft.id, slug="gated", name="Gated", approved_by="human"
+    )
+    assert wf.metadata["answers"] == {"scope": "API only"}
+
+
+def test_approve_draft_validates_question_node_bindings(cp):
+    """wf-01: a question that binds_to_node must reference a real node_key."""
+    draft = cp.create_workflow_draft(
+        "Add feature",
+        proposed_steps=[
+            {"node_key": "design", "role_required": "qa", "instructions": "Design"},
+        ],
+        questions=[
+            {
+                "id": "scope",
+                "text": "What scope?",
+                "required": True,
+                "binds_to_node": "nonexistent_node",
+            },
+        ],
+        answers={"scope": "API"},
+    )
+    with pytest.raises(ValidationError, match="unknown node_keys"):
+        cp.approve_workflow_draft(
+            draft.id, slug="badbind", name="Badbind", approved_by="human"
+        )
+
+
+def test_approve_draft_injects_answer_into_bound_node_instructions(cp):
+    """wf-01: an answered binds_to_node question appends its answer block
+    to the target node's instructions so an LLM-driven executor sees it."""
+    draft = cp.create_workflow_draft(
+        "Add feature",
+        proposed_steps=[
+            {
+                "node_key": "design",
+                "role_required": "qa",
+                "instructions": "Design the feature",
+            },
+            {
+                "node_key": "implement",
+                "role_required": "dev",
+                "instructions": "Build it",
+            },
+        ],
+        questions=[
+            {
+                "id": "scope",
+                "text": "What scope?",
+                "required": True,
+                "binds_to_node": "design",
+            },
+            {
+                "id": "stack",
+                "text": "Which stack?",
+                "binds_to_node": "implement",
+                "binds_to_param": "metadata.preferred_stack",
+            },
+        ],
+        answers={"scope": "API only", "stack": "FastAPI"},
+    )
+    wf = cp.approve_workflow_draft(
+        draft.id, slug="bound", name="Bound", approved_by="human"
+    )
+    nodes_by_key = {n["node_key"]: n for n in wf.definition["nodes"]}
+    # Default binding appended a readable answer block to instructions.
+    assert "Pre-supplied answer: What scope?" in nodes_by_key["design"]["instructions"]
+    assert "API only" in nodes_by_key["design"]["instructions"]
+    # The answer is also in metadata.answers (always).
+    assert nodes_by_key["design"]["metadata"]["answers"]["scope"] == "API only"
+    # binds_to_param="metadata.preferred_stack" sets the metadata field
+    # directly rather than appending to instructions.
+    assert nodes_by_key["implement"]["metadata"]["preferred_stack"] == "FastAPI"
+    assert "FastAPI" not in nodes_by_key["implement"]["instructions"]
+
+
+def test_legacy_text_keyed_answers_migrate_to_ids(cp):
+    """wf-01: callers used to key answers by free-text question content;
+    those answers should map onto the newly-assigned question ids."""
+    draft = cp.create_workflow_draft(
+        "Legacy shape",
+        proposed_steps=[
+            {"node_key": "design", "role_required": "qa", "instructions": "Design"},
+        ],
+        # No `id`, answer keyed by the text instead of an id.
+        questions=[{"text": "What scope?", "required": True}],
+        answers={"What scope?": "API only"},
+    )
+    # The answer should have been migrated under the normalized id.
+    assert "What scope?" not in draft.answers or draft.answers != {"What scope?": "API only"}
+    qid = draft.questions[0]["id"]
+    assert draft.answers.get(qid) == "API only"
+
+
 def test_delete_workflow_refuses_when_runs_in_flight(cp):
     wf = cp.workflows.create_workflow(
         slug="bug",
