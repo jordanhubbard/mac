@@ -363,6 +363,27 @@ class RemoteDispatch:
             self._get("/workflows/runs/%s/decisions" % quote(run_id, safe=""))
         )
 
+    def start_workflow(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        started_by: str = "human",
+        input: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        pre_decisions: Optional[Dict[str, str]] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "started_by": started_by,
+                "input": input or {},
+                "tenant_id": tenant_id,
+                "pre_decisions": pre_decisions or {},
+            }
+        )
+        return _Dictish(
+            self._post("/workflows/%s/start" % quote(workflow_id_or_slug, safe=""), body)
+        )
+
     # -- Tenant / User / Persona / Hermes / Binding / Interaction -----------
 
     def register_tenant(self, name: str, **kw: Any) -> _Dictish:

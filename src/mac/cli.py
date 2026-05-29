@@ -1134,6 +1134,30 @@ def cmd_workflow_decisions(args: argparse.Namespace) -> None:
         _print(cp.workflow_decisions(target, tenant_id=args.tenant_id))
 
 
+def cmd_workflow_start(args: argparse.Namespace) -> None:
+    """wf-03: start a workflow run, optionally with pre-supplied approval
+    decisions so the run can advance through approval gates unattended."""
+    cp = _plane(args)
+    pre_decisions: Dict[str, str] = {}
+    for spec in args.pre_decision or []:
+        if "=" not in spec:
+            raise MACError(
+                "--pre-decision expects <node_key>=approved|rejected (got %r)" % spec
+            )
+        key, _, value = spec.partition("=")
+        pre_decisions[key.strip()] = value.strip().lower()
+    input_obj = _json_arg(args.input, {})
+    _print(
+        cp.start_workflow(
+            args.workflow_id_or_slug,
+            started_by=args.started_by,
+            input=input_obj,
+            tenant_id=args.tenant_id,
+            pre_decisions=pre_decisions or None,
+        )
+    )
+
+
 def cmd_notifier_configure(args: argparse.Namespace) -> None:
     _print(
         _plane(args).configure_notifier_channel(
@@ -2096,6 +2120,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="scope a slug lookup to a tenant",
     )
     _set(cmd_workflow_decisions, workflow_decisions)
+
+    workflow_start = workflow.add_parser(
+        "start",
+        help="start a workflow run, optionally with front-loaded approval "
+        "decisions so the run can advance unattended.",
+    )
+    workflow_start.add_argument("workflow_id_or_slug")
+    workflow_start.add_argument("--started-by", default="human")
+    workflow_start.add_argument("--tenant-id")
+    workflow_start.add_argument(
+        "--input",
+        default=None,
+        help="JSON object passed to the workflow as initial input",
+    )
+    workflow_start.add_argument(
+        "--pre-decision",
+        action="append",
+        default=[],
+        metavar="NODE_KEY=approved|rejected",
+        help="pre-supplied decision for an approval node; may repeat "
+        "(e.g. --pre-decision pm_review=approved --pre-decision qa=rejected)",
+    )
+    _set(cmd_workflow_start, workflow_start)
 
     eval_root = sub.add_parser("eval", help="evaluation sets and runs").add_subparsers(
         dest="eval_command", required=True

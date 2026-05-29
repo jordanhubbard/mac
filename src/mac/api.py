@@ -498,6 +498,10 @@ class WorkflowStart(BaseModel):
     started_by: str = "human"
     input: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: Optional[str] = None
+    # wf-03: front-loaded approval decisions. Each key must reference an
+    # approval-typed node in the workflow definition; each value must be
+    # "approved" or "rejected". Validated server-side.
+    pre_decisions: Dict[str, str] = Field(default_factory=dict)
 
 
 class WorkflowPreview(BaseModel):
@@ -2874,6 +2878,7 @@ def create_app(
             started_by=body.started_by,
             input=body.input,
             tenant_id=body.tenant_id,
+            pre_decisions=body.pre_decisions or None,
         ).to_dict()
 
     @app.get("/workflows/runs/{run_id}")

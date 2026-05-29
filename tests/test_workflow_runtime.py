@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from mac.models import NotFoundError, TaskState, ValidationError
@@ -57,6 +59,114 @@ def _two_node_workflow(cp, *, slug="bug-default"):
         },
         created_by="human",
     )
+
+
+def _approval_workflow(cp, *, slug="approval-flow"):
+    """Workflow that opens with an approval gate.
+
+    Keeping `review` as the start node lets pre_decision tests verify
+    the skip-and-advance path without needing to drive an upstream task
+    through the full claim/start/review/approve flow first.
+    """
+    return cp.workflows.create_workflow(
+        slug=slug,
+        name="Approval",
+        description="approval-first workflow",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1, "instructions": "approve scope"},
+                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+                {"node_key": "rework", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "rework", "condition": "rejected", "priority": 90},
+                {"from_node_key": "build", "to_node_key": "", "condition": "success", "priority": 100},
+                {"from_node_key": "rework", "to_node_key": "", "condition": "success", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+
+
+def test_pre_decisions_validated_against_workflow_nodes(cp):
+    """wf-03: start_run refuses pre_decisions referring to unknown / non-approval nodes."""
+    _approval_workflow(cp)
+    with pytest.raises(ValidationError, match="unknown or non-approval"):
+        cp.workflow_runtime.start_run(
+            "approval-flow",
+            started_by="ops",
+            pre_decisions={"design": "approved"},  # design is a task, not an approval
+        )
+    with pytest.raises(ValidationError, match="unknown or non-approval"):
+        cp.workflow_runtime.start_run(
+            "approval-flow",
+            started_by="ops",
+            pre_decisions={"bogus": "approved"},
+        )
+
+
+def test_pre_decisions_validated_against_value_vocabulary(cp):
+    """wf-03: pre_decisions values must be `approved` or `rejected`."""
+    _approval_workflow(cp)
+    with pytest.raises(ValidationError, match="must be `approved` or `rejected`"):
+        cp.workflow_runtime.start_run(
+            "approval-flow",
+            started_by="ops",
+            pre_decisions={"review": "yes-please"},
+        )
+
+
+def test_pre_decision_approved_skips_to_next_node(cp):
+    """wf-03: a pre-decided `approved` skips the approval node entirely
+    and lands the run on the next node along the `approved` edge."""
+    _approval_workflow(cp)
+    run = cp.workflow_runtime.start_run(
+        "approval-flow",
+        started_by="ops",
+        pre_decisions={"review": "approved"},
+    )
+    # `review` was pre-decided — the run should have skipped it during
+    # start_run and parked on `build` (the `approved` edge target).
+    assert run.current_node_key == "build", run.current_node_key
+    assert run.current_task_id is not None  # `build` is a real task node
+    # The skip is recorded in workflow_run_history as the audit trail.
+    rows = cp.store.query_all(
+        "SELECT to_node_key, condition, task_id, detail "
+        "FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    keys = [r["to_node_key"] for r in rows]
+    # Row 0 is the start-edge entry into review (condition=success);
+    # row 1 is the skip-out via the pre-decision.
+    assert keys == ["review", "build"]
+    skip_row = rows[1]
+    assert skip_row["condition"] == "approved"
+    assert skip_row["task_id"] is None  # no real task for a skipped node
+    detail = json.loads(skip_row["detail"])
+    assert detail["approval_decision"] == "approved"
+    assert detail["pre_decision_origin"] == "workflow_start"
+    assert detail.get("skipped") is True
+
+
+def test_pre_decision_rejected_skips_along_rejected_edge(cp):
+    """wf-03: a pre-decided `rejected` follows the rejected-condition edge."""
+    _approval_workflow(cp)
+    run = cp.workflow_runtime.start_run(
+        "approval-flow",
+        started_by="ops",
+        pre_decisions={"review": "rejected"},
+    )
+    assert run.current_node_key == "rework"  # the `rejected` edge target
+    rows = cp.store.query_all(
+        "SELECT to_node_key, condition FROM workflow_run_history "
+        "WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    assert [r["to_node_key"] for r in rows] == ["review", "rework"]
+    assert rows[1]["condition"] == "rejected"
 
 
 def test_start_run_spawns_first_node_task_with_role_metadata(cp):
