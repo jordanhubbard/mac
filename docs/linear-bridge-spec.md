@@ -1,6 +1,16 @@
 # Linear Bridge — Design Spec
 
-> Status: draft 2026-05-28, **revised after review**.
+> Status: **deferred 2026-05-28** — implementation paused pending
+> end-to-end validation of the existing beads-backed mac pipeline
+> (Hermes → mac-api → mac-k8s-runner → Job → evidence → review). No
+> code has been written against this spec. When e2e is confirmed
+> working, Phase L0 (outbox extension) is the first concrete PR.
+>
+> Spec was reviewed by both an architect subagent and `codex exec`
+> (codex-cli 0.134.0) before being deferred. v2 post-review revisions
+> are below; see [`linear-bridge-spec-review.md`](linear-bridge-spec-review.md)
+> for the codex review notes.
+>
 > See also: [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md),
 > [`docs/production-deployment.md`](production-deployment.md) §Beads Bridge.
 
