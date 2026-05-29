@@ -11,6 +11,7 @@ from mac.k8s.bootstrap import (
     BootstrapConfig,
     _slot_already_populated,
     register_dispatcher,
+    register_projects,
     rotate_attestation_keys,
     seed_role_machines_and_agents,
     wait_for_mac_api,
@@ -792,3 +793,45 @@ class TestMainCallOrder:
         # No partial Secret write.
         assert core.created == []
         assert core.patched == []
+
+
+class TestRegisterProjects:
+    def test_posts_each_project_with_actor(self) -> None:
+        mac = _FakeMac(
+            responses={
+                "POST /projects": lambda b: {
+                    "id": "project_" + b["name"],
+                    "name": b["name"],
+                    "status": b.get("status", "active"),
+                }
+            }
+        )
+        cfg = BootstrapConfig(
+            mac_url="http://x",
+            dispatcher=_dispatcher_cfg(),
+            projects=[
+                {"name": "ivan-plugin", "description": "ivan", "status": "active", "metadata": {"repository": "https://x/y.git"}},
+                {"name": "mac", "description": "", "status": "active", "metadata": {}},
+            ],
+        )
+        register_projects(mac, cfg)
+        posts = [p for p in mac.posted if p["path"] == "/projects"]
+        assert [p["body"]["name"] for p in posts] == ["ivan-plugin", "mac"]
+        assert posts[0]["body"]["actor"] == "mac-k8s-bootstrap"
+        assert posts[0]["body"]["metadata"] == {"repository": "https://x/y.git"}
+
+    def test_empty_projects_is_noop(self) -> None:
+        mac = _FakeMac()
+        cfg = BootstrapConfig(mac_url="http://x", dispatcher=_dispatcher_cfg(), projects=[])
+        register_projects(mac, cfg)
+        assert [p for p in mac.posted if p["path"] == "/projects"] == []
+
+    def test_missing_name_raises(self) -> None:
+        mac = _FakeMac()
+        cfg = BootstrapConfig(
+            mac_url="http://x",
+            dispatcher=_dispatcher_cfg(),
+            projects=[{"name": "", "description": "", "status": "active", "metadata": {}}],
+        )
+        with pytest.raises(SystemExit, match="requires name"):
+            register_projects(mac, cfg)

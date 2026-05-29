@@ -23,6 +23,7 @@ class BootstrapConfig:
     role_machines: List[JsonDict] = field(default_factory=list)
     role_agents: List[JsonDict] = field(default_factory=list)
     attestation_keys: Optional[JsonDict] = None
+    projects: List[JsonDict] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "BootstrapConfig":
@@ -37,6 +38,15 @@ class BootstrapConfig:
             role_machines=[dict(m) for m in cfg_file.role_machines],
             role_agents=cfg_file.role_agents(),
             attestation_keys=cfg_file.attestation_keys_block(),
+            projects=[
+                {
+                    "name": p.name,
+                    "description": p.description,
+                    "status": p.status,
+                    "metadata": dict(p.metadata),
+                }
+                for p in cfg_file.projects
+            ],
         )
 
 class MacApiProtocol(Protocol):
@@ -179,6 +189,29 @@ def seed_role_machines_and_agents(
             resp.get("name"),
             resp.get("capabilities"),
         )
+
+def register_projects(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
+    for spec in cfg.projects:
+        name = spec.get("name")
+        if not name:
+            raise SystemExit("projects entry requires name: %r" % (spec,))
+        body = {
+            "name": name,
+            "description": spec.get("description") or "",
+            "status": spec.get("status") or "active",
+            "metadata": dict(spec.get("metadata") or {}),
+            "actor": "mac-k8s-bootstrap",
+        }
+        resp = mac.post("/projects", body)
+        if not isinstance(resp, dict):
+            raise SystemExit("POST /projects returned non-object: %r" % (resp,))
+        log.info(
+            "project: name=%s id=%s status=%s",
+            resp.get("name"),
+            resp.get("id"),
+            resp.get("status"),
+        )
+
 
 def _existing_secret_data(
     core: CoreV1Protocol, namespace: str, name: str
@@ -367,6 +400,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     wait_for_mac_api(mac)
     register_dispatcher(mac, cfg)
     seed_role_machines_and_agents(mac, cfg)
+    register_projects(mac, cfg)
 
     if cfg.attestation_keys is not None:
         load_in_cluster_config()

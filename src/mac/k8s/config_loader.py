@@ -22,6 +22,14 @@ class RoleConfig:
     attestation_key_secret: Dict[str, str]
 
 @dataclass
+class ProjectConfig:
+    name: str
+    description: str = ""
+    status: str = "active"
+    metadata: JsonDict = field(default_factory=dict)
+
+
+@dataclass
 class MacConfigFile:
     mac_url: str
     dispatcher: JsonDict
@@ -29,6 +37,7 @@ class MacConfigFile:
     roles: Dict[str, RoleConfig] = field(default_factory=dict)
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
     attestation_keys: Optional[JsonDict] = None
+    projects: List[ProjectConfig] = field(default_factory=list)
 
     def role_agents(self) -> List[JsonDict]:
         return [
@@ -188,6 +197,31 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         )
     aliases = {str(k): str(v) for k, v in aliases_raw.items()}
 
+    projects_raw = data.get("projects") or []
+    if not isinstance(projects_raw, list):
+        raise SystemExit(
+            "projects must be a list (got %s)" % type(projects_raw).__name__
+        )
+    projects: List[ProjectConfig] = []
+    for i, p in enumerate(projects_raw):
+        if not isinstance(p, dict):
+            raise SystemExit(
+                "projects[%d] must be a mapping (got %s)" % (i, type(p).__name__)
+            )
+        name = _require_str(p, "name", path="projects[%d]" % i)
+        meta_raw = p.get("metadata") or {}
+        if not isinstance(meta_raw, dict):
+            raise SystemExit(
+                "projects[%d].metadata must be a mapping (got %s)"
+                % (i, type(meta_raw).__name__)
+            )
+        projects.append(ProjectConfig(
+            name=name,
+            description=str(p.get("description") or ""),
+            status=str(p.get("status") or "active"),
+            metadata=dict(meta_raw),
+        ))
+
     attestation_raw = data.get("attestation_keys")
     if attestation_raw is not None and not isinstance(attestation_raw, dict):
         raise SystemExit(
@@ -214,4 +248,5 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         roles=roles,
         capability_role_aliases=aliases,
         attestation_keys=attestation,
+        projects=projects,
     )
