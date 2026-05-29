@@ -343,6 +343,505 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    # -- Tenant / User / Persona / Hermes / Binding / Interaction -----------
+
+    def register_tenant(self, name: str, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/tenants", _drop_none({"name": name, **kw})))
+
+    def list_tenants(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/tenants"))
+
+    def register_user(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/users", _drop_none(kw)))
+
+    def register_persona(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/personas", _drop_none(kw)))
+
+    def register_hermes_instance(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/hermes-instances", _drop_none(kw)))
+
+    def hermes_context(self, instance_id: str) -> _Dictish:
+        return _Dictish(self._get("/hermes-instances/%s/context" % quote(instance_id, safe="")))
+
+    def hermes_work_context(self, instance_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._get("/hermes-instances/%s/work-context" % quote(instance_id, safe=""), **kw)
+        )
+
+    def hermes_runtime_proof(self, instance_id: str, *, hermes_startup: Any = None) -> _Dictish:
+        if hermes_startup is None:
+            return _Dictish(
+                self._get("/hermes-instances/%s/runtime-proof" % quote(instance_id, safe=""))
+            )
+        return _Dictish(
+            self._post(
+                "/hermes-instances/%s/runtime-proof" % quote(instance_id, safe=""),
+                {"hermes_startup": hermes_startup},
+            )
+        )
+
+    def register_platform_binding(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/platform-bindings", _drop_none(kw)))
+
+    def create_interaction_task(self, instance_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/hermes-instances/%s/tasks" % quote(instance_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    # -- Machine / Agent / Fleet --------------------------------------------
+
+    def register_machine(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/machines", _drop_none(kw)))
+
+    def register_agent(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agents", _drop_none(kw)))
+
+    def list_agents(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/agents"))
+
+    def heartbeat_agent(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/agents/%s/heartbeat" % quote(agent_id, safe=""), _drop_none(kw))
+        )
+
+    def fleet_build_distribution(self) -> _Dictish:
+        return _Dictish(self._get("/fleet/build-distribution"))
+
+    # -- Mood (per-agent overlay) -------------------------------------------
+
+    def set_mood(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/agents/%s/mood" % quote(agent_id, safe=""), _drop_none(kw))
+        )
+
+    def get_current_mood(self, agent_id: str) -> Optional[_Dictish]:
+        resp = self._get("/agents/%s/mood" % quote(agent_id, safe=""))
+        return _Dictish(resp) if resp else None
+
+    def clear_mood(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._delete("/agents/%s/mood" % quote(agent_id, safe=""))
+            if not kw
+            else self._client.request(
+                "DELETE", "/agents/%s/mood" % quote(agent_id, safe=""), body=_drop_none(kw)
+            )
+        )
+
+    def list_mood_history(self, agent_id: str, *, limit: Optional[int] = None) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/agents/%s/mood/history" % quote(agent_id, safe=""), limit=limit)
+        )
+
+    # -- Nap (per-agent consolidation) --------------------------------------
+
+    def configure_nap(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/agents/%s/nap-schedule" % quote(agent_id, safe=""), _drop_none(kw))
+        )
+
+    def get_nap_schedule(self, agent_id: str) -> Optional[_Dictish]:
+        resp = self._get("/agents/%s/nap-schedule" % quote(agent_id, safe=""))
+        return _Dictish(resp) if resp else None
+
+    def next_nap_window(self, agent_id: str) -> _Dictish:
+        return _Dictish(self._get("/agents/%s/nap-schedule/next" % quote(agent_id, safe="")))
+
+    def begin_nap(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/agents/%s/nap-runs" % quote(agent_id, safe=""), _drop_none(kw))
+        )
+
+    def complete_nap(self, run_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/nap-runs/%s/complete" % quote(run_id, safe=""), _drop_none(kw))
+        )
+
+    def fail_nap(self, run_id: str, reason: str, *, actor: Optional[str] = None) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/nap-runs/%s/fail" % quote(run_id, safe=""),
+                _drop_none({"reason": reason, "actor": actor}),
+            )
+        )
+
+    def list_nap_runs(self, agent_id: Optional[str] = None) -> List[_Dictish]:
+        return _wrap_list(self._get("/nap-runs", agent_id=agent_id))
+
+    # -- Dispatch -----------------------------------------------------------
+
+    def dispatch_once(self, lease_seconds: Optional[int] = None) -> Optional[_Dictish]:
+        resp = self._post("/dispatch/assign", _drop_none({"lease_seconds": lease_seconds}))
+        return _Dictish(resp) if resp else None
+
+    def tick(
+        self,
+        lease_seconds: Optional[int] = None,
+        limit: Optional[int] = None,
+        stale_after_seconds: Optional[int] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/dispatch/tick",
+                _drop_none(
+                    {
+                        "lease_seconds": lease_seconds,
+                        "limit": limit,
+                        "stale_after_seconds": stale_after_seconds,
+                    }
+                ),
+            )
+        )
+
+    # -- Messaging (control bus + structured agentbus) ----------------------
+
+    def send_message(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/messages", _drop_none(kw)))
+
+    def deliver_messages(self, agent_id: str, limit: Optional[int] = None) -> List[_Dictish]:
+        return _wrap_list(
+            self._post(
+                "/agents/%s/messages/deliver" % quote(agent_id, safe=""),
+                _drop_none({"limit": limit}),
+            )
+        )
+
+    def open_agentbus_stream(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agentbus/streams", _drop_none(kw)))
+
+    def append_agentbus_chunk(self, stream_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agentbus/streams/%s/chunks" % quote(stream_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def close_agentbus_stream(self, stream_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agentbus/streams/%s/close" % quote(stream_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def list_agentbus_streams(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/agentbus/streams", **kw))
+
+    def read_agentbus_chunks(self, stream_id: str, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/agentbus/streams/%s/chunks" % quote(stream_id, safe=""), **kw)
+        )
+
+    def publish_agentbus_content(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agentbus", _drop_none(kw)))
+
+    # -- Review / Publish ---------------------------------------------------
+
+    def request_review(self, task_id: str, reviewer_agent_id: str, actor: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/reviews" % quote(task_id, safe=""),
+                {"reviewer_agent_id": reviewer_agent_id, "actor": actor},
+            )
+        )
+
+    def submit_review(self, review_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/reviews/%s/decision" % quote(review_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def publish_task(
+        self,
+        task_id: str,
+        target: str,
+        created_by: str,
+        *,
+        evidence_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/publications",
+                _drop_none(
+                    {
+                        "task_id": task_id,
+                        "target": target,
+                        "created_by": created_by,
+                        "evidence_id": evidence_id,
+                    }
+                ),
+            )
+        )
+
+    # -- Secret -------------------------------------------------------------
+
+    def create_secret(
+        self,
+        name: str,
+        value: str,
+        scopes: Dict[str, Any],
+        created_by: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/secrets",
+                {"name": name, "value": value, "scopes": scopes, "created_by": created_by},
+            )
+        )
+
+    def list_secrets(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/secrets"))
+
+    def request_secret(self, secret: str, agent_id: str, purpose: str) -> _Dictish:
+        # The api.py route is /secrets/{secret_id}/access; the cli passes
+        # `secret` as the id-or-name (mac.cli.cmd_secret_request).
+        return _Dictish(
+            self._post(
+                "/secrets/%s/access" % quote(secret, safe=""),
+                {"agent_id": agent_id, "purpose": purpose},
+            )
+        )
+
+    def list_secret_audits(self, secret_id: str) -> List[_Dictish]:
+        return _wrap_list(self._get("/secret-audits", secret_id=secret_id))
+
+    # -- Runtime / Artifact / Environment / Deployment ----------------------
+
+    def create_runtime(self, name: str, manifest: Dict[str, Any], created_by: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/runtimes",
+                {"name": name, "manifest": manifest, "created_by": created_by},
+            )
+        )
+
+    def list_runtimes(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/runtimes"))
+
+    def register_artifact(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/artifacts", _drop_none(kw)))
+
+    def list_artifacts(self, kind: Optional[str] = None) -> List[_Dictish]:
+        return _wrap_list(self._get("/artifacts", kind=kind))
+
+    def get_artifact(self, artifact: str) -> _Dictish:
+        return _Dictish(self._get("/artifacts/%s" % quote(artifact, safe="")))
+
+    def register_environment(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/environments", _drop_none(kw)))
+
+    def list_environments(
+        self,
+        tenant_id: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(self._get("/environments", tenant_id=tenant_id, channel=channel))
+
+    def get_environment(self, environment: str) -> _Dictish:
+        return _Dictish(self._get("/environments/%s" % quote(environment, safe="")))
+
+    def deploy_artifact(self, environment: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/environments/%s/deploy" % quote(environment, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def current_deployment(self, environment: str) -> Optional[_Dictish]:
+        resp = self._get("/environments/%s/current" % quote(environment, safe=""))
+        return _Dictish(resp) if resp else None
+
+    def list_deployments(self, environment: str) -> List[_Dictish]:
+        return _wrap_list(self._get("/environments/%s/deployments" % quote(environment, safe="")))
+
+    # -- Bridge (beads / project items) -------------------------------------
+
+    def list_beads_repositories(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/bridge/beads/repositories"))
+
+    def register_beads_repository(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/bridge/beads/repositories", _drop_none(kw)))
+
+    def poll_beads_repositories(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/bridge/beads/poll", _drop_none(kw)))
+
+    def import_project_item(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/bridge/items", _drop_none(kw)))
+
+    def list_project_items(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/bridge/items", **kw))
+
+    # -- Integrations -------------------------------------------------------
+
+    def list_integration_findings(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/integrations/findings", **kw))
+
+    def list_integration_observations(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/integrations/observations", **kw))
+
+    # -- Memory (note: list/forget remain SQL-direct, handled via store) ----
+
+    def add_memory(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/memory", _drop_none(kw)))
+
+    def search_memory(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/memory", **kw))
+
+    # -- Rollout ------------------------------------------------------------
+
+    def create_rollout(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/rollouts", _drop_none(kw)))
+
+    def list_rollouts(
+        self,
+        tenant_id: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(self._get("/rollouts", tenant_id=tenant_id, channel=channel))
+
+    def advance_rollout(
+        self,
+        rollout_id: str,
+        action: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/rollouts/%s/advance" % quote(rollout_id, safe=""),
+                _drop_none({"action": action, "actor": actor, "detail": detail or {}}),
+            )
+        )
+
+    def verify_rollout_artifact(
+        self,
+        rollout_id: str,
+        artifact_uri: str,
+        artifact_hash: str,
+        actor: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/rollouts/%s/artifact" % quote(rollout_id, safe=""),
+                {
+                    "artifact_uri": artifact_uri,
+                    "artifact_hash": artifact_hash,
+                    "actor": actor,
+                },
+            )
+        )
+
+    def evaluate_rollout_health(
+        self,
+        rollout_id: str,
+        checks: Dict[str, Any],
+        actor: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/rollouts/%s/health" % quote(rollout_id, safe=""),
+                {"checks": checks, "actor": actor},
+            )
+        )
+
+    def rescue_rollout(
+        self,
+        rollout_id: str,
+        actor: str,
+        reason: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> tuple:  # type: ignore[type-arg]
+        resp = self._post(
+            "/rollouts/%s/rescue" % quote(rollout_id, safe=""),
+            _drop_none({"actor": actor, "reason": reason, "detail": detail or {}}),
+        )
+        rollout = resp.get("rollout") if isinstance(resp, dict) else None
+        task = resp.get("task") if isinstance(resp, dict) else None
+        return _Dictish(rollout or {}), _Dictish(task or {})
+
+    # -- Eval ---------------------------------------------------------------
+
+    def create_eval_set(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/eval-sets", _drop_none(kw)))
+
+    def list_eval_sets(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/eval-sets"))
+
+    def get_eval_set(self, eval_set: str) -> _Dictish:
+        return _Dictish(self._get("/eval-sets/%s" % quote(eval_set, safe="")))
+
+    def update_eval_set_baseline(self, eval_set: str, baseline_score: float, actor: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/eval-sets/%s/baseline" % quote(eval_set, safe=""),
+                {"baseline_score": baseline_score, "actor": actor},
+            )
+        )
+
+    def record_eval_run(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/eval-runs", _drop_none(kw)))
+
+    def list_eval_runs(
+        self,
+        eval_set: Optional[str] = None,
+        target_id: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(self._get("/eval-runs", eval_set=eval_set, target_id=target_id))
+
+    # -- Notifier / Observability / Command audit / Events ------------------
+
+    def configure_notifier_channel(self, name: str, channel_type: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/notifier/channels",
+                _drop_none({"name": name, "channel_type": channel_type, **kw}),
+            )
+        )
+
+    def list_notifier_channels(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/notifier/channels", **kw))
+
+    def delete_notifier_channel(self, channel_id_or_name: str) -> _Dictish:
+        return _Dictish(
+            self._delete("/notifier/channels/%s" % quote(channel_id_or_name, safe=""))
+        )
+
+    def deliver_pending_notifications(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/notifier/deliver", _drop_none(kw)))
+
+    def list_events(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/events", **kw))
+
+    def list_command_audit(self, **kw: Any) -> List[_Dictish]:
+        agent_id = kw.pop("agent_id", None)
+        path = (
+            "/agents/%s/command-audit" % quote(agent_id, safe="")
+            if agent_id
+            else "/command-audit"
+        )
+        return _wrap_list(self._get(path, **kw))
+
+    def list_observability(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/observability", **kw))
+
+    def prune_observability(
+        self,
+        older_than: Optional[str] = None,
+        keep_last: Optional[int] = None,
+    ) -> int:
+        # No HTTP endpoint exposes prune. Surface a clear refusal so the
+        # operator either uses --db or waits for the matching route.
+        raise DispatchError(
+            "prune_observability has no HTTP endpoint yet; run `mac --db <path> "
+            "observability prune` against the hub's SQLite file via ssh."
+        )
+
     # -- Unknown methods ----------------------------------------------------
 
     def __getattr__(self, name: str) -> Any:
