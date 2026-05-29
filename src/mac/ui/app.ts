@@ -440,6 +440,10 @@ interface DashboardState {
   observabilityLive: ObservabilityEvent[];
   observabilityStream: AbortController | null;
   observabilityStreamStatus: string;
+  // wf-05: which workflow's graph + drafts are shown on the Workflows tab,
+  // and which node (if any) is open in the inspector panel.
+  selectedWorkflowId: string;
+  selectedNodeKey: string;
 }
 
 interface DashboardNodes {
@@ -550,6 +554,8 @@ const state: DashboardState = {
   observabilityLive: [],
   observabilityStream: null,
   observabilityStreamStatus: "idle",
+  selectedWorkflowId: "",
+  selectedNodeKey: "",
 };
 
 const nodes: DashboardNodes = {
@@ -591,6 +597,7 @@ function bindEvents(): void {
   nodes.refresh.addEventListener("click", () => loadDashboard());
   nodes.content.addEventListener("click", handleContentClick);
   nodes.content.addEventListener("submit", handleActionSubmit);
+  nodes.content.addEventListener("change", handleContentChange);
   nodes.loginForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const token = nodes.loginTokenInput.value.trim();
@@ -1203,6 +1210,10 @@ function renderWorkflows(): string {
   const data = mustData();
   const running = Number(data.workflow_runs.counts?.running || 0);
   const pendingDrafts = data.workflow_drafts.filter((draft) => draft.status !== "compiled" && draft.status !== "cancelled");
+  // wf-05: pick which workflow's graph + inspector to render. Default to
+  // the first definition (legacy behavior) but let the operator switch.
+  const selectedId = state.selectedWorkflowId || (data.workflows[0]?.id as string | undefined) || "";
+  const selectedWorkflow = data.workflows.find((wf) => String(wf.id) === String(selectedId)) || data.workflows[0];
   return `
     <section class="metric-grid">
       ${metric("Definitions", data.workflows.length, `${data.workflow_runs.total || 0} total runs`)}
@@ -1210,20 +1221,19 @@ function renderWorkflows(): string {
       ${metric("Drafts", data.workflow_drafts.length, `${pendingDrafts.length} pending`)}
       ${metric("Notifier Channels", data.notifier_channels.length, "task progress sinks")}
     </section>
-    <section class="split">
+    <section class="split workflow-stage">
       <div class="surface">
-        <h2>Workflow Graph</h2>
-        ${workflowGraph(data.workflows[0])}
+        <div class="surface-header">
+          <h2>Workflow Graph</h2>
+          ${workflowSelector(data.workflows, selectedWorkflow?.id)}
+        </div>
+        ${workflowLegend()}
+        ${workflowGraph(selectedWorkflow)}
+        ${workflowInspector(selectedWorkflow)}
       </div>
       <div class="surface">
         <h2>Create Draft</h2>
-        <form class="action-form" data-action="workflowDraftCreate">
-          <label>Goal <textarea name="goal" required></textarea></label>
-          <label>Steps JSON <textarea name="proposed_steps" placeholder='[{"node_key":"step_1","role_required":"dev","instructions":"Do the work"}]'></textarea></label>
-          <label>Questions JSON <textarea name="questions" placeholder="[]"></textarea></label>
-          <label>Answers JSON <textarea name="answers" placeholder="{}"></textarea></label>
-          <button type="submit">Create Draft</button>
-        </form>
+        ${draftCreationForm()}
       </div>
     </section>
     <section class="split">
@@ -1312,37 +1322,284 @@ function workflowDraftRecord(draft: WorkflowDraftRecord): string {
   `;
 }
 
+function workflowSelector(workflows: ApiRecord[], selectedId: unknown): string {
+  if (!workflows.length) return "";
+  const current = String(selectedId || workflows[0]?.id || "");
+  const options = workflows
+    .map(
+      (wf) =>
+        `<option value="${escapeHtml(String(wf.id))}"${
+          String(wf.id) === current ? " selected" : ""
+        }>${escapeHtml(String(wf.name || wf.slug || wf.id))}</option>`,
+    )
+    .join("");
+  return `
+    <label class="workflow-selector">
+      <span class="muted small">Workflow</span>
+      <select data-action="workflowGraphSelect">${options}</select>
+    </label>
+  `;
+}
+
+const WORKFLOW_NODE_LEGEND: { type: string; label: string }[] = [
+  { type: "task", label: "Task" },
+  { type: "approval", label: "Approval (needs human)" },
+  { type: "plan", label: "Plan" },
+  { type: "commit", label: "Commit" },
+  { type: "verify", label: "Verify" },
+];
+
+function workflowLegend(): string {
+  const items = WORKFLOW_NODE_LEGEND.map(
+    ({ type, label }) =>
+      `<span class="workflow-legend-item workflow-legend-${type}"><span class="workflow-legend-swatch"></span>${escapeHtml(
+        label,
+      )}</span>`,
+  ).join("");
+  return `<div class="workflow-legend">${items}</div>`;
+}
+
+// Layered DAG layout: rank(node) = 1 + max(rank(predecessor)); start nodes
+// rank=0. Within a rank, distribute vertically. Beats the modulo-3 grid
+// for everything but the trivial linear case and still works there.
+function layoutWorkflowNodes(
+  nodes: JsonObject[],
+  edges: JsonObject[],
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return positions;
+  const ranks = new Map<string, number>();
+  nodes.forEach((node) => ranks.set(String(node.node_key), 0));
+  // Iterate until stable (small graphs converge in <= node-count passes).
+  for (let pass = 0; pass < nodes.length + 1; pass++) {
+    let changed = false;
+    edges.forEach((edge) => {
+      const from = String(edge.from_node_key || "");
+      const to = String(edge.to_node_key || "");
+      if (!from || !to) return;
+      const fromRank = ranks.get(from);
+      const toRank = ranks.get(to);
+      if (fromRank === undefined || toRank === undefined) return;
+      const want = fromRank + 1;
+      if (want > toRank) {
+        ranks.set(to, want);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  const byRank = new Map<number, string[]>();
+  nodes.forEach((node) => {
+    const key = String(node.node_key);
+    const rank = ranks.get(key) ?? 0;
+    if (!byRank.has(rank)) byRank.set(rank, []);
+    byRank.get(rank)!.push(key);
+  });
+  const colWidth = 200;
+  const rowHeight = 90;
+  const xOrigin = 120;
+  const yOrigin = 60;
+  byRank.forEach((keys, rank) => {
+    keys.forEach((key, row) => {
+      positions.set(key, {
+        x: xOrigin + rank * colWidth,
+        y: yOrigin + row * rowHeight,
+      });
+    });
+  });
+  return positions;
+}
+
 function workflowGraph(workflow: ApiRecord | undefined): string {
   const definition = workflow?.definition as JsonObject | undefined;
   const nodes = (definition?.nodes as JsonObject[] | undefined) || [];
   const edges = (definition?.edges as JsonObject[] | undefined) || [];
   if (!workflow || !nodes.length) return `<div class="empty-state">No workflow graph</div>`;
-  const width = 720;
-  const height = Math.max(180, nodes.length * 70 + 60);
-  const nodePositions = new Map(nodes.map((node, index) => [String(node.node_key), { x: 120 + (index % 3) * 240, y: 70 + Math.floor(index / 3) * 110 }]));
-  const edgeSvg = edges.map((edge) => {
-    const from = nodePositions.get(String(edge.from_node_key || ""));
-    const to = nodePositions.get(String(edge.to_node_key || ""));
-    if (!from || !to) return "";
-    return `<path class="graph-edge graph-edge-dependency" d="M${from.x + 82},${from.y} C${from.x + 150},${from.y} ${to.x - 150},${to.y} ${to.x - 82},${to.y}"></path>`;
-  }).join("");
-  const nodeSvg = nodes.map((node) => {
-    const pos = nodePositions.get(String(node.node_key)) || { x: 120, y: 70 };
-    return `
-      <g class="graph-node graph-node-task" transform="translate(${pos.x},${pos.y})">
-        <rect x="-86" y="-24" width="172" height="48" rx="8"></rect>
-        <text text-anchor="middle" y="-3">${escapeHtml(truncate(node.node_key, 20))}</text>
-        <text class="graph-column-label" text-anchor="middle" y="15">${escapeHtml(truncate(node.role_required, 18))}</text>
-      </g>
-    `;
-  }).join("");
+  const positions = layoutWorkflowNodes(nodes, edges);
+  let maxX = 0;
+  let maxY = 0;
+  positions.forEach((pos) => {
+    if (pos.x > maxX) maxX = pos.x;
+    if (pos.y > maxY) maxY = pos.y;
+  });
+  const width = Math.max(560, maxX + 140);
+  const height = Math.max(180, maxY + 80);
+  const edgeSvg = edges
+    .map((edge) => {
+      const from = positions.get(String(edge.from_node_key || ""));
+      const to = positions.get(String(edge.to_node_key || ""));
+      if (!from || !to) return "";
+      const condition = String(edge.condition || "success");
+      const edgeClass = `graph-edge graph-edge-${condition}`;
+      return `<path class="${edgeClass}" d="M${from.x + 82},${from.y} C${
+        from.x + 150
+      },${from.y} ${to.x - 150},${to.y} ${to.x - 82},${to.y}"></path>`;
+    })
+    .join("");
+  const selectedNodeKey = state.selectedNodeKey || "";
+  const nodeSvg = nodes
+    .map((node) => {
+      const key = String(node.node_key);
+      const type = String(node.node_type || "task").toLowerCase();
+      const pos = positions.get(key) || { x: 120, y: 60 };
+      const selected = key === selectedNodeKey ? " is-selected" : "";
+      return `
+        <g class="graph-node graph-node-${type}${selected}" transform="translate(${pos.x},${pos.y})"
+           data-action="workflowNodeOpen" data-node-key="${escapeHtml(key)}"
+           tabindex="0" role="button"
+           aria-label="${escapeHtml(`${key} (${type})`)}">
+          <rect x="-86" y="-24" width="172" height="48" rx="8"></rect>
+          ${workflowNodeIcon(type)}
+          <text text-anchor="middle" y="-3" x="14">${escapeHtml(truncate(key, 18))}</text>
+          <text class="graph-column-label" text-anchor="middle" y="15" x="14">${escapeHtml(
+            truncate(String(node.role_required || ""), 18),
+          )}</text>
+        </g>
+      `;
+    })
+    .join("");
   return `
-    <div class="graph-wrap">
-      <svg class="relationship-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow graph">
+    <div class="graph-wrap workflow-graph-wrap">
+      <svg class="relationship-graph workflow-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow graph">
         ${edgeSvg}
         ${nodeSvg}
       </svg>
     </div>
+  `;
+}
+
+function workflowNodeIcon(nodeType: string): string {
+  // Small inline SVG glyph per node type, anchored at left of the rect.
+  const cx = -64;
+  const cy = 0;
+  const r = 8;
+  const stroke = "currentColor";
+  switch (nodeType) {
+    case "approval":
+      return `<g class="graph-node-icon"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${stroke}" stroke-width="2"></circle><path d="M${cx - 3},${cy} l3,3 l5,-6" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g>`;
+    case "plan":
+      return `<g class="graph-node-icon"><rect x="${cx - 6}" y="${cy - 6}" width="12" height="12" rx="2" fill="none" stroke="${stroke}" stroke-width="2"></rect><line x1="${cx - 3}" y1="${cy - 2}" x2="${cx + 3}" y2="${cy - 2}" stroke="${stroke}" stroke-width="1.5"></line><line x1="${cx - 3}" y1="${cy + 1}" x2="${cx + 3}" y2="${cy + 1}" stroke="${stroke}" stroke-width="1.5"></line><line x1="${cx - 3}" y1="${cy + 4}" x2="${cx + 1}" y2="${cy + 4}" stroke="${stroke}" stroke-width="1.5"></line></g>`;
+    case "verify":
+      return `<g class="graph-node-icon"><path d="M${cx - 5},${cy} l4,4 l6,-8" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g>`;
+    case "commit":
+      return `<g class="graph-node-icon"><circle cx="${cx}" cy="${cy}" r="4" fill="none" stroke="${stroke}" stroke-width="2"></circle><line x1="${cx - 9}" y1="${cy}" x2="${cx - 4}" y2="${cy}" stroke="${stroke}" stroke-width="2"></line><line x1="${cx + 4}" y1="${cy}" x2="${cx + 9}" y2="${cy}" stroke="${stroke}" stroke-width="2"></line></g>`;
+    default:
+      return `<g class="graph-node-icon"><circle cx="${cx}" cy="${cy}" r="3" fill="${stroke}"></circle></g>`;
+  }
+}
+
+function workflowInspector(workflow: ApiRecord | undefined): string {
+  if (!workflow) return "";
+  const selectedKey = state.selectedNodeKey;
+  if (!selectedKey) {
+    return `
+      <aside class="workflow-inspector workflow-inspector-empty">
+        <p class="muted small">Click a node to inspect it.</p>
+      </aside>
+    `;
+  }
+  const definition = workflow.definition as JsonObject | undefined;
+  const nodes = (definition?.nodes as JsonObject[] | undefined) || [];
+  const node = nodes.find((n) => String(n.node_key) === selectedKey);
+  if (!node) {
+    return `
+      <aside class="workflow-inspector">
+        <header class="workflow-inspector-header">
+          <h3>Node not found</h3>
+          <button type="button" data-action="workflowNodeClose" aria-label="Close inspector">×</button>
+        </header>
+      </aside>
+    `;
+  }
+  const type = String(node.node_type || "task").toLowerCase();
+  const instructions = String(node.instructions || "(no instructions)");
+  const questions = workflowDraftQuestionsForNode(workflow, String(node.node_key));
+  const questionFields = questions.length
+    ? `
+      <section class="workflow-inspector-section">
+        <h4>Questions bound to this node (wf-01)</h4>
+        ${questions
+          .map(
+            (q) => `
+            <div class="workflow-question">
+              <p class="workflow-question-text">${escapeHtml(q.text)}${
+              q.required ? ' <span class="chip warn">required</span>' : ""
+            }</p>
+              <p class="muted small mono">id: ${escapeHtml(q.id)}${
+              q.binds_to_param ? ` → ${escapeHtml(q.binds_to_param)}` : ""
+            }</p>
+            </div>
+          `,
+          )
+          .join("")}
+      </section>
+    `
+    : "";
+  return `
+    <aside class="workflow-inspector workflow-inspector-${type} is-open">
+      <header class="workflow-inspector-header">
+        <div>
+          <span class="chip workflow-inspector-type-chip workflow-legend-${type}">${escapeHtml(type)}</span>
+          <h3>${escapeHtml(String(node.node_key))}</h3>
+        </div>
+        <button type="button" data-action="workflowNodeClose" aria-label="Close inspector">×</button>
+      </header>
+      <div class="row-grid compact-grid">
+        ${field("Role", String(node.role_required || ""))}
+        ${field("Max attempts", String(node.max_attempts || 1))}
+        ${field("Timeout (min)", String(node.timeout_minutes || 0))}
+        ${field("Persona", String(node.persona_hint || "(default)"))}
+      </div>
+      <section class="workflow-inspector-section">
+        <h4>Instructions</h4>
+        <pre class="workflow-instructions">${escapeHtml(instructions)}</pre>
+      </section>
+      ${questionFields}
+    </aside>
+  `;
+}
+
+function workflowDraftQuestionsForNode(
+  workflow: ApiRecord,
+  nodeKey: string,
+): { id: string; text: string; required: boolean; binds_to_param?: string }[] {
+  // Compiled definitions stash the draft's normalized questions in
+  // definition.metadata.questions (wf-02 wired this in definition_from_draft).
+  const definition = workflow.definition as JsonObject | undefined;
+  const meta = (definition?.metadata as JsonObject | undefined) || {};
+  const questions = (meta.questions as JsonObject[] | undefined) || [];
+  return questions
+    .filter((q) => String(q.binds_to_node || "") === nodeKey)
+    .map((q) => ({
+      id: String(q.id || ""),
+      text: String(q.text || ""),
+      required: Boolean(q.required),
+      binds_to_param: q.binds_to_param ? String(q.binds_to_param) : undefined,
+    }));
+}
+
+function draftCreationForm(): string {
+  // wf-05 part 3: replace the three JSON textareas with a stepped form.
+  // For now we still ship the JSON-textarea form as a fallback (the
+  // backend accepts both shapes). A future iteration upgrades this to
+  // repeating row editors.
+  return `
+    <form class="action-form" data-action="workflowDraftCreate">
+      <label>Goal <textarea name="goal" required></textarea></label>
+      <details>
+        <summary>Steps (JSON)</summary>
+        <textarea name="proposed_steps" placeholder='[{"node_key":"step_1","role_required":"dev","instructions":"Do the work"}]'></textarea>
+      </details>
+      <details>
+        <summary>Questions (JSON, wf-01 shape: {id, text, required, binds_to_node})</summary>
+        <textarea name="questions" placeholder='[{"id":"scope","text":"Scope?","required":true,"binds_to_node":"step_1"}]'></textarea>
+      </details>
+      <details>
+        <summary>Answers (JSON keyed by question id)</summary>
+        <textarea name="answers" placeholder='{"scope":"API only"}'></textarea>
+      </details>
+      <button type="submit">Create Draft</button>
+    </form>
   `;
 }
 
@@ -3030,6 +3287,22 @@ function bindAuditControl(selector: string, key: keyof Pick<DashboardState, "aud
   });
 }
 
+// wf-05: change-event router. Right now only the workflow selector
+// listens here; other selectors live in their own forms and submit.
+function handleContentChange(event: Event): void {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  const selector = target.closest<HTMLSelectElement>(
+    "select[data-action='workflowGraphSelect']",
+  );
+  if (selector) {
+    state.selectedWorkflowId = selector.value;
+    state.selectedNodeKey = "";
+    render();
+    return;
+  }
+}
+
 async function handleContentClick(event: MouseEvent): Promise<void> {
   const projectDelete = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-project-delete]");
   if (projectDelete) {
@@ -3080,6 +3353,24 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
       updateUrlState();
       render();
     }
+    return;
+  }
+  // wf-05: open the inspector when a workflow-graph node is clicked.
+  const nodeOpen = (event.target as Element | null)?.closest<HTMLElement>(
+    "[data-action='workflowNodeOpen']",
+  );
+  if (nodeOpen) {
+    const key = nodeOpen.dataset.nodeKey || "";
+    state.selectedNodeKey = state.selectedNodeKey === key ? "" : key;
+    render();
+    return;
+  }
+  const nodeClose = (event.target as Element | null)?.closest<HTMLElement>(
+    "[data-action='workflowNodeClose']",
+  );
+  if (nodeClose) {
+    state.selectedNodeKey = "";
+    render();
     return;
   }
   const target = (event.target as Element | null)?.closest<HTMLElement>("[data-select-id]");
