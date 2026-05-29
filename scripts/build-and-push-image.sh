@@ -108,15 +108,26 @@ IMAGE_REF="${IMAGE}:${TAG}"
 
 # ----------------------------------------------------------------------
 # Tool checks
+#
+# Prefer real `docker` on PATH; fall back to `podman` (which exposes
+# `podman buildx` as a buildah-backed shim). On macOS the user often
+# only has podman installed and aliases `docker` to it in their shell
+# — that alias isn't visible to non-interactive subshells, so we
+# detect podman explicitly here.
 # ----------------------------------------------------------------------
 
-if ! command -v docker >/dev/null 2>&1; then
-    echo "docker is required (the docker CLI / podman alias must be on PATH)" >&2
+if command -v docker >/dev/null 2>&1; then
+    DOCKER=docker
+elif command -v podman >/dev/null 2>&1; then
+    DOCKER=podman
+    echo "==> docker not on PATH; using podman ($(podman --version))"
+else
+    echo "docker or podman is required on PATH" >&2
     exit 1
 fi
 
-if ! docker buildx version >/dev/null 2>&1; then
-    echo "docker buildx is required (Docker Desktop ships it; on Linux: 'apt install docker-buildx-plugin' or build from source)" >&2
+if ! "${DOCKER}" buildx version >/dev/null 2>&1; then
+    echo "${DOCKER} buildx is required (Docker Desktop ships it; podman provides a buildah-backed shim; on Linux: 'apt install docker-buildx-plugin')" >&2
     exit 1
 fi
 
@@ -124,16 +135,24 @@ fi
 # Builder bootstrap. On macOS Apple Silicon, the default 'desktop-linux'
 # builder can usually do cross-arch via QEMU, but a docker-container
 # builder is more reliable for amd64 from arm64. Create one if missing.
+#
+# podman's buildx shim doesn't support `buildx create --driver
+# docker-container` — it has no concept of named builders. Skip the
+# bootstrap when running under podman.
 # ----------------------------------------------------------------------
 
-if ! docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
-    echo "==> bootstrapping buildx builder '${BUILDER_NAME}' (docker-container driver)"
-    docker buildx create \
-        --name "${BUILDER_NAME}" \
-        --driver docker-container \
-        --bootstrap >/dev/null
+if [ "${DOCKER}" = "docker" ]; then
+    if ! "${DOCKER}" buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
+        echo "==> bootstrapping buildx builder '${BUILDER_NAME}' (docker-container driver)"
+        "${DOCKER}" buildx create \
+            --name "${BUILDER_NAME}" \
+            --driver docker-container \
+            --bootstrap >/dev/null
+    fi
+    echo "==> using buildx builder: ${BUILDER_NAME}"
+else
+    echo "==> podman: skipping named-builder bootstrap (uses buildah backend directly)"
 fi
-echo "==> using buildx builder: ${BUILDER_NAME}"
 
 # ----------------------------------------------------------------------
 # Build
@@ -143,27 +162,44 @@ METADATA_FILE="$(mktemp -t mac-build-meta.XXXXXX.json)"
 trap 'rm -f "${METADATA_FILE}"' EXIT
 
 BUILD_ARGS=(
-    --builder "${BUILDER_NAME}"
     --platform "${PLATFORM}"
     --file "${DOCKERFILE}"
     --tag "${IMAGE_REF}"
-    --metadata-file "${METADATA_FILE}"
 )
+
+# `--builder` and `--metadata-file` are docker-buildx-only flags;
+# podman's buildx shim (buildah-backed) doesn't accept them.
+# Skip them when running under podman — we can still resolve the
+# pushed digest via `podman image inspect` after the build.
+if [ "${DOCKER}" = "docker" ]; then
+    BUILD_ARGS=(
+        --builder "${BUILDER_NAME}"
+        --metadata-file "${METADATA_FILE}"
+        "${BUILD_ARGS[@]}"
+    )
+fi
 
 if [[ "${NO_CACHE}" == "1" ]]; then
     BUILD_ARGS+=(--no-cache)
 fi
 
-if [[ "${PUSH}" == "1" ]]; then
-    BUILD_ARGS+=(--push)
-else
-    # --load only works for a single-platform build, which is what we
-    # do by default. Multi-platform builds REQUIRE --push.
-    if [[ "${PLATFORM}" == *","* ]]; then
-        echo "multi-platform build (${PLATFORM}) requires --push; either drop platforms to one, or pass --push" >&2
-        exit 1
+# docker buildx supports `--push` and `--load` directly on the
+# build invocation; podman's buildx shim does not — it builds into
+# local storage and requires a separate `podman push`. Multi-platform
+# builds still require --push under docker.
+if [ "${DOCKER}" = "docker" ]; then
+    if [[ "${PUSH}" == "1" ]]; then
+        BUILD_ARGS+=(--push)
+    else
+        if [[ "${PLATFORM}" == *","* ]]; then
+            echo "multi-platform build (${PLATFORM}) requires --push; either drop platforms to one, or pass --push" >&2
+            exit 1
+        fi
+        BUILD_ARGS+=(--load)
     fi
-    BUILD_ARGS+=(--load)
+elif [[ "${PLATFORM}" == *","* ]]; then
+    echo "multi-platform builds aren't supported under podman in this script" >&2
+    exit 1
 fi
 
 echo "==> building ${IMAGE_REF}"
@@ -171,8 +207,15 @@ echo "    platform:    ${PLATFORM}"
 echo "    dockerfile:  ${DOCKERFILE}"
 echo "    context:     ${BUILD_CONTEXT}"
 echo "    push:        $( [[ ${PUSH} == 1 ]] && echo yes || echo no )"
+echo "    runtime:     ${DOCKER}"
 
-docker buildx build "${BUILD_ARGS[@]}" "${BUILD_CONTEXT}"
+"${DOCKER}" buildx build "${BUILD_ARGS[@]}" "${BUILD_CONTEXT}"
+
+# podman builds into local storage; push separately when requested.
+if [ "${DOCKER}" = "podman" ] && [[ "${PUSH}" == "1" ]]; then
+    echo "==> pushing ${IMAGE_REF}"
+    "${DOCKER}" push "${IMAGE_REF}"
+fi
 
 # ----------------------------------------------------------------------
 # Resolve the immutable digest written by buildx into the metadata file.
