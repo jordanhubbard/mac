@@ -712,7 +712,114 @@ class WorkflowService:
                 "priority": 1,
             }
         )
-        return {"metadata": {"draft_id": draft.id, "workflow_type": workflow_type}, "nodes": nodes, "edges": edges}
+        # Stash the normalized questions on the compiled definition so
+        # downstream readers (wf-02 decisions inventory, wf-05 UI) don't
+        # have to fetch the source draft, which may have been cancelled
+        # or deleted by then.
+        return {
+            "metadata": {
+                "draft_id": draft.id,
+                "workflow_type": workflow_type,
+                "questions": list(draft.questions or []),
+            },
+            "nodes": nodes,
+            "edges": edges,
+        }
+
+    # Decisions inventory (wf-02) ----------------------------------------
+
+    def decisions_for_workflow(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> JsonDict:
+        """Enumerate every human-decision gate in a workflow.
+
+        Returns the workflow id/version/slug plus a `decisions` list of
+        approval-node entries. Each entry includes the bound questions
+        (from wf-01) so an operator can see what context the decision
+        needs. Pre-decision state is always None at this layer — for
+        live-run context use :meth:`decisions_for_run`.
+        """
+        workflow = self.get_workflow(workflow_id_or_slug, tenant_id=tenant_id)
+        return {
+            "workflow_id": workflow.id,
+            "workflow_slug": workflow.slug,
+            "workflow_version": workflow.version,
+            "decisions": self._decisions_from_definition(workflow.definition),
+        }
+
+    def decisions_for_run(self, run: Any) -> JsonDict:
+        """Enumerate the human-decision gates in a live run.
+
+        `run` is a WorkflowRun (caller fetches it through the runtime).
+        Each decision entry adds `is_current` (True if the run is parked
+        at this approval node now) and `state` ("pending"/"future").
+        Pre-decisions (wf-03) populate this layer when that ticket
+        lands.
+        """
+        decisions = self._decisions_from_definition(run.definition_snapshot)
+        pre = (run.context or {}).get("pre_decisions") or {}
+        for entry in decisions:
+            node_key = entry["node_key"]
+            entry["is_current"] = node_key == run.current_node_key
+            if entry["is_current"]:
+                entry["current_task_id"] = run.current_task_id
+                entry["state"] = "pending"
+            elif node_key in pre:
+                entry["state"] = "pre_decided"
+            else:
+                entry["state"] = "future"
+            entry["pre_decision"] = pre.get(node_key)
+        return {
+            "run_id": run.id,
+            "workflow_id": run.workflow_id,
+            "run_state": run.state,
+            "current_node_key": run.current_node_key,
+            "decisions": decisions,
+        }
+
+    def _decisions_from_definition(self, definition: JsonDict) -> List[JsonDict]:
+        nodes = (definition or {}).get("nodes") or []
+        edges = (definition or {}).get("edges") or []
+        questions = ((definition or {}).get("metadata") or {}).get("questions") or []
+        outgoing: Dict[str, List[JsonDict]] = {}
+        for edge in edges:
+            key = str(edge.get("from_node_key") or "")
+            outgoing.setdefault(key, []).append(
+                {
+                    "to_node_key": edge.get("to_node_key"),
+                    "condition": edge.get("condition"),
+                    "priority": edge.get("priority"),
+                }
+            )
+        out: List[JsonDict] = []
+        for node in nodes:
+            if str(node.get("node_type") or "task").strip().lower() != "approval":
+                continue
+            node_key = node.get("node_key")
+            bound = [
+                {
+                    "id": q.get("id"),
+                    "text": q.get("text"),
+                    "required": bool(q.get("required")),
+                    "binds_to_param": q.get("binds_to_param"),
+                }
+                for q in questions
+                if q.get("binds_to_node") == node_key
+            ]
+            out.append(
+                {
+                    "node_key": node_key,
+                    "node_type": "approval",
+                    "role_required": node.get("role_required"),
+                    "instructions": node.get("instructions"),
+                    "bound_questions": bound,
+                    "outgoing_edges": outgoing.get(str(node_key) or "", []),
+                }
+            )
+        return out
 
     def _definition_fingerprint(self, definition: Dict[str, Any]) -> str:
         import hashlib

@@ -343,6 +343,26 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    # -- Workflow decisions (wf-02) -----------------------------------------
+
+    def workflow_decisions(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/workflows/%s/decisions" % quote(workflow_id_or_slug, safe=""),
+                tenant_id=tenant_id,
+            )
+        )
+
+    def workflow_run_decisions(self, run_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/workflows/runs/%s/decisions" % quote(run_id, safe=""))
+        )
+
     # -- Tenant / User / Persona / Hermes / Binding / Interaction -----------
 
     def register_tenant(self, name: str, **kw: Any) -> _Dictish:

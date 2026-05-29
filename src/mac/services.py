@@ -2545,6 +2545,22 @@ class ControlPlane:
     def list_workflow_runs(self, *args: Any, **kwargs: Any) -> List[WorkflowRun]:
         return self.workflow_runtime.list_runs(*args, **kwargs)
 
+    def workflow_decisions(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> JsonDict:
+        """Enumerate every human-decision gate in a workflow definition."""
+        return self.workflows.decisions_for_workflow(
+            workflow_id_or_slug, tenant_id=tenant_id
+        )
+
+    def workflow_run_decisions(self, run_id: str) -> JsonDict:
+        """Enumerate human-decision gates for a live workflow run."""
+        run = self.workflow_runtime.get_run(run_id)
+        return self.workflows.decisions_for_run(run)
+
     def cancel_workflow_run(self, *args: Any, **kwargs: Any) -> WorkflowRun:
         return self.workflow_runtime.cancel_run(*args, **kwargs)
 

@@ -2896,6 +2896,24 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [run.to_dict() for run in cp.workflow_runtime.tick()]
 
+    # wf-02: decisions inventory — enumerate every approval-node gate
+    # in a workflow (or a live run) so a human can preview all the
+    # input the system will need.
+    @app.get("/workflows/{workflow_id_or_slug}/decisions")
+    def workflow_decisions(
+        workflow_id_or_slug: str,
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_decisions(workflow_id_or_slug, tenant_id=tenant_id)
+
+    @app.get("/workflows/runs/{run_id}/decisions")
+    def workflow_run_decisions(
+        run_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_run_decisions(run_id)
+
     @app.get("/fleet/build-distribution")
     def fleet_build_distribution() -> Dict[str, Any]:
         return cp.fleet_build_distribution()

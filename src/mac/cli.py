@@ -1124,6 +1124,16 @@ def cmd_observability_prune(args: argparse.Namespace) -> None:
     _print({"removed": removed})
 
 
+def cmd_workflow_decisions(args: argparse.Namespace) -> None:
+    """wf-02: list every human-decision gate in a workflow or live run."""
+    cp = _plane(args)
+    target = args.id_or_slug
+    if target.startswith("run_"):
+        _print(cp.workflow_run_decisions(target))
+    else:
+        _print(cp.workflow_decisions(target, tenant_id=args.tenant_id))
+
+
 def cmd_notifier_configure(args: argparse.Namespace) -> None:
     _print(
         _plane(args).configure_notifier_channel(
@@ -2066,6 +2076,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_acc.add_argument("--report", help="write the migration report JSON to this path")
     _set(cmd_migrate_acc, migrate_acc)
+
+    workflow = sub.add_parser(
+        "workflow",
+        help="workflow inspection (graph definitions, runs, decision gates)",
+    ).add_subparsers(dest="workflow_command", required=True)
+    workflow_decisions = workflow.add_parser(
+        "decisions",
+        help="list every human-decision (approval) gate in a workflow or a "
+        "live run. Pass a workflow id/slug to see the definition's gates, "
+        "or a run id (prefix run_) for live state.",
+    )
+    workflow_decisions.add_argument(
+        "id_or_slug",
+        help="workflow id/slug, or workflow-run id (prefix `run_`)",
+    )
+    workflow_decisions.add_argument(
+        "--tenant-id",
+        help="scope a slug lookup to a tenant",
+    )
+    _set(cmd_workflow_decisions, workflow_decisions)
 
     eval_root = sub.add_parser("eval", help="evaluation sets and runs").add_subparsers(
         dest="eval_command", required=True
