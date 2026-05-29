@@ -4772,7 +4772,10 @@ class ControlPlane:
         *,
         sync_beads: bool = True,
     ) -> Evidence:
-        self.get_task(task_id)
+        task = self.get_task(task_id)
+        if task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
+            if not self._lease_actor_allowed(task, created_by):
+                raise AuthorizationError("agent does not own task lease")
         if not kind or not uri or not summary:
             raise ValidationError("evidence requires kind, uri, and summary")
         if kind not in EVIDENCE_KINDS:
@@ -11112,14 +11115,36 @@ class ControlPlane:
         # below stays the dominant matcher for un-roled fleets.
         required_role = task.metadata.get("required_role") if isinstance(task.metadata, dict) else None
         if required_role:
-            if agent.role_id is None:
-                return False
+            # Look up the target role first. An unknown role can never be
+            # served, regardless of whether the agent is role-bound or a
+            # multi-role dispatcher — fail closed.
             try:
-                role = self.roles.get_role(agent.role_id)
+                target_role = self.roles.get_role(str(required_role))
             except NotFoundError:
                 return False
-            if role.slug != required_role:
-                return False
+            if agent.role_id is not None:
+                # Role-bound agent: keep the strict slug match so a tenant
+                # using role-specific agents still gets the original
+                # routing guarantee.
+                try:
+                    bound_role = self.roles.get_role(agent.role_id)
+                except NotFoundError:
+                    return False
+                if bound_role.slug != required_role:
+                    return False
+            else:
+                # Dispatcher case (job-per-task roles spec §6.1 Option B):
+                # the runner agent has no role_id but carries the union of
+                # role capabilities and re-attributes the work to a
+                # role-specific identity at Job-launch time. Allow the
+                # claim iff the dispatcher's capabilities cover the
+                # target role's required_capabilities. The task-level
+                # capabilities are still enforced by the union check at
+                # the end of this method.
+                if not set(target_role.required_capabilities).issubset(
+                    set(agent.capabilities)
+                ):
+                    return False
         role_required_caps: set = set()
         if agent.role_id is not None:
             try:
