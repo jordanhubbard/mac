@@ -734,6 +734,30 @@ class RemoteDispatch:
     def search_memory(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/memory", **kw))
 
+    # mem-09: recall over the vector tier.
+    def recall_memory(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **_extra: Any,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/v1/memory/recall",
+                q=query,
+                tier=tier,
+                limit=limit,
+                min_score=min_score,
+                project=project,
+                tenant_id=tenant_id,
+            )
+        )
+
     # -- Rollout ------------------------------------------------------------
 
     def create_rollout(self, **kw: Any) -> _Dictish:

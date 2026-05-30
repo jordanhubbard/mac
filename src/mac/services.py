@@ -6136,6 +6136,47 @@ class ControlPlane:
     def begin_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.begin_nap(*args, **kwargs)
 
+    def recall_memory(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+    ) -> List[JsonDict]:
+        """mem-09: vector-tier recall.
+
+        Embeds ``query`` and returns the top hits in the chosen tier
+        as the mem-09 standard shape (memory_id, task_id, score,
+        summary, ...). Server-side filters cover project/tenant; pass
+        a pre-built VectorWriterService when the caller already has
+        one to skip repeated initialization.
+        """
+        if not query or not str(query).strip():
+            raise ValidationError("recall_memory requires a non-empty query")
+        if vector_writer is None:
+            url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+            if not url:
+                raise ValidationError(
+                    "recall_memory needs a Qdrant URL — pass qdrant_url or set "
+                    "MAC_QDRANT_URL"
+                )
+            from mac.vector_writer_service import VectorWriterService
+
+            vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
+        return vector_writer.recall(
+            query,
+            tier=tier,
+            limit=limit,
+            score_threshold=min_score,
+            project=project,
+            tenant_id=tenant_id,
+        )
+
     def consolidate_nap(
         self,
         agent_id: str,

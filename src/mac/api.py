@@ -3823,6 +3823,26 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
 
+    # mem-09: vector-tier recall.
+    @app.get("/v1/memory/recall")
+    def recall_memory(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_memory(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            tenant_id=tenant_id,
+        )
+
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:
         return cp.create_eval_set(**_data(body)).to_dict()

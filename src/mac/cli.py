@@ -999,10 +999,22 @@ def cmd_memory_backfill(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_recall(args: argparse.Namespace) -> None:
-    """mem-07: minimal recall — embed query, find top hits in Qdrant.
-    The full mem-09 recall API will subsume this."""
-    writer = _build_vector_writer(args)
-    _print(writer.recall(args.query, tier=args.tier, limit=args.limit))
+    """mem-09: vector-tier recall, hub-routable when MAC_API_URL is set."""
+    cp = _plane(args)
+    # If the dispatch is local (operator running `mac --db ...`), we
+    # need to provide a Qdrant URL; if it's remote, the HTTP route
+    # already resolves Qdrant on the hub side.
+    qdrant_url = getattr(args, "qdrant_url", None)
+    kwargs = {
+        "tier": args.tier,
+        "limit": args.limit,
+        "min_score": args.min_score,
+        "project": args.project,
+        "tenant_id": args.tenant_id,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.recall_memory(args.query, **kwargs))
 
 
 def cmd_nap_consolidate(args: argparse.Namespace) -> None:
@@ -2032,14 +2044,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     memory_recall = memory.add_parser(
         "recall",
-        help="minimal MVP recall: embed a query and return top hits (mem-09 will subsume)",
+        help="vector-tier recall (mem-09): embed query and return top "
+        "ranked memory hits with their summaries",
     )
     memory_recall.add_argument("query")
     memory_recall.add_argument(
         "--tier", choices=("medium", "long"), default="medium"
     )
     memory_recall.add_argument("--limit", type=int, default=5)
-    memory_recall.add_argument("--qdrant-url")
+    memory_recall.add_argument(
+        "--min-score", type=float,
+        help="drop hits below this cosine score (0.0–1.0)",
+    )
+    memory_recall.add_argument(
+        "--project",
+        help="server-side filter: only return hits whose payload project matches",
+    )
+    memory_recall.add_argument(
+        "--tenant-id",
+        help="server-side filter: only return hits whose payload tenant matches",
+    )
+    memory_recall.add_argument(
+        "--qdrant-url",
+        help="override Qdrant URL when running in local mode (--db). "
+        "Hub mode reads MAC_QDRANT_URL on the hub.",
+    )
     _set(cmd_memory_recall, memory_recall)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)

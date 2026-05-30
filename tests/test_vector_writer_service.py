@@ -68,11 +68,29 @@ class _FakeQdrant:
         if method == "POST" and suffix == "points/search":
             query_vec = list(body.get("vector") or [])
             limit = int(body.get("limit") or 10)
+            # Honor a minimal subset of Qdrant's filter language:
+            # filter.must = [{key: <field>, match: {value: <v>}}, ...]
+            must_clauses = []
+            f = body.get("filter") or {}
+            if isinstance(f, dict):
+                must_clauses = [c for c in (f.get("must") or []) if isinstance(c, dict)]
+
+            def _matches(point_payload):
+                for clause in must_clauses:
+                    key = clause.get("key")
+                    match = clause.get("match") or {}
+                    expected = match.get("value")
+                    if point_payload.get(key) != expected:
+                        return False
+                return True
+
             # Cosine similarity (vectors are L2-normalized by writer).
             results = []
             for stored in self.collections[coll].values():
                 vec = stored["vector"]
                 if not vec or len(vec) != len(query_vec):
+                    continue
+                if must_clauses and not _matches(stored["payload"]):
                     continue
                 score = sum(a * b for a, b in zip(vec, query_vec))
                 results.append(
@@ -224,6 +242,51 @@ def test_writer_refuses_unknown_tier(cp, writer):
     record = _add_memory(cp, "x")
     with pytest.raises(Exception, match="unknown memory tier"):
         writer.embed_memory(record.id, tier="cold")
+
+
+def test_recall_returns_mem09_standard_shape(cp, writer, fake_qdrant):
+    """mem-09: recall hits expose memory_id / task_id / summary at the
+    top level, not buried under payload."""
+    record = _add_memory(cp, "feature: workflow inspector slide-in")
+    writer.embed_memory(record.id)
+    hits = writer.recall("feature: workflow inspector slide-in", limit=1)
+    assert hits, "expected at least one hit"
+    hit = hits[0]
+    # Standard mem-09 fields exposed directly:
+    assert hit["memory_id"] == record.id
+    assert "task_id" in hit  # may be None when memory has none
+    assert hit["score"] > 0.99
+    assert hit["summary"].startswith("feature: workflow inspector")
+    assert hit["subject_type"]
+    # The full payload is still there for callers that want it.
+    assert hit["payload"]["memory_id"] == record.id
+
+
+def test_recall_project_filter_scopes_to_payload_project(cp, writer, fake_qdrant):
+    """mem-09: server-side project filter; only matching points return."""
+    a = cp.add_memory(
+        task_id=None, subject_type="topic", subject_id=None,
+        record_type="note", content="alpha topic", evidence_id=None,
+        created_by="agent_one",
+    )
+    b = cp.add_memory(
+        task_id=None, subject_type="topic", subject_id=None,
+        record_type="note", content="beta topic", evidence_id=None,
+        created_by="agent_one",
+    )
+    writer.embed_memory(a.id)
+    writer.embed_memory(b.id)
+    # Force a project on one of the stored points so we can filter.
+    points = fake_qdrant.collections["mac_memory_medium"]
+    for point in points.values():
+        if point["payload"]["memory_id"] == a.id:
+            point["payload"]["project"] = "proj-alpha"
+    hits = writer.recall("alpha topic", limit=5, project="proj-alpha")
+    assert hits, "filtered query should still return the alpha point"
+    assert all(h["payload"].get("project") == "proj-alpha" for h in hits)
+    # The unfiltered baseline returns both points.
+    baseline = writer.recall("alpha topic", limit=5)
+    assert len(baseline) == 2
 
 
 def test_embed_fn_returning_wrong_dim_is_rejected(cp, fake_qdrant):

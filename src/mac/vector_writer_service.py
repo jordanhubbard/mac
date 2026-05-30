@@ -206,13 +206,18 @@ class VectorWriterService:
         limit: int = 5,
         score_threshold: Optional[float] = None,
         filter_payload: Optional[JsonDict] = None,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Embed ``query_text`` and ask Qdrant for the top hits.
 
-        Returns a list of ``{point_id, score, payload}`` dicts ordered
-        by descending score. This is a minimal MVP of what mem-09 will
-        flesh out; lets operators verify the round-trip works
-        end-to-end before the full recall API lands.
+        Returns mem-09's standard recall-hit shape:
+        ``{memory_id, task_id, score, summary, point_id, payload}``
+        ordered by descending score.
+
+        Server-side filtering: pass ``project`` and/or ``tenant_id`` to
+        scope the search to a project / tenant. Combine with
+        ``filter_payload`` if you need richer Qdrant filter clauses.
         """
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
@@ -230,8 +235,18 @@ class VectorWriterService:
         }
         if score_threshold is not None:
             body["score_threshold"] = float(score_threshold)
+        must_clauses: List[Dict[str, Any]] = []
+        if project:
+            must_clauses.append({"key": "project", "match": {"value": project}})
+        if tenant_id:
+            must_clauses.append({"key": "tenant_id", "match": {"value": tenant_id}})
         if filter_payload:
             body["filter"] = filter_payload
+            # If callers supply both, must clauses get folded in.
+            if must_clauses:
+                body["filter"] = {**filter_payload, "must": (filter_payload.get("must") or []) + must_clauses}
+        elif must_clauses:
+            body["filter"] = {"must": must_clauses}
         response = self._transport(
             "POST",
             "%s/collections/%s/points/search" % (self._qdrant_url, quote(collection, safe="")),
@@ -239,15 +254,24 @@ class VectorWriterService:
             None,
         )
         result = (response or {}).get("result") or []
-        return [
-            {
-                "point_id": str(hit.get("id")),
-                "score": float(hit.get("score") or 0.0),
-                "payload": hit.get("payload") or {},
-            }
-            for hit in result
-            if isinstance(hit, dict)
-        ]
+        hits: List[Dict[str, Any]] = []
+        for raw in result:
+            if not isinstance(raw, dict):
+                continue
+            payload = raw.get("payload") or {}
+            hits.append(
+                {
+                    "memory_id": payload.get("memory_id"),
+                    "task_id": payload.get("task_id"),
+                    "subject_type": payload.get("subject_type"),
+                    "subject_id": payload.get("subject_id"),
+                    "score": float(raw.get("score") or 0.0),
+                    "summary": payload.get("summary"),
+                    "point_id": str(raw.get("id")),
+                    "payload": payload,
+                }
+            )
+        return hits
 
     # -- Internals ----------------------------------------------------------
 
