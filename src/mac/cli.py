@@ -967,6 +967,44 @@ def cmd_memory_remember(args: argparse.Namespace) -> None:
     )
 
 
+def _build_vector_writer(args: argparse.Namespace):
+    """Construct a VectorWriterService for CLI commands. The Qdrant
+    endpoint defaults to MAC_QDRANT_URL or http://127.0.0.1:6333. Tests
+    inject the writer directly; this builder is for operator use.
+    """
+    import os
+
+    from mac.vector_writer_service import VectorWriterService
+
+    cp = _plane(args)
+    qdrant_url = (
+        getattr(args, "qdrant_url", None)
+        or os.environ.get("MAC_QDRANT_URL")
+        or "http://127.0.0.1:6333"
+    )
+    return VectorWriterService(memory=cp.memory, qdrant_url=qdrant_url)
+
+
+def cmd_memory_embed(args: argparse.Namespace) -> None:
+    """mem-07: embed one memory_record into the medium tier."""
+    writer = _build_vector_writer(args)
+    ref = writer.embed_memory(args.memory_id, tier=args.tier)
+    _print(ref.to_dict())
+
+
+def cmd_memory_backfill(args: argparse.Namespace) -> None:
+    """mem-07: embed every memory_record that isn't already in the tier."""
+    writer = _build_vector_writer(args)
+    _print(writer.backfill(tier=args.tier, limit=args.limit))
+
+
+def cmd_memory_recall(args: argparse.Namespace) -> None:
+    """mem-07: minimal recall — embed query, find top hits in Qdrant.
+    The full mem-09 recall API will subsume this."""
+    writer = _build_vector_writer(args)
+    _print(writer.recall(args.query, tier=args.tier, limit=args.limit))
+
+
 def cmd_memory_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = args.project or "default"
@@ -1917,6 +1955,46 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget.add_argument("key")
     memory_forget.add_argument("--project", default="default")
     _set(cmd_memory_forget, memory_forget)
+
+    # mem-07: embed a memory_record into Qdrant + record the vector_ref.
+    memory_embed = memory.add_parser(
+        "embed",
+        help="embed one memory_record into the vector tier (mem-07)",
+    )
+    memory_embed.add_argument("memory_id")
+    memory_embed.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_embed.add_argument(
+        "--qdrant-url",
+        help="override the default Qdrant URL (MAC_QDRANT_URL env or 127.0.0.1:6333)",
+    )
+    _set(cmd_memory_embed, memory_embed)
+
+    memory_backfill = memory.add_parser(
+        "backfill",
+        help="embed every memory_record not yet in the target Qdrant collection (mem-07)",
+    )
+    memory_backfill.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_backfill.add_argument(
+        "--limit", type=int, help="cap embeddings this pass (None = all)"
+    )
+    memory_backfill.add_argument("--qdrant-url")
+    _set(cmd_memory_backfill, memory_backfill)
+
+    memory_recall = memory.add_parser(
+        "recall",
+        help="minimal MVP recall: embed a query and return top hits (mem-09 will subsume)",
+    )
+    memory_recall.add_argument("query")
+    memory_recall.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_recall.add_argument("--limit", type=int, default=5)
+    memory_recall.add_argument("--qdrant-url")
+    _set(cmd_memory_recall, memory_recall)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
     rollout_create = rollout.add_parser("create")
