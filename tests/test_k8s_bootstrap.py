@@ -835,3 +835,114 @@ class TestRegisterProjects:
         )
         with pytest.raises(SystemExit, match="requires name"):
             register_projects(mac, cfg)
+
+    def test_updates_metadata_of_existing_project(self) -> None:
+        """create_project is create-only on the control plane, so a project
+        that already exists keeps its old metadata. Bootstrap must apply the
+        configured metadata to existing projects too (merging over what is
+        there) so GitOps config.yaml changes actually take effect on
+        restart — e.g. adding a publication_target."""
+        existing_meta = {
+            "repository": "https://x/y.git",
+            "default_branch": "main",
+        }
+        puts: List[Dict[str, Any]] = []
+
+        def _projects_post(body: Dict[str, Any]) -> Dict[str, Any]:
+            # Simulate create-only: returns the pre-existing record, NOT the
+            # metadata in the POST body.
+            return {
+                "id": "project_" + body["name"],
+                "name": body["name"],
+                "status": "active",
+                "metadata": dict(existing_meta),
+            }
+
+        def _projects_get(_body: Any) -> Dict[str, Any]:
+            return {
+                "record": {
+                    "id": "project_ivan-plugin",
+                    "name": "ivan-plugin",
+                    "metadata": dict(existing_meta),
+                    "status": "active",
+                }
+            }
+
+        def _projects_put(body: Dict[str, Any]) -> Dict[str, Any]:
+            puts.append(body)
+            return {"name": "ivan-plugin", "metadata": body.get("metadata")}
+
+        mac = _FakeMac(
+            responses={
+                "POST /projects": _projects_post,
+                "GET /projects/ivan-plugin": _projects_get,
+                "PUT /projects/ivan-plugin": _projects_put,
+            }
+        )
+        # Teach the fake to handle PUT.
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+
+        cfg = BootstrapConfig(
+            mac_url="http://x",
+            dispatcher=_dispatcher_cfg(),
+            projects=[
+                {
+                    "name": "ivan-plugin",
+                    "description": "ivan",
+                    "status": "active",
+                    "metadata": {
+                        "repository": "https://x/y.git",
+                        "default_branch": "main",
+                        "publication_target": "gitea://merge-request",
+                    },
+                },
+            ],
+        )
+        register_projects(mac, cfg)
+
+        # The new publication_target must have been PUT onto the project,
+        # merged over the existing metadata (repository preserved).
+        assert len(puts) == 1, "expected one metadata update PUT"
+        meta = puts[0]["metadata"]
+        assert meta["publication_target"] == "gitea://merge-request"
+        assert meta["repository"] == "https://x/y.git"
+        assert meta["default_branch"] == "main"
+
+    def test_no_put_when_metadata_unchanged(self) -> None:
+        """If the existing project metadata already contains the configured
+        keys, bootstrap must not issue a redundant PUT."""
+        meta = {
+            "repository": "https://x/y.git",
+            "default_branch": "main",
+            "publication_target": "gitea://merge-request",
+        }
+        puts: List[Dict[str, Any]] = []
+        mac = _FakeMac(
+            responses={
+                "POST /projects": lambda b: {
+                    "id": "p_" + b["name"],
+                    "name": b["name"],
+                    "status": "active",
+                    "metadata": dict(meta),
+                },
+                "GET /projects/ivan-plugin": lambda _b: {
+                    "record": {"name": "ivan-plugin", "metadata": dict(meta)}
+                },
+                "PUT /projects/ivan-plugin": lambda b: puts.append(b) or {},
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        cfg = BootstrapConfig(
+            mac_url="http://x",
+            dispatcher=_dispatcher_cfg(),
+            projects=[
+                {
+                    "name": "ivan-plugin",
+                    "description": "ivan",
+                    "status": "active",
+                    "metadata": dict(meta),
+                }
+            ],
+        )
+        register_projects(mac, cfg)
+        assert puts == [], "no PUT expected when metadata already matches"

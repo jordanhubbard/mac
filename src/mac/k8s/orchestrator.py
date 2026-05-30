@@ -9,6 +9,61 @@ from typing import List, Optional
 
 controller_loop_failures = 0
 review_loop_failures = 0
+review_tick_loop_failures = 0
+
+
+def _truthy(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _run_review_tick_loop_forever(
+    mac: "object",
+    interval: float,
+    limit: int,
+    actor: str,
+    log: logging.Logger,
+) -> None:
+    """Periodically OPEN reviews for tasks in needs_review/reviewing.
+
+    The review-dispatch loop only *claims* existing reviewer nudges; it
+    does not *open* the first review. The control plane's heartbeat-driven
+    tick requires a configured hub agent that actually heartbeats — which
+    the K8s deployment does not provide. Without an explicit tick a task
+    that reaches needs_review opens no review, emits no reviewer nudge, and
+    stalls forever. This loop drives ``POST /reviews/default/tick`` so the
+    default-review workflow advances autonomously.
+    """
+    global review_tick_loop_failures
+    from urllib.parse import quote  # noqa: WPS433
+
+    path = "/reviews/default/tick?limit=%d&actor=%s" % (
+        max(1, int(limit)),
+        quote(actor, safe=""),
+    )
+    try:
+        while True:
+            try:
+                result = mac.post(path, {})
+                if isinstance(result, dict):
+                    processed = result.get("processed")
+                    if processed:
+                        log.info("review-tick: processed=%s", processed)
+            except Exception:  # noqa: BLE001
+                review_tick_loop_failures += 1
+                log.warning(
+                    "review-tick iteration failed (will retry): "
+                    "review_tick_loop_failures=%d",
+                    review_tick_loop_failures,
+                )
+            time.sleep(interval)
+    except Exception:  # noqa: BLE001
+        review_tick_loop_failures += 1
+        log.exception(
+            "review-tick loop terminated unexpectedly; needs_review tasks "
+            "will NOT auto-advance in this pod until restart. "
+            "review_tick_loop_failures=%d",
+            review_tick_loop_failures,
+        )
 
 
 def _run_controller_loop_forever(
@@ -153,6 +208,38 @@ def main(argv: Optional[List[str]] = None) -> int:
             "review-dispatch loop: no reviewer roles configured "
             "(no role has the 'review' capability) — skipping"
         )
+
+    # Review-tick loop: opens reviews for needs_review tasks. Enabled by
+    # default; disable with MAC_REVIEW_TICK_LOOP_ENABLED=0.
+    if _truthy(os.environ.get("MAC_REVIEW_TICK_LOOP_ENABLED", "1")):
+        tick_interval = float(
+            os.environ.get("MAC_REVIEW_TICK_INTERVAL_SECONDS", "30")
+        )
+        try:
+            tick_limit = int(os.environ.get("MAC_REVIEW_TICK_LIMIT", "25"))
+        except ValueError:
+            tick_limit = 25
+        log.info(
+            "review-tick loop: interval=%.1fs limit=%d actor=%s",
+            tick_interval,
+            tick_limit,
+            runner_cfg.agent_id,
+        )
+        review_tick_thread = threading.Thread(
+            target=_run_review_tick_loop_forever,
+            kwargs={
+                "mac": mac,
+                "interval": tick_interval,
+                "limit": tick_limit,
+                "actor": runner_cfg.agent_id,
+                "log": logging.getLogger("mac-k8s-orchestrator.review-tick"),
+            },
+            name="mac-orchestrator-review-tick",
+            daemon=True,
+        )
+        review_tick_thread.start()
+    else:
+        log.info("review-tick loop: disabled by MAC_REVIEW_TICK_LOOP_ENABLED=0")
 
     try:
         runner_loop(mac, jobs_client, runner_cfg)

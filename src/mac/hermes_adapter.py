@@ -113,6 +113,9 @@ class MacApiClient:
     def post(self, path: str, payload: JsonDict) -> Any:
         return self.request("POST", path, payload)
 
+    def put(self, path: str, payload: JsonDict) -> Any:
+        return self.request("PUT", path, payload)
+
     def request(self, method: str, path: str, payload: Optional[JsonDict]) -> Any:
         if self.transport is not None:
             return self.transport(method, path, payload)

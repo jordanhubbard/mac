@@ -12164,6 +12164,33 @@ class ControlPlane:
             beads_id = acc_metadata.get("beads_id")
             if isinstance(beads_id, str) and beads_id.strip():
                 return "beads://%s" % beads_id.strip()
+        # Fall back to the task's registered project metadata so an
+        # operator can configure a single publication target per project
+        # (e.g. for autonomous coding tasks that all complete the same
+        # way) instead of stamping every task individually.
+        project_target = self._project_publication_target(task)
+        if project_target:
+            return project_target
+        return None
+
+    def _project_publication_target(self, task: Task) -> Optional[str]:
+        project_name = str(getattr(task, "project", "") or "").strip()
+        if not project_name:
+            return None
+        try:
+            record = self.get_project_record(project_name)
+        except NotFoundError:
+            return None
+        meta = ensure_json_object(record.metadata)
+        for key in ("publication_target", "publish_target"):
+            value = meta.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        publication = meta.get("publication")
+        if isinstance(publication, dict):
+            target = publication.get("target")
+            if isinstance(target, str) and target.strip():
+                return target.strip()
         return None
 
     def _record_default_review_observation(

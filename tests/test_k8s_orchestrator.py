@@ -261,6 +261,9 @@ def test_controller_daemon_failure_does_not_kill_runner(
 
     # Short interval so the daemon loops fast.
     monkeypatch.setenv("MAC_CONTROLLER_INTERVAL_SECONDS", "0.01")
+    # Isolate the controller daemon: the review-tick daemon also calls
+    # time.sleep and would race the bounded-sleep counter.
+    monkeypatch.setenv("MAC_REVIEW_TICK_LOOP_ENABLED", "0")
 
     with caplog.at_level(logging.ERROR, logger="mac-k8s-orchestrator.controller"):
         rc = orchestrator.main([])
@@ -327,3 +330,106 @@ def test_run_controller_loop_forever_continues_after_iteration_failure(
 
     assert call_count["n"] >= 2
     assert orchestrator.controller_loop_failures >= 1
+
+
+class _TickMac:
+    """Mac client stub that records POSTs to /reviews/default/tick."""
+
+    def __init__(self) -> None:
+        self.tick_calls: List[str] = []
+
+    def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        if "/reviews/default/tick" in path:
+            self.tick_calls.append(path)
+        return {"processed": 0, "results": []}
+
+
+def test_review_tick_loop_posts_default_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The orchestrator must periodically OPEN reviews for needs_review
+    tasks by POSTing /reviews/default/tick — not merely claim existing
+    nudges. Without this, a task reaching needs_review never gets a review
+    opened and stalls forever."""
+    mac = _TickMac()
+    sleep_calls = {"n": 0}
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] >= 2:
+            raise RuntimeError("stop test loop")
+
+    monkeypatch.setattr(orchestrator.time, "sleep", _fake_sleep)
+    orchestrator.review_tick_loop_failures = 0
+    orchestrator._run_review_tick_loop_forever(
+        mac=mac,
+        interval=0.001,
+        limit=25,
+        actor="mac-runner",
+        log=logging.getLogger("mac-k8s-orchestrator.review-tick"),
+    )
+    assert mac.tick_calls, "review-tick loop must POST /reviews/default/tick"
+    assert any("limit=25" in c for c in mac.tick_calls)
+    assert any("actor=mac-runner" in c for c in mac.tick_calls)
+
+
+def test_review_tick_loop_survives_iteration_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _BoomMac:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("hub unreachable")
+            return {"processed": 0, "results": []}
+
+    mac = _BoomMac()
+    sleep_calls = {"n": 0}
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] >= 2:
+            raise RuntimeError("stop test loop")
+
+    monkeypatch.setattr(orchestrator.time, "sleep", _fake_sleep)
+    orchestrator.review_tick_loop_failures = 0
+    with caplog.at_level(logging.WARNING):
+        orchestrator._run_review_tick_loop_forever(
+            mac=mac,
+            interval=0.001,
+            limit=10,
+            actor="mac-runner",
+            log=logging.getLogger("mac-k8s-orchestrator.review-tick"),
+        )
+    # First iteration failed but loop continued to a second POST.
+    assert mac.calls >= 2
+    assert orchestrator.review_tick_loop_failures >= 1
+
+
+def test_main_starts_review_tick_daemon_thread(
+    baseline_env: None,
+    patched_runtime: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main() must start the review-tick loop as a daemon thread so
+    needs_review tasks auto-advance (open reviews + emit reviewer nudges)."""
+    captured: Dict[str, threading.Thread] = {}
+    real_thread_init = threading.Thread.__init__
+
+    def _spy_init(self: threading.Thread, *args: Any, **kwargs: Any) -> None:
+        real_thread_init(self, *args, **kwargs)
+        if kwargs.get("name") == "mac-orchestrator-review-tick":
+            captured["t"] = self
+
+    monkeypatch.setattr(threading.Thread, "__init__", _spy_init)
+    rc = orchestrator.main([])
+    assert rc == 0
+    t = captured.get("t")
+    assert t is not None, "review-tick thread must be created"
+    assert t.daemon is True, "review-tick thread must be a daemon"
+
+

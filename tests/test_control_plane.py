@@ -754,6 +754,57 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
+def test_default_review_workflow_falls_back_to_project_publication_target(cp):
+    """A task with no publication_target of its own must inherit the
+    target from its registered project, so autonomous tasks complete
+    instead of stalling in REVIEWING (waiting_for_publication_target)."""
+    from tests.conftest import submit_review_verdict
+
+    cp.create_project(
+        "demo-proj",
+        metadata={"publication_target": "test://project-publish"},
+    )
+    worker = register_agent(cp, "worker", ["ops"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Plan project",
+        required_capabilities=["ops"],
+        project="demo-proj",
+        metadata={},  # no publication_target on the task itself
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Work produced",
+            "result": "Edited files and opened MR.",
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://operator-result",
+        "Work produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    first = cp.advance_default_review_workflow(task.id)
+    assert first["status"] == "waiting_for_reviewer_verdict"
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    publications = cp.list_publications(task.id)
+    assert publications[-1].target == "test://project-publish"
+
+
 def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
     from tests.conftest import submit_review_verdict
 

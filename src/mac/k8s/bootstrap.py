@@ -54,6 +54,7 @@ class BootstrapConfig:
 class MacApiProtocol(Protocol):
     def post(self, path: str, body: JsonDict) -> JsonDict: ...
     def get(self, path: str) -> JsonDict: ...
+    def put(self, path: str, body: JsonDict) -> JsonDict: ...
 
 class CoreV1Protocol(Protocol):
     def read_namespaced_secret(self, name: str, namespace: str) -> Any: ...
@@ -226,13 +227,19 @@ def register_projects(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
         name = spec.get("name")
         if not name:
             raise SystemExit("projects entry requires name: %r" % (spec,))
+        desired_metadata = dict(spec.get("metadata") or {})
         body = {
             "name": name,
             "description": spec.get("description") or "",
             "status": spec.get("status") or "active",
-            "metadata": dict(spec.get("metadata") or {}),
+            "metadata": dict(desired_metadata),
             "actor": "mac-k8s-bootstrap",
         }
+        # POST /projects is create-only on the control plane: an existing
+        # project is returned untouched, so config.yaml metadata changes
+        # (e.g. a new publication_target) would never reach an already-
+        # registered project. Reconcile the metadata explicitly so the
+        # GitOps config remains authoritative across restarts.
         resp = mac.post("/projects", body)
         if not isinstance(resp, dict):
             raise SystemExit("POST /projects returned non-object: %r" % (resp,))
@@ -242,6 +249,45 @@ def register_projects(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
             resp.get("id"),
             resp.get("status"),
         )
+        if desired_metadata:
+            _reconcile_project_metadata(mac, str(name), desired_metadata)
+
+
+def _reconcile_project_metadata(
+    mac: MacApiProtocol,
+    name: str,
+    desired_metadata: JsonDict,
+) -> None:
+    """Merge ``desired_metadata`` over the project's current metadata and
+    PUT it back when it differs. Merge (not replace) so keys the live
+    record gained elsewhere are preserved."""
+    try:
+        current = mac.get("/projects/%s" % name)
+    except Exception as exc:  # noqa: BLE001 - reconcile is best-effort.
+        log.warning("project metadata reconcile: GET failed for %s: %s", name, exc)
+        return
+    record = None
+    if isinstance(current, dict):
+        record = current.get("record") or current.get("project") or current
+    existing_metadata = {}
+    if isinstance(record, dict) and isinstance(record.get("metadata"), dict):
+        existing_metadata = dict(record["metadata"])
+    merged = dict(existing_metadata)
+    changed = False
+    for key, value in desired_metadata.items():
+        if merged.get(key) != value:
+            merged[key] = value
+            changed = True
+    if not changed:
+        return
+    try:
+        mac.put(
+            "/projects/%s" % name,
+            {"metadata": merged, "actor": "mac-k8s-bootstrap"},
+        )
+        log.info("project: name=%s metadata updated (keys=%s)", name, sorted(desired_metadata))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("project metadata reconcile: PUT failed for %s: %s", name, exc)
 
 
 def _existing_secret_data(
