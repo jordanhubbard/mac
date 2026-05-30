@@ -3823,6 +3823,14 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
 
+    # mem-10: memory-tier health snapshot for operators + future alerter.
+    @app.get("/v1/memory/health")
+    def memory_health(
+        nap_interval_hours: float = Query(default=24.0, ge=0.1, le=720.0),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.memory_health(nap_interval_hours=nap_interval_hours)
+
     # mem-09: vector-tier recall.
     @app.get("/v1/memory/recall")
     def recall_memory(

@@ -6136,6 +6136,150 @@ class ControlPlane:
     def begin_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.begin_nap(*args, **kwargs)
 
+    def memory_health(
+        self,
+        *,
+        qdrant_url: Optional[str] = None,
+        nap_interval_hours: float = 24.0,
+    ) -> JsonDict:
+        """mem-10: memory-tier health snapshot.
+
+        Returns a dict the operator (and a future scheduled alerter)
+        can read to spot the failure modes the audit found:
+
+          * Inert vector tier — memory_records growing while
+            vector_refs stays at 0. The audit's smoking gun.
+          * Stalled consolidator — last_nap_run_at older than
+            ``2 * nap_interval_hours`` means the nightly nap stopped
+            running.
+          * Disk bloat — mac.db growing faster than the vector tier.
+
+        ``qdrant_url`` defaults to MAC_QDRANT_URL. When unreachable,
+        the qdrant_collections block reports its error instead of
+        raising; the operator still gets the SQLite-side numbers.
+        """
+        import time
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        now = utcnow()
+        now_dt = datetime.now(tz=timezone.utc)
+
+        # SQLite-side counts.
+        def _count(sql: str) -> int:
+            row = self.store.query_one(sql)
+            return int(row["n"]) if row is not None else 0
+
+        mr_count = _count("SELECT COUNT(*) AS n FROM memory_records")
+        vr_count = _count("SELECT COUNT(*) AS n FROM vector_refs")
+        oe_count = _count("SELECT COUNT(*) AS n FROM observability_events")
+
+        nap_row = self.store.query_one(
+            "SELECT MAX(completed_at) AS last FROM nap_runs WHERE status = 'completed'"
+        )
+        last_nap_at = nap_row["last"] if nap_row is not None and nap_row["last"] else None
+
+        # mac.db file size (when we can find the file).
+        db_path = getattr(self.store, "path", None) or getattr(self.store, "_path", None)
+        db_size: Optional[int] = None
+        if db_path:
+            try:
+                db_size = Path(str(db_path)).stat().st_size
+            except OSError:
+                db_size = None
+
+        # Qdrant points per collection — best-effort.
+        url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+        qdrant_block: JsonDict = {"url": url, "collections": {}, "error": None}
+        if url:
+            try:
+                from mac.models import MAC_MEMORY_COLLECTIONS
+                import json as _json
+                import urllib.request as _req
+
+                for tier_name, coll in MAC_MEMORY_COLLECTIONS.items():
+                    try:
+                        with _req.urlopen(
+                            "%s/collections/%s"
+                            % (url.rstrip("/"), coll),
+                            timeout=5,
+                        ) as resp:
+                            data = _json.loads(resp.read().decode("utf-8"))
+                            points = (
+                                (data.get("result") or {}).get("points_count")
+                            )
+                            qdrant_block["collections"][coll] = {
+                                "tier": tier_name,
+                                "points_count": int(points) if points is not None else None,
+                            }
+                    except Exception as exc:  # noqa: BLE001
+                        qdrant_block["collections"][coll] = {
+                            "tier": tier_name,
+                            "error": str(exc),
+                        }
+            except Exception as exc:  # noqa: BLE001
+                qdrant_block["error"] = str(exc)
+
+        # Alert rules (the audit's failure modes encoded).
+        alerts: List[JsonDict] = []
+        if mr_count > 100 and vr_count == 0:
+            alerts.append(
+                {
+                    "severity": "critical",
+                    "code": "inert_vector_tier",
+                    "message": (
+                        "memory_records=%d but vector_refs=0; the writer never "
+                        "ran. This is the failure mode the original 2026-05-28 "
+                        "audit surfaced." % mr_count
+                    ),
+                }
+            )
+        if last_nap_at is not None:
+            try:
+                last_dt = datetime.fromisoformat(last_nap_at)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                age_hours = (now_dt - last_dt).total_seconds() / 3600.0
+                if age_hours > 2.0 * nap_interval_hours:
+                    alerts.append(
+                        {
+                            "severity": "critical",
+                            "code": "stalled_consolidator",
+                            "message": (
+                                "last successful nap completed_at=%s "
+                                "(%.1fh ago, threshold %.1fh = 2× nap_interval)"
+                                % (last_nap_at, age_hours, 2.0 * nap_interval_hours)
+                            ),
+                        }
+                    )
+            except (TypeError, ValueError):
+                pass
+        elif mr_count > 0:
+            # We have memories but no completed nap_runs at all.
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "code": "no_nap_history",
+                    "message": (
+                        "no completed nap_runs on record despite %d "
+                        "memory_records — the consolidator has never run "
+                        "successfully." % mr_count
+                    ),
+                }
+            )
+
+        return {
+            "schema": "mac.memory_health.v1",
+            "captured_at": now,
+            "mac_db_size_bytes": db_size,
+            "memory_records_count": mr_count,
+            "vector_refs_count": vr_count,
+            "observability_events_count": oe_count,
+            "last_nap_run_at": last_nap_at,
+            "qdrant": qdrant_block,
+            "alerts": alerts,
+        }
+
     def recall_memory(
         self,
         query: str,

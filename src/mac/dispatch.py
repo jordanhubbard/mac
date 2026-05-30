@@ -734,6 +734,12 @@ class RemoteDispatch:
     def search_memory(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/memory", **kw))
 
+    # mem-10: memory-tier health snapshot.
+    def memory_health(self, *, nap_interval_hours: float = 24.0) -> _Dictish:
+        return _Dictish(
+            self._get("/v1/memory/health", nap_interval_hours=nap_interval_hours)
+        )
+
     # mem-09: recall over the vector tier.
     def recall_memory(
         self,
