@@ -5932,7 +5932,7 @@ set -euo pipefail
 worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
-if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   service="${fleet_name}-tunnel-${worker_agent}.service"
   ssh_bin="$(command -v ssh)"
   sudo tee "/etc/systemd/system/${service}" > /dev/null <<EOF
