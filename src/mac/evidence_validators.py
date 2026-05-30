@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
@@ -11,12 +13,59 @@ GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 WORKTREE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+# mem-13: when evidence claims pushed=true with a remote_url + remote_ref,
+# the validator runs `git ls-remote <url> <ref>` and refuses the evidence
+# if the ref doesn't resolve. This closes the validator gap that let
+# bullwinkle's phantom-push evidence get past the repo anchor check.
+#
+# Set MAC_VALIDATE_REMOTE_REFS=0 to skip the network round-trip (useful
+# for offline development; tests run with no remote_url so they don't
+# touch the network either way).
+_REMOTE_REF_VERIFY_TIMEOUT_SEC = 8
+
+
+def _remote_ref_verification_enabled() -> bool:
+    flag = os.environ.get("MAC_VALIDATE_REMOTE_REFS", "1")
+    return flag not in {"", "0", "false", "False"}
+
+
+def _verify_remote_ref_resolves(remote_url: str, remote_ref: str) -> Optional[str]:
+    """Return None if the ref resolves on the remote; a string problem
+    description otherwise. Returns None on network failure (best-effort)
+    so a flaky CI doesn't reject legitimate evidence."""
+    if not remote_url or not remote_ref:
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "ls-remote", remote_url, remote_ref],
+            capture_output=True,
+            text=True,
+            timeout=_REMOTE_REF_VERIFY_TIMEOUT_SEC,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None  # best-effort: we can't reach git or network
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        return (
+            "repo.remote_ref %s does not resolve on %s (git ls-remote "
+            "returncode=%d: %s)"
+            % (remote_ref, remote_url, completed.returncode, stderr[:200])
+        )
+    if not (completed.stdout or "").strip():
+        return (
+            "repo.remote_ref %s did not match any ref on %s "
+            "(git ls-remote returned no output)" % (remote_ref, remote_url)
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class VerificationRepoAnchor:
     head_sha: str
     dirty: Any
     pushed: bool
     remote_ref: str
+    remote_url: str
     pr_url: str
     files_changed: List[Any]
 
@@ -31,6 +80,7 @@ class VerificationRepoAnchor:
             pushed=repo.get("pushed") is True
             or str(repo.get("pushed") or "").lower() == "true",
             remote_ref=str(repo.get("remote_ref") or "").strip(),
+            remote_url=str(repo.get("remote_url") or "").strip(),
             pr_url=str(repo.get("pr_url") or "").strip(),
             files_changed=_manifest_list(repo.get("files_changed")),
         )
@@ -85,6 +135,22 @@ class EvidenceValidator:
             problems.append("repo evidence must declare dirty=false")
         if not (repo.pushed and repo.remote_ref) and not repo.pr_url:
             problems.append("repo evidence requires pushed=true with remote_ref, or pr_url")
+        # mem-13: when the manifest claims pushed=true with a remote_url
+        # + remote_ref, ask git itself whether the ref resolves. This
+        # catches the failure mode where an executor lies about pushing
+        # (the original task_d7c51a0b incident was on a soft validator
+        # path that mem-11 closes; this anchor check defends the strict
+        # validator path too). Network failures don't reject evidence —
+        # they fall back to the existing static checks.
+        if (
+            repo.pushed
+            and repo.remote_url
+            and repo.remote_ref
+            and _remote_ref_verification_enabled()
+        ):
+            failure = _verify_remote_ref_resolves(repo.remote_url, repo.remote_ref)
+            if failure is not None:
+                problems.append(failure)
         return problems
 
     def passed_checks(

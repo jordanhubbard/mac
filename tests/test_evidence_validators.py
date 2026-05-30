@@ -1,4 +1,9 @@
-from mac.evidence_validators import registered_evidence_types, validate_evidence_type
+import pytest
+
+from mac.evidence_validators import (
+    registered_evidence_types,
+    validate_evidence_type,
+)
 
 
 def _repo_manifest(**overrides):
@@ -139,6 +144,89 @@ def test_review_verdict_validator_allows_repo_less_operator_result_verdict():
 
     assert validate_evidence_type(
         "review_verdict",
+        manifest,
+        passed_check_count=_passed_check_count,
+    ) == []
+
+
+# ---------------------------------------------------------------------------
+# mem-13: when a manifest declares pushed=true + remote_url + remote_ref,
+# the validator must verify the ref actually resolves on the remote.
+# ---------------------------------------------------------------------------
+
+
+def _patch_remote_ref_check(monkeypatch, result):
+    """Replace the real git ls-remote call with a stub returning ``result``."""
+    import mac.evidence_validators as ev
+    monkeypatch.setattr(ev, "_verify_remote_ref_resolves", lambda url, ref: result)
+
+
+def test_remote_ref_resolution_disabled_when_env_off(monkeypatch):
+    """mem-13: MAC_VALIDATE_REMOTE_REFS=0 short-circuits the check
+    even when remote_url is supplied — used for offline dev / CI."""
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "0")
+    # No monkeypatching of _verify_remote_ref_resolves: if the gate
+    # doesn't short-circuit, this would try a network call.
+    manifest = _repo_manifest()
+    manifest["repo"]["remote_url"] = "https://example.invalid/repo.git"
+    manifest["repo"]["remote_ref"] = "refs/heads/main"
+    assert validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=_passed_check_count,
+    ) == []
+
+
+def test_remote_ref_resolves_clean_manifest(monkeypatch):
+    """mem-13: the check runs and a real-looking ref resolution returns
+    None (i.e., no problems added)."""
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "1")
+    _patch_remote_ref_check(monkeypatch, None)
+    manifest = _repo_manifest()
+    manifest["repo"]["remote_url"] = "https://example.com/repo.git"
+    manifest["repo"]["remote_ref"] = "refs/heads/feature/x"
+    assert validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=_passed_check_count,
+    ) == []
+
+
+def test_remote_ref_resolution_rejects_phantom_push(monkeypatch):
+    """mem-13: when git ls-remote returns no match for the claimed ref,
+    the validator rejects the evidence. This closes the loop on the
+    runaway-loop incident (executor lied about pushing → validator
+    couldn't see it → reviewer fetch failed → review retracted)."""
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "1")
+    _patch_remote_ref_check(
+        monkeypatch,
+        "repo.remote_ref refs/heads/phantom does not resolve on "
+        "https://example.com/repo.git (git ls-remote returncode=2: ...)",
+    )
+    manifest = _repo_manifest()
+    manifest["repo"]["remote_url"] = "https://example.com/repo.git"
+    manifest["repo"]["remote_ref"] = "refs/heads/phantom"
+    problems = validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=_passed_check_count,
+    )
+    assert any("does not resolve" in p for p in problems), problems
+
+
+def test_remote_ref_resolution_best_effort_on_network_failure(monkeypatch):
+    """mem-13: a network failure (helper returns None for that case)
+    must not reject the evidence — flaky CI shouldn't break the
+    contract. Other anchor checks still run."""
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "1")
+    _patch_remote_ref_check(monkeypatch, None)
+    manifest = _repo_manifest()
+    manifest["repo"]["remote_url"] = "https://unreachable.invalid/repo.git"
+    manifest["repo"]["remote_ref"] = "refs/heads/main"
+    # Other checks should still run normally; an empty problems list
+    # means the network-failure best-effort path didn't reject.
+    assert validate_evidence_type(
+        "repo_change",
         manifest,
         passed_check_count=_passed_check_count,
     ) == []
