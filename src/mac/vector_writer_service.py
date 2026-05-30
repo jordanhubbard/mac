@@ -186,17 +186,6 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
     )
 
 
-# A tiny probe call we use at writer-init time to lock the dim to
-# whatever the configured model actually returns. Avoids the operator
-# having to keep MAC_MEMORY_EMBED_MODEL and MAC_MEMORY_EMBEDDING_DIM
-# in sync by hand.
-def _probe_embedding_dim(embed_fn: EmbedFn) -> int:
-    vec = embed_fn("probe")
-    if not isinstance(vec, list) or not vec:
-        raise ValidationError("embed_fn probe returned an empty vector")
-    return len(vec)
-
-
 class VectorWriterService:
     """Embed memory_records into Qdrant + record the provenance ref."""
 
@@ -222,17 +211,18 @@ class VectorWriterService:
         resolved_fn: Optional[EmbedFn] = embed_fn
         if resolved_fn is None and auto_env:
             resolved_fn = resolve_embed_fn_from_env()
-        # When the operator picks a real backend, we let the model
-        # decide the dim by probing once at init time. When they keep
-        # the hash fallback, dim defaults to whatever the ADR pins
-        # (1536) unless overridden.
+        # When the operator picks a real backend we don't probe it here:
+        # doing network I/O in a constructor means a transient backend
+        # blip fails the whole init (and one process per `mac nap cycle`
+        # would re-probe every tick). If the dim isn't pinned via
+        # embedding_dim, we learn it lazily from the first embedded
+        # vector (see _resolve_dim). The hash fallback has no remote so
+        # it keeps the static ADR dim (1536) unless overridden.
+        self._dim_locked = False
         if resolved_fn is not None:
             self._embed_fn = resolved_fn
-            self._embedding_dim = (
-                int(embedding_dim)
-                if embedding_dim is not None
-                else _probe_embedding_dim(resolved_fn)
-            )
+            self._embedding_dim = int(embedding_dim) if embedding_dim is not None else None
+            self._dim_locked = embedding_dim is not None
             self._embedding_model = embedding_model or (
                 os.environ.get("MAC_MEMORY_EMBED_MODEL")
                 or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
@@ -242,11 +232,29 @@ class VectorWriterService:
                 embedding_dim if embedding_dim is not None
                 else MAC_MEMORY_DEFAULT_EMBEDDING_DIM
             )
+            self._dim_locked = True
             self._embedding_model = embedding_model or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
             self._embed_fn = lambda text: _hash_embedding(text, self._embedding_dim)
         # `transport` is the same hook shape as mac.http_client.HubClient
         # uses for tests: (method, url, body, token) -> response dict.
         self._transport = transport or self._urllib_transport
+
+    def _resolve_dim(self, vector: List[float]) -> None:
+        """Lock the embedding dim to the first real vector when it
+        wasn't pinned at construction, then validate every vector
+        against it. This replaces the old init-time network probe:
+        the first embed/recall call defines the dim instead."""
+        if not isinstance(vector, list) or not vector:
+            raise ValidationError("embed_fn returned an empty vector")
+        if not self._dim_locked:
+            self._embedding_dim = len(vector)
+            self._dim_locked = True
+            return
+        if len(vector) != self._embedding_dim:
+            raise ValidationError(
+                "embed_fn returned %d dims; expected %d"
+                % (len(vector), self._embedding_dim)
+            )
 
     # -- Public API ---------------------------------------------------------
 
@@ -266,11 +274,7 @@ class VectorWriterService:
         collection = MAC_MEMORY_COLLECTIONS[tier]
         payload = self._build_payload(record, tier=tier)
         vector = self._embed_fn(record.content)
-        if len(vector) != self._embedding_dim:
-            raise ValidationError(
-                "embed_fn returned %d dims; expected %d"
-                % (len(vector), self._embedding_dim)
-            )
+        self._resolve_dim(vector)
         point_id = self._point_id_for(record.id)
         self._upsert_point(collection, point_id, vector, payload.to_dict())
         # vector_refs has a UNIQUE constraint on (vector_db, collection,
@@ -358,11 +362,7 @@ class VectorWriterService:
             raise ValidationError("unknown memory tier: %s" % tier)
         collection = MAC_MEMORY_COLLECTIONS[tier]
         vector = self._embed_fn(query_text)
-        if len(vector) != self._embedding_dim:
-            raise ValidationError(
-                "embed_fn returned %d dims; expected %d"
-                % (len(vector), self._embedding_dim)
-            )
+        self._resolve_dim(vector)
         body: JsonDict = {
             "vector": vector,
             "limit": max(1, int(limit)),

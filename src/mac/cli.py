@@ -1045,7 +1045,14 @@ def cmd_nap_cycle(args: argparse.Namespace) -> None:
 
 def cmd_nap_due(args: argparse.Namespace) -> None:
     """List agents whose nap window has opened and hasn't been completed."""
-    _print(_plane(args).list_due_nap_agents(as_of=args.as_of))
+    due = _plane(args).list_due_nap_agents(as_of=args.as_of)
+    if getattr(args, "format", "json") == "agent-ids":
+        # Newline-delimited agent_ids for `xargs` in the nap-tick unit —
+        # avoids piping JSON through an embedded interpreter.
+        for item in due:
+            print(item["agent_id"])
+        return
+    _print(due)
 
 
 def cmd_nap_consolidate(args: argparse.Namespace) -> None:
@@ -1744,6 +1751,13 @@ def build_parser() -> argparse.ArgumentParser:
     nap_due.add_argument(
         "--as-of",
         help="ISO timestamp to compute due-ness against (default: now)",
+    )
+    nap_due.add_argument(
+        "--format",
+        choices=("json", "agent-ids"),
+        default="json",
+        help="'json' (full due list) or 'agent-ids' (newline-delimited "
+        "agent_ids, for piping to `xargs mac nap cycle`)",
     )
     _set(cmd_nap_due, nap_due)
 

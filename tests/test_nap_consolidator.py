@@ -188,6 +188,41 @@ def test_nap_cycle_completes_even_when_consolidate_fails(cp):
     assert cp.get_agent(agent.id).status == AgentStatus.IDLE.value
 
 
+def test_nap_cycle_reports_completion_failure_without_raising(cp):
+    """If complete_nap itself raises a non-TransitionError (e.g. a DB
+    fault), run_nap_cycle must capture it in complete_error and return
+    a report rather than letting the exception escape — a propagating
+    error would strand the agent in DRAINING."""
+    from unittest.mock import patch
+
+    machine = cp.register_machine("h1")
+    agent = cp.register_agent(machine.id, "agent-fail", capabilities=[])
+    with patch.object(cp, "complete_nap", side_effect=RuntimeError("db down")):
+        out = cp.run_nap_cycle(agent.id)
+    assert out["complete_error"] == "db down"
+    # The run is reported (refetched from the begin_nap state) instead
+    # of the call blowing up.
+    assert out["nap_run"]["agent_id"] == agent.id
+
+
+def test_nap_cycle_skips_busy_agent_without_raising(cp):
+    """If begin_nap refuses (agent holds an active lease), the cycle is
+    reported as skipped rather than raising — one busy agent must not
+    fail the autonomous nap-tick's whole batch."""
+    from mac.models import ValidationError
+    from unittest.mock import patch
+
+    machine = cp.register_machine("h1")
+    agent = cp.register_agent(machine.id, "agent-busy", capabilities=[])
+    with patch.object(
+        cp, "begin_nap", side_effect=ValidationError("agent holds an active lease")
+    ):
+        out = cp.run_nap_cycle(agent.id)
+    assert out["skipped"] is True
+    assert "lease" in out["skip_reason"]
+    assert out["nap_run"] is None
+
+
 def test_list_due_nap_agents_finds_opened_windows(cp):
     """An agent whose window has opened today and not completed is due."""
     from datetime import datetime, timedelta, timezone

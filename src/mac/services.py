@@ -6336,46 +6336,86 @@ class ControlPlane:
           2. consolidate (summarize since last nap, embed into medium)
           3. complete_nap (agent → IDLE, nap_run completed)
 
-        Failures in step 2 don't strand the agent: complete_nap still
-        runs in a finally block so DRAINING never leaks. The
-        consolidation report is returned alongside the nap_run for
-        operators to inspect.
+        Neither consolidation nor completion is allowed to escape once
+        begin_nap has moved the agent to DRAINING: a step-2 failure is
+        captured in ``consolidation_error`` and a step-3 failure in
+        ``complete_error``, and the agent's resolved state is always
+        refetched and reported. A leaking exception here would strand
+        the agent in DRAINING, which is much worse than a missing
+        summary, so this method never re-raises after the nap begins.
+
+        If begin_nap itself refuses (e.g. the agent holds an active
+        lease — it's mid-task, not nappable right now), the cycle is
+        reported as ``skipped`` rather than raising. This keeps the
+        autonomous nap-tick from failing its whole batch over one busy
+        agent; the next tick retries once the agent is free.
         """
-        run = self.begin_nap(agent_id, actor=actor)
+        try:
+            run = self.begin_nap(agent_id, actor=actor)
+        except ValidationError as exc:
+            return {
+                "nap_run": None,
+                "skipped": True,
+                "skip_reason": str(exc),
+                "consolidation": {},
+                "consolidation_error": None,
+                "complete_error": None,
+            }
         consolidation_report: JsonDict = {}
         consolidation_error: Optional[str] = None
+        complete_error: Optional[str] = None
+        completed = run
         try:
-            consolidation_report = self.consolidate_nap(
-                agent_id,
-                nap_run_id=run.id,
-                embed_into_medium=embed_into_medium,
-                vector_writer=vector_writer,
-                created_by=actor or "nap-cycle:%s" % agent_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            consolidation_error = str(exc)
-        # Always complete the nap so the agent returns to IDLE — even
-        # when consolidation threw, an incomplete nap leaves the agent
-        # stuck in DRAINING which is much worse than a missing summary.
-        try:
-            completed = self.complete_nap(
-                run.id,
-                summary_evidence_id=None,
-                detail={
-                    "consolidation": consolidation_report,
-                    "consolidation_error": consolidation_error,
-                },
-                actor=actor,
-            )
-        except TransitionError as exc:
-            # An off-path actor already completed/failed the run
-            # (e.g., an admin cancelled mid-cycle). Refetch and report.
-            completed = self.get_nap_run(run.id)
+            try:
+                consolidation_report = self.consolidate_nap(
+                    agent_id,
+                    nap_run_id=run.id,
+                    embed_into_medium=embed_into_medium,
+                    vector_writer=vector_writer,
+                    created_by=actor or "nap-cycle:%s" % agent_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                consolidation_error = str(exc)
+        finally:
+            # Always attempt to complete the nap so the agent returns to
+            # IDLE, even when consolidation threw. A completion failure
+            # (anything other than the benign off-path TransitionError)
+            # is recorded rather than re-raised so the agent isn't left
+            # stranded in DRAINING by a propagating exception.
+            try:
+                completed = self.complete_nap(
+                    run.id,
+                    summary_evidence_id=None,
+                    detail={
+                        "consolidation": consolidation_report,
+                        "consolidation_error": consolidation_error,
+                    },
+                    actor=actor,
+                )
+            except TransitionError:
+                # An off-path actor already completed/failed the run
+                # (e.g., an admin cancelled mid-cycle). Refetch and
+                # report; not an error from this cycle's perspective.
+                completed = self._safe_get_nap_run(run.id, run)
+            except Exception as exc:  # noqa: BLE001
+                complete_error = str(exc)
+                completed = self._safe_get_nap_run(run.id, run)
         return {
             "nap_run": completed.to_dict(),
+            "skipped": False,
             "consolidation": consolidation_report,
             "consolidation_error": consolidation_error,
+            "complete_error": complete_error,
         }
+
+    def _safe_get_nap_run(self, run_id: str, fallback: NapRun) -> NapRun:
+        """Refetch a nap_run for reporting in an error path, falling
+        back to a known run object if even the read fails — so
+        run_nap_cycle never re-raises after the nap has begun."""
+        try:
+            return self.get_nap_run(run_id)
+        except Exception:  # noqa: BLE001
+            return fallback
 
     def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[JsonDict]:
         """Return enabled nap_schedules whose current window has opened
@@ -6385,6 +6425,16 @@ class ControlPlane:
         offset_minutes` (or yesterday's if today's hasn't opened yet).
         We consider it open when `as_of` >= window_start, and unclaimed
         when last_completed_at is either NULL or before window_start.
+
+        Selection is deliberately catch-up, not strict: an agent stays
+        due from window_start until it actually completes a nap, even
+        once `as_of` has passed window_end. ``window_minutes`` therefore
+        does NOT gate the autonomous path — it only sets how long the
+        informational ``in_window`` flag stays true. This keeps the
+        once-per-day nap robust against a tick that lands just after a
+        narrow window closes (a strict in-window check would silently
+        skip the agent for the whole day). Callers that want strict
+        windowing should filter on ``in_window`` themselves.
         """
         from datetime import datetime, timedelta, timezone
 

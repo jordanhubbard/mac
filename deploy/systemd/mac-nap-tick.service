@@ -15,13 +15,14 @@ WorkingDirectory=__MAC_HOME__
 EnvironmentFile=-__MAC_HOME__/mac.env
 EnvironmentFile=-/etc/mac/nap-tick.env
 
-# `mac nap due` emits a JSON list; jq pulls out agent_ids; xargs runs
-# `mac nap cycle` for each. Errors per-agent don't stop the tick
-# (--no-run-if-empty keeps a clean exit when nothing is due).
+# `mac nap due --format=agent-ids` emits newline-delimited agent_ids;
+# xargs runs `mac nap cycle` for each. A busy agent (active lease) is
+# reported as skipped by the cycle, not an error, so one busy agent
+# doesn't fail the whole tick. --no-run-if-empty keeps a clean exit
+# when nothing is due.
 ExecStart=/bin/bash -lc '\
   set -euo pipefail; \
-  __MAC_HOME__/venv/bin/mac nap due 2>/dev/null \
-    | python3 -c "import sys,json; print(\\\"\\\\n\\\".join(t[\\\"agent_id\\\"] for t in json.load(sys.stdin)))" \
+  __MAC_HOME__/venv/bin/mac nap due --format=agent-ids \
     | xargs --no-run-if-empty -I{} __MAC_HOME__/venv/bin/mac nap cycle {} \
         --qdrant-url=${MAC_QDRANT_URL:-http://127.0.0.1:6333} \
         --actor=nap-tick.service'

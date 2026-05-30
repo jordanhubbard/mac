@@ -284,6 +284,33 @@ def test_env_backend_hash_default_keeps_static_dim(cp, monkeypatch, fake_qdrant)
     assert len(point["vector"]) == 128
 
 
+def test_backend_dim_locked_lazily_from_first_vector(cp, fake_qdrant):
+    """With a real embed_fn and no pinned dim, the writer does NOT probe
+    at construction — it locks the dim to the first embedded vector and
+    then enforces it. A later vector of a different length is rejected."""
+    from mac.models import ValidationError
+    from mac.vector_writer_service import VectorWriterService
+
+    state = {"dim": 16}
+    w = VectorWriterService(
+        memory=cp.memory,
+        qdrant_url="http://x:1",
+        embed_fn=lambda text: [0.1] * state["dim"],
+        transport=fake_qdrant,
+    )
+    # Nothing probed at init: dim is still unknown until the first embed.
+    assert w._embedding_dim is None
+    r1 = _add_memory(cp, "first")
+    ref = w.embed_memory(r1.id)
+    assert len(fake_qdrant.collections["mac_memory_medium"][ref.point_id]["vector"]) == 16
+    assert w._embedding_dim == 16
+    # Backend now returns a different dim → the locked dim is enforced.
+    state["dim"] = 32
+    r2 = _add_memory(cp, "second")
+    with pytest.raises(ValidationError, match="expected 16"):
+        w.embed_memory(r2.id)
+
+
 def test_recall_returns_mem09_standard_shape(cp, writer, fake_qdrant):
     """mem-09: recall hits expose memory_id / task_id / summary at the
     top level, not buried under payload."""
