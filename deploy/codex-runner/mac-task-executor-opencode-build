@@ -168,6 +168,12 @@ PUSHED="false"
 FILES_CHANGED=""
 PR_URL=""
 PR_NUMBER=""
+# When a working tree exists, the build agent is expected to edit files.
+# If opencode returns rc=0 but leaves the tree clean (it "planned" but
+# never called an edit tool), or if the commit can't be pushed, the run
+# is NOT successful work — mark it failed so the lease expires and the
+# task is retried instead of being submitted for review as complete.
+NO_EFFECTIVE_CHANGE="false"
 if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
     cd "${WORKDIR}"
     if [ -n "$(git status --porcelain)" ]; then
@@ -216,12 +222,24 @@ except Exception:
             fi
         else
             echo "[opencode-build] push failed rc=$push_rc"
+            NO_EFFECTIVE_CHANGE="true"
         fi
     else
         echo "[opencode-build] opencode made no file changes"
+        NO_EFFECTIVE_CHANGE="true"
     fi
 fi
 export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER
+
+# If we had a working tree but produced no pushed change, force a
+# non-zero effective return code. job_executor.py keys submit-for-review
+# off returncode==0, so a clean-tree "plan only" run would otherwise be
+# recorded as complete. Only override a successful opencode rc — a real
+# opencode failure already carries its own non-zero code.
+if [ "${NO_EFFECTIVE_CHANGE}" = "true" ] && [ "${opencode_rc}" -eq 0 ]; then
+    echo "[opencode-build] no pushed change despite rc=0 — marking task failed for retry"
+    opencode_rc=1
+fi
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE
