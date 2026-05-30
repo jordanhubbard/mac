@@ -222,16 +222,32 @@ def _findings_by_kind(manifest: dict) -> Dict[str, dict]:
 
 def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
-    # Build a long JSON-lines opencode stream: a head error, many tool
-    # events, and a final step_finish; plus a distinctive tail error.
+    # Build a JSON-lines stream using the REAL opencode event shapes:
+    # `tool_use` events carry the tool name + status + error under
+    # `part.state`; `step_finish` carries its reason under `part.reason`.
+    # (See evidence ev_23c0286d: 35 tool_use events, reason under part.)
+    def tool_use(name, status="completed", error=None):
+        state = {"status": status, "input": {}}
+        if error is not None:
+            state["error"] = error
+        return json.dumps(
+            {"type": "tool_use", "part": {"type": "tool", "tool": name, "state": state}}
+        )
+
+    def step_finish(reason):
+        return json.dumps({"type": "step_finish", "part": {"reason": reason}})
+
     lines: List[str] = []
-    lines.append(json.dumps({"type": "step_start"}))
-    lines.append(json.dumps({"type": "error", "message": "first failure"}))
+    lines.append(json.dumps({"type": "step_start", "part": {}}))
+    # one tool that errored (first error), then many ok tools, then a
+    # final errored tool (last error).
+    lines.append(tool_use("bash", status="error", error="first failure"))
+    lines.append(step_finish("tool-calls"))
     for _ in range(50):
-        lines.append(json.dumps({"type": "tool", "name": "edit"}))
-        lines.append(json.dumps({"type": "tool", "name": "read"}))
-    lines.append(json.dumps({"type": "error", "message": "last failure"}))
-    lines.append(json.dumps({"type": "step_finish", "reason": "stop"}))
+        lines.append(tool_use("edit"))
+        lines.append(tool_use("read"))
+    lines.append(tool_use("bash", status="error", error="last failure"))
+    lines.append(step_finish("stop"))
     stdout = "\n".join(lines) + "\n"
     stderr = "provider error: model rejected request\n" * 200
 
@@ -283,18 +299,19 @@ def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> N
     assert err["sha256"] == hashlib.sha256(stderr.encode("utf-8")).hexdigest()
     assert "provider error" in err["tail"]
 
-    # event summary.
+    # event summary: must parse the REAL `tool_use` shape, not synthetic.
     summary = findings["opencode_event_summary"]
     assert summary["total_lines"] >= len(lines)
     assert summary["parseable_json_lines"] >= len(lines)
     counts = summary["event_counts"]
-    assert counts.get("tool") == 100
-    assert counts.get("error") == 2
-    assert counts.get("step_finish") == 1
-    assert summary["tool_call_count"] == 100
+    assert counts.get("tool_use") == 102  # 50 edit + 50 read + 2 bash
+    assert counts.get("step_finish") == 2
+    assert summary["tool_call_count"] == 102
     assert summary["edit_tool_count"] == 50
-    assert summary["first_error"]["message"] == "first failure"
-    assert summary["last_error"]["message"] == "last failure"
+    # errors are nested under part.state.error.
+    assert "first failure" in json.dumps(summary["first_error"])
+    assert "last failure" in json.dumps(summary["last_error"])
+    # finish reason is nested under part.reason.
     assert summary["final_step_finish_reason"] == "stop"
 
     # selected model recorded.
@@ -457,4 +474,142 @@ def test_signed_manifest_with_rich_findings_passes_review_gate(
     )
     cp.submit_for_review(task.id, worker.id)
     assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+
+
+# --- Fix #1: capture work the agent committed to its own branch ---------
+
+
+def _git(args: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> str:
+    full_env = dict(os.environ)
+    full_env.update(
+        {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+    )
+    if env:
+        full_env.update(env)
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        env=full_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.mark.skipif(
+    shutil.which("git") is None, reason="git required for real-clone test"
+)
+def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None:
+    """The real production failure: an agentic model uses its bash tool to
+    `git checkout -b <its-own-branch>` + commit, leaving the working tree
+    clean on a branch the script never inspects. The executor must detect
+    that branch and push its work to the task branch on origin, instead of
+    declaring 'no file changes'."""
+    # Real bare remote + a seed commit on main.
+    remote = tmp_path / "remote.git"
+    _git(["init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(["init", "-b", "main", str(seed)], cwd=tmp_path)
+    (seed / "a.txt").write_text("original\n")
+    _git(["add", "-A"], cwd=seed)
+    _git(["commit", "-m", "seed"], cwd=seed)
+    _git(["remote", "add", "origin", str(remote)], cwd=seed)
+    _git(["push", "origin", "main"], cwd=seed)
+
+    repo_url = "file://%s" % remote
+    bindir = tmp_path / "bin"
+    bindir.mkdir(parents=True)
+
+    # fake opencode: act like the agent — checkout its OWN branch, edit a
+    # file, commit. Leaves the script's checked-out branch + tree clean.
+    _write_exec(
+        bindir / "opencode",
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "--version" ]; then echo "opencode test"; exit 0; fi\n'
+        'if [ "$1" = "run" ]; then\n'
+        "  git checkout -b feature/agent-branch >/dev/null 2>&1\n"
+        '  printf "agent change\\n" >> a.txt\n'
+        "  git add -A >/dev/null 2>&1\n"
+        '  git -c user.name=agent -c user.email=a@a commit -m "agent work" >/dev/null 2>&1\n'
+        '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    task_json = json.dumps(
+        {
+            "task": {
+                "title": "Edit a.txt",
+                "description": "append a line",
+                "project": "demo",
+                "metadata": {
+                    "origin": {
+                        "repository_url": repo_url,
+                        "default_branch": "main",
+                    }
+                },
+            }
+        }
+    )
+    _write_exec(
+        bindir / "curl",
+        "#!/usr/bin/env bash\n"
+        'url="${@: -1}"\n'
+        'case "$url" in\n'
+        f'  *"/tasks/"*) cat <<\'JSON\'\n{task_json}\nJSON\n;;\n'
+        "  *) : ;;\n"
+        "esac\n"
+        "exit 0\n",
+    )
+    _write_exec(
+        bindir / "mac",
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "pull-request" ] && [ "$2" = "open" ]; then\n'
+        '  echo \'{"url":"https://example.test/mr/1","number":1}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    task_id = "task_agentbranch"
+    manifest_path = tmp_path / "mac-evidence.json"
+    # NOTE: do NOT shadow the real `git` — the script must use real git so
+    # the clone/checkout/branch-detection/push all run for real. Only
+    # opencode/curl/mac are faked.
+    result = _run_build(
+        bindir=bindir,
+        manifest_path=manifest_path,
+        task_id=task_id,
+    )
+    assert manifest_path.exists(), (
+        "manifest missing; stdout=%s stderr=%s" % (result.stdout, result.stderr)
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    findings = _findings_by_kind(manifest)
+    repo = findings["repo_change_summary"]
+
+    expected_branch = "mac/mac-worker-python-coder-opencode/%s" % task_id
+    assert repo["pushed"] is True, (
+        "agent-committed branch must be pushed; repo=%s stdout=%s"
+        % (repo, result.stdout)
+    )
+    assert manifest["returncode"] == 0, (
+        "run with real agent work must succeed; stdout=%s" % result.stdout
+    )
+    # The work must actually exist on the task branch in the REMOTE.
+    remote_branches = _git(["branch", "--format=%(refname:short)"], cwd=remote)
+    assert expected_branch in remote_branches.split(), (
+        "task branch missing on remote; have=%r" % remote_branches
+    )
+    # And it must contain the agent's change.
+    show = _git(["show", "%s:a.txt" % expected_branch], cwd=remote)
+    assert "agent change" in show, "agent's commit not on the pushed branch"
+
 

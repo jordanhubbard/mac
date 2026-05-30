@@ -158,6 +158,7 @@ authed_url() {
 
 WORKDIR=""
 TASK_BRANCH="mac/${MAC_AGENT_ID}/${MAC_TASK_ID}"
+BASE_SHA=""
 if [ -n "${REPO_URL}" ]; then
     WORKDIR="/tmp/work-${MAC_TASK_ID}"
     rm -rf "${WORKDIR}"
@@ -166,8 +167,12 @@ if [ -n "${REPO_URL}" ]; then
     cd "${WORKDIR}"
     git config user.email "${MAC_AGENT_ID}@mac.local"
     git config user.name "${MAC_AGENT_ID}"
+    # Remember the clone point so we can detect commits the agent makes on
+    # ANY branch (agentic models often run their own git workflow via the
+    # bash tool and commit to a branch of their choosing).
+    BASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
     git checkout -b "${TASK_BRANCH}"
-    echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH}"
+    echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH} (base ${BASE_SHA})"
 fi
 
 # Run opencode build agent. If we have a working tree, cd into it so opencode
@@ -223,20 +228,65 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
     cd "${WORKDIR}"
     GIT_CWD="$(pwd)"
     GIT_STATUS="$(git status --porcelain 2>/dev/null || true)"
+
+    # The build agent may produce work in two ways:
+    #   1. Leave uncommitted edits in the working tree (we commit them).
+    #   2. Run its own git workflow via the bash tool — checkout a branch
+    #      of its choosing, `git add`, `git commit` — leaving the tree
+    #      clean. The previous logic only handled (1) and silently
+    #      discarded (2): the agent's real work was stranded on an
+    #      unpushed local branch and the run was marked "no file changes".
+    #
+    # Resolve the branch that actually carries the work, then push it to
+    # ${TASK_BRANCH} on origin.
+    WORK_REF=""
     if [ -n "${GIT_STATUS}" ]; then
-        # Full changed-file list (no head cap) so evidence is complete.
+        # Case 1: uncommitted edits — commit them on TASK_BRANCH.
         FILES_CHANGED="$(git diff --name-only HEAD | tr '\n' ',' | sed 's/,$//')"
         git add -A
         git commit -m "mac: $(echo "${PROMPT}" | head -1)" -m "task=${MAC_TASK_ID} agent=${MAC_AGENT_ID}" || true
-        HEAD_SHA="$(git rev-parse HEAD)"
+        WORK_REF="HEAD"
+    else
+        # Case 2: clean tree. Find a branch whose tip is ahead of the
+        # clone point — that's where the agent committed its work.
+        if [ -n "${BASE_SHA}" ]; then
+            cur_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+            if [ -n "${cur_sha}" ] && [ "${cur_sha}" != "${BASE_SHA}" ]; then
+                # Agent committed on the current branch (could be
+                # TASK_BRANCH or one it checked out).
+                WORK_REF="HEAD"
+            else
+                # Scan local branches for one ahead of BASE_SHA.
+                for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null); do
+                    if [ "${b}" = "${REPO_BRANCH}" ]; then continue; fi
+                    btip="$(git rev-parse "${b}" 2>/dev/null || true)"
+                    if [ -n "${btip}" ] && [ "${btip}" != "${BASE_SHA}" ]; then
+                        # Confirm it has commits not in BASE_SHA.
+                        if [ -n "$(git rev-list "${BASE_SHA}..${b}" 2>/dev/null | head -1)" ]; then
+                            WORK_REF="${b}"
+                            echo "[opencode-build] agent committed work on branch '${b}'"
+                            break
+                        fi
+                    fi
+                done
+            fi
+        fi
+    fi
+
+    if [ -n "${WORK_REF}" ]; then
+        FILES_CHANGED="${FILES_CHANGED:-$(git diff --name-only "${BASE_SHA}" "${WORK_REF}" 2>/dev/null | tr '\n' ',' | sed 's/,$//')}"
+        HEAD_SHA="$(git rev-parse "${WORK_REF}" 2>/dev/null || true)"
         echo "[opencode-build] head=${HEAD_SHA} files=${FILES_CHANGED}"
         set +e
-        git push origin "${TASK_BRANCH}" 2>&1
+        # Push whatever ref carries the work TO the task branch on origin,
+        # so the review/PR path is consistent regardless of which branch
+        # the agent chose locally.
+        git push origin "${WORK_REF}:refs/heads/${TASK_BRANCH}" 2>&1
         push_rc=$?
         set -e
         if [ "$push_rc" -eq 0 ]; then
             PUSHED="true"
-            echo "[opencode-build] pushed ${TASK_BRANCH}"
+            echo "[opencode-build] pushed ${WORK_REF} -> ${TASK_BRANCH}"
             # Open a PR/MR. Host (github/gitea) is detected from the URL.
             PR_TITLE="mac: $(echo "${PROMPT}" | head -1 | cut -c1-72)"
             PR_BODY="task=${MAC_TASK_ID}
@@ -355,6 +405,10 @@ def event_summary(raw):
     last_error = None
     final_step_finish = None
     last_events = []
+    # opencode emits tool invocations as `tool_use` events; the tool name,
+    # status and error live under `part` (part.tool, part.state.status,
+    # part.state.error). step_finish carries its reason under part.reason.
+    tool_event_types = {"tool_use", "tool", "tool_start", "tool_call"}
     edit_tool_names = {"edit", "write", "patch", "apply_patch", "multiedit"}
     for line in lines:
         line = line.strip()
@@ -370,16 +424,32 @@ def event_summary(raw):
         etype = str(evt.get("type") or evt.get("event") or "")
         if etype:
             counts[etype] = counts.get(etype, 0) + 1
-        if etype in ("tool", "tool_start", "tool_call"):
+        part = evt.get("part") if isinstance(evt.get("part"), dict) else {}
+        state = part.get("state") if isinstance(part.get("state"), dict) else {}
+        if etype in tool_event_types:
             tool_calls += 1
-            name = str(evt.get("name") or evt.get("tool") or "").lower()
+            name = str(
+                part.get("tool") or evt.get("tool") or evt.get("name") or ""
+            ).lower()
             if name in edit_tool_names:
                 edit_calls += 1
-        if etype == "error" or evt.get("error"):
+        # Errors can be a top-level error event, or a tool that finished in
+        # an error state (part.state.error / part.state.status == "error").
+        err = (
+            evt.get("error")
+            or state.get("error")
+            or (etype == "error" and evt)
+            or (state.get("status") == "error" and evt)
+        )
+        if err:
             first_error = first_error or evt
             last_error = evt
         if etype == "step_finish":
-            final_step_finish = evt.get("reason") or evt.get("finish_reason")
+            final_step_finish = (
+                part.get("reason")
+                or evt.get("reason")
+                or evt.get("finish_reason")
+            )
         last_events.append(evt)
     return {
         "total_lines": len(lines),
