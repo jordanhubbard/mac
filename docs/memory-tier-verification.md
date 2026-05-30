@@ -50,6 +50,23 @@ deselected.
 * The invariant gaps that caused the original `task_d7c51a0b`
   incident are all closed.
 
+## Autonomy (added 2026-05-30)
+
+The consolidator is now wired into a systemd timer that ticks every 15
+minutes, queries `mac nap due` for agents whose window has opened, and
+runs `mac nap cycle <agent_id>` for each:
+
+| Step | Detail |
+|---|---|
+| `deploy/systemd/mac-nap-tick.{service,timer}` | Oneshot service + 15-min OnUnitActiveSec timer. Service body: `mac nap due | python -c (...extract agent_ids...) | xargs mac nap cycle`. |
+| `deploy/install-nap-tick-service.sh` | Installer mirroring `install-observability-prune.sh` (detects User= from mac.service, substitutes into template). Provisions `/etc/mac/nap-tick.env` with commented-out TokenHub embedding knobs. |
+| Verified on rocky | Cleared `agent_rocky`'s `last_completed_at`; ran `systemctl start mac-nap-tick.service`; service picked up agent_rocky, drove the full cycle (begin → consolidate → embed → complete), produced `nap_run=nap_c00be4c…` with `status=completed`, agent back to IDLE. No operator command in the chain. |
+
+What this means: between `mac memory backfill` (which embeds historic
+memory_records once) and the nap-tick timer (which catches newly
+authored ones on each agent's daily window), the memory tier maintains
+itself going forward.
+
 ## What's deliberately left as follow-ups
 
 * **Re-embed the full 362 memory_records.** The verification used a
@@ -57,10 +74,6 @@ deselected.
   trip and we wanted a sub-minute demo. `mac memory backfill --limit
   500` (or unbounded) covers the rest; safe to run while the system
   is live because backfill is idempotent on `(memory_id, collection)`.
-* **Wire the consolidator into the nap schedule.** Operators currently
-  trigger `mac nap consolidate <agent_id>` manually. Auto-triggering
-  on the `nap_schedules` window is the last piece for "fully
-  autonomous" — straightforward systemd timer + `mac nap next` poll.
 * **Medium → long promotion.** mem-08 ships the consolidator that
   writes to medium; the long-tier promotion (summarize old summaries,
   delete the medium points) is a planned mem-08 extension.
