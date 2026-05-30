@@ -322,13 +322,50 @@ EOF
 esac
 
 health_url="${service_url}/collections"
+ready=""
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   if curl -fsS --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
     echo "[qdrant] Qdrant ready at $health_url"
-    exit 0
+    ready="yes"
+    break
   fi
   sleep 2
 done
+
+if [ -n "$ready" ]; then
+  # mem-06: provision the mac memory tier collections idempotently.
+  # PUT /collections/<name> creates if missing; on a conflict (already
+  # present) Qdrant 4xxes which we explicitly tolerate.
+  MAC_MEMORY_EMBEDDING_DIM="${MAC_MEMORY_EMBEDDING_DIM:-1536}"
+  provision_collection() {
+    local name="$1"
+    local ef_construct="${2:-100}"
+    local existing
+    existing="$(curl -fsS --max-time 5 "${service_url}/collections/${name}" 2>/dev/null || true)"
+    if [ -n "$existing" ] && echo "$existing" | grep -q '"status":"ok"'; then
+      echo "[qdrant] collection ${name} already exists; skipping create"
+      return 0
+    fi
+    local body
+    body=$(cat <<JSON
+{
+  "vectors": {"size": ${MAC_MEMORY_EMBEDDING_DIM}, "distance": "Cosine"},
+  "hnsw_config": {"m": 16, "ef_construct": ${ef_construct}},
+  "optimizers_config": {"indexing_threshold": 20000}
+}
+JSON
+)
+    if curl -fsS --max-time 10 -X PUT -H "Content-Type: application/json" \
+       -d "$body" "${service_url}/collections/${name}" >/dev/null 2>&1; then
+      echo "[qdrant] collection ${name} created (dim=${MAC_MEMORY_EMBEDDING_DIM})"
+    else
+      echo "[qdrant] WARN: failed to create collection ${name}; see Qdrant logs" >&2
+    fi
+  }
+  provision_collection mac_memory_medium 100
+  provision_collection mac_memory_long   200
+  exit 0
+fi
 
 echo "[qdrant] ERROR: Qdrant did not become ready at $health_url" >&2
 case "$SUPERVISOR_KIND" in

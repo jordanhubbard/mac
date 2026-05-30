@@ -1012,6 +1012,111 @@ class VectorRef:
         return asdict(self)
 
 
+# mem-06: typed payload + tier enum + collection registry for the
+# vector memory tier. The vector writer (mem-07), nap consolidator
+# (mem-08), and recall API (mem-09) all build against these. See
+# docs/memory-tier-schema.md for the ADR-level rationale.
+
+
+MAC_MEMORY_PAYLOAD_SCHEMA = "mac.memory.v1"
+
+
+class MacMemoryTier(StrEnum):
+    MEDIUM = "medium"
+    LONG = "long"
+
+
+# Concept → Qdrant collection. Single point of truth so the writer,
+# reader, and the install script all agree.
+MAC_MEMORY_COLLECTIONS: Dict[str, str] = {
+    MacMemoryTier.MEDIUM.value: "mac_memory_medium",
+    MacMemoryTier.LONG.value: "mac_memory_long",
+}
+
+
+# Default embedding model (overridable by MAC_MEMORY_EMBEDDING_MODEL +
+# MAC_MEMORY_EMBEDDING_DIM at install / runtime; the model name still
+# lands on every payload so cross-model recalls are filterable).
+MAC_MEMORY_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+MAC_MEMORY_DEFAULT_EMBEDDING_DIM = 1536
+
+
+@dataclass
+class MacVectorPayload:
+    """Per-point payload stored alongside the vector in Qdrant.
+
+    Mirrors the schema in docs/memory-tier-schema.md. `to_dict()` is
+    what gets sent to Qdrant's `payload` field; `from_dict()` parses
+    a hit back into typed form for the recall API.
+    """
+
+    tier: str
+    subject_type: str
+    subject_id: str
+    memory_id: str
+    summary: str
+    created_at: str
+    embedded_at: str
+    embedding_model: str
+    task_id: Optional[str] = None
+    project: Optional[str] = None
+    agent_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    evidence_type: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    schema: str = MAC_MEMORY_PAYLOAD_SCHEMA
+
+    def to_dict(self) -> JsonDict:
+        # Drop None values to keep the Qdrant payload tight. Schema +
+        # required fields always pass through.
+        data = asdict(self)
+        return {k: v for k, v in data.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, raw: JsonDict) -> "MacVectorPayload":
+        if not isinstance(raw, dict):
+            raise ValidationError("vector payload must be an object")
+        if str(raw.get("schema") or "") != MAC_MEMORY_PAYLOAD_SCHEMA:
+            raise ValidationError(
+                "vector payload schema %r does not match %r"
+                % (raw.get("schema"), MAC_MEMORY_PAYLOAD_SCHEMA)
+            )
+        tier = str(raw.get("tier") or "").strip().lower()
+        if tier not in {t.value for t in MacMemoryTier}:
+            raise ValidationError("vector payload tier must be one of medium / long")
+        required_fields = (
+            "subject_type",
+            "subject_id",
+            "memory_id",
+            "summary",
+            "created_at",
+            "embedded_at",
+            "embedding_model",
+        )
+        for name in required_fields:
+            if not raw.get(name):
+                raise ValidationError("vector payload missing required field: %s" % name)
+        return cls(
+            schema=MAC_MEMORY_PAYLOAD_SCHEMA,
+            tier=tier,
+            subject_type=str(raw["subject_type"]),
+            subject_id=str(raw["subject_id"]),
+            memory_id=str(raw["memory_id"]),
+            summary=str(raw["summary"]),
+            created_at=str(raw["created_at"]),
+            embedded_at=str(raw["embedded_at"]),
+            embedding_model=str(raw["embedding_model"]),
+            task_id=str(raw["task_id"]) if raw.get("task_id") else None,
+            project=str(raw["project"]) if raw.get("project") else None,
+            agent_id=str(raw["agent_id"]) if raw.get("agent_id") else None,
+            tenant_id=str(raw["tenant_id"]) if raw.get("tenant_id") else None,
+            evidence_type=(
+                str(raw["evidence_type"]) if raw.get("evidence_type") else None
+            ),
+            tags=list(raw.get("tags") or []),
+        )
+
+
 @dataclass
 class MoodOverlay:
     """One mood transition. Append-only; current mood is the most recent row
