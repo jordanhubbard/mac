@@ -1005,6 +1005,25 @@ def cmd_memory_recall(args: argparse.Namespace) -> None:
     _print(writer.recall(args.query, tier=args.tier, limit=args.limit))
 
 
+def cmd_nap_consolidate(args: argparse.Namespace) -> None:
+    """mem-08: walk the agent's recent memory_records, write per-group
+    summaries, and embed them into the medium tier."""
+    cp = _plane(args)
+    writer = None
+    if not args.no_embed:
+        writer = _build_vector_writer(args)
+    _print(
+        cp.consolidate_nap(
+            args.agent_id,
+            since=args.since,
+            nap_run_id=args.nap_run_id,
+            embed_into_medium=not args.no_embed,
+            vector_writer=writer,
+            created_by=args.created_by,
+        )
+    )
+
+
 def cmd_memory_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = args.project or "default"
@@ -1661,6 +1680,33 @@ def build_parser() -> argparse.ArgumentParser:
     nap_list = nap.add_parser("list", help="list nap_runs")
     nap_list.add_argument("--agent-id")
     _set(cmd_nap_list, nap_list)
+
+    # mem-08: build per-(task/project) memory summaries for an agent.
+    nap_consolidate = nap.add_parser(
+        "consolidate",
+        help="walk the agent's recent memory_records, summarize by "
+        "task/project, write a nap_summary row per group, and embed "
+        "into the medium tier (mem-08)",
+    )
+    nap_consolidate.add_argument("agent_id")
+    nap_consolidate.add_argument(
+        "--since",
+        help="ISO timestamp lower bound; default = last successful nap's "
+        "completed_at, or '<beginning>' if there isn't one",
+    )
+    nap_consolidate.add_argument("--nap-run-id", help="link the summaries to this run")
+    nap_consolidate.add_argument("--created-by")
+    nap_consolidate.add_argument(
+        "--no-embed",
+        action="store_true",
+        help="skip the vector-writer handoff (summary-only mode; useful "
+        "when Qdrant is offline)",
+    )
+    nap_consolidate.add_argument(
+        "--qdrant-url",
+        help="override the default Qdrant URL passed to the vector writer",
+    )
+    _set(cmd_nap_consolidate, nap_consolidate)
 
     dispatch = sub.add_parser("dispatch", help="dispatcher commands").add_subparsers(dest="dispatch_command", required=True)
     assign = dispatch.add_parser("assign")

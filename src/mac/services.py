@@ -6136,6 +6136,37 @@ class ControlPlane:
     def begin_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.begin_nap(*args, **kwargs)
 
+    def consolidate_nap(
+        self,
+        agent_id: str,
+        *,
+        since: Optional[str] = None,
+        nap_run_id: Optional[str] = None,
+        embed_into_medium: bool = True,
+        vector_writer: Optional[Any] = None,
+        created_by: Optional[str] = None,
+    ) -> JsonDict:
+        """mem-08: build per-(task/project) summaries from the agent's
+        recent memory_records and embed them into the medium tier.
+
+        ``vector_writer`` is an optional pre-built VectorWriterService.
+        When None, no embedding happens (consolidator runs in
+        summary-only mode — useful when Qdrant is unreachable)."""
+        from mac.nap_consolidator import NapConsolidatorService
+
+        consolidator = NapConsolidatorService(
+            store=self.store,
+            memory=self.memory,
+            vector_writer=vector_writer,
+        )
+        return consolidator.consolidate_agent(
+            agent_id,
+            since=since,
+            nap_run_id=nap_run_id,
+            embed_into_medium=embed_into_medium,
+            created_by=created_by,
+        )
+
     def complete_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.complete_nap(*args, **kwargs)
 
