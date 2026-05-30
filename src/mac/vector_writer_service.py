@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import struct
 import urllib.error
 import urllib.request
@@ -89,6 +90,113 @@ def _hash_embedding(text: str, dim: int) -> List[float]:
     return [v / norm for v in out]
 
 
+def tokenhub_embedding_fn(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    input_type: str = "passage",
+    timeout: float = 30.0,
+) -> EmbedFn:
+    """Build an embed_fn that calls an OpenAI-compatible /v1/embeddings
+    endpoint (TokenHub, OpenAI itself, Azure, etc.).
+
+    The closure captures the model name + key so the writer's
+    interface stays text → list[float]. Input type ('passage' for
+    documents, 'query' for query text) matters for asymmetric models
+    like NVIDIA's nv-embedqa-1b; symmetric models ignore it.
+    """
+    if not base_url or not api_key or not model:
+        raise ValidationError("tokenhub_embedding_fn requires base_url, api_key, and model")
+
+    def _embed(text: str) -> List[float]:
+        body = {"model": model, "input": text, "input_type": input_type}
+        data = json.dumps(body).encode("utf-8")
+        url = "%s/embeddings" % base_url.rstrip("/")
+        headers = {
+            "Authorization": "Bearer %s" % api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValidationError(
+                "tokenhub embeddings HTTP %s %s: %s" % (exc.code, exc.reason, detail[:400])
+            )
+        except urllib.error.URLError as exc:
+            raise ValidationError("tokenhub embeddings unreachable at %s: %s" % (url, exc.reason))
+        payload = json.loads(raw) if raw else {}
+        items = payload.get("data") or []
+        if not items or not isinstance(items[0], dict) or "embedding" not in items[0]:
+            raise ValidationError("tokenhub embeddings response missing data[0].embedding: %s" % str(payload)[:300])
+        vector = items[0]["embedding"]
+        if not isinstance(vector, list) or not all(isinstance(x, (int, float)) for x in vector):
+            raise ValidationError("tokenhub embeddings returned non-numeric vector")
+        return [float(x) for x in vector]
+
+    return _embed
+
+
+def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
+    """Build an embed_fn from environment variables. Returns None when
+    nothing is configured (callers then fall back to the hash stub).
+
+    Recognized env vars (TokenHub on the rocky fleet ships these
+    pre-set in /etc/mac/mac.env):
+
+      MAC_MEMORY_EMBED_BACKEND   = tokenhub | hash (default: hash)
+      MAC_MEMORY_EMBED_MODEL     = e.g. nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
+      MAC_MEMORY_EMBED_BASE_URL  = e.g. http://100.125.137.89:8090/v1
+                                    (falls back to OPENAI_BASE_URL)
+      MAC_MEMORY_EMBED_API_KEY   = bearer token
+                                    (falls back to OPENAI_API_KEY)
+      MAC_MEMORY_EMBED_INPUT_TYPE = passage|query (default: passage)
+    """
+    backend = os.environ.get("MAC_MEMORY_EMBED_BACKEND", "hash").strip().lower()
+    if backend in {"", "hash"}:
+        return None
+    if backend != "tokenhub":
+        raise ValidationError("unknown MAC_MEMORY_EMBED_BACKEND: %s" % backend)
+    base_url = (
+        os.environ.get("MAC_MEMORY_EMBED_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or ""
+    ).strip()
+    api_key = (
+        os.environ.get("MAC_MEMORY_EMBED_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    model = (os.environ.get("MAC_MEMORY_EMBED_MODEL") or "").strip()
+    input_type = (
+        os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
+    ).strip()
+    if not (base_url and api_key and model):
+        raise ValidationError(
+            "MAC_MEMORY_EMBED_BACKEND=tokenhub requires MAC_MEMORY_EMBED_MODEL "
+            "and either MAC_MEMORY_EMBED_BASE_URL / MAC_MEMORY_EMBED_API_KEY or "
+            "the OPENAI_BASE_URL / OPENAI_API_KEY fallbacks."
+        )
+    return tokenhub_embedding_fn(
+        base_url=base_url, api_key=api_key, model=model, input_type=input_type
+    )
+
+
+# A tiny probe call we use at writer-init time to lock the dim to
+# whatever the configured model actually returns. Avoids the operator
+# having to keep MAC_MEMORY_EMBED_MODEL and MAC_MEMORY_EMBEDDING_DIM
+# in sync by hand.
+def _probe_embedding_dim(embed_fn: EmbedFn) -> int:
+    vec = embed_fn("probe")
+    if not isinstance(vec, list) or not vec:
+        raise ValidationError("embed_fn probe returned an empty vector")
+    return len(vec)
+
+
 class VectorWriterService:
     """Embed memory_records into Qdrant + record the provenance ref."""
 
@@ -97,18 +205,45 @@ class VectorWriterService:
         *,
         memory: Any,
         qdrant_url: str,
-        embedding_model: str = MAC_MEMORY_DEFAULT_EMBEDDING_MODEL,
-        embedding_dim: int = MAC_MEMORY_DEFAULT_EMBEDDING_DIM,
+        embedding_model: Optional[str] = None,
+        embedding_dim: Optional[int] = None,
         embed_fn: Optional[EmbedFn] = None,
         transport: Optional[Callable[..., Any]] = None,
+        auto_env: bool = True,
     ) -> None:
         if not qdrant_url:
             raise ValidationError("VectorWriterService requires a qdrant_url")
         self._memory = memory
         self._qdrant_url = qdrant_url.rstrip("/")
-        self._embedding_model = embedding_model
-        self._embedding_dim = int(embedding_dim)
-        self._embed_fn = embed_fn or (lambda text: _hash_embedding(text, self._embedding_dim))
+        # Embed function resolution order:
+        # 1) explicit embed_fn arg (tests, custom backends)
+        # 2) env-configured backend (auto_env=True, default)
+        # 3) hash fallback
+        resolved_fn: Optional[EmbedFn] = embed_fn
+        if resolved_fn is None and auto_env:
+            resolved_fn = resolve_embed_fn_from_env()
+        # When the operator picks a real backend, we let the model
+        # decide the dim by probing once at init time. When they keep
+        # the hash fallback, dim defaults to whatever the ADR pins
+        # (1536) unless overridden.
+        if resolved_fn is not None:
+            self._embed_fn = resolved_fn
+            self._embedding_dim = (
+                int(embedding_dim)
+                if embedding_dim is not None
+                else _probe_embedding_dim(resolved_fn)
+            )
+            self._embedding_model = embedding_model or (
+                os.environ.get("MAC_MEMORY_EMBED_MODEL")
+                or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
+            )
+        else:
+            self._embedding_dim = int(
+                embedding_dim if embedding_dim is not None
+                else MAC_MEMORY_DEFAULT_EMBEDDING_DIM
+            )
+            self._embedding_model = embedding_model or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
+            self._embed_fn = lambda text: _hash_embedding(text, self._embedding_dim)
         # `transport` is the same hook shape as mac.http_client.HubClient
         # uses for tests: (method, url, body, token) -> response dict.
         self._transport = transport or self._urllib_transport

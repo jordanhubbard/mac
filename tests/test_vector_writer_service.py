@@ -244,6 +244,46 @@ def test_writer_refuses_unknown_tier(cp, writer):
         writer.embed_memory(record.id, tier="cold")
 
 
+def test_env_backend_tokenhub_requires_full_config(cp, monkeypatch):
+    """MAC_MEMORY_EMBED_BACKEND=tokenhub without the rest of the env
+    raises ValidationError at writer-init time, rather than silently
+    falling back to the hash stub."""
+    from mac.vector_writer_service import VectorWriterService
+    monkeypatch.setenv("MAC_MEMORY_EMBED_BACKEND", "tokenhub")
+    monkeypatch.delenv("MAC_MEMORY_EMBED_MODEL", raising=False)
+    monkeypatch.delenv("MAC_MEMORY_EMBED_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MAC_MEMORY_EMBED_API_KEY", raising=False)
+    with pytest.raises(Exception, match="requires MAC_MEMORY_EMBED_MODEL"):
+        VectorWriterService(memory=cp.memory, qdrant_url="http://x:1")
+
+
+def test_env_backend_unknown_value_rejected(cp, monkeypatch):
+    monkeypatch.setenv("MAC_MEMORY_EMBED_BACKEND", "magic")
+    with pytest.raises(Exception, match="unknown MAC_MEMORY_EMBED_BACKEND"):
+        from mac.vector_writer_service import VectorWriterService
+        VectorWriterService(memory=cp.memory, qdrant_url="http://x:1")
+
+
+def test_env_backend_hash_default_keeps_static_dim(cp, monkeypatch, fake_qdrant):
+    """With the hash backend (default), dim comes from the kwarg or
+    MAC_MEMORY_DEFAULT_EMBEDDING_DIM — no probe call."""
+    monkeypatch.delenv("MAC_MEMORY_EMBED_BACKEND", raising=False)
+    from mac.vector_writer_service import VectorWriterService
+    w = VectorWriterService(
+        memory=cp.memory,
+        qdrant_url="http://x:1",
+        embedding_dim=128,
+        transport=fake_qdrant,
+    )
+    record = _add_memory(cp, "test")
+    ref = w.embed_memory(record.id)
+    # Vector in fake Qdrant has the asked-for dim.
+    point = fake_qdrant.collections["mac_memory_medium"][ref.point_id]
+    assert len(point["vector"]) == 128
+
+
 def test_recall_returns_mem09_standard_shape(cp, writer, fake_qdrant):
     """mem-09: recall hits expose memory_id / task_id / summary at the
     top level, not buried under payload."""
