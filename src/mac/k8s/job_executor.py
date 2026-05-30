@@ -360,11 +360,19 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
             env=proc_env,
         )
         stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        # The executor output is captured (so it can be hashed into
+        # evidence), which means it never reaches the pod's own logs. A
+        # terminated pod would otherwise show nothing useful. Forward a
+        # bounded tail of both streams to the runner's stdout/stderr so
+        # postmortems work — errors usually appear at the tail.
+        _forward_to_pod_logs("executor stdout", stdout)
+        _forward_to_pod_logs("executor stderr", stderr, stream=sys.stderr)
         manifest, manifest_error = _read_verification_manifest(manifest_path)
         return _ExecResult(
             returncode=proc.returncode,
             stdout=stdout,
-            stderr=proc.stderr or "",
+            stderr=stderr,
             stdout_sha256=hashlib.sha256(stdout.encode("utf-8", "replace")).hexdigest(),
             verification_manifest=manifest,
             manifest_path=manifest_path,
@@ -372,6 +380,35 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
         )
 
     return _run
+
+POD_LOG_FORWARD_TAIL_BYTES = 16000
+
+
+def _forward_to_pod_logs(
+    label: str,
+    text: str,
+    *,
+    stream: Any = None,
+    tail_bytes: int = POD_LOG_FORWARD_TAIL_BYTES,
+) -> None:
+    """Echo a bounded tail of captured executor output to the runner's
+    own stdout/stderr so terminated pod logs retain the most relevant
+    (trailing) portion. Never raises — logging must not break a run."""
+    if not text:
+        return
+    target = stream if stream is not None else sys.stdout
+    try:
+        if len(text) > tail_bytes:
+            shown = text[-tail_bytes:]
+            header = "mac-task-runner: %s (last %d bytes):" % (label, tail_bytes)
+        else:
+            shown = text
+            header = "mac-task-runner: %s:" % label
+        print(header, file=target)
+        print(shown, file=target)
+        target.flush()
+    except Exception:  # noqa: BLE001 — best-effort pod logging
+        pass
 
 def _read_verification_manifest(
     path: str,

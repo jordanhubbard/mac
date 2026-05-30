@@ -376,6 +376,35 @@ class TestSubprocessExecutorReadsManifest:
         executor = _default_subprocess_executor(env)
         assert DEFAULT_EVIDENCE_MANIFEST_PATH == "/tmp/mac-evidence.json"
 
+    def test_executor_forwards_captured_output_to_pod_logs(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """The subprocess captures executor stdout/stderr (so they can be
+        hashed into evidence). Without forwarding, a terminated pod's logs
+        show nothing useful. The executor must echo a bounded tail of both
+        streams to the runner's own stdout/stderr so postmortems work."""
+        cmd = (
+            "%s -c "
+            "'import sys; "
+            'sys.stdout.write("STDOUT_MARKER_LINE\\n"); '
+            'sys.stderr.write("STDERR_PROVIDER_ERROR\\n")\''
+        ) % sys.executable
+        env = {
+            "MAC_TASK_EXECUTOR_COMMAND": cmd,
+            "MAC_TASK_EVIDENCE_MANIFEST_PATH": str(tmp_path / "m.json"),
+        }
+        executor = _default_subprocess_executor(env)
+        result = executor({"id": "task-1", "title": "x"})
+        assert "STDOUT_MARKER_LINE" in result.stdout
+        captured = capfd.readouterr()
+        combined = captured.out + captured.err
+        assert "STDOUT_MARKER_LINE" in combined, (
+            "executor stdout must be forwarded to pod logs"
+        )
+        assert "STDERR_PROVIDER_ERROR" in combined, (
+            "executor stderr must be forwarded to pod logs"
+        )
+
 
 def test_run_one_lease_threads_manifest_through_to_evidence_post(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -27,8 +27,33 @@ export XDG_DATA_HOME="${HOME}/.local/share"
 export XDG_CACHE_HOME="${HOME}/.cache"
 export XDG_STATE_HOME="${HOME}/.local/state"
 mkdir -p "${HOME}/.local" "${XDG_CONFIG_HOME}/opencode" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
-cp /etc/opencode/opencode.json "${XDG_CONFIG_HOME}/opencode/opencode.json"
+# Source config is the ConfigMap mount at /etc/opencode, overridable for
+# tests via MAC_OPENCODE_CONFIG_PATH.
+OPENCODE_CONFIG_SRC="${MAC_OPENCODE_CONFIG_PATH:-/etc/opencode/opencode.json}"
+OPENCODE_CONFIG_DST="${XDG_CONFIG_HOME}/opencode/opencode.json"
+if [ -f "${OPENCODE_CONFIG_SRC}" ]; then
+    cp "${OPENCODE_CONFIG_SRC}" "${OPENCODE_CONFIG_DST}"
+else
+    echo "[opencode-build] WARNING: opencode config not found at ${OPENCODE_CONFIG_SRC}" >&2
+fi
 export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
+
+# Resolve the build agent's configured model/provider for evidence.
+OPENCODE_MODEL=""
+if [ -f "${OPENCODE_CONFIG_DST}" ]; then
+    OPENCODE_MODEL="$(python3 - "${OPENCODE_CONFIG_DST}" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except Exception:
+    sys.exit(0)
+agent = (cfg.get("agent") or {}).get("build") or {}
+model = agent.get("model") or cfg.get("model") or ""
+print(model)
+PYEOF
+)"
+fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -40,7 +65,8 @@ echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
 echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
 echo "MAC_URL:          ${MAC_URL:-<unset>}"
 echo "XDG_CONFIG_HOME:  ${XDG_CONFIG_HOME}"
-echo "opencode config:  ${XDG_CONFIG_HOME}/opencode/opencode.json"
+echo "opencode config:  ${OPENCODE_CONFIG_DST}"
+echo "opencode model:   ${OPENCODE_MODEL:-<unset>}"
 echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
 if [ -n "${ATTESTATION_KEY}" ]; then
     echo "MAC_AGENT_ATTESTATION_KEY: <present>"
@@ -146,7 +172,10 @@ fi
 
 # Run opencode build agent. If we have a working tree, cd into it so opencode
 # sees the repo as cwd (it does NOT have an explicit --cwd flag).
+# Capture stdout (structured JSON events) and stderr (provider/runtime
+# errors) into SEPARATE files so a postmortem can tell them apart.
 opencode_stdout="$(mktemp)"
+opencode_stderr="$(mktemp)"
 set +e
 if [ -n "${WORKDIR}" ]; then
     FULL_PROMPT="You are working in the git repository at \`${WORKDIR}\` (current directory). Use your edit tools to make the code changes requested below, then stop. Do not just describe the changes — actually edit the files.
@@ -155,12 +184,24 @@ ${PROMPT}"
 else
     FULL_PROMPT="${PROMPT}"
 fi
-opencode run --agent build --format json "${FULL_PROMPT}" > "${opencode_stdout}" 2>&1
+opencode run --agent build --format json "${FULL_PROMPT}" > "${opencode_stdout}" 2> "${opencode_stderr}"
 opencode_rc=$?
 set -e
+ORIGINAL_OPENCODE_RC="${opencode_rc}"
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "[opencode-build] rc=${opencode_rc}"
+# Echo head AND tail of both streams so terminated pod logs are
+# actionable — provider/tool errors frequently land at the tail.
+echo "[opencode-build] --- opencode stdout (head) ---"
 sed -n '1,40p' "${opencode_stdout}" || true
+echo "[opencode-build] --- opencode stdout (tail) ---"
+tail -n 40 "${opencode_stdout}" || true
+if [ -s "${opencode_stderr}" ]; then
+    echo "[opencode-build] --- opencode stderr (head) ---"
+    sed -n '1,40p' "${opencode_stderr}" || true
+    echo "[opencode-build] --- opencode stderr (tail) ---"
+    tail -n 40 "${opencode_stderr}" || true
+fi
 
 # Commit + push any changes opencode made.
 HEAD_SHA=""
@@ -168,16 +209,23 @@ PUSHED="false"
 FILES_CHANGED=""
 PR_URL=""
 PR_NUMBER=""
+PR_OPENED="false"
+GIT_STATUS=""
+GIT_CWD=""
 # When a working tree exists, the build agent is expected to edit files.
 # If opencode returns rc=0 but leaves the tree clean (it "planned" but
-# never called an edit tool), or if the commit can't be pushed, the run
-# is NOT successful work — mark it failed so the lease expires and the
-# task is retried instead of being submitted for review as complete.
+# never called an edit tool), or if the commit can't be pushed, or the
+# push succeeded but the PR/MR couldn't be opened, the run is NOT
+# successful work — mark it failed so the lease expires and the task is
+# retried instead of being submitted for review as complete.
 NO_EFFECTIVE_CHANGE="false"
 if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
     cd "${WORKDIR}"
-    if [ -n "$(git status --porcelain)" ]; then
-        FILES_CHANGED="$(git diff --name-only HEAD | head -50 | tr '\n' ',' | sed 's/,$//')"
+    GIT_CWD="$(pwd)"
+    GIT_STATUS="$(git status --porcelain 2>/dev/null || true)"
+    if [ -n "${GIT_STATUS}" ]; then
+        # Full changed-file list (no head cap) so evidence is complete.
+        FILES_CHANGED="$(git diff --name-only HEAD | tr '\n' ',' | sed 's/,$//')"
         git add -A
         git commit -m "mac: $(echo "${PROMPT}" | head -1)" -m "task=${MAC_TASK_ID} agent=${MAC_AGENT_ID}" || true
         HEAD_SHA="$(git rev-parse HEAD)"
@@ -207,6 +255,7 @@ ${PROMPT}"
             pr_rc=$?
             set -e
             if [ "$pr_rc" -eq 0 ]; then
+                PR_OPENED="true"
                 eval "$(printf '%s' "${pr_json}" | python3 -c '
 import json, shlex, sys
 try:
@@ -218,7 +267,10 @@ except Exception:
 ' 2>/dev/null || true)"
                 echo "[opencode-build] PR opened: #${PR_NUMBER} ${PR_URL}"
             else
+                # Pushed but no MR means the review/integration path is
+                # broken — treat as a failed run so it is retried.
                 echo "[opencode-build] PR open failed rc=${pr_rc}: ${pr_json}"
+                NO_EFFECTIVE_CHANGE="true"
             fi
         else
             echo "[opencode-build] push failed rc=$push_rc"
@@ -230,29 +282,121 @@ except Exception:
     fi
 fi
 export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER
+export PR_OPENED GIT_STATUS GIT_CWD ORIGINAL_OPENCODE_RC OPENCODE_MODEL
 
-# If we had a working tree but produced no pushed change, force a
+# If we had a working tree but produced no pushed+MR'd change, force a
 # non-zero effective return code. job_executor.py keys submit-for-review
-# off returncode==0, so a clean-tree "plan only" run would otherwise be
-# recorded as complete. Only override a successful opencode rc — a real
-# opencode failure already carries its own non-zero code.
+# off returncode==0, so a clean-tree "plan only" run (or a push without a
+# PR) would otherwise be recorded as complete. Only override a successful
+# opencode rc — a real opencode failure already carries its own non-zero
+# code.
 if [ "${NO_EFFECTIVE_CHANGE}" = "true" ] && [ "${opencode_rc}" -eq 0 ]; then
-    echo "[opencode-build] no pushed change despite rc=0 — marking task failed for retry"
+    echo "[opencode-build] no pushed+reviewed change despite rc=0 — marking task failed for retry"
     opencode_rc=1
 fi
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE
-export started_at finished_at opencode_rc opencode_stdout
+export started_at finished_at opencode_rc opencode_stdout opencode_stderr
 python3 - "${tmp_path}" <<'PYEOF'
-import json, os, sys
+import hashlib
+import json
+import os
+import sys
+
 out_path = sys.argv[1]
 rc = int(os.environ.get("opencode_rc", "1"))
-try:
-    with open(os.environ["opencode_stdout"], "r", encoding="utf-8") as fh:
-        stdout = fh.read()
-except Exception:
-    stdout = ""
+original_rc = int(os.environ.get("ORIGINAL_OPENCODE_RC", str(rc)))
+
+# Bounds: keep evidence durable but not unbounded. Head/tail slices so
+# both the initial setup AND the trailing provider/tool error survive.
+HEAD_BYTES = 24000
+TAIL_BYTES = 24000
+
+
+def read_bytes(path_env):
+    path = os.environ.get(path_env) or ""
+    if not path:
+        return b""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except Exception:
+        return b""
+
+
+def decode(raw):
+    # Binary-safe: never let invalid bytes break manifest generation.
+    return raw.decode("utf-8", "replace")
+
+
+def stream_finding(kind, raw):
+    text = decode(raw)
+    head = decode(raw[:HEAD_BYTES])
+    tail = decode(raw[-TAIL_BYTES:]) if len(raw) > TAIL_BYTES else text
+    return {
+        "kind": kind,
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "head": head,
+        "tail": tail,
+        "truncated": len(raw) > (HEAD_BYTES + TAIL_BYTES),
+    }
+
+
+def event_summary(raw):
+    text = decode(raw)
+    lines = text.splitlines()
+    counts = {}
+    parseable = 0
+    tool_calls = 0
+    edit_calls = 0
+    first_error = None
+    last_error = None
+    final_step_finish = None
+    last_events = []
+    edit_tool_names = {"edit", "write", "patch", "apply_patch", "multiedit"}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        parseable += 1
+        etype = str(evt.get("type") or evt.get("event") or "")
+        if etype:
+            counts[etype] = counts.get(etype, 0) + 1
+        if etype in ("tool", "tool_start", "tool_call"):
+            tool_calls += 1
+            name = str(evt.get("name") or evt.get("tool") or "").lower()
+            if name in edit_tool_names:
+                edit_calls += 1
+        if etype == "error" or evt.get("error"):
+            first_error = first_error or evt
+            last_error = evt
+        if etype == "step_finish":
+            final_step_finish = evt.get("reason") or evt.get("finish_reason")
+        last_events.append(evt)
+    return {
+        "total_lines": len(lines),
+        "parseable_json_lines": parseable,
+        "event_counts": counts,
+        "tool_call_count": tool_calls,
+        "edit_tool_count": edit_calls,
+        "first_error": first_error,
+        "last_error": last_error,
+        "final_step_finish_reason": final_step_finish,
+        "last_events": last_events[-5:],
+    }
+
+
+stdout_raw = read_bytes("opencode_stdout")
+stderr_raw = read_bytes("opencode_stderr")
+
 status = "complete" if rc == 0 else "incomplete"
 manifest = {
     "schema": "mac.worker_evidence.v1",
@@ -266,19 +410,29 @@ manifest = {
     ),
     "result": "executor_completed" if rc == 0 else "executor_failed",
     "returncode": rc,
+    "original_opencode_rc": original_rc,
+    "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
     "started_at": os.environ.get("started_at", ""),
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
     "findings": [
-        {"kind": "opencode_stdout", "preview": stdout[:48000]},
+        stream_finding("opencode_stdout", stdout_raw),
+        stream_finding("opencode_stderr", stderr_raw),
+        dict(event_summary(stdout_raw), kind="opencode_event_summary"),
         {
             "kind": "repo_change_summary",
             "repo_url": os.environ.get("REPO_URL", ""),
             "branch": os.environ.get("TASK_BRANCH", ""),
             "head_sha": os.environ.get("HEAD_SHA", ""),
             "pushed": os.environ.get("PUSHED", "false") == "true",
-            "files_changed": [f for f in (os.environ.get("FILES_CHANGED", "") or "").split(",") if f],
-            # PR URL is recorded as an integration_finding by
+            "pr_opened": os.environ.get("PR_OPENED", "false") == "true",
+            "pr_url": os.environ.get("PR_URL", ""),
+            "files_changed": [
+                f for f in (os.environ.get("FILES_CHANGED", "") or "").split(",") if f
+            ],
+            "cwd": os.environ.get("GIT_CWD", ""),
+            "git_status": os.environ.get("GIT_STATUS", ""),
+            # PR URL is also recorded as an integration_finding by
             # `mac pull-request open --task-id`; query via
             # GET /integrations/findings?source_kind=github|gitea
             # &finding_type=pull_request_opened.
@@ -302,5 +456,5 @@ else
     mv "${tmp_path}" "${EVIDENCE_PATH}"
     echo "[opencode-build] manifest unsigned -> ${EVIDENCE_PATH}"
 fi
-rm -f "${opencode_stdout}"
+rm -f "${opencode_stdout}" "${opencode_stderr}"
 exit "${opencode_rc}"
