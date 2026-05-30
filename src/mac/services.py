@@ -6321,6 +6321,118 @@ class ControlPlane:
             tenant_id=tenant_id,
         )
 
+    def run_nap_cycle(
+        self,
+        agent_id: str,
+        *,
+        actor: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+        embed_into_medium: bool = True,
+    ) -> JsonDict:
+        """mem-08 autonomy: drive an agent through one full nap.
+
+        Sequence:
+          1. begin_nap (agent → DRAINING, nap_run created)
+          2. consolidate (summarize since last nap, embed into medium)
+          3. complete_nap (agent → IDLE, nap_run completed)
+
+        Failures in step 2 don't strand the agent: complete_nap still
+        runs in a finally block so DRAINING never leaks. The
+        consolidation report is returned alongside the nap_run for
+        operators to inspect.
+        """
+        run = self.begin_nap(agent_id, actor=actor)
+        consolidation_report: JsonDict = {}
+        consolidation_error: Optional[str] = None
+        try:
+            consolidation_report = self.consolidate_nap(
+                agent_id,
+                nap_run_id=run.id,
+                embed_into_medium=embed_into_medium,
+                vector_writer=vector_writer,
+                created_by=actor or "nap-cycle:%s" % agent_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            consolidation_error = str(exc)
+        # Always complete the nap so the agent returns to IDLE — even
+        # when consolidation threw, an incomplete nap leaves the agent
+        # stuck in DRAINING which is much worse than a missing summary.
+        try:
+            completed = self.complete_nap(
+                run.id,
+                summary_evidence_id=None,
+                detail={
+                    "consolidation": consolidation_report,
+                    "consolidation_error": consolidation_error,
+                },
+                actor=actor,
+            )
+        except TransitionError as exc:
+            # An off-path actor already completed/failed the run
+            # (e.g., an admin cancelled mid-cycle). Refetch and report.
+            completed = self.get_nap_run(run.id)
+        return {
+            "nap_run": completed.to_dict(),
+            "consolidation": consolidation_report,
+            "consolidation_error": consolidation_error,
+        }
+
+    def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[JsonDict]:
+        """Return enabled nap_schedules whose current window has opened
+        and hasn't been completed yet.
+
+        An agent's "current window" is today's `midnight UTC +
+        offset_minutes` (or yesterday's if today's hasn't opened yet).
+        We consider it open when `as_of` >= window_start, and unclaimed
+        when last_completed_at is either NULL or before window_start.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        as_of_dt = (
+            datetime.fromisoformat(as_of)
+            if as_of
+            else datetime.now(timezone.utc)
+        )
+        if as_of_dt.tzinfo is None:
+            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+        rows = self.store.query_all(
+            """
+            SELECT agent_id, offset_minutes, window_minutes, last_completed_at
+            FROM nap_schedules WHERE enabled = 1
+            """
+        )
+        due: List[JsonDict] = []
+        for row in rows:
+            offset = int(row["offset_minutes"] or 0)
+            window = int(row["window_minutes"] or 15)
+            midnight = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            window_start = midnight + timedelta(minutes=offset)
+            if window_start > as_of_dt:
+                window_start = window_start - timedelta(days=1)
+            window_end = window_start + timedelta(minutes=window)
+            already_done = False
+            if row["last_completed_at"]:
+                try:
+                    last_dt = datetime.fromisoformat(row["last_completed_at"])
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if last_dt >= window_start:
+                        already_done = True
+                except (TypeError, ValueError):
+                    pass
+            if already_done:
+                continue
+            due.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "window_start": window_start.isoformat(timespec="microseconds"),
+                    "window_end": window_end.isoformat(timespec="microseconds"),
+                    "last_completed_at": row["last_completed_at"],
+                    "in_window": window_start <= as_of_dt <= window_end,
+                }
+            )
+        return due
+
     def consolidate_nap(
         self,
         agent_id: str,

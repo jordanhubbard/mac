@@ -1027,6 +1027,27 @@ def cmd_memory_recall(args: argparse.Namespace) -> None:
     _print(cp.recall_memory(args.query, **kwargs))
 
 
+def cmd_nap_cycle(args: argparse.Namespace) -> None:
+    """mem-08 autonomy: begin + consolidate + complete in one shot."""
+    cp = _plane(args)
+    writer = None
+    if not args.no_embed:
+        writer = _build_vector_writer(args)
+    _print(
+        cp.run_nap_cycle(
+            args.agent_id,
+            actor=args.actor,
+            vector_writer=writer,
+            embed_into_medium=not args.no_embed,
+        )
+    )
+
+
+def cmd_nap_due(args: argparse.Namespace) -> None:
+    """List agents whose nap window has opened and hasn't been completed."""
+    _print(_plane(args).list_due_nap_agents(as_of=args.as_of))
+
+
 def cmd_nap_consolidate(args: argparse.Namespace) -> None:
     """mem-08: walk the agent's recent memory_records, write per-group
     summaries, and embed them into the medium tier."""
@@ -1702,6 +1723,29 @@ def build_parser() -> argparse.ArgumentParser:
     nap_list = nap.add_parser("list", help="list nap_runs")
     nap_list.add_argument("--agent-id")
     _set(cmd_nap_list, nap_list)
+
+    # mem-08 autonomy: run the whole begin → consolidate → complete arc.
+    nap_cycle = nap.add_parser(
+        "cycle",
+        help="run a full nap cycle (begin + consolidate + complete) for "
+        "one agent — what the auto-trigger timer calls",
+    )
+    nap_cycle.add_argument("agent_id")
+    nap_cycle.add_argument("--actor")
+    nap_cycle.add_argument("--no-embed", action="store_true")
+    nap_cycle.add_argument("--qdrant-url")
+    _set(cmd_nap_cycle, nap_cycle)
+
+    nap_due = nap.add_parser(
+        "due",
+        help="list enabled nap_schedules whose current window has opened "
+        "and not yet been completed",
+    )
+    nap_due.add_argument(
+        "--as-of",
+        help="ISO timestamp to compute due-ness against (default: now)",
+    )
+    _set(cmd_nap_due, nap_due)
 
     # mem-08: build per-(task/project) memory summaries for an agent.
     nap_consolidate = nap.add_parser(

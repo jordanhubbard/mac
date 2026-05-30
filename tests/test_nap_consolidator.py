@@ -151,6 +151,81 @@ def test_consolidate_handles_no_records_gracefully(cp):
 # ---------------------------------------------------------------------------
 
 
+def test_nap_cycle_runs_full_arc_with_consolidation(cp, writer, fake_qdrant):
+    """mem-08 autonomy: run_nap_cycle does begin + consolidate +
+    complete in one shot. Agent ends IDLE; nap_run is COMPLETED."""
+    from mac.models import AgentStatus, NapStatus, TaskState
+
+    machine = cp.register_machine("h1")
+    agent = cp.register_agent(machine.id, "agent-cycle", capabilities=[])
+    _add_memory_as_agent(cp, agent.id, "first thing the agent did")
+    _add_memory_as_agent(cp, agent.id, "second thing the agent did")
+    out = cp.run_nap_cycle(agent.id, vector_writer=writer)
+    # Run reached COMPLETED.
+    assert out["nap_run"]["status"] == NapStatus.COMPLETED.value
+    # Agent is back to IDLE.
+    refreshed = cp.get_agent(agent.id)
+    assert refreshed.status == AgentStatus.IDLE.value
+    # Consolidation produced a summary that was embedded.
+    assert out["consolidation"]["summaries_written"] >= 1
+    assert out["consolidation"]["summaries_embedded"] >= 1
+    assert out["consolidation_error"] is None
+
+
+def test_nap_cycle_completes_even_when_consolidate_fails(cp):
+    """A consolidation failure must not strand the agent in DRAINING —
+    complete_nap runs in a finally block so the lifecycle always
+    resolves."""
+    from mac.models import AgentStatus, NapStatus
+    from unittest.mock import patch
+
+    machine = cp.register_machine("h1")
+    agent = cp.register_agent(machine.id, "agent-x", capabilities=[])
+    with patch.object(cp, "consolidate_nap", side_effect=RuntimeError("boom")):
+        out = cp.run_nap_cycle(agent.id)
+    assert out["consolidation_error"] == "boom"
+    assert out["nap_run"]["status"] == NapStatus.COMPLETED.value
+    assert cp.get_agent(agent.id).status == AgentStatus.IDLE.value
+
+
+def test_list_due_nap_agents_finds_opened_windows(cp):
+    """An agent whose window has opened today and not completed is due."""
+    from datetime import datetime, timedelta, timezone
+
+    machine = cp.register_machine("h1")
+    a = cp.register_agent(machine.id, "agent-a", capabilities=[])
+    b = cp.register_agent(machine.id, "agent-b", capabilities=[])
+    # Both agents pick offsets within the nap-window-cap [0, 360).
+    # agent-a: opens at midnight UTC; agent-b: opens at 5h UTC. Test at
+    # noon means both have already opened today; neither has been
+    # completed → both are due.
+    cp.configure_nap(a.id, offset_minutes=0, window_minutes=30)
+    cp.configure_nap(b.id, offset_minutes=300, window_minutes=15)
+    as_of = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc).isoformat()
+    due = cp.list_due_nap_agents(as_of=as_of)
+    due_ids = {item["agent_id"] for item in due}
+    assert a.id in due_ids
+    assert b.id in due_ids
+
+
+def test_list_due_nap_agents_skips_already_completed_windows(cp):
+    """Once last_completed_at >= window_start, the agent isn't due."""
+    from datetime import datetime, timezone
+
+    machine = cp.register_machine("h1")
+    a = cp.register_agent(machine.id, "agent-a", capabilities=[])
+    cp.configure_nap(a.id, offset_minutes=0, window_minutes=30)
+    # Stamp a recent completion at today's window (midnight or after).
+    today_midnight = datetime(2026, 5, 30, 0, 0, 0, tzinfo=timezone.utc)
+    cp.store.execute(
+        "UPDATE nap_schedules SET last_completed_at = ? WHERE agent_id = ?",
+        ((today_midnight).isoformat(), a.id),
+    )
+    as_of = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc).isoformat()
+    due_ids = {item["agent_id"] for item in cp.list_due_nap_agents(as_of=as_of)}
+    assert a.id not in due_ids
+
+
 def test_consolidate_and_recall_end_to_end(cp, writer, fake_qdrant):
     """The 'does this memory tier actually do its job?' test.
 
