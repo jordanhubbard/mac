@@ -112,6 +112,9 @@ class VerificationManifest:
 class EvidenceValidationContext:
     passed_check_count: Callable[[JsonDict], int]
     allow_empty_repo_change: bool = False
+    # mem-11: a repo-coupled task (one with a repository_contract / git target)
+    # must produce a pushed repo anchor, not a free-text operator_result.
+    repo_coupled: bool = False
 
 
 class EvidenceValidator:
@@ -292,6 +295,17 @@ class OperatorResultValidator(EvidenceValidator):
         manifest: VerificationManifest,
         context: EvidenceValidationContext,
     ) -> List[str]:
+        # mem-11: reject the permissive operator_result path for repo-coupled
+        # tasks. The verified task_d7c51a0b incident was a code task whose
+        # executor emitted operator_result with a "hello hello…" summary, no
+        # commit, and pushed=false — it passed here and then jammed the review
+        # loop. A repo task must anchor on a pushed commit.
+        if context.repo_coupled:
+            return [
+                "operator_result evidence is not accepted for a repo-coupled task; "
+                "provide repo_change/test/no_change evidence with a pushed repo anchor "
+                "(repo.head_sha, repo.pushed=true, repo.remote_ref)"
+            ]
         if str(manifest.raw.get("summary") or manifest.raw.get("result") or "").strip():
             return []
         if _manifest_list(manifest.raw.get("artifacts")) or _manifest_list(manifest.raw.get("findings")):
@@ -324,6 +338,7 @@ def validate_evidence_type(
     *,
     passed_check_count: Callable[[JsonDict], int],
     allow_empty_repo_change: bool = False,
+    repo_coupled: bool = False,
 ) -> List[str]:
     typed = VerificationManifest.parse(manifest)
     validator = VALIDATORS.get(str(evidence_type or "").strip().lower())
@@ -334,6 +349,7 @@ def validate_evidence_type(
         EvidenceValidationContext(
             passed_check_count=passed_check_count,
             allow_empty_repo_change=allow_empty_repo_change,
+            repo_coupled=repo_coupled,
         ),
     )
 

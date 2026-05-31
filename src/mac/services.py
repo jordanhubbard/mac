@@ -11774,6 +11774,7 @@ class ControlPlane:
             manifest,
             passed_check_count=self._passed_verification_check_count,
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
+            repo_coupled=self._task_is_repo_coupled(task),
         )
         problems.extend(self._required_changed_file_problems(task, manifest))
         return problems
@@ -11804,6 +11805,22 @@ class ControlPlane:
         return origin.get("type") == "beads_source_remediation" or remediation.get(
             "type"
         ) == "beads_source_refresh"
+
+    def _task_is_repo_coupled(self, task: Task) -> bool:
+        """mem-11: True when the task carries a repository_contract — a code task
+        expected to produce a pushed repo change. ``operator_result`` evidence is
+        rejected for such tasks (the verified task_d7c51a0b jam was a code task
+        that emitted a free-text operator_result with no commit/push)."""
+        metadata = ensure_json_object(task.metadata)
+        for path in (
+            ("execution_contract", "repository_contract"),
+            ("origin", "repository_contract"),
+            ("repository_contract",),
+        ):
+            contract = _nested_json_object(metadata, *path)
+            if isinstance(contract, dict) and contract:
+                return True
+        return False
 
     def _repo_verification_problems(self, manifest: JsonDict, require_tests: bool) -> List[str]:
         problems = self._require_pushed_repo_anchor(manifest)

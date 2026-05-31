@@ -58,6 +58,24 @@ def test_evidence_validators_are_registry_backed_by_type():
     ) == []
 
 
+def test_operator_result_rejected_for_repo_coupled_task():
+    # mem-11: a repo-coupled task must anchor on a pushed commit, not a free-text
+    # operator_result (the verified task_d7c51a0b "hello hello…" jam).
+    manifest = {
+        "schema": "mac.verification.v1",
+        "status": "complete",
+        "evidence_type": "operator_result",
+        "summary": "hello hello hello",  # the literal incident payload shape
+    }
+    # Not repo-coupled (default): accepted as before.
+    assert validate_evidence_type("operator_result", manifest, passed_check_count=_passed_check_count) == []
+    # Repo-coupled: rejected, with guidance to use a pushed repo anchor.
+    problems = validate_evidence_type(
+        "operator_result", manifest, passed_check_count=_passed_check_count, repo_coupled=True
+    )
+    assert problems and "not accepted for a repo-coupled task" in problems[0]
+
+
 def test_repo_change_validator_reuses_repo_anchor_and_check_gates():
     manifest = _repo_manifest()
     manifest["repo"]["dirty"] = True
