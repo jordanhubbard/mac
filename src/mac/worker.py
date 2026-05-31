@@ -344,7 +344,25 @@ class MacWorker:
         try:
             while not self._stop and (max_iterations is None or iterations < max_iterations):
                 iterations += 1
-                outcome = self.run_once()
+                try:
+                    outcome = self.run_once()
+                except Exception as exc:  # noqa: BLE001
+                    # Loop resilience (loop-01): run_once best-effort-marks the
+                    # task failed before any re-raise, so one task's error must
+                    # not crash the worker and halt ALL autonomous work. Record
+                    # it and continue to the next poll. (SIGTERM/SIGINT set
+                    # self._stop via the handlers, not exceptions, so graceful
+                    # shutdown is unaffected; KeyboardInterrupt/SystemExit are
+                    # BaseException and still propagate.)
+                    self._observe_log(
+                        "worker.run_once.exception",
+                        level="error",
+                        detail={"error": str(exc), "iteration": iterations},
+                    )
+                    results.append(WorkerRunResult(status="error", error=str(exc)))
+                    if max_iterations is None:
+                        time.sleep(self.poll_interval_seconds)
+                    continue
                 if outcome.status == "no_task":
                     if max_iterations is None:
                         time.sleep(self.poll_interval_seconds)
@@ -2605,9 +2623,26 @@ def _worker_verification_contract_problems(
     if evidence_type == "review_verdict":
         return []
     if evidence_type == "operator_result":
-        if not str(manifest.get("summary") or manifest.get("result") or "").strip():
-            if not _manifest_list(manifest.get("artifacts")) and not _manifest_list(manifest.get("findings")):
-                return ["operator_result evidence requires summary, result, findings, or artifacts"]
+        # autonomy-loop fix: mirror the server's substance gate so the worker
+        # pre-check fails chatter ("hello hello hello") / placeholder evidence
+        # locally and fails the task cleanly, instead of submitting it and
+        # crashing on the server's 400. One definition of "substantive" —
+        # reused from evidence_validators so worker and server can't drift.
+        from mac.evidence_validators import _operator_result_is_substantive
+
+        if _manifest_list(manifest.get("artifacts")) or _manifest_list(manifest.get("findings")):
+            return []
+        combined = (
+            str(manifest.get("summary") or "") + " " + str(manifest.get("result") or "")
+        ).strip()
+        if not combined:
+            return ["operator_result evidence requires summary, result, findings, or artifacts"]
+        if not _operator_result_is_substantive(combined):
+            return [
+                "operator_result evidence is not substantive (degenerate or placeholder "
+                "text); provide a real summary/result describing the completed work, or "
+                "structured findings/artifacts"
+            ]
         return []
     return ["unsupported verification.evidence_type: %s" % evidence_type]
 

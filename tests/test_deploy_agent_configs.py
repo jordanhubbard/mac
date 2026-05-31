@@ -96,7 +96,10 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     assert '--attestation-key-env "$HOME/.mac/mac.env"' in script
     assert "--rotate-missing-attestation-key" in script
     assert "--rotate-invalid-attestation-key" in script
-    assert "evidence_type=review_verdict" in script
+    # loop-01: the reviewer prompt that asks for a signed review_verdict moved
+    # into the extracted mac.task_executor module.
+    executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    assert "evidence_type=review_verdict" in executor_module
 
 
 def test_fleet_deploy_bootstraps_hub_fleet_record():
@@ -120,36 +123,6 @@ def test_fleet_deploy_drain_agent_lookup_does_not_pipe_json_into_python_stdin():
     assert 'mac_api_json GET "/agents" |' not in agent_id_for_drain
 
 
-def test_fleet_deploy_bootstraps_beads_cli_for_bridge():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-
-    assert "BEADS_REPO_URL=\"${MAC_DEPLOY_BEADS_REPO_URL:-https://github.com/gastownhall/beads.git}\"" in script
-    assert "install_beads_cli()" in script
-    assert '"$HOME/.local/bin/bd"' in script
-    assert '"$HOME/bin/bd"' in script
-    assert "bootstrap_beads_repositories()" in script
-    assert "restore_beads_tracked_exports()" in script
-    assert 'values.setdefault("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")' in script
-    assert 'values.setdefault("MAC_BEADS_BRIDGE_ROOT", str(mac_home / "beads-checkouts"))' in script
-    assert 'bootstrap --yes' in script
-    # Dolt pull is gated behind MAC_BEADS_DOLT_SYNC_ENABLED=1 (disabled by default).
-    assert 'MAC_BEADS_DOLT_SYNC_ENABLED' in script
-    assert 'dolt pull' in script
-    assert 'chmod 700 "$repo_path/.beads"' in script
-    assert 'git -C "$repo_path" config beads.role maintainer' in script
-    source_install_block = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
-        'log "creating/updating mac environment file"', 1
-    )[0]
-    assert "install_beads_cli" in source_install_block
-    env_source_block = script.split('. "$ENV_FILE"', 1)[1].split(
-        'log "installing mac Python package"', 1
-    )[0]
-    assert "bootstrap_beads_repositories" in env_source_block
-    assert "restore_beads_tracked_exports" in env_source_block
-    assert 'values["MAC_BEADS_CLI"] = str(mac_home / "bin" / "bd")' in script
-    services_text = (ROOT / "src" / "mac" / "services.py").read_text(encoding="utf-8")
-    assert "BeadsBridgeService(_beads_cli, runner=_run_beads_command)" in services_text
-    assert 'self.beads_bridge.run(["ready", "--json"]' in services_text
 
 
 def test_fleet_deploy_installs_github_cli_for_workers():
@@ -196,10 +169,12 @@ def test_fleet_deploy_applies_hermes_patch_set():
     quench_patch = ROOT / "deploy" / "hermes" / "disable-shutdown-chat-notices.patch"
     runtime_patch = ROOT / "deploy" / "hermes" / "mac-runtime-context-prompt.patch"
 
-    assert "multi-slack-mvp.patch" in script
-    assert "mac-runtime-context-prompt.patch" in script
-    assert "disable-shutdown-chat-notices.patch" in script
-    assert "upstream plus mac-managed patches" in script
+    # ADR 0001 hu-04: the runtime is vendored in-tree (patches folded into the
+    # snapshot); the deploy no longer clones upstream or applies patches at
+    # deploy time. The .patch files are retained for re-vendoring (asserted below).
+    assert "NousResearch/hermes-agent.git" not in script
+    assert "vendored in-tree Hermes runtime" in script
+    assert 'HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"' in script
     assert "verify_hermes_prompt_bridge()" in script
     assert "prompt_builder.build_context_files_prompt" in script
     assert "First-Class Objects" in script
@@ -382,8 +357,7 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
         "reload_mac_env\n"
         "fetch_slack_secrets_from_vault\n"
         "reload_mac_env\n"
-        "sync_hermes_slack_identity_env\n"
-        '[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories'
+        "sync_hermes_slack_identity_env"
     ) in script
     assert "fetch_slack_secrets_from_vault()" in script
     assert "scripts/mac-fetch-slack-secrets.py" in script
@@ -403,11 +377,30 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     assert 'model_config.pop("api_key", None)' in script
     assert '"key_env": "TOKENHUB_API_KEY"' in script
     assert 'tokenhub_provider.pop("api_key", None)' in script
-    assert '"chat", "--query", prompt, "--quiet", "--accept-hooks"' in script
-    assert "write_fallback_evidence_manifest(task_workspace, task, result, review_context)" in script
-    assert '"evidence_type": task_evidence_type(task)' in script
-    assert 'runtime_kwargs["api_key"] = mac_gateway_api_key' in startup
-    assert 'runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")' in startup
+    # loop-01: the executor logic was extracted from a ~500-line bash heredoc
+    # into the tested mac.task_executor module. The deploy now writes only a
+    # shim that delegates to it.
+    assert "from mac.task_executor import main" in script
+    assert "raise SystemExit(main())" in script
+    assert "mac-hermes-task-executor" in script
+    executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    assert '"chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"' in executor_module
+    assert "def write_fallback_evidence_manifest(" in executor_module
+    # autonomy-loop fix (preserved through the extraction): the fallback must
+    # never fabricate verified completion — UNVERIFIED operator_result only,
+    # never a fake repo_change/test and never a synthetic passing check.
+    assert '"evidence_type": "operator_result",' in executor_module
+    assert '"name": "hermes_chat_query"' not in executor_module
+    # telemetry path + memory feed (deployment gets smarter over time)
+    assert 'name": "executor.%s"' in executor_module or '"executor.%s"' in executor_module
+    assert "def recall_deployment_lessons(" in executor_module
+    assert "def record_deployment_learning(" in executor_module
+    # ADR 0001 hu-03: the gateway provider/model override is now owned, in-process
+    # code (mac.agent_provider) routing through TokenHub — not runtime
+    # string-surgery of an upstream checkout. Verify the owned mechanism.
+    agent_provider = (ROOT / "src" / "mac" / "agent_provider.py").read_text(encoding="utf-8")
+    assert '"TOKENHUB_URL"' in agent_provider
+    assert "mac-gateway-explicit" in agent_provider
     assert '[ -f "$HOME/.acc/.env" ]' not in gateway_wrapper
     assert '[ -f "$HOME/.acc/.env" ]' not in executor_wrapper
     assert 'or os.environ.get("NVIDIA_API_KEY")' not in startup
@@ -764,7 +757,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
     assert '"key_matches_env": key_matches_env' in selftest
-    assert '[python_bin, hermes_script, "chat", "--query", prompt, "--quiet"]' in selftest
+    assert '[python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"]' in selftest
     assert "def output_text" in selftest
     assert "output_text(exc.stdout)" in selftest
     assert "classify_hermes_chat_failure" in selftest
@@ -778,9 +771,10 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
 
 
 def test_executor_prompt_includes_repository_runtime_contract():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    # loop-01: the executor (and its prompts) live in mac.task_executor now.
+    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
 
-    assert "def repository_contract_section(task: dict) -> str:" in script
+    assert "def repository_contract_section(task: Dict[str, Any]) -> str:" in script
     assert "Repository runtime contract:" in script
     assert "metadata.runtime.repository_worktree" in script
     assert "origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only" in script
@@ -790,7 +784,7 @@ def test_executor_prompt_includes_repository_runtime_contract():
 
 
 def test_reviewer_prompt_includes_verdict_contract():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
 
     assert "MAC_TASK_REPO_WORKTREE" in script
     assert "local review checkout" in script

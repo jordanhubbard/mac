@@ -1,6 +1,6 @@
 ---
 id: mem-12
-status: open
+status: closed
 deps: []
 links: [mem-01, mem-11, mem-13]
 created: 2026-05-29T02:58:02Z
@@ -27,3 +27,7 @@ This is independent of why the underlying evidence is bad (mem-11 covers that). 
 - Backfill: on rollout, scan existing tasks with > N retracted reviews and transition them.
 
 Discovered during [mem-01](mem-01.md) root cause analysis on 2026-05-29.
+
+## Resolution (2026-05-31)
+
+Implemented + tested (bound review retraction; MAC_REVIEW_RETRACTION_CAP default 3 -> task failed; test_default_review_workflow_caps_retractions).

@@ -1,6 +1,6 @@
 ---
 id: mem-11
-status: open
+status: closed
 deps: []
 links: [mem-01, mem-12, mem-13]
 created: 2026-05-29T02:58:00Z
@@ -25,3 +25,7 @@ The dispatcher knows whether a task is repo-coupled (it stages a worktree, a bra
 - Existing inert / non-repo tasks remain free to use `operator_result`.
 
 Discovered during [mem-01](mem-01.md) root cause analysis on 2026-05-29.
+
+## Resolution (2026-05-31)
+
+Closed. `OperatorResultValidator` now rejects `operator_result` evidence for repo-coupled tasks (those carrying a `repository_contract`); the task must anchor on a pushed commit (repo_change/test/no_change). `EvidenceValidationContext.repo_coupled` is set by `ControlPlane._task_is_repo_coupled`. Test: `test_operator_result_rejected_for_repo_coupled_task`. This closes the source of the task_d7c51a0b jam.

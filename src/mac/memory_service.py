@@ -12,7 +12,7 @@ that try to push transcript content here get rejected at the boundary.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mac.models import (
     ConversationThread,
@@ -119,6 +119,65 @@ class MemoryService:
         sql += " ORDER BY created_at, id"
         rows = self.store.query_all(sql, tuple(params))
         return [self._memory_from_row(row) for row in rows]
+
+    # dream-04: salience-aware decay / forgetting -----------------------
+
+    #: Curated, durable knowledge that decay must never touch. Salience here is
+    #: high by construction (these are explicitly-remembered facts/lessons).
+    PROTECTED_MEMORY_PREFIXES = ("beads_memory", "deployment_learning", "user", "project", "feedback")
+
+    def decay_memory(
+        self,
+        *,
+        ttl_days: float = 90.0,
+        dry_run: bool = True,
+        limit: int = 500,
+        protected_prefixes: Optional[Tuple[str, ...]] = None,
+    ) -> Dict[str, Any]:
+        """Forget stale, low-salience memory records (dream-04).
+
+        Salience here is a recency-and-kind heuristic: records older than
+        ``ttl_days`` whose ``record_type`` is NOT curated knowledge
+        (PROTECTED_MEMORY_PREFIXES) have decayed and are forgettable. This both
+        delivers the dreaming system's "forgetting" + keeps the memory tier from
+        growing unbounded (the observability-bloat problem).
+
+        **Dry-run by default** — it reports what *would* be forgotten and
+        deletes nothing. Pass ``dry_run=False`` to actually prune (bounded by
+        ``limit``). Curated knowledge is always preserved.
+        """
+        from datetime import datetime, timezone, timedelta
+
+        protected = tuple(protected_prefixes) if protected_prefixes is not None else self.PROTECTED_MEMORY_PREFIXES
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(0.0, ttl_days))).isoformat(timespec="microseconds")
+        rows = self.store.query_all(
+            "SELECT id, record_type, created_at FROM memory_records WHERE created_at < ? ORDER BY created_at LIMIT ?",
+            (cutoff, int(limit)),
+        )
+        forgettable = [
+            r for r in rows
+            if not any(str(r["record_type"]).startswith(p) for p in protected)
+        ]
+        by_type: Dict[str, int] = {}
+        for r in forgettable:
+            key = str(r["record_type"]).split(":", 1)[0]
+            by_type[key] = by_type.get(key, 0) + 1
+        deleted = 0
+        if not dry_run and forgettable:
+            for r in forgettable:
+                self.store.execute("DELETE FROM memory_records WHERE id = ?", (r["id"],))
+            deleted = len(forgettable)
+        return {
+            "schema": "mac.memory_decay.v1",
+            "ttl_days": ttl_days,
+            "dry_run": dry_run,
+            "cutoff": cutoff,
+            "scanned": len(rows),
+            "forgettable": len(forgettable),
+            "by_type": by_type,
+            "protected_prefixes": list(protected),
+            "deleted": deleted,
+        }
 
     # Conversation threads ---------------------------------------------
 

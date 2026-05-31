@@ -343,6 +343,47 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    # -- Workflow decisions (wf-02) -----------------------------------------
+
+    def workflow_decisions(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/workflows/%s/decisions" % quote(workflow_id_or_slug, safe=""),
+                tenant_id=tenant_id,
+            )
+        )
+
+    def workflow_run_decisions(self, run_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/workflows/runs/%s/decisions" % quote(run_id, safe=""))
+        )
+
+    def start_workflow(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        started_by: str = "human",
+        input: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        pre_decisions: Optional[Dict[str, str]] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "started_by": started_by,
+                "input": input or {},
+                "tenant_id": tenant_id,
+                "pre_decisions": pre_decisions or {},
+            }
+        )
+        return _Dictish(
+            self._post("/workflows/%s/start" % quote(workflow_id_or_slug, safe=""), body)
+        )
+
     # -- Tenant / User / Persona / Hermes / Binding / Interaction -----------
 
     def register_tenant(self, name: str, **kw: Any) -> _Dictish:
@@ -660,16 +701,8 @@ class RemoteDispatch:
     def list_deployments(self, environment: str) -> List[_Dictish]:
         return _wrap_list(self._get("/environments/%s/deployments" % quote(environment, safe="")))
 
-    # -- Bridge (beads / project items) -------------------------------------
-
-    def list_beads_repositories(self) -> List[_Dictish]:
-        return _wrap_list(self._get("/bridge/beads/repositories"))
-
-    def register_beads_repository(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/bridge/beads/repositories", _drop_none(kw)))
-
-    def poll_beads_repositories(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/bridge/beads/poll", _drop_none(kw)))
+    # -- Bridge (project items) ---------------------------------------------
+    # beads bridge endpoints removed: beads is no longer a read/write source.
 
     def import_project_item(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/bridge/items", _drop_none(kw)))
@@ -695,6 +728,36 @@ class RemoteDispatch:
 
     def search_memory(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/memory", **kw))
+
+    # mem-10: memory-tier health snapshot.
+    def memory_health(self, *, nap_interval_hours: float = 24.0) -> _Dictish:
+        return _Dictish(
+            self._get("/v1/memory/health", nap_interval_hours=nap_interval_hours)
+        )
+
+    # mem-09: recall over the vector tier.
+    def recall_memory(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **_extra: Any,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/v1/memory/recall",
+                q=query,
+                tier=tier,
+                limit=limit,
+                min_score=min_score,
+                project=project,
+                tenant_id=tenant_id,
+            )
+        )
 
     # -- Rollout ------------------------------------------------------------
 

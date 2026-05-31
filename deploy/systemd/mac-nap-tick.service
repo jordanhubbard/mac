@@ -1,0 +1,31 @@
+[Unit]
+Description=mac nap-tick — drive due nap cycles for all agents
+Documentation=https://github.com/jordanh/mac
+After=mac.service mac-qdrant.service
+Requires=mac.service
+
+[Service]
+Type=oneshot
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+
+# Defaults; override in /etc/mac/nap-tick.env. The TokenHub embed
+# backend is opt-in (set MAC_MEMORY_EMBED_BACKEND=tokenhub there or
+# the timer just won't embed and will use the hash stub).
+EnvironmentFile=-__MAC_HOME__/mac.env
+EnvironmentFile=-/etc/mac/nap-tick.env
+
+# `mac nap due --format=agent-ids` emits newline-delimited agent_ids;
+# xargs runs `mac nap cycle` for each. A busy agent (active lease) is
+# reported as skipped by the cycle, not an error, so one busy agent
+# doesn't fail the whole tick. --no-run-if-empty keeps a clean exit
+# when nothing is due.
+ExecStart=/bin/bash -lc '\
+  set -euo pipefail; \
+  __MAC_HOME__/venv/bin/mac nap due --format=agent-ids \
+    | xargs --no-run-if-empty -I{} __MAC_HOME__/venv/bin/mac nap cycle {} \
+        --qdrant-url=${MAC_QDRANT_URL:-http://127.0.0.1:6333} \
+        --actor=nap-tick.service'
+
+StandardOutput=journal
+StandardError=journal

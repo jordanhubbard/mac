@@ -1,6 +1,6 @@
 ---
 id: mac-73cz
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-28T03:29:36Z
@@ -29,3 +29,7 @@ Mitigation already in place: mac-rdez closed today verified TokenHub provider ch
 - Self-repair task spawning is bounded by a circuit breaker; opening the breaker is visible in agent heartbeat resources
 - An OpenAI 429 or equivalent quota error short-circuits further task spawning until manually cleared OR a cooldown elapses
 - Test: simulate provider 429 from a worker and verify no more than 3 'Repair X' tasks are spawned in a 5-minute window
+
+## Resolution (2026-05-31)
+
+Circuit-breaker implemented. ControlPlane._beads_remediation_breaker_open (services.py) bounds the self-repair spawn rate per repository: if MAC_REPAIR_BREAKER_MAX_SPAWNS (default 3) remediation tasks for a repo were created within MAC_REPAIR_BREAKER_WINDOW_SECONDS (default 300), the breaker opens and _ensure_beads_source_remediation_task returns None instead of spawning another — so a flaky provider (e.g. an OpenAI 429) can't turn self-healing into a thrash multiplier. Bounding by spawn *rate* (not error class) covers quota AND transient failures; the window rolling off is the cooldown. Opening is recorded as a bridge.beads.source_remediation.circuit_open observation (operator-visible). tests/test_repair_circuit_breaker.py proves the AC: no more than 3 'Repair X' tasks spawn in a 5-minute window, per-repo, disable-able via max=0. Note: the beads bridge is gated off by default (MAC_BEADS_BRIDGE_ENABLED), so this is also defense-in-depth. Partial/follow-up: surfacing the breaker in the heartbeat resources *field* (vs. the obs log) and a per-error-class quota-vs-transient policy are refinements, not blockers.

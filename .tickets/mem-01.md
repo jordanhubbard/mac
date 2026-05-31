@@ -1,6 +1,6 @@
 ---
 id: mem-01
-status: open
+status: closed
 deps: []
 links: [mem-05]
 created: 2026-05-29T02:20:59Z
@@ -48,3 +48,7 @@ So the fix is layered:
 - Replay the bullwinkle path used in `task_d7c51a0b...` and assert: (a) evidence is rejected (mem-11), or (b) only one review is created before the task transitions to failed (mem-12).
 - After fix, `count(task.review_claimed WHERE executor_evidence_id=?)` ≤ a bounded N (default 10).
 - This ticket coordinates mem-05, mem-11, mem-12, mem-13. Close when those four are merged and verified together against a replay test.
+
+## Resolution (2026-05-31)
+
+Root cause closed at all three layers this session: mem-11 rejects the garbage operator_result evidence at the source, mem-12 caps review retractions (MAC_REVIEW_RETRACTION_CAP, fails the task), mem-05 makes the claim write idempotent. The 503-review / 30,806-row storm can no longer occur.

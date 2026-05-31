@@ -498,6 +498,10 @@ class WorkflowStart(BaseModel):
     started_by: str = "human"
     input: Dict[str, Any] = Field(default_factory=dict)
     tenant_id: Optional[str] = None
+    # wf-03: front-loaded approval decisions. Each key must reference an
+    # approval-typed node in the workflow definition; each value must be
+    # "approved" or "rejected". Validated server-side.
+    pre_decisions: Dict[str, str] = Field(default_factory=dict)
 
 
 class WorkflowPreview(BaseModel):
@@ -842,29 +846,6 @@ class ProjectImport(BaseModel):
     dependencies: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     actor: str = "bridge"
-
-
-class BeadsRepositoryRegister(BaseModel):
-    name: str
-    path: str
-    source: Optional[str] = None
-    project: Optional[str] = None
-    required_capabilities: List[str] = Field(default_factory=list)
-    enabled: bool = True
-    poll_interval_seconds: int = 60
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    actor: str = "beads-bridge"
-
-
-class BeadsRepositoryPoll(BaseModel):
-    repository: Optional[str] = None
-    force: bool = False
-    actor: str = "beads-bridge"
-
-
-class BeadsRepositoryRepair(BaseModel):
-    actor: str = "beads-bridge"
-    poll_after: bool = True
 
 
 class MemoryCreate(BaseModel):
@@ -1767,9 +1748,9 @@ def _dashboard_state(
     ]
     artifacts = [artifact.to_dict() for artifact in cp.list_artifacts()]
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
-    beads_repositories = [
-        repo.to_dict() for repo in cp.list_beads_repositories()
-    ]
+    # beads removed as a read/write source; the status view no longer lists
+    # beads repositories (kept as an empty list for dashboard shape stability).
+    beads_repositories: List[Dict[str, Any]] = []
     memory_records = [
         record.to_dict() for record in cp.search_memory()
     ][-120:]
@@ -1949,6 +1930,12 @@ def create_app(
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp
     app.state.auth_tokens = tokens
+    # ADR 0001 hu-05: stream TokenHub's routing decisions into observability so
+    # "why am I on provider X / model Y?" is answerable. No-op unless
+    # MAC_TOKENHUB_EVENTS_URL / TOKENHUB_URL (+ admin token) is configured.
+    from mac.tokenhub_feed import start_background_consumer
+
+    app.state.tokenhub_feed_thread = start_background_consumer(cp.observability)
     app.state.hermes_startup = build_hermes_startup_report()
     if (
         os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
@@ -2910,6 +2897,7 @@ def create_app(
             started_by=body.started_by,
             input=body.input,
             tenant_id=body.tenant_id,
+            pre_decisions=body.pre_decisions or None,
         ).to_dict()
 
     @app.get("/workflows/runs/{run_id}")
@@ -2931,6 +2919,24 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
         return [run.to_dict() for run in cp.workflow_runtime.tick()]
+
+    # wf-02: decisions inventory — enumerate every approval-node gate
+    # in a workflow (or a live run) so a human can preview all the
+    # input the system will need.
+    @app.get("/workflows/{workflow_id_or_slug}/decisions")
+    def workflow_decisions(
+        workflow_id_or_slug: str,
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_decisions(workflow_id_or_slug, tenant_id=tenant_id)
+
+    @app.get("/workflows/runs/{run_id}/decisions")
+    def workflow_run_decisions(
+        run_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_run_decisions(run_id)
 
     @app.get("/fleet/build-distribution")
     def fleet_build_distribution() -> Dict[str, Any]:
@@ -3827,21 +3833,9 @@ def create_app(
     def list_project_items() -> List[Dict[str, Any]]:
         return [item.to_dict() for item in cp.list_project_items()]
 
-    @app.post("/bridge/beads/repositories")
-    def register_beads_repository(body: BeadsRepositoryRegister) -> Dict[str, Any]:
-        return cp.register_beads_repository(**_data(body)).to_dict()
-
-    @app.get("/bridge/beads/repositories")
-    def list_beads_repositories(enabled: Optional[bool] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [repo.to_dict() for repo in cp.list_beads_repositories(enabled=enabled)]
-
-    @app.post("/bridge/beads/poll")
-    def poll_beads_repositories(body: BeadsRepositoryPoll) -> Dict[str, Any]:
-        return cp.poll_beads_repositories(body.repository, force=body.force, actor=body.actor)
-
-    @app.post("/bridge/beads/repositories/{repo_id_or_name}/repair")
-    def repair_beads_repository(repo_id_or_name: str, body: BeadsRepositoryRepair) -> Dict[str, Any]:
-        return cp.repair_beads_repository(repo_id_or_name, actor=body.actor, poll_after=body.poll_after)
+    # beads is no longer a read/write source — the bridge register/poll/repair
+    # endpoints are removed. Detection + one-way conversion live behind the
+    # ticketing connector (`mac task detect-ticketing` / `convert-ticketing`).
 
     @app.post("/memory")
     def add_memory(body: MemoryCreate) -> Dict[str, Any]:
@@ -3856,6 +3850,34 @@ def create_app(
         subject_id: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
+
+    # mem-10: memory-tier health snapshot for operators + future alerter.
+    @app.get("/v1/memory/health")
+    def memory_health(
+        nap_interval_hours: float = Query(default=24.0, ge=0.1, le=720.0),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.memory_health(nap_interval_hours=nap_interval_hours)
+
+    # mem-09: vector-tier recall.
+    @app.get("/v1/memory/recall")
+    def recall_memory(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_memory(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            tenant_id=tenant_id,
+        )
 
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:

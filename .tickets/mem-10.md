@@ -1,6 +1,6 @@
 ---
 id: mem-10
-status: open
+status: closed
 deps: [mem-07]
 links: []
 created: 2026-05-29T02:21:17Z
@@ -32,3 +32,7 @@ audit: memory-tier-2026-05-28
 - Optional: dashboard tile in the existing mac UI.
 
 Blocked by mem-07 (need vector_refs to actually grow before the alert is meaningful).
+
+## Resolution (2026-05-31)
+
+Implemented + tested (memory-tier health check / regression detector).

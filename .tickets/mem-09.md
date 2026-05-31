@@ -1,6 +1,6 @@
 ---
 id: mem-09
-status: open
+status: closed
 deps: [mem-07]
 links: []
 created: 2026-05-29T02:21:15Z
@@ -23,3 +23,7 @@ audit: memory-tier-2026-05-28
 - Test: insert known-good memories, query with semantically-similar wording, assert ranking matches expectation.
 
 Blocked by mem-07.
+
+## Resolution (2026-05-31)
+
+Implemented + tested (recall read path). The tier has data to read (20 vector_refs).

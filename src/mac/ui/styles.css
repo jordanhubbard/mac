@@ -1047,9 +1047,323 @@ details.action-box summary {
   stroke: #b8d8d0;
 }
 
+/*
+ * wf-05: workflow graph node typing.
+ *
+ * `.graph-node-task` was previously yellow because the workflow graph
+ * was the only producer of `task`-class nodes. Now we color nodes by
+ * the workflow node_type so a human can spot approval gates without
+ * reading text. The relationship graph (machine/fleet/agent) keeps its
+ * own .graph-node-machine/fleet/agent rules above.
+ */
 .graph-node-task rect {
+  fill: #eef2f8;
+  stroke: #bdd0e3;
+}
+
+.graph-node-approval rect {
   fill: var(--warning-soft);
   stroke: #ead09f;
+  stroke-width: 2;
+}
+
+.graph-node-approval .graph-node-icon {
+  color: #9a5b13;
+}
+
+.graph-node-plan rect {
+  fill: #f4ecff;
+  stroke: #c8b6f0;
+}
+
+.graph-node-plan .graph-node-icon {
+  color: #6e3fbb;
+}
+
+.graph-node-commit rect {
+  fill: #ecf7ef;
+  stroke: #b5d8be;
+}
+
+.graph-node-commit .graph-node-icon {
+  color: #2f6f4a;
+}
+
+.graph-node-verify rect {
+  fill: #e7f1f6;
+  stroke: #a7c8d8;
+}
+
+.graph-node-verify .graph-node-icon {
+  color: #2d637c;
+}
+
+.graph-node-icon {
+  color: var(--muted);
+}
+
+.graph-edge-approved {
+  stroke: #2f6f4a;
+}
+
+.graph-edge-rejected {
+  stroke: #b6443c;
+  stroke-dasharray: 5 4;
+}
+
+.graph-edge-failure {
+  stroke: #b6443c;
+}
+
+.graph-edge-success {
+  stroke: #2f6f63;
+}
+
+/* Workflow stage: legend + selector + inspector */
+.surface-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.workflow-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-selector select {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.workflow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.workflow-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+
+.workflow-legend-task .workflow-legend-swatch { background: #eef2f8; border-color: #bdd0e3; }
+.workflow-legend-approval .workflow-legend-swatch { background: var(--warning-soft); border-color: #ead09f; }
+.workflow-legend-plan .workflow-legend-swatch { background: #f4ecff; border-color: #c8b6f0; }
+.workflow-legend-commit .workflow-legend-swatch { background: #ecf7ef; border-color: #b5d8be; }
+.workflow-legend-verify .workflow-legend-swatch { background: #e7f1f6; border-color: #a7c8d8; }
+
+.workflow-graph-wrap {
+  overflow-x: auto;
+}
+
+.workflow-inspector {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.workflow-inspector-empty {
+  background: #f6f8fb;
+  color: var(--muted);
+  text-align: center;
+}
+
+.workflow-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.workflow-inspector-header h3 {
+  margin: 4px 0 0 0;
+  font-size: 16px;
+}
+
+.workflow-inspector-header button {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.workflow-inspector-header button:hover {
+  color: var(--ink);
+}
+
+.workflow-inspector-type-chip {
+  text-transform: lowercase;
+}
+
+.workflow-inspector-section {
+  margin-top: 12px;
+}
+
+.workflow-inspector-section h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.workflow-instructions {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 12px;
+  background: #f6f8fb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.workflow-question {
+  border-left: 3px solid var(--line);
+  padding: 4px 10px;
+  margin: 6px 0;
+}
+
+.workflow-question-text {
+  margin: 0 0 2px 0;
+}
+
+/* wf-05 part 3: stepped draft form. Row editors for Steps + Questions
+   with auto-rendered Answer inputs, plus an "advanced" JSON escape
+   hatch under a `<details>` for power users / scripted authoring. */
+.workflow-draft-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-draft-rows {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.workflow-draft-rows legend {
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.workflow-draft-row {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.workflow-draft-row:last-of-type {
+  border-bottom: none;
+}
+
+.workflow-draft-row > label,
+.workflow-draft-row > .row-grid {
+  margin: 4px 0;
+}
+
+.workflow-draft-checkbox {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.workflow-draft-checkbox input[type="checkbox"] {
+  width: auto;
+}
+
+.workflow-draft-remove,
+.workflow-draft-add {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.workflow-draft-remove:hover {
+  color: #b6443c;
+  border-color: #e0b3ae;
+}
+
+.workflow-draft-add {
+  margin-top: 8px;
+  color: var(--ink);
+}
+
+.workflow-draft-add:hover {
+  background: #f6f8fb;
+}
+
+.workflow-draft-answers {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.workflow-draft-answers legend {
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+.workflow-draft-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.workflow-draft-answer span {
+  font-size: 13px;
+}
+
+.workflow-draft-raw {
+  background: #f9fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.workflow-draft-raw summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.workflow-draft-raw label {
+  margin: 6px 0;
 }
 
 .graph-node.is-selected rect {

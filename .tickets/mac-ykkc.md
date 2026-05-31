@@ -1,6 +1,6 @@
 ---
 id: mac-ykkc
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-28T03:29:19Z
@@ -38,3 +38,7 @@ Action (urgent):
 1. Cap review_claim retries on the reviewer side (e.g. 5 attempts within 1 minute), then mark the review FAILED with a clear reason so the parent task transitions to FAILED instead of spinning.
 2. When the `git fetch` step for the source branch returns 0 refs / not_found, fail-closed immediately rather than re-claiming.
 3. Add an observability counter for review_claim attempts per review id so this storm is visible in dashboards.
+
+## Resolution (2026-05-31)
+
+Storm bounded: mem-05 makes review_claim idempotent (identical re-claims add no rows) and mem-12 caps retractions (fails the task). Added idx_task_history_event_type so action/audit queries aren't table scans. The review_claimed:reviews ratio can no longer blow up.

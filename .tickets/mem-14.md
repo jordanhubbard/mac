@@ -1,6 +1,6 @@
 ---
 id: mem-14
-status: open
+status: closed
 deps: []
 links: [mem-01]
 created: 2026-05-29T03:50:00Z
@@ -90,3 +90,7 @@ and emit a clear `DispatchError` in hub mode. Surfacing those over
 HTTP is tracked separately as a follow-up.
 
 All 575 non-e2e tests pass.
+
+## Resolution (2026-05-31)
+
+Verified done: resolve_dispatch no longer auto-defaults to a local db — explicit --db prints a stderr banner, a configured hub is used, and nothing-configured raises 'no hub configured'. Tested (test_resolve_dispatch_errors_when_nothing_configured, explicit_db_wins_over_hub).

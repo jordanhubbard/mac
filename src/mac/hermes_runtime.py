@@ -759,6 +759,59 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# fleet-02: live fleet snapshot injected into the runtime context, so every
+# agent's session always knows what its teammates are doing. A timer refreshes
+# the delimited block below (mac fleet refresh-context); the prompt builder
+# loads the whole markdown, so the block lands in each agent's system prompt.
+# ---------------------------------------------------------------------------
+
+FLEET_SECTION_BEGIN = "<!-- mac:fleet:begin -->"
+FLEET_SECTION_END = "<!-- mac:fleet:end -->"
+
+
+def render_fleet_section(snapshot: Dict[str, Any]) -> str:
+    """Render a fleet snapshot (services.ControlPlane.fleet_snapshot) as a
+    markdown block for the runtime context."""
+    members = snapshot.get("members") or []
+    lines = [
+        FLEET_SECTION_BEGIN,
+        "## Fleet — your teammates (live)",
+        "",
+        "_Other agents on the fleet and what they're doing right now (refreshed %s). "
+        "You keep your own identity; use the `fleet` tool to see more or message them._"
+        % snapshot.get("generated_at", "?"),
+        "",
+    ]
+    if not members:
+        lines.append("- (no other agents currently online)")
+    for m in members:
+        doing = m.get("current_task_title")
+        if not doing:
+            doing = ("task %s" % m.get("current_task_id")) if m.get("current_task_id") else "idle"
+        lines.append(
+            "- **%s** [%s/%s] — %s" % (m.get("name", "?"), m.get("status", "?"), m.get("health", "?"), doing)
+        )
+    lines.append(FLEET_SECTION_END)
+    return "\n".join(lines)
+
+
+def refresh_fleet_section(markdown_path: Path, section: str) -> None:
+    """Insert/replace the delimited fleet block in the runtime-context markdown.
+    Idempotent — running it repeatedly just refreshes the block in place."""
+    text = ""
+    if markdown_path.exists():
+        text = markdown_path.read_text(encoding="utf-8", errors="ignore")
+    if FLEET_SECTION_BEGIN in text and FLEET_SECTION_END in text:
+        pre = text.split(FLEET_SECTION_BEGIN, 1)[0].rstrip()
+        post = text.split(FLEET_SECTION_END, 1)[1].lstrip()
+        text = (pre + "\n\n" + section + "\n\n" + post).rstrip() + "\n"
+    else:
+        text = (text.rstrip() + "\n\n" + section + "\n").lstrip("\n")
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(text, encoding="utf-8")
+
+
 def write_runtime_context(
     *,
     context_path: Path,

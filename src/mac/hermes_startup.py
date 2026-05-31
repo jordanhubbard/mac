@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from mac.agent_provider import resolve_agent_provider
 from mac.hermes_runtime import RUNTIME_CONTEXT_SCHEMA
 
 
@@ -1123,22 +1124,6 @@ def _log_classification_report() -> Dict[str, Any]:
     return report
 
 
-def _hermes_agent_dir_info() -> tuple[Optional[Path], bool]:
-    configured = os.environ.get("MAC_HERMES_AGENT_DIR") or os.environ.get("HERMES_AGENT_DIR")
-    if configured:
-        return Path(configured).expanduser(), True
-    default = Path("~/Src/hermes-agent").expanduser()
-    return (default, False) if default.exists() else (None, False)
-
-
-def _slack_account_shim_present(agent_dir: Optional[Path]) -> bool:
-    if agent_dir is None:
-        return False
-    config_py = agent_dir / "gateway" / "config.py"
-    text = _read_small_text(config_py)
-    return "_slack_accounts_file_configured" in text and "slack_accounts.json" in text
-
-
 def _slack_home_channel_name() -> str:
     return (
         os.environ.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME")
@@ -1146,26 +1131,6 @@ def _slack_home_channel_name() -> str:
         or os.environ.get("SLACK_HOME_CHANNEL_NAME")
         or ""
     ).strip().lstrip("#")
-
-
-def _slack_home_channel_shim_present(agent_dir: Optional[Path]) -> bool:
-    if agent_dir is None:
-        return False
-    run_py = agent_dir / "gateway" / "run.py"
-    text = _read_small_text(run_py)
-    return "_source_has_home_target" in text and "slack_home_channels.json" in text
-
-
-def _gateway_runtime_shim_present(agent_dir: Optional[Path]) -> bool:
-    if agent_dir is None:
-        return False
-    run_py = agent_dir / "gateway" / "run.py"
-    text = _read_small_text(run_py)
-    return (
-        "MAC_HERMES_GATEWAY_MODEL" in text
-        and "MAC_HERMES_GATEWAY_PROVIDER" in text
-        and "resolve_runtime_provider" in text
-    )
 
 
 def _configured_gateway_model() -> str:
@@ -1199,457 +1164,42 @@ def _configured_gateway_base_url_present() -> bool:
     )
 
 
-def _apply_gateway_runtime_shim(agent_dir: Path) -> Dict[str, Any]:
-    run_py = agent_dir / "gateway" / "run.py"
-    result = {
-        "attempted": True,
-        "applied": False,
-        "path": str(run_py),
-        "error": "",
-    }
-    try:
-        text = run_py.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        result["attempted"] = False
-        return result
-    except OSError as exc:
-        result["error"] = "cannot read Hermes gateway/run.py: %s" % exc
-        return result
-
-    runtime_needle = "        runtime_kwargs = _resolve_runtime_agent_kwargs()\n"
-    runtime_patch = '''        mac_gateway_provider = (
-            os.environ.get("MAC_HERMES_GATEWAY_PROVIDER")
-            or os.environ.get("ACC_HERMES_GATEWAY_PROVIDER")
-            or os.environ.get("HERMES_INFERENCE_PROVIDER")
-            or ""
-        ).strip()
-        mac_gateway_base_url = (
-            os.environ.get("MAC_HERMES_GATEWAY_BASE_URL")
-            or os.environ.get("ACC_HERMES_GATEWAY_BASE_URL")
-            or ((os.environ.get("TOKENHUB_URL") or "").rstrip("/") + "/v1" if os.environ.get("TOKENHUB_URL") else "")
-            or os.environ.get("OPENAI_BASE_URL")
-            or ""
-        ).strip()
-        mac_gateway_api_key = (
-            os.environ.get("MAC_HERMES_GATEWAY_API_KEY")
-            or os.environ.get("ACC_HERMES_GATEWAY_API_KEY")
-            or os.environ.get("TOKENHUB_API_KEY")
-            or os.environ.get("TOKENHUB_AGENT_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or ""
-        ).strip()
-        if mac_gateway_model or mac_gateway_provider or mac_gateway_base_url:
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-            runtime_kwargs = resolve_runtime_provider(
-                requested=mac_gateway_provider or "custom",
-                explicit_base_url=mac_gateway_base_url or None,
-                explicit_api_key=mac_gateway_api_key or None,
-                target_model=model or None,
-            )
-            if mac_gateway_api_key:
-                runtime_kwargs["api_key"] = mac_gateway_api_key
-                runtime_kwargs["source"] = "mac-gateway-explicit"
-            if mac_gateway_base_url:
-                runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")
-        else:
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
-'''
-
-    if "MAC_HERMES_GATEWAY_MODEL" in text:
-        if (
-            "mac-gateway-explicit" in text
-            and 'runtime_kwargs["api_key"] = mac_gateway_api_key' in text
-        ):
-            return result
-        old_runtime_needle = '''            runtime_kwargs = resolve_runtime_provider(
-                requested=mac_gateway_provider or "custom",
-                explicit_base_url=mac_gateway_base_url or None,
-                explicit_api_key=mac_gateway_api_key or None,
-                target_model=model or None,
-            )
-'''
-        old_runtime_patch = old_runtime_needle + '''            if mac_gateway_api_key:
-                runtime_kwargs["api_key"] = mac_gateway_api_key
-                runtime_kwargs["source"] = "mac-gateway-explicit"
-            if mac_gateway_base_url:
-                runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")
-'''
-        if old_runtime_needle not in text:
-            result["error"] = "cannot upgrade Hermes gateway runtime override; upstream gateway/run.py changed"
-            return result
-        text = text.replace(old_runtime_needle, old_runtime_patch, 1)
-        try:
-            run_py.write_text(text, encoding="utf-8")
-        except OSError as exc:
-            result["error"] = "cannot write Hermes gateway/run.py: %s" % exc
-            return result
-        result["applied"] = True
-        return result
-
-    model_needle = "        model = _resolve_gateway_model(user_config)\n"
-    model_patch = '''        model = _resolve_gateway_model(user_config)
-        mac_gateway_model = (
-            os.environ.get("MAC_HERMES_GATEWAY_MODEL")
-            or os.environ.get("ACC_HERMES_GATEWAY_MODEL")
-            or os.environ.get("HERMES_INFERENCE_MODEL")
-            or os.environ.get("ACC_LLM_MODEL")
-            or ""
-        ).strip()
-        if mac_gateway_model:
-            logger.info("mac gateway model override active: %s", mac_gateway_model)
-            model = mac_gateway_model
-'''
-    if model_needle not in text:
-        result["error"] = "cannot patch Hermes gateway model override; upstream gateway/run.py changed"
-        return result
-    text = text.replace(model_needle, model_patch, 1)
-
-    runtime_patch = runtime_patch.replace(
-        "        else:\n            runtime_kwargs = _resolve_runtime_agent_kwargs()\n",
-        '''            logger.info(
-                "mac gateway runtime override active: provider=%s base_url=%s",
-                runtime_kwargs.get("provider"),
-                runtime_kwargs.get("base_url"),
-            )
-        else:
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
-''',
-    )
-    if runtime_needle not in text:
-        result["error"] = "cannot patch Hermes gateway runtime override; upstream gateway/run.py changed"
-        return result
-    text = text.replace(runtime_needle, runtime_patch, 1)
-
-    try:
-        run_py.write_text(text, encoding="utf-8")
-    except OSError as exc:
-        result["error"] = "cannot write Hermes gateway/run.py: %s" % exc
-        return result
-    result["applied"] = True
-    return result
-
-
-def _apply_slack_account_activation_shim(agent_dir: Path) -> Dict[str, Any]:
-    config_py = agent_dir / "gateway" / "config.py"
-    result = {
-        "attempted": True,
-        "applied": False,
-        "path": str(config_py),
-        "error": "",
-    }
-    try:
-        text = config_py.read_text(encoding="utf-8")
-    except OSError as exc:
-        result["error"] = "cannot read Hermes gateway/config.py: %s" % exc
-        return result
-
-    changed = False
-    helper = '''\
-
-def _slack_accounts_file_configured() -> bool:
-    """Return True when Hermes has at least one complete Slack account file."""
-    import json
-
-    accounts_file = get_hermes_home() / "slack_accounts.json"
-    try:
-        data = json.loads(accounts_file.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    if not isinstance(data, list):
-        return False
-    for item in data:
-        if (
-            isinstance(item, dict)
-            and str(item.get("bot_token") or "").strip()
-            and str(item.get("app_token") or "").strip()
-        ):
-            return True
-    return False
-'''
-    if "_slack_accounts_file_configured" not in text:
-        helper_needle = "\n\n# -----------------------------------------------------------------------------\n# Built-in platform connection checkers\n"
-        if helper_needle not in text:
-            result["error"] = (
-                "cannot patch Slack account-file detection; upstream gateway/config.py changed"
-            )
-            return result
-        text = text.replace(helper_needle, helper + helper_needle, 1)
-        changed = True
-
-    checker_needle = "_PLATFORM_CONNECTED_CHECKERS: dict[Platform, Callable[[PlatformConfig], bool]] = {\n"
-    checker_patch = checker_needle + "    Platform.SLACK: lambda cfg: _slack_accounts_file_configured(),\n"
-    if "Platform.SLACK: lambda cfg: _slack_accounts_file_configured()" not in text:
-        if checker_needle not in text:
-            result["error"] = "cannot patch Slack connected checker; upstream gateway/config.py changed"
-            return result
-        text = text.replace(checker_needle, checker_patch, 1)
-        changed = True
-
-    old = '''\
-    # Slack
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    if slack_token:
-        if Platform.SLACK not in config.platforms:
-            # No yaml config for Slack — env-only setup, enable it
-            config.platforms[Platform.SLACK] = PlatformConfig()
-            config.platforms[Platform.SLACK].enabled = True
-        else:
-            slack_config = config.platforms[Platform.SLACK]
-            enabled_was_explicit = bool(slack_config.extra.pop("_enabled_explicit", False))
-            if not slack_config.enabled and not enabled_was_explicit:
-                # Top-level Slack settings such as channel prompts should not
-                # turn an env-token setup into a disabled platform. Only an
-                # explicit slack.enabled/platforms.slack.enabled false should.
-                slack_config.enabled = True
-        # If yaml config exists, respect its enabled flag (don't override
-        # explicit enabled: false). Token is still stored so skills that
-        # send Slack messages can use it without activating the gateway adapter.
-        config.platforms[Platform.SLACK].token = slack_token
-'''
-    new = '''\
-    # Slack
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    slack_accounts_configured = _slack_accounts_file_configured()
-    if slack_token or slack_accounts_configured:
-        if Platform.SLACK not in config.platforms:
-            # No yaml config for Slack — env-only or slack_accounts.json setup, enable it.
-            config.platforms[Platform.SLACK] = PlatformConfig()
-            config.platforms[Platform.SLACK].enabled = True
-        else:
-            slack_config = config.platforms[Platform.SLACK]
-            enabled_was_explicit = bool(slack_config.extra.pop("_enabled_explicit", False))
-            if not slack_config.enabled and not enabled_was_explicit:
-                # Top-level Slack settings such as channel prompts should not
-                # turn an env-token/account-file setup into a disabled platform.
-                # Only an explicit slack.enabled/platforms.slack.enabled false should.
-                slack_config.enabled = True
-        # If yaml config exists, respect its enabled flag (don't override
-        # explicit enabled: false). Token is still stored so skills that
-        # send Slack messages can use it without activating the gateway adapter.
-        if slack_token:
-            config.platforms[Platform.SLACK].token = slack_token
-'''
-    if "slack_accounts_configured = _slack_accounts_file_configured()" not in text:
-        if old not in text:
-            result["error"] = "cannot patch Slack env override; upstream gateway/config.py changed"
-            return result
-        text = text.replace(old, new, 1)
-        changed = True
-
-    if changed:
-        try:
-            config_py.write_text(text, encoding="utf-8")
-        except OSError as exc:
-            result["error"] = "cannot write Hermes gateway/config.py: %s" % exc
-            return result
-    result["applied"] = changed
-    return result
-
-
-def _apply_slack_home_channel_shim(agent_dir: Path) -> Dict[str, Any]:
-    run_py = agent_dir / "gateway" / "run.py"
-    result = {
-        "attempted": True,
-        "applied": False,
-        "path": str(run_py),
-        "error": "",
-    }
-    try:
-        text = run_py.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        result["attempted"] = False
-        return result
-    except OSError as exc:
-        result["error"] = "cannot read Hermes gateway/run.py: %s" % exc
-        return result
-
-    helper = '''\
-
-def _source_has_home_target(source: Any, platform_name: str, env_key: str) -> bool:
-    """Return True when a platform has a configured home target for this source."""
-    if os.getenv(env_key):
-        return True
-    if platform_name.lower() != "slack":
-        return False
-
-    try:
-        path = _hermes_home / "slack_home_channels.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    if not isinstance(data, list):
-        return False
-
-    team_id = str(getattr(source, "guild_id", "") or "")
-    chat_id = str(getattr(source, "chat_id", "") or "")
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        item_team = str(item.get("team_id") or "")
-        item_channel = str(item.get("channel_id") or item.get("chat_id") or "")
-        if chat_id and item_channel == chat_id:
-            return True
-        if team_id and item_team == team_id and item_channel:
-            return True
-    return False
-'''
-    changed = False
-    if "_source_has_home_target" not in text:
-        helper_needle = "\n\ndef _home_thread_env_var(platform_name: str) -> str:\n"
-        if helper_needle not in text:
-            result["error"] = (
-                "cannot patch per-workspace Slack home target helper; "
-                "upstream gateway/run.py changed"
-            )
-            return result
-        text = text.replace(helper_needle, helper + helper_needle, 1)
-        changed = True
-
-    replacements = (
-        (
-            "            if not os.getenv(env_key):\n",
-            "            if not _source_has_home_target(source, platform_name, env_key):\n",
-        ),
-        (
-            "    if not os.getenv(env_key):\n",
-            "    if not _source_has_home_target(source, platform_name, env_key):\n",
-        ),
-    )
-    if not any(new in text for _, new in replacements):
-        for old, new in replacements:
-            if old in text:
-                text = text.replace(old, new, 1)
-                changed = True
-                break
-        else:
-            result["error"] = (
-                "cannot patch home-channel onboarding check; upstream gateway/run.py changed"
-            )
-            return result
-
-    if changed:
-        try:
-            run_py.write_text(text, encoding="utf-8")
-        except OSError as exc:
-            result["error"] = "cannot write Hermes gateway/run.py: %s" % exc
-            return result
-    result["applied"] = changed
-    return result
-
-
-def _maybe_apply_slack_account_activation_shim(
-    agent_dir: Optional[Path],
-    explicit_agent_dir: bool,
-    account_file_present: bool,
-    env_token_present: bool,
-    explicit_config: bool,
-    shim_present: bool,
-) -> Dict[str, Any]:
-    result = {
-        "enabled": explicit_agent_dir and _env_enabled("MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM", True),
-        "attempted": False,
-        "applied": False,
-        "path": str(agent_dir / "gateway" / "config.py") if agent_dir is not None else None,
-        "error": "",
-    }
-    if (
-        not result["enabled"]
-        or agent_dir is None
-        or not account_file_present
-        or shim_present
-    ):
-        return result
-    return {
-        "enabled": True,
-        **_apply_slack_account_activation_shim(agent_dir),
-    }
-
-
-def _maybe_apply_slack_home_channel_shim(
-    agent_dir: Optional[Path],
-    explicit_agent_dir: bool,
-    home_channel_file_present: bool,
-    shim_present: bool,
-) -> Dict[str, Any]:
-    result = {
-        "enabled": explicit_agent_dir and _env_enabled("MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM", True),
-        "attempted": False,
-        "applied": False,
-        "path": str(agent_dir / "gateway" / "run.py") if agent_dir is not None else None,
-        "error": "",
-    }
-    if (
-        not result["enabled"]
-        or agent_dir is None
-        or not home_channel_file_present
-        or shim_present
-    ):
-        return result
-    return {
-        "enabled": True,
-        **_apply_slack_home_channel_shim(agent_dir),
-    }
-
-
-def _maybe_apply_gateway_runtime_shim(
-    agent_dir: Optional[Path],
-    explicit_agent_dir: bool,
-    shim_present: bool,
-) -> Dict[str, Any]:
-    result = {
-        "enabled": explicit_agent_dir
-        and _env_enabled("MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM", True),
-        "attempted": False,
-        "applied": False,
-        "path": str(agent_dir / "gateway" / "run.py") if agent_dir is not None else None,
-        "error": "",
-    }
-    if not result["enabled"] or agent_dir is None:
-        return result
-    return {
-        "enabled": True,
-        **_apply_gateway_runtime_shim(agent_dir),
-    }
-
-
 def apply_hermes_gateway_runtime_shim_report(
     agent_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    if agent_dir is None:
-        agent_dir, explicit_agent_dir = _hermes_agent_dir_info()
-    else:
-        agent_dir = Path(agent_dir).expanduser()
-        explicit_agent_dir = True
+    """Report the per-agent gateway provider/model override.
 
-    shim_present = _gateway_runtime_shim_present(agent_dir)
-    shim_patch = _maybe_apply_gateway_runtime_shim(
-        agent_dir,
-        explicit_agent_dir,
-        shim_present,
-    )
-    if shim_patch["applied"]:
-        shim_present = _gateway_runtime_shim_present(agent_dir)
-
+    ADR 0001 hu-03/hu-04: the override is now **owned, in-process code**
+    (``mac.agent_provider``, called by the vendored gateway in ``src/mac/_hermes``).
+    The old runtime string-surgery of a cloned upstream tree is gone, so there is
+    no shim to "miss" — when an override is configured the in-process gateway
+    always honors it. The ``gateway_runtime_shim_*`` field names are retained for
+    dashboard/report-schema compatibility but now reflect the owned decision.
+    ``agent_dir`` is accepted and ignored (no upstream checkout is consulted).
+    """
     configured_model = _configured_gateway_model()
     configured_provider = _configured_gateway_provider()
     base_url_configured = _configured_gateway_base_url_present()
-    warnings = []
-    if (configured_model or configured_provider or base_url_configured) and not shim_present:
-        detail = shim_patch["error"] or "gateway runtime shim is missing"
-        warnings.append(
-            "Hermes gateway model/runtime override is configured but inactive: %s"
-            % detail
-        )
+    provider_decision = resolve_agent_provider().observable()
+    override_active = bool(provider_decision["override_active"])
 
     return {
-        "hermes_agent_dir": str(agent_dir) if agent_dir is not None else None,
-        "hermes_agent_dir_explicit": explicit_agent_dir,
+        "hermes_agent_dir": None,
+        "hermes_agent_dir_explicit": False,
         "configured_model": configured_model or None,
         "provider_override_configured": bool(configured_provider),
         "base_url_override_configured": base_url_configured,
-        "gateway_runtime_shim_present": shim_present,
-        "gateway_runtime_shim_patch": shim_patch,
-        "warnings": warnings,
+        # "active" now means: an override is configured and the in-process
+        # gateway honors it via mac.agent_provider (no string surgery to fail).
+        "gateway_runtime_shim_present": override_active,
+        "gateway_runtime_shim_patch": {
+            "obsolete": True,
+            "applied": False,
+            "note": "in-process via mac.agent_provider (vendored gateway); no string surgery",
+            "error": "",
+        },
+        "provider_decision": provider_decision,
+        "warnings": [],
     }
 
 
@@ -1667,68 +1217,29 @@ def _slack_activation_report(
     home_channel_file_present = bool(home_channel_ref["exists"])
     env_token_present = bool(os.environ.get("SLACK_BOT_TOKEN"))
     explicit_config = _config_explicitly_enables_slack(hermes_home / "config.yaml")
-    agent_dir, explicit_agent_dir = _hermes_agent_dir_info()
-    shim_present = _slack_account_shim_present(agent_dir)
-    home_channel_shim_present = _slack_home_channel_shim_present(agent_dir)
-    shim_patch = _maybe_apply_slack_account_activation_shim(
-        agent_dir,
-        explicit_agent_dir,
-        account_file_present,
-        env_token_present,
-        explicit_config,
-        shim_present,
-    )
-    if shim_patch["applied"]:
-        shim_present = _slack_account_shim_present(agent_dir)
-    home_channel_shim_patch = _maybe_apply_slack_home_channel_shim(
-        agent_dir,
-        explicit_agent_dir,
-        home_channel_file_present,
-        home_channel_shim_present,
-    )
-    if home_channel_shim_patch["applied"]:
-        home_channel_shim_present = _slack_home_channel_shim_present(agent_dir)
-
+    # ADR 0001 hu-04: multi-workspace Slack support (activation from
+    # slack_accounts.json) is now baked into the vendored gateway — the former
+    # out-of-tree multi-slack-mvp patch. So an account file is sufficient; there
+    # is no upstream-checkout "shim" to apply. Shim field names are retained for
+    # report-schema compatibility and report as effectively present.
     activation_source = "not_configured"
     can_activate = False
-    needs_shim = False
-    warnings = []
-    if account_file_present:
-        if env_token_present:
-            activation_source = "slack_bot_token"
-            can_activate = True
-        elif explicit_config:
-            activation_source = "explicit_config"
-            can_activate = True
-        elif shim_present:
-            activation_source = "slack_accounts_file_shim"
-            can_activate = True
-        else:
-            activation_source = "missing_account_file_activation"
-            needs_shim = True
-            if shim_patch["error"]:
-                warnings.append(
-                    "slack_accounts.json exists, but mac could not apply the upstream "
-                    "Hermes account-file activation shim: %s" % shim_patch["error"]
-                )
-            else:
-                warnings.append(
-                    "slack_accounts.json exists, but upstream Hermes will not enable Slack "
-                    "from that file unless SLACK_BOT_TOKEN, explicit Slack config, or the "
-                    "account-file activation shim is present"
-                )
-    if home_channel_file_present and not home_channel_shim_present:
-        if home_channel_shim_patch["error"]:
-            warnings.append(
-                "slack_home_channels.json exists, but mac could not apply the upstream "
-                "Hermes home-channel shim: %s" % home_channel_shim_patch["error"]
-            )
-        elif explicit_agent_dir:
-            warnings.append(
-                "slack_home_channels.json exists, but upstream Hermes may still ask for "
-                "home-channel setup because the home-channel shim is missing"
-            )
+    if env_token_present:
+        activation_source = "slack_bot_token"
+        can_activate = True
+    elif explicit_config:
+        activation_source = "explicit_config"
+        can_activate = True
+    elif account_file_present:
+        activation_source = "slack_accounts_file"
+        can_activate = True
 
+    _obsolete_patch = {
+        "obsolete": True,
+        "applied": False,
+        "note": "vendored gateway (no upstream-checkout shim)",
+        "error": "",
+    }
     return {
         "account_file": account_ref,
         "account_file_present": account_file_present,
@@ -1737,16 +1248,16 @@ def _slack_activation_report(
         "configured_home_channel_name": _slack_home_channel_name(),
         "slack_bot_token_present": env_token_present,
         "explicit_config_present": explicit_config,
-        "hermes_agent_dir": str(agent_dir) if agent_dir is not None else None,
-        "hermes_agent_dir_explicit": explicit_agent_dir,
-        "account_file_activation_shim_present": shim_present,
-        "account_file_activation_shim_patch": shim_patch,
-        "home_channel_shim_present": home_channel_shim_present,
-        "home_channel_shim_patch": home_channel_shim_patch,
-        "needs_account_file_activation_shim": needs_shim,
+        "hermes_agent_dir": None,
+        "hermes_agent_dir_explicit": False,
+        "account_file_activation_shim_present": True,
+        "account_file_activation_shim_patch": dict(_obsolete_patch),
+        "home_channel_shim_present": True,
+        "home_channel_shim_patch": dict(_obsolete_patch),
+        "needs_account_file_activation_shim": False,
         "activation_source": activation_source,
         "can_activate": can_activate,
-        "warning": "; ".join(warnings),
+        "warning": "",
     }
 
 
@@ -1812,7 +1323,12 @@ def build_hermes_startup_report() -> Dict[str, Any]:
     firecrawl = _firecrawl_web_search_report()
     tokenhub = _tokenhub_report()
     task_project_runtime = _runtime_context_summary(hermes_home)
-    agent_dir, _explicit_agent_dir = _hermes_agent_dir_info()
+    # ADR 0001 hu-04: the Hermes runtime is vendored in-tree, so verify the
+    # mac-runtime-context prompt bridge against the vendored tree (which has the
+    # patch folded in) rather than a separate upstream checkout.
+    from mac.hermes_vendor import VENDOR_DIR, is_vendored
+
+    agent_dir = Path(VENDOR_DIR) if is_vendored() else None
     task_project_runtime["prompt_bridge"] = _runtime_prompt_bridge_report(
         agent_dir,
         required=bool(task_project_runtime["required"]),

@@ -1,0 +1,3 @@
+upstream https://github.com/NousResearch/hermes-agent.git
+commit b1a25404b638bfbd79ce4d08b49afc0ee1361528
+vendored 2026-05-31T03:16:29Z

@@ -344,6 +344,120 @@ def test_legacy_text_keyed_answers_migrate_to_ids(cp):
     assert draft.answers.get(qid) == "API only"
 
 
+def test_decisions_for_workflow_lists_approval_nodes_only(cp):
+    """wf-02: only approval-type nodes show up as decisions."""
+    cp.workflows.create_workflow(
+        slug="multi-gate",
+        name="Multi gate",
+        description="d",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "investigate", "node_type": "task", "role_required": "qa"},
+                {"node_key": "pm_review", "node_type": "approval", "role_required": "qa", "instructions": "Approve scope"},
+                {"node_key": "implement", "node_type": "task", "role_required": "dev"},
+                {"node_key": "qa_signoff", "node_type": "approval", "role_required": "qa", "instructions": "Final signoff"},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
+                {"from_node_key": "investigate", "to_node_key": "pm_review", "condition": "success", "priority": 100},
+                {"from_node_key": "pm_review", "to_node_key": "implement", "condition": "approved", "priority": 100},
+                {"from_node_key": "pm_review", "to_node_key": "investigate", "condition": "rejected", "priority": 90},
+                {"from_node_key": "implement", "to_node_key": "qa_signoff", "condition": "success", "priority": 100},
+                {"from_node_key": "qa_signoff", "to_node_key": "", "condition": "approved", "priority": 100},
+            ],
+        },
+        created_by="h",
+    )
+    result = cp.workflow_decisions("multi-gate")
+    assert result["workflow_slug"] == "multi-gate"
+    keys = [d["node_key"] for d in result["decisions"]]
+    assert keys == ["pm_review", "qa_signoff"]
+    # Outgoing edges expose what each decision controls.
+    pm_review = result["decisions"][0]
+    edge_conds = sorted(e["condition"] for e in pm_review["outgoing_edges"])
+    assert edge_conds == ["approved", "rejected"]
+
+
+def test_decisions_for_workflow_surfaces_bound_questions(cp):
+    """wf-02: questions bound to an approval node show up on that decision."""
+    draft = cp.create_workflow_draft(
+        "Scoped feature",
+        proposed_steps=[
+            {"node_key": "design", "role_required": "qa", "instructions": "design"},
+            {
+                "node_key": "approve_design",
+                "node_type": "approval",
+                "role_required": "qa",
+                "instructions": "Approve design",
+            },
+        ],
+        questions=[
+            {"id": "scope", "text": "What scope?", "required": True, "binds_to_node": "approve_design"},
+            {"id": "owner", "text": "Who owns it?", "binds_to_node": "design"},
+        ],
+        answers={"scope": "API only", "owner": "alice"},
+    )
+    wf = cp.approve_workflow_draft(
+        draft.id, slug="bound-decision", name="Bound", approved_by="h"
+    )
+    decisions = cp.workflow_decisions(wf.id)["decisions"]
+    assert len(decisions) == 1
+    approval = decisions[0]
+    assert approval["node_key"] == "approve_design"
+    # Only the question bound to this node appears here.
+    bound_ids = [q["id"] for q in approval["bound_questions"]]
+    assert bound_ids == ["scope"]
+    assert approval["bound_questions"][0]["required"] is True
+
+
+def test_decisions_for_run_marks_current_approval_node(cp):
+    """wf-02: a live run's decisions distinguish current vs future gates."""
+    wf = cp.workflows.create_workflow(
+        slug="two-gates",
+        name="Two gates",
+        description="d",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "approve_a", "node_type": "approval", "role_required": "qa", "instructions": "First gate"},
+                {"node_key": "approve_b", "node_type": "approval", "role_required": "qa", "instructions": "Second gate"},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "approve_a", "condition": "success", "priority": 100},
+                {"from_node_key": "approve_a", "to_node_key": "approve_b", "condition": "approved", "priority": 100},
+                {"from_node_key": "approve_b", "to_node_key": "", "condition": "approved", "priority": 100},
+            ],
+        },
+        created_by="h",
+    )
+    # Insert a workflow_run directly so we don't depend on runtime side
+    # effects (claim_task etc.) being wired in this test fixture.
+    import json as _json
+    # current_task_id FKs to tasks(id); leave it NULL for this test
+    # since we're not exercising task spawning here.
+    cp.store.execute(
+        """
+        INSERT INTO workflow_runs (
+            id, workflow_id, workflow_version, definition_snapshot, state,
+            current_node_key, current_task_id, input, context, tenant_id,
+            started_by, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, 'running', 'approve_a', NULL,
+                  '{}', '{}', NULL, 'h', 'now', 'now', NULL)
+        """,
+        ("run_xyz", wf.id, wf.version, _json.dumps(wf.definition)),
+    )
+    result = cp.workflow_run_decisions("run_xyz")
+    assert result["run_id"] == "run_xyz"
+    assert result["current_node_key"] == "approve_a"
+    by_key = {d["node_key"]: d for d in result["decisions"]}
+    assert by_key["approve_a"]["is_current"] is True
+    assert by_key["approve_a"]["state"] == "pending"
+    assert by_key["approve_a"]["current_task_id"] is None  # no live task in this test
+    assert by_key["approve_b"]["state"] == "future"
+    assert by_key["approve_b"].get("is_current") is False
+
+
 def test_delete_workflow_refuses_when_runs_in_flight(cp):
     wf = cp.workflows.create_workflow(
         slug="bug",

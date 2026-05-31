@@ -50,10 +50,9 @@ live outside this Git repository. The checked-in deploy/fleet/config.yaml is a
 generic schema/defaults sample only.
 
 Each host gets:
-  - ~/.mac/src/mac from this repository
-  - ~/.mac/venv with mac installed
-  - upstream NousResearch/hermes-agent in ~/.mac/hermes-agent
-  - the minimal Hermes multi-Slack patch set
+  - ~/.mac/src/mac from this repository (includes the vendored Hermes runtime
+    at src/mac/_hermes — pinned + patched; no upstream clone, no separate venv)
+  - ~/.mac/venv with mac + the hermes-gateway extra installed
   - preinstalled configured Hermes messaging dependencies
   - enforced Hermes secret redaction
   - a host-local mac service, with the configured hub exposed
@@ -882,7 +881,11 @@ MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 SRC_DIR="$MAC_HOME/src/mac"
 VENV="$MAC_HOME/venv"
 HERMES_DIR="$MAC_HOME/hermes-agent"
-BEADS_DIR="$MAC_HOME/vendor/beads"
+# ADR 0001 hu-04: the Hermes runtime is vendored in-tree (no upstream clone).
+# Deploy-time python runs from the mac venv ($VENV) and imports the vendored
+# runtime via PYTHONPATH; HERMES_DIR is no longer created.
+HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"
+export PYTHONPATH="$HERMES_VENDORED:${PYTHONPATH:-}"
 ENV_FILE="$MAC_HOME/mac.env"
 LOG_DIR="$MAC_HOME/logs"
 DEPLOY_LOG="$LOG_DIR/deploy-${DEPLOY_TS}.log"
@@ -910,8 +913,6 @@ MAC_AGENT_UNIT_BACKUP=""
 MAC_PLIST_BACKUP=""
 HERMES_PLIST_BACKUP=""
 MAC_AGENT_PLIST_BACKUP=""
-BEADS_REPO_URL="${MAC_DEPLOY_BEADS_REPO_URL:-https://github.com/gastownhall/beads.git}"
-BEADS_REF="${MAC_DEPLOY_BEADS_REF:-main}"
 
 mkdir -p "$LOG_DIR" "$MAC_HOME/backups"
 exec > >(tee -a "$DEPLOY_LOG") 2>&1
@@ -965,7 +966,7 @@ PY
 PY="$(python_bin)"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR BEADS_DIR BEADS_REPO_URL BEADS_REF ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1671,7 +1672,7 @@ verify_hermes_prompt_bridge() {
   HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
   MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HOME/.hermes/mac-runtime-context.md}" \
   PYTHONPATH="$HERMES_DIR:${PYTHONPATH:-}" \
-  "$HERMES_DIR/.venv/bin/python" - "$SRC_DIR" <<'PY'
+  "$VENV/bin/python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -2017,16 +2018,12 @@ manifest = {
             "timeout_seconds": int(os.environ.get("DRAIN_TIMEOUT_SECONDS") or 0),
             "poll_seconds": int(os.environ.get("DRAIN_POLL_SECONDS") or 0),
         },
-        "beads_repo_url": os.environ.get("BEADS_REPO_URL") or None,
-        "beads_ref": os.environ.get("BEADS_REF") or None,
     },
     "paths": {
         "mac_home": str(mac_home),
         "source": str(Path(os.environ["SRC_DIR"])),
         "mac_venv": str(Path(os.environ["VENV"])),
         "hermes_agent": str(hermes_dir),
-        "beads_source": str(Path(os.environ["BEADS_DIR"])),
-        "beads_cli": str(mac_home / "bin" / "bd"),
         "env_file": str(Path(os.environ["ENV_FILE"])),
         "hermes_runtime_context": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or str(Path.home() / ".hermes" / "mac-runtime-context.json"),
         "hermes_runtime_markdown": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or str(Path.home() / ".hermes" / "mac-runtime-context.md"),
@@ -2041,7 +2038,6 @@ manifest = {
         "mac_source": file_ref(os.environ["SRC_DIR"]),
         "mac_database": file_ref(mac_home / "mac.db"),
         "hermes_agent": file_ref(hermes_dir),
-        "beads_cli": file_ref(mac_home / "bin" / "bd"),
         "hermes_state": file_ref(Path.home() / ".hermes"),
         "hermes_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (Path.home() / ".hermes" / "mac-runtime-context.json")),
         "hermes_runtime_markdown": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or (Path.home() / ".hermes" / "mac-runtime-context.md")),
@@ -2390,111 +2386,6 @@ clear_mac_agent_drain_after_deploy() {
   mac_api_json POST "/agents/$agent_id/heartbeat" '{"status":"idle","health_status":"healthy"}' >/dev/null || true
 }
 
-install_beads_cli() {
-  local target="$MAC_HOME/bin/bd" existing upgrade source_first missing_required required
-  mkdir -p "$MAC_HOME/bin" "$(dirname "$BEADS_DIR")"
-  upgrade="${MAC_DEPLOY_BEADS_UPGRADE:-1}"
-  source_first="${MAC_DEPLOY_BEADS_SOURCE_FIRST:-1}"
-  if [ -x "$target" ]; then
-    log "bd CLI already installed at $target"
-    "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-    if ! truthy "$upgrade"; then
-      return 0
-    fi
-    log "upgrading bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-    existing="$target"
-  fi
-
-  if truthy "$source_first"; then
-    missing_required=""
-    for required in git make go; do
-      if ! command -v "$required" >/dev/null 2>&1; then
-        missing_required="${missing_required}${missing_required:+, }$required"
-      fi
-    done
-    if [ -z "$missing_required" ]; then
-      log "building bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-      if [ -d "$BEADS_DIR/.git" ]; then
-        git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-      else
-        git clone --quiet "$BEADS_REPO_URL" "$BEADS_DIR"
-        git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-      fi
-      git -C "$BEADS_DIR" checkout --quiet FETCH_HEAD
-      make -C "$BEADS_DIR" build
-      install -m 0755 "$BEADS_DIR/bd" "$target"
-      "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-      return 0
-    fi
-    log "WARNING: cannot build bd CLI from source (missing: $missing_required); falling back to an existing binary or release download"
-  fi
-
-  if [ -z "${existing:-}" ]; then
-    existing="$(command -v bd 2>/dev/null || true)"
-  fi
-  if [ -z "$existing" ]; then
-    for candidate in "$HOME/.local/bin/bd" "$HOME/bin/bd" /opt/homebrew/bin/bd /usr/local/bin/bd; do
-      if [ -x "$candidate" ]; then
-        existing="$candidate"
-        break
-      fi
-    done
-  fi
-  if [ -n "$existing" ] && [ -x "$existing" ]; then
-    log "copying existing bd CLI from $existing to managed mac bin"
-    if [ "$existing" != "$target" ]; then
-      cp -f "$existing" "$target"
-      chmod 0755 "$target"
-    fi
-    "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-    return 0
-  fi
-  local os_name arch_name dl_url tmp_dir bd_version
-  case "$OS_KIND" in
-    linux)  os_name="linux" ;;
-    darwin) os_name="darwin" ;;
-    *)      os_name="" ;;
-  esac
-  case "$(uname -m 2>/dev/null || true)" in
-    x86_64)        arch_name="amd64" ;;
-    aarch64|arm64) arch_name="arm64" ;;
-    *)             arch_name="" ;;
-  esac
-  if [ -n "$os_name" ] && [ -n "$arch_name" ] && command -v curl >/dev/null 2>&1; then
-    bd_version="$(curl -fsSL "https://api.github.com/repos/gastownhall/beads/releases/latest" 2>/dev/null \
-      | grep '"tag_name"' | sed 's/.*"tag_name": *"v\([^"]*\)".*/\1/' | tr -d '\r\n')"
-    if [ -n "$bd_version" ]; then
-      dl_url="https://github.com/gastownhall/beads/releases/download/v${bd_version}/beads_${bd_version}_${os_name}_${arch_name}.tar.gz"
-      log "downloading bd CLI v${bd_version} from GitHub releases"
-      tmp_dir="$(mktemp -d)"
-      if curl -fsSL "$dl_url" | tar -xz -C "$tmp_dir" 2>/dev/null && [ -x "$tmp_dir/bd" ]; then
-        install -m 0755 "$tmp_dir/bd" "$target"
-        rm -rf "$tmp_dir"
-        "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-        return 0
-      fi
-      rm -rf "$tmp_dir"
-      log "WARNING: bd CLI release download failed; falling back to source build"
-    fi
-  fi
-  for required in git make go; do
-    if ! command -v "$required" >/dev/null 2>&1; then
-      log "WARNING: bd CLI could not be installed (build prereq missing: $required); Beads lifecycle sync disabled"
-      return 1
-    fi
-  done
-  log "building bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-  if [ -d "$BEADS_DIR/.git" ]; then
-    git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-  else
-    git clone --quiet "$BEADS_REPO_URL" "$BEADS_DIR"
-    git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-  fi
-  git -C "$BEADS_DIR" checkout --quiet FETCH_HEAD
-  make -C "$BEADS_DIR" build
-  install -m 0755 "$BEADS_DIR/bd" "$target"
-  "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-}
 
 install_github_cli() {
   local target="$MAC_HOME/bin/gh" existing=""
@@ -2553,82 +2444,7 @@ install_github_cli() {
   log "GitHub CLI ready at $target"
 }
 
-bootstrap_beads_repositories() {
-  local raw="${MAC_BEADS_REPOSITORIES:-}" entry rest repo_path index log_path
-  [ -n "$raw" ] || return 0
-  index=0
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    if [ "$entry" = "${entry#*=}" ]; then
-      log "WARNING: skipping malformed MAC_BEADS_REPOSITORIES entry: $entry"
-      continue
-    fi
-    rest="${entry#*=}"
-    repo_path="${rest%%|*}"
-    repo_path="${repo_path%%:*}"
-    [ -n "$repo_path" ] || continue
-    if [ ! -d "$repo_path/.beads" ]; then
-      log "WARNING: skipping Beads bootstrap for $repo_path because .beads is absent"
-      continue
-    fi
-    chmod 700 "$repo_path/.beads" 2>/dev/null || true
-    git -C "$repo_path" config beads.role maintainer 2>/dev/null || true
-    index=$((index + 1))
-    log_path="$LOG_DIR/beads-bootstrap-${index}.log"
-    log "bootstrapping Beads repository at $repo_path"
-    if ! (cd "$repo_path" && "$MAC_BEADS_CLI" bootstrap --yes) > "$log_path" 2>&1; then
-      log "ERROR: Beads bootstrap failed for $repo_path; see $log_path"
-      cat "$log_path"
-      exit 1
-    fi
-    # Dolt pull is intentionally skipped: embedded dolt's migration
-    # rejects the issues table once any worker has touched it, and the
-    # JSONL files under .beads/ are already the source of truth (and
-    # travel with the repo via git). Re-enable here only if
-    # MAC_BEADS_DOLT_SYNC_ENABLED is set on the running fleet.
-    if [ "${MAC_BEADS_DOLT_SYNC_ENABLED:-}" = "1" ]; then
-      if ! (cd "$repo_path" && "$MAC_BEADS_CLI" dolt pull) >> "$log_path" 2>&1; then
-        log "WARNING: Beads Dolt pull failed for $repo_path; bridge polling will report authority drift if the embedded DB is stale"
-      fi
-    fi
-  done <<EOF
-${raw//;/$'\n'}
-EOF
-}
 
-restore_beads_tracked_exports() {
-  local raw="${MAC_BEADS_REPOSITORIES:-}" entry rest repo_path index status_path
-  case "${MAC_BEADS_RESTORE_TRACKED_EXPORTS:-}" in
-    1|true|TRUE|yes|YES|on|ON)
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-  [ -n "$raw" ] || return 0
-  index=0
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    [ "$entry" != "${entry#*=}" ] || continue
-    rest="${entry#*=}"
-    repo_path="${rest%%|*}"
-    repo_path="${repo_path%%:*}"
-    [ -n "$repo_path" ] || continue
-    if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      continue
-    fi
-    if [ -z "$(git -C "$repo_path" status --porcelain -- .beads/config.yaml .beads/issues.jsonl)" ]; then
-      continue
-    fi
-    index=$((index + 1))
-    status_path="$LOG_DIR/beads-tracked-export-restore-${index}.txt"
-    git -C "$repo_path" status --porcelain -- .beads/config.yaml .beads/issues.jsonl > "$status_path" || true
-    git -C "$repo_path" restore --staged --worktree -- .beads/config.yaml .beads/issues.jsonl
-    log "restored tracked Beads export noise in $repo_path; status saved to $status_path"
-  done <<EOF
-${raw//;/$'\n'}
-EOF
-}
 
 normalize_hermes_redaction_env() {
   "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
@@ -2816,7 +2632,10 @@ if not tokenhub_url and not tokenhub_key:
     raise SystemExit(0)
 
 updates: dict[str, str | None] = {
-    "NVIDIA_API_KEY": None,
+    # Preserve a provided NVIDIA_API_KEY (the NIM image-gen backend reads it).
+    # The NVIDIA *base URLs* are still stripped below so chat never routes to
+    # NVIDIA directly — the gateway provider stays pinned to "custom"/TokenHub.
+    "NVIDIA_API_KEY": (source.get("NVIDIA_API_KEY") or "").strip() or None,
     "NVIDIA_API_BASE": None,
     "NVIDIA_BASE_URL": None,
     "ANTHROPIC_API_KEY": None,
@@ -2876,7 +2695,7 @@ PY
 
 sync_hermes_tokenhub_runtime_config() {
   log "syncing Hermes TokenHub runtime config"
-  "$HERMES_DIR/.venv/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
+  "$VENV/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -2971,6 +2790,19 @@ if tokenhub_key:
         output.append("TOKENHUB_API_KEY=%s" % tokenhub_key)
     env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     env_path.chmod(0o600)
+
+# Image generation backend: when this agent carries an NVIDIA_API_KEY (a NIM
+# image key the operator opted into via the fleet config), make NVIDIA the
+# active ``image_gen`` provider so the core ``image_generate`` tool surfaces.
+# Chat is unaffected — it stays pinned to the "tokenhub" model/provider above.
+nvidia_image_key = str(env.get("NVIDIA_API_KEY") or "").strip()
+if nvidia_image_key:
+    image_gen_cfg = config.get("image_gen") if isinstance(config.get("image_gen"), dict) else {}
+    image_gen_cfg = dict(image_gen_cfg)
+    image_gen_cfg["provider"] = "nvidia"
+    image_gen_cfg.setdefault("model", "flux.1-dev")
+    config["image_gen"] = image_gen_cfg
+    print("Image generation: NVIDIA NIM backend enabled (model=%s)" % image_gen_cfg["model"])
 
 config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 config_path.chmod(0o600)
@@ -3103,7 +2935,7 @@ PY
 
 initialize_hermes_home() {
   log "initializing Hermes home with upstream Hermes defaults"
-  "$HERMES_DIR/.venv/bin/python" - <<'PY'
+  "$VENV/bin/python" - <<'PY'
 from hermes_cli.config import ensure_hermes_home
 
 ensure_hermes_home()
@@ -3158,7 +2990,7 @@ PY
 
 install_hermes_messaging_deps() {
   log "preinstalling configured Hermes messaging dependencies"
-  "$HERMES_DIR/.venv/bin/python" - "$HERMES_DIR" "$HOME/.hermes" "$LOG_DIR/hermes-messaging-deps.json" <<'PY'
+  "$VENV/bin/python" - "$HERMES_VENDORED" "$HOME/.hermes" "$LOG_DIR/hermes-messaging-deps.json" <<'PY'
 import importlib.util
 import json
 import os
@@ -3334,7 +3166,7 @@ PY
 
 install_hermes_web_deps() {
   log "preinstalling configured Hermes web dependencies"
-  "$HERMES_DIR/.venv/bin/python" - "$HOME/.hermes" "$LOG_DIR/hermes-web-deps.json" <<'PY'
+  "$VENV/bin/python" - "$HOME/.hermes" "$LOG_DIR/hermes-web-deps.json" <<'PY'
 import importlib.util
 import json
 import os
@@ -3632,7 +3464,6 @@ fi
 mv "$SRC_DIR.new" "$SRC_DIR"
 rm -f "$ARCHIVE"
 
-install_beads_cli || true
 install_github_cli || true
 
 log "creating/updating mac environment file"
@@ -3714,7 +3545,7 @@ values["HERMES_HOME"] = str(home / ".hermes")
 values["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
 values["HERMES_REDACT_SECRETS"] = "true"
 values["ACC_DIR"] = str(home / ".acc")
-values["MAC_HERMES_AGENT_DIR"] = str(mac_home / "hermes-agent")
+values["MAC_HERMES_AGENT_DIR"] = str(mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
 values["MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM"] = "1"
 values["MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM"] = "1"
 values["MAC_HERMES_STARTUP_CHECK"] = "1"
@@ -3732,8 +3563,6 @@ values["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] = "1"
 values["MAC_HERMES_WORKSPACE"] = str(mac_home / "src" / "mac")
 values["MAC_PROJECT_CONTRACT_FILE"] = str(mac_home / "src" / "mac" / ".mac" / "project.yaml")
 values["MAC_SELF_UPDATE_REPO"] = str(mac_home / "src" / "mac")
-values["MAC_BEADS_CLI"] = str(mac_home / "bin" / "bd")
-values.setdefault("MAC_BEADS_BRIDGE_ROOT", str(mac_home / "beads-checkouts"))
 if configured_gateway_model:
     values["MAC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
     values["ACC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
@@ -3826,7 +3655,10 @@ if derived_firecrawl_url:
     values["HERMES_WEB_EXTRACT_BACKEND"] = "firecrawl"
 
 provider_secret_keys = (
-    "NVIDIA_API_KEY",
+    # NVIDIA_API_KEY is intentionally NOT stripped: it's the NVIDIA NIM
+    # image-generation backend's key. Chat routing is unaffected because the
+    # NVIDIA base URLs (below) are still removed and the gateway provider is
+    # pinned to "custom"/TokenHub.
     "NVIDIA_API_BASE",
     "NVIDIA_BASE_URL",
     "ANTHROPIC_API_KEY",
@@ -3918,23 +3750,7 @@ values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
 values.setdefault("MAC_WORKER_EXECUTOR", str(mac_home / "bin" / "mac-hermes-task-executor"))
 values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
 values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
-values["MAC_BEADS_BRIDGE_HUB_AGENT"] = shared_services_manager
 values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", shared_services_manager)
-values.setdefault("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
-if agent_name == shared_services_manager:
-    values["MAC_BEADS_BRIDGE_ON_HEARTBEAT"] = "1"
-    values["MAC_BEADS_AUTO_PULL"] = "1"
-    values.setdefault(
-        "MAC_BEADS_REPOSITORIES",
-        "mac=%s:repo-beads-mac:repo-beads-mac::30" % (mac_home / "src" / "mac"),
-    )
-else:
-    values.setdefault("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "0")
-if "MAC_BEADS_REPOSITORIES" in values:
-    # Older generated env files used "|" as an internal separator. That is
-    # readable by Python but invalid in a shell-sourced env file because it is
-    # parsed as a pipeline. Normalize before the file is sourced below.
-    values["MAC_BEADS_REPOSITORIES"] = values["MAC_BEADS_REPOSITORIES"].replace("|", ":")
 home_channel = (
     configured_home_channel
     or values.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
@@ -3970,8 +3786,6 @@ reload_mac_env
 fetch_slack_secrets_from_vault
 reload_mac_env
 sync_hermes_slack_identity_env
-[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories || true
-[ -x "$MAC_HOME/bin/bd" ] && restore_beads_tracked_exports || true
 if [ "$WORKER_MODE" = "loop" ]; then
   ensure_hub_tunnel_key
 else
@@ -3982,35 +3796,25 @@ install_or_validate_shared_services
 write_hermes_memory_topology
 sync_hermes_home_channels
 
-log "installing mac Python package"
+log "installing mac Python package (with vendored Hermes runtime + gateway extra)"
 "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
-"$VENV/bin/python" -m pip install -e "$SRC_DIR" >/dev/null
+# ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
+# runtime (src/mac/_hermes) runs in-process from this one venv — no separate
+# hermes-agent venv needed. The gateway service execs mac-hermes-gateway.
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway]" >/dev/null
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
 write_hermes_web_search_config
 
-log "redeploying upstream Hermes agent"
-git clone --quiet https://github.com/NousResearch/hermes-agent.git "$HERMES_DIR"
-git -C "$HERMES_DIR" rev-parse HEAD > "$LOG_DIR/hermes-upstream-rev.txt"
-for patch_path in \
-  "$SRC_DIR/deploy/hermes/multi-slack-mvp.patch" \
-  "$SRC_DIR/deploy/hermes/mac-runtime-context-prompt.patch" \
-  "$SRC_DIR/deploy/hermes/disable-shutdown-chat-notices.patch"
-do
-  if git -C "$HERMES_DIR" apply --check "$patch_path"; then
-    git -C "$HERMES_DIR" apply "$patch_path"
-    log "applied Hermes patch $(basename "$patch_path")"
-  else
-    log "ERROR: Hermes patch $(basename "$patch_path") does not apply to upstream checkout"
-    git -C "$HERMES_DIR" status --short
-    exit 1
-  fi
-done
-"$HERMES_PY" -m venv "$HERMES_DIR/.venv"
-"$HERMES_DIR/.venv/bin/python" -m pip install --upgrade pip wheel >/dev/null
-"$HERMES_DIR/.venv/bin/python" -m pip install --ignore-requires-python -e "$HERMES_DIR" >/dev/null
+log "using vendored in-tree Hermes runtime (ADR 0001 hu-04; no upstream clone)"
+# The Hermes runtime ships pinned + patched in the mac package at
+# $HERMES_VENDORED and runs in-process from the single mac venv ($VENV) — there
+# is no upstream clone and no separate hermes venv. HERMES_DIR stays a path
+# symbol for the (guarded) backup/restore logic but is intentionally NOT created.
+git -C "$SRC_DIR" rev-parse HEAD > "$LOG_DIR/hermes-vendored-rev.txt" 2>/dev/null || true
+cat "$HERMES_VENDORED/SNAPSHOT_PIN" > "$LOG_DIR/hermes-vendored-pin.txt" 2>/dev/null || true
 initialize_hermes_home
 sync_hermes_tokenhub_runtime_config
 ensure_hermes_identity_memory_continuity
@@ -4216,7 +4020,10 @@ fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
 fi
-exec "$HOME/.mac/hermes-agent/.venv/bin/python" "$HOME/.mac/hermes-agent/hermes" gateway run --replace
+# ADR 0001 hu-04: run the vendored Hermes gateway in-process from the mac venv
+# (mac-hermes-gateway -> hermes_cli.main "gateway run --replace"), instead of a
+# separate hermes-agent venv. Validated in fleet rollout 2026-05-31.
+exec "$HOME/.mac/venv/bin/python" -m mac.hermes_gateway
 EOF
   chmod 700 "$wrapper"
 }
@@ -4327,8 +4134,8 @@ case "$mode" in
   loop)
     executor="${MAC_WORKER_EXECUTOR:-$HOME/.mac/bin/mac-hermes-task-executor}"
     if [ "$executor" = "$HOME/.mac/bin/mac-hermes-task-executor" ]; then
-      test -x "$HOME/.mac/hermes-agent/.venv/bin/python"
-      test -f "$HOME/.mac/hermes-agent/hermes"
+      test -x "$HOME/.mac/venv/bin/python"
+      test -f "$HOME/.mac/bin/mac-hermes-task-executor.py"
     fi
     exec "${common[@]}" --loop --executor "$executor"
     ;;
@@ -4375,10 +4182,8 @@ fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
 fi
-selftest_python="$HOME/.mac/hermes-agent/.venv/bin/python"
-if [ ! -x "$selftest_python" ]; then
-  selftest_python="$HOME/.mac/venv/bin/python"
-fi
+# ADR 0001 hu-04: the self-test runs from the single mac venv (vendored runtime).
+selftest_python="$HOME/.mac/venv/bin/python"
 exec "$selftest_python" - <<'PY'
 from __future__ import annotations
 
@@ -4528,8 +4333,10 @@ firecrawl_key = os.environ.get("FIRECRAWL_API_KEY") or ""
 firecrawl_required = True
 firecrawl_required_flag = os.environ.get("MAC_REQUIRE_FIRECRAWL")
 timeout = int(os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT") or "120")
-python_bin = str(mac_home / "hermes-agent" / ".venv" / "bin" / "python")
-hermes_script = str(mac_home / "hermes-agent" / "hermes")
+# ADR 0001 hu-04: run the vendored Hermes runtime from the mac venv in-process.
+python_bin = str(mac_home / "venv" / "bin" / "python")
+hermes_vendored = str(mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
+hermes_env = {**os.environ, "PYTHONPATH": hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")}
 
 problems: list[str] = []
 checks: dict[str, object] = {
@@ -4631,7 +4438,7 @@ elif firecrawl_url:
     checks["firecrawl_web_search"] = ok
 
 try:
-    sys.path.insert(0, str(mac_home / "hermes-agent"))
+    sys.path.insert(0, hermes_vendored)
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     runtime_provider = resolve_runtime_provider(
@@ -4670,11 +4477,12 @@ prompt = (
 )
 try:
     completed = subprocess.run(
-        [python_bin, hermes_script, "chat", "--query", prompt, "--quiet"],
+        [python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"],
         text=True,
         capture_output=True,
         timeout=timeout,
         check=False,
+        env=hermes_env,
     )
     chat_returncode = completed.returncode
     chat_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
@@ -4817,520 +4625,15 @@ exec "$HOME/.mac/venv/bin/python" "$HOME/.mac/bin/mac-hermes-task-executor.py"
 EOF
   chmod 700 "$executor"
 
-  cat > "$executor_py" <<'PY'
-from __future__ import annotations
+cat > "$executor_py" <<'PY'
+# Autonomous task executor shim. The real, unit-tested logic lives in the
+# mac.task_executor module (extracted from this heredoc per loop-01): it
+# builds the prompt, runs the vendored Hermes agent, writes deterministic
+# evidence, emits executor telemetry, and feeds deployment lessons into
+# memory so the fleet gets smarter over time.
+from mac.task_executor import main
 
-import hashlib
-import json
-import os
-import subprocess
-import sys
-import time
-import urllib.request
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
-
-
-def sha256_text(value: str) -> str:
-    return "sha256:%s" % hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def command_audit_id() -> str:
-    seed = "%s:%s" % (time.time_ns(), os.getpid())
-    return "cmd_%s" % hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
-
-
-def audit_safe_argv(argv: list[str]) -> list[str]:
-    safe: list[str] = []
-    redact_next = False
-    for raw in argv:
-        arg = str(raw)
-        lowered = arg.lower()
-        if redact_next:
-            safe.append(redacted_arg(arg))
-            redact_next = False
-            continue
-        if lowered in {"--token", "--api-key", "--key", "--secret", "--password"}:
-            safe.append(arg)
-            redact_next = True
-            continue
-        if any(marker in lowered for marker in ("bearer ", "token=", "api_key=", "apikey=", "password=", "secret=")):
-            safe.append(redacted_arg(arg))
-            continue
-        if len(arg) > 512:
-            safe.append("<truncated:%s:chars=%d>" % (sha256_text(arg), len(arg)))
-            continue
-        safe.append(arg)
-    return safe
-
-
-def redacted_arg(value: str) -> str:
-    return "<redacted:%s:chars=%d>" % (sha256_text(value), len(value))
-
-
-def safe_path_component(value: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in value)[:180]
-
-
-def local_agent_id() -> str:
-    configured = os.environ.get("MAC_AGENT_ID") or os.environ.get("MAC_WORKER_AGENT_ID")
-    if configured:
-        return configured
-    name = os.environ.get("MAC_WORKER_AGENT_NAME") or os.uname().nodename.split(".")[0]
-    return "agent_%s" % (safe_path_component(name.lower()).strip("_") or "default")
-
-
-def post_command_audit(agent_id: str, payload: dict) -> None:
-    base_url = (os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or "").rstrip("/")
-    token = os.environ.get("MAC_WORKER_TOKEN") or os.environ.get("MAC_TOKEN") or os.environ.get("MAC_API_TOKEN")
-    if not base_url or not token or not agent_id:
-        return
-    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    request = urllib.request.Request(
-        "%s/agents/%s/command-audit" % (base_url, agent_id),
-        data=data,
-        headers={
-            "Authorization": "Bearer %s" % token,
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(request, timeout=5).read()
-    except Exception:
-        pass
-
-
-def run_audited_command(argv: list[str], cwd: Path, task_id, metadata: dict) -> subprocess.CompletedProcess[str]:
-    command_id = command_audit_id()
-    agent_id = local_agent_id()
-    started_at = utcnow()
-    started = time.monotonic()
-    argv_hash = sha256_text(json.dumps(argv, separators=(",", ":")))
-    base = {
-        "command_id": command_id,
-        "argv": audit_safe_argv(argv),
-        "cwd": str(cwd),
-        "task_id": task_id,
-        "started_at": started_at,
-        "metadata": {"component": "mac-hermes-task-executor", "argv_sha256": argv_hash, **metadata},
-    }
-    post_command_audit(agent_id, {**base, "phase": "started"})
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=str(cwd),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError as exc:
-        post_command_audit(
-            agent_id,
-            {
-                **base,
-                "phase": "error",
-                "completed_at": utcnow(),
-                "duration_ms": (time.monotonic() - started) * 1000.0,
-                "metadata": {**base["metadata"], "error": str(exc)},
-            },
-        )
-        raise
-    stdout = result.stdout or ""
-    stderr = result.stderr or ""
-    post_command_audit(
-        agent_id,
-        {
-            **base,
-            "phase": "completed" if result.returncode == 0 else "failed",
-            "completed_at": utcnow(),
-            "duration_ms": (time.monotonic() - started) * 1000.0,
-            "returncode": result.returncode,
-            "stdout_sha256": sha256_text(stdout),
-            "stderr_sha256": sha256_text(stderr),
-            "stdout_bytes": len(stdout.encode("utf-8")),
-            "stderr_bytes": len(stderr.encode("utf-8")),
-        },
-    )
-    return result
-
-
-def repository_contract_section(task: dict) -> str:
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    origin = metadata.get("origin") if isinstance(metadata, dict) else {}
-    contract = origin.get("repository_contract") if isinstance(origin, dict) else None
-    if not isinstance(contract, dict):
-        return (
-            "No repository runtime contract is attached. Do not guess bootstrap or "
-            "test commands; report this as a task contract failure."
-        )
-    summary = {
-        "schema": contract.get("schema"),
-        "project": contract.get("project"),
-        "contract_path": contract.get("contract_path"),
-        "platforms": contract.get("platforms"),
-        "toolchain": contract.get("toolchain"),
-        "bootstrap": contract.get("bootstrap"),
-        "test": contract.get("test"),
-        "evidence": contract.get("evidence"),
-    }
-    return "\n".join(
-        [
-            json.dumps(summary, indent=2, sort_keys=True),
-            "For normal repository tasks, MAC prepares a task-owned git worktree before the executor starts.",
-            "Use $MAC_TASK_REPO_WORKTREE, or metadata.runtime.repository_worktree in task.json, as the only writable checkout.",
-            "Treat origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only registered source state; do not edit it for feature or bug work.",
-            "The registered checkout must remain clean. Commit, test, and publish from the task worktree branch, then report the pushed ref in evidence.",
-            "Only explicit source-remediation tasks may repair origin.repository_path directly.",
-            "Before build or test work, run bootstrap.command from the repository root when the declared tools or bootstrap.creates outputs are missing.",
-            "Use test.command as the canonical verification command unless the task explicitly narrows the check.",
-        ]
-    )
-
-
-def task_evidence_type(task: dict) -> str:
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    contract = metadata.get("execution_contract") if isinstance(metadata, dict) else {}
-    evidence_type = str(contract.get("evidence_type") or "").strip().lower() if isinstance(contract, dict) else ""
-    allowed = {
-        "repo_change",
-        "documentation",
-        "investigation",
-        "deployment",
-        "test",
-        "artifact",
-        "no_change",
-        "operator_result",
-    }
-    return evidence_type if evidence_type in allowed else "operator_result"
-
-
-def _git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
-
-
-def run_deterministic_git_finalizer(task_workspace: Path, task: dict) -> None:
-    """mac-jfns: enforce deterministic repo_change evidence for tasks
-    declaring publication_target=git://main. Runs after the LLM-driven
-    Hermes step. Commits any uncommitted work, pushes the lease branch,
-    runs the contract test suite, then writes an authoritative
-    mac-evidence.json that reflects real git state (overriding whatever
-    evidence_type / pushed / dirty flags the LLM proposed).
-    """
-    metadata = task.get("metadata") or {}
-    publication_target = str(metadata.get("publication_target") or "").strip()
-    if not publication_target.startswith("git://"):
-        return
-    worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
-    if not worktree:
-        # Some tasks ship the worktree path inside the task json
-        rt = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
-        worktree = str(rt.get("repository_worktree") or "").strip()
-    worktree_path = Path(worktree).expanduser() if worktree else None
-    if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
-        return
-    # Auto-commit any uncommitted changes (the LLM may have edited files but skipped commit)
-    status = _git(["status", "--porcelain"], worktree_path)
-    if status.stdout.strip():
-        _git(["add", "-A"], worktree_path)
-        commit_msg = "auto-commit: %s" % task.get("id", "unknown")
-        _git(
-            [
-                "-c", "user.email=mac-fleet@nvidia.com",
-                "-c", "user.name=MAC fleet",
-                "commit",
-                "-m", commit_msg,
-            ],
-            worktree_path,
-        )
-    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
-    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
-    # Push the current branch to origin (idempotent on re-runs)
-    pushed = False
-    push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
-    push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
-    if push.returncode == 0:
-        pushed = True
-    # Run contract tests
-    contract = (metadata.get("origin") or {}).get("repository_contract") or {}
-    test_cmd = ((contract.get("test") or {}).get("command") or "scripts/run-contract-tests.sh").strip()
-    tests = None
-    if test_cmd:
-        tr = subprocess.run(
-            ["bash", "-lc", test_cmd],
-            cwd=str(worktree_path),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=600,
-        )
-        tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
-        # Extract pytest summary if present
-        import re as _re
-        passed = failed = total = None
-        m = _re.search(r"(\d+) passed", tail)
-        if m:
-            passed = int(m.group(1))
-        m = _re.search(r"(\d+) failed", tail)
-        if m:
-            failed = int(m.group(1))
-        if passed is not None or failed is not None:
-            total = (passed or 0) + (failed or 0)
-        tests = {
-            "command": test_cmd,
-            "returncode": int(tr.returncode),
-            "passed": passed,
-            "failed": failed,
-            "total": total,
-            "status": "pass" if tr.returncode == 0 else "fail",
-        }
-    # Compute files_changed relative to origin/main
-    _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
-    diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
-    files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
-    final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "summary": "Deterministic finalizer: commit+push+test for %s" % task.get("id"),
-        "repo": {
-            "head_sha": head_sha,
-            "pushed": pushed,
-            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
-            "dirty": bool(final_status),
-            "files_changed": files_changed,
-        },
-        "tests": tests,
-        "checks": [
-            {
-                "name": "git_finalizer",
-                "returncode": 0 if pushed and (tests is None or tests.get("returncode") == 0) else 1,
-                "status": "pass" if pushed and (tests is None or tests.get("returncode") == 0) else "fail",
-            }
-        ],
-    }
-    manifest_path = task_workspace / "mac-evidence.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _sign_verdict(key: str, manifest: dict) -> str:
-    """HMAC-SHA256 → base64url; matches mac.services.sign_verification_manifest."""
-    import hmac as _hmac
-    import hashlib as _hashlib
-    import base64 as _base64
-    # Match services._canonicalize_for_signature: stable JSON, exclude 'signature'
-    filtered = {k: v for k, v in manifest.items() if k != "signature"}
-    blob = json.dumps(filtered, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    digest = _hmac.new(key.encode("ascii"), blob, _hashlib.sha256).digest()
-    return "v1:" + _base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-
-
-def run_deterministic_review_verdict(task_workspace: Path, task: dict, review_context: dict) -> None:
-    """mac-jfns: deterministic post-LLM review verdict. After Hermes
-    runs as the reviewer, override whatever it wrote with a signed
-    review_verdict manifest that:
-      - reads the executor's evidence from executor-evidence.json
-      - runs the contract test gate in the review checkout
-      - signs an approved verdict if tests pass and the executor's
-        commit is reachable on origin
-    """
-    reviewer_agent_id = str(task.get("owner_agent_id") or os.environ.get("MAC_WORKER_AGENT_ID") or "").strip()
-    attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
-    if not reviewer_agent_id or not attestation_key:
-        return
-    executor_evidence_id = str(review_context.get("executor_evidence_id") or "").strip()
-    review_id = str(review_context.get("review_id") or "").strip()
-    if not executor_evidence_id or not review_id:
-        return
-    # Load the executor's evidence the dispatcher staged in the review workspace
-    exec_ev_path = task_workspace / "executor-evidence.json"
-    if not exec_ev_path.exists():
-        return
-    try:
-        exec_ev = json.loads(exec_ev_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    exec_verification = (exec_ev.get("metadata") or {}).get("verification") or {}
-    exec_repo = exec_verification.get("repo") or {}
-    exec_head = str(exec_repo.get("head_sha") or "").strip()
-    if not exec_head:
-        return
-    # Locate a review worktree: the dispatcher prepares one and exposes
-    # it as MAC_TASK_REPO_WORKTREE; if absent we can still attest based
-    # on the executor's claims.
-    review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
-    tests = None
-    independent_pass = False
-    if review_worktree and Path(review_worktree).is_dir():
-        # Independent test run against the executor commit
-        ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], Path(review_worktree))
-        if ck.returncode == 0:
-            test_cmd = (((task.get("metadata") or {}).get("origin") or {})
-                        .get("repository_contract") or {}).get("test", {}).get("command", "scripts/run-contract-tests.sh")
-            tr = subprocess.run(
-                ["bash", "-lc", test_cmd],
-                cwd=review_worktree,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=600,
-            )
-            independent_pass = tr.returncode == 0
-            tests = {
-                "command": test_cmd,
-                "returncode": int(tr.returncode),
-                "status": "pass" if tr.returncode == 0 else "fail",
-            }
-    verdict = "approved" if independent_pass else "rejected"
-    # Compute a worktree_digest the reviewer can attest to
-    digest_input = ("%s|%s|%s" % (exec_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
-    import hashlib as _hashlib
-    worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "review_verdict",
-        "verdict": verdict,
-        "review_id": review_id,
-        "reviewed_evidence_id": executor_evidence_id,
-        "worktree_digest": worktree_digest,
-        "repo": {
-            "head_sha": exec_head,
-            "remote_ref": exec_repo.get("remote_ref") or "",
-            "pushed": True,
-            "dirty": False,
-        },
-        "checks": [
-            {
-                "name": "review_verdict_finalizer",
-                "returncode": 0 if independent_pass else 1,
-                "status": "pass" if independent_pass else "fail",
-            }
-        ],
-        "tests": tests,
-        "signed_by": reviewer_agent_id,
-    }
-    manifest["signature"] = _sign_verdict(attestation_key, manifest)
-    out_path = task_workspace / "mac-evidence.json"
-    out_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def write_fallback_evidence_manifest(
-    task_workspace: Path,
-    task: dict,
-    result: subprocess.CompletedProcess[str],
-    review_context,
-) -> None:
-    if result.returncode != 0 or isinstance(review_context, dict):
-        return
-    manifest_path = task_workspace / "mac-evidence.json"
-    if manifest_path.exists():
-        return
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    result_text = stdout or stderr or "Hermes executor completed without textual output."
-    summary = next((line.strip() for line in result_text.splitlines() if line.strip()), "")
-    if len(summary) > 240:
-        summary = summary[:237].rstrip() + "..."
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": task_evidence_type(task),
-        "summary": summary or "Hermes executor completed.",
-        "result": result_text[-20000:],
-        "task": {
-            "id": task.get("id"),
-            "title": task.get("title"),
-            "project": task.get("project"),
-        },
-        "checks": [
-            {
-                "name": "hermes_chat_query",
-                "returncode": result.returncode,
-                "status": "pass",
-            }
-        ],
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def main() -> int:
-    task_file = Path(os.environ["MAC_TASK_FILE"])
-    task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
-    task_payload = json.loads(task_file.read_text(encoding="utf-8"))
-    task = task_payload.get("task", task_payload)
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    review_context = metadata.get("review_context") if isinstance(metadata, dict) else None
-    if isinstance(review_context, dict):
-        prompt = "\n\n".join(
-            [
-                "You are running as a MAC fleet reviewer. Review the executor's work independently.",
-                "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",
-                "Decide whether the executor evidence actually proves the task was completed and verified.",
-                "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
-                "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
-                "For repository changes, build the review checkout and run the repository contract test command or the task's declared tests before approving. Look for failures introduced by the change, not just manifest shape.",
-                "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
-                "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
-                % (
-                    review_context.get("executor_evidence_id", ""),
-                    review_context.get("review_id", ""),
-                ),
-                "A review verdict must also include repo copied from the executor verification repo object, with the same repo.head_sha, plus at least one independent passing check as checks=[{\"name\":\"...\",\"returncode\":0}] or status=\"pass\".",
-                "Include worktree_digest as sha256:<64 lowercase hex chars>. If you cannot independently verify the executor result, write verdict=rejected and explain the blocker instead of omitting repo/check fields.",
-                "Read the original task from executor-task.json and the executor evidence from executor-evidence.json in your workspace (%s)." % str(task_workspace),
-            ]
-        )
-    else:
-        prompt = "\n\n".join(
-            [
-                "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
-                "Use the task JSON as the source of truth. Preserve secrets and do not print bearer tokens.",
-                "When you finish, report the exact outcome, files changed, tests run, and any blockers.",
-                "Also write a verifiable evidence manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
-                "Use schema mac.worker_evidence.v1 with status=complete and evidence_type set to one of repo_change, documentation, investigation, deployment, test, artifact, no_change, or operator_result.",
-                "For no-repository planning or operator directive work, use evidence_type=operator_result with summary and result fields describing the completed work.",
-                "For repo/code work include repo.head_sha, repo.remote_ref or repo.pr_url, repo.pushed=true, repo.dirty=false, repo.files_changed, and passing tests/checks. Passing tests/checks should use returncode=0, status=pass, result=passed, or boolean/count fields that make success unambiguous. For deployments include targets/services plus passing checks. If you cannot produce this manifest, say why; MAC will not auto-publish unverifiable work.",
-                "Repository runtime contract:\n%s" % repository_contract_section(task),
-                "Read the full task from: %s" % str(task_file),
-            ]
-        )
-    hermes_py = Path.home() / ".mac" / "hermes-agent" / ".venv" / "bin" / "python"
-    hermes = Path.home() / ".mac" / "hermes-agent" / "hermes"
-    audit_task_id = review_context.get("task_id") if isinstance(review_context, dict) else task.get("id")
-    result = run_audited_command(
-        [str(hermes_py), str(hermes), "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"],
-        task_workspace,
-        str(audit_task_id) if audit_task_id else None,
-        {"execution_kind": "review" if isinstance(review_context, dict) else "task"},
-    )
-    # mac-jfns: deterministic post-LLM finalizer for repo tasks. Runs
-    # only for non-review tasks targeting git://main, and overrides
-    # whatever evidence the LLM emitted with a manifest derived from
-    # actual git state.
-    if not isinstance(review_context, dict):
-        try:
-            run_deterministic_git_finalizer(task_workspace, task)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("git finalizer failed: %s\n" % exc)
-    else:
-        try:
-            run_deterministic_review_verdict(task_workspace, task, review_context)
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
-    write_fallback_evidence_manifest(task_workspace, task, result, review_context)
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    return result.returncode
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+raise SystemExit(main())
 PY
   chmod 600 "$executor_py"
 }
@@ -5354,7 +4657,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HERMES_DIR
+WorkingDirectory=$MAC_HOME
 EnvironmentFile=$ENV_FILE
 ExecStart=$MAC_HOME/bin/hermes-gateway
 Restart=always
@@ -5460,7 +4763,7 @@ environment=HOME="$HOME"
 
 [program:$HERMES_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/hermes-gateway
-directory=$HERMES_DIR
+directory=$MAC_HOME
 user=$USER
 autostart=true
 autorestart=true
@@ -5575,7 +4878,7 @@ install_darwin_hermes_service() {
   <array><string>$MAC_HOME/bin/hermes-gateway</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>$HERMES_DIR</string>
+  <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>StandardOutPath</key><string>$LOG_DIR/hermes-gateway.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/hermes-gateway.log</string>
 </dict>
@@ -5925,14 +5228,24 @@ install_reverse_tunnel_on_hub() {
   if [ -z "$tunnel_host" ]; then
     tunnel_host="$worker_target"
   fi
+  # Derive the worker's SSH user from the agent's target (user@host, an
+  # ~/.ssh/config alias, or a bare host) the same way we derive the
+  # host. Falls back to "horde" only when ssh can't resolve a user, so
+  # fleets whose worker user isn't horde (e.g. jkh@...) get the right
+  # account instead of a hardcoded guess.
+  tunnel_user="$(ssh -G "$worker_target" 2>/dev/null | awk '/^user / {print $2; exit}')"
+  if [ -z "$tunnel_user" ]; then
+    tunnel_user="horde"
+  fi
   # Pass values to the remote inline; quoting handled by shell_quote
   ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
-    "TUNNEL_WORKER_AGENT=$(shell_quote "$worker_agent") TUNNEL_HOST=$(shell_quote "$tunnel_host") TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local") bash -s" <<'HUBSCRIPT'
+    "TUNNEL_WORKER_AGENT=$(shell_quote "$worker_agent") TUNNEL_HOST=$(shell_quote "$tunnel_host") TUNNEL_USER=$(shell_quote "$tunnel_user") TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local") bash -s" <<'HUBSCRIPT'
 set -euo pipefail
 worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
+tunnel_user="${TUNNEL_USER:-horde}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
-if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   service="${fleet_name}-tunnel-${worker_agent}.service"
   ssh_bin="$(command -v ssh)"
   sudo tee "/etc/systemd/system/${service}" > /dev/null <<EOF
@@ -5945,7 +5258,7 @@ Wants=network-online.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$HOME
-ExecStart=${ssh_bin} -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 horde@${tunnel_host}
+ExecStart=${ssh_bin} -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 ${tunnel_user}@${tunnel_host}
 Restart=always
 RestartSec=5
 
@@ -5960,7 +5273,7 @@ fi
 conf_dir="$(ls -d /etc/supervisor/conf.d 2>/dev/null || ls -d /etc/supervisord.d 2>/dev/null || echo '/etc/supervisor/conf.d')"
 sudo tee "$conf_dir/${fleet_name}-tunnel-${worker_agent}.conf" > /dev/null <<EOF
 [program:${fleet_name}-tunnel-${worker_agent}]
-command=ssh -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 horde@${tunnel_host}
+command=ssh -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 ${tunnel_user}@${tunnel_host}
 directory=$HOME
 user=$(whoami)
 autostart=true

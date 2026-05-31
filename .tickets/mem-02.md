@@ -1,6 +1,6 @@
 ---
 id: mem-02
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-29T02:21:01Z
@@ -27,3 +27,7 @@ Result on rocky as of 2026-05-29:
 - Pruning is logged as a `metric` so its effect is observable.
 
 Depends on no other ticket — this is a standalone hygiene fix.
+
+## Resolution (2026-05-31)
+
+Verified done: mac-observability-prune.timer is enabled on rocky, ran 6h ago, next in ~17h; prune_observability wired via cli + the timer. Retention prune is scheduled.

@@ -326,6 +326,26 @@ class AgentStateService:
         now = utcnow()
         run_id = new_id("nap")
         with self.store.transaction() as conn:
+            # Reap any prior RUNNING run for this agent before starting a
+            # new one. Without this, a cycle that died after begin_nap
+            # (e.g. the process was killed mid-nap) leaves an orphan
+            # RUNNING row that never resolves; the next nap would then
+            # stack a second RUNNING run on top of it.
+            conn.execute(
+                """
+                UPDATE nap_runs
+                SET status = ?, completed_at = ?, updated_at = ?, detail = ?
+                WHERE agent_id = ? AND status = ?
+                """,
+                (
+                    NapStatus.FAILED.value,
+                    now,
+                    now,
+                    json_dumps({"failure_reason": "superseded by a new nap_run"}),
+                    agent.id,
+                    NapStatus.RUNNING.value,
+                ),
+            )
             conn.execute(
                 """
                 UPDATE agents
