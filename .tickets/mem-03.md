@@ -1,6 +1,6 @@
 ---
 id: mem-03
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-29T02:21:03Z
@@ -24,3 +24,7 @@ Plus `task.beads_retry_exhausted` (38 rows) and `beads_repositories` table still
 - When `MAC_BEADS_BRIDGE_ENABLED` is unset/false, the bridge produces zero `observability_events` rows under any name (not even "skipped").
 - Verified by running the worker loop for 10 minutes with the gate off and asserting zero new `bridge.beads.*` rows.
 - If there's a legitimate "bridge offline" health metric, demote it to one `metric` row per hour (not per-poll `log`).
+
+## Resolution (2026-05-31)
+
+Implemented + tested (beads bridge log spam suppressed when bridge disabled).

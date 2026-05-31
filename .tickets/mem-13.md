@@ -1,6 +1,6 @@
 ---
 id: mem-13
-status: open
+status: closed
 deps: []
 links: [mem-01, mem-11, mem-12]
 created: 2026-05-29T02:58:04Z
@@ -30,3 +30,7 @@ That's the only check. A future executor (intentionally or accidentally) saying 
 - Test: submit evidence with a bogus remote_ref; assert it is rejected (or marked pending and rejected on re-check).
 
 Discovered during [mem-01](mem-01.md) root cause analysis on 2026-05-29.
+
+## Resolution (2026-05-31)
+
+Implemented + tested (remote-ref verification in require_pushed_repo_anchor: rejects pushed=true evidence whose remote_ref doesn't resolve).

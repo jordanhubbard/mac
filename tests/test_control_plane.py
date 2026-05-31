@@ -661,6 +661,33 @@ def test_task_lifecycle_requires_evidence_review_and_publication(cp):
     assert "task.published" in event_types
 
 
+def test_review_claim_is_idempotent_for_identical_evidence(cp):
+    # mem-05: a repeat claim (same review + executor_evidence + head_sha) writes
+    # no new task.review_claimed row — schema/app defense against the verified
+    # 30,806-row storm (task_d7c51a0b).
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task("Implement thing", required_capabilities=["python"])
+    cp.dispatch_once()
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "test", "artifact://pytest", "pytest passed", worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+
+    def claim_rows():
+        return [e for e in cp.task_history(task.id) if e.event_type == "task.review_claimed"]
+
+    cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
+    assert len(claim_rows()) == 1
+    for _ in range(50):
+        result = cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
+        assert result.get("idempotent") is True
+    assert len(claim_rows()) == 1  # 50 identical re-claims added no rows
+
+
 def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     from tests.conftest import submit_review_verdict
 

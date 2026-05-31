@@ -6902,6 +6902,25 @@ class ControlPlane:
         claim["claimed_at"] = now
         metadata = ensure_json_object(task.metadata)
         claims = ensure_json_object(metadata.get("review_claims"))
+        # mem-05: idempotent re-claim. The verified 30,806-row storm was one
+        # review re-claiming identical evidence over and over. A repeat claim
+        # (same review + executor_evidence_id + head_sha) is now a no-op: it
+        # returns the prior claim and writes no new task.review_claimed row.
+        prior = ensure_json_object(claims.get(review.id))
+        if (
+            prior
+            and str(prior.get("executor_evidence_id") or "") == str(claim.get("executor_evidence_id") or "")
+            and str(prior.get("repository_head_sha") or "") == str(claim.get("repository_head_sha") or "")
+        ):
+            refreshed = self.get_task(task.id)
+            return {
+                "schema": "mac.review_claim.v1",
+                "status": "claimed",
+                "review": review.to_dict(),
+                "task": refreshed.to_dict(),
+                "claim": prior,
+                "idempotent": True,
+            }
         claims[review.id] = claim
         metadata["review_claims"] = claims
         metadata["latest_review_claim"] = claim

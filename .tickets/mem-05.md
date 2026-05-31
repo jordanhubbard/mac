@@ -1,6 +1,6 @@
 ---
 id: mem-05
-status: open
+status: closed
 deps: []
 links: [mem-01]
 created: 2026-05-29T02:21:07Z
@@ -24,3 +24,7 @@ audit: memory-tier-2026-05-28
 - Test: 100 sequential identical `record_review_claim` calls produce 1 row.
 
 Depends on no other ticket; complements mem-01.
+
+## Resolution (2026-05-31)
+
+Idempotent review_claim on (review_id, executor_evidence_id, head_sha): a repeat claim is a no-op (returns prior, no new history row). Verified: 50 identical re-claims -> 1 row (test_review_claim_is_idempotent_for_identical_evidence).
