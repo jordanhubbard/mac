@@ -203,10 +203,12 @@ def start_background_consumer(
     """
     env = env or os.environ
     url = url or events_url_from_env(env)
-    if not url or not observability:
-        return None
     if token is None:
         token = admin_token_from_env(env) or None
+    # The /admin/v1/events feed requires admin auth, so without a token we'd just
+    # loop-retry 401s. Stay a clean no-op until BOTH url and admin token are set.
+    if not url or not token or not observability:
+        return None
 
     def _run() -> None:
         import time

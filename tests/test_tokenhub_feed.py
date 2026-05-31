@@ -125,10 +125,14 @@ def test_start_background_consumer_gating():
     spawned = []
     assert start_background_consumer(obs, env={}, _spawn=lambda r: spawned.append(r)) is None
     assert spawned == []
-    # No observability -> no-op even with a URL.
-    assert start_background_consumer(None, env={"TOKENHUB_URL": "http://hub:8090"}, _spawn=lambda r: spawned.append(r)) is None
+    # URL but no admin token -> no-op (the /admin/v1/events feed needs auth).
+    assert start_background_consumer(obs, env={"TOKENHUB_URL": "http://hub:8090"}, _spawn=lambda r: spawned.append(r)) is None
     assert spawned == []
-    # URL + observability -> spawns the runner.
+    # No observability -> no-op even with url + token.
+    full_env = {"TOKENHUB_URL": "http://hub:8090", "TOKENHUB_ADMIN_TOKEN": "adm"}
+    assert start_background_consumer(None, env=full_env, _spawn=lambda r: spawned.append(r)) is None
+    assert spawned == []
+    # URL + token + observability -> spawns the runner.
     sentinel = object()
-    out = start_background_consumer(obs, env={"TOKENHUB_URL": "http://hub:8090"}, _spawn=lambda r: (spawned.append(r), sentinel)[1])
+    out = start_background_consumer(obs, env=full_env, _spawn=lambda r: (spawned.append(r), sentinel)[1])
     assert out is sentinel and len(spawned) == 1 and callable(spawned[0])
