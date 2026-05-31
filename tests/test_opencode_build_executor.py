@@ -68,6 +68,7 @@ def _make_fake_bin(
     pr_rc: int = 0,
     pr_json: str = '{"url": "https://example.test/mr/1", "number": 1}',
     opencode_config: Optional[str] = None,
+    task_metadata: Optional[dict] = None,
 ) -> None:
     """Create fake opencode/git/curl/mac/python helpers on PATH.
 
@@ -124,18 +125,21 @@ def _make_fake_bin(
 
     # curl: the script fetches task + project JSON. Return a task carrying
     # an origin repository_url so the workdir branch is exercised.
+    metadata = {
+        "origin": {
+            "repository_url": "https://gitea.omv.example/org/repo.git",
+            "default_branch": "main",
+        }
+    }
+    if task_metadata:
+        metadata.update(task_metadata)
     task_json = json.dumps(
         {
             "task": {
                 "title": "Do a thing",
                 "description": "edit files",
                 "project": "demo",
-                "metadata": {
-                    "origin": {
-                        "repository_url": "https://gitea.omv.example/org/repo.git",
-                        "default_branch": "main",
-                    }
-                },
+                "metadata": metadata,
             }
         }
     )
@@ -611,5 +615,43 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
     # And it must contain the agent's change.
     show = _git(["show", "%s:a.txt" % expected_branch], cwd=remote)
     assert "agent change" in show, "agent's commit not on the pushed branch"
+
+
+def test_review_feedback_is_included_in_prompt_with_shell_safety(tmp_path: Path) -> None:
+    bindir = tmp_path / "bin"
+    captured = bindir / "_opencode_args.txt"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=json.dumps({"type": "step_finish", "part": {"reason": "stop"}}) + "\n",
+        make_change=False,
+        task_metadata={
+            "review_feedback": {
+                "latest": {
+                    "review_id": "rev_1",
+                    "verdict_evidence_id": "ev_v",
+                    "summary": "Needs fix",
+                    "feedback": "Do not execute $(touch /tmp/pwned); fix tests",
+                    "findings": [{"severity": "blocking", "message": "bad `command`; use quotes"}],
+                }
+            }
+        },
+    )
+    # Override fake opencode to capture the prompt argument exactly.
+    _write_exec(
+        bindir / "opencode",
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "--version" ]; then echo "opencode 1.2.3"; exit 0; fi\n'
+        f'printf "%s\\n" "$@" > {captured}\n'
+        "printf '%s\\n' '{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}'\n"
+        "exit 0\n",
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    assert result.returncode != 127
+    prompt = captured.read_text(encoding="utf-8")
+    assert "Previous review feedback" in prompt
+    assert "Do not execute $(touch /tmp/pwned); fix tests" in prompt
+    assert not Path("/tmp/pwned").exists()
 
 
