@@ -57,10 +57,22 @@ producing non-work that jams.
 
 ## Remaining architectural debt (follow-ups)
 
-- [ ] **Executor lives in a ~500-line bash heredoc** (deploy-mac-fleet.sh) —
-      untestable, easy to drift. Extract to a real `src/mac/task_executor.py`
-      module the deploy just invokes, with unit tests for the prompt builder,
-      git finalizer, and fallback.
+- [x] **Executor extracted from the bash heredoc** → `src/mac/task_executor.py`
+      (tested: `tests/test_task_executor.py`, 13 tests — prompt builders, git
+      finalizer against a real temp repo, fail-closed fallback, outcome
+      classification, telemetry, memory recall/record, and `main()` e2e with an
+      injected runner). The deploy now writes only a 2-line shim
+      (`from mac.task_executor import main`). Added two capabilities:
+      * **Telemetry path** — executor-scoped observations (`layer="executor"`,
+        `executor.started/agent_completed/finalized`) so the autonomous loop is
+        visible distinctly from the per-command audit trail.
+      * **Memory feed (deployment gets smarter)** — before running, recall prior
+        `deployment_learning` lessons for the project (semantic vector recall,
+        falling back to a direct most-recent read so it works before embeddings
+        exist) and inject them into the agent prompt; after running, record a
+        structured `deployment_learning` memory from the outcome. The nap
+        consolidator ([[mem-08]]/[[dream-03]]) promotes these into the vector
+        tier over time, so recall gets richer with every completed task.
 - [ ] **Full worker/server validator consolidation** — the worker still
       reimplements most of `evidence_validators` (`_worker_*`). Have the worker
       delegate to `validate_evidence_type` so the contract has ONE source of

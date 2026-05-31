@@ -96,7 +96,10 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     assert '--attestation-key-env "$HOME/.mac/mac.env"' in script
     assert "--rotate-missing-attestation-key" in script
     assert "--rotate-invalid-attestation-key" in script
-    assert "evidence_type=review_verdict" in script
+    # loop-01: the reviewer prompt that asks for a signed review_verdict moved
+    # into the extracted mac.task_executor module.
+    executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    assert "evidence_type=review_verdict" in executor_module
 
 
 def test_fleet_deploy_bootstraps_hub_fleet_record():
@@ -405,15 +408,24 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     assert 'model_config.pop("api_key", None)' in script
     assert '"key_env": "TOKENHUB_API_KEY"' in script
     assert 'tokenhub_provider.pop("api_key", None)' in script
-    assert '"chat", "--query", prompt, "--quiet", "--accept-hooks"' in script
-    assert "write_fallback_evidence_manifest(task_workspace, task, result, review_context)" in script
-    # autonomy-loop fix: the fallback must never fabricate verified completion.
-    # It records the agent's output as an UNVERIFIED operator_result (never a
-    # fake repo_change/test) and without a synthetic passing check — so a
-    # proof-requiring task with no real evidence fails the verification gate
-    # instead of auto-publishing chatter.
-    assert '"evidence_type": "operator_result",' in script
-    assert '"name": "hermes_chat_query"' not in script
+    # loop-01: the executor logic was extracted from a ~500-line bash heredoc
+    # into the tested mac.task_executor module. The deploy now writes only a
+    # shim that delegates to it.
+    assert "from mac.task_executor import main" in script
+    assert "raise SystemExit(main())" in script
+    assert "mac-hermes-task-executor" in script
+    executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    assert '"chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"' in executor_module
+    assert "def write_fallback_evidence_manifest(" in executor_module
+    # autonomy-loop fix (preserved through the extraction): the fallback must
+    # never fabricate verified completion — UNVERIFIED operator_result only,
+    # never a fake repo_change/test and never a synthetic passing check.
+    assert '"evidence_type": "operator_result",' in executor_module
+    assert '"name": "hermes_chat_query"' not in executor_module
+    # telemetry path + memory feed (deployment gets smarter over time)
+    assert 'name": "executor.%s"' in executor_module or '"executor.%s"' in executor_module
+    assert "def recall_deployment_lessons(" in executor_module
+    assert "def record_deployment_learning(" in executor_module
     # ADR 0001 hu-03: the gateway provider/model override is now owned, in-process
     # code (mac.agent_provider) routing through TokenHub — not runtime
     # string-surgery of an upstream checkout. Verify the owned mechanism.
@@ -790,9 +802,10 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
 
 
 def test_executor_prompt_includes_repository_runtime_contract():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    # loop-01: the executor (and its prompts) live in mac.task_executor now.
+    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
 
-    assert "def repository_contract_section(task: dict) -> str:" in script
+    assert "def repository_contract_section(task: Dict[str, Any]) -> str:" in script
     assert "Repository runtime contract:" in script
     assert "metadata.runtime.repository_worktree" in script
     assert "origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only" in script
@@ -802,7 +815,7 @@ def test_executor_prompt_includes_repository_runtime_contract():
 
 
 def test_reviewer_prompt_includes_verdict_contract():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
 
     assert "MAC_TASK_REPO_WORKTREE" in script
     assert "local review checkout" in script
