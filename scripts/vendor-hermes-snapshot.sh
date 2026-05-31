@@ -44,10 +44,17 @@ if [ -z "${PIN:-}" ]; then
 fi
 echo "Hermes snapshot pin: $PIN"
 
-# Include / exclude manifests mirror deploy/hermes/SNAPSHOT.md.
-INCLUDE=(agent gateway providers hermes_cli skills tools hermes cli.py)
+# Include / exclude manifests mirror deploy/hermes/SNAPSHOT.md, derived from
+# scripts/trace-hermes-reachability.py (394 reachable first-party files).
+# skills/ is runtime-loaded data (not statically imported) so it is included
+# explicitly; verify with a runtime trace before trusting the static set.
+INCLUDE=(agent gateway providers hermes_cli plugins acp_adapter cron tui_gateway \
+  tools skills hermes cli.py mcp_serve.py run_agent.py model_tools.py toolsets.py \
+  utils.py hermes_bootstrap.py hermes_time.py hermes_state.py hermes_logging.py \
+  hermes_constants.py)
 EXCLUDE_GLOBS=(website ui-tui web infographic assets locales \
-  datagen-config-examples docs tests)
+  datagen-config-examples docs docker nix packaging acp_registry \
+  optional-mcps optional-skills plans scripts tests)
 
 if [ "$APPLY" -ne 1 ]; then
   echo

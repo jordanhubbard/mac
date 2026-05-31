@@ -18,30 +18,40 @@ moves us toward. It replaces the old deploy behavior of cloning pristine
 Bumping the pin is a deliberate, reviewed act. We do **not** track the upstream
 commit-of-the-day. "Mature" means pinned.
 
-## Include manifest (runtime surface we own)
+## Include manifest (runtime surface we own) — MEASURED
 
-Vendor these into `src/mac/_hermes/` (paths relative to the upstream checkout):
+Derived from `scripts/trace-hermes-reachability.py` (static import closure from
+the deployed gateway + oneshot-agent entrypoints). **394 reachable first-party
+files.** Reachable subtrees, with file counts:
 
-- `agent/`            — agent loop, adapters, context engine (~68k LOC)
-- `gateway/`          — Slack/Telegram/Discord gateway, session, run (~82k LOC)
-- `providers/`        — provider registry (~0.4k LOC)
-- `hermes_cli/`       — runtime modules actually imported by agent/gateway,
-                        notably `runtime_provider.py` (the function the deleted
-                        string-surgery shim used to call). Prune CLI-only
-                        sub-trees not reachable from the gateway/agent runtime.
-- `skills/`, `tools/` — only the entries actually invoked by deployed agents;
-                        audit with an import/usage trace before vendoring whole.
-- `hermes`, `cli.py`, `hermes_*.py` top-level runtime entry shims as needed.
+- `hermes_cli/` (109) — runtime modules imported by agent/gateway, notably
+  `runtime_provider.py` (the function the deleted string-surgery shim called)
+- `agent/` (103) — agent loop, adapters, context engine
+- `tools/` (86) — tool implementations reachable from the runtime
+- `gateway/` (50) — Slack/Telegram/Discord gateway, session, run
+- `plugins/` (20) — **reachable; was missing from the first guess — must vendor**
+- `acp_adapter/` (8), `cron/` (3), `tui_gateway/` (2), `providers/` (2)
+- top-level entry modules: `hermes_bootstrap.py`, `cli.py`, `mcp_serve.py`,
+  `run_agent.py`, `model_tools.py`, `toolsets.py`, `utils.py`,
+  `hermes_time.py`, `hermes_state.py`, `hermes_logging.py`, `hermes_constants.py`
+- `hermes` (the launcher script)
 
-## Exclude manifest (cruft — do NOT vendor)
+**Runtime-loaded, NOT statically imported (vendor anyway, verify at runtime):**
+- `skills/` — markdown/skill library the agent scans at runtime (data, not
+  imports), so the static trace shows it unreached. Confirm with a runtime
+  import/usage trace (gateway boot + oneshot under `-X importtime`) before
+  trusting the static set; also re-check `optional-skills/` / `optional-mcps/`
+  and `tools/lazy_deps.py` lazy paths.
 
-- `website/`               (731 files)
-- `ui-tui/`                (344 files)
-- `web/`                   (97 files)
+## Exclude manifest (cruft — do NOT vendor) — MEASURED
+
+Top-level dirs **never statically reached** from the runtime entrypoints:
+
+- `website/` (731), `ui-tui/` (344), `web/` (97)
 - `infographic/`, `assets/`, `locales/`
-- `datagen-config-examples/`, datagen/training scaffolding
-- `docs/` (keep only runtime-relevant docs, if any)
-- upstream `tests/` (port only the tests covering vendored runtime code)
+- `datagen-config-examples/`, `docs/`, `docker/`, `nix/`, `packaging/`
+- `acp_registry/`, `optional-mcps/`, `optional-skills/` (verify per above)
+- `plans/`, `scripts/`, upstream `tests/`
 
 ## Patches to fold in permanently (then delete the .patch files)
 
