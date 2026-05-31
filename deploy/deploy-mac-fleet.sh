@@ -4221,7 +4221,7 @@ if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KE
 fi
 # ADR 0001 hu-04: run the vendored Hermes gateway in-process from the mac venv
 # (mac-hermes-gateway -> hermes_cli.main "gateway run --replace"), instead of a
-# separate hermes-agent venv. Validated on the rocky fleet 2026-05-31.
+# separate hermes-agent venv. Validated in fleet rollout 2026-05-31.
 exec "$HOME/.mac/venv/bin/python" -m mac.hermes_gateway
 EOF
   chmod 700 "$wrapper"
