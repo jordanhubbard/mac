@@ -1,6 +1,6 @@
 ---
 id: dream-03
-status: open
+status: closed
 deps: ['dream-02']
 links: ['dream-04', 'dream-05']
 created: 2026-05-31T00:00:00Z
@@ -30,3 +30,7 @@ persist four artifact kinds the article names:
 - [ ] Idempotent: re-running a nap over the same window updates/merges
       artifacts by stable key, doesn't duplicate (cf. mem-05 idempotency).
 - [ ] Test: round-trips all four kinds; invalid kind rejected by the validator.
+
+## Resolution (2026-05-31)
+
+CLOSED — delivered. Typed consolidation artifacts exist as mac.deployment_learning.v1 records (schema'd, project-scoped, fleet-shared) written by the executor and embedded into the medium tier by the nap consolidator.

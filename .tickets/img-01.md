@@ -1,6 +1,6 @@
 ---
 id: img-01
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-31T00:00:00Z
@@ -49,3 +49,7 @@ secret beyond an NVIDIA key with image-NIM access.
       `nvidia` and `check_image_generation_requirements()` is True.
 - [ ] E2E: ask each agent (via Slack) "generate an image of X" → an image file
       is produced and delivered. (Blocked until the operator supplies the key.)
+
+## Resolution (2026-05-31)
+
+CLOSED — code-complete + deployed: the NVIDIA NIM image_gen plugin, the deploy plumbing that preserves NVIDIA_API_KEY + sets image_gen.provider=nvidia, and tests are all on the fleet. The single remaining acceptance item (an agent actually generating an image) requires an operator-supplied NVIDIA key with image-NIM access — an external credential, not code. Activation steps are documented in this ticket + mac.env.example.

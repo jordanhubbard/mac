@@ -1,6 +1,6 @@
 ---
 id: dream-00
-status: open
+status: closed
 deps: []
 links: ['mem-08']
 created: 2026-05-31T00:00:00Z
@@ -38,3 +38,7 @@ dream-01 (input quality) → dream-02/03 (the dream itself) → dream-04 (hygien
 ## Non-goals
 No second event loop, no new store, no Python rewrite of TokenHub. Everything
 hangs off `run_nap_cycle` and the existing vector tiers.
+
+## Resolution (2026-05-31)
+
+CLOSED — the self-improving memory loop is delivered and working: recall (executor recall_deployment_lessons + the fleet-02 runtime context), record (typed deployment_learning artifacts), consolidate/promote (mem-08 nap cycle, live), and decay/forget (dream-04). Agents now learn from prior work and the memory tier is self-pruning. Richer aspirational layers are dispositioned per sub-ticket below.

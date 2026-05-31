@@ -6601,6 +6601,48 @@ class ControlPlane:
         )
         return {"status": "converted", "from": detection.conversion_from, "report": report}
 
+    # -- Fleet awareness (fleet-01/02) --------------------------------------
+
+    def fleet_snapshot(self, *, exclude_agent_id: Optional[str] = None, limit: int = 30) -> JsonDict:
+        """A compact, current view of the fleet — who's online, their status, and
+        what each agent is working on. Powers passive group awareness (injected
+        into each agent's runtime context) and the on-demand `fleet` tool, so the
+        three agents always know what the others are doing."""
+        active = {
+            TaskState.CLAIMED.value,
+            TaskState.RUNNING.value,
+            TaskState.NEEDS_REVIEW.value,
+            TaskState.REVIEWING.value,
+        }
+        by_owner: Dict[str, Task] = {}
+        for state in active:
+            for task in self.list_tasks(state, limit=200):
+                if task.owner_agent_id:
+                    by_owner.setdefault(task.owner_agent_id, task)
+        members: List[JsonDict] = []
+        for agent in self.list_agents():
+            if exclude_agent_id and agent.id == exclude_agent_id:
+                continue
+            cur = by_owner.get(agent.id)
+            members.append(
+                {
+                    "name": agent.name,
+                    "agent_id": agent.id,
+                    "status": agent.status,
+                    "health": agent.health_status,
+                    "current_task_id": cur.id if cur else agent.current_task_id,
+                    "current_task_title": (cur.title if cur else None),
+                    "last_seen_at": agent.last_seen_at,
+                }
+            )
+            if len(members) >= limit:
+                break
+        return {
+            "schema": "mac.fleet_snapshot.v1",
+            "generated_at": utcnow(),
+            "members": members,
+        }
+
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:
         cutoff = (
             parse_time(utcnow()) - timedelta(seconds=max(1, int(stale_after_seconds)))
@@ -11025,6 +11067,10 @@ class ControlPlane:
 
     def add_memory(self, *args: Any, **kwargs: Any) -> MemoryRecord:
         return self.memory.add_memory(*args, **kwargs)
+
+    def decay_memory(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """dream-04: forget stale, low-salience memory (dry-run by default)."""
+        return self.memory.decay_memory(*args, **kwargs)
 
     def get_memory(self, memory_id: str) -> MemoryRecord:
         return self.memory.get_memory(memory_id)

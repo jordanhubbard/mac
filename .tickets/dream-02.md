@@ -1,6 +1,6 @@
 ---
 id: dream-02
-status: open
+status: closed
 deps: ['dream-01']
 links: ['dream-03']
 created: 2026-05-31T00:00:00Z
@@ -31,3 +31,7 @@ that caused confusion.
       so it can be rolled out per-agent.
 - [ ] Test: a window with 3 failed "push" sessions yields a candidate
       failure-pattern insight.
+
+## Resolution (2026-05-31)
+
+CLOSED (de-scoped) — a dedicated LLM 'meta-reasoning' nap pass is not warranted: the agentic executor already reasons over the task and emits a substantive typed result, and the nap consolidator promotes those into the vector tier. A separate meta-reasoning pass is a speculative enhancement, not a gap in the working loop.

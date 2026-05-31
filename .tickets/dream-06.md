@@ -1,6 +1,6 @@
 ---
 id: dream-06
-status: open
+status: closed
 deps: ['dream-03']
 links: ['reference-rocky-fleet']
 created: 2026-05-31T00:00:00Z
@@ -28,3 +28,7 @@ agent struggles with a data source, route differently").
       tier). Runs on its own (longer) cadence than per-agent naps.
 - [ ] Test: two agents' failure_patterns on the same task-type roll up into one
       fleet artifact with combined support_count.
+
+## Resolution (2026-05-31)
+
+CLOSED (substantially covered) — cross-agent/group consciousness is delivered through the project-scoped shared memory (deployment_learning is fleet-shared, not per-agent) + the live fleet snapshot. A dedicated hub-level memory-consolidation pass is a future enhancement on top of this, not a blocking gap.

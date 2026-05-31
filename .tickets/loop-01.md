@@ -1,6 +1,6 @@
 ---
 id: loop-01
-status: open
+status: closed
 deps: []
 links: [mac-73cz, mem-08]
 created: 2026-05-31T00:00:00Z
@@ -106,3 +106,7 @@ blocked indefinitely. Fixes (task_executor.py):
       turn hung.
 - [x] Fixed `classify_outcome` mis-grading non-repo evidence as failure
       (absent repo → pushed=None, not False).
+
+## Resolution (2026-05-31)
+
+CLOSED — delivered + live-validated on rocky/natasha/bullwinkle. The loop produces genuine verified work (agent inspected the real repo and wrote a substantive plan), fails closed on non-work, and is resilient to a wedged TokenHub (bounded agent run + salvage-on-evidence). Executor extracted to a tested module with telemetry + memory feed. The only residual (full worker/server validator consolidation) is a non-behavioral cleanup, not a gap.

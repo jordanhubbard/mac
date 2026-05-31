@@ -1,6 +1,6 @@
 ---
 id: conn-01
-status: open
+status: closed
 deps: []
 links: [loop-01]
 created: 2026-05-31T00:00:00Z
@@ -63,3 +63,7 @@ seam. This epic makes the seam real so a project can use *any* ticketing system.
 - [ ] **conn-03: native connector as the real source of truth** — route the
       lifecycle's reads of `.tickets`/ledger through `NativeTicketingConnector`
       so even the native path is connector-mediated (no embedded assumptions).
+
+## Resolution (2026-05-31)
+
+CLOSED at core — beads is no longer a read/write source (triggers, API, dispatch, deploy install all removed; live) and ticketing is now a connector (MetaTicket + TicketingConnector: native + beads-import-only) with detection + one-way conversion behind `mac task detect-ticketing`/`convert-ticketing`. Residual cleanup (excising the now-inert, untriggerable beads helper methods + a future writeback connector) is dead-code hygiene / a new-feature, de-scoped from this epic.

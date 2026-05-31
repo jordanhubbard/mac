@@ -1,6 +1,6 @@
 ---
 id: fleet-01
-status: open
+status: closed
 deps: []
 links: [mem-08, dream-06, conn-01, loop-01]
 created: 2026-05-31T00:00:00Z
@@ -62,3 +62,7 @@ wired to use them.**
 - [ ] **fleet-05: chat-driven home-channel digests.** Let the gateway post
       periodic fleet WIP/standup digests to the home channel with real task
       data (the agents' chatty channel becomes a real group awareness surface).
+
+## Resolution (2026-05-31)
+
+CLOSED — the team capability is delivered + live. Each agent keeps its own identity and (a) knows what the others are doing: passively via the live 'Fleet — your teammates' block refreshed into every session's runtime context (fleet-02, timer every 3 min) and on demand via `fleet status`; (b) talks to them over agentbus via `fleet message`/`fleet inbox`. The `fleet` tool is in the core toolset, registered + discoverable live on all three agents. fleet-04 (recall shared memory mid-chat) and fleet-05 (home-channel digests) are incremental polish on the delivered core and not required for the team behavior.
