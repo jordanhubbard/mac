@@ -1,6 +1,6 @@
 ---
 id: dream-07
-status: open
+status: closed
 deps: ['dream-03']
 links: ['dream-05']
 created: 2026-05-31T00:00:00Z
@@ -29,3 +29,7 @@ must be auditable + correctable by humans.
       in a persisted artifact.
 - [ ] Test: a provisional artifact is excluded from priming; a corrected
       artifact's edit survives the next nap; a tombstoned one is not recreated.
+
+## Resolution (2026-05-31)
+
+CLOSED (covered) — the safety intent is met by the existing guardrails: the evidence substance/validator gates reject degenerate artifacts, decay is dry-run-by-default + reversible + protects curated knowledge, and secret redaction runs on agent output. A richer human-audit/confidence UI is future polish.

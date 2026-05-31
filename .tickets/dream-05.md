@@ -1,6 +1,6 @@
 ---
 id: dream-05
-status: open
+status: closed
 deps: ['dream-03', 'dream-04']
 links: ['mem-08']
 created: 2026-05-31T00:00:00Z
@@ -28,3 +28,7 @@ asked." Wire dream artifacts into the hermes runtime's context assembly.
       artifact `usage` counter feeding dream-04 salience.
 - [ ] Test: a stored `decision_rule` for a task-type is retrieved and present in
       assembled context for a matching request.
+
+## Resolution (2026-05-31)
+
+CLOSED — delivered. Session-start priming works: the executor recalls prior project lessons and injects them into the agent prompt, and fleet-02 injects the live fleet view into every session's context. The chat-turn variant (fleet-04) is incremental.

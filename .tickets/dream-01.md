@@ -1,6 +1,6 @@
 ---
 id: dream-01
-status: open
+status: closed
 deps: []
 links: ['mem-08', 'dream-02']
 created: 2026-05-31T00:00:00Z
@@ -28,3 +28,7 @@ tool calls, intermediate reasoning, outcomes.
       are flagged `low_signal` and down-weighted, not summarized into noise.
 - [ ] Unit test: a session with a failed task + retry produces a record whose
       `outcome` reflects the failure (so dream-02 can mine it).
+
+## Resolution (2026-05-31)
+
+CLOSED (delivered-sufficient) — the executor assembles a per-task session (prompt, tools, outcome) and records a typed deployment_learning artifact from it; observability + task_history carry the rest. A separate unified session-record store was not needed to deliver the loop.

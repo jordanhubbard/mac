@@ -1,6 +1,6 @@
 ---
 id: dream-04
-status: open
+status: closed
 deps: ['dream-03']
 links: ['project-mac-observability-bloat']
 created: 2026-05-31T00:00:00Z
@@ -28,3 +28,7 @@ the hygiene the article implies ("distill noise into high-signal knowledge").
       be forgotten without deleting; counts are emitted as observations.
 - [ ] Test: a never-retrieved low-confidence artifact decays below threshold and
       is archived after the simulated TTL; a frequently-retrieved one survives.
+
+## Resolution (2026-05-31)
+
+CLOSED — delivered. Salience-aware decay/forgetting implemented: ControlPlane.decay_memory / `mac memory decay` (dry-run by default, bounded, --apply to prune) forgets stale low-salience records while protecting curated knowledge (user/project/feedback/deployment_learning/beads_memory). Also addresses the memory-tier bloat. Tests: test_memory_decay.py.

@@ -482,6 +482,26 @@ def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
 
+def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
+    """fleet-02: the team roster + what each agent is doing now."""
+    _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
+
+
+def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
+    """fleet-02: refresh the live Fleet section in this agent's runtime-context
+    markdown so its next session knows what teammates are doing. Idempotent."""
+    import os as _os
+    from pathlib import Path as _Path
+    from mac.hermes_runtime import render_fleet_section, refresh_fleet_section
+
+    snapshot = _plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None))
+    markdown = getattr(args, "markdown", None) or _os.environ.get(
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"
+    ) or str(_Path.home() / ".hermes" / "mac-runtime-context.md")
+    refresh_fleet_section(_Path(markdown), render_fleet_section(snapshot))
+    _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
+
+
 def cmd_mood_set(args: argparse.Namespace) -> None:
     _print(
         _plane(args).set_mood(
@@ -1131,6 +1151,17 @@ def cmd_memory_forget(args: argparse.Namespace) -> None:
     _print({"deleted": cursor.rowcount, "key": args.key, "project": project})
 
 
+def cmd_memory_decay(args: argparse.Namespace) -> None:
+    """dream-04: forget stale, low-salience memory (dry-run unless --apply)."""
+    _print(
+        _plane(args).decay_memory(
+            ttl_days=args.ttl_days,
+            dry_run=not args.apply,
+            limit=args.limit,
+        )
+    )
+
+
 def cmd_rollout_create(args: argparse.Namespace) -> None:
     _print(
         _plane(args).create_rollout(
@@ -1685,6 +1716,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_fleet_build_distribution, fleet_build)
 
+    # fleet-02: live group awareness for the team.
+    fleet_snap = fleet.add_parser(
+        "snapshot",
+        help="compact view of the fleet: who's online + what each agent is working on",
+    )
+    fleet_snap.add_argument("--agent", help="exclude this agent id (the caller) from the snapshot")
+    _set(cmd_fleet_snapshot, fleet_snap)
+
+    fleet_refresh = fleet.add_parser(
+        "refresh-context",
+        help="refresh the live Fleet section in this agent's runtime-context markdown "
+        "(what the nap-tick-style timer calls so each session knows its teammates)",
+    )
+    fleet_refresh.add_argument("--agent", help="this agent's id (excluded from its own fleet view)")
+    fleet_refresh.add_argument(
+        "--markdown",
+        help="runtime-context markdown path (default: $MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN "
+        "or ~/.hermes/mac-runtime-context.md)",
+    )
+    _set(cmd_fleet_refresh_context, fleet_refresh)
+
     mood = sub.add_parser(
         "mood",
         help="agent mood overlays (agents self-report; operators query)",
@@ -2098,6 +2150,15 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_integrations_observations, integrations_observations)
 
     memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(dest="memory_command", required=True)
+    memory_decay = memory.add_parser(
+        "decay",
+        help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
+        "curated knowledge (user/project/feedback/deployment_learning/beads_memory) is preserved",
+    )
+    memory_decay.add_argument("--ttl-days", type=float, default=90.0)
+    memory_decay.add_argument("--limit", type=int, default=500)
+    memory_decay.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+    _set(cmd_memory_decay, memory_decay)
     memory_add = memory.add_parser("add")
     memory_add.add_argument("--task-id")
     memory_add.add_argument("--subject-type", required=True)
