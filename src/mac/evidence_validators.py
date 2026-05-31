@@ -115,6 +115,8 @@ class EvidenceValidationContext:
     # mem-11: a repo-coupled task (one with a repository_contract / git target)
     # must produce a pushed repo anchor, not a free-text operator_result.
     repo_coupled: bool = False
+    # mac-wjy3: a task whose contract requires tests must record a tests list.
+    require_tests: bool = False
 
 
 class EvidenceValidator:
@@ -181,6 +183,15 @@ class RepoChangeValidator(EvidenceValidator):
             problems.append("repo evidence requires changed files")
         if self.passed_checks(manifest, context) < 1:
             problems.append("repo code evidence requires at least one passing test/check")
+        # mac-wjy3: when the task's contract requires tests, the manifest must
+        # record a tests list — tests:null/missing (no invocation) is rejected.
+        # This is gated by ``require_tests`` so config/remediation repo changes
+        # that legitimately run no tests are unaffected.
+        if context.require_tests and not isinstance(manifest.raw.get("tests"), list):
+            problems.append(
+                "this task's contract requires tests, but verification.tests is "
+                "null/missing — run the repository test command and record results"
+            )
         return problems
 
 
@@ -339,6 +350,7 @@ def validate_evidence_type(
     passed_check_count: Callable[[JsonDict], int],
     allow_empty_repo_change: bool = False,
     repo_coupled: bool = False,
+    require_tests: bool = False,
 ) -> List[str]:
     typed = VerificationManifest.parse(manifest)
     validator = VALIDATORS.get(str(evidence_type or "").strip().lower())
@@ -350,6 +362,7 @@ def validate_evidence_type(
             passed_check_count=passed_check_count,
             allow_empty_repo_change=allow_empty_repo_change,
             repo_coupled=repo_coupled,
+            require_tests=require_tests,
         ),
     )
 

@@ -11794,6 +11794,7 @@ class ControlPlane:
             passed_check_count=self._passed_verification_check_count,
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
             repo_coupled=self._task_is_repo_coupled(task),
+            require_tests=self._task_requires_tests(task),
         )
         problems.extend(self._required_changed_file_problems(task, manifest))
         return problems
@@ -11838,6 +11839,26 @@ class ControlPlane:
         ):
             contract = _nested_json_object(metadata, *path)
             if isinstance(contract, dict) and contract:
+                return True
+        return False
+
+    def _task_requires_tests(self, task: Task) -> bool:
+        """mac-wjy3: True when the task's repository_contract explicitly lists
+        ``tests`` in its required evidence. Conservative — config/remediation
+        tasks (which don't opt in) are unaffected; only contracts that demand
+        tests reject a tests:null manifest."""
+        metadata = ensure_json_object(task.metadata)
+        for path in (
+            ("execution_contract", "repository_contract"),
+            ("origin", "repository_contract"),
+            ("repository_contract",),
+        ):
+            contract = _nested_json_object(metadata, *path)
+            if not isinstance(contract, dict) or not contract:
+                continue
+            evidence = ensure_json_object(contract.get("evidence"))
+            required = evidence.get("required") if isinstance(evidence.get("required"), list) else []
+            if any(str(r).strip().lower() in {"tests", "test"} for r in required):
                 return True
         return False
 

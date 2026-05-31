@@ -76,6 +76,20 @@ def test_operator_result_rejected_for_repo_coupled_task():
     assert problems and "not accepted for a repo-coupled task" in problems[0]
 
 
+def test_repo_change_requires_tests_only_when_contract_demands():
+    # mac-wjy3: tests:null is rejected only when the contract requires tests.
+    base = _repo_manifest()  # has a passing check, no tests list
+    assert validate_evidence_type("repo_change", base, passed_check_count=_passed_check_count) == []
+    problems = validate_evidence_type(
+        "repo_change", base, passed_check_count=_passed_check_count, require_tests=True
+    )
+    assert any("tests is null/missing" in p for p in problems)
+    with_tests = _repo_manifest(tests=[{"command": "scripts/run-contract-tests.sh", "returncode": 0}])
+    assert validate_evidence_type(
+        "repo_change", with_tests, passed_check_count=_passed_check_count, require_tests=True
+    ) == []
+
+
 def test_repo_change_validator_reuses_repo_anchor_and_check_gates():
     manifest = _repo_manifest()
     manifest["repo"]["dirty"] = True
