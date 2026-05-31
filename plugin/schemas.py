@@ -39,10 +39,11 @@ _SCHEMAS: dict[str, dict] = {
             "required_capabilities": dict(
                 _STRING_ARRAY,
                 description=(
-                    "Capability slugs for executor routing. Include at least one for "
-                    "executable tasks: ['frontend','design'] for UI/layout/readability, "
-                    "['python'] for backend/API/task-ledger work, ['ops'] for "
-                    "Kubernetes/deploy/infra. Omitting this can create an unroutable task."
+                    "Hard runtime capability slugs only. Do not send language/domain "
+                    "labels like 'typescript', 'frontend', or 'design' for normal "
+                    "project work; send `project` and let MAC apply task_defaults.role. "
+                    "Use this only for runner requirements such as ['ops'] for "
+                    "Kubernetes/deploy/infra access."
                 ),
             ),
             "priority": dict(_INTEGER, description="Higher = sooner. Default 0."),
@@ -58,7 +59,8 @@ _SCHEMAS: dict[str, dict] = {
                 _OPTIONAL_STRING,
                 description=(
                     "Project slug for executor routing. For MAC control-plane/API/UI/runner/plugin "
-                    "work use 'mac'. Do not omit when the target system/repo is known."
+                    "work use 'mac'. MAC applies project task_defaults.role; do not add "
+                    "language/domain capabilities for normal project work."
                 ),
             ),
             "snippets": dict(
