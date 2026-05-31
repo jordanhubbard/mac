@@ -1,6 +1,6 @@
 ---
 id: mem-08
-status: open
+status: closed
 deps: [mem-06, mem-07]
 links: []
 created: 2026-05-29T02:21:13Z
@@ -29,3 +29,7 @@ audit: memory-tier-2026-05-28
 - After one nap cycle on rocky: `nap_runs` > 0, `memory_records` count grows, `vector_refs` count grows.
 
 Blocked by mem-06, mem-07.
+
+## Resolution (2026-05-31)
+
+Implemented and live. ControlPlane.run_nap_cycle (services.py:6324) drives the full lifecycle in one shot — begin_nap (agent→DRAINING, nap_run created) → consolidate_nap (summarize since last nap, embed into medium tier) → complete_nap (agent→IDLE, nap_run completed). Completion runs in a finally block so a consolidation failure can never strand the agent in DRAINING or leave a nap_run uncompleted; a busy agent (active lease) is reported as skipped rather than failing the batch. The mac-nap-tick systemd timer (deploy/systemd/mac-nap-tick.service, installed via install-nap-tick-service.sh) wakes every 15 min, runs `mac nap due --format=agent-ids | xargs mac nap cycle`, and was verified live on rocky (commit 1201858). The historical '3 begun / 0 completed' rows were the pre-fix state from the old begin-without-complete path; the consolidator now always calls complete_nap.

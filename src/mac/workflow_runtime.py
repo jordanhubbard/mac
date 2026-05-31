@@ -26,6 +26,7 @@ from mac.models import (
     Tenant,
     TransitionError,
     ValidationError,
+    NodeType,
     Workflow,
     WORKFLOW_TERMINAL_STATES,
     WorkflowRun,
@@ -78,11 +79,25 @@ class WorkflowRuntime:
         started_by: str,
         input: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
+        pre_decisions: Optional[Dict[str, str]] = None,
     ) -> WorkflowRun:
+        """Start a workflow run.
+
+        ``pre_decisions`` (wf-03) is an optional ``{node_key: "approved"|
+        "rejected"}`` map. For each approval-node task spawned during
+        the run, the runtime checks this map first — if present, the
+        task is created with ``metadata["approval_decision"]`` already
+        set and immediately transitioned to COMPLETED, so the run
+        advances along the matching edge without waiting for a human.
+        Pre-decisions are validated up front: every key must reference
+        a real approval-typed node, every value must be one of
+        ``{approved, rejected}``.
+        """
         workflow = self.workflows.get_workflow(workflow_id_or_slug, tenant_id=tenant_id)
         if not workflow.enabled:
             raise ValidationError("workflow %s is disabled" % workflow.slug)
         definition = dict(workflow.definition)
+        pre_decisions = self._validate_pre_decisions(definition, pre_decisions)
         # mac-hbk7: freeze role definitions at start_run so a mid-run
         # role edit can't change capability requirements or hardware
         # constraints for downstream nodes. Embed a snapshot keyed by
@@ -117,6 +132,11 @@ class WorkflowRuntime:
         run_id = new_id("run")
         now = utcnow()
         input_obj = ensure_json_object(input)
+        # pre_decisions ride along on the run's context bag so
+        # downstream _advance calls (mid-workflow approval nodes) can
+        # read them without an extra schema column.
+        context_obj: Dict[str, Any] = {"pre_decisions": pre_decisions} if pre_decisions else {}
+        spawn_node: Optional[Dict[str, Any]] = first_node
         with self.store.transaction() as conn:
             conn.execute(
                 """
@@ -124,7 +144,7 @@ class WorkflowRuntime:
                     id, workflow_id, workflow_version, definition_snapshot,
                     state, current_node_key, current_task_id, input, context,
                     tenant_id, started_by, created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, '{}', ?, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     run_id,
@@ -133,6 +153,7 @@ class WorkflowRuntime:
                     json_dumps(definition),
                     WorkflowState.RUNNING.value,
                     json_dumps(input_obj),
+                    json_dumps(context_obj),
                     tenant_id,
                     started_by,
                     now,
@@ -151,14 +172,45 @@ class WorkflowRuntime:
                 attempt=1,
                 detail={"phase": "start"},
             )
+            # wf-03: if the start node (or any chain of approval nodes
+            # immediately following) is pre-decided, skip them in this
+            # same transaction. The walk writes one history row per
+            # skipped approval node and returns the first non-skipped
+            # node — or None if the chain terminates the run.
+            if pre_decisions:
+                spawn_node = self._walk_through_pre_decided(
+                    run_id,
+                    definition,
+                    first_node,
+                    pre_decisions=pre_decisions,
+                    actor=started_by,
+                    conn=conn,
+                )
+                if spawn_node is None:
+                    # Pre-decisions resolved the whole run. Mark
+                    # COMPLETED and return.
+                    conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET state = ?, current_node_key = NULL,
+                            current_task_id = NULL, updated_at = ?,
+                            completed_at = ?
+                        WHERE id = ?
+                        """,
+                        (WorkflowState.COMPLETED.value, now, now, run_id),
+                    )
+        if spawn_node is None:
+            return self.get_run(run_id)
         task = self._spawn_node_task(
             run_id,
-            first_node,
+            spawn_node,
             workflow=workflow,
             started_by=started_by,
             tenant_id=tenant_id,
             attempt=1,
             role_snapshots=role_snapshots or None,
+            pre_decisions=pre_decisions,
+            run_input=input_obj,
         )
         self.store.execute(
             """
@@ -166,7 +218,7 @@ class WorkflowRuntime:
             SET current_node_key = ?, current_task_id = ?, updated_at = ?
             WHERE id = ?
             """,
-            (first_node["node_key"], task.id, utcnow(), run_id),
+            (spawn_node["node_key"], task.id, utcnow(), run_id),
         )
         return self.get_run(run_id)
 
@@ -336,10 +388,82 @@ class WorkflowRuntime:
         run = self.get_run(run_id)
         if run.state in WORKFLOW_TERMINAL_STATES:
             return run
+        task_metadata = json_loads(row["metadata"], {})
+        node_key = row["workflow_node_key"]
         condition = self._terminal_to_condition(
-            terminal_state, metadata=json_loads(row["metadata"], {})
+            terminal_state, metadata=task_metadata
         )
-        return self._advance(run, row["workflow_node_key"], condition, task_id)
+        # wf-04: if this was a plan-type node, harvest its evidence's
+        # plan_payloads and store them on the run's context so the
+        # subsequent _spawn_node_task calls can use them to parameterize
+        # downstream node tasks.
+        if (
+            terminal_state == TaskState.COMPLETED.value
+            and self._is_plan_node(run.definition_snapshot, node_key)
+        ):
+            self._merge_plan_payloads_from_evidence(run.id, task_id)
+            run = self.get_run(run.id)
+        return self._advance(run, node_key, condition, task_id)
+
+    def _is_plan_node(self, definition: Dict[str, Any], node_key: Optional[str]) -> bool:
+        if not node_key:
+            return False
+        for node in (definition or {}).get("nodes") or []:
+            if node.get("node_key") == node_key:
+                return (
+                    str(node.get("node_type") or "task").strip().lower()
+                    == NodeType.PLAN.value
+                )
+        return False
+
+    def _merge_plan_payloads_from_evidence(self, run_id: str, task_id: str) -> None:
+        """Read the most recent evidence for ``task_id`` and merge its
+        ``metadata.plan_payloads`` into ``WorkflowRun.context.plan_payloads``.
+
+        Best-effort: if the plan task's evidence isn't there or is
+        malformed, the downstream nodes simply use their static
+        definition (just like they did before wf-04).
+        """
+        row = self.store.query_one(
+            "SELECT metadata FROM evidence WHERE task_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (task_id,),
+        )
+        if row is None:
+            return
+        evidence_meta = json_loads(row["metadata"], {}) or {}
+        # Accept either metadata.plan_payloads (flat) or
+        # metadata.verification.plan_payloads (nested) — agents may use
+        # the same verification envelope as other evidence types.
+        payloads = (
+            evidence_meta.get("plan_payloads")
+            or (evidence_meta.get("verification") or {}).get("plan_payloads")
+        )
+        if not isinstance(payloads, dict) or not payloads:
+            return
+        # Filter to dict-of-dicts (each value must be node-payload-shaped).
+        clean: Dict[str, Dict[str, Any]] = {}
+        for key, value in payloads.items():
+            if isinstance(value, dict):
+                clean[str(key)] = {
+                    k: v for k, v in value.items()
+                    if k in {"instructions", "metadata", "required_capabilities"}
+                }
+        if not clean:
+            return
+        run_row = self.store.query_one(
+            "SELECT context FROM workflow_runs WHERE id = ?", (run_id,)
+        )
+        context = json_loads(run_row["context"] if run_row else None, {}) or {}
+        existing = context.get("plan_payloads") or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(clean)
+        context["plan_payloads"] = existing
+        self.store.execute(
+            "UPDATE workflow_runs SET context = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(context), utcnow(), run_id),
+        )
 
     # Internals --------------------------------------------------------
 
@@ -459,10 +583,58 @@ class WorkflowRuntime:
                     ),
                 )
             return self.get_run(run.id)
+        pre_decisions = (
+            (run.context or {}).get("pre_decisions")
+            if isinstance(run.context, dict)
+            else None
+        )
+        # wf-03: if the target is a pre-decided approval node (or the
+        # start of a chain of pre-decided ones), skip past them in the
+        # same transaction. Returns the first non-skipped node, or None
+        # if the chain terminates the run.
+        if (
+            pre_decisions
+            and str(target.get("node_type") or "task").strip().lower() == "approval"
+            and pre_decisions.get(target["node_key"]) in {"approved", "rejected"}
+        ):
+            with self.store.transaction() as conn:
+                spawn_target = self._walk_through_pre_decided(
+                    run.id,
+                    definition,
+                    target,
+                    pre_decisions=pre_decisions,
+                    actor=run.started_by,
+                    conn=conn,
+                )
+                if spawn_target is None:
+                    # Chain ran the workflow to a terminal state.
+                    conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET state = ?, current_node_key = NULL,
+                            current_task_id = NULL, updated_at = ?,
+                            completed_at = ?
+                        WHERE id = ? AND state = ?
+                        """,
+                        (
+                            WorkflowState.COMPLETED.value,
+                            now,
+                            now,
+                            run.id,
+                            WorkflowState.RUNNING.value,
+                        ),
+                    )
+                    return self.get_run(run.id)
+                target = spawn_target
         # Spawn the next task BEFORE the transaction (because create_task
         # opens its own transaction and SQLite cannot nest). If the
         # subsequent guarded UPDATE finds the run has moved on, we cancel
         # the freshly-spawned task to avoid an orphan.
+        plan_payloads = (
+            (run.context or {}).get("plan_payloads")
+            if isinstance(run.context, dict)
+            else None
+        )
         new_task = self._spawn_node_task(
             run.id,
             target,
@@ -471,6 +643,9 @@ class WorkflowRuntime:
             tenant_id=run.tenant_id,
             attempt=prior_attempts + 1,
             role_snapshots=definition.get("role_snapshots") if isinstance(definition, dict) else None,
+            pre_decisions=pre_decisions,
+            plan_payloads=plan_payloads,
+            run_input=run.input if isinstance(run.input, dict) else None,
         )
         with self.store.transaction() as conn:
             cur = conn.execute(
@@ -533,7 +708,25 @@ class WorkflowRuntime:
         tenant_id: Optional[str],
         attempt: int,
         role_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+        pre_decisions: Optional[Dict[str, str]] = None,
+        plan_payloads: Optional[Dict[str, Dict[str, Any]]] = None,
+        run_input: Optional[Dict[str, Any]] = None,
     ) -> Task:
+        # wf-04: if a plan node already ran and emitted a payload for
+        # this node, apply the override on a *local copy* of the node
+        # dict before reading any fields. Static definition wins for
+        # fields the plan didn't touch.
+        plan_override_metadata: Dict[str, Any] = {}
+        if plan_payloads:
+            override = plan_payloads.get(node.get("node_key") or "")
+            if isinstance(override, dict) and override:
+                node = dict(node)
+                if "instructions" in override:
+                    node["instructions"] = override["instructions"]
+                if "required_capabilities" in override:
+                    node["required_capabilities"] = override["required_capabilities"]
+                if isinstance(override.get("metadata"), dict):
+                    plan_override_metadata = dict(override["metadata"])
         # mac-hbk7: prefer the role snapshot embedded in the workflow
         # definition at start_run time so mid-run role edits don't
         # change downstream capabilities or hardware constraints. Fall
@@ -581,6 +774,21 @@ class WorkflowRuntime:
             )
         if node.get("node_type") == "approval":
             metadata["requires_approval"] = True
+        # wf-04: a plan-typed node is just a task that produces a
+        # plan_payloads evidence; surface the run's input so the
+        # executor can see the free-form description it should plan
+        # against.
+        if str(node.get("node_type") or "").strip().lower() == NodeType.PLAN.value:
+            metadata["is_plan_node"] = True
+            if run_input is not None:
+                metadata["plan_input"] = run_input
+        # wf-04 (cont.): merge plan-payload metadata onto the task's
+        # metadata so downstream executors see whatever the planner
+        # resolved (preferred stack, owner, etc.). Static run metadata
+        # keys take precedence so a malformed plan can't overwrite
+        # things like workflow_run_id.
+        for key, value in plan_override_metadata.items():
+            metadata.setdefault(key, value)
         task = self._create_task(
             "%s :: %s" % (workflow.slug if workflow else "workflow", node["node_key"]),
             description=(node.get("instructions") or "").strip(),
@@ -602,6 +810,113 @@ class WorkflowRuntime:
             (run_id, node["node_key"], utcnow(), task.id),
         )
         return self._get_task(task.id)
+
+    def _walk_through_pre_decided(
+        self,
+        run_id: str,
+        definition: Dict[str, Any],
+        node: Dict[str, Any],
+        *,
+        pre_decisions: Optional[Dict[str, str]],
+        actor: str,
+        conn: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Skip past any chain of pre-decided approval nodes.
+
+        ``node`` is the current approval node the run has arrived at.
+        The caller has already recorded the *entry* into ``node`` in
+        history (the start-edge history row, or _advance's edge row).
+        This helper writes one history row per *exit* from a skipped
+        approval node — ``from = approval_key``, ``to = next_key``,
+        ``condition = approved|rejected`` — then keeps walking if the
+        next node is itself a pre-decided approval.
+
+        Returns the first non-skipped node (the one a real task should
+        spawn on), or ``None`` if the chain terminates the run.
+        """
+        current = node
+        while True:
+            if current is None:
+                return None
+            if str(current.get("node_type") or "task").strip().lower() != "approval":
+                return current
+            decision = (pre_decisions or {}).get(current["node_key"])
+            if decision not in {"approved", "rejected"}:
+                return current
+            edge = self._pick_edge(definition, current["node_key"], decision)
+            if edge is None and decision == "approved":
+                edge = self._pick_edge(definition, current["node_key"], "success")
+            target = self._node_by_key(definition, edge.get("to_node_key")) if edge else None
+            next_seq = self._next_history_seq(run_id)
+            conn.execute(
+                """
+                INSERT INTO workflow_run_history (
+                    id, run_id, seq, from_node_key, to_node_key, condition,
+                    task_id, actor, attempt_number, detail, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, ?)
+                """,
+                (
+                    new_id("wfh"),
+                    run_id,
+                    next_seq,
+                    current["node_key"],
+                    target["node_key"] if target else None,
+                    decision,
+                    actor,
+                    json_dumps(
+                        {
+                            "approval_decision": decision,
+                            "pre_decision_origin": "workflow_start",
+                            "skipped": True,
+                        }
+                    ),
+                    utcnow(),
+                ),
+            )
+            if target is None:
+                return None
+            current = target
+
+    def _validate_pre_decisions(
+        self,
+        definition: Dict[str, Any],
+        pre_decisions: Optional[Dict[str, str]],
+    ) -> Dict[str, str]:
+        """Sanity-check pre_decisions against the workflow definition.
+
+        Returns the normalized map; raises ValidationError on bad keys
+        (non-existent node_key or non-approval node) or bad values.
+        """
+        if not pre_decisions:
+            return {}
+        approval_keys = {
+            str(node.get("node_key"))
+            for node in definition.get("nodes", []) or []
+            if str(node.get("node_type") or "task").strip().lower() == "approval"
+        }
+        bad_keys: List[str] = []
+        bad_values: List[str] = []
+        normalized: Dict[str, str] = {}
+        for key, value in pre_decisions.items():
+            if key not in approval_keys:
+                bad_keys.append(str(key))
+                continue
+            normalized_value = str(value or "").strip().lower()
+            if normalized_value not in {"approved", "rejected"}:
+                bad_values.append("%s=%s" % (key, value))
+                continue
+            normalized[str(key)] = normalized_value
+        if bad_keys:
+            raise ValidationError(
+                "pre_decisions reference unknown or non-approval nodes: %s"
+                % ", ".join(bad_keys)
+            )
+        if bad_values:
+            raise ValidationError(
+                "pre_decisions values must be `approved` or `rejected`: %s"
+                % ", ".join(bad_values)
+            )
+        return normalized
 
     def _terminal_to_condition(self, terminal_state: str, *, metadata: Dict[str, Any]) -> str:
         if metadata.get("requires_approval"):

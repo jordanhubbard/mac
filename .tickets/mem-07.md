@@ -1,6 +1,6 @@
 ---
 id: mem-07
-status: open
+status: closed
 deps: [mem-06]
 links: [mem-08, mem-09, mem-10]
 created: 2026-05-29T02:21:11Z
@@ -26,3 +26,7 @@ audit: memory-tier-2026-05-28
 - Test: write a memory record, run the writer, assert `vector_refs` row exists and Qdrant `GET /collections/{c}/points/{id}` returns the payload.
 
 Blocked by mem-06. Blocks mem-09, mem-10.
+
+## Resolution (2026-05-31)
+
+Verified done: vector_refs populated (20 rows on rocky) from memory_records; writer path operational. Implementation + tests present.

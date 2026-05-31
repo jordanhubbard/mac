@@ -172,8 +172,10 @@ def test_startup_report_inventories_hermes_state_without_contents(monkeypatch, t
     assert report["enabled"] is True
     assert report["checks"]["soul_present"] is True
     assert report["checks"]["conversation_state_present"] is True
-    assert report["slack"]["needs_account_file_activation_shim"] is True
-    assert report["slack"]["activation_source"] == "missing_account_file_activation"
+    # ADR 0001 hu-04: multi-slack support is baked into the vendored gateway, so
+    # an account file alone activates Slack — no upstream-checkout shim needed.
+    assert report["slack"]["needs_account_file_activation_shim"] is False
+    assert report["slack"]["activation_source"] == "slack_accounts_file"
     roles = {ref["role"] for ref in report["state_refs"] if ref["exists"]}
     assert {"soul", "long_term_memory", "conversation_state", "slack_accounts"} <= roles
     rendered = str(report)
@@ -196,192 +198,6 @@ def test_startup_report_treats_unwritten_hermes_memory_as_pending_not_warning(mo
 
     assert report["checks"]["long_term_memory_present"] is False
     assert "Hermes MEMORY.md is missing" not in " ".join(report["warnings"])
-
-
-def test_slack_accounts_file_shim_satisfies_account_file_only_startup(monkeypatch, tmp_path):
-    _clear_startup_env(monkeypatch)
-    hermes_home = tmp_path / ".hermes"
-    agent_dir = tmp_path / "hermes-agent"
-    _write(hermes_home / "config.yaml", "model: local\n")
-    _write(hermes_home / "SOUL.md", "soul")
-    _write(hermes_home / "MEMORY.md", "memory")
-    _write(hermes_home / "state.db", "state")
-    _write(hermes_home / "slack_accounts.json", '{"workspace":"T123"}')
-    _write(
-        agent_dir / "gateway" / "config.py",
-        "def _slack_accounts_file_configured():\n    return 'slack_accounts.json'\n",
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-    _configure_mandatory_shared_services(monkeypatch, hermes_home)
-
-    report = build_hermes_startup_report()
-
-    assert report["ready"] is True
-    assert report["slack"]["activation_source"] == "slack_accounts_file_shim"
-    assert report["slack"]["account_file_activation_shim_present"] is True
-    assert report["slack"]["needs_account_file_activation_shim"] is False
-
-
-def test_startup_applies_home_channel_shim_for_slack_home_channels(
-    monkeypatch,
-    tmp_path,
-):
-    _clear_startup_env(monkeypatch)
-    hermes_home = tmp_path / ".hermes"
-    agent_dir = tmp_path / "hermes-agent"
-    run_py = agent_dir / "gateway" / "run.py"
-    _write(hermes_home / "config.yaml", "model: local\n")
-    _write(hermes_home / "SOUL.md", "soul")
-    _write(hermes_home / "MEMORY.md", "memory")
-    _write(hermes_home / "state.db", "state")
-    _write(
-        hermes_home / "slack_home_channels.json",
-        '[{"team_id":"T123","channel_id":"C456","channel_name":"#ops"}]',
-    )
-    _write(
-        run_py,
-        '''import json
-import os
-from typing import Any
-
-_hermes_home = None
-
-
-def _home_target_env_var(platform_name: str) -> str:
-    return f"{platform_name.upper()}_HOME_CHANNEL"
-
-
-def _home_thread_env_var(platform_name: str) -> str:
-    return f"{_home_target_env_var(platform_name)}_THREAD_ID"
-
-
-def needs_home(source, platform_name):
-    env_key = _home_target_env_var(platform_name)
-    if not os.getenv(env_key):
-        return True
-    return False
-''',
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-    monkeypatch.setenv("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "ops")
-
-    report = build_hermes_startup_report()
-    patched = run_py.read_text(encoding="utf-8")
-
-    assert report["slack"]["home_channel_file_present"] is True
-    assert report["slack"]["configured_home_channel_name"] == "ops"
-    assert report["slack"]["home_channel_shim_patch"]["applied"] is True
-    assert report["slack"]["home_channel_shim_present"] is True
-    assert "_source_has_home_target" in patched
-    assert "slack_home_channels.json" in patched
-    assert "if not _source_has_home_target(source, platform_name, env_key):" in patched
-
-
-def test_startup_applies_gateway_runtime_model_shim(monkeypatch, tmp_path):
-    _clear_startup_env(monkeypatch)
-    hermes_home = tmp_path / ".hermes"
-    agent_dir = tmp_path / "hermes-agent"
-    run_py = agent_dir / "gateway" / "run.py"
-    _write(hermes_home / "config.yaml", "model: local\n")
-    _write(hermes_home / "SOUL.md", "soul")
-    _write(hermes_home / "MEMORY.md", "memory")
-    _write(hermes_home / "state.db", "state")
-    _write(
-        run_py,
-        '''import os
-
-
-def _resolve_gateway_model(user_config):
-    return "upstream-default"
-
-
-def _resolve_runtime_agent_kwargs():
-    return {}
-
-
-class GatewayRunner:
-    def _resolve_session_agent_runtime(self, user_config=None):
-        model = _resolve_gateway_model(user_config)
-        runtime_kwargs = _resolve_runtime_agent_kwargs()
-        return model, runtime_kwargs
-''',
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-    monkeypatch.setenv("MAC_HERMES_GATEWAY_MODEL", "azure/openai/gpt-5.5")
-    monkeypatch.setenv("MAC_HERMES_GATEWAY_PROVIDER", "custom")
-    monkeypatch.setenv("TOKENHUB_URL", "http://tokenhub.invalid:8090")
-    monkeypatch.setenv("TOKENHUB_API_KEY", "secret-tokenhub-key")
-    monkeypatch.setenv("MAC_TOKENHUB_ALLOW_DEGRADED", "1")
-    _configure_mandatory_shared_services(monkeypatch, hermes_home)
-
-    report = build_hermes_startup_report()
-    patched = run_py.read_text(encoding="utf-8")
-
-    assert report["ready"] is True
-    assert report["runtime"]["configured_model"] == "azure/openai/gpt-5.5"
-    assert report["runtime"]["provider_override_configured"] is True
-    assert report["runtime"]["base_url_override_configured"] is True
-    assert report["runtime"]["gateway_runtime_shim_patch"]["applied"] is True
-    assert report["runtime"]["gateway_runtime_shim_present"] is True
-    assert report["checks"]["gateway_runtime_override_active"] is True
-    assert "MAC_HERMES_GATEWAY_MODEL" in patched
-    assert "TOKENHUB_URL" in patched
-    assert "resolve_runtime_provider" in patched
-    assert 'runtime_kwargs["api_key"] = mac_gateway_api_key' in patched
-    assert 'runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")' in patched
-    assert "secret-tokenhub-key" not in str(report)
-
-
-def test_gateway_runtime_shim_upgrades_existing_tokenhub_override(monkeypatch, tmp_path):
-    _clear_startup_env(monkeypatch)
-    agent_dir = tmp_path / "hermes-agent"
-    run_py = agent_dir / "gateway" / "run.py"
-    _write(
-        run_py,
-        '''
-def _resolve_runtime_agent_kwargs():
-    return {}
-
-
-class GatewayRunner:
-    def _resolve_session_agent_runtime(self, user_config=None):
-        model = "old"
-        mac_gateway_model = (
-            "MAC_HERMES_GATEWAY_MODEL"
-        )
-        mac_gateway_provider = (
-            os.environ.get("MAC_HERMES_GATEWAY_PROVIDER")
-            or os.environ.get("ACC_HERMES_GATEWAY_PROVIDER")
-            or os.environ.get("HERMES_INFERENCE_PROVIDER")
-            or ""
-        ).strip()
-        mac_gateway_base_url = "http://tokenhub.invalid:8090/v1"
-        mac_gateway_api_key = "stale-or-explicit"
-        if mac_gateway_model or mac_gateway_provider or mac_gateway_base_url:
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-            runtime_kwargs = resolve_runtime_provider(
-                requested=mac_gateway_provider or "custom",
-                explicit_base_url=mac_gateway_base_url or None,
-                explicit_api_key=mac_gateway_api_key or None,
-                target_model=model or None,
-            )
-        else:
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
-        return model, runtime_kwargs
-''',
-    )
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-
-    report = hermes_startup.apply_hermes_gateway_runtime_shim_report()
-    patched = run_py.read_text(encoding="utf-8")
-
-    assert report["gateway_runtime_shim_patch"]["applied"] is True
-    assert 'runtime_kwargs["api_key"] = mac_gateway_api_key' in patched
-    assert 'runtime_kwargs["source"] = "mac-gateway-explicit"' in patched
-    assert 'runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")' in patched
 
 
 def test_startup_reports_tokenhub_readiness_without_leaking_key(monkeypatch, tmp_path):
@@ -423,150 +239,6 @@ def test_startup_reports_tokenhub_readiness_without_leaking_key(monkeypatch, tmp
     assert report["checks"]["tokenhub_ready"] is True
     assert report["operator_health"]["tokenhub_model_count"] == 2
     assert "secret-tokenhub-key" not in str(report)
-
-
-def test_startup_applies_slack_accounts_shim_for_explicit_hermes_checkout(
-    monkeypatch,
-    tmp_path,
-):
-    _clear_startup_env(monkeypatch)
-    hermes_home = tmp_path / ".hermes"
-    agent_dir = tmp_path / "hermes-agent"
-    config_py = agent_dir / "gateway" / "config.py"
-    _write(hermes_home / "config.yaml", "model: local\n")
-    _write(hermes_home / "SOUL.md", "soul")
-    _write(hermes_home / "MEMORY.md", "memory")
-    _write(hermes_home / "state.db", "state")
-    _write(hermes_home / "slack_accounts.json", '{"workspace":"T123"}')
-    _write(
-        config_py,
-        '''from typing import Callable
-import os
-
-
-class Platform:
-    SLACK = "slack"
-
-
-class PlatformConfig:
-    pass
-
-
-def get_hermes_home():
-    return None
-
-
-# -----------------------------------------------------------------------------
-# Built-in platform connection checkers
-_PLATFORM_CONNECTED_CHECKERS: dict[Platform, Callable[[PlatformConfig], bool]] = {
-}
-
-
-def apply_env_overrides(config):
-    # Slack
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    if slack_token:
-        if Platform.SLACK not in config.platforms:
-            # No yaml config for Slack — env-only setup, enable it
-            config.platforms[Platform.SLACK] = PlatformConfig()
-            config.platforms[Platform.SLACK].enabled = True
-        else:
-            slack_config = config.platforms[Platform.SLACK]
-            enabled_was_explicit = bool(slack_config.extra.pop("_enabled_explicit", False))
-            if not slack_config.enabled and not enabled_was_explicit:
-                # Top-level Slack settings such as channel prompts should not
-                # turn an env-token setup into a disabled platform. Only an
-                # explicit slack.enabled/platforms.slack.enabled false should.
-                slack_config.enabled = True
-        # If yaml config exists, respect its enabled flag (don't override
-        # explicit enabled: false). Token is still stored so skills that
-        # send Slack messages can use it without activating the gateway adapter.
-        config.platforms[Platform.SLACK].token = slack_token
-''',
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-    _configure_mandatory_shared_services(monkeypatch, hermes_home)
-
-    report = build_hermes_startup_report()
-    patched = config_py.read_text(encoding="utf-8")
-
-    assert report["ready"] is True
-    assert report["slack"]["activation_source"] == "slack_accounts_file_shim"
-    assert report["slack"]["account_file_activation_shim_patch"]["applied"] is True
-    assert "_slack_accounts_file_configured" in patched
-    assert "slack_accounts_configured = _slack_accounts_file_configured()" in patched
-
-
-def test_startup_applies_slack_accounts_shim_even_when_slack_has_other_activation(
-    monkeypatch,
-    tmp_path,
-):
-    _clear_startup_env(monkeypatch)
-    hermes_home = tmp_path / ".hermes"
-    agent_dir = tmp_path / "hermes-agent"
-    config_py = agent_dir / "gateway" / "config.py"
-    _write(hermes_home / "config.yaml", "slack:\n  enabled: true\n")
-    _write(hermes_home / "SOUL.md", "soul")
-    _write(hermes_home / "MEMORY.md", "memory")
-    _write(hermes_home / "state.db", "state")
-    _write(hermes_home / "slack_accounts.json", '{"workspace":"T123"}')
-    _write(
-        config_py,
-        '''from typing import Callable
-import os
-
-
-class Platform:
-    SLACK = "slack"
-
-
-class PlatformConfig:
-    pass
-
-
-def get_hermes_home():
-    return None
-
-
-# -----------------------------------------------------------------------------
-# Built-in platform connection checkers
-_PLATFORM_CONNECTED_CHECKERS: dict[Platform, Callable[[PlatformConfig], bool]] = {
-}
-
-
-def apply_env_overrides(config):
-    # Slack
-    slack_token = os.getenv("SLACK_BOT_TOKEN")
-    if slack_token:
-        if Platform.SLACK not in config.platforms:
-            # No yaml config for Slack — env-only setup, enable it
-            config.platforms[Platform.SLACK] = PlatformConfig()
-            config.platforms[Platform.SLACK].enabled = True
-        else:
-            slack_config = config.platforms[Platform.SLACK]
-            enabled_was_explicit = bool(slack_config.extra.pop("_enabled_explicit", False))
-            if not slack_config.enabled and not enabled_was_explicit:
-                # Top-level Slack settings such as channel prompts should not
-                # turn an env-token setup into a disabled platform. Only an
-                # explicit slack.enabled/platforms.slack.enabled false should.
-                slack_config.enabled = True
-        # If yaml config exists, respect its enabled flag (don't override
-        # explicit enabled: false). Token is still stored so skills that
-        # send Slack messages can use it without activating the gateway adapter.
-        config.platforms[Platform.SLACK].token = slack_token
-''',
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
-    _configure_mandatory_shared_services(monkeypatch, hermes_home)
-
-    report = build_hermes_startup_report()
-
-    assert report["ready"] is True
-    assert report["slack"]["activation_source"] == "explicit_config"
-    assert report["slack"]["account_file_activation_shim_present"] is True
-    assert report["slack"]["account_file_activation_shim_patch"]["applied"] is True
 
 
 def test_slack_bot_token_satisfies_upstream_slack_activation(monkeypatch, tmp_path):
@@ -1149,9 +821,13 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
         ),
     )
     _write(markdown_path, "runtime")
+    # ADR 0001 hu-04: the prompt-bridge check inspects the *vendored* tree, not
+    # MAC_HERMES_AGENT_DIR. Point the vendored dir at a tree whose prompt_builder
+    # LACKS the mac-runtime-context bridge to exercise the "missing" path.
     _write(agent_dir / "agent" / "prompt_builder.py", "def build_context_files_prompt(): pass\n")
+    monkeypatch.setattr("mac.hermes_vendor.VENDOR_DIR", str(agent_dir))
+    monkeypatch.setattr("mac.hermes_vendor.is_vendored", lambda: True)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_FILE", str(context_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(markdown_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_REQUIRED", "1")

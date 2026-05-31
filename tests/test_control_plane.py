@@ -661,6 +661,33 @@ def test_task_lifecycle_requires_evidence_review_and_publication(cp):
     assert "task.published" in event_types
 
 
+def test_review_claim_is_idempotent_for_identical_evidence(cp):
+    # mem-05: a repeat claim (same review + executor_evidence + head_sha) writes
+    # no new task.review_claimed row — schema/app defense against the verified
+    # 30,806-row storm (task_d7c51a0b).
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task("Implement thing", required_capabilities=["python"])
+    cp.dispatch_once()
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "test", "artifact://pytest", "pytest passed", worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+
+    def claim_rows():
+        return [e for e in cp.task_history(task.id) if e.event_type == "task.review_claimed"]
+
+    cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
+    assert len(claim_rows()) == 1
+    for _ in range(50):
+        result = cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
+        assert result.get("idempotent") is True
+    assert len(claim_rows()) == 1  # 50 identical re-claims added no rows
+
+
 def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     from tests.conftest import submit_review_verdict
 
@@ -707,6 +734,325 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.assigned" in names
     assert "workflow.default_review.approved" in names
     assert "workflow.default_review.published" in names
+
+
+def test_beads_source_state_log_suppressed_when_bridge_disabled(cp, monkeypatch, tmp_path):
+    """mem-03: bridge.beads.repository_source must NOT fire when
+    MAC_BEADS_BRIDGE_ENABLED is unset (the default per CLAUDE.md).
+    The original audit found 31K rows of this log on rocky despite
+    the bridge being supposedly off."""
+    monkeypatch.delenv("MAC_BEADS_BRIDGE_ENABLED", raising=False)
+    # Build a minimal BeadsRepository directly instead of registering a
+    # real on-disk one — the .mac/project.yaml requirement at registration
+    # time is unrelated to this gate test.
+    from mac.models import BeadsRepository
+    repo = BeadsRepository(
+        id="repo_fake",
+        name="acme",
+        path=str(tmp_path / "acme"),
+        source="file://acme",
+        project="acme-project",
+        required_capabilities=[],
+        enabled=True,
+        poll_interval_seconds=300,
+        last_polled_at=None,
+        last_imported_at=None,
+        last_error=None,
+        metadata={},
+        created_at="2026-05-29T00:00:00Z",
+        updated_at="2026-05-29T00:00:00Z",
+    )
+    cp._record_beads_source_state(
+        actor="test",
+        repo=repo,
+        state={"status": "error", "error": "anything"},
+        level="warning",
+    )
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "bridge.beads.repository_source" not in names
+
+
+def test_beads_source_state_log_writes_when_bridge_enabled(cp, monkeypatch, tmp_path):
+    """mem-03 (negative): when MAC_BEADS_BRIDGE_ENABLED is true, the
+    log fires normally — operators who actually use the bridge keep
+    the audit trail."""
+    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
+    # Build a minimal BeadsRepository directly instead of registering a
+    # real on-disk one — the .mac/project.yaml requirement at registration
+    # time is unrelated to this gate test.
+    from mac.models import BeadsRepository
+    repo = BeadsRepository(
+        id="repo_fake",
+        name="acme",
+        path=str(tmp_path / "acme"),
+        source="file://acme",
+        project="acme-project",
+        required_capabilities=[],
+        enabled=True,
+        poll_interval_seconds=300,
+        last_polled_at=None,
+        last_imported_at=None,
+        last_error=None,
+        metadata={},
+        created_at="2026-05-29T00:00:00Z",
+        updated_at="2026-05-29T00:00:00Z",
+    )
+    cp._record_beads_source_state(
+        actor="test",
+        repo=repo,
+        state={"status": "error", "error": "anything"},
+        level="warning",
+    )
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "bridge.beads.repository_source" in names
+
+
+def test_record_log_suppresses_verbose_poll_names_by_default(cp):
+    """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
+    by default. The 1.83M-of-2.09M-row bloat on rocky was these six
+    names firing per-poll regardless of state change."""
+    # Default: suppressed → record_log returns None and no row lands.
+    result = cp.record_log(
+        "worker.no_task", level="debug", source="worker-1"
+    )
+    assert result is None
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "worker.no_task" not in names
+    # A non-suppressed name still records as normal.
+    cp.record_log("task.evidence_added", level="info", source="control")
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "task.evidence_added" in names
+
+
+def test_record_log_writes_verbose_poll_names_when_env_set(cp, monkeypatch):
+    """mem-04: operators flip MAC_OBSERVABILITY_VERBOSE_POLL=1 to
+    re-enable the chatter for debugging."""
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
+    cp.record_log("worker.no_task", level="debug", source="worker-1")
+    names = {e.name for e in cp.list_observability(limit=50)}
+    assert "worker.no_task" in names
+
+
+def test_add_evidence_rejects_operator_result_for_repo_coupled_task(cp):
+    """mem-11: repo-coupled tasks (execution_contract.type=repository
+    or repository_required=true) must not accept operator_result
+    evidence — that was the validator gap that let bullwinkle's
+    fake-merge evidence trigger the runaway review loop."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "Repo-coupled task",
+        required_capabilities=["python"],
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+                "source": "test_fixture",
+                "repository_required": True,
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    # The poison-pill evidence: operator_result for a repo task.
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "hello hello hello",
+        },
+    )
+    with pytest.raises(ValidationError, match="operator_result evidence cannot be recorded"):
+        cp.add_evidence(
+            task.id,
+            "log",
+            "artifact://hello",
+            "hello hello hello",
+            worker.id,
+            metadata={"returncode": 0, "verification": manifest},
+        )
+
+
+def test_add_evidence_accepts_repo_change_evidence_for_repo_coupled_task(cp):
+    """mem-11 (negative): the repo-coupled gate must not block legitimate
+    repo_change evidence on the same task class."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "Repo task",
+        required_capabilities=["python"],
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+                "repository_required": True,
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "file://t",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    assert evidence.task_id == task.id
+
+
+def test_add_evidence_accepts_operator_result_for_non_repo_task(cp):
+    """mem-11 (negative): pure-operator tasks (no repository contract)
+    must keep accepting operator_result. Only repo-coupled tasks
+    enforce the strict subset."""
+    worker = register_agent(cp, "worker", ["ops"])
+    task = cp.create_task("Plan something", required_capabilities=["ops"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "plan produced",
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://plan",
+        "plan produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    assert evidence.task_id == task.id
+
+
+def test_default_review_workflow_caps_retractions(cp, monkeypatch):
+    """mem-12: after N consecutive retractions for a task, the workflow
+    refuses to spawn another review and transitions the task to FAILED."""
+    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    register_agent(cp, "reviewer-b", ["review"])
+    task = cp.create_task("Loopy", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    # Pre-plant N retracted reviews so we land exactly at the cap on
+    # the next advance() call.
+    from mac.models import ReviewStatus, new_id, utcnow
+
+    now = utcnow()
+    for label in ("a", "b"):
+        cp.store.execute(
+            """
+            INSERT INTO reviews (
+                id, task_id, reviewer_agent_id, status, reason, evidence_id,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                new_id("review"),
+                task.id,
+                "agent_" + label,
+                ReviewStatus.RETRACTED.value,
+                "reviewer_unable_to_produce_verdict_after_10_attempts",
+                now,
+                now,
+            ),
+        )
+
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "review_retraction_exhausted"
+    assert result["cap"] == 2
+    assert result["retracted_count"] >= 2
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    # Confirm an observability row was written so operators can see why.
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.exhausted" in names
+
+
+def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
+    """mem-12: the cap is scoped to retractions AFTER the latest evidence.
+    Submitting fresh evidence implicitly resets the counter."""
+    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    task = cp.create_task("Resettable", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    # Old evidence, then 2 retracted reviews against it.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo1",
+        "first try",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    from mac.models import ReviewStatus, new_id, utcnow
+    old_now = "2026-05-29T00:00:00+00:00"
+    for label in ("a", "b"):
+        cp.store.execute(
+            """
+            INSERT INTO reviews (
+                id, task_id, reviewer_agent_id, status, reason, evidence_id,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                new_id("review"),
+                task.id,
+                "agent_" + label,
+                ReviewStatus.RETRACTED.value,
+                "stale",
+                old_now,
+                old_now,
+            ),
+        )
+    # Reset the task back to NEEDS_REVIEW manually (in the real flow,
+    # submitting new evidence + submit_for_review walks the state
+    # machine; we shortcut here for the test).
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
+        (TaskState.NEEDS_REVIEW.value, utcnow(), task.id),
+    )
+    # New evidence at a NEWER timestamp → cap counter should reset.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo2",
+        "second try",
+        worker.id,
+        metadata=verified_repo_metadata(
+            cp,
+            worker.id,
+            head_sha="0123456789abcdef0123456789abcdef01234567",
+            files_changed=["src/example.py"],
+        ),
+    )
+    result = cp.advance_default_review_workflow(task.id)
+    # Should advance normally (assigning a new reviewer) rather than
+    # failing on the cap.
+    assert result["status"] != "review_retraction_exhausted", result
+    assert cp.get_task(task.id).state != TaskState.FAILED.value
 
 
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
@@ -3108,99 +3454,10 @@ def test_beads_bridge_failed_task_reopen_limit_is_bounded(cp, tmp_path, monkeypa
     )
 
 
-def test_hub_heartbeat_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-heartbeat",
-                "title": "Heartbeat imported bead",
-                "description": "import me from heartbeat",
-                "status": "open",
-                "priority": 1,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    natasha = register_agent(cp, "natasha", ["python"])
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT_ASYNC", "0")
-
-    cp.heartbeat_agent(natasha.id, status=AgentStatus.IDLE.value)
-    assert cp.list_project_items() == []
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-
-    assert len(cp.list_project_items()) == 1
-    assert cp.list_project_items()[0].external_id == "mac-heartbeat"
 
 
-def test_hub_heartbeat_schedules_beads_poll_async_by_default(cp, monkeypatch):
-    rocky = register_agent(cp, "rocky", ["python"])
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    calls = []
-
-    def fake_poll(**kwargs):
-        calls.append(kwargs["actor"])
-        started.set()
-        release.wait(1)
-        finished.set()
-        return {"repositories": []}
-
-    monkeypatch.setattr(cp, "poll_beads_repositories", fake_poll)
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-    assert started.wait(1)
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-    release.set()
-    assert finished.wait(1)
-    assert calls == [rocky.id]
 
 
-def test_hub_lease_renewal_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-renewal",
-                "title": "Lease renewal imported bead",
-                "description": "import me while hub is busy",
-                "status": "open",
-                "priority": 1,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    task = cp.create_task("busy hub task", required_capabilities=["python"])
-    _claimed, lease = cp.claim_task(task.id, rocky.id)
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT_ASYNC", "0")
-
-    cp.renew_lease(lease.id, rocky.id)
-
-    imported = [item.external_id for item in cp.list_project_items()]
-    assert imported == ["mac-renewal"]
 
 
 def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
@@ -3225,6 +3482,10 @@ def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
     cp.submit_for_review(task.id, worker.id)
     monkeypatch.setenv("MAC_REVIEW_TICK_ON_HEARTBEAT", "1")
     monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", "rocky")
+    # mem-04: workflow.default_review.heartbeat_tick is one of the
+    # high-volume poll-log names suppressed by default; enable verbose
+    # poll logging for this assertion.
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
 
     cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
 

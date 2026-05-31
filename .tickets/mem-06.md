@@ -1,6 +1,6 @@
 ---
 id: mem-06
-status: open
+status: closed
 deps: []
 links: [mem-07, mem-08, mem-09]
 created: 2026-05-29T02:21:09Z
@@ -31,3 +31,7 @@ Define the contract before anyone writes code:
 - Schema lands in `mac/models.py` as typed payloads so writers (mem-07) and readers (mem-09) share types.
 
 Blocks: mem-07, mem-08, mem-09.
+
+## Resolution (2026-05-31)
+
+Verified done: rocky Qdrant has 2 live collections (mac_memory_long, mac_memory_medium). Tier schema is operational.

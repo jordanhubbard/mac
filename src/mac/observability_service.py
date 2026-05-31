@@ -16,6 +16,7 @@ participate in cross-domain transactions.
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +34,27 @@ from mac.models import (
 )
 
 OBSERVABILITY_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/:]{0,127}$")
+
+# mem-04: the original audit on rocky 2026-05-28 found 1.83M of 2.09M
+# total observability_events rows came from these six emitters, all
+# of which fire on every poll regardless of state change. They're
+# debug-level by design but the table still grew to 3.1GB. By default
+# we drop them at the record_log boundary; operators flip
+# MAC_OBSERVABILITY_VERBOSE_POLL=1 to re-enable for debugging.
+_VERBOSE_POLL_LOG_NAMES = frozenset(
+    {
+        "worker.routing.no_candidate",
+        "worker.no_task",
+        "workflow.default_review.waiting",
+        "workflow.default_review.waiting_for_verdict",
+        "workflow.default_review.heartbeat_tick",
+        "workflow.default_review.heartbeat_tick_failed",
+    }
+)
+
+
+def _verbose_poll_enabled() -> bool:
+    return os.environ.get("MAC_OBSERVABILITY_VERBOSE_POLL", "0") not in {"", "0", "false", "False"}
 
 
 class ObservabilityService:
@@ -75,6 +97,24 @@ class ObservabilityService:
             utcnow(),
         )
 
+    def _record_log_unfiltered(
+        self,
+        name: str,
+        level: str = "info",
+        layer: str = "control_plane",
+        source: str = "mac",
+        subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> ObservabilityEvent:
+        """Internal record_log that bypasses the mem-04 verbose-poll
+        suppression. Use this for tests and for emitters that have
+        genuinely changing state per call."""
+        return self.record_observation(
+            "log", name, layer, source, level, None, "",
+            subject_type, subject_id, detail,
+        )
+
     def record_metric(
         self,
         name: str,
@@ -109,7 +149,15 @@ class ObservabilityService:
         subject_type: Optional[str] = None,
         subject_id: Optional[str] = None,
         detail: Optional[Dict[str, Any]] = None,
-    ) -> ObservabilityEvent:
+    ) -> Optional[ObservabilityEvent]:
+        # mem-04: silence the high-volume idle-poll log names by
+        # default. The original audit found that 1.83M of 2.09M total
+        # observability rows on rocky came from these six emitters,
+        # all of which fire on every poll regardless of state change.
+        # Operators who need them for debugging can re-enable with
+        # MAC_OBSERVABILITY_VERBOSE_POLL=1 in the mac.env file.
+        if name in _VERBOSE_POLL_LOG_NAMES and not _verbose_poll_enabled():
+            return None
         return self.record_observation(
             "log",
             name,

@@ -682,7 +682,6 @@ class ControlPlane:
             add_memory=self.add_memory,
             task_from_row=self._task_from_row,
         )
-        self._seed_beads_repositories_from_env()
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
@@ -2548,6 +2547,22 @@ class ControlPlane:
 
     def list_workflow_runs(self, *args: Any, **kwargs: Any) -> List[WorkflowRun]:
         return self.workflow_runtime.list_runs(*args, **kwargs)
+
+    def workflow_decisions(
+        self,
+        workflow_id_or_slug: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> JsonDict:
+        """Enumerate every human-decision gate in a workflow definition."""
+        return self.workflows.decisions_for_workflow(
+            workflow_id_or_slug, tenant_id=tenant_id
+        )
+
+    def workflow_run_decisions(self, run_id: str) -> JsonDict:
+        """Enumerate human-decision gates for a live workflow run."""
+        run = self.workflow_runtime.get_run(run_id)
+        return self.workflows.decisions_for_run(run)
 
     def cancel_workflow_run(self, *args: Any, **kwargs: Any) -> WorkflowRun:
         return self.workflow_runtime.cancel_run(*args, **kwargs)
@@ -4854,6 +4869,15 @@ class ControlPlane:
             raise ValidationError("unsupported evidence kind: %s" % kind)
         if kind == "publication" and not checksum:
             raise ValidationError("publication evidence requires a checksum")
+        # mem-11: reject `operator_result` evidence_type when the task's
+        # execution contract declared a repository contract (or set
+        # repository_required=true). The original `task_d7c51a0b`
+        # incident hinged on bullwinkle emitting operator_result evidence
+        # for a code task; the validator accepted it because
+        # OperatorResultValidator only requires *any* summary string,
+        # which then sent the review loop hunting a remote_ref that was
+        # never pushed.
+        self._enforce_repo_coupled_evidence_type(task, metadata)
         now = utcnow()
         evidence_id = new_id("ev")
         with self.store.transaction() as conn:
@@ -4887,6 +4911,53 @@ class ControlPlane:
         if sync_beads:
             self.sync_evidence_side_effects(evidence_id)
         return evidence
+
+    def _enforce_repo_coupled_evidence_type(
+        self,
+        task: Task,
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
+        """mem-11: refuse to accept operator_result evidence for a task
+        that the dispatcher staged with a repository contract.
+
+        The verification block inside metadata carries the proposed
+        evidence_type. Tasks whose execution_contract.type='repository'
+        or whose execution_contract.repository_required is True are
+        "repo-coupled" — they must use one of the strict evidence types
+        (repo_change / documentation / test / artifact / no_change /
+        review_verdict) that exercises `require_pushed_repo_anchor()`
+        downstream. The soft `operator_result` type bypasses that
+        anchor check and was the bug that produced the runaway review
+        loop on `task_d7c51a0b04bd...`.
+        """
+        if not isinstance(metadata, dict):
+            return
+        verification = metadata.get("verification")
+        if not isinstance(verification, dict):
+            return
+        evidence_type = str(verification.get("evidence_type") or "").strip().lower()
+        if evidence_type != "operator_result":
+            return
+        contract = (
+            task.metadata.get("execution_contract")
+            if isinstance(task.metadata, dict)
+            else None
+        )
+        if not isinstance(contract, dict):
+            return
+        is_repo_coupled = (
+            str(contract.get("type") or "").strip().lower() == "repository"
+            or contract.get("repository_required") is True
+        )
+        if not is_repo_coupled:
+            return
+        raise ValidationError(
+            "operator_result evidence cannot be recorded for a repo-coupled "
+            "task (execution_contract.type=repository or "
+            "repository_required=true); use repo_change / test / documentation "
+            "/ artifact / no_change / review_verdict instead. Task: %s"
+            % task.id
+        )
 
     def sync_evidence_side_effects(self, evidence_id: str) -> None:
         try:
@@ -5002,7 +5073,6 @@ class ControlPlane:
             )
         self._record_history(lease.task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
         heartbeat_agent = self.get_agent(agent_id)
-        self._maybe_poll_beads_bridge_on_heartbeat(heartbeat_agent)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
         self._maybe_drain_notifications_on_heartbeat(heartbeat_agent)
         return self.get_lease(lease_id)
@@ -6030,7 +6100,6 @@ class ControlPlane:
                     now,
                 )
         agent = self.get_agent(agent_id)
-        self._maybe_poll_beads_bridge_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
@@ -6268,6 +6337,384 @@ class ControlPlane:
     def begin_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.begin_nap(*args, **kwargs)
 
+    def memory_health(
+        self,
+        *,
+        qdrant_url: Optional[str] = None,
+        nap_interval_hours: float = 24.0,
+    ) -> JsonDict:
+        """mem-10: memory-tier health snapshot.
+
+        Returns a dict the operator (and a future scheduled alerter)
+        can read to spot the failure modes the audit found:
+
+          * Inert vector tier — memory_records growing while
+            vector_refs stays at 0. The audit's smoking gun.
+          * Stalled consolidator — last_nap_run_at older than
+            ``2 * nap_interval_hours`` means the nightly nap stopped
+            running.
+          * Disk bloat — mac.db growing faster than the vector tier.
+
+        ``qdrant_url`` defaults to MAC_QDRANT_URL. When unreachable,
+        the qdrant_collections block reports its error instead of
+        raising; the operator still gets the SQLite-side numbers.
+        """
+        import time
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        now = utcnow()
+        now_dt = datetime.now(tz=timezone.utc)
+
+        # SQLite-side counts.
+        def _count(sql: str) -> int:
+            row = self.store.query_one(sql)
+            return int(row["n"]) if row is not None else 0
+
+        mr_count = _count("SELECT COUNT(*) AS n FROM memory_records")
+        vr_count = _count("SELECT COUNT(*) AS n FROM vector_refs")
+        oe_count = _count("SELECT COUNT(*) AS n FROM observability_events")
+
+        nap_row = self.store.query_one(
+            "SELECT MAX(completed_at) AS last FROM nap_runs WHERE status = 'completed'"
+        )
+        last_nap_at = nap_row["last"] if nap_row is not None and nap_row["last"] else None
+
+        # mac.db file size (when we can find the file).
+        db_path = getattr(self.store, "path", None) or getattr(self.store, "_path", None)
+        db_size: Optional[int] = None
+        if db_path:
+            try:
+                db_size = Path(str(db_path)).stat().st_size
+            except OSError:
+                db_size = None
+
+        # Qdrant points per collection — best-effort.
+        url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+        qdrant_block: JsonDict = {"url": url, "collections": {}, "error": None}
+        if url:
+            try:
+                from mac.models import MAC_MEMORY_COLLECTIONS
+                import json as _json
+                import urllib.request as _req
+
+                for tier_name, coll in MAC_MEMORY_COLLECTIONS.items():
+                    try:
+                        with _req.urlopen(
+                            "%s/collections/%s"
+                            % (url.rstrip("/"), coll),
+                            timeout=5,
+                        ) as resp:
+                            data = _json.loads(resp.read().decode("utf-8"))
+                            points = (
+                                (data.get("result") or {}).get("points_count")
+                            )
+                            qdrant_block["collections"][coll] = {
+                                "tier": tier_name,
+                                "points_count": int(points) if points is not None else None,
+                            }
+                    except Exception as exc:  # noqa: BLE001
+                        qdrant_block["collections"][coll] = {
+                            "tier": tier_name,
+                            "error": str(exc),
+                        }
+            except Exception as exc:  # noqa: BLE001
+                qdrant_block["error"] = str(exc)
+
+        # Alert rules (the audit's failure modes encoded).
+        alerts: List[JsonDict] = []
+        if mr_count > 100 and vr_count == 0:
+            alerts.append(
+                {
+                    "severity": "critical",
+                    "code": "inert_vector_tier",
+                    "message": (
+                        "memory_records=%d but vector_refs=0; the writer never "
+                        "ran. This is the failure mode the original 2026-05-28 "
+                        "audit surfaced." % mr_count
+                    ),
+                }
+            )
+        if last_nap_at is not None:
+            try:
+                last_dt = datetime.fromisoformat(last_nap_at)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                age_hours = (now_dt - last_dt).total_seconds() / 3600.0
+                if age_hours > 2.0 * nap_interval_hours:
+                    alerts.append(
+                        {
+                            "severity": "critical",
+                            "code": "stalled_consolidator",
+                            "message": (
+                                "last successful nap completed_at=%s "
+                                "(%.1fh ago, threshold %.1fh = 2× nap_interval)"
+                                % (last_nap_at, age_hours, 2.0 * nap_interval_hours)
+                            ),
+                        }
+                    )
+            except (TypeError, ValueError):
+                pass
+        elif mr_count > 0:
+            # We have memories but no completed nap_runs at all.
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "code": "no_nap_history",
+                    "message": (
+                        "no completed nap_runs on record despite %d "
+                        "memory_records — the consolidator has never run "
+                        "successfully." % mr_count
+                    ),
+                }
+            )
+
+        return {
+            "schema": "mac.memory_health.v1",
+            "captured_at": now,
+            "mac_db_size_bytes": db_size,
+            "memory_records_count": mr_count,
+            "vector_refs_count": vr_count,
+            "observability_events_count": oe_count,
+            "last_nap_run_at": last_nap_at,
+            "qdrant": qdrant_block,
+            "alerts": alerts,
+        }
+
+    def recall_memory(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+    ) -> List[JsonDict]:
+        """mem-09: vector-tier recall.
+
+        Embeds ``query`` and returns the top hits in the chosen tier
+        as the mem-09 standard shape (memory_id, task_id, score,
+        summary, ...). Server-side filters cover project/tenant; pass
+        a pre-built VectorWriterService when the caller already has
+        one to skip repeated initialization.
+        """
+        if not query or not str(query).strip():
+            raise ValidationError("recall_memory requires a non-empty query")
+        if vector_writer is None:
+            url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+            if not url:
+                raise ValidationError(
+                    "recall_memory needs a Qdrant URL — pass qdrant_url or set "
+                    "MAC_QDRANT_URL"
+                )
+            from mac.vector_writer_service import VectorWriterService
+
+            vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
+        return vector_writer.recall(
+            query,
+            tier=tier,
+            limit=limit,
+            score_threshold=min_score,
+            project=project,
+            tenant_id=tenant_id,
+        )
+
+    def run_nap_cycle(
+        self,
+        agent_id: str,
+        *,
+        actor: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+        embed_into_medium: bool = True,
+    ) -> JsonDict:
+        """mem-08 autonomy: drive an agent through one full nap.
+
+        Sequence:
+          1. begin_nap (agent → DRAINING, nap_run created)
+          2. consolidate (summarize since last nap, embed into medium)
+          3. complete_nap (agent → IDLE, nap_run completed)
+
+        Neither consolidation nor completion is allowed to escape once
+        begin_nap has moved the agent to DRAINING: a step-2 failure is
+        captured in ``consolidation_error`` and a step-3 failure in
+        ``complete_error``, and the agent's resolved state is always
+        refetched and reported. A leaking exception here would strand
+        the agent in DRAINING, which is much worse than a missing
+        summary, so this method never re-raises after the nap begins.
+
+        If begin_nap itself refuses (e.g. the agent holds an active
+        lease — it's mid-task, not nappable right now), the cycle is
+        reported as ``skipped`` rather than raising. This keeps the
+        autonomous nap-tick from failing its whole batch over one busy
+        agent; the next tick retries once the agent is free.
+        """
+        try:
+            run = self.begin_nap(agent_id, actor=actor)
+        except ValidationError as exc:
+            return {
+                "nap_run": None,
+                "skipped": True,
+                "skip_reason": str(exc),
+                "consolidation": {},
+                "consolidation_error": None,
+                "complete_error": None,
+            }
+        consolidation_report: JsonDict = {}
+        consolidation_error: Optional[str] = None
+        complete_error: Optional[str] = None
+        completed = run
+        try:
+            try:
+                consolidation_report = self.consolidate_nap(
+                    agent_id,
+                    nap_run_id=run.id,
+                    embed_into_medium=embed_into_medium,
+                    vector_writer=vector_writer,
+                    created_by=actor or "nap-cycle:%s" % agent_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                consolidation_error = str(exc)
+        finally:
+            # Always attempt to complete the nap so the agent returns to
+            # IDLE, even when consolidation threw. A completion failure
+            # (anything other than the benign off-path TransitionError)
+            # is recorded rather than re-raised so the agent isn't left
+            # stranded in DRAINING by a propagating exception.
+            try:
+                completed = self.complete_nap(
+                    run.id,
+                    summary_evidence_id=None,
+                    detail={
+                        "consolidation": consolidation_report,
+                        "consolidation_error": consolidation_error,
+                    },
+                    actor=actor,
+                )
+            except TransitionError:
+                # An off-path actor already completed/failed the run
+                # (e.g., an admin cancelled mid-cycle). Refetch and
+                # report; not an error from this cycle's perspective.
+                completed = self._safe_get_nap_run(run.id, run)
+            except Exception as exc:  # noqa: BLE001
+                complete_error = str(exc)
+                completed = self._safe_get_nap_run(run.id, run)
+        return {
+            "nap_run": completed.to_dict(),
+            "skipped": False,
+            "consolidation": consolidation_report,
+            "consolidation_error": consolidation_error,
+            "complete_error": complete_error,
+        }
+
+    def _safe_get_nap_run(self, run_id: str, fallback: NapRun) -> NapRun:
+        """Refetch a nap_run for reporting in an error path, falling
+        back to a known run object if even the read fails — so
+        run_nap_cycle never re-raises after the nap has begun."""
+        try:
+            return self.get_nap_run(run_id)
+        except Exception:  # noqa: BLE001
+            return fallback
+
+    def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[JsonDict]:
+        """Return enabled nap_schedules whose current window has opened
+        and hasn't been completed yet.
+
+        An agent's "current window" is today's `midnight UTC +
+        offset_minutes` (or yesterday's if today's hasn't opened yet).
+        We consider it open when `as_of` >= window_start, and unclaimed
+        when last_completed_at is either NULL or before window_start.
+
+        Selection is deliberately catch-up, not strict: an agent stays
+        due from window_start until it actually completes a nap, even
+        once `as_of` has passed window_end. ``window_minutes`` therefore
+        does NOT gate the autonomous path — it only sets how long the
+        informational ``in_window`` flag stays true. This keeps the
+        once-per-day nap robust against a tick that lands just after a
+        narrow window closes (a strict in-window check would silently
+        skip the agent for the whole day). Callers that want strict
+        windowing should filter on ``in_window`` themselves.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        as_of_dt = (
+            datetime.fromisoformat(as_of)
+            if as_of
+            else datetime.now(timezone.utc)
+        )
+        if as_of_dt.tzinfo is None:
+            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+        rows = self.store.query_all(
+            """
+            SELECT agent_id, offset_minutes, window_minutes, last_completed_at
+            FROM nap_schedules WHERE enabled = 1
+            """
+        )
+        due: List[JsonDict] = []
+        for row in rows:
+            offset = int(row["offset_minutes"] or 0)
+            window = int(row["window_minutes"] or 15)
+            midnight = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            window_start = midnight + timedelta(minutes=offset)
+            if window_start > as_of_dt:
+                window_start = window_start - timedelta(days=1)
+            window_end = window_start + timedelta(minutes=window)
+            already_done = False
+            if row["last_completed_at"]:
+                try:
+                    last_dt = datetime.fromisoformat(row["last_completed_at"])
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if last_dt >= window_start:
+                        already_done = True
+                except (TypeError, ValueError):
+                    pass
+            if already_done:
+                continue
+            due.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "window_start": window_start.isoformat(timespec="microseconds"),
+                    "window_end": window_end.isoformat(timespec="microseconds"),
+                    "last_completed_at": row["last_completed_at"],
+                    "in_window": window_start <= as_of_dt <= window_end,
+                }
+            )
+        return due
+
+    def consolidate_nap(
+        self,
+        agent_id: str,
+        *,
+        since: Optional[str] = None,
+        nap_run_id: Optional[str] = None,
+        embed_into_medium: bool = True,
+        vector_writer: Optional[Any] = None,
+        created_by: Optional[str] = None,
+    ) -> JsonDict:
+        """mem-08: build per-(task/project) summaries from the agent's
+        recent memory_records and embed them into the medium tier.
+
+        ``vector_writer`` is an optional pre-built VectorWriterService.
+        When None, no embedding happens (consolidator runs in
+        summary-only mode — useful when Qdrant is unreachable)."""
+        from mac.nap_consolidator import NapConsolidatorService
+
+        consolidator = NapConsolidatorService(
+            store=self.store,
+            memory=self.memory,
+            vector_writer=vector_writer,
+        )
+        return consolidator.consolidate_agent(
+            agent_id,
+            since=since,
+            nap_run_id=nap_run_id,
+            embed_into_medium=embed_into_medium,
+            created_by=created_by,
+        )
+
     def complete_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.complete_nap(*args, **kwargs)
 
@@ -6279,6 +6726,126 @@ class ControlPlane:
 
     def list_nap_runs(self, *args: Any, **kwargs: Any) -> List[NapRun]:
         return self.agent_state.list_nap_runs(*args, **kwargs)
+
+    def refresh_tokenhub_wildcards(self, *, timeout: float = 30.0) -> JsonDict:
+        """mac-nyx7: refresh TokenHub's wildcard model ladder and record it into
+        observability. Gated no-op (returns ``status=skipped``) unless
+        TOKENHUB_URL/MAC_TOKENHUB_WILDCARD_URL and a TokenHub admin token are
+        both set — same activation contract as the SSE decision feed (hu-05)."""
+        from mac.tokenhub_wildcard import refresh_wildcard_ladder
+
+        return refresh_wildcard_ladder(self.observability, timeout=timeout)
+
+    # -- Ticketing connectors (meta-tickets) --------------------------------
+    # beads is no longer a read/write source; it's an import-only connector.
+    # The native source is .tickets/ + this ledger. detect/convert route
+    # through mac.ticketing so any future ticketing system plugs in the same way.
+
+    def detect_ticketing(self, repo_path: str) -> JsonDict:
+        """Report which ticketing sources a repo has + whether a one-way
+        conversion should be offered (foreign source present, no native
+        .tickets/). Read-only. Emits a ``ticketing.conversion_available``
+        observation the hub's hermes agent can surface to the user."""
+        from pathlib import Path as _Path
+        from mac.ticketing import detect_ticketing as _detect
+
+        detection = _detect(_Path(repo_path))
+        if detection.needs_conversion:
+            self.record_log(
+                "ticketing.conversion_available",
+                layer="control_plane",
+                source="ticketing",
+                level="info",
+                subject_type="environment",
+                subject_id=str(repo_path),
+                detail={
+                    "schema": "mac.ticketing_conversion.v1",
+                    "conversion_from": detection.conversion_from,
+                    "message": detection.message,
+                    "prompt": (
+                        "Repo %s has a '%s' ticket source but no native .tickets/. "
+                        "Convert it one-way into .tickets (mac task ledger)?"
+                        % (repo_path, detection.conversion_from)
+                    ),
+                },
+            )
+        return detection.to_dict()
+
+    def convert_ticketing_source(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        actor: str = "hermes",
+        dry_run: bool = False,
+    ) -> JsonDict:
+        """Run the one-way conversion of a detected foreign source (e.g. beads)
+        into native .tickets/ + the ledger. Hermes calls this only after the
+        user agrees. Never writes back to the foreign source."""
+        from pathlib import Path as _Path
+        from mac.ticketing import detect_ticketing as _detect, connector_for
+
+        detection = _detect(_Path(repo_path))
+        if not detection.needs_conversion or not detection.conversion_from:
+            return {"status": "no_conversion_needed", "detection": detection.to_dict()}
+        connector = connector_for(detection.conversion_from)
+        if connector is None:
+            return {"status": "unknown_connector", "detection": detection.to_dict()}
+        report = connector.convert(
+            _Path(repo_path), project=project, cp=None if dry_run else self, actor=actor, dry_run=dry_run
+        )
+        self.record_log(
+            "ticketing.converted",
+            layer="control_plane",
+            source="ticketing",
+            level="info",
+            subject_type="environment",
+            subject_id=str(repo_path),
+            detail={"schema": "mac.ticketing_conversion.v1", "from": detection.conversion_from, "report": report},
+        )
+        return {"status": "converted", "from": detection.conversion_from, "report": report}
+
+    # -- Fleet awareness (fleet-01/02) --------------------------------------
+
+    def fleet_snapshot(self, *, exclude_agent_id: Optional[str] = None, limit: int = 30) -> JsonDict:
+        """A compact, current view of the fleet — who's online, their status, and
+        what each agent is working on. Powers passive group awareness (injected
+        into each agent's runtime context) and the on-demand `fleet` tool, so the
+        three agents always know what the others are doing."""
+        active = {
+            TaskState.CLAIMED.value,
+            TaskState.RUNNING.value,
+            TaskState.NEEDS_REVIEW.value,
+            TaskState.REVIEWING.value,
+        }
+        by_owner: Dict[str, Task] = {}
+        for state in active:
+            for task in self.list_tasks(state, limit=200):
+                if task.owner_agent_id:
+                    by_owner.setdefault(task.owner_agent_id, task)
+        members: List[JsonDict] = []
+        for agent in self.list_agents():
+            if exclude_agent_id and agent.id == exclude_agent_id:
+                continue
+            cur = by_owner.get(agent.id)
+            members.append(
+                {
+                    "name": agent.name,
+                    "agent_id": agent.id,
+                    "status": agent.status,
+                    "health": agent.health_status,
+                    "current_task_id": cur.id if cur else agent.current_task_id,
+                    "current_task_title": (cur.title if cur else None),
+                    "last_seen_at": agent.last_seen_at,
+                }
+            )
+            if len(members) >= limit:
+                break
+        return {
+            "schema": "mac.fleet_snapshot.v1",
+            "generated_at": utcnow(),
+            "members": members,
+        }
 
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:
         cutoff = (
@@ -6660,6 +7227,25 @@ class ControlPlane:
         claim["claimed_at"] = now
         metadata = ensure_json_object(task.metadata)
         claims = ensure_json_object(metadata.get("review_claims"))
+        # mem-05: idempotent re-claim. The verified 30,806-row storm was one
+        # review re-claiming identical evidence over and over. A repeat claim
+        # (same review + executor_evidence_id + head_sha) is now a no-op: it
+        # returns the prior claim and writes no new task.review_claimed row.
+        prior = ensure_json_object(claims.get(review.id))
+        if (
+            prior
+            and str(prior.get("executor_evidence_id") or "") == str(claim.get("executor_evidence_id") or "")
+            and str(prior.get("repository_head_sha") or "") == str(claim.get("repository_head_sha") or "")
+        ):
+            refreshed = self.get_task(task.id)
+            return {
+                "schema": "mac.review_claim.v1",
+                "status": "claimed",
+                "review": review.to_dict(),
+                "task": refreshed.to_dict(),
+                "claim": prior,
+                "idempotent": True,
+            }
         claims[review.id] = claim
         metadata["review_claims"] = claims
         metadata["latest_review_claim"] = claim
@@ -7287,6 +7873,85 @@ class ControlPlane:
                 )
                 review = None
         if review is None:
+            # mem-12: bound review retraction. Before creating a fresh
+            # review for the same executor evidence, count how many
+            # reviews for this task have already retracted *since the
+            # latest evidence was recorded*. If we've hit the cap, fail
+            # the task — looping forever is what bit task_d7c51a0b
+            # with 503 retracted reviews in the original incident.
+            try:
+                retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
+            except ValueError:
+                retraction_cap = 3
+            evidence_threshold = self.store.query_one(
+                """
+                SELECT created_at FROM evidence
+                WHERE task_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+            threshold_at = (
+                evidence_threshold["created_at"] if evidence_threshold else ""
+            )
+            retracted_count_row = self.store.query_one(
+                """
+                SELECT COUNT(*) AS n FROM reviews
+                WHERE task_id = ? AND status = ?
+                  AND created_at >= ?
+                """,
+                (task_id, ReviewStatus.RETRACTED.value, threshold_at),
+            )
+            retracted_count = (
+                int(retracted_count_row["n"]) if retracted_count_row else 0
+            )
+            if retracted_count >= retraction_cap:
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.exhausted",
+                    "error",
+                    {
+                        "reason": "review_retraction_cap_hit",
+                        "cap": retraction_cap,
+                        "retracted_count": retracted_count,
+                        "executor_evidence_id": evidence.id,
+                    },
+                    actor,
+                )
+                self._record_history(
+                    task_id,
+                    "task.review_exhausted",
+                    actor,
+                    None,
+                    None,
+                    {
+                        "cap": retraction_cap,
+                        "retracted_count": retracted_count,
+                        "executor_evidence_id": evidence.id,
+                    },
+                )
+                try:
+                    self.transition_task(
+                        task_id,
+                        TaskState.FAILED.value,
+                        actor,
+                        {
+                            "reason": "review_retraction_cap_hit",
+                            "cap": retraction_cap,
+                            "retracted_count": retracted_count,
+                            "executor_evidence_id": evidence.id,
+                        },
+                    )
+                except TransitionError:
+                    # Already terminal: nothing more to do.
+                    pass
+                return {
+                    "task_id": task_id,
+                    "status": "review_retraction_exhausted",
+                    "cap": retraction_cap,
+                    "retracted_count": retracted_count,
+                }
             reviewer = self._select_default_reviewer(
                 task,
                 executor_agent_id=evidence.created_by,
@@ -8802,6 +9467,13 @@ class ControlPlane:
         state: JsonDict,
         level: str,
     ) -> None:
+        # mem-03: silence the bridge.beads.repository_source emitter
+        # when the bridge is disabled (the default per CLAUDE.md). The
+        # original audit found 31,833 rows of this log on rocky despite
+        # MAC_BEADS_BRIDGE_ENABLED being unset — _refresh_beads_repository_source
+        # is reachable from non-poll paths that don't gate themselves.
+        if not _truthy_env("MAC_BEADS_BRIDGE_ENABLED"):
+            return
         self.record_log(
             "bridge.beads.repository_source",
             layer="control_plane",
@@ -8834,6 +9506,10 @@ class ControlPlane:
         existing = self._existing_beads_source_remediation_task(repo, status)
         if existing is not None:
             return existing
+        # mac-73cz: bound the spawn rate so a flaky provider can't turn
+        # self-healing into a task-spawn storm.
+        if self._beads_remediation_breaker_open(repo):
+            return None
         title = "Repair %s checkout before Beads polling" % repo.name
         dirty_paths = source_state.get("dirty_paths") or []
         description = (
@@ -8939,6 +9615,68 @@ class ControlPlane:
                 continue
             return task
         return None
+
+    def _beads_remediation_breaker_open(self, repo: BeadsRepository) -> bool:
+        """mac-73cz: circuit-breaker on the self-repair spawn rate.
+
+        A flaky upstream provider (e.g. an OpenAI 429) makes every repair task
+        fail fast, and the next poll spawns another — self-healing becomes a
+        thrash multiplier (the 2026-05-27 incident: 10+ identical
+        'Repair X checkout' tasks in one minute, all dying on the same quota
+        error). Bound the spawn rate: if at least
+        ``MAC_REPAIR_BREAKER_MAX_SPAWNS`` remediation tasks for this repo were
+        created within ``MAC_REPAIR_BREAKER_WINDOW_SECONDS``, the breaker is
+        open and we skip spawning until the window rolls off. Counting *all*
+        recent spawns (not just failures) bounds the storm regardless of the
+        error class — quota or transient. The open event is logged so an
+        operator can see why self-repair paused.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            max_spawns = int(os.environ.get("MAC_REPAIR_BREAKER_MAX_SPAWNS", "3"))
+            window_seconds = int(os.environ.get("MAC_REPAIR_BREAKER_WINDOW_SECONDS", "300"))
+        except ValueError:
+            max_spawns, window_seconds = 3, 300
+        if max_spawns <= 0 or window_seconds <= 0:
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        recent = 0
+        for task in self.list_tasks():
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            remediation = metadata.get("remediation")
+            if not isinstance(remediation, dict):
+                continue
+            if remediation.get("type") != "beads_source_refresh":
+                continue
+            if remediation.get("repository_id") != repo.id:
+                continue
+            try:
+                created = parse_time(task.created_at)
+            except (TypeError, ValueError):
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created >= cutoff:
+                recent += 1
+        if recent >= max_spawns:
+            self.record_log(
+                "bridge.beads.source_remediation.circuit_open",
+                layer="control_plane",
+                source="circuit_breaker",
+                level="warning",
+                subject_type="environment",
+                subject_id=repo.id,
+                detail={
+                    "repository": self._beads_repository_ref(repo),
+                    "recent_spawns": recent,
+                    "max_spawns": max_spawns,
+                    "window_seconds": window_seconds,
+                    "reason": "self-repair spawn rate exceeded; pausing new repair tasks",
+                },
+            )
+            return True
+        return False
 
     def _beads_repository_owner_agent(
         self,
@@ -10538,6 +11276,10 @@ class ControlPlane:
     def add_memory(self, *args: Any, **kwargs: Any) -> MemoryRecord:
         return self.memory.add_memory(*args, **kwargs)
 
+    def decay_memory(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """dream-04: forget stale, low-salience memory (dry-run by default)."""
+        return self.memory.decay_memory(*args, **kwargs)
+
     def get_memory(self, memory_id: str) -> MemoryRecord:
         return self.memory.get_memory(memory_id)
 
@@ -11496,6 +12238,8 @@ class ControlPlane:
             manifest,
             passed_check_count=self._passed_verification_check_count,
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
+            repo_coupled=self._task_is_repo_coupled(task),
+            require_tests=self._task_requires_tests(task),
         )
         problems.extend(self._required_changed_file_problems(task, manifest))
         return problems
@@ -11526,6 +12270,42 @@ class ControlPlane:
         return origin.get("type") == "beads_source_remediation" or remediation.get(
             "type"
         ) == "beads_source_refresh"
+
+    def _task_is_repo_coupled(self, task: Task) -> bool:
+        """mem-11: True when the task carries a repository_contract — a code task
+        expected to produce a pushed repo change. ``operator_result`` evidence is
+        rejected for such tasks (the verified task_d7c51a0b jam was a code task
+        that emitted a free-text operator_result with no commit/push)."""
+        metadata = ensure_json_object(task.metadata)
+        for path in (
+            ("execution_contract", "repository_contract"),
+            ("origin", "repository_contract"),
+            ("repository_contract",),
+        ):
+            contract = _nested_json_object(metadata, *path)
+            if isinstance(contract, dict) and contract:
+                return True
+        return False
+
+    def _task_requires_tests(self, task: Task) -> bool:
+        """mac-wjy3: True when the task's repository_contract explicitly lists
+        ``tests`` in its required evidence. Conservative — config/remediation
+        tasks (which don't opt in) are unaffected; only contracts that demand
+        tests reject a tests:null manifest."""
+        metadata = ensure_json_object(task.metadata)
+        for path in (
+            ("execution_contract", "repository_contract"),
+            ("origin", "repository_contract"),
+            ("repository_contract",),
+        ):
+            contract = _nested_json_object(metadata, *path)
+            if not isinstance(contract, dict) or not contract:
+                continue
+            evidence = ensure_json_object(contract.get("evidence"))
+            required = evidence.get("required") if isinstance(evidence.get("required"), list) else []
+            if any(str(r).strip().lower() in {"tests", "test"} for r in required):
+                return True
+        return False
 
     def _repo_verification_problems(self, manifest: JsonDict, require_tests: bool) -> List[str]:
         problems = self._require_pushed_repo_anchor(manifest)

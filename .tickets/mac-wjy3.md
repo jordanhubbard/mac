@@ -1,6 +1,6 @@
 ---
 id: mac-wjy3
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-28T17:32:35Z
@@ -25,3 +25,7 @@ Action:
 3. Either way, the verification contract should reject tests:null as it does test failures; today it accepts the manifest, and the workflow only fails later for "no passing tests".
 
 Discovered during mac-wsny e2e proof attempt.
+
+## Resolution (2026-05-31)
+
+Validator now rejects repo_change evidence with tests:null/missing when the task's repository_contract requires tests (require_tests gate). Worker-side deterministic test invocation remains a further hardening, but the contract now refuses to accept 'ran code, recorded no tests' for test-required tasks. Test added.

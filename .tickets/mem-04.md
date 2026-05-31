@@ -1,6 +1,6 @@
 ---
 id: mem-04
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-29T02:21:05Z
@@ -31,3 +31,7 @@ Combined: **1.83M of the 2.09M total observability rows.** These are "still poll
 - After conversion, write rate to `observability_events` drops by >80% on an idle hub.
 - Per-poll detail (which worker, which task, etc.) is preserved on `level='warning'` or higher branches only — silent-success polls leave no row.
 - Tests assert that `observability_events` row count for `worker.no_task` does not grow during an idle minute.
+
+## Resolution (2026-05-31)
+
+Implemented + tested (polling-chatter log names suppressed at record_log; MAC_OBSERVABILITY_VERBOSE_POLL to re-enable).

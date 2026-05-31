@@ -1,0 +1,65 @@
+diff --git a/gateway/run.py b/gateway/run.py
+index 6cec293..10c983c 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -1068,6 +1068,29 @@ logger = logging.getLogger(__name__)
+ _AGENT_PENDING_SENTINEL = object()
+ 
+ 
++def _mac_provider_decision():
++    """ADR 0001 (hu-03): mac's owned, in-process per-agent provider/model
++    override.
++
++    This is the first-class replacement for the runtime string-surgery mac used
++    to apply to this file from the outside
++    (``hermes_startup._apply_gateway_runtime_shim``). Because the Hermes runtime
++    is now vendored inside mac, the gateway calls mac directly instead of having
++    its source rewritten. Returns the ``ProviderDecision`` when an override is
++    configured, else ``None``; a no-op (returns ``None``) when ``mac`` is not
++    importable, i.e. standalone upstream Hermes.
++    """
++    try:
++        from mac.agent_provider import resolve_agent_provider
++    except Exception:
++        return None
++    try:
++        decision = resolve_agent_provider()
++    except Exception:
++        return None
++    return decision if decision.override_active else None
++
++
+ def _resolve_runtime_agent_kwargs() -> dict:
+     """Resolve provider credentials for gateway-created AIAgent instances.
+ 
+@@ -1105,6 +1128,18 @@ def _resolve_runtime_agent_kwargs() -> dict:
+     except Exception as exc:
+         raise RuntimeError(format_runtime_provider_error(exc)) from exc
+ 
++    # ADR 0001 (hu-03): layer mac's owned per-agent override (provider / base_url
++    # / api_key) onto the resolved runtime, in-process and observably — the
++    # replacement for the deleted string-surgery shim. No-op when mac isn't
++    # present or no override is configured.
++    _mac_decision = _mac_provider_decision()
++    if _mac_decision is not None:
++        runtime = _mac_decision.override_kwargs(runtime)
++        logger.info(
++            "mac provider override active: provider=%s base_url=%s source=%s",
++            runtime.get("provider"), runtime.get("base_url"), runtime.get("source"),
++        )
++
+     return {
+         "api_key": runtime.get("api_key"),
+         "base_url": runtime.get("base_url"),
+@@ -1468,6 +1503,11 @@ def _resolve_gateway_model(config: dict | None = None) -> str:
+     """
+     cfg = config if config is not None else _load_gateway_config()
+     model_cfg = cfg.get("model", {})
++    # ADR 0001 (hu-03): mac's owned per-agent model override wins (anti-monoculture
++    # lever), in-process — replaces the string-surgery model patch.
++    _mac_decision = _mac_provider_decision()
++    if _mac_decision is not None and _mac_decision.model:
++        return _mac_decision.model
+     if isinstance(model_cfg, str):
+         return model_cfg
+     elif isinstance(model_cfg, dict):

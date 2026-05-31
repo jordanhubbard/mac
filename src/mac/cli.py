@@ -266,6 +266,22 @@ def cmd_task_detect_beads(args: argparse.Namespace) -> None:
     _print(asdict(detect(_Path(args.repo_path).expanduser().resolve())))
 
 
+def cmd_task_detect_ticketing(args: argparse.Namespace) -> None:
+    """Connector-aware detection: which ticketing sources a repo has + whether a
+    one-way conversion to native .tickets/ should be offered."""
+    _print(_plane(args).detect_ticketing(args.repo_path))
+
+
+def cmd_task_convert_ticketing(args: argparse.Namespace) -> None:
+    """Run the one-way conversion of a detected foreign source (e.g. beads) into
+    native .tickets/ + the ledger (what hermes invokes once the user agrees)."""
+    _print(
+        _plane(args).convert_ticketing_source(
+            args.repo_path, project=args.project, actor=args.actor, dry_run=args.dry_run
+        )
+    )
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     description = _read_text_arg(
@@ -464,6 +480,26 @@ def cmd_agent_heartbeat(args: argparse.Namespace) -> None:
 
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
+
+
+def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
+    """fleet-02: the team roster + what each agent is doing now."""
+    _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
+
+
+def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
+    """fleet-02: refresh the live Fleet section in this agent's runtime-context
+    markdown so its next session knows what teammates are doing. Idempotent."""
+    import os as _os
+    from pathlib import Path as _Path
+    from mac.hermes_runtime import render_fleet_section, refresh_fleet_section
+
+    snapshot = _plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None))
+    markdown = getattr(args, "markdown", None) or _os.environ.get(
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"
+    ) or str(_Path.home() / ".hermes" / "mac-runtime-context.md")
+    refresh_fleet_section(_Path(markdown), render_fleet_section(snapshot))
+    _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
 
 
 def cmd_mood_set(args: argparse.Namespace) -> None:
@@ -1011,6 +1047,119 @@ def cmd_memory_remember(args: argparse.Namespace) -> None:
     )
 
 
+def _build_vector_writer(args: argparse.Namespace):
+    """Construct a VectorWriterService for CLI commands. The Qdrant
+    endpoint defaults to MAC_QDRANT_URL or http://127.0.0.1:6333. Tests
+    inject the writer directly; this builder is for operator use.
+    """
+    import os
+
+    from mac.vector_writer_service import VectorWriterService
+
+    cp = _plane(args)
+    qdrant_url = (
+        getattr(args, "qdrant_url", None)
+        or os.environ.get("MAC_QDRANT_URL")
+        or "http://127.0.0.1:6333"
+    )
+    return VectorWriterService(memory=cp.memory, qdrant_url=qdrant_url)
+
+
+def cmd_memory_embed(args: argparse.Namespace) -> None:
+    """mem-07: embed one memory_record into the medium tier."""
+    writer = _build_vector_writer(args)
+    ref = writer.embed_memory(args.memory_id, tier=args.tier)
+    _print(ref.to_dict())
+
+
+def cmd_memory_backfill(args: argparse.Namespace) -> None:
+    """mem-07: embed every memory_record that isn't already in the tier."""
+    writer = _build_vector_writer(args)
+    _print(writer.backfill(tier=args.tier, limit=args.limit))
+
+
+def cmd_memory_health(args: argparse.Namespace) -> None:
+    """mem-10: memory-tier health snapshot."""
+    cp = _plane(args)
+    kwargs: Dict[str, Any] = {"nap_interval_hours": args.nap_interval_hours}
+    qdrant_url = getattr(args, "qdrant_url", None)
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.memory_health(**kwargs))
+
+
+def cmd_memory_recall(args: argparse.Namespace) -> None:
+    """mem-09: vector-tier recall, hub-routable when MAC_API_URL is set."""
+    cp = _plane(args)
+    # If the dispatch is local (operator running `mac --db ...`), we
+    # need to provide a Qdrant URL; if it's remote, the HTTP route
+    # already resolves Qdrant on the hub side.
+    qdrant_url = getattr(args, "qdrant_url", None)
+    kwargs = {
+        "tier": args.tier,
+        "limit": args.limit,
+        "min_score": args.min_score,
+        "project": args.project,
+        "tenant_id": args.tenant_id,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.recall_memory(args.query, **kwargs))
+
+
+def cmd_nap_cycle(args: argparse.Namespace) -> None:
+    """mem-08 autonomy: begin + consolidate + complete in one shot."""
+    cp = _plane(args)
+    writer = None
+    if not args.no_embed:
+        writer = _build_vector_writer(args)
+    _print(
+        cp.run_nap_cycle(
+            args.agent_id,
+            actor=args.actor,
+            vector_writer=writer,
+            embed_into_medium=not args.no_embed,
+        )
+    )
+
+
+def cmd_tokenhub_refresh_wildcards(args: argparse.Namespace) -> None:
+    """mac-nyx7: refresh TokenHub's wildcard model ladder (what the weekly
+    timer calls). Clean no-op without TOKENHUB_URL + admin token."""
+    _print(_plane(args).refresh_tokenhub_wildcards())
+
+
+def cmd_nap_due(args: argparse.Namespace) -> None:
+    """List agents whose nap window has opened and hasn't been completed."""
+    due = _plane(args).list_due_nap_agents(as_of=args.as_of)
+    if getattr(args, "format", "json") == "agent-ids":
+        # Newline-delimited agent_ids for `xargs` in the nap-tick unit —
+        # avoids piping JSON through an embedded interpreter.
+        for item in due:
+            print(item["agent_id"])
+        return
+    _print(due)
+
+
+def cmd_nap_consolidate(args: argparse.Namespace) -> None:
+    """mem-08: walk the agent's recent memory_records, write per-group
+    summaries, and embed them into the medium tier."""
+    cp = _plane(args)
+    writer = None
+    if not args.no_embed:
+        writer = _build_vector_writer(args)
+    _print(
+        cp.consolidate_nap(
+            args.agent_id,
+            since=args.since,
+            nap_run_id=args.nap_run_id,
+            embed_into_medium=not args.no_embed,
+            vector_writer=writer,
+            created_by=args.created_by,
+        )
+    )
+
+
 def cmd_memory_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = args.project or "default"
@@ -1044,6 +1193,17 @@ def cmd_memory_forget(args: argparse.Namespace) -> None:
         (project, "beads_memory:%s" % args.key),
     )
     _print({"deleted": cursor.rowcount, "key": args.key, "project": project})
+
+
+def cmd_memory_decay(args: argparse.Namespace) -> None:
+    """dream-04: forget stale, low-salience memory (dry-run unless --apply)."""
+    _print(
+        _plane(args).decay_memory(
+            ttl_days=args.ttl_days,
+            dry_run=not args.apply,
+            limit=args.limit,
+        )
+    )
 
 
 def cmd_rollout_create(args: argparse.Namespace) -> None:
@@ -1166,6 +1326,40 @@ def cmd_observability_prune(args: argparse.Namespace) -> None:
         keep_last=args.keep_last,
     )
     _print({"removed": removed})
+
+
+def cmd_workflow_decisions(args: argparse.Namespace) -> None:
+    """wf-02: list every human-decision gate in a workflow or live run."""
+    cp = _plane(args)
+    target = args.id_or_slug
+    if target.startswith("run_"):
+        _print(cp.workflow_run_decisions(target))
+    else:
+        _print(cp.workflow_decisions(target, tenant_id=args.tenant_id))
+
+
+def cmd_workflow_start(args: argparse.Namespace) -> None:
+    """wf-03: start a workflow run, optionally with pre-supplied approval
+    decisions so the run can advance through approval gates unattended."""
+    cp = _plane(args)
+    pre_decisions: Dict[str, str] = {}
+    for spec in args.pre_decision or []:
+        if "=" not in spec:
+            raise MACError(
+                "--pre-decision expects <node_key>=approved|rejected (got %r)" % spec
+            )
+        key, _, value = spec.partition("=")
+        pre_decisions[key.strip()] = value.strip().lower()
+    input_obj = _json_arg(args.input, {})
+    _print(
+        cp.start_workflow(
+            args.workflow_id_or_slug,
+            started_by=args.started_by,
+            input=input_obj,
+            tenant_id=args.tenant_id,
+            pre_decisions=pre_decisions or None,
+        )
+    )
 
 
 def cmd_notifier_configure(args: argparse.Namespace) -> None:
@@ -1487,6 +1681,28 @@ def build_parser() -> argparse.ArgumentParser:
                                     "(useful for repos not registered with a MAC hub)")
     _set(cmd_task_migrate_beads, migrate_beads)
 
+    # Connector-aware (preferred): works for any future ticketing system, not
+    # just beads. detect-ticketing reports the needs-conversion signal hermes
+    # uses to ask the user; convert-ticketing runs the one-way import.
+    detect_ticketing = task.add_parser(
+        "detect-ticketing",
+        help="detect ticketing sources in a repo (.tickets native / .beads foreign) "
+        "and whether a one-way conversion should be offered (read-only)",
+    )
+    detect_ticketing.add_argument("repo_path")
+    _set(cmd_task_detect_ticketing, detect_ticketing)
+
+    convert_ticketing = task.add_parser(
+        "convert-ticketing",
+        help="one-way convert a detected foreign source (e.g. beads) into native "
+        ".tickets/ + the ledger (run after the user agrees)",
+    )
+    convert_ticketing.add_argument("repo_path")
+    convert_ticketing.add_argument("--project", required=True)
+    convert_ticketing.add_argument("--actor", default="hermes")
+    convert_ticketing.add_argument("--dry-run", action="store_true")
+    _set(cmd_task_convert_ticketing, convert_ticketing)
+
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
     project_create = project.add_parser("create")
     project_create.add_argument("name")
@@ -1543,6 +1759,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    # fleet-02: live group awareness for the team.
+    fleet_snap = fleet.add_parser(
+        "snapshot",
+        help="compact view of the fleet: who's online + what each agent is working on",
+    )
+    fleet_snap.add_argument("--agent", help="exclude this agent id (the caller) from the snapshot")
+    _set(cmd_fleet_snapshot, fleet_snap)
+
+    fleet_refresh = fleet.add_parser(
+        "refresh-context",
+        help="refresh the live Fleet section in this agent's runtime-context markdown "
+        "(what the nap-tick-style timer calls so each session knows its teammates)",
+    )
+    fleet_refresh.add_argument("--agent", help="this agent's id (excluded from its own fleet view)")
+    fleet_refresh.add_argument(
+        "--markdown",
+        help="runtime-context markdown path (default: $MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN "
+        "or ~/.hermes/mac-runtime-context.md)",
+    )
+    _set(cmd_fleet_refresh_context, fleet_refresh)
 
     mood = sub.add_parser(
         "mood",
@@ -1633,6 +1870,75 @@ def build_parser() -> argparse.ArgumentParser:
     nap_list = nap.add_parser("list", help="list nap_runs")
     nap_list.add_argument("--agent-id")
     _set(cmd_nap_list, nap_list)
+
+    # mem-08 autonomy: run the whole begin → consolidate → complete arc.
+    nap_cycle = nap.add_parser(
+        "cycle",
+        help="run a full nap cycle (begin + consolidate + complete) for "
+        "one agent — what the auto-trigger timer calls",
+    )
+    nap_cycle.add_argument("agent_id")
+    nap_cycle.add_argument("--actor")
+    nap_cycle.add_argument("--no-embed", action="store_true")
+    nap_cycle.add_argument("--qdrant-url")
+    _set(cmd_nap_cycle, nap_cycle)
+
+    nap_due = nap.add_parser(
+        "due",
+        help="list enabled nap_schedules whose current window has opened "
+        "and not yet been completed",
+    )
+    nap_due.add_argument(
+        "--as-of",
+        help="ISO timestamp to compute due-ness against (default: now)",
+    )
+    nap_due.add_argument(
+        "--format",
+        choices=("json", "agent-ids"),
+        default="json",
+        help="'json' (full due list) or 'agent-ids' (newline-delimited "
+        "agent_ids, for piping to `xargs mac nap cycle`)",
+    )
+    _set(cmd_nap_due, nap_due)
+
+    # mac-nyx7: weekly refresh of TokenHub's wildcard model ladder.
+    tokenhub = sub.add_parser(
+        "tokenhub", help="TokenHub integration commands"
+    ).add_subparsers(dest="tokenhub_command", required=True)
+    tokenhub_refresh = tokenhub.add_parser(
+        "refresh-wildcards",
+        help="refresh TokenHub's wildcard model ladder from current "
+        "availability/quality/cost (what the weekly timer calls). No-op "
+        "without TOKENHUB_URL and a TokenHub admin token.",
+    )
+    _set(cmd_tokenhub_refresh_wildcards, tokenhub_refresh)
+
+    # mem-08: build per-(task/project) memory summaries for an agent.
+    nap_consolidate = nap.add_parser(
+        "consolidate",
+        help="walk the agent's recent memory_records, summarize by "
+        "task/project, write a nap_summary row per group, and embed "
+        "into the medium tier (mem-08)",
+    )
+    nap_consolidate.add_argument("agent_id")
+    nap_consolidate.add_argument(
+        "--since",
+        help="ISO timestamp lower bound; default = last successful nap's "
+        "completed_at, or '<beginning>' if there isn't one",
+    )
+    nap_consolidate.add_argument("--nap-run-id", help="link the summaries to this run")
+    nap_consolidate.add_argument("--created-by")
+    nap_consolidate.add_argument(
+        "--no-embed",
+        action="store_true",
+        help="skip the vector-writer handoff (summary-only mode; useful "
+        "when Qdrant is offline)",
+    )
+    nap_consolidate.add_argument(
+        "--qdrant-url",
+        help="override the default Qdrant URL passed to the vector writer",
+    )
+    _set(cmd_nap_consolidate, nap_consolidate)
 
     dispatch = sub.add_parser("dispatch", help="dispatcher commands").add_subparsers(dest="dispatch_command", required=True)
     assign = dispatch.add_parser("assign")
@@ -1905,6 +2211,15 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_integrations_observations, integrations_observations)
 
     memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(dest="memory_command", required=True)
+    memory_decay = memory.add_parser(
+        "decay",
+        help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
+        "curated knowledge (user/project/feedback/deployment_learning/beads_memory) is preserved",
+    )
+    memory_decay.add_argument("--ttl-days", type=float, default=90.0)
+    memory_decay.add_argument("--limit", type=int, default=500)
+    memory_decay.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+    _set(cmd_memory_decay, memory_decay)
     memory_add = memory.add_parser("add")
     memory_add.add_argument("--task-id")
     memory_add.add_argument("--subject-type", required=True)
@@ -1944,6 +2259,75 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget.add_argument("key")
     memory_forget.add_argument("--project", default="default")
     _set(cmd_memory_forget, memory_forget)
+
+    # mem-07: embed a memory_record into Qdrant + record the vector_ref.
+    memory_embed = memory.add_parser(
+        "embed",
+        help="embed one memory_record into the vector tier (mem-07)",
+    )
+    memory_embed.add_argument("memory_id")
+    memory_embed.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_embed.add_argument(
+        "--qdrant-url",
+        help="override the default Qdrant URL (MAC_QDRANT_URL env or 127.0.0.1:6333)",
+    )
+    _set(cmd_memory_embed, memory_embed)
+
+    memory_backfill = memory.add_parser(
+        "backfill",
+        help="embed every memory_record not yet in the target Qdrant collection (mem-07)",
+    )
+    memory_backfill.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_backfill.add_argument(
+        "--limit", type=int, help="cap embeddings this pass (None = all)"
+    )
+    memory_backfill.add_argument("--qdrant-url")
+    _set(cmd_memory_backfill, memory_backfill)
+
+    memory_health = memory.add_parser(
+        "health",
+        help="mem-10: memory-tier health snapshot (counts + alerts for "
+        "inert vector tier / stalled consolidator / disk bloat)",
+    )
+    memory_health.add_argument(
+        "--nap-interval-hours", type=float, default=24.0,
+        help="2× this value is the stalled-consolidator alert threshold",
+    )
+    memory_health.add_argument("--qdrant-url")
+    _set(cmd_memory_health, memory_health)
+
+    memory_recall = memory.add_parser(
+        "recall",
+        help="vector-tier recall (mem-09): embed query and return top "
+        "ranked memory hits with their summaries",
+    )
+    memory_recall.add_argument("query")
+    memory_recall.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_recall.add_argument("--limit", type=int, default=5)
+    memory_recall.add_argument(
+        "--min-score", type=float,
+        help="drop hits below this cosine score (0.0–1.0)",
+    )
+    memory_recall.add_argument(
+        "--project",
+        help="server-side filter: only return hits whose payload project matches",
+    )
+    memory_recall.add_argument(
+        "--tenant-id",
+        help="server-side filter: only return hits whose payload tenant matches",
+    )
+    memory_recall.add_argument(
+        "--qdrant-url",
+        help="override Qdrant URL when running in local mode (--db). "
+        "Hub mode reads MAC_QDRANT_URL on the hub.",
+    )
+    _set(cmd_memory_recall, memory_recall)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
     rollout_create = rollout.add_parser("create")
@@ -2127,6 +2511,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_acc.add_argument("--report", help="write the migration report JSON to this path")
     _set(cmd_migrate_acc, migrate_acc)
+
+    workflow = sub.add_parser(
+        "workflow",
+        help="workflow inspection (graph definitions, runs, decision gates)",
+    ).add_subparsers(dest="workflow_command", required=True)
+    workflow_decisions = workflow.add_parser(
+        "decisions",
+        help="list every human-decision (approval) gate in a workflow or a "
+        "live run. Pass a workflow id/slug to see the definition's gates, "
+        "or a run id (prefix run_) for live state.",
+    )
+    workflow_decisions.add_argument(
+        "id_or_slug",
+        help="workflow id/slug, or workflow-run id (prefix `run_`)",
+    )
+    workflow_decisions.add_argument(
+        "--tenant-id",
+        help="scope a slug lookup to a tenant",
+    )
+    _set(cmd_workflow_decisions, workflow_decisions)
+
+    workflow_start = workflow.add_parser(
+        "start",
+        help="start a workflow run, optionally with front-loaded approval "
+        "decisions so the run can advance unattended.",
+    )
+    workflow_start.add_argument("workflow_id_or_slug")
+    workflow_start.add_argument("--started-by", default="human")
+    workflow_start.add_argument("--tenant-id")
+    workflow_start.add_argument(
+        "--input",
+        default=None,
+        help="JSON object passed to the workflow as initial input",
+    )
+    workflow_start.add_argument(
+        "--pre-decision",
+        action="append",
+        default=[],
+        metavar="NODE_KEY=approved|rejected",
+        help="pre-supplied decision for an approval node; may repeat "
+        "(e.g. --pre-decision pm_review=approved --pre-decision qa=rejected)",
+    )
+    _set(cmd_workflow_start, workflow_start)
 
     eval_root = sub.add_parser("eval", help="evaluation sets and runs").add_subparsers(
         dest="eval_command", required=True

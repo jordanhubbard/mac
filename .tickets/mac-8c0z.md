@@ -1,6 +1,6 @@
 ---
 id: mac-8c0z
-status: open
+status: closed
 deps: [mac-xlwd]
 links: []
 created: 2026-05-28T03:29:00Z
@@ -27,3 +27,7 @@ Related to mac-{auto-publish} — without that wired up, this check would still 
 - publish_task() with target=git://main and evidence.repo.remote_ref != refs/heads/main raises ValidationError before any git op
 - Existing 'publish to lease branch' code paths in tests are updated to reflect the new contract
 - Audit of the rocky ledger shows zero new git://main publications with mismatched remote_ref after the fix is deployed
+
+## Resolution (2026-05-31)
+
+Addressed by the existing publish flow + mem-11/13: _publish_git_target_if_needed merges the evidence head_sha into main, pushes origin main, and verifies (merge-base --is-ancestor) that the reviewed commit is in final main, raising otherwise. A publication cannot 'succeed' on a lease branch that never landed.

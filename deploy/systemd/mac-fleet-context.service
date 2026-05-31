@@ -1,0 +1,21 @@
+[Unit]
+Description=mac fleet-context — refresh this agent's live view of its teammates
+Documentation=https://github.com/jordanh/mac
+After=mac.service
+Requires=mac.service
+
+[Service]
+Type=oneshot
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+EnvironmentFile=-__MAC_HOME__/mac.env
+
+# fleet-02: refresh the live "Fleet — your teammates" block in this agent's
+# runtime-context markdown, so each new hermes session always knows what the
+# other agents are doing. --agent excludes the caller from its own view.
+ExecStart=/bin/bash -lc '\
+  __MAC_HOME__/venv/bin/mac fleet refresh-context \
+    --agent "${MAC_AGENT_ID:-${MAC_WORKER_AGENT_ID:-}}"'
+
+StandardOutput=journal
+StandardError=journal

@@ -1,6 +1,6 @@
 ---
 id: mac-zpku
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-05-28T17:32:22Z
@@ -26,3 +26,7 @@ Discovered during attempt to demonstrate autonomous-merge for mac-wsny.
 - bullwinkle's mac-hermes-task-executor can `git push origin <lease-branch>` against git@github.com:jordanhubbard/mac.git without manual auth intervention
 - A subsequent e2e task run by bullwinkle produces evidence with verification.repo.pushed=True and the branch exists on origin
 - Push failures generate verification.problems entries, not silent pushed=False
+
+## Resolution (2026-05-31)
+
+Silent push failure is now loud: mem-11/mem-13 reject repo evidence with pushed=false or an unresolvable remote_ref, so a missing lease branch fails validation instead of passing. The deploy's install_github_review_key is not OS-gated (runs on darwin too), and bullwinkle is verified push-capable to git@github.com:jordanhubbard/mac.
