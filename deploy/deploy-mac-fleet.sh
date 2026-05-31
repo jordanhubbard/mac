@@ -50,10 +50,9 @@ live outside this Git repository. The checked-in deploy/fleet/config.yaml is a
 generic schema/defaults sample only.
 
 Each host gets:
-  - ~/.mac/src/mac from this repository
-  - ~/.mac/venv with mac installed
-  - upstream NousResearch/hermes-agent in ~/.mac/hermes-agent
-  - the minimal Hermes multi-Slack patch set
+  - ~/.mac/src/mac from this repository (includes the vendored Hermes runtime
+    at src/mac/_hermes — pinned + patched; no upstream clone, no separate venv)
+  - ~/.mac/venv with mac + the hermes-gateway extra installed
   - preinstalled configured Hermes messaging dependencies
   - enforced Hermes secret redaction
   - a host-local mac service, with the configured hub exposed
@@ -882,6 +881,11 @@ MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 SRC_DIR="$MAC_HOME/src/mac"
 VENV="$MAC_HOME/venv"
 HERMES_DIR="$MAC_HOME/hermes-agent"
+# ADR 0001 hu-04: the Hermes runtime is vendored in-tree (no upstream clone).
+# Deploy-time python runs from the mac venv ($VENV) and imports the vendored
+# runtime via PYTHONPATH; HERMES_DIR is no longer created.
+HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"
+export PYTHONPATH="$HERMES_VENDORED:${PYTHONPATH:-}"
 BEADS_DIR="$MAC_HOME/vendor/beads"
 ENV_FILE="$MAC_HOME/mac.env"
 LOG_DIR="$MAC_HOME/logs"
@@ -1671,7 +1675,7 @@ verify_hermes_prompt_bridge() {
   HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
   MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HOME/.hermes/mac-runtime-context.md}" \
   PYTHONPATH="$HERMES_DIR:${PYTHONPATH:-}" \
-  "$HERMES_DIR/.venv/bin/python" - "$SRC_DIR" <<'PY'
+  "$VENV/bin/python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -2876,7 +2880,7 @@ PY
 
 sync_hermes_tokenhub_runtime_config() {
   log "syncing Hermes TokenHub runtime config"
-  "$HERMES_DIR/.venv/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
+  "$VENV/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -3103,7 +3107,7 @@ PY
 
 initialize_hermes_home() {
   log "initializing Hermes home with upstream Hermes defaults"
-  "$HERMES_DIR/.venv/bin/python" - <<'PY'
+  "$VENV/bin/python" - <<'PY'
 from hermes_cli.config import ensure_hermes_home
 
 ensure_hermes_home()
@@ -3158,7 +3162,7 @@ PY
 
 install_hermes_messaging_deps() {
   log "preinstalling configured Hermes messaging dependencies"
-  "$HERMES_DIR/.venv/bin/python" - "$HERMES_DIR" "$HOME/.hermes" "$LOG_DIR/hermes-messaging-deps.json" <<'PY'
+  "$VENV/bin/python" - "$HERMES_VENDORED" "$HOME/.hermes" "$LOG_DIR/hermes-messaging-deps.json" <<'PY'
 import importlib.util
 import json
 import os
@@ -3334,7 +3338,7 @@ PY
 
 install_hermes_web_deps() {
   log "preinstalling configured Hermes web dependencies"
-  "$HERMES_DIR/.venv/bin/python" - "$HOME/.hermes" "$LOG_DIR/hermes-web-deps.json" <<'PY'
+  "$VENV/bin/python" - "$HOME/.hermes" "$LOG_DIR/hermes-web-deps.json" <<'PY'
 import importlib.util
 import json
 import os
@@ -3714,7 +3718,7 @@ values["HERMES_HOME"] = str(home / ".hermes")
 values["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
 values["HERMES_REDACT_SECRETS"] = "true"
 values["ACC_DIR"] = str(home / ".acc")
-values["MAC_HERMES_AGENT_DIR"] = str(mac_home / "hermes-agent")
+values["MAC_HERMES_AGENT_DIR"] = str(mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
 values["MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM"] = "1"
 values["MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM"] = "1"
 values["MAC_HERMES_STARTUP_CHECK"] = "1"
@@ -3994,26 +3998,13 @@ ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
 write_hermes_web_search_config
 
-log "redeploying upstream Hermes agent"
-git clone --quiet https://github.com/NousResearch/hermes-agent.git "$HERMES_DIR"
-git -C "$HERMES_DIR" rev-parse HEAD > "$LOG_DIR/hermes-upstream-rev.txt"
-for patch_path in \
-  "$SRC_DIR/deploy/hermes/multi-slack-mvp.patch" \
-  "$SRC_DIR/deploy/hermes/mac-runtime-context-prompt.patch" \
-  "$SRC_DIR/deploy/hermes/disable-shutdown-chat-notices.patch"
-do
-  if git -C "$HERMES_DIR" apply --check "$patch_path"; then
-    git -C "$HERMES_DIR" apply "$patch_path"
-    log "applied Hermes patch $(basename "$patch_path")"
-  else
-    log "ERROR: Hermes patch $(basename "$patch_path") does not apply to upstream checkout"
-    git -C "$HERMES_DIR" status --short
-    exit 1
-  fi
-done
-"$HERMES_PY" -m venv "$HERMES_DIR/.venv"
-"$HERMES_DIR/.venv/bin/python" -m pip install --upgrade pip wheel >/dev/null
-"$HERMES_DIR/.venv/bin/python" -m pip install --ignore-requires-python -e "$HERMES_DIR" >/dev/null
+log "using vendored in-tree Hermes runtime (ADR 0001 hu-04; no upstream clone)"
+# The Hermes runtime ships pinned + patched in the mac package at
+# $HERMES_VENDORED and runs in-process from the single mac venv ($VENV) — there
+# is no upstream clone and no separate hermes venv. HERMES_DIR stays a path
+# symbol for the (guarded) backup/restore logic but is intentionally NOT created.
+git -C "$SRC_DIR" rev-parse HEAD > "$LOG_DIR/hermes-vendored-rev.txt" 2>/dev/null || true
+cat "$HERMES_VENDORED/SNAPSHOT_PIN" > "$LOG_DIR/hermes-vendored-pin.txt" 2>/dev/null || true
 initialize_hermes_home
 sync_hermes_tokenhub_runtime_config
 ensure_hermes_identity_memory_continuity
@@ -4333,8 +4324,8 @@ case "$mode" in
   loop)
     executor="${MAC_WORKER_EXECUTOR:-$HOME/.mac/bin/mac-hermes-task-executor}"
     if [ "$executor" = "$HOME/.mac/bin/mac-hermes-task-executor" ]; then
-      test -x "$HOME/.mac/hermes-agent/.venv/bin/python"
-      test -f "$HOME/.mac/hermes-agent/hermes"
+      test -x "$HOME/.mac/venv/bin/python"
+      test -f "$HOME/.mac/bin/mac-hermes-task-executor.py"
     fi
     exec "${common[@]}" --loop --executor "$executor"
     ;;
@@ -4381,10 +4372,8 @@ fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
 fi
-selftest_python="$HOME/.mac/hermes-agent/.venv/bin/python"
-if [ ! -x "$selftest_python" ]; then
-  selftest_python="$HOME/.mac/venv/bin/python"
-fi
+# ADR 0001 hu-04: the self-test runs from the single mac venv (vendored runtime).
+selftest_python="$HOME/.mac/venv/bin/python"
 exec "$selftest_python" - <<'PY'
 from __future__ import annotations
 
@@ -4534,8 +4523,10 @@ firecrawl_key = os.environ.get("FIRECRAWL_API_KEY") or ""
 firecrawl_required = True
 firecrawl_required_flag = os.environ.get("MAC_REQUIRE_FIRECRAWL")
 timeout = int(os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT") or "120")
-python_bin = str(mac_home / "hermes-agent" / ".venv" / "bin" / "python")
-hermes_script = str(mac_home / "hermes-agent" / "hermes")
+# ADR 0001 hu-04: run the vendored Hermes runtime from the mac venv in-process.
+python_bin = str(mac_home / "venv" / "bin" / "python")
+hermes_vendored = str(mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
+hermes_env = {**os.environ, "PYTHONPATH": hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")}
 
 problems: list[str] = []
 checks: dict[str, object] = {
@@ -4637,7 +4628,7 @@ elif firecrawl_url:
     checks["firecrawl_web_search"] = ok
 
 try:
-    sys.path.insert(0, str(mac_home / "hermes-agent"))
+    sys.path.insert(0, hermes_vendored)
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     runtime_provider = resolve_runtime_provider(
@@ -4676,11 +4667,12 @@ prompt = (
 )
 try:
     completed = subprocess.run(
-        [python_bin, hermes_script, "chat", "--query", prompt, "--quiet"],
+        [python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"],
         text=True,
         capture_output=True,
         timeout=timeout,
         check=False,
+        env=hermes_env,
     )
     chat_returncode = completed.returncode
     chat_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
@@ -5306,11 +5298,13 @@ def main() -> int:
                 "Read the full task from: %s" % str(task_file),
             ]
         )
-    hermes_py = Path.home() / ".mac" / "hermes-agent" / ".venv" / "bin" / "python"
-    hermes = Path.home() / ".mac" / "hermes-agent" / "hermes"
+    # ADR 0001 hu-04: run the vendored Hermes runtime from the mac venv in-process.
+    hermes_py = Path.home() / ".mac" / "venv" / "bin" / "python"
+    hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
+    os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
     audit_task_id = review_context.get("task_id") if isinstance(review_context, dict) else task.get("id")
     result = run_audited_command(
-        [str(hermes_py), str(hermes), "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"],
+        [str(hermes_py), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"],
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if isinstance(review_context, dict) else "task"},
@@ -5360,7 +5354,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HERMES_DIR
+WorkingDirectory=$MAC_HOME
 EnvironmentFile=$ENV_FILE
 ExecStart=$MAC_HOME/bin/hermes-gateway
 Restart=always
@@ -5466,7 +5460,7 @@ environment=HOME="$HOME"
 
 [program:$HERMES_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/hermes-gateway
-directory=$HERMES_DIR
+directory=$MAC_HOME
 user=$USER
 autostart=true
 autorestart=true
@@ -5581,7 +5575,7 @@ install_darwin_hermes_service() {
   <array><string>$MAC_HOME/bin/hermes-gateway</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>$HERMES_DIR</string>
+  <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>StandardOutPath</key><string>$LOG_DIR/hermes-gateway.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/hermes-gateway.log</string>
 </dict>
