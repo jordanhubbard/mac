@@ -38,10 +38,21 @@ files.** Reachable subtrees, with file counts:
 
 **Runtime-loaded, NOT statically imported (vendor anyway, verify at runtime):**
 - `skills/` — markdown/skill library the agent scans at runtime (data, not
-  imports), so the static trace shows it unreached. Confirm with a runtime
-  import/usage trace (gateway boot + oneshot under `-X importtime`) before
-  trusting the static set; also re-check `optional-skills/` / `optional-mcps/`
-  and `tools/lazy_deps.py` lazy paths.
+  imports), so the static trace shows it unreached.
+
+### Runtime trace result (validates the static manifest)
+
+A real oneshot (`hermes -z` under `python -v`) on rocky confirmed:
+- **`plugins/` loads 273 files at runtime** (vs 20 statically — dynamic
+  loading). It is essential; omitting it would break the vendor.
+- `hermes_cli` (87), `agent` (78), `gateway` (27), `tools` (15), `providers`
+  (6) + top-level entry modules all load — subset of the static set, since a
+  trivial oneshot doesn't exercise every path. **Vendor the union of static ∪
+  runtime** (the INCLUDE arrays already cover every reachable subtree).
+- **`skills/` did NOT load** in a basic oneshot — agent skills are likely
+  loaded on-demand or from `HERMES_HOME`, not the checkout. Vendor
+  conservatively, but confirm whether the checkout `skills/` is needed at all
+  before treating it as required.
 
 ## Exclude manifest (cruft — do NOT vendor) — MEASURED
 
