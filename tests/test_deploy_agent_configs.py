@@ -196,10 +196,12 @@ def test_fleet_deploy_applies_hermes_patch_set():
     quench_patch = ROOT / "deploy" / "hermes" / "disable-shutdown-chat-notices.patch"
     runtime_patch = ROOT / "deploy" / "hermes" / "mac-runtime-context-prompt.patch"
 
-    assert "multi-slack-mvp.patch" in script
-    assert "mac-runtime-context-prompt.patch" in script
-    assert "disable-shutdown-chat-notices.patch" in script
-    assert "upstream plus mac-managed patches" in script
+    # ADR 0001 hu-04: the runtime is vendored in-tree (patches folded into the
+    # snapshot); the deploy no longer clones upstream or applies patches at
+    # deploy time. The .patch files are retained for re-vendoring (asserted below).
+    assert "NousResearch/hermes-agent.git" not in script
+    assert "vendored in-tree Hermes runtime" in script
+    assert 'HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"' in script
     assert "verify_hermes_prompt_bridge()" in script
     assert "prompt_builder.build_context_files_prompt" in script
     assert "First-Class Objects" in script
@@ -768,7 +770,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
     assert '"key_matches_env": key_matches_env' in selftest
-    assert '[python_bin, hermes_script, "chat", "--query", prompt, "--quiet"]' in selftest
+    assert '[python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"]' in selftest
     assert "def output_text" in selftest
     assert "output_text(exc.stdout)" in selftest
     assert "classify_hermes_chat_failure" in selftest
