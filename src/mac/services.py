@@ -2665,6 +2665,35 @@ class ControlPlane:
         default_caps = defaults.get("required_capabilities")
         if not caps and isinstance(default_caps, list):
             caps = [str(item).strip() for item in default_caps if str(item).strip()]
+
+        # Capability policy (untrusted LLM input guard): when a project pins
+        # an allow-list of hard runtime capabilities, any requested capability
+        # outside it (e.g. domain/language labels like "typescript",
+        # "frontend", "design" hallucinated by Hermes) is stripped from the
+        # scheduler's hard requirements and preserved as domain context so the
+        # task stays claimable while keeping the LLM's classification intent.
+        allowed_caps = defaults.get("allowed_capabilities")
+        if caps and isinstance(allowed_caps, list):
+            allowed = [str(item).strip() for item in allowed_caps if str(item).strip()]
+            allowed_set = set(allowed)
+            accepted: List[str] = []
+            filtered: List[str] = []
+            for cap in caps:
+                (accepted if cap in allowed_set else filtered).append(cap)
+            if filtered:
+                existing_domain = normalized.get("domain_capabilities")
+                domain = list(existing_domain) if isinstance(existing_domain, list) else []
+                for cap in filtered:
+                    if cap not in domain:
+                        domain.append(cap)
+                normalized["domain_capabilities"] = domain
+                normalized["capability_policy"] = {
+                    "source": "project.task_defaults.allowed_capabilities",
+                    "allowed": allowed,
+                    "accepted": accepted,
+                    "filtered": filtered,
+                }
+            caps = accepted
         return caps, normalized
 
     def create_task(
