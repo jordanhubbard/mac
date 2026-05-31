@@ -2633,6 +2633,40 @@ class ControlPlane:
 
     # Task ledger
 
+    def _apply_project_task_defaults(
+        self,
+        project: Optional[str],
+        required_capabilities: List[str],
+        metadata: Dict[str, Any],
+    ) -> Tuple[List[str], JsonDict]:
+        normalized = ensure_json_object(metadata)
+        caps = list(required_capabilities)
+        if not project:
+            return caps, normalized
+        try:
+            record = self.get_project_record(project)
+        except NotFoundError:
+            return caps, normalized
+        project_meta = ensure_json_object(record.metadata)
+        defaults = project_meta.get("task_defaults")
+        if not isinstance(defaults, dict):
+            return caps, normalized
+
+        role = str(defaults.get("role") or "").strip()
+        if role and not str(normalized.get("required_role") or "").strip():
+            try:
+                self.roles.get_role(role)
+            except NotFoundError as exc:
+                raise ValidationError(
+                    "unknown project default role for %s: %s" % (project, role)
+                ) from exc
+            normalized["required_role"] = role
+
+        default_caps = defaults.get("required_capabilities")
+        if not caps and isinstance(default_caps, list):
+            caps = [str(item).strip() for item in default_caps if str(item).strip()]
+        return caps, normalized
+
     def create_task(
         self,
         title: str,
@@ -2654,10 +2688,15 @@ class ControlPlane:
         now = utcnow()
         task_id = new_id("task")
         state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
-        normalized_metadata = self._normalize_task_execution_contract(
-            ensure_json_object(metadata),
+        task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
             coerce_list(required_capabilities),
+            ensure_json_object(metadata),
+        )
+        normalized_metadata = self._normalize_task_execution_contract(
+            task_metadata,
+            project,
+            task_capabilities,
         )
         self.store.execute(
             """
@@ -2675,7 +2714,7 @@ class ControlPlane:
                 project,
                 int(priority),
                 state,
-                json_dumps(coerce_list(required_capabilities)),
+                json_dumps(task_capabilities),
                 json_dumps(dep_ids),
                 json_dumps(normalized_metadata),
                 int(max_attempts),
@@ -2691,7 +2730,7 @@ class ControlPlane:
             state,
             {
                 "title": title,
-                "required_capabilities": coerce_list(required_capabilities),
+                "required_capabilities": task_capabilities,
                 "dependencies": dep_ids,
                 "execution_contract_type": (
                     normalized_metadata.get("execution_contract", {}).get("type")
@@ -2713,7 +2752,7 @@ class ControlPlane:
                 subject_id=task_id,
                 detail={
                     "project": project,
-                    "required_capabilities": coerce_list(required_capabilities),
+                    "required_capabilities": task_capabilities,
                     "reason": normalized_metadata["execution_contract"].get("reason"),
                 },
             )
@@ -2860,7 +2899,7 @@ class ControlPlane:
         detail: JsonDict = {}
         new_project = task.project
         new_capabilities = list(task.required_capabilities)
-        new_metadata = task.metadata
+        new_metadata = ensure_json_object(task.metadata)
         if title is not None:
             title_value = str(title or "").strip()
             if not title_value:
@@ -2881,11 +2920,6 @@ class ControlPlane:
             updates.append("priority = ?")
             params.append(int(priority))
             detail["priority"] = int(priority)
-        if required_capabilities is not None:
-            new_capabilities = coerce_list(required_capabilities)
-            updates.append("required_capabilities = ?")
-            params.append(json_dumps(new_capabilities))
-            detail["required_capabilities"] = new_capabilities
         if dependencies is not None:
             dep_ids = coerce_list(dependencies)
             if task_id in dep_ids:
@@ -2900,24 +2934,33 @@ class ControlPlane:
                 updates.append("state = ?")
                 params.append(next_state)
                 detail["state"] = next_state
+        should_reconcile_metadata = metadata is not None or project is not None or required_capabilities is not None
+        explicit_required_capabilities_update = required_capabilities is not None
+        if required_capabilities is not None:
+            new_capabilities = coerce_list(required_capabilities)
         if metadata is not None:
+            new_metadata = ensure_json_object(metadata)
+        if should_reconcile_metadata:
+            new_capabilities, new_metadata = self._apply_project_task_defaults(
+                new_project,
+                new_capabilities,
+                ensure_json_object(new_metadata),
+            )
+            if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
+                updates.append("required_capabilities = ?")
+                params.append(json_dumps(new_capabilities))
+                detail["required_capabilities"] = new_capabilities
             new_metadata = self._normalize_task_execution_contract(
-                ensure_json_object(metadata),
+                new_metadata,
                 new_project,
                 new_capabilities,
             )
             updates.append("metadata = ?")
             params.append(json_dumps(new_metadata))
-            detail["metadata_changed"] = True
-        elif project is not None or required_capabilities is not None:
-            new_metadata = self._normalize_task_execution_contract(
-                dict(task.metadata),
-                new_project,
-                new_capabilities,
-            )
-            updates.append("metadata = ?")
-            params.append(json_dumps(new_metadata))
-            detail["metadata_reconciled"] = True
+            if metadata is not None:
+                detail["metadata_changed"] = True
+            else:
+                detail["metadata_reconciled"] = True
         if max_attempts is not None:
             if int(max_attempts) < 1:
                 raise ValidationError("max_attempts must be >= 1")

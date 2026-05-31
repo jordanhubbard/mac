@@ -6853,3 +6853,110 @@ def test_agentbus_enforces_recipient_chunk_size_and_stream_id_shape(cp):
             payload={"blob": "x" * (256 * 1024 + 1)},
         )
     assert cp.read_agentbus_chunks(recipient.id, stream.id) == []
+
+
+def test_create_task_inherits_project_default_role(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task("Fix UI", project="mac")
+
+    assert task.metadata["required_role"] == "python-coder-opencode"
+    assert task.required_capabilities == []
+
+
+def test_create_task_preserves_explicit_required_role(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.roles.create_role(
+        "custom-coder",
+        "Custom Coder",
+        "Custom coding role",
+        "You are a custom coder.",
+        "ic",
+        default_capabilities=["python"],
+        required_capabilities=["python"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task(
+        "Custom role work",
+        project="mac",
+        metadata={"required_role": "custom-coder"},
+    )
+
+    assert task.metadata["required_role"] == "custom-coder"
+
+
+def test_create_task_rejects_unknown_project_default_role(cp):
+    import pytest
+    from mac.models import ValidationError
+
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    with pytest.raises(ValidationError, match="unknown project default role"):
+        cp.create_task("Unroutable", project="mac")
+
+
+def test_update_task_without_routing_change_tolerates_later_bad_project_default(cp):
+    task = cp.create_task("work", project="mac", metadata={"required_role": "custom"})
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    updated = cp.update_task(task.id, title="renamed")
+
+    assert updated.title == "renamed"
+    assert updated.metadata["required_role"] == "custom"
+
+
+def test_update_task_rejects_newly_applied_unknown_project_default(cp):
+    import pytest
+    from mac.models import ValidationError
+
+    task = cp.create_task("work")
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    with pytest.raises(ValidationError, match="unknown project default role"):
+        cp.update_task(task.id, project="mac")
+
+
+def test_update_task_uses_explicit_metadata_when_applying_project_defaults(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+    task = cp.create_task("work")
+
+    updated = cp.update_task(task.id, project="mac", metadata={"source": "explicit"})
+
+    assert updated.metadata["source"] == "explicit"
+    assert updated.metadata["required_role"] == "python-coder-opencode"
