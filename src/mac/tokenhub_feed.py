@@ -20,14 +20,18 @@ The SSE parser and the event→record mapping are pure and unit-tested;
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, Mapping, Optional, Tuple
 
 __all__ = [
     "iter_sse_events",
     "event_to_record",
     "record_event",
     "stream_decisions",
+    "events_url_from_env",
+    "admin_token_from_env",
+    "start_background_consumer",
     "ROUTE_EVENT_NAMES",
 ]
 
@@ -155,3 +159,72 @@ def stream_decisions(
             if should_stop is not None and should_stop():
                 break
     return recorded
+
+
+def events_url_from_env(env: Optional[Mapping[str, str]] = None) -> str:
+    """Resolve the TokenHub SSE feed URL: explicit ``MAC_TOKENHUB_EVENTS_URL``,
+    else derive from ``TOKENHUB_URL`` + ``/admin/v1/events`` (the SSE route)."""
+    env = env or os.environ
+    explicit = (env.get("MAC_TOKENHUB_EVENTS_URL") or "").strip()
+    if explicit:
+        return explicit
+    base = (env.get("TOKENHUB_URL") or "").strip().rstrip("/")
+    return base + "/admin/v1/events" if base else ""
+
+
+def admin_token_from_env(env: Optional[Mapping[str, str]] = None) -> str:
+    """The TokenHub *admin* token (the /admin/v1 feed needs admin auth, not the
+    agent chat key)."""
+    env = env or os.environ
+    for key in ("MAC_TOKENHUB_ADMIN_TOKEN", "TOKENHUB_ADMIN_TOKEN"):
+        value = (env.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def start_background_consumer(
+    observability: Any,
+    *,
+    url: Optional[str] = None,
+    token: Optional[str] = None,
+    env: Optional[Mapping[str, str]] = None,
+    reconnect_delay: float = 5.0,
+    _spawn: Optional[Callable[[Callable[[], None]], Any]] = None,
+) -> Any:
+    """Launch a daemon thread that streams TokenHub decisions into ``observability``,
+    reconnecting on drop. **No-op (returns None)** if no events URL is configured
+    or no observability — so it is safe to call unconditionally at control-plane
+    startup. The mac store is thread-safe (lock + ``check_same_thread=False``),
+    so writing observations from this thread is fine.
+
+    ``_spawn`` is injectable for tests (so we can verify gating/derivation without
+    starting a real thread or connecting to TokenHub).
+    """
+    env = env or os.environ
+    url = url or events_url_from_env(env)
+    if token is None:
+        token = admin_token_from_env(env) or None
+    # The /admin/v1/events feed requires admin auth, so without a token we'd just
+    # loop-retry 401s. Stay a clean no-op until BOTH url and admin token are set.
+    if not url or not token or not observability:
+        return None
+
+    def _run() -> None:
+        import time
+
+        while True:
+            try:
+                stream_decisions(url, observability, token=token)
+            except Exception:
+                pass
+            time.sleep(reconnect_delay)
+
+    if _spawn is not None:
+        return _spawn(_run)
+
+    import threading
+
+    thread = threading.Thread(target=_run, name="tokenhub-feed", daemon=True)
+    thread.start()
+    return thread
