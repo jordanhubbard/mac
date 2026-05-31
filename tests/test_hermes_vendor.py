@@ -38,3 +38,29 @@ def test_vendored_snapshot_is_importable():
     import hermes_cli.runtime_provider as rp
 
     assert hasattr(rp, "resolve_runtime_provider")
+
+
+def _gateway_extra_installed() -> bool:
+    if not hermes_vendor.is_vendored():
+        return False
+    hermes_vendor.ensure_on_path()
+    try:
+        import slack_bolt  # noqa: F401  (the hermes-gateway extra)
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(
+    not _gateway_extra_installed(),
+    reason="hermes-gateway extra not installed (pip install -e '.[hermes-gateway]')",
+)
+def test_full_gateway_imports_in_process():
+    """hu-03 premise: the gateway + agent runtime import in-process from the
+    vendored tree (no separate venv, no string surgery)."""
+    hermes_vendor.ensure_on_path()
+    import gateway.run  # noqa: F401
+    import gateway.session  # noqa: F401
+    import agent.conversation_loop  # noqa: F401
+    import agent.agent_init  # noqa: F401
+    import plugins  # noqa: F401
