@@ -96,21 +96,24 @@ def test_vendored_gateway_honors_mac_provider_override(monkeypatch):
 
 
 @pytest.mark.skipif(not hermes_vendor.is_vendored(), reason="no vendored Hermes snapshot present")
-def test_hermes_gateway_launcher_delegates_without_booting():
+def test_hermes_gateway_launcher_delegates_without_booting(monkeypatch):
     """hu-03/hu-04: the in-process launcher bootstraps the vendored tree, logs
-    the provider decision, and delegates to the vendored gateway entrypoint
-    (injected here so we don't boot the real gateway)."""
+    the provider decision, and invokes the SAME CLI entry as the deployed
+    `hermes gateway run --replace` (injected so we don't boot the real gateway)."""
+    import sys as _sys
+
     from mac import hermes_gateway
 
-    called = {}
+    seen = {}
 
-    def fake_gateway_main():
-        called["ran"] = True
+    def fake_cli_main():
+        seen["argv"] = list(_sys.argv)
         return 0
 
-    rc = hermes_gateway.main(_gateway_main=fake_gateway_main)
+    rc = hermes_gateway.main(_cli_main=fake_cli_main)
     assert rc == 0
-    assert called.get("ran") is True
+    # Must reproduce the deployed gateway invocation exactly.
+    assert seen["argv"] == ["hermes", "gateway", "run", "--replace"]
     # provider-decision logging is best-effort and must return the observable dict
     observable = hermes_gateway.log_provider_decision()
     assert observable is not None and observable["schema"] == "mac.agent_provider.decision.v1"

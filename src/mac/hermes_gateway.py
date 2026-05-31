@@ -32,21 +32,28 @@ def log_provider_decision(stream=sys.stderr) -> Optional[dict]:
         return None
 
 
-def main(argv: Optional[list] = None, _gateway_main: Optional[Callable[[], int]] = None) -> int:
+def main(argv: Optional[list] = None, _cli_main: Optional[Callable[[], int]] = None) -> int:
     """Launch the vendored Hermes gateway in-process.
 
-    ``_gateway_main`` is injectable for testing so the launch path can be
-    verified without booting the real gateway (which needs platform config).
+    Faithfully reproduces the deployed ``hermes gateway run --replace`` path:
+    that command dispatches through ``hermes_cli.main.main()`` to
+    ``hermes_cli.gateway.run_gateway(replace=True)`` — NOT ``gateway.run.main()``
+    (which doesn't handle ``--replace`` or the profile/setup dispatch). We invoke
+    the same CLI entry in-process with the same argv.
+
+    ``argv`` overrides the gateway args (default ``["--replace"]``).
+    ``_cli_main`` is injectable for testing so the launch path can be verified
+    without booting the real gateway (which needs platform config).
     """
     from mac.hermes_vendor import ensure_on_path
 
     ensure_on_path()
-    if argv is not None:
-        sys.argv = ["mac-hermes-gateway", *argv]
     log_provider_decision()
-    if _gateway_main is None:
-        from gateway.run import main as _gateway_main  # vendored gateway entrypoint
-    return _gateway_main() or 0
+    extra = list(argv) if argv is not None else ["--replace"]
+    sys.argv = ["hermes", "gateway", "run", *extra]
+    if _cli_main is None:
+        from hermes_cli.main import main as _cli_main  # same entry as `hermes ...`
+    return _cli_main() or 0
 
 
 if __name__ == "__main__":
