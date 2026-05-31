@@ -317,11 +317,25 @@ class OperatorResultValidator(EvidenceValidator):
                 "provide repo_change/test/no_change evidence with a pushed repo anchor "
                 "(repo.head_sha, repo.pushed=true, repo.remote_ref)"
             ]
-        if str(manifest.raw.get("summary") or manifest.raw.get("result") or "").strip():
-            return []
+        # Structured proof (findings/artifacts) is always sufficient.
         if _manifest_list(manifest.raw.get("artifacts")) or _manifest_list(manifest.raw.get("findings")):
             return []
-        return ["operator_result evidence requires summary, result, findings, or artifacts"]
+        combined = (
+            str(manifest.raw.get("summary") or "") + " " + str(manifest.raw.get("result") or "")
+        ).strip()
+        if not combined:
+            return ["operator_result evidence requires summary, result, findings, or artifacts"]
+        # autonomy-loop fix: reject degenerate / placeholder deliverable text so
+        # the executor's fallback writer can't turn agent chatter ("hello hello
+        # hello") or its own "completed without textual output" stub into a
+        # PUBLISHED task. Genuine planning summaries clear the distinct-token bar.
+        if not _operator_result_is_substantive(combined):
+            return [
+                "operator_result evidence is not substantive (degenerate or placeholder "
+                "text); provide a real summary/result describing the completed work, or "
+                "structured findings/artifacts"
+            ]
+        return []
 
 
 VALIDATORS: Dict[str, EvidenceValidator] = {
@@ -369,3 +383,33 @@ def validate_evidence_type(
 
 def _manifest_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
+
+
+# mem-11 / autonomy-loop fix: the executor's fallback evidence writer turns the
+# agent's raw chat output (or its own no-output placeholder) into an
+# operator_result. The verified jam was a task whose deliverable was literally
+# "hello hello hello". These markers + the distinct-token floor below let the
+# validator reject degenerate, non-substantive operator_result text without
+# over-rejecting genuine short planning summaries (which carry several distinct
+# words, or structured findings/artifacts).
+_OPERATOR_RESULT_PLACEHOLDERS = frozenset(
+    {
+        "hermes executor completed without textual output",
+        "hermes executor completed",
+    }
+)
+_OPERATOR_RESULT_MIN_DISTINCT_TOKENS = 3
+
+
+def _operator_result_is_substantive(text: str) -> bool:
+    """True when ``text`` reads like a real deliverable rather than degenerate
+    chatter ('hello hello hello') or the executor's own no-output placeholder."""
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        return False
+    if cleaned.lower().rstrip(". ") in _OPERATOR_RESULT_PLACEHOLDERS:
+        return False
+    # Distinct, non-trivial word tokens. 'hello hello hello' collapses to one
+    # distinct token; a real summary carries several.
+    tokens = {t for t in re.findall(r"[a-z0-9]+", cleaned.lower()) if len(t) > 1}
+    return len(tokens) >= _OPERATOR_RESULT_MIN_DISTINCT_TOKENS

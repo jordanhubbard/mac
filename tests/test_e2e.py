@@ -211,6 +211,72 @@ def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path):
     assert (tmp_path / "mac.db").stat().st_size > 0
 
 
+def _operator_execution(summary: str) -> WorkerExecution:
+    """A non-repo operator_result execution (the planning/directive path the
+    executor's fallback writer emits)."""
+    return WorkerExecution(
+        0,
+        summary,
+        stdout=summary + "\n",
+        metadata={
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "operator_result",
+                "summary": summary,
+            }
+        },
+    )
+
+
+def test_e2e_chatter_evidence_fails_closed(tmp_path: Path):
+    """autonomy-loop fix: an executor that only chats ('hello hello hello') —
+    the exact jam shape — must fail closed at the verification gate, not get
+    submitted for review or published. A *substantive* operator_result on the
+    same kind of task still passes the gate, proving we didn't break the
+    legitimate planning/directive path."""
+    client = _disk_app(tmp_path)
+    machine = client.post("/machines", json={"hostname": "host-fc"}).json()
+    worker = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "rocky", "capabilities": ["python"]},
+    ).json()
+    api = MacApiClient("http://mac.test", transport=_api_transport(client))
+
+    def _run(title: str, summary: str):
+        task = client.post(
+            "/tasks",
+            json={
+                "title": title,
+                "required_capabilities": ["python"],
+                "metadata": {"publication_target": "test://e2e"},
+            },
+        ).json()
+        macworker = MacWorker(
+            api,
+            worker["id"],
+            tmp_path / "workspaces",
+            lambda _t, _d: _operator_execution(summary),
+            attestation_key=worker["attestation_key"],
+        )
+        return task, macworker.run_once()
+
+    # Chatter → rejected at the gate, task fails closed, nothing published.
+    task, result = _run("E2E chatter task", "hello hello hello")
+    assert result.status == "failed", result
+    assert "substantive" in (result.error or "")
+    final = client.get("/tasks/%s" % task["id"]).json()
+    assert final["task"]["state"] == TaskState.FAILED.value
+    assert not final.get("publications")
+
+    # Substantive planning result → passes the gate (submitted for review).
+    task2, result2 = _run(
+        "E2E planning task",
+        "Produced the rollout plan and identified the three blocking dependencies.",
+    )
+    assert result2.status == "submitted_for_review", result2
+
+
 # ---------------------------------------------------------------------------
 # Test 2: two workers race for one task; exactly one wins
 # ---------------------------------------------------------------------------

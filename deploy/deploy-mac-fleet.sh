@@ -5250,28 +5250,33 @@ def write_fallback_evidence_manifest(
         return
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
-    result_text = stdout or stderr or "Hermes executor completed without textual output."
+    # autonomy-loop fix: do NOT substitute a "completed without output" placeholder
+    # — leave the deliverable empty so the substance gate can fail it honestly.
+    result_text = stdout or stderr or ""
     summary = next((line.strip() for line in result_text.splitlines() if line.strip()), "")
     if len(summary) > 240:
         summary = summary[:237].rstrip() + "..."
+    # autonomy-loop fix: the fallback must never fabricate *verified* completion.
+    # The deterministic git finalizer already writes real repo_change evidence for
+    # git:// tasks (and short-circuits this via manifest_path.exists()). So the
+    # only thing left to record here is the agent's textual output as an
+    # UNVERIFIED operator_result — NOT a fake repo_change/test/deployment, and
+    # with NO synthetic passing "check" (the chat process exiting 0 is not proof
+    # of the work). A proof-requiring task with no real evidence then fails
+    # validation honestly instead of auto-publishing chatter (the "hello hello
+    # hello" jam). Repo-coupled tasks are additionally rejected by the
+    # operator_result repo-coupled gate (mem-11).
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
-        "evidence_type": task_evidence_type(task),
-        "summary": summary or "Hermes executor completed.",
+        "evidence_type": "operator_result",
+        "summary": summary,
         "result": result_text[-20000:],
         "task": {
             "id": task.get("id"),
             "title": task.get("title"),
             "project": task.get("project"),
         },
-        "checks": [
-            {
-                "name": "hermes_chat_query",
-                "returncode": result.returncode,
-                "status": "pass",
-            }
-        ],
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
