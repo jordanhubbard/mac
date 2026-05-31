@@ -61,19 +61,62 @@ def test_evidence_validators_are_registry_backed_by_type():
 def test_operator_result_rejected_for_repo_coupled_task():
     # mem-11: a repo-coupled task must anchor on a pushed commit, not a free-text
     # operator_result (the verified task_d7c51a0b "hello hello…" jam).
+    # Use a substantive summary so this exercises the *repo-coupled* gate and not
+    # the separate substance gate (see test_operator_result_rejects_degenerate…).
     manifest = {
         "schema": "mac.verification.v1",
         "status": "complete",
         "evidence_type": "operator_result",
-        "summary": "hello hello hello",  # the literal incident payload shape
+        "summary": "Produced the rollout plan and identified the three blocking dependencies.",
     }
-    # Not repo-coupled (default): accepted as before.
+    # Not repo-coupled (default): a substantive planning result is accepted.
     assert validate_evidence_type("operator_result", manifest, passed_check_count=_passed_check_count) == []
     # Repo-coupled: rejected, with guidance to use a pushed repo anchor.
     problems = validate_evidence_type(
         "operator_result", manifest, passed_check_count=_passed_check_count, repo_coupled=True
     )
     assert problems and "not accepted for a repo-coupled task" in problems[0]
+
+
+def test_operator_result_rejects_degenerate_and_placeholder_text():
+    # autonomy-loop fix: the executor fallback turned agent chatter / its own
+    # no-output stub into a PUBLISHED operator_result. Both must now be rejected.
+    def _op(summary="", result=""):
+        return {
+            "schema": "mac.verification.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": summary,
+            "result": result,
+        }
+
+    # The literal jam payload.
+    bad = validate_evidence_type("operator_result", _op(summary="hello hello hello"),
+                                 passed_check_count=_passed_check_count)
+    assert bad and "not substantive" in bad[0]
+    # The fallback writer's own placeholder.
+    bad2 = validate_evidence_type(
+        "operator_result",
+        _op(summary="Hermes executor completed without textual output."),
+        passed_check_count=_passed_check_count,
+    )
+    assert bad2 and "not substantive" in bad2[0]
+    # A genuine planning summary clears the bar.
+    good = validate_evidence_type(
+        "operator_result",
+        _op(summary="Story graph produced", result="Mapped the milestones and owners."),
+        passed_check_count=_passed_check_count,
+    )
+    assert good == []
+    # Structured findings/artifacts always pass, regardless of summary text.
+    structured = {
+        "schema": "mac.verification.v1",
+        "status": "complete",
+        "evidence_type": "operator_result",
+        "summary": "ok",
+        "findings": [{"id": 1, "note": "x"}],
+    }
+    assert validate_evidence_type("operator_result", structured, passed_check_count=_passed_check_count) == []
 
 
 def test_repo_change_requires_tests_only_when_contract_demands():

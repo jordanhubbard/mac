@@ -407,7 +407,13 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     assert 'tokenhub_provider.pop("api_key", None)' in script
     assert '"chat", "--query", prompt, "--quiet", "--accept-hooks"' in script
     assert "write_fallback_evidence_manifest(task_workspace, task, result, review_context)" in script
-    assert '"evidence_type": task_evidence_type(task)' in script
+    # autonomy-loop fix: the fallback must never fabricate verified completion.
+    # It records the agent's output as an UNVERIFIED operator_result (never a
+    # fake repo_change/test) and without a synthetic passing check — so a
+    # proof-requiring task with no real evidence fails the verification gate
+    # instead of auto-publishing chatter.
+    assert '"evidence_type": "operator_result",' in script
+    assert '"name": "hermes_chat_query"' not in script
     # ADR 0001 hu-03: the gateway provider/model override is now owned, in-process
     # code (mac.agent_provider) routing through TokenHub — not runtime
     # string-surgery of an upstream checkout. Verify the owned mechanism.
