@@ -23,9 +23,11 @@ PATCH_DIR="$REPO_ROOT/deploy/hermes"
 
 APPLY=0
 PIN_OVERRIDE=""
+FROM=""
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
+    --from=*) FROM="${arg#--from=}" ;;
     --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
     -*) echo "unknown flag: $arg" >&2; exit 2 ;;
     *) PIN_OVERRIDE="$arg" ;;
@@ -69,9 +71,17 @@ fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-echo "Cloning upstream at $PIN ..."
-git clone --quiet "$UPSTREAM" "$WORK/hermes"
-git -C "$WORK/hermes" checkout --quiet "$PIN"
+if [ -n "$FROM" ]; then
+  # Vendor from a local checkout (must already be at the pinned commit). Avoids
+  # a network clone and is what we use when ~/Src/hermes-agent is at the pin.
+  echo "Vendoring from local checkout: $FROM"
+  mkdir -p "$WORK/hermes"
+  rsync -a --exclude='.git' "${FROM%/}/" "$WORK/hermes/"
+else
+  echo "Cloning upstream at $PIN ..."
+  git clone --quiet "$UPSTREAM" "$WORK/hermes"
+  git -C "$WORK/hermes" checkout --quiet "$PIN"
+fi
 
 echo "Applying in-tree patches ..."
 for p in "$PATCH_DIR"/*.patch; do

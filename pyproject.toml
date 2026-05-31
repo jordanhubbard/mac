@@ -7,19 +7,47 @@ name = "mac"
 version = "0.1.0"
 description = "Trustworthy coordination layer for a fleet of AI agents."
 readme = "README.md"
-requires-python = ">=3.9"
+# Bumped 3.9 -> 3.11 for the vendored Hermes runtime (ADR 0001).
+requires-python = ">=3.11"
 dependencies = [
+    # --- mac control plane ---
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.29,<1.0",
     "cryptography>=42,<46",
-    "PyYAML>=6.0,<7.0",
     "slack-sdk>=3.27,<4.0",
+    # --- vendored Hermes runtime core (ADR 0001; see deploy/hermes/SNAPSHOT.md) ---
+    # Exact-pinned per Hermes' supply-chain discipline. The two overlaps with
+    # mac (httpx, pyyaml) fell within mac's ranges, so we adopt Hermes' pins.
+    "httpx[socks]==0.28.1",
+    "pyyaml==6.0.3",
+    "openai==2.24.0",
+    "pydantic==2.13.4",
+    "prompt_toolkit==3.0.52",
+    "rich==14.3.3",
+    "tenacity==9.1.4",
+    "jinja2==3.1.6",
+    "requests==2.33.0",
+    "fire==0.7.1",
+    "croniter==6.0.0",
+    "psutil==7.2.2",
+    "PyJWT[crypto]==2.12.1",
+    "python-dotenv==1.2.2",
+    "ruamel.yaml==0.18.17",
+    "tzdata==2025.3; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.27,<1.0",
     "pytest>=8.0,<9.0",
+]
+# Platform deps the in-process Hermes gateway needs (hu-03), measured from the
+# deployed Hermes venv. Provider-specific backends (anthropic, firecrawl-py,
+# exa-py, ...) stay lazy via the vendored tools/lazy_deps.py, not here.
+hermes-gateway = [
+    "slack_bolt==1.27.0",
+    "discord.py==2.7.1",
+    "python-telegram-bot==22.6",
+    "aiohttp==3.13.4",
 ]
 
 [project.scripts]
