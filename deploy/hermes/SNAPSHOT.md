@@ -82,6 +82,24 @@ dependency-manifest merge and the in-process launch, not 350k LOC of namespace
 surgery. Validate by importing `gateway.run` from the vendored path once deps
 are merged.
 
+## Dependency-manifest merge — MEASURED, no conflicts
+
+Hermes core deps: 16 exact pins. mac deps: 7 (ranges). **Only 2 overlap, both
+compatible:**
+- `httpx[socks]==0.28.1` ⊂ mac `httpx>=0.27,<1.0` → adopt Hermes pin (+`[socks]`)
+- `pyyaml==6.0.3` ⊂ mac `PyYAML>=6.0,<7.0` → adopt Hermes pin
+
+Merge = mac's deps (fastapi, uvicorn[standard], cryptography, slack-sdk) + the
+two tightened overlaps + Hermes's 14 unique core pins: `openai==2.24.0`,
+`pydantic==2.13.4`, `prompt_toolkit==3.0.52`, `rich==14.3.3`, `tenacity==9.1.4`,
+`jinja2==3.1.6`, `requests==2.33.0`, `fire==0.7.1`, `croniter==6.0.0`,
+`psutil==7.2.2`, `PyJWT[crypto]==2.12.1`, `python-dotenv==1.2.2`,
+`ruamel.yaml==0.18.17`, `tzdata==2025.3; sys_platform=='win32'`. Bump
+`requires-python` to `>=3.11` (Hermes requirement; fleet venvs are already 3.12).
+Hermes's provider-specific extras (anthropic, firecrawl-py, exa-py, …) stay
+**lazy** via `tools/lazy_deps.py` — do not pull into core (supply-chain blast
+radius). Adopt Hermes's exact-pin discipline going forward.
+
 ## Patches to fold in permanently (then delete the .patch files)
 
 These out-of-tree patches become ordinary in-tree edits once vendored:
