@@ -406,8 +406,12 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     assert '"chat", "--query", prompt, "--quiet", "--accept-hooks"' in script
     assert "write_fallback_evidence_manifest(task_workspace, task, result, review_context)" in script
     assert '"evidence_type": task_evidence_type(task)' in script
-    assert 'runtime_kwargs["api_key"] = mac_gateway_api_key' in startup
-    assert 'runtime_kwargs["base_url"] = mac_gateway_base_url.rstrip("/")' in startup
+    # ADR 0001 hu-03: the gateway provider/model override is now owned, in-process
+    # code (mac.agent_provider) routing through TokenHub — not runtime
+    # string-surgery of an upstream checkout. Verify the owned mechanism.
+    agent_provider = (ROOT / "src" / "mac" / "agent_provider.py").read_text(encoding="utf-8")
+    assert '"TOKENHUB_URL"' in agent_provider
+    assert "mac-gateway-explicit" in agent_provider
     assert '[ -f "$HOME/.acc/.env" ]' not in gateway_wrapper
     assert '[ -f "$HOME/.acc/.env" ]' not in executor_wrapper
     assert 'or os.environ.get("NVIDIA_API_KEY")' not in startup
