@@ -918,7 +918,7 @@ def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
 
     first_review = cp.advance_default_review_workflow(task.id)
     assert first_review["reviewer_agent_id"] == beta.id
-    submit_review_verdict(cp, task.id, beta.id, first_evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, beta.id, first_evidence.id, verdict="rejected", feedback="Rejected.")
     rejected = cp.advance_default_review_workflow(task.id)
     assert rejected["status"] == "review_not_approved"
     assert cp.get_task(task.id).state == TaskState.OPEN.value
@@ -4654,6 +4654,8 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
         "evidence_type": "review_verdict",
         "verdict": "rejected",
         "reviewed_evidence_id": executor_evidence.id,
+        "worktree_digest": "sha256:" + ("0" * 64),
+        "feedback": "Dirty checkout; not publishable.",
         "repo": {
             "head_sha": "fedcba9876543210fedcba9876543210fedcba98",
             "pushed": False,
@@ -4709,7 +4711,7 @@ def test_rejected_review_verdict_fails_exhausted_task(cp):
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="No more attempts.")
 
     result = cp.advance_default_review_workflow(task.id)
 
@@ -4744,7 +4746,7 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp):
     )
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="Stale.")
     rejected = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
     assert rejected["status"] == "review_not_approved"
@@ -7020,4 +7022,83 @@ def test_review_verdict_validator_rejected_accepts_feedback():
         EvidenceValidationContext(passed_check_count=lambda _m: 0),
     )
 
+    assert problems == []
+
+
+def _add_signed_repo_evidence(cp, task_id, agent_id):
+    return cp.add_evidence(
+        task_id,
+        "log",
+        "artifact://repo-change",
+        "repo changed",
+        agent_id,
+        metadata=verified_repo_metadata(cp, agent_id),
+    )
+
+
+def test_find_review_verdict_rejected_requires_digest(cp):
+    from mac.services import sign_verification_manifest
+
+    task = cp.create_task("work", required_capabilities=["python"])
+    executor = register_agent(cp, "executor", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
+    evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
+    key = cp._agent_attestation_key(reviewer.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "rejected",
+        "reviewed_evidence_id": evidence.id,
+        "feedback": "Needs changes.",
+        "signed_by": reviewer.id,
+    }
+    manifest["signature"] = sign_verification_manifest(key, manifest)
+    cp.add_evidence(
+        task.id,
+        "review",
+        "artifact://verdict",
+        "rejected",
+        reviewer.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+
+    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+
+    assert found is None
+    assert any("worktree_digest" in problem for problem in problems)
+
+
+def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
+    from mac.services import sign_verification_manifest
+
+    task = cp.create_task("work", required_capabilities=["python"])
+    executor = register_agent(cp, "executor", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
+    evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
+    key = cp._agent_attestation_key(reviewer.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "rejected",
+        "reviewed_evidence_id": evidence.id,
+        "worktree_digest": "sha256:" + "0" * 64,
+        "feedback": "Branch is not publishable; fix the tests.",
+        "signed_by": reviewer.id,
+    }
+    manifest["signature"] = sign_verification_manifest(key, manifest)
+    verdict = cp.add_evidence(
+        task.id,
+        "review",
+        "artifact://verdict",
+        "rejected",
+        reviewer.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+
+    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+
+    assert found is not None
+    assert found.id == verdict.id
     assert problems == []

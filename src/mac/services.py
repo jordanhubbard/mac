@@ -108,7 +108,7 @@ from mac.agent_state_service import AgentStateService
 from mac.agentbus_service import AgentBusService
 from mac.beads_bridge_service import BeadsBridgeService
 from mac.deploy_service import DeployService
-from mac.evidence_validators import validate_evidence_type
+from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
 from mac.identity_service import IdentityService
 from mac.memory_service import MemoryService
@@ -11870,12 +11870,19 @@ class ControlPlane:
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
                 continue
-            if verdict == "rejected":
-                return evidence, []
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
                 problems.append("verdict %s requires worktree_digest sha256" % evidence.id)
                 continue
+            if verdict == "rejected":
+                feedback_problems = rejected_verdict_feedback_problems(manifest)
+                if feedback_problems:
+                    problems.extend(
+                        "verdict %s %s" % (evidence.id, problem)
+                        for problem in feedback_problems
+                    )
+                    continue
+                return evidence, []
             executor_repo = executor_manifest.get("repo")
             if isinstance(executor_repo, dict):
                 repo_problems = self._require_pushed_repo_anchor(manifest)

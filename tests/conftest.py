@@ -79,6 +79,7 @@ def submit_review_verdict(
     executor_evidence_id: str,
     *,
     verdict: str = "approved",
+    feedback: str = "",
 ) -> str:
     """Produce the reviewer's signed verdict evidence (mac-jqb).
 
@@ -106,6 +107,8 @@ def submit_review_verdict(
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("0" * 64),
     }
+    if feedback:
+        manifest["feedback"] = feedback
     manifest["signed_by"] = reviewer_agent_id
     manifest["signature"] = sign_verification_manifest(key, manifest)
     evidence = cp.add_evidence(
