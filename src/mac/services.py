@@ -6526,6 +6526,15 @@ class ControlPlane:
     def list_nap_runs(self, *args: Any, **kwargs: Any) -> List[NapRun]:
         return self.agent_state.list_nap_runs(*args, **kwargs)
 
+    def refresh_tokenhub_wildcards(self, *, timeout: float = 30.0) -> JsonDict:
+        """mac-nyx7: refresh TokenHub's wildcard model ladder and record it into
+        observability. Gated no-op (returns ``status=skipped``) unless
+        TOKENHUB_URL/MAC_TOKENHUB_WILDCARD_URL and a TokenHub admin token are
+        both set — same activation contract as the SSE decision feed (hu-05)."""
+        from mac.tokenhub_wildcard import refresh_wildcard_ladder
+
+        return refresh_wildcard_ladder(self.observability, timeout=timeout)
+
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:
         cutoff = (
             parse_time(utcnow()) - timedelta(seconds=max(1, int(stale_after_seconds)))
@@ -9181,6 +9190,10 @@ class ControlPlane:
         existing = self._existing_beads_source_remediation_task(repo, status)
         if existing is not None:
             return existing
+        # mac-73cz: bound the spawn rate so a flaky provider can't turn
+        # self-healing into a task-spawn storm.
+        if self._beads_remediation_breaker_open(repo):
+            return None
         title = "Repair %s checkout before Beads polling" % repo.name
         dirty_paths = source_state.get("dirty_paths") or []
         description = (
@@ -9286,6 +9299,68 @@ class ControlPlane:
                 continue
             return task
         return None
+
+    def _beads_remediation_breaker_open(self, repo: BeadsRepository) -> bool:
+        """mac-73cz: circuit-breaker on the self-repair spawn rate.
+
+        A flaky upstream provider (e.g. an OpenAI 429) makes every repair task
+        fail fast, and the next poll spawns another — self-healing becomes a
+        thrash multiplier (the 2026-05-27 incident: 10+ identical
+        'Repair X checkout' tasks in one minute, all dying on the same quota
+        error). Bound the spawn rate: if at least
+        ``MAC_REPAIR_BREAKER_MAX_SPAWNS`` remediation tasks for this repo were
+        created within ``MAC_REPAIR_BREAKER_WINDOW_SECONDS``, the breaker is
+        open and we skip spawning until the window rolls off. Counting *all*
+        recent spawns (not just failures) bounds the storm regardless of the
+        error class — quota or transient. The open event is logged so an
+        operator can see why self-repair paused.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            max_spawns = int(os.environ.get("MAC_REPAIR_BREAKER_MAX_SPAWNS", "3"))
+            window_seconds = int(os.environ.get("MAC_REPAIR_BREAKER_WINDOW_SECONDS", "300"))
+        except ValueError:
+            max_spawns, window_seconds = 3, 300
+        if max_spawns <= 0 or window_seconds <= 0:
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        recent = 0
+        for task in self.list_tasks():
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            remediation = metadata.get("remediation")
+            if not isinstance(remediation, dict):
+                continue
+            if remediation.get("type") != "beads_source_refresh":
+                continue
+            if remediation.get("repository_id") != repo.id:
+                continue
+            try:
+                created = parse_time(task.created_at)
+            except (TypeError, ValueError):
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created >= cutoff:
+                recent += 1
+        if recent >= max_spawns:
+            self.record_log(
+                "bridge.beads.source_remediation.circuit_open",
+                layer="control_plane",
+                source="circuit_breaker",
+                level="warning",
+                subject_type="environment",
+                subject_id=repo.id,
+                detail={
+                    "repository": self._beads_repository_ref(repo),
+                    "recent_spawns": recent,
+                    "max_spawns": max_spawns,
+                    "window_seconds": window_seconds,
+                    "reason": "self-repair spawn rate exceeded; pausing new repair tasks",
+                },
+            )
+            return True
+        return False
 
     def _beads_repository_owner_agent(
         self,
