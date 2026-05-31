@@ -7140,3 +7140,79 @@ def test_rejected_review_persists_feedback_and_reopens(cp):
     assert latest["review_id"] == review.id
     assert latest["verdict_evidence_id"] == verdict_id
     assert latest["feedback"] == "Fix the failing contract test."
+
+
+def test_project_task_review_reject_retry_approve_publish_loop(cp):
+    from tests.conftest import submit_review_verdict
+    from mac.models import ReviewStatus, TaskState
+
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {"role": "python-coder-opencode"},
+            "publication_target": "gitea://merge-request",
+        },
+    )
+    executor = register_agent(cp, "executor", capabilities=["python", "ops"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
+
+    task = cp.create_task("Fix task UI", project="mac", max_attempts=3)
+    assert task.metadata["required_role"] == "python-coder-opencode"
+
+    # First attempt: executor works, reviewer rejects
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    first_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change-1",
+        "repo changed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    first_review = cp.request_review(task.id, reviewer.id)
+    rejected_verdict = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        first_evidence.id,
+        verdict="rejected",
+        feedback="Fix layout overflow on the task cards.",
+    )
+    cp.submit_review(first_review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=rejected_verdict)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == "open"
+    assert reopened.metadata["review_feedback"]["latest"]["feedback"] == "Fix layout overflow on the task cards."
+
+    # Second attempt: executor addresses feedback, reviewer approves
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    second_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change-2",
+        "repo changed after feedback",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    second_review = cp.request_review(task.id, reviewer.id)
+    approved_verdict = submit_review_verdict(cp, task.id, reviewer.id, second_evidence.id)
+    cp.submit_review(second_review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=approved_verdict)
+
+    publication = cp.publish_task(task.id, "gitea://merge-request", reviewer.id, evidence_id=second_evidence.id)
+    completed = cp.get_task(task.id)
+
+    assert publication.target == "gitea://merge-request"
+    assert completed.state == "completed"
