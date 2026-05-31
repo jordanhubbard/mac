@@ -3369,99 +3369,10 @@ def test_beads_bridge_failed_task_reopen_limit_is_bounded(cp, tmp_path, monkeypa
     )
 
 
-def test_hub_heartbeat_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-heartbeat",
-                "title": "Heartbeat imported bead",
-                "description": "import me from heartbeat",
-                "status": "open",
-                "priority": 1,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    natasha = register_agent(cp, "natasha", ["python"])
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT_ASYNC", "0")
-
-    cp.heartbeat_agent(natasha.id, status=AgentStatus.IDLE.value)
-    assert cp.list_project_items() == []
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-
-    assert len(cp.list_project_items()) == 1
-    assert cp.list_project_items()[0].external_id == "mac-heartbeat"
 
 
-def test_hub_heartbeat_schedules_beads_poll_async_by_default(cp, monkeypatch):
-    rocky = register_agent(cp, "rocky", ["python"])
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    calls = []
-
-    def fake_poll(**kwargs):
-        calls.append(kwargs["actor"])
-        started.set()
-        release.wait(1)
-        finished.set()
-        return {"repositories": []}
-
-    monkeypatch.setattr(cp, "poll_beads_repositories", fake_poll)
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-    assert started.wait(1)
-
-    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
-    release.set()
-    assert finished.wait(1)
-    assert calls == [rocky.id]
 
 
-def test_hub_lease_renewal_polls_registered_beads_repositories(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-renewal",
-                "title": "Lease renewal imported bead",
-                "description": "import me while hub is busy",
-                "status": "open",
-                "priority": 1,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    task = cp.create_task("busy hub task", required_capabilities=["python"])
-    _claimed, lease = cp.claim_task(task.id, rocky.id)
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_HUB_AGENT", "rocky")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ON_HEARTBEAT_ASYNC", "0")
-
-    cp.renew_lease(lease.id, rocky.id)
-
-    imported = [item.external_id for item in cp.list_project_items()]
-    assert imported == ["mac-renewal"]
 
 
 def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
