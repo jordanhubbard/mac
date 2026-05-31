@@ -108,6 +108,9 @@ These out-of-tree patches become ordinary in-tree edits once vendored:
 - `mac-runtime-context-prompt.patch`    → `agent/prompt_builder.py`
 - `multi-slack-mvp.patch` (1,372 lines) → `gateway/platforms/slack.py`,
                                            `gateway/session.py`
+- `mac-provider-decision.patch`         → `gateway/run.py` — hu-03: the owned,
+  in-process replacement for the string-surgery provider/model shim. The
+  vendored gateway calls `mac.agent_provider` directly (no-op standalone).
 
 ## Runtime string surgery to delete (replaced by owned code)
 

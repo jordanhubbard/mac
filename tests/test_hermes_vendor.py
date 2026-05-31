@@ -64,3 +64,32 @@ def test_full_gateway_imports_in_process():
     import agent.conversation_loop  # noqa: F401
     import agent.agent_init  # noqa: F401
     import plugins  # noqa: F401
+
+
+@pytest.mark.skipif(
+    not _gateway_extra_installed(),
+    reason="hermes-gateway extra not installed",
+)
+def test_vendored_gateway_honors_mac_provider_override(monkeypatch):
+    """hu-03: the vendored gateway resolves the per-agent provider/model via
+    mac.agent_provider in-process (the owned replacement for the string-surgery
+    shim), and preserves upstream behavior when no override is set."""
+    hermes_vendor.ensure_on_path()
+    import gateway.run as gr
+
+    for k in (
+        "MAC_HERMES_GATEWAY_MODEL", "ACC_HERMES_GATEWAY_MODEL", "HERMES_INFERENCE_MODEL",
+        "ACC_LLM_MODEL", "MAC_HERMES_GATEWAY_PROVIDER", "MAC_HERMES_GATEWAY_BASE_URL",
+        "TOKENHUB_URL", "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(k, raising=False)
+
+    # No override -> standalone upstream behavior (config wins).
+    assert gr._mac_provider_decision() is None
+    assert gr._resolve_gateway_model({"model": {"default": "config-model"}}) == "config-model"
+
+    # mac override -> wins (anti-monoculture lever), in-process, no string surgery.
+    monkeypatch.setenv("MAC_HERMES_GATEWAY_MODEL", "mac-override-model")
+    decision = gr._mac_provider_decision()
+    assert decision is not None and decision.model == "mac-override-model"
+    assert gr._resolve_gateway_model({"model": {"default": "config-model"}}) == "mac-override-model"
