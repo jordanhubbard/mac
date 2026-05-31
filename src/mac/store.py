@@ -214,6 +214,10 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_task_history_task_created
                     ON task_history (task_id, created_at);
+                -- mac-ykkc: index event_type so debug/audit queries by action
+                -- (e.g. counting task.review_claimed) are not table scans.
+                CREATE INDEX IF NOT EXISTS idx_task_history_event_type
+                    ON task_history (event_type, task_id);
 
                 CREATE TABLE IF NOT EXISTS task_transition_outbox (
                     id TEXT PRIMARY KEY,
