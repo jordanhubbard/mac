@@ -344,7 +344,25 @@ class MacWorker:
         try:
             while not self._stop and (max_iterations is None or iterations < max_iterations):
                 iterations += 1
-                outcome = self.run_once()
+                try:
+                    outcome = self.run_once()
+                except Exception as exc:  # noqa: BLE001
+                    # Loop resilience (loop-01): run_once best-effort-marks the
+                    # task failed before any re-raise, so one task's error must
+                    # not crash the worker and halt ALL autonomous work. Record
+                    # it and continue to the next poll. (SIGTERM/SIGINT set
+                    # self._stop via the handlers, not exceptions, so graceful
+                    # shutdown is unaffected; KeyboardInterrupt/SystemExit are
+                    # BaseException and still propagate.)
+                    self._observe_log(
+                        "worker.run_once.exception",
+                        level="error",
+                        detail={"error": str(exc), "iteration": iterations},
+                    )
+                    results.append(WorkerRunResult(status="error", error=str(exc)))
+                    if max_iterations is None:
+                        time.sleep(self.poll_interval_seconds)
+                    continue
                 if outcome.status == "no_task":
                     if max_iterations is None:
                         time.sleep(self.poll_interval_seconds)

@@ -167,6 +167,34 @@ def _write_repo_worker_manifest(task_dir: Path, worktree: Path) -> Dict[str, Any
     )
 
 
+def test_run_forever_survives_run_once_exception(tmp_path: Path):
+    # loop-01: one task's error (here the executor raising) must NOT crash the
+    # worker loop and halt all autonomous work. run_once best-effort-fails the
+    # task and re-raises; run_forever must catch, record, and keep polling.
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Python task", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+
+    def boom_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
+        raise RuntimeError("executor blew up")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        boom_executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    # Does not raise: the loop absorbs the exception and returns a result.
+    results = worker.run_forever(max_iterations=1)
+    assert results and results[-1].status == "error"
+    assert "executor blew up" in (results[-1].error or "")
+    # The task was best-effort-marked failed before the re-raise.
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+
+
 def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
