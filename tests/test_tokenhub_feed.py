@@ -3,9 +3,12 @@
 import json
 
 from mac.tokenhub_feed import (
+    admin_token_from_env,
     event_to_record,
+    events_url_from_env,
     iter_sse_events,
     record_event,
+    start_background_consumer,
 )
 
 
@@ -101,3 +104,31 @@ def test_record_event_tolerates_skips_and_no_observability():
             raise AssertionError("should not be called for skipped event")
 
     assert record_event(FakeObs(), "heartbeat", {}) is None
+
+
+def test_events_url_from_env():
+    assert events_url_from_env({}) == ""
+    assert events_url_from_env({"TOKENHUB_URL": "http://hub:8090/"}) == "http://hub:8090/admin/v1/events"
+    # explicit override wins
+    assert events_url_from_env({"TOKENHUB_URL": "http://hub:8090", "MAC_TOKENHUB_EVENTS_URL": "http://x/e"}) == "http://x/e"
+
+
+def test_admin_token_from_env_precedence():
+    assert admin_token_from_env({}) == ""
+    assert admin_token_from_env({"TOKENHUB_ADMIN_TOKEN": "t2"}) == "t2"
+    assert admin_token_from_env({"MAC_TOKENHUB_ADMIN_TOKEN": "t1", "TOKENHUB_ADMIN_TOKEN": "t2"}) == "t1"
+
+
+def test_start_background_consumer_gating():
+    obs = object()
+    # No URL configured -> no-op, does not spawn.
+    spawned = []
+    assert start_background_consumer(obs, env={}, _spawn=lambda r: spawned.append(r)) is None
+    assert spawned == []
+    # No observability -> no-op even with a URL.
+    assert start_background_consumer(None, env={"TOKENHUB_URL": "http://hub:8090"}, _spawn=lambda r: spawned.append(r)) is None
+    assert spawned == []
+    # URL + observability -> spawns the runner.
+    sentinel = object()
+    out = start_background_consumer(obs, env={"TOKENHUB_URL": "http://hub:8090"}, _spawn=lambda r: (spawned.append(r), sentinel)[1])
+    assert out is sentinel and len(spawned) == 1 and callable(spawned[0])
