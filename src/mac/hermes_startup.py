@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from mac.agent_provider import resolve_agent_provider
 from mac.hermes_runtime import RUNTIME_CONTEXT_SCHEMA
 
 
@@ -1641,6 +1642,14 @@ def apply_hermes_gateway_runtime_shim_report(
             % detail
         )
 
+    # ADR 0001 keystone: compute the per-agent provider override decision as
+    # owned mac code (mac.agent_provider) so the *intended* provider/model is
+    # legible here even when the brittle string-surgery shim silently missed on
+    # upstream drift. The existing warning above already flags a missing shim;
+    # this adds the secret-free decision + rationale (the api key is never
+    # included) so an operator can see what mac meant to do.
+    provider_decision = resolve_agent_provider().observable()
+
     return {
         "hermes_agent_dir": str(agent_dir) if agent_dir is not None else None,
         "hermes_agent_dir_explicit": explicit_agent_dir,
@@ -1649,6 +1658,7 @@ def apply_hermes_gateway_runtime_shim_report(
         "base_url_override_configured": base_url_configured,
         "gateway_runtime_shim_present": shim_present,
         "gateway_runtime_shim_patch": shim_patch,
+        "provider_decision": provider_decision,
         "warnings": warnings,
     }
 
