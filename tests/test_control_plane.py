@@ -7102,3 +7102,41 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
     assert found is not None
     assert found.id == verdict.id
     assert problems == []
+
+
+def test_rejected_review_persists_feedback_and_reopens(cp):
+    from tests.conftest import submit_review_verdict
+    from mac.models import ReviewStatus, TaskState
+
+    task = cp.create_task("work", required_capabilities=["python"], max_attempts=3)
+    executor = register_agent(cp, "executor", capabilities=["python"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change",
+        "repo changed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        verdict="rejected",
+        feedback="Fix the failing contract test.",
+    )
+
+    cp.submit_review(review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=verdict_id)
+    updated = cp.get_task(task.id)
+
+    assert updated.state == "open"
+    latest = updated.metadata["review_feedback"]["latest"]
+    assert latest["review_id"] == review.id
+    assert latest["verdict_evidence_id"] == verdict_id
+    assert latest["feedback"] == "Fix the failing contract test."

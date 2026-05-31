@@ -80,6 +80,8 @@ def submit_review_verdict(
     *,
     verdict: str = "approved",
     feedback: str = "",
+    summary: str = "",
+    findings: Optional[list] = None,
 ) -> str:
     """Produce the reviewer's signed verdict evidence (mac-jqb).
 
@@ -109,6 +111,10 @@ def submit_review_verdict(
     }
     if feedback:
         manifest["feedback"] = feedback
+    if summary:
+        manifest["summary"] = summary
+    if findings is not None:
+        manifest["findings"] = findings
     manifest["signed_by"] = reviewer_agent_id
     manifest["signature"] = sign_verification_manifest(key, manifest)
     evidence = cp.add_evidence(
