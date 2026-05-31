@@ -2820,7 +2820,10 @@ if not tokenhub_url and not tokenhub_key:
     raise SystemExit(0)
 
 updates: dict[str, str | None] = {
-    "NVIDIA_API_KEY": None,
+    # Preserve a provided NVIDIA_API_KEY (the NIM image-gen backend reads it).
+    # The NVIDIA *base URLs* are still stripped below so chat never routes to
+    # NVIDIA directly — the gateway provider stays pinned to "custom"/TokenHub.
+    "NVIDIA_API_KEY": (source.get("NVIDIA_API_KEY") or "").strip() or None,
     "NVIDIA_API_BASE": None,
     "NVIDIA_BASE_URL": None,
     "ANTHROPIC_API_KEY": None,
@@ -2975,6 +2978,19 @@ if tokenhub_key:
         output.append("TOKENHUB_API_KEY=%s" % tokenhub_key)
     env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
     env_path.chmod(0o600)
+
+# Image generation backend: when this agent carries an NVIDIA_API_KEY (a NIM
+# image key the operator opted into via the fleet config), make NVIDIA the
+# active ``image_gen`` provider so the core ``image_generate`` tool surfaces.
+# Chat is unaffected — it stays pinned to the "tokenhub" model/provider above.
+nvidia_image_key = str(env.get("NVIDIA_API_KEY") or "").strip()
+if nvidia_image_key:
+    image_gen_cfg = config.get("image_gen") if isinstance(config.get("image_gen"), dict) else {}
+    image_gen_cfg = dict(image_gen_cfg)
+    image_gen_cfg["provider"] = "nvidia"
+    image_gen_cfg.setdefault("model", "flux.1-dev")
+    config["image_gen"] = image_gen_cfg
+    print("Image generation: NVIDIA NIM backend enabled (model=%s)" % image_gen_cfg["model"])
 
 config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 config_path.chmod(0o600)
@@ -3830,7 +3846,10 @@ if derived_firecrawl_url:
     values["HERMES_WEB_EXTRACT_BACKEND"] = "firecrawl"
 
 provider_secret_keys = (
-    "NVIDIA_API_KEY",
+    # NVIDIA_API_KEY is intentionally NOT stripped: it's the NVIDIA NIM
+    # image-generation backend's key. Chat routing is unaffected because the
+    # NVIDIA base URLs (below) are still removed and the gateway provider is
+    # pinned to "custom"/TokenHub.
     "NVIDIA_API_BASE",
     "NVIDIA_BASE_URL",
     "ANTHROPIC_API_KEY",
