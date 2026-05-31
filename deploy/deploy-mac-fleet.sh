@@ -5354,7 +5354,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HERMES_DIR
+WorkingDirectory=$MAC_HOME
 EnvironmentFile=$ENV_FILE
 ExecStart=$MAC_HOME/bin/hermes-gateway
 Restart=always
@@ -5460,7 +5460,7 @@ environment=HOME="$HOME"
 
 [program:$HERMES_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/hermes-gateway
-directory=$HERMES_DIR
+directory=$MAC_HOME
 user=$USER
 autostart=true
 autorestart=true
@@ -5575,7 +5575,7 @@ install_darwin_hermes_service() {
   <array><string>$MAC_HOME/bin/hermes-gateway</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>$HERMES_DIR</string>
+  <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>StandardOutPath</key><string>$LOG_DIR/hermes-gateway.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/hermes-gateway.log</string>
 </dict>
