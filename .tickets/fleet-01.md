@@ -49,10 +49,12 @@ wired to use them.**
       `write_runtime_context` to include a compact, current view of the fleet
       (agents + status + their active tasks + recent completions), refreshed
       live (not just at deploy). The chat agent then *sees* the group.
-- [ ] **fleet-03: a `fleet` tool for the gateway toolset.** An in-process tool
-      exposing read-only `list_agents` / `list_tasks(state)` / recent
-      observations so a session can answer "what is the fleet doing?" with real
-      data. Enable it in the default Slack toolset.
+- [x] **fleet-03: a `fleet` tool (DONE).** `src/mac/_hermes/tools/fleet_tool.py`
+      (added to `_HERMES_CORE_TOOLS`): `fleet status` = roster + who's working on
+      what; `fleet message <agent>` = send an agentbus message to another agent;
+      `fleet inbox` = read messages addressed to me. Calls the hub HTTP API with
+      the agent's env token; gated on hub access. Tests: test_fleet_tool.py (6).
+      This delivers the core 'know what others are doing + talk over agentbus'.
 - [ ] **fleet-04: shared-memory recall in chat.** Have the chat turn recall
       project/fleet memory (like the executor) and inject a "what the fleet has
       learned / is working on" block — true shared consciousness, building on
