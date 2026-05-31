@@ -7216,3 +7216,154 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
 
     assert publication.target == "gitea://merge-request"
     assert completed.state == "completed"
+
+
+def test_create_task_filters_disallowed_capabilities_to_metadata(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "Fix metadata JSON textbox in Projects UI",
+        project="mac",
+        required_capabilities=["typescript", "python"],
+    )
+
+    assert task.required_capabilities == ["python"]
+    assert task.metadata["required_role"] == "python-coder-opencode"
+    assert task.metadata["domain_capabilities"] == ["typescript"]
+    policy = task.metadata["capability_policy"]
+    assert policy["source"] == "project.task_defaults.allowed_capabilities"
+    assert policy["allowed"] == ["python", "ops"]
+    assert policy["accepted"] == ["python"]
+    assert policy["filtered"] == ["typescript"]
+
+
+def test_create_task_without_allowed_capabilities_preserves_caps(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task(
+        "Legacy capability task",
+        project="mac",
+        required_capabilities=["typescript"],
+    )
+
+    assert task.required_capabilities == ["typescript"]
+    assert "domain_capabilities" not in task.metadata
+    assert "capability_policy" not in task.metadata
+
+
+def test_create_task_all_allowed_capabilities_no_policy_noise(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "Backend change",
+        project="mac",
+        required_capabilities=["python"],
+    )
+
+    assert task.required_capabilities == ["python"]
+    assert "domain_capabilities" not in task.metadata
+    assert "capability_policy" not in task.metadata
+
+
+def test_create_task_merges_existing_domain_capabilities(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "UI work",
+        project="mac",
+        required_capabilities=["frontend"],
+        metadata={"domain_capabilities": ["ui"]},
+    )
+
+    assert task.required_capabilities == []
+    assert task.metadata["domain_capabilities"] == ["ui", "frontend"]
+
+
+def test_update_task_filters_disallowed_capabilities(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+    task = cp.create_task("work", project="mac")
+
+    updated = cp.update_task(task.id, required_capabilities=["typescript", "ops"])
+
+    assert updated.required_capabilities == ["ops"]
+    assert updated.metadata["domain_capabilities"] == ["typescript"]

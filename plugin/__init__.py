@@ -41,6 +41,7 @@ def _shape_create_task_body(args: dict) -> dict:
     summary = (args.get("summary") or "").strip()
     snippets = [s.strip() for s in (args.get("snippets") or []) if str(s).strip()]
     links = [l.strip() for l in (args.get("links") or []) if str(l).strip()]
+    tags = [t.strip() for t in (args.get("tags") or []) if str(t).strip()]
 
     sections: list[str] = []
     if summary:
@@ -68,6 +69,19 @@ def _shape_create_task_body(args: dict) -> dict:
     ):
         if args.get(key) is not None:
             body[key] = args[key]
+
+    # Domain/language labels (e.g. "typescript", "frontend", "ui") are
+    # classification hints, not hard runtime requirements. Carry them in
+    # metadata.domain_capabilities so MAC routing stays role-driven.
+    if tags:
+        metadata = dict(body.get("metadata") or {})
+        existing = metadata.get("domain_capabilities")
+        domain = list(existing) if isinstance(existing, list) else []
+        for tag in tags:
+            if tag not in domain:
+                domain.append(tag)
+        metadata["domain_capabilities"] = domain
+        body["metadata"] = metadata
 
     body["hermes_instance_id"] = args.get("hermes_instance_id") or hermes_instance_id()
     return body

@@ -68,6 +68,14 @@ _SCHEMAS: dict[str, dict] = {
                 description="Short verbatim quotes from the user that scope the task. Avoid private memory.",
             ),
             "links": dict(_STRING_ARRAY, description="Reference URIs (PR links, docs, etc.)."),
+            "tags": dict(
+                _STRING_ARRAY,
+                description=(
+                    "Domain/language classification labels for the work, e.g. "
+                    "['typescript','frontend','ui']. Put language/domain hints here, "
+                    "not in required_capabilities. MAC stores them as task context."
+                ),
+            ),
         },
         "required": ["title", "summary"],
     },
