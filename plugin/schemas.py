@@ -31,11 +31,19 @@ _SCHEMAS: dict[str, dict] = {
             "title": dict(_NON_EMPTY_STRING, description="Short imperative summary of the work."),
             "summary": dict(
                 _NON_EMPTY_STRING,
-                description="Longer task brief: what, scope, success criteria. Sanitized — no private memory.",
+                description=(
+                    "Longer task brief: target system/repository, what to change, "
+                    "scope, acceptance criteria, and sanitized evidence. No private memory."
+                ),
             ),
             "required_capabilities": dict(
                 _STRING_ARRAY,
-                description="Capability slugs an executor must have to claim this task.",
+                description=(
+                    "Capability slugs for executor routing. Include at least one for "
+                    "executable tasks: ['frontend','design'] for UI/layout/readability, "
+                    "['python'] for backend/API/task-ledger work, ['ops'] for "
+                    "Kubernetes/deploy/infra. Omitting this can create an unroutable task."
+                ),
             ),
             "priority": dict(_INTEGER, description="Higher = sooner. Default 0."),
             "platform_binding_id": dict(
@@ -46,7 +54,13 @@ _SCHEMAS: dict[str, dict] = {
                 _OPTIONAL_STRING,
                 description="Optional opaque URI referencing the user thread (e.g. telegram://chat/msg).",
             ),
-            "project": dict(_OPTIONAL_STRING, description="Project slug, if known."),
+            "project": dict(
+                _OPTIONAL_STRING,
+                description=(
+                    "Project slug for executor routing. For MAC control-plane/API/UI/runner/plugin "
+                    "work use 'mac'. Do not omit when the target system/repo is known."
+                ),
+            ),
             "snippets": dict(
                 _STRING_ARRAY,
                 description="Short verbatim quotes from the user that scope the task. Avoid private memory.",
