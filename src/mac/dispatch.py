@@ -701,16 +701,8 @@ class RemoteDispatch:
     def list_deployments(self, environment: str) -> List[_Dictish]:
         return _wrap_list(self._get("/environments/%s/deployments" % quote(environment, safe="")))
 
-    # -- Bridge (beads / project items) -------------------------------------
-
-    def list_beads_repositories(self) -> List[_Dictish]:
-        return _wrap_list(self._get("/bridge/beads/repositories"))
-
-    def register_beads_repository(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/bridge/beads/repositories", _drop_none(kw)))
-
-    def poll_beads_repositories(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/bridge/beads/poll", _drop_none(kw)))
+    # -- Bridge (project items) ---------------------------------------------
+    # beads bridge endpoints removed: beads is no longer a read/write source.
 
     def import_project_item(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/bridge/items", _drop_none(kw)))

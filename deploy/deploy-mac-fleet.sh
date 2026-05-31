@@ -886,7 +886,6 @@ HERMES_DIR="$MAC_HOME/hermes-agent"
 # runtime via PYTHONPATH; HERMES_DIR is no longer created.
 HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"
 export PYTHONPATH="$HERMES_VENDORED:${PYTHONPATH:-}"
-BEADS_DIR="$MAC_HOME/vendor/beads"
 ENV_FILE="$MAC_HOME/mac.env"
 LOG_DIR="$MAC_HOME/logs"
 DEPLOY_LOG="$LOG_DIR/deploy-${DEPLOY_TS}.log"
@@ -914,8 +913,6 @@ MAC_AGENT_UNIT_BACKUP=""
 MAC_PLIST_BACKUP=""
 HERMES_PLIST_BACKUP=""
 MAC_AGENT_PLIST_BACKUP=""
-BEADS_REPO_URL="${MAC_DEPLOY_BEADS_REPO_URL:-https://github.com/gastownhall/beads.git}"
-BEADS_REF="${MAC_DEPLOY_BEADS_REF:-main}"
 
 mkdir -p "$LOG_DIR" "$MAC_HOME/backups"
 exec > >(tee -a "$DEPLOY_LOG") 2>&1
@@ -969,7 +966,7 @@ PY
 PY="$(python_bin)"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR BEADS_DIR BEADS_REPO_URL BEADS_REF ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -2021,16 +2018,12 @@ manifest = {
             "timeout_seconds": int(os.environ.get("DRAIN_TIMEOUT_SECONDS") or 0),
             "poll_seconds": int(os.environ.get("DRAIN_POLL_SECONDS") or 0),
         },
-        "beads_repo_url": os.environ.get("BEADS_REPO_URL") or None,
-        "beads_ref": os.environ.get("BEADS_REF") or None,
     },
     "paths": {
         "mac_home": str(mac_home),
         "source": str(Path(os.environ["SRC_DIR"])),
         "mac_venv": str(Path(os.environ["VENV"])),
         "hermes_agent": str(hermes_dir),
-        "beads_source": str(Path(os.environ["BEADS_DIR"])),
-        "beads_cli": str(mac_home / "bin" / "bd"),
         "env_file": str(Path(os.environ["ENV_FILE"])),
         "hermes_runtime_context": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or str(Path.home() / ".hermes" / "mac-runtime-context.json"),
         "hermes_runtime_markdown": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or str(Path.home() / ".hermes" / "mac-runtime-context.md"),
@@ -2045,7 +2038,6 @@ manifest = {
         "mac_source": file_ref(os.environ["SRC_DIR"]),
         "mac_database": file_ref(mac_home / "mac.db"),
         "hermes_agent": file_ref(hermes_dir),
-        "beads_cli": file_ref(mac_home / "bin" / "bd"),
         "hermes_state": file_ref(Path.home() / ".hermes"),
         "hermes_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (Path.home() / ".hermes" / "mac-runtime-context.json")),
         "hermes_runtime_markdown": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or (Path.home() / ".hermes" / "mac-runtime-context.md")),
@@ -2394,111 +2386,6 @@ clear_mac_agent_drain_after_deploy() {
   mac_api_json POST "/agents/$agent_id/heartbeat" '{"status":"idle","health_status":"healthy"}' >/dev/null || true
 }
 
-install_beads_cli() {
-  local target="$MAC_HOME/bin/bd" existing upgrade source_first missing_required required
-  mkdir -p "$MAC_HOME/bin" "$(dirname "$BEADS_DIR")"
-  upgrade="${MAC_DEPLOY_BEADS_UPGRADE:-1}"
-  source_first="${MAC_DEPLOY_BEADS_SOURCE_FIRST:-1}"
-  if [ -x "$target" ]; then
-    log "bd CLI already installed at $target"
-    "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-    if ! truthy "$upgrade"; then
-      return 0
-    fi
-    log "upgrading bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-    existing="$target"
-  fi
-
-  if truthy "$source_first"; then
-    missing_required=""
-    for required in git make go; do
-      if ! command -v "$required" >/dev/null 2>&1; then
-        missing_required="${missing_required}${missing_required:+, }$required"
-      fi
-    done
-    if [ -z "$missing_required" ]; then
-      log "building bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-      if [ -d "$BEADS_DIR/.git" ]; then
-        git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-      else
-        git clone --quiet "$BEADS_REPO_URL" "$BEADS_DIR"
-        git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-      fi
-      git -C "$BEADS_DIR" checkout --quiet FETCH_HEAD
-      make -C "$BEADS_DIR" build
-      install -m 0755 "$BEADS_DIR/bd" "$target"
-      "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-      return 0
-    fi
-    log "WARNING: cannot build bd CLI from source (missing: $missing_required); falling back to an existing binary or release download"
-  fi
-
-  if [ -z "${existing:-}" ]; then
-    existing="$(command -v bd 2>/dev/null || true)"
-  fi
-  if [ -z "$existing" ]; then
-    for candidate in "$HOME/.local/bin/bd" "$HOME/bin/bd" /opt/homebrew/bin/bd /usr/local/bin/bd; do
-      if [ -x "$candidate" ]; then
-        existing="$candidate"
-        break
-      fi
-    done
-  fi
-  if [ -n "$existing" ] && [ -x "$existing" ]; then
-    log "copying existing bd CLI from $existing to managed mac bin"
-    if [ "$existing" != "$target" ]; then
-      cp -f "$existing" "$target"
-      chmod 0755 "$target"
-    fi
-    "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-    return 0
-  fi
-  local os_name arch_name dl_url tmp_dir bd_version
-  case "$OS_KIND" in
-    linux)  os_name="linux" ;;
-    darwin) os_name="darwin" ;;
-    *)      os_name="" ;;
-  esac
-  case "$(uname -m 2>/dev/null || true)" in
-    x86_64)        arch_name="amd64" ;;
-    aarch64|arm64) arch_name="arm64" ;;
-    *)             arch_name="" ;;
-  esac
-  if [ -n "$os_name" ] && [ -n "$arch_name" ] && command -v curl >/dev/null 2>&1; then
-    bd_version="$(curl -fsSL "https://api.github.com/repos/gastownhall/beads/releases/latest" 2>/dev/null \
-      | grep '"tag_name"' | sed 's/.*"tag_name": *"v\([^"]*\)".*/\1/' | tr -d '\r\n')"
-    if [ -n "$bd_version" ]; then
-      dl_url="https://github.com/gastownhall/beads/releases/download/v${bd_version}/beads_${bd_version}_${os_name}_${arch_name}.tar.gz"
-      log "downloading bd CLI v${bd_version} from GitHub releases"
-      tmp_dir="$(mktemp -d)"
-      if curl -fsSL "$dl_url" | tar -xz -C "$tmp_dir" 2>/dev/null && [ -x "$tmp_dir/bd" ]; then
-        install -m 0755 "$tmp_dir/bd" "$target"
-        rm -rf "$tmp_dir"
-        "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-        return 0
-      fi
-      rm -rf "$tmp_dir"
-      log "WARNING: bd CLI release download failed; falling back to source build"
-    fi
-  fi
-  for required in git make go; do
-    if ! command -v "$required" >/dev/null 2>&1; then
-      log "WARNING: bd CLI could not be installed (build prereq missing: $required); Beads lifecycle sync disabled"
-      return 1
-    fi
-  done
-  log "building bd CLI from $BEADS_REPO_URL@$BEADS_REF"
-  if [ -d "$BEADS_DIR/.git" ]; then
-    git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-  else
-    git clone --quiet "$BEADS_REPO_URL" "$BEADS_DIR"
-    git -C "$BEADS_DIR" fetch --quiet origin "$BEADS_REF"
-  fi
-  git -C "$BEADS_DIR" checkout --quiet FETCH_HEAD
-  make -C "$BEADS_DIR" build
-  install -m 0755 "$BEADS_DIR/bd" "$target"
-  "$target" version > "$LOG_DIR/beads-version.txt" 2>&1 || true
-}
 
 install_github_cli() {
   local target="$MAC_HOME/bin/gh" existing=""
@@ -2557,82 +2444,7 @@ install_github_cli() {
   log "GitHub CLI ready at $target"
 }
 
-bootstrap_beads_repositories() {
-  local raw="${MAC_BEADS_REPOSITORIES:-}" entry rest repo_path index log_path
-  [ -n "$raw" ] || return 0
-  index=0
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    if [ "$entry" = "${entry#*=}" ]; then
-      log "WARNING: skipping malformed MAC_BEADS_REPOSITORIES entry: $entry"
-      continue
-    fi
-    rest="${entry#*=}"
-    repo_path="${rest%%|*}"
-    repo_path="${repo_path%%:*}"
-    [ -n "$repo_path" ] || continue
-    if [ ! -d "$repo_path/.beads" ]; then
-      log "WARNING: skipping Beads bootstrap for $repo_path because .beads is absent"
-      continue
-    fi
-    chmod 700 "$repo_path/.beads" 2>/dev/null || true
-    git -C "$repo_path" config beads.role maintainer 2>/dev/null || true
-    index=$((index + 1))
-    log_path="$LOG_DIR/beads-bootstrap-${index}.log"
-    log "bootstrapping Beads repository at $repo_path"
-    if ! (cd "$repo_path" && "$MAC_BEADS_CLI" bootstrap --yes) > "$log_path" 2>&1; then
-      log "ERROR: Beads bootstrap failed for $repo_path; see $log_path"
-      cat "$log_path"
-      exit 1
-    fi
-    # Dolt pull is intentionally skipped: embedded dolt's migration
-    # rejects the issues table once any worker has touched it, and the
-    # JSONL files under .beads/ are already the source of truth (and
-    # travel with the repo via git). Re-enable here only if
-    # MAC_BEADS_DOLT_SYNC_ENABLED is set on the running fleet.
-    if [ "${MAC_BEADS_DOLT_SYNC_ENABLED:-}" = "1" ]; then
-      if ! (cd "$repo_path" && "$MAC_BEADS_CLI" dolt pull) >> "$log_path" 2>&1; then
-        log "WARNING: Beads Dolt pull failed for $repo_path; bridge polling will report authority drift if the embedded DB is stale"
-      fi
-    fi
-  done <<EOF
-${raw//;/$'\n'}
-EOF
-}
 
-restore_beads_tracked_exports() {
-  local raw="${MAC_BEADS_REPOSITORIES:-}" entry rest repo_path index status_path
-  case "${MAC_BEADS_RESTORE_TRACKED_EXPORTS:-}" in
-    1|true|TRUE|yes|YES|on|ON)
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-  [ -n "$raw" ] || return 0
-  index=0
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    [ "$entry" != "${entry#*=}" ] || continue
-    rest="${entry#*=}"
-    repo_path="${rest%%|*}"
-    repo_path="${repo_path%%:*}"
-    [ -n "$repo_path" ] || continue
-    if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      continue
-    fi
-    if [ -z "$(git -C "$repo_path" status --porcelain -- .beads/config.yaml .beads/issues.jsonl)" ]; then
-      continue
-    fi
-    index=$((index + 1))
-    status_path="$LOG_DIR/beads-tracked-export-restore-${index}.txt"
-    git -C "$repo_path" status --porcelain -- .beads/config.yaml .beads/issues.jsonl > "$status_path" || true
-    git -C "$repo_path" restore --staged --worktree -- .beads/config.yaml .beads/issues.jsonl
-    log "restored tracked Beads export noise in $repo_path; status saved to $status_path"
-  done <<EOF
-${raw//;/$'\n'}
-EOF
-}
 
 normalize_hermes_redaction_env() {
   "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
@@ -3652,7 +3464,6 @@ fi
 mv "$SRC_DIR.new" "$SRC_DIR"
 rm -f "$ARCHIVE"
 
-install_beads_cli || true
 install_github_cli || true
 
 log "creating/updating mac environment file"
@@ -3752,8 +3563,6 @@ values["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] = "1"
 values["MAC_HERMES_WORKSPACE"] = str(mac_home / "src" / "mac")
 values["MAC_PROJECT_CONTRACT_FILE"] = str(mac_home / "src" / "mac" / ".mac" / "project.yaml")
 values["MAC_SELF_UPDATE_REPO"] = str(mac_home / "src" / "mac")
-values["MAC_BEADS_CLI"] = str(mac_home / "bin" / "bd")
-values.setdefault("MAC_BEADS_BRIDGE_ROOT", str(mac_home / "beads-checkouts"))
 if configured_gateway_model:
     values["MAC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
     values["ACC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
@@ -3941,23 +3750,7 @@ values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
 values.setdefault("MAC_WORKER_EXECUTOR", str(mac_home / "bin" / "mac-hermes-task-executor"))
 values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
 values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
-values["MAC_BEADS_BRIDGE_HUB_AGENT"] = shared_services_manager
 values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", shared_services_manager)
-values.setdefault("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
-if agent_name == shared_services_manager:
-    values["MAC_BEADS_BRIDGE_ON_HEARTBEAT"] = "1"
-    values["MAC_BEADS_AUTO_PULL"] = "1"
-    values.setdefault(
-        "MAC_BEADS_REPOSITORIES",
-        "mac=%s:repo-beads-mac:repo-beads-mac::30" % (mac_home / "src" / "mac"),
-    )
-else:
-    values.setdefault("MAC_BEADS_BRIDGE_ON_HEARTBEAT", "0")
-if "MAC_BEADS_REPOSITORIES" in values:
-    # Older generated env files used "|" as an internal separator. That is
-    # readable by Python but invalid in a shell-sourced env file because it is
-    # parsed as a pipeline. Normalize before the file is sourced below.
-    values["MAC_BEADS_REPOSITORIES"] = values["MAC_BEADS_REPOSITORIES"].replace("|", ":")
 home_channel = (
     configured_home_channel
     or values.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
@@ -3993,8 +3786,6 @@ reload_mac_env
 fetch_slack_secrets_from_vault
 reload_mac_env
 sync_hermes_slack_identity_env
-[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories || true
-[ -x "$MAC_HOME/bin/bd" ] && restore_beads_tracked_exports || true
 if [ "$WORKER_MODE" = "loop" ]; then
   ensure_hub_tunnel_key
 else

@@ -678,7 +678,6 @@ class ControlPlane:
             add_memory=self.add_memory,
             task_from_row=self._task_from_row,
         )
-        self._seed_beads_repositories_from_env()
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
@@ -4990,7 +4989,6 @@ class ControlPlane:
             )
         self._record_history(lease.task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
         heartbeat_agent = self.get_agent(agent_id)
-        self._maybe_poll_beads_bridge_on_heartbeat(heartbeat_agent)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
         return self.get_lease(lease_id)
 
@@ -5952,7 +5950,6 @@ class ControlPlane:
                     now,
                 )
         agent = self.get_agent(agent_id)
-        self._maybe_poll_beads_bridge_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         return agent
 
@@ -6534,6 +6531,75 @@ class ControlPlane:
         from mac.tokenhub_wildcard import refresh_wildcard_ladder
 
         return refresh_wildcard_ladder(self.observability, timeout=timeout)
+
+    # -- Ticketing connectors (meta-tickets) --------------------------------
+    # beads is no longer a read/write source; it's an import-only connector.
+    # The native source is .tickets/ + this ledger. detect/convert route
+    # through mac.ticketing so any future ticketing system plugs in the same way.
+
+    def detect_ticketing(self, repo_path: str) -> JsonDict:
+        """Report which ticketing sources a repo has + whether a one-way
+        conversion should be offered (foreign source present, no native
+        .tickets/). Read-only. Emits a ``ticketing.conversion_available``
+        observation the hub's hermes agent can surface to the user."""
+        from pathlib import Path as _Path
+        from mac.ticketing import detect_ticketing as _detect
+
+        detection = _detect(_Path(repo_path))
+        if detection.needs_conversion:
+            self.record_log(
+                "ticketing.conversion_available",
+                layer="control_plane",
+                source="ticketing",
+                level="info",
+                subject_type="environment",
+                subject_id=str(repo_path),
+                detail={
+                    "schema": "mac.ticketing_conversion.v1",
+                    "conversion_from": detection.conversion_from,
+                    "message": detection.message,
+                    "prompt": (
+                        "Repo %s has a '%s' ticket source but no native .tickets/. "
+                        "Convert it one-way into .tickets (mac task ledger)?"
+                        % (repo_path, detection.conversion_from)
+                    ),
+                },
+            )
+        return detection.to_dict()
+
+    def convert_ticketing_source(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        actor: str = "hermes",
+        dry_run: bool = False,
+    ) -> JsonDict:
+        """Run the one-way conversion of a detected foreign source (e.g. beads)
+        into native .tickets/ + the ledger. Hermes calls this only after the
+        user agrees. Never writes back to the foreign source."""
+        from pathlib import Path as _Path
+        from mac.ticketing import detect_ticketing as _detect, connector_for
+
+        detection = _detect(_Path(repo_path))
+        if not detection.needs_conversion or not detection.conversion_from:
+            return {"status": "no_conversion_needed", "detection": detection.to_dict()}
+        connector = connector_for(detection.conversion_from)
+        if connector is None:
+            return {"status": "unknown_connector", "detection": detection.to_dict()}
+        report = connector.convert(
+            _Path(repo_path), project=project, cp=None if dry_run else self, actor=actor, dry_run=dry_run
+        )
+        self.record_log(
+            "ticketing.converted",
+            layer="control_plane",
+            source="ticketing",
+            level="info",
+            subject_type="environment",
+            subject_id=str(repo_path),
+            detail={"schema": "mac.ticketing_conversion.v1", "from": detection.conversion_from, "report": report},
+        )
+        return {"status": "converted", "from": detection.conversion_from, "report": report}
 
     def mark_stale_agents_offline(self, stale_after_seconds: int) -> List[Agent]:
         cutoff = (

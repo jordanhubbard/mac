@@ -123,36 +123,6 @@ def test_fleet_deploy_drain_agent_lookup_does_not_pipe_json_into_python_stdin():
     assert 'mac_api_json GET "/agents" |' not in agent_id_for_drain
 
 
-def test_fleet_deploy_bootstraps_beads_cli_for_bridge():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-
-    assert "BEADS_REPO_URL=\"${MAC_DEPLOY_BEADS_REPO_URL:-https://github.com/gastownhall/beads.git}\"" in script
-    assert "install_beads_cli()" in script
-    assert '"$HOME/.local/bin/bd"' in script
-    assert '"$HOME/bin/bd"' in script
-    assert "bootstrap_beads_repositories()" in script
-    assert "restore_beads_tracked_exports()" in script
-    assert 'values.setdefault("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")' in script
-    assert 'values.setdefault("MAC_BEADS_BRIDGE_ROOT", str(mac_home / "beads-checkouts"))' in script
-    assert 'bootstrap --yes' in script
-    # Dolt pull is gated behind MAC_BEADS_DOLT_SYNC_ENABLED=1 (disabled by default).
-    assert 'MAC_BEADS_DOLT_SYNC_ENABLED' in script
-    assert 'dolt pull' in script
-    assert 'chmod 700 "$repo_path/.beads"' in script
-    assert 'git -C "$repo_path" config beads.role maintainer' in script
-    source_install_block = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
-        'log "creating/updating mac environment file"', 1
-    )[0]
-    assert "install_beads_cli" in source_install_block
-    env_source_block = script.split('. "$ENV_FILE"', 1)[1].split(
-        'log "installing mac Python package"', 1
-    )[0]
-    assert "bootstrap_beads_repositories" in env_source_block
-    assert "restore_beads_tracked_exports" in env_source_block
-    assert 'values["MAC_BEADS_CLI"] = str(mac_home / "bin" / "bd")' in script
-    services_text = (ROOT / "src" / "mac" / "services.py").read_text(encoding="utf-8")
-    assert "BeadsBridgeService(_beads_cli, runner=_run_beads_command)" in services_text
-    assert 'self.beads_bridge.run(["ready", "--json"]' in services_text
 
 
 def test_fleet_deploy_installs_github_cli_for_workers():
@@ -387,8 +357,7 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
         "reload_mac_env\n"
         "fetch_slack_secrets_from_vault\n"
         "reload_mac_env\n"
-        "sync_hermes_slack_identity_env\n"
-        '[ -x "$MAC_HOME/bin/bd" ] && bootstrap_beads_repositories'
+        "sync_hermes_slack_identity_env"
     ) in script
     assert "fetch_slack_secrets_from_vault()" in script
     assert "scripts/mac-fetch-slack-secrets.py" in script

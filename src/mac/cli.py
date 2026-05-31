@@ -266,6 +266,22 @@ def cmd_task_detect_beads(args: argparse.Namespace) -> None:
     _print(asdict(detect(_Path(args.repo_path).expanduser().resolve())))
 
 
+def cmd_task_detect_ticketing(args: argparse.Namespace) -> None:
+    """Connector-aware detection: which ticketing sources a repo has + whether a
+    one-way conversion to native .tickets/ should be offered."""
+    _print(_plane(args).detect_ticketing(args.repo_path))
+
+
+def cmd_task_convert_ticketing(args: argparse.Namespace) -> None:
+    """Run the one-way conversion of a detected foreign source (e.g. beads) into
+    native .tickets/ + the ledger (what hermes invokes once the user agrees)."""
+    _print(
+        _plane(args).convert_ticketing_source(
+            args.repo_path, project=args.project, actor=args.actor, dry_run=args.dry_run
+        )
+    )
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     description = _read_text_arg(
@@ -1589,6 +1605,28 @@ def build_parser() -> argparse.ArgumentParser:
                                help="write .tickets/<id>.md mirror only; skip MAC db writes "
                                     "(useful for repos not registered with a MAC hub)")
     _set(cmd_task_migrate_beads, migrate_beads)
+
+    # Connector-aware (preferred): works for any future ticketing system, not
+    # just beads. detect-ticketing reports the needs-conversion signal hermes
+    # uses to ask the user; convert-ticketing runs the one-way import.
+    detect_ticketing = task.add_parser(
+        "detect-ticketing",
+        help="detect ticketing sources in a repo (.tickets native / .beads foreign) "
+        "and whether a one-way conversion should be offered (read-only)",
+    )
+    detect_ticketing.add_argument("repo_path")
+    _set(cmd_task_detect_ticketing, detect_ticketing)
+
+    convert_ticketing = task.add_parser(
+        "convert-ticketing",
+        help="one-way convert a detected foreign source (e.g. beads) into native "
+        ".tickets/ + the ledger (run after the user agrees)",
+    )
+    convert_ticketing.add_argument("repo_path")
+    convert_ticketing.add_argument("--project", required=True)
+    convert_ticketing.add_argument("--actor", default="hermes")
+    convert_ticketing.add_argument("--dry-run", action="store_true")
+    _set(cmd_task_convert_ticketing, convert_ticketing)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
     project_create = project.add_parser("create")
