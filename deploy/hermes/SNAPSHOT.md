@@ -64,6 +64,24 @@ Top-level dirs **never statically reached** from the runtime entrypoints:
 - `acp_registry/`, `optional-mcps/`, `optional-skills/` (verify per above)
 - `plans/`, `scripts/`, upstream `tests/`
 
+## Vendor strategy: sys.path injection, NOT namespace rewrite
+
+Measured fact: Hermes is a **flat top-level package layout** and imports its own
+code with **top-level absolute imports** everywhere (`from agent import …`,
+`from gateway import …`, `from hermes_cli/tools/plugins/providers import …`,
+`from hermes_constants import …` — hundreds of references; no `from ..` parent-
+relative imports). It is installed via `setuptools.packages.find`.
+
+Therefore the vendor needs **no import rewriting**. Vendor the tree into
+`src/mac/_hermes/` and put that directory on `sys.path` (the vendor stamps a
+bootstrap; mac inserts it before importing the gateway in-process). Then
+`agent`, `gateway`, `hermes_cli`, `tools`, `plugins`, `providers`,
+`hermes_constants`, etc. all resolve from the vendored tree unchanged. This is
+what makes hu-03 (in-process gateway) tractable: the hard parts are the
+dependency-manifest merge and the in-process launch, not 350k LOC of namespace
+surgery. Validate by importing `gateway.run` from the vendored path once deps
+are merged.
+
 ## Patches to fold in permanently (then delete the .patch files)
 
 These out-of-tree patches become ordinary in-tree edits once vendored:
