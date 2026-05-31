@@ -1,0 +1,7 @@
+name: nvidia
+version: 1.0.0
+description: "NVIDIA NIM image generation backend (FLUX.1, SDXL via ai.api.nvidia.com/v1/genai). Saves generated images to $HERMES_HOME/cache/images/."
+author: mac
+kind: backend
+requires_env:
+  - NVIDIA_API_KEY
