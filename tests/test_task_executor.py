@@ -132,6 +132,65 @@ def test_classify_outcome_failure_when_no_evidence(tmp_path):
     assert out["outcome"] == "failure"
 
 
+def test_agent_timeout_default_and_override(monkeypatch):
+    monkeypatch.delenv("MAC_EXECUTOR_AGENT_TIMEOUT", raising=False)
+    assert te._agent_timeout() == 900.0
+    monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "120")
+    assert te._agent_timeout() == 120.0
+    monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "0")  # disable the bound
+    assert te._agent_timeout() is None
+
+
+def test_manifest_is_complete(tmp_path):
+    assert te._manifest_is_complete(tmp_path) is False
+    (tmp_path / "mac-evidence.json").write_text('{"status":"complete","evidence_type":"operator_result"}')
+    assert te._manifest_is_complete(tmp_path) is True
+    (tmp_path / "mac-evidence.json").write_text('{"status":"running"}')  # partial
+    assert te._manifest_is_complete(tmp_path) is False
+
+
+def test_main_salvages_evidence_when_agent_run_times_out(tmp_path, monkeypatch):
+    # loop-01 resilience: the agent wrote a valid deliverable, then a trailing
+    # turn hung and the run was bounded (rc=124). The deliverable must NOT be
+    # discarded — main() salvages it and reports success.
+    task = {"id": "t1", "title": "Plan X", "project": "demo", "metadata": {"publication_target": "test://x"}}
+    task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    posts = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+
+    def timed_out_runner(argv, cwd, task_id, metadata):
+        # agent produced a real deliverable before the trailing turn hung
+        (ws / "mac-evidence.json").write_text(json.dumps({
+            "schema": "mac.worker_evidence.v1", "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Produced a substantive plan with several distinct points.",
+        }))
+        return _FakeResult(124, stdout="...", stderr="agent run timed out")
+
+    rc = te.main(runner=timed_out_runner)
+    assert rc == 0, "valid deliverable should be salvaged despite the timeout"
+    names = {p[1]["name"] for p in posts if p[0] == "/observability/logs"}
+    assert "executor.evidence_salvaged" in names
+    # outcome recorded as success (memory feed)
+    mem = [p for p in posts if p[0] == "/memory"]
+    assert mem and json.loads(mem[0][1]["content"])["outcome"] == "success"
+
+
+def test_main_fails_when_timeout_and_no_evidence(tmp_path, monkeypatch):
+    task = {"id": "t1", "title": "Plan X", "project": "demo", "metadata": {"publication_target": "test://x"}}
+    task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setattr(te, "_hub_post", lambda *a, **k: True)
+    monkeypatch.setattr(te, "_hub_get", lambda *a, **k: [])
+    # timeout with NO deliverable written → honest failure, not salvaged
+    rc = te.main(runner=lambda *a: _FakeResult(124, stderr="agent run timed out"))
+    assert rc == 124
+
+
 # ---------------------------------------------------------------------------
 # Hub seam: telemetry + memory are best-effort and gated
 # ---------------------------------------------------------------------------

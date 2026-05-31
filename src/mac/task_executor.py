@@ -179,8 +179,33 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
         "metadata": {"component": "mac-hermes-task-executor", "argv_sha256": argv_hash, **metadata},
     }
     post_command_audit(agent_id, {**base, "phase": "started"})
+    timeout = metadata.pop("timeout", None) if isinstance(metadata, dict) else None
     try:
-        result = subprocess.run(argv, cwd=str(cwd), text=True, capture_output=True, check=False)
+        result = subprocess.run(
+            argv, cwd=str(cwd), text=True, capture_output=True, check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        # loop-01 resilience: a wedged TokenHub turn can hang the agent
+        # indefinitely. Bound it. The agent may already have written a valid
+        # mac-evidence.json before the trailing turn stalled; main() salvages
+        # that so verified work isn't discarded just because the run was capped.
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        post_command_audit(
+            agent_id,
+            {
+                **base,
+                "phase": "timeout",
+                "completed_at": utcnow(),
+                "duration_ms": (time.monotonic() - started) * 1000.0,
+                "metadata": {**base["metadata"], "timeout_seconds": timeout},
+            },
+        )
+        return subprocess.CompletedProcess(argv, 124, out, err + "\n[executor] agent run timed out after %ss" % timeout)
     except OSError as exc:
         post_command_audit(
             agent_id,
@@ -372,15 +397,18 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     tests_state = None
     if isinstance(tests, dict):
         tests_state = "pass" if (tests.get("returncode") == 0 or tests.get("status") == "pass") else "fail"
+    # ``repo`` is {} for non-repo evidence (operator_result/documentation/...);
+    # in that case pushed/files_changed are N/A (None), NOT False — otherwise a
+    # legitimate planning result would be mis-graded a failure.
     signals = {
         "returncode": returncode,
-        "pushed": bool(repo.get("pushed")) if isinstance(repo, dict) else None,
-        "files_changed": len(repo.get("files_changed") or []) if isinstance(repo, dict) else None,
+        "pushed": bool(repo.get("pushed")) if repo else None,
+        "files_changed": len(repo.get("files_changed") or []) if repo else None,
         "tests": tests_state,
         "checks_pass": checks_pass if checks else None,
     }
     # Success: the run exited cleanly, evidence exists, and (where relevant)
-    # it was pushed and tests/checks passed.
+    # it was pushed and tests/checks passed. Absent repo/checks don't fail it.
     success = (
         returncode == 0
         and bool(manifest)
@@ -733,6 +761,36 @@ def _hermes_argv(prompt: str) -> List[str]:
     return [str(hermes_py), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
 
 
+def _agent_timeout() -> Optional[float]:
+    """Bound a single agent run so a wedged TokenHub turn can't hang the loop
+    forever. Default 900s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
+    raw = (os.environ.get("MAC_EXECUTOR_AGENT_TIMEOUT") or "").strip()
+    if not raw:
+        return 900.0
+    try:
+        val = float(raw)
+    except ValueError:
+        return 900.0
+    return val if val > 0 else None
+
+
+def _manifest_is_complete(task_workspace: Path) -> bool:
+    """True when the agent (or a deterministic finalizer) already wrote a
+    complete, typed evidence manifest — i.e. real verified work exists."""
+    path = task_workspace / "mac-evidence.json"
+    if not path.exists():
+        return False
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return (
+        isinstance(manifest, dict)
+        and str(manifest.get("status") or "").lower() == "complete"
+        and bool(manifest.get("evidence_type"))
+    )
+
+
 def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
     task_file = Path(os.environ["MAC_TASK_FILE"])
     task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
@@ -764,7 +822,7 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         _hermes_argv(prompt),
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
-        {"execution_kind": "review" if is_review else "task"},
+        {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout()},
     )
     emit_telemetry(
         "agent_completed",
@@ -785,11 +843,20 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
             sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
     write_fallback_evidence_manifest(task_workspace, task, result, review_context)
 
+    # loop-01 resilience: if the run was bounded/failed (e.g. a wedged TokenHub
+    # trailing turn) but the agent or a deterministic finalizer already wrote a
+    # complete, typed manifest, don't discard that verified work — finalize as
+    # success. The downstream verification gate still validates the content.
+    rc = result.returncode
+    if rc != 0 and _manifest_is_complete(task_workspace):
+        emit_telemetry("evidence_salvaged", task_id=task_id, level="warning", original_returncode=rc)
+        rc = 0
+
     # Memory feed (out): distill this run's outcome into a deployment lesson the
     # nap consolidator will promote into the vector tier — so the fleet's recall
     # gets richer with every task. Reviews don't feed deployment lessons.
     if not is_review:
-        outcome = classify_outcome(task_workspace, task, result.returncode)
+        outcome = classify_outcome(task_workspace, task, rc)
         emit_telemetry(
             "finalized",
             task_id=task_id,
@@ -802,7 +869,7 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
-    return result.returncode
+    return rc
 
 
 if __name__ == "__main__":

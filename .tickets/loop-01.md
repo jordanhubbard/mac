@@ -84,3 +84,25 @@ producing non-work that jams.
       polling (run_once still best-effort-fails the task first). Test:
       `test_run_forever_survives_run_once_exception`. (A finer-grained
       clean-`failed`-on-4xx vs re-raise-on-5xx remains a possible refinement.)
+
+## Live fleet test (2026-05-31)
+
+Deployed to rocky/natasha/bullwinkle and drove a real operator_result task
+through the loop. **The loop produces genuine, verified work**: the agent
+inspected the actual repo (found conn-01.md, dream-*.md, the bd CLI, project.yaml)
+and wrote a substantive 7-point plan to mac-evidence.json — the opposite of the
+old "hello hello hello". The executor telemetry (`executor.started`,
+`layer=executor`) confirmed the extracted module is live.
+
+**Gap found + fixed:** the agent wrote its deliverable, then made a trailing LLM
+turn whose TokenHub call **hung** (TokenHub was wedged on chat completions —
+fresh requests timed out at 30s+). With no bound on the agent run, the executor
+blocked indefinitely. Fixes (task_executor.py):
+- [x] Bound the agent run (`MAC_EXECUTOR_AGENT_TIMEOUT`, default 900s); a hung
+      turn is terminated instead of hanging the loop.
+- [x] **Salvage-on-evidence**: if the agent (or the deterministic finalizer)
+      already wrote a complete, typed manifest, a bounded/failed run still
+      finalizes as success — verified work is never discarded because a trailing
+      turn hung.
+- [x] Fixed `classify_outcome` mis-grading non-repo evidence as failure
+      (absent repo → pushed=None, not False).
