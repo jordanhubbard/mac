@@ -195,6 +195,19 @@ class NoChangeValidator(EvidenceValidator):
         return problems
 
 
+def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
+    verdict = str(raw.get("verdict") or "").strip().lower()
+    if verdict != "rejected":
+        return []
+    has_feedback = bool(str(raw.get("feedback") or "").strip())
+    has_summary = bool(str(raw.get("summary") or "").strip())
+    findings = raw.get("findings")
+    has_findings = isinstance(findings, list) and bool(findings)
+    if has_feedback or has_summary or has_findings:
+        return []
+    return ["rejected review_verdict requires feedback, findings, or summary"]
+
+
 class ReviewVerdictValidator(EvidenceValidator):
     evidence_type = "review_verdict"
 
@@ -212,6 +225,7 @@ class ReviewVerdictValidator(EvidenceValidator):
         digest = str(manifest.raw.get("worktree_digest") or "").strip()
         if not WORKTREE_DIGEST_RE.match(digest):
             problems.append("review_verdict evidence requires worktree_digest sha256")
+        problems.extend(rejected_verdict_feedback_problems(manifest.raw))
         if verdict == "approved":
             if self.passed_checks(manifest, context) < 1:
                 problems.append("review_verdict evidence requires at least one independent passing check")

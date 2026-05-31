@@ -6960,3 +6960,64 @@ def test_update_task_uses_explicit_metadata_when_applying_project_defaults(cp):
 
     assert updated.metadata["source"] == "explicit"
     assert updated.metadata["required_role"] == "python-coder-opencode"
+
+
+def test_verdict_value_unknown_fails_closed(cp):
+    from mac.models import Evidence
+
+    evidence = Evidence(
+        "ev_test",
+        "task_test",
+        "review",
+        "artifact://verdict",
+        "bad verdict",
+        None,
+        {"verification": {"verdict": "needs_changes"}},
+        "reviewer",
+        "2026-01-01T00:00:00+00:00",
+    )
+
+    assert cp._verdict_value(evidence) == "rejected"
+
+
+def test_review_verdict_validator_rejected_requires_feedback():
+    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+
+    manifest = VerificationManifest.parse(
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": "rejected",
+            "reviewed_evidence_id": "ev_executor",
+            "worktree_digest": "sha256:" + "0" * 64,
+        }
+    )
+    problems = ReviewVerdictValidator().validate(
+        manifest,
+        EvidenceValidationContext(passed_check_count=lambda _m: 0),
+    )
+
+    assert "rejected review_verdict requires feedback, findings, or summary" in problems
+
+
+def test_review_verdict_validator_rejected_accepts_feedback():
+    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+
+    manifest = VerificationManifest.parse(
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": "rejected",
+            "reviewed_evidence_id": "ev_executor",
+            "worktree_digest": "sha256:" + "0" * 64,
+            "feedback": "Fix the failing contract test.",
+        }
+    )
+    problems = ReviewVerdictValidator().validate(
+        manifest,
+        EvidenceValidationContext(passed_check_count=lambda _m: 0),
+    )
+
+    assert problems == []

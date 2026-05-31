@@ -11929,7 +11929,7 @@ class ControlPlane:
     def _verdict_value(self, evidence: Evidence) -> str:
         manifest = evidence.metadata.get("verification") or {}
         verdict = str(manifest.get("verdict") or "").strip().lower()
-        return verdict if verdict in {"approved", "rejected"} else "approved"
+        return verdict if verdict in {"approved", "rejected"} else "rejected"
 
     def _retract_default_review(self, review: Review, actor: str, reason: str) -> None:
         now = utcnow()
