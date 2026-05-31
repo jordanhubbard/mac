@@ -55,6 +55,7 @@ mac = "mac.cli:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
+mac-hermes-gateway = "mac.hermes_gateway:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
