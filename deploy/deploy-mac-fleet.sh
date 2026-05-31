@@ -3982,10 +3982,13 @@ install_or_validate_shared_services
 write_hermes_memory_topology
 sync_hermes_home_channels
 
-log "installing mac Python package"
+log "installing mac Python package (with vendored Hermes runtime + gateway extra)"
 "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
-"$VENV/bin/python" -m pip install -e "$SRC_DIR" >/dev/null
+# ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
+# runtime (src/mac/_hermes) runs in-process from this one venv — no separate
+# hermes-agent venv needed. The gateway service execs mac-hermes-gateway.
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway]" >/dev/null
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
@@ -4216,7 +4219,10 @@ fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
 fi
-exec "$HOME/.mac/hermes-agent/.venv/bin/python" "$HOME/.mac/hermes-agent/hermes" gateway run --replace
+# ADR 0001 hu-04: run the vendored Hermes gateway in-process from the mac venv
+# (mac-hermes-gateway -> hermes_cli.main "gateway run --replace"), instead of a
+# separate hermes-agent venv. Validated on the rocky fleet 2026-05-31.
+exec "$HOME/.mac/venv/bin/python" -m mac.hermes_gateway
 EOF
   chmod 700 "$wrapper"
 }
