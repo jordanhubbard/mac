@@ -65,7 +65,10 @@ producing non-work that jams.
       reimplements most of `evidence_validators` (`_worker_*`). Have the worker
       delegate to `validate_evidence_type` so the contract has ONE source of
       truth and cannot drift again.
-- [ ] **Worker generic handler re-raises after marking failed** (worker.py:542)
-      — a server-only verification rejection that slips past the local pre-check
-      still escapes run_once. Consider returning a clean `failed` result for
-      verification rejections (4xx) and re-raising only on transient/5xx.
+- [x] **Worker loop resilience** — `run_forever` had no per-iteration guard, so
+      a `run_once` re-raise (e.g. a server-only verification rejection past the
+      local pre-check) crashed the whole worker and halted all autonomous work.
+      Now `run_forever` catches it, records a `status=error` result, and keeps
+      polling (run_once still best-effort-fails the task first). Test:
+      `test_run_forever_survives_run_once_exception`. (A finer-grained
+      clean-`failed`-on-4xx vs re-raise-on-5xx remains a possible refinement.)
