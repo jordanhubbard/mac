@@ -17,7 +17,7 @@ gaps around it.
 
 ## Work breakdown (by leverage)
 
-- [ ] **mem-store-02: real embeddings on by default.** Default a hub to a real
+- [x] **mem-store-02: real embeddings on by default.** Default a hub to a real
       embedding model (batched, async, fixed model+dim per collection); hash
       stub becomes offline/test-only. Biggest recall-quality win, store-agnostic.
 - [ ] **mem-store-03: `VectorStore` interface.** `ensure_collection/upsert/
