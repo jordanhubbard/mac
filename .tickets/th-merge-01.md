@@ -50,7 +50,27 @@ Motivated by the live wedge (single provider + stuck breaker + no fail-fast).
       for full model breadth; cut over rocky + bullwinkle; stop the standalone
       TokenHub service.
 
-## Status (2026-06-01)
+## Status (2026-06-01) — TokenHub RETIRED, fleet self-contained on mac
+
+`mac-tokenhub` is **stopped + disabled**, `:8090` gone, and every TokenHub deploy
+step is gated off in router mode. All 3 agents (rocky/natasha/bullwinkle) route
+**inference + embeddings** through their local in-mac router → inference-api.nvidia.com
+directly (key from mac's vault), and all 3 are **connected to Slack** (2 socket
+connections each) using secrets served from mac's own vault. The TokenHub vault
+(41 Slack secrets) + the GitHub token were migrated into mac's `SecretsService`
+(43 total). The Slack fetcher reads from mac's vault via the new audited
+`POST /secrets/{name}/resolve` (rocky local; natasha/bullwinkle cross-agent from
+the hub vault) — verified live.
+
+th-merge-02/02b/03/04/06 done; th-merge-07 (retire + Slack repoint) done.
+Remaining = optional cleanup only: delete the inert TokenHub files on disk
+(~/Src/tokenhub, binary, ~/.tokenhub), gate the cosmetic "TokenHub health
+endpoint unreachable" startup warning, and excise the dormant `tokenhub` code
+refs (only reachable via the unused `MAC_ROUTER_BACKEND=tokenhub` path).
+
+External infra (not code, inherent): the NVIDIA LLM upstream, Qdrant, Firecrawl.
+
+## Status (2026-05-31)
 **Direct cutover is LIVE on `natasha`.** Its gateway → its local in-mac router →
 `inference-api.nvidia.com` **directly**, key resolved from the encrypted vault
 (`secret:nvidia-upstream`). TokenHub is entirely out of natasha's path. Verified
