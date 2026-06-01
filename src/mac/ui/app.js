@@ -5,6 +5,48 @@
 //   cp /tmp/uib/app.js app.js
 import { createDashboardApi } from "./dashboard_api.js";
 const TOKEN_KEY = "mac.dashboard.token";
+const THEME_KEY = "mac.dashboard.theme";
+function readStoredTheme() {
+    let stored = null;
+    try {
+        stored = localStorage.getItem(THEME_KEY);
+    }
+    catch {
+        stored = null;
+    }
+    if (stored === "light" || stored === "dark")
+        return stored;
+    if (typeof window !== "undefined" &&
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "dark";
+    }
+    return "light";
+}
+function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    const toggle = document.querySelector("#themeToggle");
+    if (toggle) {
+        const isDark = theme === "dark";
+        toggle.setAttribute("aria-pressed", String(isDark));
+        const label = toggle.querySelector(".theme-toggle-label");
+        if (label)
+            label.textContent = isDark ? "Light" : "Dark";
+    }
+}
+function setTheme(theme) {
+    applyTheme(theme);
+    try {
+        localStorage.setItem(THEME_KEY, theme);
+    }
+    catch {
+        /* storage unavailable — theme still applies for this session */
+    }
+}
+function toggleTheme() {
+    const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    setTheme(current === "dark" ? "light" : "dark");
+}
 const TASK_STATES = [
     "open",
     "blocked",
@@ -111,8 +153,10 @@ const nodes = {
     loginForm: requiredElement("#loginForm"),
     loginTokenInput: requiredElement("#loginTokenInput"),
     serviceLinks: requiredElement("#serviceLinks"),
+    themeToggle: requiredElement("#themeToggle"),
 };
 const api = createDashboardApi(() => state.token);
+applyTheme(readStoredTheme());
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
 bindEvents();
@@ -134,6 +178,7 @@ function bindEvents() {
         render();
     });
     nodes.refresh.addEventListener("click", () => loadDashboard());
+    nodes.themeToggle.addEventListener("click", () => toggleTheme());
     nodes.content.addEventListener("click", handleContentClick);
     nodes.content.addEventListener("submit", handleActionSubmit);
     nodes.content.addEventListener("change", handleContentChange);
