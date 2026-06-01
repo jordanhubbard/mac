@@ -21,7 +21,7 @@ Motivated by the live wedge (single provider + stuck breaker + no fail-fast).
 - [ ] **th-merge-02: OpenAI front door in mac.** `/v1/chat/completions` +
       `/v1/embeddings` accepting `model="*"`; Hermes/executor point at it via the
       same base_url contract (config flip). `MAC_ROUTER_BACKEND=inproc|tokenhub`.
-- [ ] **th-merge-03: multi-provider + recovering breaker.** >1 provider,
+- [x] **th-merge-03: multi-provider + recovering breaker.** >1 provider,
       priority/Thompson selection, a circuit breaker that **half-opens + re-probes**
       (the exact bug we hit), and fail-fast when all providers are down. Fixes
       the SPOF + the hang.
