@@ -24,27 +24,22 @@ SRC_HOST="${SRC_HOST:-rocky}"
 SECRET_NAME="${SECRET_NAME:-nvidia-upstream}"
 TMP_REMOTE='$HOME/.mac/.upstream-key.tmp'
 
-echo ">> [1/3] extracting nvapi- key from ${SRC_HOST}:~/.tokenhub/credentials" >&2
+echo ">> [1/3] extracting upstream provider api_key from ${SRC_HOST}:~/.tokenhub/credentials" >&2
 KEY="$(ssh "$SRC_HOST" 'python3 - <<PY
 import json, os, sys
 d = json.load(open(os.path.expanduser("~/.tokenhub/credentials")))
-def find(o):
-    if isinstance(o, str):
-        return o if o.startswith("nvapi-") else None
-    if isinstance(o, dict):
-        for v in o.values():
-            r = find(v)
-            if r:
-                return r
-    if isinstance(o, list):
-        for v in o:
-            r = find(v)
-            if r:
-                return r
-    return None
-sys.stdout.write(find(d) or "")
+provs = d.get("providers") or []
+# Prefer the provider whose base_url is the inference upstream; else the first.
+key = ""
+for p in provs:
+    if "inference-api" in (p.get("base_url") or ""):
+        key = p.get("api_key") or ""
+        break
+if not key and provs:
+    key = provs[0].get("api_key") or ""
+sys.stdout.write(key)
 PY')"
-[ -n "$KEY" ] || { echo "ERROR: no nvapi- key found on ${SRC_HOST}" >&2; exit 1; }
+[ -n "$KEY" ] || { echo "ERROR: no provider api_key found in ${SRC_HOST} tokenhub credentials" >&2; exit 1; }
 
 echo ">> [2/3] pushing key to ${DST_AGENT} (0600 temp, not printed)" >&2
 printf '%s' "$KEY" | ssh "$DST_AGENT" "umask 077; cat > ${TMP_REMOTE}"
