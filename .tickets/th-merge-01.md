@@ -39,23 +39,34 @@ Motivated by the live wedge (single provider + stuck breaker + no fail-fast).
 - [ ] **th-merge-05: native decision telemetry.** Emit `mac.router.*`
       observations in-process (reuse [[hu-05]] mapping); surface provider
       decisions in the hub UI (replaces the dropped TokenHub admin UI).
-- [ ] **th-merge-06: wildcard ladder IN the router.** Fold [[mac-nyx7]]'s ladder
-      into the in-proc router: resolve `"*"` to rank-0, and on a model-level
-      failure substitute rank-1.. (on-the-fly LLM substitution) so the router
-      no longer leans on TokenHub to resolve the wildcard.
-- [ ] **th-merge-07: networked-hub rollout + retire standalone TokenHub.** Bind
-      the hub's mac `/v1` on the tailnet; store the upstream key as
-      `secret:nvidia-upstream`; point spokes at the hub router (they present
-      their agent token); drop the per-spoke TokenHub dependency. End-state:
-      centralized hub router+escrow, TokenHub gone as a failure domain.
+- [x] **th-merge-06: wildcard ladder IN the router** (PR #27). `"*"` resolves to
+      rank-0 and substitutes the next model on a 404/422 (on-the-fly LLM
+      substitution); provider-level failures still drive the recovering breaker.
+      The router no longer needs TokenHub to resolve the wildcard.
+- [~] **th-merge-07: direct cutover + retire standalone TokenHub.** Escrow tool
+      (PR #28) + env-file shell-quoting fix + direct cutover (PR #29).
+      `natasha` is LIVE direct-to-upstream — TokenHub out of its path.
+      Remaining: escrow the broader vault keys (TOKENHUB_VAULT_PASSWORD group)
+      for full model breadth; cut over rocky + bullwinkle; stop the standalone
+      TokenHub service.
 
-## Status (2026-05-31)
-A **wrap-TokenHub canary** is LIVE on `natasha`: gateway cut over to its local
-in-mac router (recovering breaker + streaming passthrough), forwarding through
-TokenHub with natasha's own key. Streaming chat verified end-to-end; rest of the
-fleet untouched. Routing code is proven on live traffic. Remaining to fully
-retire TokenHub: th-merge-06 (ladder) + th-merge-07 (networked rollout); the
-direct cutover now needs only an operator to escrow the upstream key.
+## Status (2026-06-01)
+**Direct cutover is LIVE on `natasha`.** Its gateway → its local in-mac router →
+`inference-api.nvidia.com` **directly**, key resolved from the encrypted vault
+(`secret:nvidia-upstream`). TokenHub is entirely out of natasha's path. Verified
+live: non-stream 200 (`us/azure/openai/gpt-4.1-mini`) + streaming SSE. rocky +
+bullwinkle still on TokenHub (untouched).
+
+The in-mac router is now a **complete TokenHub replacement** in code: OpenAI
+front door, streaming passthrough, recovering breaker + fail-fast, multi-provider
+failover, wildcard ladder, and escrowed-key resolution from the existing
+`SecretsService`. The escrowed key is scoped to litellm's `default-models` group
+(gpt-4.1-mini class — what natasha's `"*"` already resolved to); the broader
+ladder (meta/llama-*, etc.) needs the vault-held keys escrowed too.
+
+Remaining to retire TokenHub fleet-wide: escrow the broader keys, cut over rocky
++ bullwinkle (per-agent like natasha, or centralized hub `/v1` on the tailnet),
+then stop `mac-tokenhub`.
 
 ## Guardrails (stay minimal)
 Port routing + vault + the OpenAI surface only. NOT the admin UI, NOT Temporal,
