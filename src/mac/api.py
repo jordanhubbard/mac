@@ -926,6 +926,12 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return None
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if path == "/v1" or path.startswith("/v1/"):
+        # In-mac model router (th-merge-02): LLM inference is an agent action, so
+        # the OpenAI front door requires the agent scope (admin inherits it),
+        # regardless of method. This keeps the router from being an open proxy
+        # when the API is bound to a network interface (e.g. the hub node).
+        return "agent"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
