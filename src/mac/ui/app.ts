@@ -460,9 +460,55 @@ interface DashboardNodes {
   loginForm: HTMLFormElement;
   loginTokenInput: HTMLInputElement;
   serviceLinks: HTMLElement;
+  themeToggle: HTMLButtonElement;
 }
 
 const TOKEN_KEY = "mac.dashboard.token";
+const THEME_KEY = "mac.dashboard.theme";
+type ThemeName = "light" | "dark";
+
+function readStoredTheme(): ThemeName {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    stored = null;
+  }
+  if (stored === "light" || stored === "dark") return stored;
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  ) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyTheme(theme: ThemeName): void {
+  document.documentElement.setAttribute("data-theme", theme);
+  const toggle = document.querySelector<HTMLButtonElement>("#themeToggle");
+  if (toggle) {
+    const isDark = theme === "dark";
+    toggle.setAttribute("aria-pressed", String(isDark));
+    const label = toggle.querySelector<HTMLElement>(".theme-toggle-label");
+    if (label) label.textContent = isDark ? "Light" : "Dark";
+  }
+}
+
+function setTheme(theme: ThemeName): void {
+  applyTheme(theme);
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    /* storage unavailable — theme still applies for this session */
+  }
+}
+
+function toggleTheme(): void {
+  const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  setTheme(current === "dark" ? "light" : "dark");
+}
 const TASK_STATES = [
   "open",
   "blocked",
@@ -572,9 +618,11 @@ const nodes: DashboardNodes = {
   loginForm: requiredElement<HTMLFormElement>("#loginForm"),
   loginTokenInput: requiredElement<HTMLInputElement>("#loginTokenInput"),
   serviceLinks: requiredElement("#serviceLinks"),
+  themeToggle: requiredElement<HTMLButtonElement>("#themeToggle"),
 };
 const api = createDashboardApi(() => state.token);
 
+applyTheme(readStoredTheme());
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
 bindEvents();
@@ -595,6 +643,7 @@ function bindEvents(): void {
     render();
   });
   nodes.refresh.addEventListener("click", () => loadDashboard());
+  nodes.themeToggle.addEventListener("click", () => toggleTheme());
   nodes.content.addEventListener("click", handleContentClick);
   nodes.content.addEventListener("submit", handleActionSubmit);
   nodes.content.addEventListener("change", handleContentChange);
