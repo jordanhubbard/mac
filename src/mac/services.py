@@ -12914,8 +12914,25 @@ class ControlPlane:
         if executor_persona_slug is None:
             executor_persona_slug = self._task_executor_persona_slug(task)
         agent_tenant, agent_persona_slug = self._agent_tenant_and_persona(agent)
-        if task_tenant is not None and (agent_tenant is None or agent_tenant != task_tenant):
-            return "reviewer_wrong_tenant"
+        if task_tenant is not None:
+            if agent_tenant is None:
+                # Headless worker (no hermes_instance_id => no persona
+                # tenant). Persona-boundary tenancy fails closed for these
+                # agents, which would park every tenant-scoped Hermes task
+                # forever in needs_review. Fall back to the hardware
+                # boundary — the same gate the executor path uses
+                # (_agent_available_for) — so a headless reviewer on a
+                # machine whose tenant policy permits the task's tenant
+                # stays eligible, while one on a disallowed machine is
+                # still refused.
+                try:
+                    machine = self.get_machine(agent.machine_id)
+                except NotFoundError:
+                    return "reviewer_wrong_tenant"
+                if not self._machine_allows_tenant(machine, task_tenant):
+                    return "reviewer_wrong_tenant"
+            elif agent_tenant != task_tenant:
+                return "reviewer_wrong_tenant"
         if (
             executor_persona_slug is not None
             and agent_persona_slug is not None

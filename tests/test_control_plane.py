@@ -2210,6 +2210,83 @@ def test_default_review_refuses_reviewer_from_different_tenant(cp):
     assert cp.list_reviews(task.id) == []
 
 
+def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(cp):
+    """mac: a headless K8s reviewer (no hermes_instance_id, so no persona
+    tenant) must still be drafted for a tenant-scoped task when its
+    machine's tenant policy permits that tenant. Persona-boundary
+    tenancy fails closed for headless workers; the hardware boundary
+    (_machine_allows_tenant) is the correct gate, mirroring how the
+    executor path admits the same workers. Without this, every Hermes
+    (tenant-scoped) task parks forever in needs_review because no
+    souled reviewer exists in the fleet."""
+    tenant = cp.register_tenant("personal", tenant_id="personal")
+    # Shared machine (default tenant policy => allows any tenant).
+    machine = cp.register_machine("k8s-shared-host", resources={"cpu": 4, "memory_gb": 8})
+    worker = cp.register_agent(machine.id, "worker", capabilities=["python"])
+    # Headless reviewer: no hermes_instance_id => agent_tenant is None.
+    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
+    assert reviewer.hermes_instance_id is None
+
+    task = cp.create_task(
+        "tenant-scoped-work",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://headless",
+            "origin": {"tenant_id": tenant.id},
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+    # The headless reviewer on a tenant-permitting machine must be drafted.
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert len(cp.list_reviews(task.id)) == 1
+
+
+def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(cp):
+    """mac: the hardware-boundary tenancy gate must still fail closed.
+    A headless reviewer whose machine's tenant policy does NOT permit
+    the task's tenant must not be drafted — otherwise the fallback would
+    leak cross-tenant review onto disallowed hardware."""
+    tenant = cp.register_tenant("personal", tenant_id="personal")
+    worker_machine = cp.register_machine("worker-host", resources={"cpu": 4, "memory_gb": 8})
+    # Reviewer machine is private to a different tenant => denies "personal".
+    reviewer_machine = cp.register_machine(
+        "private-host",
+        resources={"cpu": 4, "memory_gb": 8},
+        labels={"tenant_policy": {"mode": "private", "tenant_ids": ["other-tenant"]}},
+    )
+    worker = cp.register_agent(worker_machine.id, "worker", capabilities=["python"])
+    reviewer = cp.register_agent(reviewer_machine.id, "reviewer", capabilities=["review"])
+    assert reviewer.hermes_instance_id is None
+
+    task = cp.create_task(
+        "tenant-scoped-work",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://denied",
+            "origin": {"tenant_id": tenant.id},
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+    # The only review-capable agent lives on a machine that denies this
+    # tenant — the workflow must refuse to draft it.
+    assert result["status"] == "waiting_for_reviewer"
+    assert cp.list_reviews(task.id) == []
+
+
 def test_renew_lease_refuses_on_transitioning_task(cp):
     """mac-eow: renew_lease must refuse when the underlying task is no
     longer CLAIMED/RUNNING. Previous silent-update behavior was a
