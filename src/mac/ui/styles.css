@@ -666,12 +666,37 @@ details.action-box summary {
   resize: vertical;
 }
 
+/* JSON metadata editors: legible monospace, roomier, no autocorrect noise. */
+.json-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+
+.action-form textarea.json-editor {
+  min-height: 96px;
+}
+
+.data-table textarea.json-editor {
+  min-width: 220px;
+  min-height: 92px;
+}
+
 .project-table {
-  min-width: 1180px;
+  min-width: 1240px;
 }
 
 .project-table td:first-child {
   min-width: 190px;
+}
+
+/* Description + Metadata columns need room for multi-line JSON editing. */
+.project-table td:nth-child(3),
+.project-table td:nth-child(4) {
+  min-width: 240px;
 }
 
 .compact-table {

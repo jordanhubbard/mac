@@ -541,7 +541,7 @@ function renderProjects() {
           <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
           <label>Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
           <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
+          <label>Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
           <button type="submit" ${disabledAttr(!writable)}>Create</button>
         </form>
       </div>
@@ -2084,7 +2084,7 @@ function projectTableRow(project, data) {
     const description = String(project.description || "");
     const status = String(project.status || (durable ? "active" : "derived"));
     const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
-    const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata) : "{}";
+    const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata, null, 2) : "{}";
     const disabled = disabledAttr(!editable);
     return `
     <tr class="${state.projectFilter === project.project ? "is-selected" : ""}">
@@ -2098,7 +2098,7 @@ function projectTableRow(project, data) {
       </td>
       <td>${select("status", ["active", "inactive", "archived"], statusValue, !editable, formId)}</td>
       <td><textarea form="${escapeHtml(formId)}" name="description" ${disabled}>${escapeHtml(description)}</textarea></td>
-      <td><textarea form="${escapeHtml(formId)}" name="metadata" ${disabled}>${escapeHtml(metadata)}</textarea></td>
+      <td><textarea class="json-editor" form="${escapeHtml(formId)}" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" rows="4" ${disabled}>${escapeHtml(metadata)}</textarea></td>
       <td>
         <span class="mono">${project.task_count}</span>
         <div class="chip-row">
@@ -3789,9 +3789,16 @@ function parseJsonObject(value) {
     const text = String(value || "").trim();
     if (!text)
         return {};
-    const parsed = JSON.parse(text);
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`invalid JSON: ${detail}`);
+    }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("expected a JSON object");
+        throw new Error("metadata must be a JSON object, e.g. {\"key\": \"value\"}");
     }
     return parsed;
 }
