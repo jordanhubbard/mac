@@ -86,6 +86,13 @@ def _is_provider_failure(status: Optional[int]) -> bool:
     return status is None or status == 429 or status >= 500
 
 
+# th-merge-06: provider-healthy but THIS model is unusable (not found / unprocessable).
+# For a wildcard request the router substitutes the next model in the ladder; the
+# provider is NOT penalised. 400 is intentionally excluded (a genuine bad request
+# should be returned, not retried across the whole ladder).
+_MODEL_RETRY_CODES = frozenset({404, 422})
+
+
 class ProviderProxy:
     def __init__(
         self,
@@ -94,6 +101,7 @@ class ProviderProxy:
         *,
         stream_forward_fn: Optional[StreamForwardFn] = None,
         default_model: str = "",
+        wildcard_models: Tuple[str, ...] = (),
         timeout: float = 60.0,
         stream_timeout: float = 300.0,
     ) -> None:
@@ -101,43 +109,70 @@ class ProviderProxy:
         self._forward = forward_fn
         self._stream_forward = stream_forward_fn
         self._default_model = (default_model or "").strip()
+        # The wildcard ladder: ordered concrete models a "*" request resolves to,
+        # tried rank-0 first, substituting the next on a model-level failure.
+        self._wildcard_models = tuple(m for m in wildcard_models if m)
         self._timeout = timeout
         self._stream_timeout = stream_timeout
 
     # -- model resolution ----------------------------------------------------
 
-    def _resolve_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Resolve a wildcard/empty model to the configured concrete model so
-        the upstream (which rejects ``model="*"``) accepts it. A concrete model
-        is forwarded untouched."""
+    def _candidate_models(self, payload: Dict[str, Any]) -> list:
+        """Ordered concrete models to try. A concrete request is a single
+        candidate (no substitution). A wildcard/empty request expands to the
+        ladder, else the single default model, else ``"*"`` itself (passthrough
+        — e.g. wrapping TokenHub, which resolves the wildcard upstream)."""
         model = str(payload.get("model") or "").strip()
-        if model in ("", "*") and self._default_model:
-            return {**payload, "model": self._default_model}
-        return payload
+        if model and model != "*":
+            return [model]
+        if self._wildcard_models:
+            return list(self._wildcard_models)
+        if self._default_model:
+            return [self._default_model]
+        return ["*"]
 
-    # -- non-streaming -------------------------------------------------------
+    def _route(self, path: str, payload: Dict[str, Any], forward, timeout: float) -> Tuple[int, Any]:
+        """Shared routing for streaming + non-streaming. Walks the candidate
+        models (wildcard ladder); for each, walks providers with failover +
+        breaker. Returns ``(status, body_or_iterator)``."""
+        candidates = self._candidate_models(payload)
+        last: Optional[Tuple[int, Any]] = None
+        for idx, model in enumerate(candidates):
+            is_last = idx == len(candidates) - 1
+            outgoing = {**payload, "model": model}
+            attempts = []
+            provider_answered = False
+            # Bounded: one try per provider (+1 so a half-open probe can be
+            # re-selected after another provider is tried).
+            for _ in range(len(self._router.provider_names()) + 1):
+                provider = self._router.select(model)
+                if provider is None:
+                    break
+                status, obj = forward(provider, path, outgoing, timeout=timeout)
+                if _is_provider_failure(status):
+                    self._router.record_failure(provider.name)
+                    attempts.append({"provider": provider.name, "status": status})
+                    continue
+                # The provider answered (healthy), so close its breaker.
+                self._router.record_success(provider.name)
+                provider_answered = True
+                if int(status) in _MODEL_RETRY_CODES and not is_last:
+                    last = (int(status), obj)  # this model is unusable; substitute the next
+                    break
+                return int(status), obj
+            if not provider_answered:
+                # Every eligible provider failed or is open for this model. The
+                # same providers serve the other models, so fail fast rather than
+                # walk the rest of the ladder against dead providers.
+                return 503, self._failfast_body(model, attempts)
+            # provider answered with a model-retry code and more models remain:
+            # fall through to the next candidate.
+        return last if last is not None else (503, self._failfast_body("*", []))
 
     def complete(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Any]:
         """Route one request. ``path`` is the suffix after the provider base_url
         (e.g. ``/chat/completions``). Returns ``(status_code, body)``."""
-        select_model = str(payload.get("model") or "*")
-        outgoing = self._resolve_payload(payload)
-        attempts = []
-        # Bounded: at most one try per provider (+1 to allow a half-open probe
-        # to be re-selected after another provider is tried).
-        for _ in range(len(self._router.provider_names()) + 1):
-            provider = self._router.select(select_model)
-            if provider is None:
-                break
-            status, body = self._forward(provider, path, outgoing, timeout=self._timeout)
-            if not _is_provider_failure(status):
-                self._router.record_success(provider.name)
-                return int(status), body
-            self._router.record_failure(provider.name)
-            attempts.append({"provider": provider.name, "status": status})
-        return 503, self._failfast_body(select_model, attempts)
-
-    # -- streaming -----------------------------------------------------------
+        return self._route(path, payload, self._forward, self._timeout)
 
     def stream_complete(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Any]:
         """Route one streaming request. On 2xx the second element is an iterator
@@ -151,20 +186,7 @@ class ProviderProxy:
             # No streaming transport wired: degrade to a buffered completion so a
             # stream=true request still gets an answer rather than failing.
             return self.complete(path, {**payload, "stream": False})
-        select_model = str(payload.get("model") or "*")
-        outgoing = self._resolve_payload({**payload, "stream": True})
-        attempts = []
-        for _ in range(len(self._router.provider_names()) + 1):
-            provider = self._router.select(select_model)
-            if provider is None:
-                break
-            status, obj = self._stream_forward(provider, path, outgoing, timeout=self._stream_timeout)
-            if not _is_provider_failure(status):
-                self._router.record_success(provider.name)
-                return int(status), obj
-            self._router.record_failure(provider.name)
-            attempts.append({"provider": provider.name, "status": status})
-        return 503, self._failfast_body(select_model, attempts)
+        return self._route(path, {**payload, "stream": True}, self._stream_forward, self._stream_timeout)
 
     @staticmethod
     def _failfast_body(model: str, attempts) -> Dict[str, Any]:
@@ -291,11 +313,15 @@ def build_proxy_from_env(
         failure_threshold=int(_f("MAC_ROUTER_FAILURE_THRESHOLD", 3)),
         cooldown_seconds=_f("MAC_ROUTER_COOLDOWN_SECONDS", 30.0),
     )
+    wildcard_models = tuple(
+        m.strip() for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|") if m.strip()
+    )
     return ProviderProxy(
         router,
         _fwd,
         stream_forward_fn=_sfwd,
         default_model=(env.get("MAC_ROUTER_DEFAULT_MODEL") or "").strip(),
+        wildcard_models=wildcard_models,
         timeout=_f("MAC_ROUTER_TIMEOUT", 60.0),
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),
     )
