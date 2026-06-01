@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  schedule:
+    # Poll-build for the GitHub->Gitea pull-mirror. A mirror sync does not
+    # emit a push event, so cron picks up the freshly-synced default-branch
+    # HEAD and the change-guard below ensures we only build a given commit
+    # once. Keep this interval >= the repo's mirror sync interval.
+    - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
 env:
@@ -13,7 +19,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,7 +27,32 @@ jobs:
       - name: Log in to Gitea Container Registry
         run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "${{ env.REGISTRY }}" -u "${{ gitea.actor }}" --password-stdin
 
+      - name: Change-guard — skip if this commit was already built
+        id: guard
+        run: |
+          REGISTRY_HOST=$(echo "$REGISTRY" | sed 's|https://||;s|http://||')
+          OWNER="${{ gitea.repository_owner }}"
+          IMAGE="${REGISTRY_HOST}/${OWNER}/${IMAGE_NAME}"
+          SHA="${{ gitea.sha }}"
+          SHA_TAG="sha-${SHA}"
+          # Each successful build pushes an immutable sha-<full-sha> tag.
+          # If it already exists in the registry, this commit is built — skip.
+          # Always build on tag pushes (releases) and manual dispatch.
+          if [ "${{ gitea.event_name }}" = "schedule" ]; then
+            if docker manifest inspect "${IMAGE}:${SHA_TAG}" >/dev/null 2>&1; then
+              echo "Commit ${SHA} already built (${IMAGE}:${SHA_TAG} exists) — skipping."
+              echo "build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New commit ${SHA} — will build."
+              echo "build=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Event ${{ gitea.event_name }} — building unconditionally."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push image
+        if: steps.guard.outputs.build == 'true'
         run: |
           REGISTRY_HOST=$(echo "$REGISTRY" | sed 's|https://||;s|http://||')
           SHA="${{ gitea.sha }}"
@@ -30,6 +60,7 @@ jobs:
           OWNER="${{ gitea.repository_owner }}"
           IMAGE="${REGISTRY_HOST}/${OWNER}/${IMAGE_NAME}"
           TS_TAG="$(date -u +%Y%m%d%H%M%S)-${SHORT_SHA}"
+          SHA_TAG="sha-${SHA}"
 
           echo "Building ${IMAGE} from Dockerfile"
           docker build \
@@ -39,12 +70,15 @@ jobs:
             -t "mac-build" \
             .
 
-          if [ "${{ gitea.ref }}" = "refs/heads/main" ]; then
+          if [ "${{ gitea.ref }}" = "refs/heads/main" ] || [ "${{ gitea.event_name }}" = "schedule" ] || [ "${{ gitea.event_name }}" = "workflow_dispatch" ]; then
             docker tag "mac-build" "${IMAGE}:${TS_TAG}"
             docker push "${IMAGE}:${TS_TAG}"
             docker tag "mac-build" "${IMAGE}:latest"
             docker push "${IMAGE}:latest"
-            echo "Pushed ${IMAGE}:${TS_TAG} and ${IMAGE}:latest"
+            # Immutable per-commit tag — read by the change-guard above.
+            docker tag "mac-build" "${IMAGE}:${SHA_TAG}"
+            docker push "${IMAGE}:${SHA_TAG}"
+            echo "Pushed ${IMAGE}:${TS_TAG}, :latest, and :${SHA_TAG}"
           fi
 
           if echo "${{ gitea.ref }}" | grep -qE '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'; then
