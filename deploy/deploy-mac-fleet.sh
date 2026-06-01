@@ -3930,9 +3930,6 @@ install_or_validate_tokenhub_service
 reload_mac_env
 sync_hermes_tokenhub_client_env
 reload_mac_env
-fetch_slack_secrets_from_vault
-reload_mac_env
-sync_hermes_slack_identity_env
 if [ "$WORKER_MODE" = "loop" ]; then
   ensure_hub_tunnel_key
 else
@@ -3941,7 +3938,6 @@ fi
 install_github_review_key
 install_or_validate_shared_services
 write_hermes_memory_topology
-sync_hermes_home_channels
 
 log "installing mac Python package (with vendored Hermes runtime + gateway extra)"
 "$PY" -m venv "$VENV"
@@ -4085,6 +4081,19 @@ EOF
   chmod 700 "$wrapper"
 }
 
+sync_messaging_config() {
+  # th-merge-07: fetch Slack secrets + resolve the home channel AFTER the mac API
+  # is (re)started, so the hub reads its OWN freshly-up /v1 vault instead of
+  # racing its own service cycle (the early pre-restart attempt could hit
+  # connection-refused). Runs before the gateway (re)start so the gateway picks
+  # up the resolved home channel. Idempotent for spokes (they read the hub API).
+  reload_mac_env
+  fetch_slack_secrets_from_vault
+  reload_mac_env
+  sync_hermes_slack_identity_env
+  sync_hermes_home_channels
+}
+
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   log "installing systemd service $unit"
@@ -4124,6 +4133,7 @@ EOF
   sleep 3
   sudo systemctl --no-pager -l status "$MAC_SERVICE_NAME" || true
   sudo journalctl -u "$MAC_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-service-journal.txt" || true
+  sync_messaging_config
   install_linux_hermes_service
 }
 
@@ -5003,6 +5013,7 @@ EOF
   launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
   sleep 3
   launchctl list "$MAC_LAUNCHD_LABEL" || true
+  sync_messaging_config
   install_darwin_hermes_service "$uid"
   install_darwin_agent_service "$uid"
 }
