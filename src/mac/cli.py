@@ -1079,12 +1079,6 @@ def cmd_nap_cycle(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_tokenhub_refresh_wildcards(args: argparse.Namespace) -> None:
-    """mac-nyx7: refresh TokenHub's wildcard model ladder (what the weekly
-    timer calls). Clean no-op without TOKENHUB_URL + admin token."""
-    _print(_plane(args).refresh_tokenhub_wildcards())
-
-
 def cmd_nap_due(args: argparse.Namespace) -> None:
     """List agents whose nap window has opened and hasn't been completed."""
     due = _plane(args).list_due_nap_agents(as_of=args.as_of)
@@ -1856,18 +1850,6 @@ def build_parser() -> argparse.ArgumentParser:
         "agent_ids, for piping to `xargs mac nap cycle`)",
     )
     _set(cmd_nap_due, nap_due)
-
-    # mac-nyx7: weekly refresh of TokenHub's wildcard model ladder.
-    tokenhub = sub.add_parser(
-        "tokenhub", help="TokenHub integration commands"
-    ).add_subparsers(dest="tokenhub_command", required=True)
-    tokenhub_refresh = tokenhub.add_parser(
-        "refresh-wildcards",
-        help="refresh TokenHub's wildcard model ladder from current "
-        "availability/quality/cost (what the weekly timer calls). No-op "
-        "without TOKENHUB_URL and a TokenHub admin token.",
-    )
-    _set(cmd_tokenhub_refresh_wildcards, tokenhub_refresh)
 
     # mem-08: build per-(task/project) memory summaries for an agent.
     nap_consolidate = nap.add_parser(

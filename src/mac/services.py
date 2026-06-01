@@ -6523,15 +6523,6 @@ class ControlPlane:
     def list_nap_runs(self, *args: Any, **kwargs: Any) -> List[NapRun]:
         return self.agent_state.list_nap_runs(*args, **kwargs)
 
-    def refresh_tokenhub_wildcards(self, *, timeout: float = 30.0) -> JsonDict:
-        """mac-nyx7: refresh TokenHub's wildcard model ladder and record it into
-        observability. Gated no-op (returns ``status=skipped``) unless
-        TOKENHUB_URL/MAC_TOKENHUB_WILDCARD_URL and a TokenHub admin token are
-        both set — same activation contract as the SSE decision feed (hu-05)."""
-        from mac.tokenhub_wildcard import refresh_wildcard_ladder
-
-        return refresh_wildcard_ladder(self.observability, timeout=timeout)
-
     # -- Ticketing connectors (meta-tickets) --------------------------------
     # beads is no longer a read/write source; it's an import-only connector.
     # The native source is .tickets/ + this ledger. detect/convert route
