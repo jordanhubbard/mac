@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   schedule:
     # Poll-build for the GitHub->Gitea pull-mirror. A mirror sync does not
     # emit a push event, so cron picks up the freshly-synced default-branch
@@ -17,8 +19,36 @@ env:
   IMAGE_NAME: mac
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: pip install uv --break-system-packages
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run API tests
+        run: uv run --extra dev pytest -q --tb=short -m api tests/
+
+      - name: Run CLI tests
+        run: uv run --extra dev pytest -q --tb=short -m cli tests/
+
+      - name: Run UI tests
+        run: uv run --extra dev pytest -q --tb=short -m ui tests/
+
+      - name: Run full regression suite
+        run: uv run --extra dev pytest -q --tb=short
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: test
+    # Don't push images for pull_request validation runs.
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
