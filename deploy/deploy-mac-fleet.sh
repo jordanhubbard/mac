@@ -3812,6 +3812,16 @@ if _router_backend.lower() == "inproc" and _router_providers:
     values["CUSTOM_BASE_URL"] = _local_router_v1
     values["MAC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
     values["ACC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
+    # The gateway now talks to its LOCAL mac /v1 router, which is auth-gated like
+    # the rest of the mac API. It must present a valid mac token (agent scope) as
+    # its bearer; the router then uses the provider's OWN key (MAC_ROUTER_PROVIDERS
+    # key=...) for the upstream. Without this the gateway would send the upstream
+    # key, which the mac API rejects as an unknown bearer token.
+    _local_tok = values.get("MAC_API_TOKEN") or ""
+    if _local_tok:
+        values["OPENAI_API_KEY"] = _local_tok
+        values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok
+        values["ACC_HERMES_GATEWAY_API_KEY"] = _local_tok
 home_channel = (
     configured_home_channel
     or values.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
