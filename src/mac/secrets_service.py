@@ -209,6 +209,38 @@ class SecretsService:
             raise NotFoundError("secret not found or disabled: %s" % secret_id)
         return self._decrypt(row["ciphertext"])
 
+    def resolve_secret_value(
+        self,
+        name: str,
+        *,
+        purpose: str = "router",
+        accessor: str = "router",
+    ) -> Optional[str]:
+        """Audited, in-process resolution of a secret's plaintext for a consumer
+        co-located with the control plane on the hub — specifically the model
+        router (th-merge-04) fetching an upstream provider key.
+
+        ``request_secret``/``reveal_secret`` gate *remote* agents behind a
+        single-use, time-limited handle. This is different: the hub is
+        decrypting a secret it already owns, so there is no handle dance — but it
+        is still audited (every upstream-key use is traceable) and respects the
+        ``enabled`` flag. Returns ``None`` when the secret is absent or disabled
+        so the caller can fall back to env or fail the provider, rather than
+        raising into the request path."""
+        try:
+            secret = self.get_secret(name)
+        except NotFoundError:
+            return None
+        if not secret.enabled:
+            return None
+        self.record_access(secret.id, accessor, purpose, SecretAuditResult.GRANTED.value)
+        row = self.store.query_one(
+            "SELECT ciphertext FROM secrets WHERE id = ? AND enabled = 1", (secret.id,)
+        )
+        if row is None:
+            return None
+        return self._decrypt(row["ciphertext"])
+
     # Audit + scope helpers ---------------------------------------------
 
     def record_access(

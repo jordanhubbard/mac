@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mac.provider_router import Provider, ProviderRouter
-from mac.router_app import ProviderProxy, build_proxy_from_env, mount_router
+from mac.router_app import ProviderProxy, build_proxy_from_env, mount_router, resolve_provider_key
 
 
 def _router():
@@ -205,6 +205,61 @@ def test_stream_without_transport_degrades_to_buffered_completion():
     status, body = proxy.stream_complete("/chat/completions", {"model": "*", "stream": True})
     assert status == 200 and body == {"ok": True}
     assert calls == [("primary", "/chat/completions")]
+
+
+# -- th-merge-04: provider key from the encrypted secret store ---------------
+
+
+def test_resolve_provider_key_from_env(monkeypatch):
+    monkeypatch.setenv("MY_UPSTREAM_KEY", "env-secret-123")
+    p = Provider("nvidia", "http://u/v1", api_key_env="MY_UPSTREAM_KEY")
+    assert resolve_provider_key(p) == "env-secret-123"
+
+
+def test_resolve_provider_key_from_secret_store():
+    # key=secret:<name> is resolved via the injected escrow resolver, NOT env.
+    p = Provider("nvidia", "http://u/v1", api_key_env="secret:nvidia-upstream")
+    resolver = {"nvidia-upstream": "escrowed-nvapi-key"}.get
+    assert resolve_provider_key(p, resolver) == "escrowed-nvapi-key"
+
+
+def test_resolve_provider_key_secret_missing_resolver_or_value():
+    p = Provider("nvidia", "http://u/v1", api_key_env="secret:absent")
+    assert resolve_provider_key(p, None) == ""              # no resolver wired
+    assert resolve_provider_key(p, {}.get) == ""            # resolver returns None
+    p2 = Provider("nvidia", "http://u/v1", api_key_env="")
+    assert resolve_provider_key(p2) == ""                   # no key spec
+
+
+def test_urllib_forwarder_uses_secret_resolver(monkeypatch):
+    # The real forwarder builds an Authorization header from the resolved key.
+    captured = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=60.0):
+        captured["auth"] = req.headers.get("Authorization")
+        return _Resp()
+
+    from mac import router_app
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+    p = Provider("nvidia", "http://u/v1", api_key_env="secret:nvidia-upstream")
+    status, body = router_app.urllib_forwarder(
+        p, "/chat/completions", {"model": "x"}, secret_resolver={"nvidia-upstream": "escrowed-key"}.get
+    )
+    assert status == 200 and body == {"ok": True}
+    assert captured["auth"] == "Bearer escrowed-key"
 
 
 def test_mount_streams_through_fastapi():

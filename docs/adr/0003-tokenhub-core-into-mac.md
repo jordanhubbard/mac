@@ -85,3 +85,49 @@ Provide `mac.router` (optional, in-process on the hub):
   becomes the thing ADR 0001 warned against.
 
 Tracked in **th-merge-01**.
+
+## Update (2026-05-31): the vault already exists; the topology is centralized
+
+Two clarifications from building this out:
+
+1. **The "Vault security" risk is already retired — don't reinvent it.** mac
+   already ships a Python encrypted key escrow: `SecretsService`
+   (`src/mac/secrets_service.py`) — Fernet at-rest (`MAC_SECRET_KEY`), scoped
+   access, single-use time-limited reveal handles, rotation, and a full audit
+   trail, behind `/secrets` + the `secret` scope. So "build a key store in
+   Python" is **done**; the only wiring needed was letting the router resolve an
+   upstream provider key *from* it. **th-merge-04** adds exactly that: a
+   provider's `key=` may be `secret:<name>`, resolved at use via
+   `SecretsService.resolve_secret_value` (audited, decrypt-at-use). The upstream
+   credential is therefore escrowed encrypted, never in plaintext env — which is
+   also how the direct-to-upstream cutover crosses the credential boundary
+   without an agent ever scraping a key.
+
+2. **The router + vault are centralized on the hub node; spokes point at it.**
+   This is the same topology as standalone TokenHub (one place holds the keys +
+   the wildcard ladder), but in-process in mac. The auth work in th-merge-02
+   (the `/v1` surface requires the `agent` scope) is what makes this safe over
+   the network: a spoke presents its agent token to the hub's `/v1`, the router
+   authenticates it, then uses the escrowed provider key for the upstream —
+   caller-auth and upstream-auth cleanly separated. Per-agent local routers
+   (the canary form) remain valid for isolation but are not the end-state.
+
+### Validated (2026-05-31)
+
+A **wrap-TokenHub canary** on `natasha` is live: its gateway is cut over to its
+local in-mac router (recovering breaker + fail-fast + streaming passthrough),
+which forwards through TokenHub using natasha's own key. Streaming chat verified
+end-to-end (real SSE deltas, `"*"`→`azure/openai/gpt-4.1-mini`); rest of the
+fleet untouched. This proved the router code carries live agent traffic before
+any upstream credential is moved into the vault.
+
+### Remaining to fully retire standalone TokenHub
+
+- **th-merge-04** (this) — router resolves `secret:<name>` provider keys from
+  the escrow. ✅
+- **th-merge-06** — the wildcard *ladder* (rank-0 → rank-1 model failover +
+  on-the-fly substitution) inside the router, so it resolves `"*"` itself
+  instead of leaning on TokenHub.
+- **Networked-hub rollout** — bind the hub's mac `/v1` on the tailnet, store the
+  upstream key in the escrow (`secret:nvidia-upstream`), point spokes at the hub
+  router, and drop the per-spoke TokenHub dependency.

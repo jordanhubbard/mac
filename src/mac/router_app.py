@@ -47,6 +47,7 @@ from mac.provider_router import Provider, ProviderRouter, providers_from_env
 
 __all__ = [
     "ProviderProxy",
+    "resolve_provider_key",
     "urllib_forwarder",
     "urllib_stream_forwarder",
     "build_proxy_from_env",
@@ -57,6 +58,26 @@ __all__ = [
 ForwardFn = Callable[..., Tuple[Optional[int], Any]]
 # stream_forward_fn(provider, path, payload, *, timeout) -> (status|None, iter[bytes] | error-body)
 StreamForwardFn = Callable[..., Tuple[Optional[int], Any]]
+# secret_resolver(name) -> plaintext | None  (th-merge-04: audited hub key escrow)
+SecretResolver = Callable[[str], Optional[str]]
+
+_SECRET_PREFIX = "secret:"
+
+
+def resolve_provider_key(provider: Provider, secret_resolver: Optional[SecretResolver] = None) -> str:
+    """Resolve a provider's bearer key. ``provider.api_key_env`` is either an env
+    var name (``NVIDIA_API_KEY``) or, for escrowed upstream keys, ``secret:<name>``
+    which is fetched from the in-mac encrypted key store (SecretsService) via the
+    injected ``secret_resolver`` — so the upstream credential is never stored in
+    plaintext env. Returns "" when unresolved (forwarder sends no Authorization)."""
+    spec = (provider.api_key_env or "").strip()
+    if not spec:
+        return ""
+    if spec.startswith(_SECRET_PREFIX):
+        if secret_resolver is None:
+            return ""
+        return secret_resolver(spec[len(_SECRET_PREFIX):]) or ""
+    return os.environ.get(spec, "")
 
 
 def _is_provider_failure(status: Optional[int]) -> bool:
@@ -156,15 +177,21 @@ class ProviderProxy:
         }
 
 
-def urllib_forwarder(provider: Provider, path: str, payload: Dict[str, Any], *, timeout: float = 60.0):
+def urllib_forwarder(
+    provider: Provider,
+    path: str,
+    payload: Dict[str, Any],
+    *,
+    timeout: float = 60.0,
+    secret_resolver: Optional[SecretResolver] = None,
+):
     """Real HTTP forward to ``provider.base_url + path`` with its bearer key.
     Returns ``(status_code|None, body)``; status None means unreachable/timeout."""
     url = provider.base_url.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if provider.api_key_env:
-        key = os.environ.get(provider.api_key_env, "")
-        if key:
-            headers["Authorization"] = "Bearer %s" % key
+    key = resolve_provider_key(provider, secret_resolver)
+    if key:
+        headers["Authorization"] = "Bearer %s" % key
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -198,7 +225,14 @@ def _drain_chunks(resp: Any, chunk_size: int = 8192) -> Iterator[bytes]:
             pass
 
 
-def urllib_stream_forwarder(provider: Provider, path: str, payload: Dict[str, Any], *, timeout: float = 300.0):
+def urllib_stream_forwarder(
+    provider: Provider,
+    path: str,
+    payload: Dict[str, Any],
+    *,
+    timeout: float = 300.0,
+    secret_resolver: Optional[SecretResolver] = None,
+):
     """Streaming HTTP forward. On a 2xx status line returns
     ``(status, iterator_of_bytes)`` with the connection held open; on an HTTP
     error returns ``(code, body)``; on a transport failure ``(None, body)``.
@@ -208,10 +242,9 @@ def urllib_stream_forwarder(provider: Provider, path: str, payload: Dict[str, An
     — before the client sees any bytes."""
     url = provider.base_url.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-    if provider.api_key_env:
-        key = os.environ.get(provider.api_key_env, "")
-        if key:
-            headers["Authorization"] = "Bearer %s" % key
+    key = resolve_provider_key(provider, secret_resolver)
+    if key:
+        headers["Authorization"] = "Bearer %s" % key
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -228,9 +261,14 @@ def urllib_stream_forwarder(provider: Provider, path: str, payload: Dict[str, An
         return None, {"error": {"message": str(exc), "type": "upstream_unreachable"}}
 
 
-def build_proxy_from_env(env: Optional[Dict[str, str]] = None) -> Optional[ProviderProxy]:
+def build_proxy_from_env(
+    env: Optional[Dict[str, str]] = None,
+    *,
+    secret_resolver: Optional[SecretResolver] = None,
+) -> Optional[ProviderProxy]:
     """Build a ProviderProxy from MAC_ROUTER_* env; None when no providers are
-    configured."""
+    configured. ``secret_resolver`` (th-merge-04) lets a provider's ``key=`` be
+    ``secret:<name>``, resolved from the in-mac encrypted key store at use."""
     env = env or os.environ
     providers = providers_from_env(env)
     if not providers:
@@ -242,6 +280,12 @@ def build_proxy_from_env(env: Optional[Dict[str, str]] = None) -> Optional[Provi
         except ValueError:
             return default
 
+    def _fwd(provider, path, payload, *, timeout=60.0):
+        return urllib_forwarder(provider, path, payload, timeout=timeout, secret_resolver=secret_resolver)
+
+    def _sfwd(provider, path, payload, *, timeout=300.0):
+        return urllib_stream_forwarder(provider, path, payload, timeout=timeout, secret_resolver=secret_resolver)
+
     router = ProviderRouter(
         providers,
         failure_threshold=int(_f("MAC_ROUTER_FAILURE_THRESHOLD", 3)),
@@ -249,22 +293,28 @@ def build_proxy_from_env(env: Optional[Dict[str, str]] = None) -> Optional[Provi
     )
     return ProviderProxy(
         router,
-        urllib_forwarder,
-        stream_forward_fn=urllib_stream_forwarder,
+        _fwd,
+        stream_forward_fn=_sfwd,
         default_model=(env.get("MAC_ROUTER_DEFAULT_MODEL") or "").strip(),
         timeout=_f("MAC_ROUTER_TIMEOUT", 60.0),
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),
     )
 
 
-def mount_router(app: Any, *, env: Optional[Dict[str, str]] = None, proxy: Optional[ProviderProxy] = None) -> bool:
+def mount_router(
+    app: Any,
+    *,
+    env: Optional[Dict[str, str]] = None,
+    proxy: Optional[ProviderProxy] = None,
+    secret_resolver: Optional[SecretResolver] = None,
+) -> bool:
     """Mount /v1/chat/completions + /v1/embeddings on ``app`` when
     MAC_ROUTER_BACKEND=inproc. Returns True if mounted. Default backend is
     'tokenhub' → no-op, so an existing fleet is unchanged until flipped."""
     env = env or os.environ
     if (env.get("MAC_ROUTER_BACKEND") or "tokenhub").strip().lower() != "inproc":
         return False
-    proxy = proxy or build_proxy_from_env(env)
+    proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver)
     if proxy is None:
         return False
     from fastapi.responses import JSONResponse, StreamingResponse

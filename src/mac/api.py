@@ -3904,7 +3904,19 @@ def create_app(
     try:
         from mac.router_app import mount_router
 
-        if mount_router(app):
+        # th-merge-04: let a provider key be `secret:<name>`, resolved (audited,
+        # decrypt-at-use) from the in-mac encrypted key store so upstream
+        # credentials are never stored in plaintext env on the hub.
+        def _router_secret_resolver(name: str) -> Optional[str]:
+            secrets = getattr(cp, "secrets", None)
+            if secrets is None:
+                return None
+            try:
+                return secrets.resolve_secret_value(name, purpose="router-upstream")
+            except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
+                return None
+
+        if mount_router(app, secret_resolver=_router_secret_resolver):
             _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
     except Exception as exc:  # noqa: BLE001 - the router must never block app startup
         _log.warning("in-mac model router not mounted: %s", exc)
