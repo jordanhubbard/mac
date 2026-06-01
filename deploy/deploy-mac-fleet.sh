@@ -5335,17 +5335,6 @@ read_hub_token() {
     'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; printf "%s" "${MAC_API_TOKEN:?}"'
 }
 
-read_hub_tokenhub_api_key() {
-  local target ssh_parts=() ssh_args=() ssh_target item last_index
-  target="$(hub_target)"
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
-  last_index=$((${#ssh_parts[@]} - 1))
-  ssh_target="${ssh_parts[$last_index]}"
-  ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
-    'set -euo pipefail; if [ -f "$HOME/.tokenhub/env" ]; then set -a; . "$HOME/.tokenhub/env"; set +a; fi; if [ -z "${TOKENHUB_API_KEY:-}" ] && [ -f "$HOME/.tokenhub/.host-api-key" ]; then TOKENHUB_API_KEY="$(tr -d "\r\n" < "$HOME/.tokenhub/.host-api-key")"; fi; printf "%s" "${TOKENHUB_API_KEY:?}"'
-}
-
 read_hub_tunnel_pubkey() {
   local target ssh_parts=() ssh_args=() ssh_target item last_index
   target="$(hub_target)"
@@ -5523,10 +5512,9 @@ main() {
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
     fi
-    if [ "$agent" != "$hub_agent" ] && [ -z "$tokenhub_api_key" ]; then
-      tokenhub_api_key="$(read_hub_tokenhub_api_key)"
-      upsert_local_env "$tokenhub_api_key_name" "$tokenhub_api_key"
-    fi
+    # th-merge-07: TokenHub is retired — spokes no longer fetch a TokenHub agent
+    # key from the hub (they route via the in-mac router). tokenhub_api_key stays
+    # empty.
     allow_degraded_services=0
     if [ "$agent" != "$hub_agent" ] && [ "$direct_mesh_hub" != "1" ]; then
       # Detect brand-new nodes: if the remote mac API is unreachable before deploy,
@@ -5560,8 +5548,6 @@ main() {
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
-      tokenhub_api_key="$(read_hub_tokenhub_api_key)"
-      upsert_local_env "$tokenhub_api_key_name" "$tokenhub_api_key"
       echo "==> ${agent}: hub UI access:"
       echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
       echo "    2. open browser: http://localhost:8789/ui?t=${hub_token}"
