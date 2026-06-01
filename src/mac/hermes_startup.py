@@ -925,6 +925,12 @@ def _tokenhub_report() -> Dict[str, Any]:
         "warning": "",
         "degradation_reason": "",
     }
+    if (os.environ.get("MAC_ROUTER_BACKEND") or "").strip().lower() == "inproc":
+        # th-merge-07: in router mode TokenHub is retired — its health endpoint
+        # being unreachable is expected, not a degradation. Report cleanly.
+        report["status"] = "retired"
+        report["ready"] = True
+        return report
     if not endpoint:
         if not required:
             return report
