@@ -2884,6 +2884,32 @@ def write_env(path: Path, updates: dict[str, str | None]) -> None:
     path.chmod(0o600)
 
 
+def read_config_env_slack_tokens(config_path: Path) -> dict[str, str]:
+    """Extract SLACK_BOT_TOKEN/SLACK_APP_TOKEN from the top-level env: block of
+    config.yaml. This covers spokes whose Slack *vault fetch* is skipped (no
+    TOKENHUB_ADMIN_TOKEN) but whose config.yaml already carries the tokens: the
+    gateway wrapper sources ~/.hermes/.env, so the tokens must live there too or
+    a restarted gateway comes up "No messaging platforms enabled"."""
+    out: dict[str, str] = {}
+    if not config_path.exists():
+        return out
+    in_env = False
+    for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not in_env:
+            if line.rstrip() == "env:":
+                in_env = True
+            continue
+        if line.strip() and line[:1] not in {" ", "\t", "#"}:
+            break  # left the env: block
+        stripped = line.strip()
+        for k in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
+            if stripped.startswith(k + ":"):
+                v = stripped.split(":", 1)[1].strip().strip("'\"")
+                if v:
+                    out[k] = v
+    return out
+
+
 source = read_env(source_path)
 keys = (
     "MAC_HERMES_SLACK_HOME_CHANNEL_NAME",
@@ -2899,6 +2925,10 @@ for key in keys:
     value = source.get(key, "").strip()
     if value:
         updates[key] = value
+# Ensure the gateway-sourced .env has the Slack tokens even when the vault fetch
+# was skipped (spokes without the admin token) — read them from config.yaml.
+for tk, tv in read_config_env_slack_tokens(target_path.parent / "config.yaml").items():
+    updates.setdefault(tk, tv)
 if updates:
     write_env(target_path, updates)
 print("Slack identity env: synced %d value(s) to %s" % (len(updates), target_path))
