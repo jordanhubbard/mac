@@ -2860,6 +2860,15 @@ fetch_slack_secrets_from_vault() {
       log "skipping mac-vault Slack fetch: MAC_WORKER_TOKEN/MAC_API_TOKEN unavailable"
       return 0
     fi
+    # th-merge-07: wait for the mac vault API to be serving before fetching. The
+    # hub reads its OWN API here; during the hub's deploy that API may be briefly
+    # mid-restart, which previously made the hub transiently fail its own slack
+    # fetch (warning + preserve). /health is unauthenticated. Bounded (~30s).
+    local _i
+    for _i in $(seq 1 15); do
+      curl -fsS -m3 "${mac_vault_url%/}/health" >/dev/null 2>&1 && break
+      sleep 2
+    done
     log "fetching Slack secrets for ${AGENT} from mac vault ($mac_vault_url)"
     MAC_AGENT_NAME="$AGENT" \
       MAC_SECRET_VAULT_URL="$mac_vault_url" \

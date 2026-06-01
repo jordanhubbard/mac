@@ -1909,12 +1909,9 @@ def create_app(
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp
     app.state.auth_tokens = tokens
-    # ADR 0001 hu-05: stream TokenHub's routing decisions into observability so
-    # "why am I on provider X / model Y?" is answerable. No-op unless
-    # MAC_TOKENHUB_EVENTS_URL / TOKENHUB_URL (+ admin token) is configured.
-    from mac.tokenhub_feed import start_background_consumer
-
-    app.state.tokenhub_feed_thread = start_background_consumer(cp.observability)
+    # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
+    # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
+    # integration. Routing decisions now come from the in-mac router.
     app.state.hermes_startup = build_hermes_startup_report()
     if (
         os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
