@@ -1262,24 +1262,6 @@ firecrawl_install_enabled() {
   esac
 }
 
-tokenhub_install_enabled() {
-  # th-merge-07: when this agent uses the in-mac model router, TokenHub is
-  # retired — never install/start/validate it (and never let it re-pin the
-  # gateway base_url back to :8090).
-  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
-    inproc) return 1 ;;
-  esac
-  case "${TOKENHUB_INSTALL:-auto}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    0|false|FALSE|no|NO|off|OFF|none|disabled) return 1 ;;
-    auto|"") [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; return ;;
-    *)
-      log "ERROR: unsupported MAC_DEPLOY_TOKENHUB_INSTALL value: $TOKENHUB_INSTALL"
-      exit 1
-      ;;
-  esac
-}
-
 ensure_hub_tunnel_key() {
   local key_file="$HOME/.ssh/mac_tunnel_id"
   if [ ! -f "$key_file" ]; then
@@ -1354,106 +1336,11 @@ validate_firecrawl_endpoint() {
   exit 1
 }
 
-validate_tokenhub_endpoint() {
-  local tokenhub_url tokenhub_api_key required allow_degraded
-  tokenhub_url="${TOKENHUB_URL:-${TOKENHUB_URL_CONFIGURED:-}}"
-  tokenhub_api_key="${TOKENHUB_API_KEY:-${TOKENHUB_AGENT_KEY:-${OPENAI_API_KEY:-}}}"
-  required="${MAC_REQUIRE_TOKENHUB:-${TOKENHUB_REQUIRE:-1}}"
-  allow_degraded="${MAC_TOKENHUB_ALLOW_DEGRADED:-${MAC_DEPLOY_ALLOW_DEGRADED_SERVICES:-0}}"
-  if ! truthy "$required"; then
-    if [ -z "$tokenhub_url" ]; then
-      log "TokenHub is optional and no endpoint is configured"
-      return
-    fi
-    if curl -fsS --connect-timeout 2 --max-time 5 "${tokenhub_url%/}/healthz" >/dev/null; then
-      log "Optional TokenHub reachable at configured health endpoint"
-    else
-      log "WARNING: optional TokenHub is unreachable at ${tokenhub_url%/}/healthz"
-    fi
-    return
-  fi
-  if [ -z "$tokenhub_url" ]; then
-    if truthy "$allow_degraded"; then
-      log "WARNING: TokenHub is required but no endpoint is configured; degraded override is active"
-      return
-    fi
-    log "ERROR: TokenHub is required but no endpoint is configured"
-    exit 1
-  fi
-  if ! curl -fsS --connect-timeout 2 --max-time 5 "${tokenhub_url%/}/healthz" >/dev/null; then
-    # The configured URL may be an external DNS name not reachable from inside this host
-    # (e.g. a K8s service FQDN when the service doesn't expose the tokenhub port).
-    # Fall back to loopback only when tokenhub is installed locally on this node.
-    local loopback_port="${MAC_TOKENHUB_PORT:-${TOKENHUB_PORT_CONFIGURED:-8090}}"
-    if tokenhub_install_enabled && curl -fsS --connect-timeout 2 --max-time 5 "http://127.0.0.1:${loopback_port}/healthz" >/dev/null 2>&1; then
-      log "TokenHub health confirmed on loopback; configured URL ${tokenhub_url%/} is not reachable from this host"
-      tokenhub_url="http://127.0.0.1:${loopback_port}"
-    elif truthy "$allow_degraded"; then
-      log "WARNING: TokenHub health endpoint is unreachable; degraded override is active"
-      return
-    else
-      log "ERROR: TokenHub is unreachable at ${tokenhub_url%/}/healthz"
-      exit 1
-    fi
-  fi
-  if [ -z "$tokenhub_api_key" ]; then
-    if truthy "$allow_degraded"; then
-      log "WARNING: TokenHub is reachable but no client key is configured; degraded override is active"
-      return
-    fi
-    log "ERROR: TokenHub client key is required before Hermes/AI paths start"
-    exit 1
-  fi
-  if curl -fsS --connect-timeout 2 --max-time 8 -H "Authorization: Bearer $tokenhub_api_key" "${tokenhub_url%/}/v1/models" >/dev/null; then
-    log "TokenHub model routing reachable at configured OpenAI-compatible endpoint"
-    return
-  fi
-  if truthy "$allow_degraded"; then
-    log "WARNING: TokenHub /v1/models is unreachable with configured client key; degraded override is active"
-    return
-  fi
-  log "ERROR: TokenHub /v1/models is unreachable with configured client key"
-  exit 1
-}
-
 reload_mac_env() {
   unset MAC_HERMES_GATEWAY_MODEL ACC_HERMES_GATEWAY_MODEL HERMES_INFERENCE_MODEL ACC_LLM_MODEL
   set -a
   . "$ENV_FILE"
   set +a
-}
-
-install_or_validate_tokenhub_service() {
-  # th-merge-07: in router mode TokenHub is retired — skip BOTH install and the
-  # required-endpoint validation (which would otherwise fail the deploy looking
-  # for a TokenHub that is no longer expected to run).
-  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
-    inproc) log "TokenHub retired (in-mac router active); skipping install + endpoint validation"; return 0 ;;
-  esac
-  if tokenhub_install_enabled; then
-    log "installing hub-managed TokenHub secret/model routing service"
-    if [ -n "$TOKENHUB_BIND_ADDR_CONFIGURED" ]; then
-      export TOKENHUB_BIND_ADDR="$TOKENHUB_BIND_ADDR_CONFIGURED"
-    else
-      unset TOKENHUB_BIND_ADDR
-    fi
-    if [ -n "$TOKENHUB_URL_CONFIGURED" ]; then
-      export TOKENHUB_URL="$TOKENHUB_URL_CONFIGURED"
-    else
-      unset TOKENHUB_URL
-    fi
-    export TOKENHUB_PORT="$TOKENHUB_PORT_CONFIGURED"
-    export TOKENHUB_REPO_URL="$TOKENHUB_REPO_URL_CONFIGURED"
-    export TOKENHUB_REF="$TOKENHUB_REF_CONFIGURED"
-    export FLEET_NAME="$FLEET_NAME"
-    export TOKENHUB_SUPERVISOR="${TOKENHUB_SUPERVISOR:-auto}"
-    MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
-      bash "$SRC_DIR/deploy/install-tokenhub-service.sh"
-    reload_mac_env
-  else
-    log "using hub-managed TokenHub from $SHARED_SERVICES_MANAGER_AGENT"
-  fi
-  validate_tokenhub_endpoint
 }
 
 install_or_validate_shared_services() {
@@ -3925,10 +3812,6 @@ PY
 
 normalize_hermes_redaction_env
 
-reload_mac_env
-install_or_validate_tokenhub_service
-reload_mac_env
-sync_hermes_tokenhub_client_env
 reload_mac_env
 if [ "$WORKER_MODE" = "loop" ]; then
   ensure_hub_tunnel_key
