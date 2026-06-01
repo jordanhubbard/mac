@@ -1263,6 +1263,12 @@ firecrawl_install_enabled() {
 }
 
 tokenhub_install_enabled() {
+  # th-merge-07: when this agent uses the in-mac model router, TokenHub is
+  # retired — never install/start/validate it (and never let it re-pin the
+  # gateway base_url back to :8090).
+  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+    inproc) return 1 ;;
+  esac
   case "${TOKENHUB_INSTALL:-auto}" in
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
     0|false|FALSE|no|NO|off|OFF|none|disabled) return 1 ;;
@@ -1418,6 +1424,12 @@ reload_mac_env() {
 }
 
 install_or_validate_tokenhub_service() {
+  # th-merge-07: in router mode TokenHub is retired — skip BOTH install and the
+  # required-endpoint validation (which would otherwise fail the deploy looking
+  # for a TokenHub that is no longer expected to run).
+  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+    inproc) log "TokenHub retired (in-mac router active); skipping install + endpoint validation"; return 0 ;;
+  esac
   if tokenhub_install_enabled; then
     log "installing hub-managed TokenHub secret/model routing service"
     if [ -n "$TOKENHUB_BIND_ADDR_CONFIGURED" ]; then
@@ -2530,6 +2542,11 @@ PY
 }
 
 sync_hermes_tokenhub_client_env() {
+  # th-merge-07: when the in-mac router is the backend, do NOT pin the Hermes
+  # client env to TokenHub's :8090 base_url — the router (mac /v1) is the gateway.
+  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+    inproc) log "skipping Hermes TokenHub client env sync (in-mac router active)"; return 0 ;;
+  esac
   log "syncing Hermes TokenHub client environment"
   "$PY" - "$ENV_FILE" "$HOME/.hermes/.env" <<'PY'
 import json
@@ -2699,6 +2716,12 @@ PY
 }
 
 sync_hermes_tokenhub_runtime_config() {
+  # th-merge-07: in router mode TokenHub is retired — don't re-pin config.yaml's
+  # model.provider/base_url to TokenHub. The gateway base_url comes from the
+  # MAC_HERMES_GATEWAY_BASE_URL env override (the local /v1 router) instead.
+  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+    inproc) log "skipping Hermes TokenHub runtime config sync (in-mac router active)"; return 0 ;;
+  esac
   log "syncing Hermes TokenHub runtime config"
   "$VENV/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
 from __future__ import annotations
@@ -2820,6 +2843,15 @@ fetch_slack_secrets_from_vault() {
   # secret store). Replaces per-host .env scattering. Idempotent;
   # writes ~/.hermes/slack_accounts.json and updates SLACK_BOT_TOKEN /
   # SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
+  #
+  # th-merge-07: when the in-mac router is the backend, TokenHub is retired, so
+  # this TokenHub-reading fetch is skipped. The Slack secrets have been migrated
+  # into mac's own vault (scripts/migrate-tokenhub-vault.sh) and each agent's
+  # existing ~/.hermes/slack_accounts.json is preserved, so Slack keeps working.
+  # (A mac-vault-sourced fetcher is the follow-up; the secrets are already there.)
+  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
+    inproc) log "skipping TokenHub Slack vault fetch (in-mac router active; secrets migrated to mac vault, existing slack config preserved)"; return 0 ;;
+  esac
   local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
   if [ ! -f "$fetcher" ]; then
     log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
