@@ -1,0 +1,59 @@
+name: Build and Push Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ${{ gitea.server_url }}
+  IMAGE_NAME: mac
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to Gitea Container Registry
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "${{ env.REGISTRY }}" -u "${{ gitea.actor }}" --password-stdin
+
+      - name: Build and push image
+        run: |
+          REGISTRY_HOST=$(echo "$REGISTRY" | sed 's|https://||;s|http://||')
+          SHA="${{ gitea.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          OWNER="${{ gitea.repository_owner }}"
+          IMAGE="${REGISTRY_HOST}/${OWNER}/${IMAGE_NAME}"
+          TS_TAG="$(date -u +%Y%m%d%H%M%S)-${SHORT_SHA}"
+
+          echo "Building ${IMAGE} from Dockerfile"
+          docker build \
+            -f Dockerfile \
+            --label "org.opencontainers.image.source=${{ gitea.server_url }}/${{ gitea.repository }}" \
+            --label "org.opencontainers.image.revision=${{ gitea.sha }}" \
+            -t "mac-build" \
+            .
+
+          if [ "${{ gitea.ref }}" = "refs/heads/main" ]; then
+            docker tag "mac-build" "${IMAGE}:${TS_TAG}"
+            docker push "${IMAGE}:${TS_TAG}"
+            docker tag "mac-build" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+            echo "Pushed ${IMAGE}:${TS_TAG} and ${IMAGE}:latest"
+          fi
+
+          if echo "${{ gitea.ref }}" | grep -qE '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION=$(echo "${{ gitea.ref }}" | sed 's|refs/tags/v||')
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+            for T in "$VERSION" "$MINOR" "$MAJOR"; do
+              docker tag "mac-build" "${IMAGE}:${T}"
+              docker push "${IMAGE}:${T}"
+            done
+            echo "Pushed semver tags: ${VERSION}, ${MINOR}, ${MAJOR}"
+          fi
