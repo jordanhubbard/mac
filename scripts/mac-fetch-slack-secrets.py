@@ -161,6 +161,49 @@ def write_slack_accounts(hermes_home: Path, accounts: list[dict]) -> None:
         pass
 
 
+def upsert_env_file(env_path: Path, kvs: dict[str, str]) -> bool:
+    """Idempotently set KEY=VALUE lines in a .env file, preserving everything
+    else. Returns True if the file changed.
+
+    This is the durable fix for the gateway coming up "No messaging platforms
+    enabled" after a restart: the gateway wrapper sources ~/.hermes/.env, so the
+    Slack tokens must live THERE (not only in config.yaml's env: block, which a
+    freshly systemd-launched gateway doesn't reliably load before deciding which
+    platforms to enable).
+    """
+    if not kvs:
+        return False
+    existing = ""
+    if env_path.exists():
+        existing = env_path.read_text(encoding="utf-8", errors="ignore")
+    lines = existing.splitlines()
+    out: list[str] = []
+    handled: set[str] = set()
+    changed = False
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if ("=" in line and not line.lstrip().startswith("#")) else None
+        if key in kvs:
+            new_line = "%s=%s" % (key, kvs[key])
+            if new_line != line:
+                changed = True
+            out.append(new_line)
+            handled.add(key)
+        else:
+            out.append(line)
+    for key, value in kvs.items():
+        if key not in handled:
+            out.append("%s=%s" % (key, value))
+            changed = True
+    if changed:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass
+    return changed
+
+
 def main() -> int:
     agent = (os.environ.get("MAC_AGENT_NAME") or "").strip().lower()
     if not agent:
@@ -280,12 +323,21 @@ def main() -> int:
     if config_path.exists() and env_updates:
         config_changed = update_yaml_env_block(config_path, env_updates)
 
+    # Durable fix: also write the primary tokens into ~/.hermes/.env, which the
+    # gateway wrapper sources at startup. Without this, a systemd-restarted
+    # gateway has no SLACK_BOT_TOKEN/SLACK_APP_TOKEN in its process env and comes
+    # up "No messaging platforms enabled" (Slack silent), even though the tokens
+    # are present in config.yaml.
+    env_file_changed = upsert_env_file(hermes_home / ".env", env_updates)
+
     print(json.dumps({
         "agent": agent,
         "workspaces": summary,
         "slack_accounts_path": str(hermes_home / "slack_accounts.json"),
         "config_yaml_path": str(config_path),
         "config_yaml_changed": config_changed,
+        "env_file_changed": env_file_changed,
+        "env_file_path": str(hermes_home / ".env"),
     }, indent=2))
     return 0
 
