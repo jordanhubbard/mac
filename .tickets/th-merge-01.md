@@ -18,7 +18,7 @@ Motivated by the live wedge (single provider + stuck breaker + no fail-fast).
 
 ## Work breakdown
 
-- [ ] **th-merge-02: OpenAI front door in mac.** `/v1/chat/completions` +
+- [x] **th-merge-02: OpenAI front door in mac.** `/v1/chat/completions` +
       `/v1/embeddings` accepting `model="*"`; Hermes/executor point at it via the
       same base_url contract (config flip). `MAC_ROUTER_BACKEND=inproc|tokenhub`.
 - [x] **th-merge-03: multi-provider + recovering breaker.** >1 provider,

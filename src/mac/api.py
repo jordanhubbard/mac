@@ -3892,6 +3892,17 @@ def create_app(
         rollout, task = cp.rescue_rollout(rollout_id, body.actor, body.reason, body.detail)
         return {"rollout": rollout.to_dict(), "task": task.to_dict()}
 
+    # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
+    # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub
+    # path is unchanged by default.
+    try:
+        from mac.router_app import mount_router
+
+        if mount_router(app):
+            _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
+    except Exception as exc:  # noqa: BLE001 - the router must never block app startup
+        _log.warning("in-mac model router not mounted: %s", exc)
+
     return app
 
 

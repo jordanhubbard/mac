@@ -52,6 +52,7 @@ class Provider:
     priority: int = 0                 # lower is preferred
     models: Tuple[str, ...] = ("*",)  # which model ids it serves; "*" = any
     enabled: bool = True
+    api_key_env: str = ""             # env var holding this provider's bearer key
 
 
 @dataclass
@@ -184,6 +185,9 @@ class ProviderRouter:
     def any_available(self, model: str = "*") -> bool:
         return self.select(model) is not None
 
+    def provider_names(self) -> List[str]:
+        return [p.name for p in self._order]
+
 
 # ---------------------------------------------------------------------------
 # Config loader
@@ -194,9 +198,9 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
     """Parse ``MAC_ROUTER_PROVIDERS`` into Providers.
 
     Format (semicolon-separated providers, comma-separated fields):
-      ``name=base_url[,priority][,models=a|b|*]``
-    e.g. ``nvidia=https://inference-api.nvidia.com/v1,0,models=*;`` +
-           ``openai=https://api.openai.com/v1,1,models=*``
+      ``name=base_url[,priority][,models=a|b|*][,key=ENV_VAR]``
+    e.g. ``nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY;`` +
+           ``openai=https://api.openai.com/v1,1,models=*,key=OPENAI_API_KEY``
     """
     env = env or os.environ
     raw = (env.get("MAC_ROUTER_PROVIDERS") or "").strip()
@@ -212,10 +216,15 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
         base_url = fields[0]
         priority = 0
         models: Tuple[str, ...] = ("*",)
+        api_key_env = ""
         for f in fields[1:]:
             if f.startswith("models="):
                 models = tuple(m for m in f[len("models="):].split("|") if m) or ("*",)
+            elif f.startswith("key="):
+                api_key_env = f[len("key="):].strip()
             elif f.isdigit():
                 priority = int(f)
-        providers.append(Provider(name=name.strip(), base_url=base_url, priority=priority, models=models))
+        providers.append(
+            Provider(name=name.strip(), base_url=base_url, priority=priority, models=models, api_key_env=api_key_env)
+        )
     return providers
