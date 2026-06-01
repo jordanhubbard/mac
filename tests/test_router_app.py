@@ -276,3 +276,75 @@ def test_mount_streams_through_fastapi():
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert resp.content == b"".join(sse)
+
+
+# -- th-merge-06: wildcard model ladder (on-the-fly substitution) -------------
+
+
+def _model_forward(by_model, default=(200, {"ok": True})):
+    """Forward keyed by the outgoing payload's model, recording the sequence."""
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        m = payload.get("model")
+        calls.append(m)
+        return by_model.get(m, default)
+
+    return fwd, calls
+
+
+def test_wildcard_ladder_substitutes_on_model_unavailable():
+    r = _router()
+    fwd, calls = _model_forward({"m1": (404, {"error": "no model"}), "m2": (200, {"ok": 1})})
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2", "m3"))
+    status, body = proxy.complete("/chat/completions", {"model": "*"})
+    assert status == 200 and body == {"ok": 1}
+    assert calls[:2] == ["m1", "m2"]                      # rank-0 404 -> substitute rank-1
+    assert r.status()["primary"]["state"] == "closed"     # 404 is not a provider failure
+
+
+def test_wildcard_ladder_exhausted_returns_last_model_response():
+    r = _router()
+    fwd, calls = _model_forward({"m1": (404, {"e": 1}), "m2": (422, {"e": 2})})
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"))
+    status, body = proxy.complete("/chat/completions", {"model": "*"})
+    assert status == 422 and body == {"e": 2}             # last candidate returned as-is
+    assert calls == ["m1", "m2"]
+
+
+def test_concrete_model_is_not_laddered():
+    r = _router()
+    fwd, calls = _model_forward({"gpt-x": (404, {"e": 1})})
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"))
+    status, _ = proxy.complete("/chat/completions", {"model": "gpt-x"})
+    assert status == 404 and calls == ["gpt-x"]           # concrete request: ladder not consulted
+
+
+def test_400_is_not_a_model_retry_code():
+    # A 400 is a genuine bad request, not "this model is unavailable" -> return it,
+    # do not walk the rest of the ladder.
+    r = _router()
+    fwd, calls = _model_forward({"m1": (400, {"e": "bad"})})
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"))
+    status, _ = proxy.complete("/chat/completions", {"model": "*"})
+    assert status == 400 and calls == ["m1"]
+
+
+def test_wildcard_ladder_failfast_when_providers_down_does_not_walk_models():
+    r = _router()  # failure_threshold=1
+    fwd, calls = _model_forward({}, default=(503, {"down": 1}))   # every model -> provider failure
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2", "m3"))
+    status, body = proxy.complete("/chat/completions", {"model": "*"})
+    assert status == 503 and body["error"]["type"] == "all_providers_unavailable"
+    assert "m2" not in calls and "m3" not in calls        # dead providers -> don't walk the ladder
+
+
+def test_build_proxy_reads_wildcard_models():
+    env = {
+        "MAC_ROUTER_PROVIDERS": "p=http://p/v1,0",
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_WILDCARD_MODELS": "meta/llama-3.3-70b-instruct|meta/llama-3.1-8b-instruct",
+    }
+    proxy = build_proxy_from_env(env)
+    assert proxy is not None
+    assert proxy._wildcard_models == ("meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct")
