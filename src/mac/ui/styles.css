@@ -963,6 +963,31 @@ details.action-box summary {
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-card .record-header {
+  min-width: 0;
+}
+
+.task-card .record-header h3,
+.task-card .record-header .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Cards live in narrow lanes; collapse the field grid so boxes
+   never overflow their container. */
+.task-card .row-grid,
+.compact-fields {
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+}
+
+.task-card .chip {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .task-card p,
