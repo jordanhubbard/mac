@@ -20,3 +20,9 @@ def test_non_v1_paths_unchanged():
     assert _required_scope("GET", "/tasks") == "read"
     assert _required_scope("POST", "/tasks") == "write"
     assert _required_scope("POST", "/agentbus") == "agent"
+
+
+def test_secret_resolve_requires_secret_scope():
+    # th-merge-07: audited reveal-by-name (Slack fetcher) is gated on `secret`.
+    assert _required_scope("POST", "/secrets/slack.rocky.omgjkh.bot/resolve") == "secret"
+    assert _required_scope("POST", "/secrets/github.token/resolve") == "secret"

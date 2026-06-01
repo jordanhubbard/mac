@@ -2844,17 +2844,29 @@ fetch_slack_secrets_from_vault() {
   # writes ~/.hermes/slack_accounts.json and updates SLACK_BOT_TOKEN /
   # SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
   #
-  # th-merge-07: when the in-mac router is the backend, TokenHub is retired, so
-  # this TokenHub-reading fetch is skipped. The Slack secrets have been migrated
-  # into mac's own vault (scripts/migrate-tokenhub-vault.sh) and each agent's
-  # existing ~/.hermes/slack_accounts.json is preserved, so Slack keeps working.
-  # (A mac-vault-sourced fetcher is the follow-up; the secrets are already there.)
-  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
-    inproc) log "skipping TokenHub Slack vault fetch (in-mac router active; secrets migrated to mac vault, existing slack config preserved)"; return 0 ;;
-  esac
+  # th-merge-07: in router mode TokenHub is retired, so read this agent's Slack
+  # secrets from mac's OWN vault (the hub's SecretsService, via /secrets +
+  # /secrets/<name>/resolve) instead of TokenHub. Secrets were migrated by
+  # scripts/migrate-tokenhub-vault.sh.
   local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
   if [ ! -f "$fetcher" ]; then
     log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
+    return 0
+  fi
+  if [ "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" = inproc ]; then
+    local mac_vault_url="${MAC_HUB_URL:-http://127.0.0.1:${MAC_PORT:-8789}}"
+    local mac_vault_token="${MAC_WORKER_TOKEN:-${MAC_API_TOKEN:-}}"
+    if [ -z "$mac_vault_token" ]; then
+      log "skipping mac-vault Slack fetch: MAC_WORKER_TOKEN/MAC_API_TOKEN unavailable"
+      return 0
+    fi
+    log "fetching Slack secrets for ${AGENT} from mac vault ($mac_vault_url)"
+    MAC_AGENT_NAME="$AGENT" \
+      MAC_SECRET_VAULT_URL="$mac_vault_url" \
+      MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
+      HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+      "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
+        log "WARNING: mac-vault Slack fetch failed for ${AGENT}; existing slack config preserved"
     return 0
   fi
   local th_env="$HOME/.tokenhub/env"

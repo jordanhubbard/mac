@@ -3677,6 +3677,26 @@ def create_app(
             "value": cp.reveal_secret(secret_id, body.audit_id, body.accessor_agent_id),
         }
 
+    @app.post("/secrets/{name}/resolve")
+    def resolve_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # th-merge-07: audited admin reveal-by-name for in-fleet consumers — the
+        # Slack fetcher reads slack.<agent>.* from mac's vault now that TokenHub is
+        # retired. Requires the `secret` scope (admin inherits it); decrypt-at-use
+        # and access-audited via SecretsService.resolve_secret_value. Distinct from
+        # the request/reveal handle flow (which is for per-agent scoped access).
+        _enforce_secret_rate_limit(principal, "resolve")  # mac-xc8u
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        accessor = getattr(principal, "agent_id", None) or "fleet-fetch"
+        value = secrets.resolve_secret_value(name, purpose="fleet-fetch", accessor=accessor)
+        if value is None:
+            raise NotFoundError("secret not found or disabled: %s" % name)
+        return {"name": name, "value": value}
+
     @app.get("/secret-audits")
     def list_secret_audits(secret_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
         return [audit.to_dict() for audit in cp.list_secret_audits(secret_id)]
