@@ -12,11 +12,12 @@ import argparse
 import os
 import re
 import secrets
+import shlex
 import sys
 import urllib.parse
 from typing import Dict, Mapping, MutableMapping, Optional, Sequence
 
-from mac.providers import ROUTER_PROVIDERS, router_secret_name
+from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
 
 
 DEFAULT_WORKER_CAPABILITIES = (
@@ -47,22 +48,7 @@ GATEWAY_ROUTING_KEYS = (
     "ACC_HERMES_GATEWAY_API_KEY",
 )
 
-UPSTREAM_PROVIDER_KEYS = tuple(
-    dict.fromkeys(
-        [
-            *(provider.key_env for provider in PROVIDERS),
-            *(provider.base_env for provider in PROVIDERS),
-            "NVIDIA_API_BASE",
-            "PERPLEXITY_API_BASE",
-            "NVIDIA_IMAGE_BASE_URL",
-            "FAL_KEY",
-            "VLLM_API_KEY",
-            "HAIMAKER_API_KEY",
-            "LLM_KEY",
-            "LLM_URL",
-        ]
-    )
-)
+UPSTREAM_PROVIDER_KEYS = tuple(upstream_provider_env_vars())
 
 INPROC_MANAGED_KEYS = tuple(dict.fromkeys([*ROUTER_KEYS, *GATEWAY_ROUTING_KEYS, *UPSTREAM_PROVIDER_KEYS]))
 
@@ -82,31 +68,51 @@ def build_router_provider_spec(provider_env_values: Mapping[str, str]) -> str:
 
 
 @dataclass(frozen=True)
-class DeployEnvConfig:
+class DeployPaths:
     env_file: Path
     mac_home: Path
     home: Path
+
+
+@dataclass(frozen=True)
+class ControlConfig:
     port: str
-    home_channel: str
-    gateway_model: str
-    gateway_provider: str
-    gateway_base_url: str
     hub_url: str
     hub_token: str
     bind_host: str
-    worker_mode: str
-    worker_capabilities: str
-    worker_allowed_projects: str
-    worker_required_metadata: str
-    worker_require_canary: str
-    agent: str
     supervisor_kind: str
-    shared_services_manager: str
+    network_provider: str
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    home_channel: str
+    model: str
+    provider: str
+    base_url: str
+
+
+@dataclass(frozen=True)
+class WorkerConfig:
+    mode: str
+    capabilities: str
+    allowed_projects: str
+    required_metadata: str
+    require_canary: str
+
+
+@dataclass(frozen=True)
+class SharedServicesConfig:
     qdrant_url: str
     qdrant_port: str
     firecrawl_url: str
     firecrawl_port: str
-    network_provider: str
+
+
+@dataclass(frozen=True)
+class DeployIdentity:
+    agent: str
+    shared_services_manager: str
     fleet_name: str
 
     @property
@@ -114,11 +120,54 @@ class DeployEnvConfig:
         return self.agent == self.shared_services_manager
 
 
-def _unquote_env_value(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
+@dataclass(frozen=True)
+class DeployEnvConfig:
+    paths: DeployPaths
+    control: ControlConfig
+    gateway: GatewayConfig
+    worker: WorkerConfig
+    services: SharedServicesConfig
+    identity: DeployIdentity
+
+    @property
+    def env_file(self) -> Path:
+        return self.paths.env_file
+
+    @property
+    def mac_home(self) -> Path:
+        return self.paths.mac_home
+
+    @property
+    def home(self) -> Path:
+        return self.paths.home
+
+    @property
+    def port(self) -> str:
+        return self.control.port
+
+    @property
+    def is_hub(self) -> bool:
+        return self.identity.is_hub
+
+
+def _parse_env_assignment(line: str) -> Optional[tuple[str, str]]:
+    try:
+        tokens = shlex.split(line, comments=False, posix=True)
+    except ValueError:
+        tokens = []
+    if tokens:
+        if tokens[0] == "export":
+            tokens = tokens[1:]
+        if tokens and "=" in tokens[0]:
+            key, value = tokens[0].split("=", 1)
+            return key.strip(), value
+
+    if line.startswith("export "):
+        line = line[len("export "):]
+    if "=" not in line:
+        return None
+    key, value = line.split("=", 1)
+    return key.strip(), value.strip()
 
 
 def parse_env_text(text: str) -> Dict[str, str]:
@@ -127,12 +176,11 @@ def parse_env_text(text: str) -> Dict[str, str]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if line.startswith("export "):
-            line = line[len("export "):]
-        if "=" not in line:
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
             continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = _unquote_env_value(value)
+        key, value = parsed
+        values[key] = value
     return values
 
 
@@ -155,7 +203,7 @@ def render_env(values: Mapping[str, str]) -> str:
         if _ENV_SAFE.match(rendered):
             lines.append("%s=%s" % (key, rendered))
         else:
-            lines.append("%s='%s'" % (key, rendered.replace("'", "'\\''")))
+            lines.append("%s=%s" % (key, shlex.quote(rendered)))
     return "\n".join(lines) + "\n"
 
 
@@ -197,103 +245,161 @@ def _service_url(
 
 
 def _mac_hub_url(cfg: DeployEnvConfig) -> str:
-    if cfg.worker_mode == "loop" and cfg.agent == cfg.shared_services_manager:
-        return "http://127.0.0.1:%s" % cfg.port
-    if cfg.network_provider in {"tailscale", "headscale"} and cfg.hub_url:
-        return cfg.hub_url.rstrip("/")
+    if cfg.worker.mode == "loop" and cfg.identity.is_hub:
+        return "http://127.0.0.1:%s" % cfg.control.port
+    if cfg.control.network_provider in {"tailscale", "headscale"} and cfg.control.hub_url:
+        return cfg.control.hub_url.rstrip("/")
     return "http://127.0.0.1:18789"
 
 
-def _apply_core_values(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> None:
+def _ensure_secret_values(values: MutableMapping[str, str]) -> None:
     values.setdefault("MAC_SECRET_KEY", secrets.token_urlsafe(48))
     values.setdefault("MAC_API_TOKEN", secrets.token_urlsafe(32))
-    values["MAC_DB"] = str(cfg.mac_home / "mac.db")
-    values["MAC_PORT"] = cfg.port
-    values["MAC_BIND_HOST"] = cfg.bind_host
-    values["MAC_HUB_URL"] = _mac_hub_url(cfg)
-    values["MAC_SUPERVISOR_KIND"] = cfg.supervisor_kind
-    values["HERMES_HOME"] = str(cfg.home / ".hermes")
-    values["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
-    values["HERMES_REDACT_SECRETS"] = "true"
-    values["ACC_DIR"] = str(cfg.home / ".acc")
-    values["MAC_HERMES_AGENT_DIR"] = str(cfg.mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
-    values["MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM"] = "1"
-    values["MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM"] = "1"
-    values["MAC_HERMES_STARTUP_CHECK"] = "1"
-    values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
-    values["MAC_URL"] = values["MAC_HUB_URL"]
-    values["MAC_FLEET_NAME"] = cfg.fleet_name
-    values["MAC_FLEET_TENANT_ID"] = stable_id("tenant", cfg.fleet_name)
-    values["MAC_AGENT_ID"] = stable_id("agent", cfg.agent)
-    values["MAC_HERMES_PERSONA_ID"] = stable_id("persona", cfg.agent)
-    values["MAC_HERMES_INSTANCE_ID"] = stable_id("hermes", cfg.agent)
-    values["MAC_WORKER_HERMES_INSTANCE_ID"] = values["MAC_HERMES_INSTANCE_ID"]
-    values["MAC_HERMES_RUNTIME_CONTEXT_FILE"] = str(cfg.home / ".hermes" / "mac-runtime-context.json")
-    values["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"] = str(cfg.home / ".hermes" / "mac-runtime-context.md")
-    values["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] = "1"
-    values["MAC_HERMES_WORKSPACE"] = str(cfg.mac_home / "src" / "mac")
-    values["MAC_PROJECT_CONTRACT_FILE"] = str(cfg.mac_home / "src" / "mac" / ".mac" / "project.yaml")
-    values["MAC_SELF_UPDATE_REPO"] = str(cfg.mac_home / "src" / "mac")
-    if cfg.gateway_model:
-        values["MAC_HERMES_GATEWAY_MODEL"] = cfg.gateway_model
-        values["ACC_HERMES_GATEWAY_MODEL"] = cfg.gateway_model
-        values["HERMES_INFERENCE_MODEL"] = cfg.gateway_model
-        values["ACC_LLM_MODEL"] = cfg.gateway_model
-    if cfg.gateway_provider:
-        values["MAC_HERMES_GATEWAY_PROVIDER"] = cfg.gateway_provider
-        values["ACC_HERMES_GATEWAY_PROVIDER"] = cfg.gateway_provider
-        values["HERMES_INFERENCE_PROVIDER"] = cfg.gateway_provider
-    if cfg.gateway_base_url:
-        values["MAC_HERMES_GATEWAY_BASE_URL"] = cfg.gateway_base_url
-        values["ACC_HERMES_GATEWAY_BASE_URL"] = cfg.gateway_base_url
-        values["CUSTOM_BASE_URL"] = cfg.gateway_base_url
-        values["OPENAI_BASE_URL"] = cfg.gateway_base_url
-    if cfg.worker_mode == "loop" and cfg.agent == cfg.shared_services_manager:
-        values["MAC_WORKER_TOKEN"] = values["MAC_API_TOKEN"]
-    elif cfg.hub_token:
-        values["MAC_WORKER_TOKEN"] = cfg.hub_token
-    else:
-        values.setdefault("MAC_WORKER_TOKEN", values["MAC_API_TOKEN"])
-    values["MAC_WORKER_AGENT_NAME"] = cfg.agent
-    values["MAC_WORKER_HOSTNAME"] = cfg.agent
-    values["MAC_WORKER_MODE"] = cfg.worker_mode
-    values["MAC_WORKER_CAPABILITIES"] = cfg.worker_capabilities
-    values["MAC_WORKER_REQUIRE_CANARY"] = cfg.worker_require_canary
-    values["MAC_WORKER_ALLOWED_PROJECTS"] = cfg.worker_allowed_projects
-    values["MAC_WORKER_REQUIRED_METADATA"] = cfg.worker_required_metadata
-    values["MAC_SHARED_SERVICES_MANAGER_AGENT"] = cfg.shared_services_manager
-    values["MAC_REQUIRE_QDRANT_MEMORY"] = "1"
-    values["MAC_QDRANT_MEMORY_ROLE"] = "shared_level2"
-    values["MAC_MEMORY_TOPOLOGY_FILE"] = str(cfg.home / ".hermes" / "mac-memory-topology.json")
-    values["MAC_REQUIRE_FIRECRAWL"] = "1"
 
 
-def _apply_shared_service_urls(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
-    hub_url = values.get("MAC_HUB_URL") or cfg.hub_url or "http://127.0.0.1:8789"
+def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+    paths = cfg.paths
+    hub_url = _mac_hub_url(cfg)
+    return {
+        "MAC_DB": str(paths.mac_home / "mac.db"),
+        "MAC_PORT": cfg.control.port,
+        "MAC_BIND_HOST": cfg.control.bind_host,
+        "MAC_HUB_URL": hub_url,
+        "MAC_URL": hub_url,
+        "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
+        "HERMES_HOME": str(paths.home / ".hermes"),
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
+        "HERMES_REDACT_SECRETS": "true",
+        "ACC_DIR": str(paths.home / ".acc"),
+        "MAC_HERMES_AGENT_DIR": str(paths.mac_home / "src" / "mac" / "src" / "mac" / "_hermes"),
+        "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
+        "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
+        "MAC_HERMES_STARTUP_CHECK": "1",
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(paths.home / ".hermes" / "mac-runtime-context.json"),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(paths.home / ".hermes" / "mac-runtime-context.md"),
+        "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
+        "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
+        "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
+        "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
+        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.home / ".hermes" / "mac-memory-topology.json"),
+    }
+
+
+def _identity_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+    identity = cfg.identity
+    hermes_id = stable_id("hermes", identity.agent)
+    return {
+        "MAC_FLEET_NAME": identity.fleet_name,
+        "MAC_FLEET_TENANT_ID": stable_id("tenant", identity.fleet_name),
+        "MAC_AGENT_ID": stable_id("agent", identity.agent),
+        "MAC_HERMES_PERSONA_ID": stable_id("persona", identity.agent),
+        "MAC_HERMES_INSTANCE_ID": hermes_id,
+        "MAC_WORKER_HERMES_INSTANCE_ID": hermes_id,
+        "MAC_SHARED_SERVICES_MANAGER_AGENT": identity.shared_services_manager,
+    }
+
+
+def _gateway_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+    gateway = cfg.gateway
+    values: Dict[str, str] = {}
+    if gateway.model:
+        values.update(
+            {
+                "MAC_HERMES_GATEWAY_MODEL": gateway.model,
+                "ACC_HERMES_GATEWAY_MODEL": gateway.model,
+                "HERMES_INFERENCE_MODEL": gateway.model,
+                "ACC_LLM_MODEL": gateway.model,
+            }
+        )
+    if gateway.provider:
+        values.update(
+            {
+                "MAC_HERMES_GATEWAY_PROVIDER": gateway.provider,
+                "ACC_HERMES_GATEWAY_PROVIDER": gateway.provider,
+                "HERMES_INFERENCE_PROVIDER": gateway.provider,
+            }
+        )
+    if gateway.base_url:
+        values.update(
+            {
+                "MAC_HERMES_GATEWAY_BASE_URL": gateway.base_url,
+                "ACC_HERMES_GATEWAY_BASE_URL": gateway.base_url,
+                "CUSTOM_BASE_URL": gateway.base_url,
+                "OPENAI_BASE_URL": gateway.base_url,
+            }
+        )
+    return values
+
+
+def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
+    if cfg.worker.mode == "loop" and cfg.identity.is_hub:
+        return values["MAC_API_TOKEN"]
+    if cfg.control.hub_token:
+        return cfg.control.hub_token
+    return values.get("MAC_WORKER_TOKEN") or values["MAC_API_TOKEN"]
+
+
+def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str, str]:
+    worker = cfg.worker
+    identity = cfg.identity
+    return {
+        "MAC_WORKER_TOKEN": _worker_token(cfg, values),
+        "MAC_WORKER_AGENT_NAME": identity.agent,
+        "MAC_WORKER_HOSTNAME": identity.agent,
+        "MAC_WORKER_MODE": worker.mode,
+        "MAC_WORKER_CAPABILITIES": worker.capabilities,
+        "MAC_WORKER_REQUIRE_CANARY": worker.require_canary,
+        "MAC_WORKER_ALLOWED_PROJECTS": worker.allowed_projects,
+        "MAC_WORKER_REQUIRED_METADATA": worker.required_metadata,
+    }
+
+
+def _shared_service_requirement_values() -> Dict[str, str]:
+    return {
+        "MAC_REQUIRE_QDRANT_MEMORY": "1",
+        "MAC_QDRANT_MEMORY_ROLE": "shared_level2",
+        "MAC_REQUIRE_FIRECRAWL": "1",
+    }
+
+
+def _shared_service_url_values(values: Mapping[str, str], cfg: DeployEnvConfig) -> Dict[str, str]:
+    hub_url = values.get("MAC_HUB_URL") or cfg.control.hub_url or "http://127.0.0.1:8789"
+    services = cfg.services
+    out: Dict[str, str] = {}
     qdrant_url = _service_url(
-        configured_url=cfg.qdrant_url,
+        configured_url=services.qdrant_url,
         hub_url=hub_url,
-        configured_port=cfg.qdrant_port or "6333",
-        native_port=cfg.port or "8789",
+        configured_port=services.qdrant_port or "6333",
+        native_port=cfg.control.port or "8789",
     )
     if qdrant_url:
-        values["QDRANT_URL"] = qdrant_url
-        values["QDRANT_ADDRESS"] = qdrant_url
-        values["QDRANT_FLEET_URL"] = qdrant_url
+        out.update(
+            {
+                "QDRANT_URL": qdrant_url,
+                "QDRANT_ADDRESS": qdrant_url,
+                "QDRANT_FLEET_URL": qdrant_url,
+            }
+        )
     firecrawl_url = _service_url(
-        configured_url=cfg.firecrawl_url,
+        configured_url=services.firecrawl_url,
         hub_url=hub_url,
-        configured_port=cfg.firecrawl_port or "3002",
-        native_port=cfg.port or "8789",
+        configured_port=services.firecrawl_port or "3002",
+        native_port=cfg.control.port or "8789",
     )
     if firecrawl_url:
-        values["FIRECRAWL_API_URL"] = firecrawl_url
-        values["FIRECRAWL_GATEWAY_URL"] = firecrawl_url
-        values.setdefault("FIRECRAWL_API_KEY", "none")
-        values["MAC_WEB_SEARCH_PROVIDER"] = "firecrawl"
-        values["MAC_WEB_SEARCH_URL"] = firecrawl_url
-        values["HERMES_WEB_SEARCH_BACKEND"] = "firecrawl"
-        values["HERMES_WEB_EXTRACT_BACKEND"] = "firecrawl"
+        out.update(
+            {
+                "FIRECRAWL_API_URL": firecrawl_url,
+                "FIRECRAWL_GATEWAY_URL": firecrawl_url,
+                "MAC_WEB_SEARCH_PROVIDER": "firecrawl",
+                "MAC_WEB_SEARCH_URL": firecrawl_url,
+                "HERMES_WEB_SEARCH_BACKEND": "firecrawl",
+                "HERMES_WEB_EXTRACT_BACKEND": "firecrawl",
+            }
+        )
+        if "FIRECRAWL_API_KEY" not in values:
+            out["FIRECRAWL_API_KEY"] = "none"
+    return out
 
 
 def _deploy_router_config(env: Mapping[str, str]) -> Dict[str, str]:
@@ -316,7 +422,7 @@ def _apply_inproc_router(values: MutableMapping[str, str], cfg: DeployEnvConfig,
             values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
         if router["providers"]:
             values["MAC_ROUTER_PROVIDERS"] = router["providers"]
-            local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.port
+            local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
             values["OPENAI_BASE_URL"] = local_router_v1
             values["CUSTOM_BASE_URL"] = local_router_v1
             values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
@@ -333,9 +439,9 @@ def _apply_inproc_router(values: MutableMapping[str, str], cfg: DeployEnvConfig,
             values["MAC_ROUTER_IMAGE_KEY"] = "secret:nvidia-image"
         return
 
-    hub_base = (values.get("MAC_HUB_URL") or cfg.hub_url or "").rstrip("/")
+    hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").rstrip("/")
     local_token = values.get("MAC_API_TOKEN") or ""
-    hub_token = cfg.hub_token or values.get("MAC_WORKER_TOKEN") or ""
+    hub_token = cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or ""
     if hub_token and hub_token == local_token:
         hub_token = ""
     if not hub_base or not hub_token:
@@ -374,7 +480,7 @@ def _apply_router(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: M
 
 def _apply_home_channel(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
     home_channel = (
-        cfg.home_channel
+        cfg.gateway.home_channel
         or values.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
         or values.get("ACC_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
         or values.get("SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")
@@ -397,19 +503,25 @@ def build_mac_env(
 ) -> Dict[str, str]:
     env = os.environ if environ is None else environ
     values: Dict[str, str] = dict(existing)
-    _apply_core_values(values, cfg, env)
-    _apply_shared_service_urls(values, cfg)
+    _ensure_secret_values(values)
+    values.update(_path_values(cfg))
+    values.update(_identity_values(cfg))
+    values.update(_gateway_values(cfg))
+    values.update(_worker_values(cfg, values))
+    values.update(_shared_service_requirement_values())
+    values.update(_shared_service_url_values(values, cfg))
     memory_model = (env.get("MAC_DEPLOY_MEMORY_EMBED_MODEL") or "").strip()
     if memory_model:
         values["MAC_MEMORY_EMBED_MODEL"] = memory_model
-    values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.mac_home / "agent-workspaces"))
+    values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
+    values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
-    values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.mac_home / "bin" / "mac-hermes-task-executor"))
+    values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-hermes-task-executor"))
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
-    values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.shared_services_manager)
+    values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.identity.shared_services_manager)
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values
@@ -436,32 +548,45 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
         or env.get("NETWORK_PROVIDER")
         or "tailscale"
     ).strip().lower()
+    agent = args[16].strip()
     return DeployEnvConfig(
-        env_file=Path(args[0]),
-        mac_home=Path(args[1]),
-        home=Path(args[2]),
-        port=args[3],
-        home_channel=args[4].strip().lstrip("#"),
-        gateway_model=gateway_model,
-        gateway_provider=args[6].strip(),
-        gateway_base_url=args[7].strip(),
-        hub_url=args[8].strip(),
-        hub_token=args[9].strip(),
-        bind_host=args[10].strip() or "127.0.0.1",
-        worker_mode=args[11].strip() or "heartbeat",
-        worker_capabilities=args[12].strip() or DEFAULT_WORKER_CAPABILITIES,
-        worker_allowed_projects=args[13].strip(),
-        worker_required_metadata=args[14].strip(),
-        worker_require_canary=args[15].strip() or "1",
-        agent=args[16].strip(),
-        supervisor_kind=args[17].strip(),
-        shared_services_manager=args[18].strip() or args[16].strip(),
-        qdrant_url=args[19].strip(),
-        qdrant_port=args[21].strip() or "6333",
-        firecrawl_url=args[22].strip(),
-        firecrawl_port=args[24].strip() or "3002",
-        network_provider=network_provider,
-        fleet_name=env.get("FLEET_NAME") or "mac",
+        paths=DeployPaths(
+            env_file=Path(args[0]),
+            mac_home=Path(args[1]),
+            home=Path(args[2]),
+        ),
+        control=ControlConfig(
+            port=args[3],
+            hub_url=args[8].strip(),
+            hub_token=args[9].strip(),
+            bind_host=args[10].strip() or "127.0.0.1",
+            supervisor_kind=args[17].strip(),
+            network_provider=network_provider,
+        ),
+        gateway=GatewayConfig(
+            home_channel=args[4].strip().lstrip("#"),
+            model=gateway_model,
+            provider=args[6].strip(),
+            base_url=args[7].strip(),
+        ),
+        worker=WorkerConfig(
+            mode=args[11].strip() or "heartbeat",
+            capabilities=args[12].strip() or DEFAULT_WORKER_CAPABILITIES,
+            allowed_projects=args[13].strip(),
+            required_metadata=args[14].strip(),
+            require_canary=args[15].strip() or "1",
+        ),
+        services=SharedServicesConfig(
+            qdrant_url=args[19].strip(),
+            qdrant_port=args[21].strip() or "6333",
+            firecrawl_url=args[22].strip(),
+            firecrawl_port=args[24].strip() or "3002",
+        ),
+        identity=DeployIdentity(
+            agent=agent,
+            shared_services_manager=args[18].strip() or agent,
+            fleet_name=env.get("FLEET_NAME") or "mac",
+        ),
     )
 
 

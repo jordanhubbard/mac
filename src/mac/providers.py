@@ -17,7 +17,7 @@ Consumers:
 """
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple
+from typing import Dict, Iterable, List, NamedTuple
 
 
 class Provider(NamedTuple):
@@ -36,17 +36,25 @@ ROUTER_PROVIDERS: List[Provider] = [
     Provider("perplexity", "PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
 ]
 
-# Additional upstream/external-service secret env vars that must never live on a
-# spoke (the gateway reaches these through the hub, or doesn't need them at all).
-# These are NOT router chat providers — image/search/other-LLM service keys, plus
-# alternate base-url spellings — observed materialized into spoke gateway envs.
-EXTRA_UPSTREAM_SECRET_ENV: List[str] = [
+# Additional upstream provider env vars managed with chat provider keys when the
+# in-mac router owns routing. These are not first-class chat providers in
+# ROUTER_PROVIDERS, but they are still upstream/provider credentials or alternate
+# base-url spellings that must not survive stale local env state.
+EXTRA_UPSTREAM_PROVIDER_ENV: List[str] = [
     "NVIDIA_API_BASE",
     "NVIDIA_IMAGE_BASE_URL",
     "PERPLEXITY_API_BASE",
     "FAL_KEY",
     "VLLM_API_KEY",
     "HAIMAKER_API_KEY",
+    "LLM_KEY",
+    "LLM_URL",
+]
+
+# External shared-service secrets scrubbed from spoke gateway envs. These are
+# intentionally not cleared from mac.env's inproc routing state, because shared
+# service setup may write benign local defaults such as FIRECRAWL_API_KEY=none.
+EXTRA_SPOKE_SCRUB_SECRET_ENV: List[str] = [
     "QDRANT_API_KEY",
     "FIRECRAWL_API_KEY",
 ]
@@ -62,16 +70,8 @@ def provider_key_env() -> Dict[str, str]:
     return {p.id: p.key_env for p in ROUTER_PROVIDERS}
 
 
-def spoke_scrub_env_vars() -> List[str]:
-    """Every upstream secret env var a spoke's gateway env must be scrubbed of:
-    each router provider's key + base-url var, plus the extra service keys. (A
-    spoke's OPENAI_API_KEY is the hub token, re-supplied by mac.env, so stripping
-    the gateway-env copy is safe.) Order-preserving, de-duplicated."""
-    names: List[str] = []
-    for provider in ROUTER_PROVIDERS:
-        names.append(provider.key_env)
-        names.append(provider.base_env)
-    names.extend(EXTRA_UPSTREAM_SECRET_ENV)
+def _dedupe(names: Iterable[str]) -> List[str]:
+    """Order-preserving de-duplication for env var tables."""
     seen = set()
     out: List[str] = []
     for name in names:
@@ -79,6 +79,25 @@ def spoke_scrub_env_vars() -> List[str]:
             seen.add(name)
             out.append(name)
     return out
+
+
+def upstream_provider_env_vars() -> List[str]:
+    """Provider/upstream env vars cleared when inproc routing owns credentials."""
+    names: List[str] = []
+    for provider in ROUTER_PROVIDERS:
+        names.append(provider.key_env)
+        names.append(provider.base_env)
+    names.extend(EXTRA_UPSTREAM_PROVIDER_ENV)
+    return _dedupe(names)
+
+
+def spoke_scrub_env_vars() -> List[str]:
+    """Every upstream secret env var a spoke's gateway env must be scrubbed of.
+
+    A spoke's OPENAI_API_KEY is the hub token, re-supplied by mac.env, so
+    stripping the gateway-env copy is safe.
+    """
+    return _dedupe([*upstream_provider_env_vars(), *EXTRA_SPOKE_SCRUB_SECRET_ENV])
 
 
 if __name__ == "__main__":

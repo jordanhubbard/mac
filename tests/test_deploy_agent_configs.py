@@ -5,13 +5,21 @@ import subprocess
 import sys
 
 from mac.deploy_env import (
+    ControlConfig,
     DEFAULT_WORKER_CAPABILITIES,
     DeployEnvConfig,
+    DeployIdentity,
+    DeployPaths,
+    GatewayConfig,
+    SharedServicesConfig,
+    WorkerConfig,
     build_mac_env,
+    config_from_legacy_args,
     parse_env_text,
+    render_env,
 )
 from mac.fleet_deploy import cleanup_path_strings, parse_ssh_target
-from mac.providers import ROUTER_PROVIDERS, provider_key_env
+from mac.providers import ROUTER_PROVIDERS, provider_key_env, spoke_scrub_env_vars, upstream_provider_env_vars
 import yaml
 
 
@@ -45,32 +53,60 @@ def deploy_env_config(
     fleet_name="mac",
 ):
     return DeployEnvConfig(
-        env_file=tmp_path / "mac.env",
-        mac_home=tmp_path / ".mac",
-        home=tmp_path,
-        port="8789",
-        home_channel="home",
-        gateway_model="",
-        gateway_provider="custom",
-        gateway_base_url="",
-        hub_url=hub_url,
-        hub_token=hub_token,
-        bind_host="127.0.0.1",
-        worker_mode=worker_mode,
-        worker_capabilities=DEFAULT_WORKER_CAPABILITIES,
-        worker_allowed_projects="",
-        worker_required_metadata="",
-        worker_require_canary="1",
-        agent=agent,
-        supervisor_kind="systemd",
-        shared_services_manager=hub_agent,
-        qdrant_url="",
-        qdrant_port="6333",
-        firecrawl_url="",
-        firecrawl_port="3002",
-        network_provider=network_provider,
-        fleet_name=fleet_name,
+        paths=DeployPaths(
+            env_file=tmp_path / "mac.env",
+            mac_home=tmp_path / ".mac",
+            home=tmp_path,
+        ),
+        control=ControlConfig(
+            port="8789",
+            hub_url=hub_url,
+            hub_token=hub_token,
+            bind_host="127.0.0.1",
+            supervisor_kind="systemd",
+            network_provider=network_provider,
+        ),
+        gateway=GatewayConfig(
+            home_channel="home",
+            model="",
+            provider="custom",
+            base_url="",
+        ),
+        worker=WorkerConfig(
+            mode=worker_mode,
+            capabilities=DEFAULT_WORKER_CAPABILITIES,
+            allowed_projects="",
+            required_metadata="",
+            require_canary="1",
+        ),
+        services=SharedServicesConfig(
+            qdrant_url="",
+            qdrant_port="6333",
+            firecrawl_url="",
+            firecrawl_port="3002",
+        ),
+        identity=DeployIdentity(
+            agent=agent,
+            shared_services_manager=hub_agent,
+            fleet_name=fleet_name,
+        ),
     )
+
+
+def test_deploy_env_render_round_trips_shell_quoted_values():
+    values = {
+        "PLAIN": "abc_123",
+        "WITH_SPACE": "one two",
+        "WITH_SINGLE_QUOTE": "one'two",
+        "WITH_HASH": "abc#def",
+        "EMPTY": "",
+    }
+
+    assert parse_env_text(render_env(values)) == values
+    assert parse_env_text("export FOO='bar baz'\nQUOTED='one'\"'\"'two'\n") == {
+        "FOO": "bar baz",
+        "QUOTED": "one'two",
+    }
 
 
 def test_sample_fleet_config_is_generic_and_externalized():
@@ -248,9 +284,8 @@ def test_fleet_deploy_applies_hermes_patch_set():
     )
 
 
-def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
+def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_env_source = (ROOT / "src" / "mac" / "deploy_env.py").read_text(encoding="utf-8")
     qdrant_installer = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
         encoding="utf-8"
     )
@@ -259,6 +294,21 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     )
     env_example = parse_env(ROOT / "deploy" / "systemd" / "mac.env.example")
     cfg = load_sample_fleet_config()
+    generated_env = build_mac_env(
+        {},
+        deploy_env_config(tmp_path, agent="spoke-a", hub_agent="hub-a", fleet_name="fleet-a"),
+        environ={},
+    )
+    tunnel_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="spoke-a",
+            hub_agent="hub-a",
+            network_provider="none",
+        ),
+        environ={},
+    )
 
     assert 'SUPERVISOR_REQUESTED="${MAC_DEPLOY_SUPERVISOR:-auto}"' in script
     assert "detect_supervisor()" in script
@@ -268,13 +318,13 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert "write_hermes_runtime_context()" in script
     assert "register_hermes_runtime_identity()" in script
     assert "ensure_hermes_identity_memory_continuity()" in script
-    assert 'values.setdefault("SLACK_ALLOWED_USERS", "*")' in deploy_env_source
-    assert 'values.setdefault("SLACK_STRICT_MENTION", "true")' in deploy_env_source
+    assert generated_env["SLACK_ALLOWED_USERS"] == "*"
+    assert generated_env["SLACK_STRICT_MENTION"] == "true"
     assert "mac.hermes.runtime_context.v1" in (ROOT / "src" / "mac" / "hermes_runtime.py").read_text(
         encoding="utf-8"
     )
-    assert 'values["MAC_HERMES_INSTANCE_ID"] = stable_id("hermes", cfg.agent)' in deploy_env_source
-    assert 'values["MAC_WORKER_HERMES_INSTANCE_ID"] = values["MAC_HERMES_INSTANCE_ID"]' in deploy_env_source
+    assert generated_env["MAC_HERMES_INSTANCE_ID"] == "hermes_spoke-a"
+    assert generated_env["MAC_WORKER_HERMES_INSTANCE_ID"] == generated_env["MAC_HERMES_INSTANCE_ID"]
     assert 'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")' in script
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "install_or_validate_shared_services" in script
@@ -283,16 +333,17 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert '"legacy_long_term_memory": "MEMORY.md"' in script
     assert "QDRANT_FLEET_URL" in script
     assert 'QDRANT_REQUIRE="1"' in script
-    assert 'values["MAC_REQUIRE_QDRANT_MEMORY"] = "1"' in deploy_env_source
+    assert generated_env["MAC_REQUIRE_QDRANT_MEMORY"] == "1"
     assert '"MAC_REQUIRE_QDRANT_MEMORY": "1",' in script
     assert '"mandatory": True,' in script
     assert 'updates["QDRANT_URL"] = None' not in script
     assert "Optional Qdrant shared memory" not in script
     assert "127.0.0.1:16333:127.0.0.1:6333" in script
-    assert "service_port += 10000" in deploy_env_source
+    assert tunnel_env["QDRANT_URL"] == "http://127.0.0.1:16333"
+    assert tunnel_env["FIRECRAWL_API_URL"] == "http://127.0.0.1:13002"
     assert '"qdrant_shared_memory": False' in script
     assert 'probe_http(qdrant_url, "/collections", qdrant_headers)' in script
-    assert 'values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.shared_services_manager)' in deploy_env_source
+    assert generated_env["MAC_REVIEW_TICK_HUB_AGENT"] == "hub-a"
     assert "mac-qdrant.service" in qdrant_installer
     assert 'ENV_DEST="/etc/${FLEET_NAME}/qdrant.env"' in qdrant_installer
     assert 's|/etc/mac/qdrant.env|${env_dest_sed}|g' in qdrant_installer
@@ -322,8 +373,9 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert env_example["MAC_REQUIRE_FIRECRAWL"] == "1"
     assert env_example["FIRECRAWL_API_URL"] == "http://hub.example.internal:3002"
     assert "MAC_FIRECRAWL_ALLOW_DEGRADED" not in env_example
-    assert "INPROC_MANAGED_KEYS" in deploy_env_source
-    assert "_clear(values, INPROC_MANAGED_KEYS)" in deploy_env_source
+    assert "NVIDIA_API_BASE" in upstream_provider_env_vars()
+    assert "LLM_KEY" in upstream_provider_env_vars()
+    assert "QDRANT_API_KEY" in spoke_scrub_env_vars()
     assert 'nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"' in script
     # TokenHub is retired (the in-mac router cutover replaced it): no installer,
     # no fleet-config contract, no TokenHub env in the sample. Chat now routes
@@ -338,9 +390,9 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert env_example["OPENAI_BASE_URL"] == "http://127.0.0.1:8789/v1"
 
 
-def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities():
+def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_env_source = (ROOT / "src" / "mac" / "deploy_env.py").read_text(encoding="utf-8")
+    generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
 
     assert "firecrawl = merge_dicts" in script
     assert 'os.environ.get("MAC_DEPLOY_FIRECRAWL_URL") or text_field(firecrawl.get("url"))' in script
@@ -349,7 +401,7 @@ def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities():
         'or text_field(firecrawl.get("install") or "auto")'
     ) in script
     assert 'FIRECRAWL_REQUIRE="1"' in script
-    assert 'values["MAC_REQUIRE_FIRECRAWL"] = "1"' in deploy_env_source
+    assert generated_env["MAC_REQUIRE_FIRECRAWL"] == "1"
     assert '"MAC_REQUIRE_FIRECRAWL": "1",' in script
     assert "Optional Firecrawl web search" not in script
     assert "install_or_validate_web_search_service()" in script
@@ -379,7 +431,6 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
 
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_env_source = (ROOT / "src" / "mac" / "deploy_env.py").read_text(encoding="utf-8")
     startup = (ROOT / "src" / "mac" / "hermes_startup.py").read_text(encoding="utf-8")
     gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
         "install_mac_agent_wrapper() {", 1
@@ -413,8 +464,6 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
 
     # Stream B: the in-mac router runs ONLY on the hub (keys centralized there);
     # spokes route through the hub's /v1 with their hub-facing token.
-    assert "_apply_inproc_router" in deploy_env_source
-    assert "INPROC_MANAGED_KEYS" in deploy_env_source
     hub_env = build_mac_env(
         {},
         deploy_env_config(tmp_path, agent="rocky", hub_agent="rocky"),
@@ -760,22 +809,89 @@ def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
     assert "FLEET_SITE_CONFIG" not in script
 
 
-def test_fleet_deploy_network_provider_contract_is_explicit():
+def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_env_source = (ROOT / "src" / "mac" / "deploy_env.py").read_text(encoding="utf-8")
     sample = (ROOT / "deploy" / "fleet" / "config.yaml").read_text(encoding="utf-8")
+    legacy_args = [
+        str(tmp_path / "mac.env"),
+        str(tmp_path / ".mac"),
+        str(tmp_path),
+        "8789",
+        "home",
+        "",
+        "custom",
+        "",
+        "http://mesh-hub.example:8789",
+        "HUBTOK",
+        "127.0.0.1",
+        "loop",
+        DEFAULT_WORKER_CAPABILITIES,
+        "",
+        "",
+        "1",
+        "spoke",
+        "systemd",
+        "hub",
+        "",
+        "1",
+        "6333",
+        "",
+        "1",
+        "3002",
+    ]
+    hub_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="hub",
+            hub_agent="hub",
+            hub_url="http://mesh-hub.example:8789",
+            network_provider="tailscale",
+        ),
+        environ={},
+    )
+    mesh_spoke_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="spoke",
+            hub_agent="hub",
+            hub_url="http://mesh-hub.example:8789",
+            network_provider="tailscale",
+        ),
+        environ={},
+    )
+    tunnel_spoke_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="spoke",
+            hub_agent="hub",
+            hub_url="http://mesh-hub.example:8789",
+            network_provider="none",
+        ),
+        environ={},
+    )
 
     assert "network_provider = text_field(network.get(\"provider\"))" in script
     assert "network.provider must be tailscale, headscale, or none" in script
     assert "Headscale provider requires network.headscale.login_server" in script
     assert "HEADSCALE_HEALTH_URL" in script
     assert "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE" in script
-    assert 'env.get("MAC_DEPLOY_NETWORK_PROVIDER")' in deploy_env_source
-    assert 'or env.get("NETWORK_PROVIDER")' in deploy_env_source
-    assert 'or "tailscale"' in deploy_env_source
-    assert 'if cfg.worker_mode == "loop" and cfg.agent == cfg.shared_services_manager:' in deploy_env_source
-    assert 'if cfg.network_provider in {"tailscale", "headscale"} and cfg.hub_url:' in deploy_env_source
-    assert "return cfg.hub_url.rstrip(\"/\")" in deploy_env_source
+    assert config_from_legacy_args(legacy_args, {}).control.network_provider == "tailscale"
+    assert (
+        config_from_legacy_args(legacy_args, {"MAC_DEPLOY_NETWORK_PROVIDER": "none"})
+        .control.network_provider
+        == "none"
+    )
+    assert (
+        config_from_legacy_args(legacy_args, {"NETWORK_PROVIDER": "headscale"})
+        .control.network_provider
+        == "headscale"
+    )
+    assert hub_env["MAC_HUB_URL"] == "http://127.0.0.1:8789"
+    assert mesh_spoke_env["MAC_HUB_URL"] == "http://mesh-hub.example:8789"
+    assert tunnel_spoke_env["MAC_HUB_URL"] == "http://127.0.0.1:18789"
     assert '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
     assert "uses_direct_mesh_hub()" in script
     assert 'uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"' in script
@@ -1096,9 +1212,9 @@ def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():
     assert '{"status":"offline","health_status":"degraded"}' in wrapper
 
 
-def test_worker_wrapper_runs_agent_side_startup_self_test():
+def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_env_source = (ROOT / "src" / "mac" / "deploy_env.py").read_text(encoding="utf-8")
+    generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
     wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
         'cat > "$executor" <<', 1
     )[0]
@@ -1106,7 +1222,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
         'cat > "$executor" <<', 1
     )[0]
 
-    assert 'values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")' in deploy_env_source
+    assert generated_env["MAC_AGENT_STARTUP_SELF_TEST"] == "1"
     assert '"$HOME/.mac/bin/mac-agent-startup-self-test"' in wrapper
     assert 'resolve_runtime_provider(' in selftest
     assert "MAC_REQUIRE_QDRANT_MEMORY must be true" in selftest
