@@ -786,6 +786,15 @@ deploy_host() {
   perplexity_api_key="$(fleet_scoped_env PERPLEXITY_API_KEY "$agent")"
   perplexity_base_url="$(fleet_scoped_env PERPLEXITY_BASE_URL "$agent")"
   perplexity_api_base="$(fleet_scoped_env PERPLEXITY_API_BASE "$agent")"
+  # Stream B: upstream provider keys are CENTRALIZED on the hub. Only the hub runs
+  # the router (and escrows these into its vault); a spoke routes chat through the
+  # hub's /v1 and must never receive an upstream key in its deploy process env.
+  # Blank them for spokes so they are not embedded in the remote SSH command below.
+  # ($shared_services_manager is the hub agent, parsed from the spec above.)
+  if [ "$agent" != "$shared_services_manager" ]; then
+    nvidia_api_key="" ; openai_api_key="" ; anthropic_api_key="" ; perplexity_api_key=""
+    router_providers="" ; router_default_model="" ; router_wildcard_models=""
+  fi
   remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
   local ssh_parts=() scp_parts=() last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
@@ -3406,23 +3415,26 @@ elif _router_inproc:
     for _k in ("MAC_ROUTER_BACKEND", "MAC_ROUTER_PROVIDERS",
                "MAC_ROUTER_DEFAULT_MODEL", "MAC_ROUTER_WILDCARD_MODELS"):
         values.pop(_k, None)
+    # The spoke must present a token valid AT THE HUB (agent scope) on the hub's
+    # /v1 — the configured hub token (== MAC_WORKER_TOKEN in the normal case).
+    # NEVER the spoke's LOCAL MAC_API_TOKEN: the hub would reject it. If
+    # MAC_WORKER_TOKEN degenerated to the local token (no hub token was provisioned)
+    # or no hub token is available, leave the gateway UNCONFIGURED (a loud runtime
+    # failure) rather than write a plausible-looking broken credential.
     _hub_base = (values.get("MAC_HUB_URL") or configured_hub_url or "").rstrip("/")
-    if _hub_base:
+    _local_tok = values.get("MAC_API_TOKEN") or ""
+    _hub_tok = configured_hub_token or values.get("MAC_WORKER_TOKEN") or ""
+    if _hub_tok and _hub_tok == _local_tok:
+        _hub_tok = ""
+    if _hub_base and _hub_tok:
         _hub_v1 = "%s/v1" % _hub_base
         values["OPENAI_BASE_URL"] = _hub_v1
         values["CUSTOM_BASE_URL"] = _hub_v1
         values["MAC_HERMES_GATEWAY_BASE_URL"] = _hub_v1
         values["ACC_HERMES_GATEWAY_BASE_URL"] = _hub_v1
-        _hub_tok = (
-            values.get("MAC_WORKER_TOKEN")
-            or configured_hub_token
-            or values.get("MAC_API_TOKEN")
-            or ""
-        )
-        if _hub_tok:
-            values["OPENAI_API_KEY"] = _hub_tok
-            values["MAC_HERMES_GATEWAY_API_KEY"] = _hub_tok
-            values["ACC_HERMES_GATEWAY_API_KEY"] = _hub_tok
+        values["OPENAI_API_KEY"] = _hub_tok
+        values["MAC_HERMES_GATEWAY_API_KEY"] = _hub_tok
+        values["ACC_HERMES_GATEWAY_API_KEY"] = _hub_tok
 else:
     # Router backend not inproc → preserve prior pass-through of whatever
     # MAC_ROUTER_* was configured (no /v1 cutover).
@@ -3649,6 +3661,15 @@ def existing_names():
     with urllib.request.urlopen(req, timeout=15) as resp:
         return {s.get("name") for s in json.load(resp)}
 
+# Explicit provider -> source-env-var map (mirrors setup-fleet.py _KNOWN_PROVIDERS).
+# NOT derived from the provider id: a provider whose key env var isn't exactly
+# <ID>_API_KEY would otherwise be skipped silently. An unmapped provider warns loudly.
+PROVIDER_KEY_ENV = {
+    "nvidia": "NVIDIA_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "perplexity": "PERPLEXITY_API_KEY",
+}
 have = existing_names()
 escrowed = skipped = 0
 for chunk in providers.split(";"):
@@ -3664,7 +3685,12 @@ for chunk in providers.split(";"):
         print("escrow: %r already in vault; skip" % name)
         skipped += 1
         continue
-    env_var = pid.upper() + "_API_KEY"
+    env_var = PROVIDER_KEY_ENV.get(pid)
+    if not env_var:
+        print("escrow: WARNING no source env var mapped for provider %r (secret %r); "
+              "skip — add %r to PROVIDER_KEY_ENV" % (pid, name, pid))
+        skipped += 1
+        continue
     value = (os.environ.get(env_var) or "").strip()
     if not value:
         print("escrow: %s empty/unset for secret %r; skip" % (env_var, name))

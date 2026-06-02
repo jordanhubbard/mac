@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import os
 import subprocess
 import sys
 
@@ -432,6 +433,109 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     assert '[ "${allow_degraded_services:-0}" = "1" ]' in script
 
 
+def _run_env_writer(tmp_path, *, agent, hub_agent, hub_url, hub_token, extra_env):
+    """Run the deploy's actual env-writer heredoc and return the mac.env it writes.
+
+    This exercises real behavior — the hub/spoke router split + token selection —
+    instead of asserting source substrings.
+    """
+    import re as _re
+    import subprocess as _sp
+
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    body = next(
+        m.group(1)
+        for m in _re.finditer(r"<<'PY'\n(.*?)\n[ \t]*PY$", script, _re.S | _re.M)
+        if "_router_inproc" in m.group(1) and "env_path = Path(sys.argv[1])" in m.group(1)
+    )
+    env_path = tmp_path / "mac.env"
+    mac_home = tmp_path / ".mac"
+    mac_home.mkdir(parents=True, exist_ok=True)
+    # argv[1..25] per the env-writer's sys.argv contract.
+    argv = [
+        str(env_path), str(mac_home), str(tmp_path), "8789", "home", "", "custom",
+        "", hub_url, hub_token, "127.0.0.1", "loop", "ops", "", "", "1",
+        agent, "systemd", hub_agent, "", "1", "6333", "", "1", "3002",
+    ]
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "MAC_SECRET_KEY": "x" * 40}
+    env.update(extra_env)
+    result = _sp.run([sys.executable, "-c", body, *argv], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr[-1000:]
+    out = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            out[k] = v
+    return out
+
+
+_ROUTER_ENV = {
+    "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+    "MAC_DEPLOY_ROUTER_PROVIDERS": "nvidia=https://inference-api.nvidia.com/v1,0,key=secret:nvidia-upstream",
+    "MAC_DEPLOY_NETWORK_PROVIDER": "tailscale",
+}
+
+
+def test_env_writer_hub_runs_router_locally(tmp_path):
+    out = _run_env_writer(
+        tmp_path, agent="rocky", hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
+    )
+    assert out.get("MAC_ROUTER_BACKEND") == "inproc"
+    assert "key=secret:nvidia-upstream" in out.get("MAC_ROUTER_PROVIDERS", "")
+    assert out.get("OPENAI_BASE_URL") == "http://127.0.0.1:8789/v1"
+    assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://127.0.0.1:8789/v1"
+    # the hub's own gateway presents the hub's LOCAL mac token to its local /v1
+    assert out.get("OPENAI_API_KEY") == out.get("MAC_API_TOKEN")
+
+
+def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
+    out = _run_env_writer(
+        tmp_path, agent="natasha", hub_agent="rocky",
+        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        # provider key passed UNBLANKED to prove the env-writer never persists it
+        # for a spoke (defense-in-depth on top of deploy_host's hub-only gating).
+        extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
+    )
+    # no local router / providers on the spoke
+    assert "MAC_ROUTER_PROVIDERS" not in out
+    assert "MAC_ROUTER_BACKEND" not in out
+    # gateway routes through the HUB's /v1 with the HUB token (never the local one)
+    assert out.get("OPENAI_BASE_URL") == "http://hub.example:8789/v1"
+    assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://hub.example:8789/v1"
+    assert out.get("OPENAI_API_KEY") == "HUBTOK"
+    assert out.get("OPENAI_API_KEY") != out.get("MAC_API_TOKEN")
+    # the upstream provider key never lands in a spoke's env file
+    assert "NVIDIA_API_KEY" not in out
+    assert "nvapi-SECRET" not in "\n".join(out.values())
+
+
+def test_env_writer_spoke_without_hub_token_leaves_gateway_unconfigured(tmp_path):
+    # No configured hub token → MAC_WORKER_TOKEN degenerates to the local token.
+    out = _run_env_writer(
+        tmp_path, agent="natasha", hub_agent="rocky",
+        hub_url="http://hub.example:8789", hub_token="",
+        extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": ""},
+    )
+    # do NOT point the gateway at the hub with a broken local-token credential
+    assert out.get("OPENAI_BASE_URL") != "http://hub.example:8789/v1"
+    local = out.get("MAC_API_TOKEN")
+    assert out.get("OPENAI_API_KEY") != local  # never the local token
+    assert out.get("MAC_HERMES_GATEWAY_API_KEY") != local
+
+
+def test_deploy_host_blanks_provider_keys_for_spokes():
+    # Stream B: deploy_host must NOT ship upstream provider keys to spokes (only
+    # the hub keeps them). It blanks them before building the remote SSH command.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy_host = script.split("deploy_host() {", 1)[1].split("\nmain() {", 1)[0]
+    assert 'if [ "$agent" != "$shared_services_manager" ]; then' in deploy_host
+    gate = deploy_host.split('if [ "$agent" != "$shared_services_manager" ]; then', 1)[1].split("fi", 1)[0]
+    for var in ("nvidia_api_key", "openai_api_key", "anthropic_api_key", "perplexity_api_key"):
+        assert ('%s=""' % var) in gate
+
+
 def test_hub_escrows_router_provider_keys_into_vault():
     # Stream B (B2): the hub escrows each router provider's upstream key into its
     # encrypted vault under the secret:<name> the provider spec references, so the
@@ -446,8 +550,12 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert 'case "${MAC_DEPLOY_ROUTER_PROVIDERS:-}" in *key=secret:*)' in fn
     # idempotent: skip names already in the vault
     assert "already in vault; skip" in fn
-    # derive <PROVIDER>_API_KEY from the provider id and POST to the LOCAL /secrets
-    assert 'env_var = pid.upper() + "_API_KEY"' in fn
+    # explicit provider -> env-var map (not a brittle derivation); warns loudly on
+    # an unmapped provider rather than skipping silently
+    assert "PROVIDER_KEY_ENV = {" in fn
+    assert '"nvidia": "NVIDIA_API_KEY"' in fn
+    assert "env_var = PROVIDER_KEY_ENV.get(pid)" in fn
+    assert "WARNING no source env var mapped for provider" in fn
     assert '"http://127.0.0.1:%s/secrets" % port' in fn
     assert '"created_by": "deploy"' in fn
     # failure is loud but non-fatal (chat won't route until the key is escrowed)
@@ -605,9 +713,17 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     # KEY INSIGHT fix: the wizard must wire the in-mac router (TokenHub's
     # replacement) from the collected providers, or a fresh fleet has no chat
     # routing. The test adds the "openai" provider with key "sk-test".
-    assert "MAC_DEPLOY_ROUTER_BACKEND=inproc" in env
-    assert "MAC_DEPLOY_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
+    # The wizard writes the RUNTIME names the deploy reads via fleet_scoped_env —
+    # NOT the MAC_DEPLOY_*-prefixed names (those would be inert; the deploy never
+    # reads them on the operator side). Cross-check both ends so the names can't
+    # silently diverge again.
+    assert "MAC_ROUTER_BACKEND=inproc" in env
+    assert "MAC_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
     assert "OPENAI_API_KEY=sk-test" in env
+    assert "MAC_DEPLOY_ROUTER_BACKEND=" not in env and "MAC_DEPLOY_ROUTER_PROVIDERS=" not in env
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert 'fleet_scoped_env MAC_ROUTER_BACKEND' in deploy
+    assert 'fleet_scoped_env MAC_ROUTER_PROVIDERS' in deploy
     assert "MAC_API_TOKEN" not in env
 
 
