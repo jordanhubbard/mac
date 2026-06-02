@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
+from mac.deploy_env import build_router_provider_spec  # noqa: E402
+from mac.providers import ROUTER_PROVIDERS, router_secret_name  # noqa: E402
 
 
 def prompt(
@@ -254,38 +256,12 @@ def _default_worker_capabilities() -> List[str]:
     return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
 
 
-# Known OpenAI-compatible upstreams the wizard can wire into the in-mac router.
-# provider id -> (key env var, base-url env var, default base url)
+# Known OpenAI-compatible upstreams the wizard can wire into the in-mac router,
+# derived from the single source of truth (mac.providers). provider id ->
+# (key env var, base-url env var, default base url).
 _KNOWN_PROVIDERS: Dict[str, tuple] = {
-    "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
-    "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
-    "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
-    "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
+    p.id: (p.key_env, p.base_env, p.default_base_url) for p in ROUTER_PROVIDERS
 }
-
-
-def router_secret_name(provider_id: str) -> str:
-    """Vault secret name the router resolves a provider's upstream key from."""
-    return "%s-upstream" % provider_id
-
-
-def build_router_provider_spec(provider_env_values: Dict[str, str]) -> str:
-    """Build MAC_ROUTER_PROVIDERS from the provider keys the wizard collected.
-
-    Format (mac.provider_router.providers_from_env): ``name=base_url,priority,
-    key=secret:<name>`` joined by ';'. The key is referenced as ``secret:<name>``
-    so the (hub-only) router resolves it from the encrypted vault at use — keys
-    stay in secure storage on the hub, never plaintext-spread to spokes. The
-    deploy escrows each provider's <PROVIDER>_API_KEY into the vault under
-    router_secret_name(provider) before the router needs it. Emitted in
-    _KNOWN_PROVIDERS order (nvidia preferred, priority 0)."""
-    specs = []
-    for prio, (pid, (key_var, base_var, default_base)) in enumerate(_KNOWN_PROVIDERS.items()):
-        if key_var not in provider_env_values:
-            continue
-        base = provider_env_values.get(base_var) or default_base
-        specs.append("%s=%s,%d,key=secret:%s" % (pid, base, prio, router_secret_name(pid)))
-    return ";".join(specs)
 
 
 def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
