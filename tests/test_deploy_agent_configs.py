@@ -488,6 +488,9 @@ def test_env_writer_hub_runs_router_locally(tmp_path):
     assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://127.0.0.1:8789/v1"
     # the hub's own gateway presents the hub's LOCAL mac token to its local /v1
     assert out.get("OPENAI_API_KEY") == out.get("MAC_API_TOKEN")
+    # the hub mounts the image proxy (it has an image key, NVIDIA_API_KEY, to escrow)
+    assert out.get("MAC_ROUTER_IMAGE_UPSTREAM") == "https://ai.api.nvidia.com/v1/genai"
+    assert out.get("MAC_ROUTER_IMAGE_KEY") == "secret:nvidia-image"
 
 
 def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
@@ -506,8 +509,11 @@ def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
     assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://hub.example:8789/v1"
     assert out.get("OPENAI_API_KEY") == "HUBTOK"
     assert out.get("OPENAI_API_KEY") != out.get("MAC_API_TOKEN")
-    # the upstream provider key never lands in a spoke's env file
-    assert "NVIDIA_API_KEY" not in out
+    # image-gen routes via the hub too: NVIDIA_API_KEY is the HUB TOKEN (the bearer
+    # the NIM tool sends to the hub image proxy), NVIDIA_IMAGE_BASE_URL points at
+    # the hub's /v1/genai — the real upstream image key never reaches the spoke.
+    assert out.get("NVIDIA_API_KEY") == "HUBTOK"
+    assert out.get("NVIDIA_IMAGE_BASE_URL") == "http://hub.example:8789/v1/genai"
     assert "nvapi-SECRET" not in "\n".join(out.values())
 
 
@@ -630,6 +636,10 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert "WARNING no source env var mapped for provider" in fn
     assert '"http://127.0.0.1:%s/secrets" % port' in fn
     assert '"created_by": "deploy"' in fn
+    # also escrows the image-gen key (NVIDIA_API_KEY -> secret:nvidia-image) so the
+    # hub /v1/genai proxy can resolve it (Phase 1, image-gen via the hub)
+    assert 'image_key_spec = (os.environ.get("MAC_ROUTER_IMAGE_KEY")' in fn
+    assert 'ivalue = (os.environ.get("NVIDIA_API_KEY")' in fn
     # failure is loud but non-fatal (chat won't route until the key is escrowed)
     assert "router provider key escrow failed" in fn
     # invoked on the hub after the API is up, before the gateway, in both OS flows

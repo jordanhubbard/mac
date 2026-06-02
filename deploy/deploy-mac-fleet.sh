@@ -3408,6 +3408,17 @@ if _router_inproc and _is_hub:
             values["OPENAI_API_KEY"] = _local_tok
             values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok
             values["ACC_HERMES_GATEWAY_API_KEY"] = _local_tok
+    # Image generation (Stream B "hub serves them"): the hub mounts the /v1/genai
+    # image proxy (router_app.mount_image_proxy) so spokes route NIM image-gen
+    # through the hub instead of holding the image key. Only when the hub actually
+    # has an image key to escrow — the escrow step puts NVIDIA_API_KEY into the
+    # vault as secret:nvidia-image, which the proxy resolves at use.
+    if (os.environ.get("NVIDIA_API_KEY") or "").strip():
+        values["MAC_ROUTER_IMAGE_UPSTREAM"] = (
+            os.environ.get("MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM")
+            or "https://ai.api.nvidia.com/v1/genai"
+        )
+        values["MAC_ROUTER_IMAGE_KEY"] = "secret:nvidia-image"
 elif _router_inproc:
     # SPOKE: do NOT mount a local router or carry providers/upstream keys. Strip any
     # router/provider config a fleet-wide MAC_DEPLOY_ROUTER_* introduced, and route
@@ -3435,6 +3446,12 @@ elif _router_inproc:
         values["OPENAI_API_KEY"] = _hub_tok
         values["MAC_HERMES_GATEWAY_API_KEY"] = _hub_tok
         values["ACC_HERMES_GATEWAY_API_KEY"] = _hub_tok
+        # Image generation routes through the hub too: the NIM image tool sends
+        # NVIDIA_API_KEY as its bearer to NVIDIA_IMAGE_BASE_URL, so point both at
+        # the hub's /v1/genai image proxy with the spoke's hub token. The hub swaps
+        # in the vault image key; the spoke holds NO upstream image key.
+        values["NVIDIA_API_KEY"] = _hub_tok
+        values["NVIDIA_IMAGE_BASE_URL"] = "%s/v1/genai" % _hub_base
 else:
     # Router backend not inproc → preserve prior pass-through of whatever
     # MAC_ROUTER_* was configured (no /v1 cutover).
@@ -3710,6 +3727,35 @@ for chunk in providers.split(";"):
     resp = urllib.request.urlopen(req, timeout=15)
     print("escrowed %r (HTTP %s, %d-char value)" % (name, resp.status, len(value)))
     escrowed += 1
+# Image-gen key: the hub /v1/genai proxy resolves MAC_ROUTER_IMAGE_KEY
+# (secret:<name>) from the vault. Escrow NVIDIA_API_KEY there (the same NVIDIA
+# account key, which must have image-NIM access). MAC_ROUTER_IMAGE_KEY is read
+# from the freshly written mac.env (reload_mac_env ran before this step).
+image_key_spec = (os.environ.get("MAC_ROUTER_IMAGE_KEY") or "").strip()
+if image_key_spec.startswith("secret:"):
+    iname = image_key_spec[len("secret:"):]
+    ivalue = (os.environ.get("NVIDIA_API_KEY") or "").strip()
+    if iname in have:
+        print("escrow: %r already in vault; skip" % iname)
+        skipped += 1
+    elif not ivalue:
+        print("escrow: NVIDIA_API_KEY empty/unset for image secret %r; skip" % iname)
+        skipped += 1
+    else:
+        body = json.dumps({
+            "name": iname,
+            "value": ivalue,
+            "scopes": {"capabilities": ["router-upstream", "image"]},
+            "created_by": "deploy",
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:%s/secrets" % port, data=body,
+            headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=15)
+        print("escrowed %r (HTTP %s, %d-char value)" % (iname, resp.status, len(ivalue)))
+        escrowed += 1
 print("router key escrow: %d escrowed, %d skipped" % (escrowed, skipped))
 PY
   then
