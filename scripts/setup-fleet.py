@@ -555,13 +555,18 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     # escrows into the hub's encrypted vault. SPOKES route through the hub's /v1
     # and carry no upstream key (see deploy-mac-fleet.sh router block). Without this
     # a freshly-generated fleet would have no chat routing.
-    env_values["MAC_DEPLOY_ROUTER_BACKEND"] = "inproc"
-    env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] = build_router_provider_spec(provider_env_values)
+    # NOTE: these are the RUNTIME names the deploy reads via fleet_scoped_env
+    # (deploy-mac-fleet.sh: `fleet_scoped_env MAC_ROUTER_BACKEND`), exactly like the
+    # provider keys (NVIDIA_API_KEY, ...). They are NOT MAC_DEPLOY_*-prefixed —
+    # deploy_host re-exports them as MAC_DEPLOY_ROUTER_* into the remote env itself.
+    # Writing MAC_DEPLOY_ROUTER_* here would be inert (the deploy never reads it).
+    env_values["MAC_ROUTER_BACKEND"] = "inproc"
+    env_values["MAC_ROUTER_PROVIDERS"] = build_router_provider_spec(provider_env_values)
     print("")
     print("Wired in-mac router (hub-only; keys escrowed to the hub vault on deploy):")
     print("  MAC_ROUTER_BACKEND=inproc")
-    print("  providers: %s" % (env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] or "(none)"))
-    print("  (set MAC_DEPLOY_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
+    print("  providers: %s" % (env_values["MAC_ROUTER_PROVIDERS"] or "(none)"))
+    print("  (set MAC_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):
@@ -887,9 +892,10 @@ def main(argv: List[str]) -> int:
             "MAC_API_TOKEN": secrets.token_urlsafe(32),
             # Make the in-mac router the routing backend (mounts as a no-op until
             # providers are added). --new-hub collects no provider keys, so set
-            # MAC_DEPLOY_ROUTER_PROVIDERS + the provider key(s) in the env file
-            # before deploy or chat will have no upstream.
-            "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+            # MAC_ROUTER_PROVIDERS + the provider key(s) in the env file before
+            # deploy or chat will have no upstream. Runtime name (fleet_scoped_env),
+            # NOT MAC_DEPLOY_*-prefixed — see _setup_hub.
+            "MAC_ROUTER_BACKEND": "inproc",
         }
         if args.headscale_preauth_key:
             env_values[headscale_preauth_key_env] = args.headscale_preauth_key
