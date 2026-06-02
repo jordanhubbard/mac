@@ -132,6 +132,26 @@ def test_parse_env_text_trailing_unquoted_tokens_take_leading_assignment():
     assert parse_env_text("export RAW=plainvalue\n") == {"RAW": "plainvalue"}
 
 
+def test_deploy_env_import_is_dependency_light():
+    # Regression: deploy-mac-fleet.sh runs `python -m mac.deploy_env write-mac-env`
+    # on the bootstrap python BEFORE the deploy venv exists, so importing
+    # mac.deploy_env must NOT transitively pull in mac.services (which needs
+    # yaml, cryptography, …). A lazy mac/__init__ keeps the package import light.
+    # (A bullwinkle redeploy died with ModuleNotFoundError: 'yaml' before this.)
+    code = (
+        "import sys, mac.deploy_env\n"
+        "assert 'mac.services' not in sys.modules, "
+        "'mac.deploy_env import pulled in mac.services (heavy deps)'\n"
+        "from mac import ControlPlane\n"  # lazy re-export still resolves
+        "assert ControlPlane.__name__ == 'ControlPlane'\n"
+        "print('OK')\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout
+
+
 def test_sample_fleet_config_is_generic_and_externalized():
     cfg = load_sample_fleet_config()
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
