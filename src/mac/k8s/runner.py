@@ -24,6 +24,20 @@ DEFAULT_JOB_POLL_INTERVAL_SECONDS = 5
 
 DEFAULT_OPENCODE_CONFIGMAP_NAME = "mac-opencode-config"
 
+
+def _optional_int_env(name: str) -> Optional[int]:
+    """Parse an optional positive int env var. Returns None when unset or
+    invalid so callers can fall back to the consumer's own default."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 @dataclass
 class RunnerConfig:
     mac_url: str
@@ -38,6 +52,7 @@ class RunnerConfig:
     poll_interval_seconds: float = 5.0
     backoff_limit: int = DEFAULT_BACKOFF_LIMIT
     active_deadline_seconds: int = DEFAULT_ACTIVE_DEADLINE_SECONDS
+    executor_timeout_seconds: Optional[int] = None
     ttl_seconds_after_finished: int = DEFAULT_TTL_SECONDS_AFTER_FINISHED
     capability_filter: List[str] = field(default_factory=list)
     role_images: Dict[str, str] = field(default_factory=dict)
@@ -88,6 +103,9 @@ class RunnerConfig:
                     "MAC_RUNNER_ACTIVE_DEADLINE_SECONDS",
                     str(DEFAULT_ACTIVE_DEADLINE_SECONDS),
                 )
+            ),
+            executor_timeout_seconds=_optional_int_env(
+                "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS"
             ),
             ttl_seconds_after_finished=int(
                 os.environ.get(
@@ -351,6 +369,13 @@ def build_job_spec(
         {"name": "MAC_AGENT_ID", "value": job_agent_id},
         {"name": "MAC_AGENT_ROLE", "value": role or ""},
     ]
+    if cfg.executor_timeout_seconds:
+        base_env.append(
+            {
+                "name": "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS",
+                "value": str(cfg.executor_timeout_seconds),
+            }
+        )
     container_env = _build_executor_container_env(
         cfg,
         base_env=base_env,
@@ -734,6 +759,13 @@ def build_review_job_spec(
         {"name": "MAC_AGENT_ID", "value": reviewer_agent_id},
         {"name": "MAC_AGENT_ROLE", "value": role or ""},
     ]
+    if cfg.executor_timeout_seconds:
+        base_env.append(
+            {
+                "name": "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS",
+                "value": str(cfg.executor_timeout_seconds),
+            }
+        )
     # Reviewer doesn't push to remotes — exclude the git-host token block.
     container_env = _build_executor_container_env(
         cfg,

@@ -206,6 +206,32 @@ class TestBuildJobSpec:
         ):
             assert required in names
 
+    def test_executor_timeout_forwarded_to_job_env(self) -> None:
+        """MAC_TASK_EXECUTOR_TIMEOUT_SECONDS must reach the task Job pod.
+
+        The executor reads this env to bound its subprocess; if it isn't
+        forwarded into the job container env, raising it on the runner
+        deployment has no effect and tasks keep dying at the 1500s
+        default. Forward it from RunnerConfig.executor_timeout_seconds."""
+        spec = build_job_spec(
+            _task(), _lease(), _cfg(executor_timeout_seconds=2700)
+        )
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        timeout_var = next(
+            (e for e in env if e["name"] == "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS"),
+            None,
+        )
+        assert timeout_var is not None, "timeout env not forwarded to job"
+        assert timeout_var["value"] == "2700"
+
+    def test_executor_timeout_not_set_when_unconfigured(self) -> None:
+        """When no executor timeout is configured, don't emit the env var
+        so the executor's own default applies."""
+        spec = build_job_spec(_task(), _lease(), _cfg())
+        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
+        names = {e["name"] for e in env}
+        assert "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS" not in names
+
     def test_token_pulled_from_named_secret(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
         env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
