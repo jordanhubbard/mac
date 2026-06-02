@@ -241,6 +241,27 @@ def test_startup_reports_tokenhub_readiness_without_leaking_key(monkeypatch, tmp
     assert "secret-tokenhub-key" not in str(report)
 
 
+def test_spoke_router_v1_not_mistaken_for_tokenhub(monkeypatch):
+    # th-merge-07 / Stream B: a spoke's OPENAI_BASE_URL is the HUB's router /v1, not
+    # a TokenHub. The startup report must NOT health-check it as a TokenHub (doing so
+    # produced a spurious "403 Forbidden" + degraded operator status). With no
+    # explicit TOKENHUB_URL the report is "retired", ready, no warning.
+    for var in ("TOKENHUB_URL", "MAC_TOKENHUB_URL", "MAC_ROUTER_BACKEND",
+                "MAC_REQUIRE_TOKENHUB", "CUSTOM_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://100.125.137.89:8789/v1")
+    assert hermes_startup._tokenhub_endpoint_from_env() == (None, None)
+
+    def _boom(*a, **k):
+        raise AssertionError("must not health-check a TokenHub endpoint on a spoke")
+
+    monkeypatch.setattr(hermes_startup, "_fetch_tokenhub_json", _boom)
+    report = hermes_startup._tokenhub_report()
+    assert report["status"] == "retired"
+    assert report["ready"] is True
+    assert not report["warning"]
+
+
 def test_slack_bot_token_satisfies_upstream_slack_activation(monkeypatch, tmp_path):
     _clear_startup_env(monkeypatch)
     hermes_home = tmp_path / ".hermes"
