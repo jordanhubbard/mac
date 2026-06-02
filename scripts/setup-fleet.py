@@ -254,6 +254,33 @@ def _default_worker_capabilities() -> List[str]:
     return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
 
 
+# Known OpenAI-compatible upstreams the wizard can wire into the in-mac router.
+# provider id -> (key env var, base-url env var, default base url)
+_KNOWN_PROVIDERS: Dict[str, tuple] = {
+    "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
+    "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
+    "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
+    "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
+}
+
+
+def build_router_provider_spec(provider_env_values: Dict[str, str]) -> str:
+    """Build MAC_ROUTER_PROVIDERS from the provider keys the wizard collected.
+
+    Format (mac.provider_router.providers_from_env): ``name=base_url,priority,
+    key=ENVVAR`` joined by ';'. ``key`` is the plain env-var NAME — router_app
+    resolves it from the agent env at use (the deploy plumbs these provider keys
+    through), so no vault escrow is needed to route. Emitted in _KNOWN_PROVIDERS
+    order (nvidia preferred, priority 0)."""
+    specs = []
+    for prio, (pid, (key_var, base_var, default_base)) in enumerate(_KNOWN_PROVIDERS.items()):
+        if key_var not in provider_env_values:
+            continue
+        base = provider_env_values.get(base_var) or default_base
+        specs.append("%s=%s,%d,key=%s" % (pid, base, prio, key_var))
+    return ";".join(specs)
+
+
 def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
     fleet_name = prompt("Fleet name", default="my-fleet")
     hub_name = prompt("Hub node name", required=True)
@@ -480,12 +507,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     }
 
     # Provider credentials — at least one required for the in-mac router to route requests.
-    _KNOWN_PROVIDERS: Dict[str, tuple] = {
-        "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
-        "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
-        "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
-        "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
-    }
     provider_env_values: Dict[str, str] = {}
     print("")
     print("The in-mac router requires at least one upstream LLM provider.")
@@ -521,6 +542,16 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
     }
     env_values.update(provider_env_values)
+    # Wire the in-mac router — the replacement for the retired TokenHub. With
+    # MAC_ROUTER_BACKEND=inproc + providers, the deploy mounts each agent's local
+    # /v1 front door and points its gateway there (see deploy-mac-fleet.sh router
+    # block). Without this a freshly-generated fleet would have no chat routing.
+    env_values["MAC_DEPLOY_ROUTER_BACKEND"] = "inproc"
+    env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] = build_router_provider_spec(provider_env_values)
+    print("")
+    print("Wired in-mac router: MAC_ROUTER_BACKEND=inproc")
+    print("  providers: %s" % (env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] or "(none)"))
+    print("  (set MAC_DEPLOY_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):
@@ -844,6 +875,11 @@ def main(argv: List[str]) -> int:
             "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
             "MAC_SECRET_KEY": secrets.token_urlsafe(48),
             "MAC_API_TOKEN": secrets.token_urlsafe(32),
+            # Make the in-mac router the routing backend (mounts as a no-op until
+            # providers are added). --new-hub collects no provider keys, so set
+            # MAC_DEPLOY_ROUTER_PROVIDERS + the provider key(s) in the env file
+            # before deploy or chat will have no upstream.
+            "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
         }
         if args.headscale_preauth_key:
             env_values[headscale_preauth_key_env] = args.headscale_preauth_key
@@ -859,7 +895,7 @@ def main(argv: List[str]) -> int:
 
     print("mac fleet setup wizard")
     print("Do not put provider API keys in the fleet config YAML. The wizard collects")
-    print("them into ~/.mac/.env (mode 0600); deploy escrows them into mac's vault.")
+    print("them into ~/.mac/.env (mode 0600) and wires the in-mac router to read them.")
     print("")
 
     running_locally = prompt_bool(

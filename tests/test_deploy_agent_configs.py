@@ -395,6 +395,58 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router():
     assert 'or os.environ.get("NVIDIA_API_BASE")' not in startup
 
 
+def test_first_deploy_validators_honor_allow_degraded_services_flag():
+    # A brand-new spoke reaches the hub's Qdrant/Firecrawl through a reverse
+    # tunnel that is not established until the first deploy authorizes the tunnel
+    # key. main() sets MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=1 for that first deploy;
+    # the remote validators MUST honor it (warn + proceed) instead of hard-exiting,
+    # or the deploy dies before main()'s post-deploy tunnel-reconnect path runs.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    qdrant_validator = script.split("validate_qdrant_endpoint() {", 1)[1].split("\n}", 1)[0]
+    firecrawl_validator = script.split("validate_firecrawl_endpoint() {", 1)[1].split("\n}", 1)[0]
+    for validator in (qdrant_validator, firecrawl_validator):
+        assert 'degraded="${MAC_DEPLOY_ALLOW_DEGRADED_SERVICES:-0}"' in validator
+        # Both the unreachable-endpoint and missing-endpoint branches must offer a
+        # degraded early-return guarded by the flag.
+        assert validator.count('if [ "$degraded" = "1" ]; then') == 2
+        assert "proceeding degraded (first deploy" in validator
+    # The flag is plumbed into the remote deploy env and consumed by the
+    # post-deploy reconnect path in main().
+    assert 'MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=$(shell_quote "${allow_degraded_services:-0}")' in script
+    assert '[ "${allow_degraded_services:-0}" = "1" ]' in script
+
+
+def test_setup_fleet_build_router_provider_spec():
+    # The wizard wires the in-mac router from the providers it collects, using the
+    # plain env-var key form the router resolves at use (no vault escrow needed).
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "setup_fleet_mod", ROOT / "scripts" / "setup-fleet.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    build = mod.build_router_provider_spec
+
+    assert build({}) == ""
+    assert build({"OPENAI_API_KEY": "sk"}) == "openai=https://api.openai.com/v1,1,key=OPENAI_API_KEY"
+    # nvidia is preferred (priority 0); a custom base url is honored.
+    assert build(
+        {"NVIDIA_API_KEY": "k", "OPENAI_API_KEY": "sk", "OPENAI_BASE_URL": "https://x/v1"}
+    ) == (
+        "nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY"
+        ";openai=https://x/v1,1,key=OPENAI_API_KEY"
+    )
+    # The spec round-trips through the router's own parser.
+    from mac.provider_router import providers_from_env
+
+    providers = providers_from_env(
+        {"MAC_ROUTER_PROVIDERS": build({"NVIDIA_API_KEY": "k"})}
+    )
+    assert [p.name for p in providers] == ["nvidia"]
+    assert providers[0].api_key_env == "NVIDIA_API_KEY"
+
+
 def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 
@@ -507,6 +559,12 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert "MAC_DEPLOY_FLEET_SITE_CONFIG=" not in env
     assert "MAC_DEPLOY_HUB_URL=" not in env
     assert "MAC_SECRET_KEY" not in env
+    # KEY INSIGHT fix: the wizard must wire the in-mac router (TokenHub's
+    # replacement) from the collected providers, or a fresh fleet has no chat
+    # routing. The test adds the "openai" provider with key "sk-test".
+    assert "MAC_DEPLOY_ROUTER_BACKEND=inproc" in env
+    assert "MAC_DEPLOY_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=OPENAI_API_KEY" in env
+    assert "OPENAI_API_KEY=sk-test" in env
     assert "MAC_API_TOKEN" not in env
 
 

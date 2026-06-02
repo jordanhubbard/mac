@@ -1290,10 +1290,20 @@ install_github_review_key() {
   fi
 }
 
+# On a brand-new spoke the hub's Qdrant/Firecrawl are reached through a reverse
+# tunnel that is not fully established until this first deploy authorizes the
+# tunnel key. MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=1 (set by main() for that first
+# deploy) lets the deploy proceed degraded so the tunnel gets set up; the
+# post-deploy path in main() then waits for the tunnel and restarts the agent,
+# and a subsequent deploy (flag unset) validates strictly.
 validate_qdrant_endpoint() {
-  local qdrant_url
+  local qdrant_url degraded="${MAC_DEPLOY_ALLOW_DEGRADED_SERVICES:-0}"
   qdrant_url="${QDRANT_URL:-${QDRANT_ADDRESS:-${QDRANT_FLEET_URL:-}}}"
   if [ -z "$qdrant_url" ]; then
+    if [ "$degraded" = "1" ]; then
+      log "WARNING: Qdrant endpoint not configured; proceeding degraded (first deploy)"
+      return
+    fi
     log "ERROR: Qdrant shared memory is required but no endpoint is configured"
     exit 1
   fi
@@ -1301,19 +1311,31 @@ validate_qdrant_endpoint() {
     log "Qdrant shared memory reachable at configured collections endpoint"
     return
   fi
+  if [ "$degraded" = "1" ]; then
+    log "WARNING: Qdrant unreachable at ${qdrant_url%/}/collections; proceeding degraded (first deploy — hub tunnel not yet established). Redeploy after it comes up to validate strictly."
+    return
+  fi
   log "ERROR: Qdrant shared memory is unreachable at ${qdrant_url%/}/collections"
   exit 1
 }
 
 validate_firecrawl_endpoint() {
-  local firecrawl_url
+  local firecrawl_url degraded="${MAC_DEPLOY_ALLOW_DEGRADED_SERVICES:-0}"
   firecrawl_url="${FIRECRAWL_API_URL:-${FIRECRAWL_GATEWAY_URL:-${FIRECRAWL_URL_CONFIGURED:-}}}"
   if [ -z "$firecrawl_url" ]; then
+    if [ "$degraded" = "1" ]; then
+      log "WARNING: Firecrawl endpoint not configured; proceeding degraded (first deploy)"
+      return
+    fi
     log "ERROR: Firecrawl web search is required but no endpoint is configured"
     exit 1
   fi
   if curl -fsS --connect-timeout 2 --max-time 5 "${firecrawl_url%/}/health" >/dev/null; then
     log "Firecrawl web search reachable at configured health endpoint"
+    return
+  fi
+  if [ "$degraded" = "1" ]; then
+    log "WARNING: Firecrawl unreachable at ${firecrawl_url%/}/health; proceeding degraded (first deploy — hub tunnel not yet established). Redeploy after it comes up to validate strictly."
     return
   fi
   log "ERROR: Firecrawl web search is unreachable at ${firecrawl_url%/}/health"
