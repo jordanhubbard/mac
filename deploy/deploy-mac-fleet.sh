@@ -3357,39 +3357,83 @@ values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", shared_services_manager)
 _mem_embed_model = (os.environ.get("MAC_DEPLOY_MEMORY_EMBED_MODEL") or "").strip()
 if _mem_embed_model:
     values["MAC_MEMORY_EMBED_MODEL"] = _mem_embed_model
-# th-merge-02 canary: optional in-mac model router. When this agent's
-# MAC_ROUTER_BACKEND=inproc and providers are configured, its mac API mounts the
-# /v1 OpenAI front door (streaming + failover + recovering breaker) and its own
-# gateway is cut over to that LOCAL router instead of a remote gateway base_url.
+# th-merge-02 / Stream B: the in-mac model router runs ONLY on the hub. Keys stay
+# centralized — only the hub holds the upstream provider keys (MAC_ROUTER_PROVIDERS
+# key=secret:<name>, resolved from the hub's encrypted vault at use) and mounts the
+# /v1 OpenAI front door (streaming + failover + recovering breaker). The hub's own
+# gateway talks to its LOCAL /v1 with the local mac token.
+#
+# A SPOKE never runs its own router — that would require an upstream key on the
+# spoke (defeating centralization). Instead each spoke's gateway routes through the
+# HUB's /v1, reachable via MAC_HUB_URL (the mesh hub URL, or the reverse tunnel at
+# 127.0.0.1:18789), authenticating with the spoke's hub-facing token
+# (MAC_WORKER_TOKEN, which has agent scope at the hub). Spokes carry no upstream
+# key, no MAC_ROUTER_PROVIDERS, and no local router.
+#
 # Additive + gated: with no MAC_ROUTER_* set, the fleet is unchanged.
 _router_backend = (os.environ.get("MAC_DEPLOY_ROUTER_BACKEND") or "").strip()
 _router_providers = (os.environ.get("MAC_DEPLOY_ROUTER_PROVIDERS") or "").strip()
 _router_default_model = (os.environ.get("MAC_DEPLOY_ROUTER_DEFAULT_MODEL") or "").strip()
 _router_wildcard_models = (os.environ.get("MAC_DEPLOY_ROUTER_WILDCARD_MODELS") or "").strip()
-if _router_backend:
+_router_inproc = _router_backend.lower() == "inproc"
+_is_hub = agent_name == shared_services_manager
+if _router_inproc and _is_hub:
+    # HUB: run the router with the upstream providers; cut its OWN gateway over to
+    # the LOCAL /v1 with the local mac token. The router uses each provider's own
+    # key (MAC_ROUTER_PROVIDERS key=..., e.g. secret:<name> from the vault) upstream.
     values["MAC_ROUTER_BACKEND"] = _router_backend
-if _router_providers:
-    values["MAC_ROUTER_PROVIDERS"] = _router_providers
-if _router_default_model:
-    values["MAC_ROUTER_DEFAULT_MODEL"] = _router_default_model
-if _router_wildcard_models:
-    values["MAC_ROUTER_WILDCARD_MODELS"] = _router_wildcard_models
-if _router_backend.lower() == "inproc" and _router_providers:
-    _local_router_v1 = "http://127.0.0.1:%s/v1" % port
-    values["OPENAI_BASE_URL"] = _local_router_v1
-    values["CUSTOM_BASE_URL"] = _local_router_v1
-    values["MAC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
-    values["ACC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
-    # The gateway now talks to its LOCAL mac /v1 router, which is auth-gated like
-    # the rest of the mac API. It must present a valid mac token (agent scope) as
-    # its bearer; the router then uses the provider's OWN key (MAC_ROUTER_PROVIDERS
-    # key=...) for the upstream. Without this the gateway would send the upstream
-    # key, which the mac API rejects as an unknown bearer token.
-    _local_tok = values.get("MAC_API_TOKEN") or ""
-    if _local_tok:
-        values["OPENAI_API_KEY"] = _local_tok
-        values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok
-        values["ACC_HERMES_GATEWAY_API_KEY"] = _local_tok
+    if _router_providers:
+        values["MAC_ROUTER_PROVIDERS"] = _router_providers
+    if _router_default_model:
+        values["MAC_ROUTER_DEFAULT_MODEL"] = _router_default_model
+    if _router_wildcard_models:
+        values["MAC_ROUTER_WILDCARD_MODELS"] = _router_wildcard_models
+    if _router_providers:
+        _local_router_v1 = "http://127.0.0.1:%s/v1" % port
+        values["OPENAI_BASE_URL"] = _local_router_v1
+        values["CUSTOM_BASE_URL"] = _local_router_v1
+        values["MAC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
+        values["ACC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1
+        _local_tok = values.get("MAC_API_TOKEN") or ""
+        if _local_tok:
+            values["OPENAI_API_KEY"] = _local_tok
+            values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok
+            values["ACC_HERMES_GATEWAY_API_KEY"] = _local_tok
+elif _router_inproc:
+    # SPOKE: do NOT mount a local router or carry providers/upstream keys. Strip any
+    # router/provider config a fleet-wide MAC_DEPLOY_ROUTER_* introduced, and route
+    # the gateway through the HUB's /v1 with the spoke's hub-facing token.
+    for _k in ("MAC_ROUTER_BACKEND", "MAC_ROUTER_PROVIDERS",
+               "MAC_ROUTER_DEFAULT_MODEL", "MAC_ROUTER_WILDCARD_MODELS"):
+        values.pop(_k, None)
+    _hub_base = (values.get("MAC_HUB_URL") or configured_hub_url or "").rstrip("/")
+    if _hub_base:
+        _hub_v1 = "%s/v1" % _hub_base
+        values["OPENAI_BASE_URL"] = _hub_v1
+        values["CUSTOM_BASE_URL"] = _hub_v1
+        values["MAC_HERMES_GATEWAY_BASE_URL"] = _hub_v1
+        values["ACC_HERMES_GATEWAY_BASE_URL"] = _hub_v1
+        _hub_tok = (
+            values.get("MAC_WORKER_TOKEN")
+            or configured_hub_token
+            or values.get("MAC_API_TOKEN")
+            or ""
+        )
+        if _hub_tok:
+            values["OPENAI_API_KEY"] = _hub_tok
+            values["MAC_HERMES_GATEWAY_API_KEY"] = _hub_tok
+            values["ACC_HERMES_GATEWAY_API_KEY"] = _hub_tok
+else:
+    # Router backend not inproc → preserve prior pass-through of whatever
+    # MAC_ROUTER_* was configured (no /v1 cutover).
+    if _router_backend:
+        values["MAC_ROUTER_BACKEND"] = _router_backend
+    if _router_providers:
+        values["MAC_ROUTER_PROVIDERS"] = _router_providers
+    if _router_default_model:
+        values["MAC_ROUTER_DEFAULT_MODEL"] = _router_default_model
+    if _router_wildcard_models:
+        values["MAC_ROUTER_WILDCARD_MODELS"] = _router_wildcard_models
 home_channel = (
     configured_home_channel
     or values.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME", "").strip().lstrip("#")

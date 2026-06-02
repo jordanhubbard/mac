@@ -356,15 +356,31 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router():
     assert 'values["TOKENHUB_URL"]' not in script
     assert "TOKENHUB_API_KEY" not in script
 
-    # Chat now routes through the agent's OWN local /v1 router (MAC_ROUTER_BACKEND
-    # =inproc). The router holds the upstream provider key; the gateway only
-    # presents this agent's local mac token (agent scope) to the local /v1.
-    assert 'if _router_backend.lower() == "inproc" and _router_providers:' in script
+    # Stream B: the in-mac router runs ONLY on the hub (keys centralized there);
+    # spokes route through the hub's /v1 with their hub-facing token.
+    assert '_router_inproc = _router_backend.lower() == "inproc"' in script
+    assert "_is_hub = agent_name == shared_services_manager" in script
+    assert "if _router_inproc and _is_hub:" in script
+    # hub branch: mount the router + cut its own gateway over to the LOCAL /v1
+    # with the local mac token.
     assert 'values["MAC_ROUTER_BACKEND"] = _router_backend' in script
     assert '_local_router_v1 = "http://127.0.0.1:%s/v1" % port' in script
     assert 'values["MAC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1' in script
     assert 'values["OPENAI_API_KEY"] = _local_tok' in script
     assert 'values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok' in script
+    # spoke branch: NO local router/providers; route via the hub's /v1 (MAC_HUB_URL
+    # = mesh URL or the reverse tunnel) with MAC_WORKER_TOKEN. Keys never reach the
+    # spoke.
+    assert "elif _router_inproc:" in script
+    spoke_branch = script.split("elif _router_inproc:", 1)[1].split("\nelse:", 1)[0]
+    assert 'values.pop(_k, None)' in spoke_branch
+    assert '_hub_base = (values.get("MAC_HUB_URL") or configured_hub_url or "").rstrip("/")' in spoke_branch
+    assert '_hub_v1 = "%s/v1" % _hub_base' in spoke_branch
+    assert 'values["MAC_HERMES_GATEWAY_BASE_URL"] = _hub_v1' in spoke_branch
+    assert 'values.get("MAC_WORKER_TOKEN")' in spoke_branch
+    # the spoke branch only POPs router/provider keys, never assigns them
+    assert 'values["MAC_ROUTER_PROVIDERS"] =' not in spoke_branch
+    assert 'values["MAC_ROUTER_BACKEND"] =' not in spoke_branch
 
     # loop-01: the executor logic was extracted from a ~500-line bash heredoc
     # into the tested mac.task_executor module. The deploy now writes only a
