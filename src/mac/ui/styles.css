@@ -10,13 +10,43 @@
   --muted: #667085;
   --line: #d8dee7;
   --accent: #2f6f63;
+  --accent-strong: #2f6f63;
+  --accent-ink: #174f45;
   --accent-soft: #e4f2ee;
+  --accent-line: #b8d8d0;
   --warning: #9a5b13;
   --warning-soft: #fff4df;
+  --warning-line: #ead09f;
   --danger: #b42318;
   --danger-soft: #fde8e4;
+  --danger-line: #efc3bb;
+  --danger-ink: #74231c;
   --blue: #245c8f;
   --blue-soft: #e6f0f8;
+  --blue-line: #bdd4e9;
+  /* Neutral raised surface (was hardcoded #ffffff across inputs/cards/pills) */
+  --surface: #ffffff;
+  /* Recessed neutral surface (was #fbfcfd / #f6f8fb / #f9fafc) */
+  --surface-sunken: #fbfcfd;
+  /* Brand mark badge */
+  --brand-bg: #233a35;
+  --brand-line: #28443d;
+  --brand-ink: #ffffff;
+  /* Progress / track */
+  --track: #e8edf2;
+  /* Relationship + workflow graph */
+  --graph-edge: #b8c5d2;
+  --graph-node-bg: #ffffff;
+  --graph-fleet-bg: #f4f1ff;
+  --graph-fleet-line: #cbc2f2;
+  --graph-task-bg: #eef2f8;
+  --graph-task-line: #bdd0e3;
+  --graph-plan-bg: #f4ecff;
+  --graph-plan-line: #c8b6f0;
+  --graph-commit-bg: #ecf7ef;
+  --graph-commit-line: #b5d8be;
+  --graph-verify-bg: #e7f1f6;
+  --graph-verify-line: #a7c8d8;
   --shadow: 0 18px 50px rgba(32, 33, 36, 0.08);
   color-scheme: light;
   font-family:
@@ -38,13 +68,38 @@
   --muted: #9aa6b5;
   --line: #2b333d;
   --accent: #4fb3a1;
+  --accent-strong: #3f9686;
+  --accent-ink: #aee6da;
   --accent-soft: #1d3631;
+  --accent-line: #2f5a51;
   --warning: #e0a34a;
   --warning-soft: #3a2f1c;
+  --warning-line: #5c4a28;
   --danger: #f08376;
   --danger-soft: #3a2320;
+  --danger-line: #5e3631;
+  --danger-ink: #f3aaa0;
   --blue: #6aa6d8;
   --blue-soft: #1d2c3a;
+  --blue-line: #2f4a63;
+  --surface: #1a1f26;
+  --surface-sunken: #161b21;
+  --brand-bg: #1d3631;
+  --brand-line: #2f5a51;
+  --brand-ink: #d7f1ea;
+  --track: #2b333d;
+  --graph-edge: #44515f;
+  --graph-node-bg: #1f2630;
+  --graph-fleet-bg: #25243a;
+  --graph-fleet-line: #4a4570;
+  --graph-task-bg: #1e2733;
+  --graph-task-line: #36506b;
+  --graph-plan-bg: #271f3a;
+  --graph-plan-line: #4f3f72;
+  --graph-commit-bg: #1c3025;
+  --graph-commit-line: #356a4a;
+  --graph-verify-bg: #18303a;
+  --graph-verify-line: #2d637c;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
@@ -156,10 +211,10 @@ button {
   min-width: 44px;
   height: 32px;
   place-items: center;
-  border: 1px solid #28443d;
+  border: 1px solid var(--brand-line);
   border-radius: 8px;
-  background: #233a35;
-  color: #ffffff;
+  background: var(--brand-bg);
+  color: var(--brand-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.86rem;
   font-weight: 700;
@@ -190,9 +245,9 @@ button {
 }
 
 .nav-item.is-active {
-  border-color: #b8d8d0;
+  border-color: var(--accent-line);
   background: var(--accent-soft);
-  color: #174f45;
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
@@ -229,7 +284,7 @@ button {
 }
 
 .service-link-btn:hover {
-  border-color: #b8d8d0;
+  border-color: var(--accent-line);
   background: var(--accent-soft);
 }
 
@@ -258,7 +313,7 @@ button {
   height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--input-bg);
   color: var(--ink);
   padding: 0 10px;
 }
@@ -276,7 +331,7 @@ button {
   height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--ink);
   padding: 0 12px;
   font-weight: 700;
@@ -284,7 +339,7 @@ button {
 
 .link-button {
   min-height: 30px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--blue);
   padding: 0 10px;
 }
@@ -359,15 +414,17 @@ h3 {
 .theme-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  height: 36px;
-  border: 1px solid var(--line);
+  height: 38px;
+  border: 1px solid var(--accent);
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--ink);
-  padding: 0 12px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  padding: 0 14px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
@@ -375,8 +432,14 @@ h3 {
 }
 
 .theme-toggle:hover {
+  background: var(--accent);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--on-accent);
+}
+
+.theme-toggle:hover .theme-toggle-icon {
+  background: var(--on-accent);
+  box-shadow: inset -4px -2px 0 0 var(--accent);
 }
 
 .theme-toggle:focus-visible {
@@ -389,7 +452,7 @@ h3 {
   height: 16px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: inset -4px -2px 0 0 var(--panel);
+  box-shadow: inset -4px -2px 0 0 var(--accent-soft);
 }
 
 :root[data-theme="dark"] .theme-toggle-icon {
@@ -397,12 +460,17 @@ h3 {
   box-shadow: none;
 }
 
+:root[data-theme="dark"] .theme-toggle:hover .theme-toggle-icon {
+  background: var(--warning);
+  box-shadow: none;
+}
+
 .banner {
   margin: 18px 28px 0;
-  border: 1px solid #f3c6bd;
+  border: 1px solid var(--danger-line);
   border-radius: 8px;
   background: var(--danger-soft);
-  color: #74231c;
+  color: var(--danger-ink);
   padding: 12px 14px;
 }
 
@@ -550,7 +618,7 @@ h3 {
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--input-bg);
   color: var(--ink);
   padding: 0 10px;
   text-transform: none;
@@ -582,17 +650,17 @@ h3 {
 .action-strip button {
   width: 100%;
   height: 36px;
-  border: 1px solid #2f6f63;
+  border: 1px solid var(--accent-strong);
   border-radius: 8px;
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
   padding: 0 12px;
   font-weight: 800;
   align-self: end;
 }
 
 .action-status {
-  border: 1px solid #bdd4e9;
+  border: 1px solid var(--blue-line);
   border-radius: 8px;
   background: var(--blue-soft);
   color: var(--blue);
@@ -600,7 +668,7 @@ h3 {
 }
 
 .danger-action button {
-  border-color: #b42318;
+  border-color: var(--danger);
   background: var(--danger);
 }
 
@@ -625,10 +693,10 @@ h3 {
 .danger-button {
   min-width: 96px;
   height: 36px;
-  border: 1px solid #b42318;
+  border: 1px solid var(--danger);
   border-radius: 8px;
   background: var(--danger);
-  color: #ffffff;
+  color: var(--on-accent);
   padding: 0 14px;
   font-weight: 800;
 }
@@ -640,9 +708,9 @@ h3 {
 
 details.action-box {
   margin-top: 12px;
-  border: 1px solid #e5e9ef;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfd;
+  background: var(--surface-sunken);
   padding: 10px 12px;
 }
 
@@ -651,9 +719,9 @@ details.row-actions {
 }
 
 details.row-actions.edit-disclosure {
-  border: 1px solid #e5e9ef;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfd;
+  background: var(--surface-sunken);
   padding: 8px 10px;
 }
 
@@ -703,7 +771,7 @@ details.action-box summary {
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--ink);
   padding: 8px 10px;
   text-align: left;
@@ -763,7 +831,7 @@ details.action-box summary {
   min-width: 140px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--input-bg);
   color: var(--ink);
   padding: 8px 10px;
 }
@@ -818,7 +886,7 @@ details.action-box summary {
   min-height: 30px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--blue);
   padding: 0 10px;
   font-weight: 700;
@@ -905,11 +973,11 @@ details.action-box summary {
 }
 
 .agent-card.is-blocked {
-  border-color: #e7c4bd;
+  border-color: var(--danger-line);
 }
 
 .is-selected {
-  outline: 2px solid #245c8f;
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
@@ -918,7 +986,7 @@ details.action-box summary {
 }
 
 .record-section {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   margin-top: 14px;
   padding-top: 12px;
 }
@@ -935,7 +1003,7 @@ details.action-box summary {
 }
 
 .timeline-item {
-  border-left: 3px solid #bdd4e9;
+  border-left: 3px solid var(--blue-line);
   padding: 2px 0 2px 10px;
 }
 
@@ -974,7 +1042,7 @@ details.action-box summary {
 
 .field {
   min-height: 58px;
-  border: 1px solid #e5e9ef;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
   padding: 10px;
@@ -1008,7 +1076,7 @@ details.action-box summary {
   min-height: 26px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--muted);
   padding: 0 9px;
   font-size: 0.82rem;
@@ -1018,25 +1086,25 @@ details.action-box summary {
 }
 
 .tone-good {
-  border-color: #b8d8d0;
+  border-color: var(--accent-line);
   background: var(--accent-soft);
-  color: #174f45;
+  color: var(--accent-ink);
 }
 
 .tone-warn {
-  border-color: #ead09f;
+  border-color: var(--warning-line);
   background: var(--warning-soft);
   color: var(--warning);
 }
 
 .tone-bad {
-  border-color: #efc3bb;
+  border-color: var(--danger-line);
   background: var(--danger-soft);
   color: var(--danger);
 }
 
 .tone-info {
-  border-color: #bdd4e9;
+  border-color: var(--blue-line);
   background: var(--blue-soft);
   color: var(--blue);
 }
@@ -1054,7 +1122,7 @@ details.action-box summary {
   min-height: 120px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfd;
+  background: var(--surface-sunken);
   padding: 12px;
 }
 
@@ -1066,9 +1134,9 @@ details.action-box summary {
 }
 
 .task-card {
-  border: 1px solid #e5e9ef;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   padding: 12px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1120,7 +1188,7 @@ details.action-box summary {
   height: 10px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e8edf2;
+  background: var(--track);
 }
 
 .bar-fill {
@@ -1141,9 +1209,9 @@ details.action-box summary {
   width: 100%;
   overflow-x: auto;
   margin-top: 12px;
-  border: 1px solid #e5e9ef;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
 }
 
 .relationship-graph {
@@ -1161,21 +1229,21 @@ details.action-box summary {
 
 .graph-edge {
   fill: none;
-  stroke: #b8c5d2;
+  stroke: var(--graph-edge);
   stroke-width: 2;
   opacity: 0.72;
 }
 
 .graph-edge-agent-task {
-  stroke: #2f6f63;
+  stroke: var(--accent);
 }
 
 .graph-edge-fleet-agent {
-  stroke: #5661a6;
+  stroke: var(--graph-fleet-line);
 }
 
 .graph-edge-dependency {
-  stroke: #9a5b13;
+  stroke: var(--warning);
   stroke-dasharray: 5 4;
 }
 
@@ -1184,24 +1252,24 @@ details.action-box summary {
 }
 
 .graph-node rect {
-  fill: #ffffff;
+  fill: var(--graph-node-bg);
   stroke: var(--line);
   stroke-width: 1.2;
 }
 
 .graph-node-machine rect {
   fill: var(--blue-soft);
-  stroke: #bdd4e9;
+  stroke: var(--blue-line);
 }
 
 .graph-node-fleet rect {
-  fill: #f4f1ff;
-  stroke: #cbc2f2;
+  fill: var(--graph-fleet-bg);
+  stroke: var(--graph-fleet-line);
 }
 
 .graph-node-agent rect {
   fill: var(--accent-soft);
-  stroke: #b8d8d0;
+  stroke: var(--accent-line);
 }
 
 /*
@@ -1214,45 +1282,45 @@ details.action-box summary {
  * own .graph-node-machine/fleet/agent rules above.
  */
 .graph-node-task rect {
-  fill: #eef2f8;
-  stroke: #bdd0e3;
+  fill: var(--graph-task-bg);
+  stroke: var(--graph-task-line);
 }
 
 .graph-node-approval rect {
   fill: var(--warning-soft);
-  stroke: #ead09f;
+  stroke: var(--warning-line);
   stroke-width: 2;
 }
 
 .graph-node-approval .graph-node-icon {
-  color: #9a5b13;
+  color: var(--warning);
 }
 
 .graph-node-plan rect {
-  fill: #f4ecff;
-  stroke: #c8b6f0;
+  fill: var(--graph-plan-bg);
+  stroke: var(--graph-plan-line);
 }
 
 .graph-node-plan .graph-node-icon {
-  color: #6e3fbb;
+  color: var(--graph-plan-line);
 }
 
 .graph-node-commit rect {
-  fill: #ecf7ef;
-  stroke: #b5d8be;
+  fill: var(--graph-commit-bg);
+  stroke: var(--graph-commit-line);
 }
 
 .graph-node-commit .graph-node-icon {
-  color: #2f6f4a;
+  color: var(--graph-commit-line);
 }
 
 .graph-node-verify rect {
-  fill: #e7f1f6;
-  stroke: #a7c8d8;
+  fill: var(--graph-verify-bg);
+  stroke: var(--graph-verify-line);
 }
 
 .graph-node-verify .graph-node-icon {
-  color: #2d637c;
+  color: var(--graph-verify-line);
 }
 
 .graph-node-icon {
@@ -1260,20 +1328,20 @@ details.action-box summary {
 }
 
 .graph-edge-approved {
-  stroke: #2f6f4a;
+  stroke: var(--accent);
 }
 
 .graph-edge-rejected {
-  stroke: #b6443c;
+  stroke: var(--danger);
   stroke-dasharray: 5 4;
 }
 
 .graph-edge-failure {
-  stroke: #b6443c;
+  stroke: var(--danger);
 }
 
 .graph-edge-success {
-  stroke: #2f6f63;
+  stroke: var(--accent);
 }
 
 /* Workflow stage: legend + selector + inspector */
@@ -1295,7 +1363,8 @@ details.action-box summary {
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--input-bg);
+  color: var(--ink);
   font: inherit;
 }
 
@@ -1322,11 +1391,11 @@ details.action-box summary {
   border: 1px solid var(--line);
 }
 
-.workflow-legend-task .workflow-legend-swatch { background: #eef2f8; border-color: #bdd0e3; }
-.workflow-legend-approval .workflow-legend-swatch { background: var(--warning-soft); border-color: #ead09f; }
-.workflow-legend-plan .workflow-legend-swatch { background: #f4ecff; border-color: #c8b6f0; }
-.workflow-legend-commit .workflow-legend-swatch { background: #ecf7ef; border-color: #b5d8be; }
-.workflow-legend-verify .workflow-legend-swatch { background: #e7f1f6; border-color: #a7c8d8; }
+.workflow-legend-task .workflow-legend-swatch { background: var(--graph-task-bg); border-color: var(--graph-task-line); }
+.workflow-legend-approval .workflow-legend-swatch { background: var(--warning-soft); border-color: var(--warning-line); }
+.workflow-legend-plan .workflow-legend-swatch { background: var(--graph-plan-bg); border-color: var(--graph-plan-line); }
+.workflow-legend-commit .workflow-legend-swatch { background: var(--graph-commit-bg); border-color: var(--graph-commit-line); }
+.workflow-legend-verify .workflow-legend-swatch { background: var(--graph-verify-bg); border-color: var(--graph-verify-line); }
 
 .workflow-graph-wrap {
   overflow-x: auto;
@@ -1337,11 +1406,11 @@ details.action-box summary {
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .workflow-inspector-empty {
-  background: #f6f8fb;
+  background: var(--surface-sunken);
   color: var(--muted);
   text-align: center;
 }
@@ -1392,7 +1461,7 @@ details.action-box summary {
 .workflow-instructions {
   font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
   font-size: 12px;
-  background: #f6f8fb;
+  background: var(--surface-sunken);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 10px;
@@ -1470,8 +1539,8 @@ details.action-box summary {
 }
 
 .workflow-draft-remove:hover {
-  color: #b6443c;
-  border-color: #e0b3ae;
+  color: var(--danger);
+  border-color: var(--danger-line);
 }
 
 .workflow-draft-add {
@@ -1480,7 +1549,7 @@ details.action-box summary {
 }
 
 .workflow-draft-add:hover {
-  background: #f6f8fb;
+  background: var(--surface-sunken);
 }
 
 .workflow-draft-answers {
@@ -1508,7 +1577,7 @@ details.action-box summary {
 }
 
 .workflow-draft-raw {
-  background: #f9fafc;
+  background: var(--surface-sunken);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 14px;
@@ -1535,9 +1604,9 @@ details.action-box summary {
 }
 
 .empty-state {
-  border: 1px dashed #c7d0dc;
+  border: 1px dashed var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--muted);
   padding: 24px;
   text-align: center;
