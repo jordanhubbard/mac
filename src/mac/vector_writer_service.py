@@ -478,19 +478,80 @@ class VectorWriterService:
     # -- Internals ----------------------------------------------------------
 
     def _build_payload(self, record: MemoryRecord, *, tier: str) -> MacVectorPayload:
+        content_payload: JsonDict = {}
+        try:
+            loaded = json.loads(record.content)
+            if isinstance(loaded, dict):
+                content_payload = loaded
+        except Exception:  # noqa: BLE001 - freeform memories are valid
+            content_payload = {}
+
+        project: Optional[str] = None
+        tenant_id: Optional[str] = None
+        agent_id: Optional[str] = record.created_by if record.created_by else None
+        dream_kind: Optional[str] = None
+        dream_scope: Optional[str] = None
+        dream_confidence: Optional[str] = None
+        dream_confidence_score: Optional[float] = None
+        summary = record.content[:2000]
+        tags = [record.record_type] if record.record_type else []
+
+        if record.subject_type == "project" and record.subject_id:
+            project = record.subject_id
+        if record.subject_type == "nap_summary" and record.subject_id:
+            agent_id = record.subject_id
+
+        if content_payload.get("schema") == "mac.deployment_learning.v1":
+            project = str(content_payload.get("project") or project or "") or None
+
+        if content_payload.get("schema") == "mac.dream.v1":
+            retrieval = content_payload.get("retrieval")
+            if not isinstance(retrieval, dict):
+                retrieval = {}
+            dream_kind = str(content_payload.get("kind") or "").strip() or None
+            dream_scope = str(content_payload.get("scope") or "").strip() or None
+            dream_confidence = str(content_payload.get("confidence") or "").strip() or None
+            raw_score = content_payload.get("confidence_score")
+            if raw_score is not None:
+                try:
+                    dream_confidence_score = float(raw_score)
+                except (TypeError, ValueError):
+                    dream_confidence_score = None
+            project = str(content_payload.get("project") or retrieval.get("project") or project or "") or None
+            tenant_id = str(content_payload.get("tenant_id") or retrieval.get("tenant_id") or "") or None
+            agent_id = str(content_payload.get("agent_id") or retrieval.get("agent_id") or agent_id or "") or None
+            summary = str(content_payload.get("summary") or summary)[:2000]
+            tags.extend(
+                tag
+                for tag in (
+                    "dream",
+                    "dream:%s" % dream_kind if dream_kind else "",
+                    "dream_scope:%s" % dream_scope if dream_scope else "",
+                    "dream_confidence:%s" % dream_confidence if dream_confidence else "",
+                )
+                if tag
+            )
+
         return MacVectorPayload(
             tier=tier,
             subject_type=record.subject_type or record.record_type,
             subject_id=record.subject_id or record.id,
             memory_id=record.id,
-            summary=record.content[:2000],
+            summary=summary,
             created_at=record.created_at,
             embedded_at=utcnow(),
             embedding_model=self._embedding_model,
             task_id=record.task_id,
-            agent_id=record.created_by if record.created_by else None,
+            project=project,
+            agent_id=agent_id,
+            tenant_id=tenant_id,
             evidence_type=None,
-            tags=[record.record_type] if record.record_type else [],
+            record_type=record.record_type,
+            dream_kind=dream_kind,
+            dream_scope=dream_scope,
+            dream_confidence=dream_confidence,
+            dream_confidence_score=dream_confidence_score,
+            tags=sorted(set(tags)),
             schema=MAC_MEMORY_PAYLOAD_SCHEMA,
         )
 

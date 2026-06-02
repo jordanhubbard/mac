@@ -3860,6 +3860,33 @@ def create_app(
             tenant_id=tenant_id,
         )
 
+    @app.get("/v1/memory/dreams/recall")
+    def recall_dream_artifacts(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
+        scope: Optional[str] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        min_confidence: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_dream_artifacts(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            agent_id=agent_id,
+            scope=scope,
+            kind=kind,
+            min_confidence=min_confidence,
+            tenant_id=tenant_id,
+        )
+
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:
         return cp.create_eval_set(**_data(body)).to_dict()

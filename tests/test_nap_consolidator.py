@@ -13,6 +13,8 @@ hash embedder + default string-concat summarizer).
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mac.nap_consolidator import NapConsolidatorService
@@ -115,6 +117,110 @@ def test_consolidate_uses_pluggable_summarizer(cp):
     report = consolidator.consolidate_agent(agent_id, embed_into_medium=False)
     summary = cp.memory.get_memory(report["summary_memory_ids"][0])
     assert summary.content == "AGENT agent_rocky saw 2 things"
+
+
+def test_consolidate_writes_structured_dream_artifact_with_evidence(cp):
+    """Nap consolidation now emits typed mac.dream.v1 artifacts, not only prose."""
+    agent_id = "agent_rocky"
+    task = cp.create_task("Ship structured dreams", project="mac")
+    first = _add_memory_as_agent(
+        cp,
+        agent_id,
+        "run the focused nap tests before the full contract gate",
+        task_id=task.id,
+    )
+    second = _add_memory_as_agent(
+        cp,
+        agent_id,
+        "keep dream artifacts scoped to the owning project",
+        task_id=task.id,
+    )
+
+    consolidator = NapConsolidatorService(store=cp.store, memory=cp.memory)
+    report = consolidator.consolidate_agent(agent_id, embed_into_medium=False)
+
+    assert report["summaries_written"] == 1
+    assert report["dream_artifacts_written"] == 1
+    assert report["dream_artifacts_embedded"] == 0
+    dream = cp.memory.get_memory(report["dream_memory_ids"][0])
+    artifact = json.loads(dream.content)
+
+    assert dream.subject_type == "dream"
+    assert dream.subject_id == "project:mac"
+    assert dream.record_type == "dream:knowledge_snippet"
+    assert artifact["schema"] == "mac.dream.v1"
+    assert artifact["scope"] == "project"
+    assert artifact["project"] == "mac"
+    assert artifact["agent_id"] == agent_id
+    assert artifact["task_id"] == task.id
+    assert artifact["confidence"] == "medium"
+    assert artifact["confidence_score"] == pytest.approx(0.65)
+    assert artifact["retrieval"]["scope"] == "project"
+    assert artifact["retrieval"]["project"] == "mac"
+    assert artifact["retrieval"]["agent_id"] == agent_id
+    assert {item["memory_id"] for item in artifact["evidence"]} == {first.id, second.id}
+
+
+def test_dream_artifacts_embed_with_payload_filters_and_recall_rules(cp, writer, fake_qdrant):
+    """Dream recall is explicit: subject_type=dream plus project/agent/scope/kind/confidence."""
+    agent_id = "agent_rocky"
+    task = cp.create_task("Recall dream rules", project="mac")
+    _add_memory_as_agent(
+        cp,
+        agent_id,
+        "prefer structured payload filters for dream retrieval",
+        task_id=task.id,
+    )
+    _add_memory_as_agent(
+        cp,
+        agent_id,
+        "include confidence and scope in the vector payload",
+        task_id=task.id,
+    )
+    _add_memory_as_agent(cp, "agent_natasha", "unrelated project memory")
+
+    consolidator = NapConsolidatorService(
+        store=cp.store,
+        memory=cp.memory,
+        vector_writer=writer,
+    )
+    report = consolidator.consolidate_agent(agent_id)
+    assert report["dream_artifacts_written"] == 1
+    assert report["dream_artifacts_embedded"] == 1
+
+    dream = cp.memory.get_memory(report["dream_memory_ids"][0])
+    artifact = json.loads(dream.content)
+    hits = cp.recall_dream_artifacts(
+        dream.content,
+        project="mac",
+        agent_id=agent_id,
+        scope="project",
+        kind="knowledge_snippet",
+        min_confidence="medium",
+        vector_writer=writer,
+    )
+    assert hits
+    top = hits[0]
+    assert top["memory_id"] == dream.id
+    assert top["summary"] == artifact["summary"]
+    assert top["payload"]["record_type"] == "dream:knowledge_snippet"
+    assert top["payload"]["dream_kind"] == "knowledge_snippet"
+    assert top["payload"]["dream_scope"] == "project"
+    assert top["payload"]["dream_confidence"] == "medium"
+    assert top["payload"]["dream_confidence_score"] == pytest.approx(0.65)
+    assert top["payload"]["project"] == "mac"
+    assert top["payload"]["agent_id"] == agent_id
+
+    assert cp.recall_dream_artifacts(
+        dream.content,
+        project="other",
+        vector_writer=writer,
+    ) == []
+    assert cp.recall_dream_artifacts(
+        dream.content,
+        kind="failure_pattern",
+        vector_writer=writer,
+    ) == []
 
 
 def test_consolidate_embeds_when_writer_provided(cp, writer, fake_qdrant):

@@ -6318,6 +6318,78 @@ class ControlPlane:
             tenant_id=tenant_id,
         )
 
+    def recall_dream_artifacts(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        scope: Optional[str] = None,
+        kind: Optional[str] = None,
+        min_confidence: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+    ) -> List[JsonDict]:
+        """Recall typed ``mac.dream.v1`` artifacts using their retrieval rules.
+
+        Dream artifacts are stored as ordinary memory_records, but this method
+        keeps their read path explicit: only ``subject_type='dream'`` hits are
+        eligible, and callers may narrow by scope, kind, project, agent, tenant,
+        and minimum confidence.
+        """
+        if not query or not str(query).strip():
+            raise ValidationError("recall_dream_artifacts requires a non-empty query")
+        if vector_writer is None:
+            url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+            if not url:
+                raise ValidationError(
+                    "recall_dream_artifacts needs a Qdrant URL — pass qdrant_url "
+                    "or set MAC_QDRANT_URL"
+                )
+            from mac.vector_writer_service import VectorWriterService
+
+            vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
+
+        must: List[JsonDict] = [{"key": "subject_type", "match": {"value": "dream"}}]
+        if project:
+            must.append({"key": "project", "match": {"value": project}})
+        if agent_id:
+            must.append({"key": "agent_id", "match": {"value": agent_id}})
+        if scope:
+            must.append({"key": "dream_scope", "match": {"value": scope}})
+        if kind:
+            must.append({"key": "dream_kind", "match": {"value": kind}})
+
+        hits = vector_writer.recall(
+            query,
+            tier=tier,
+            limit=max(1, int(limit)),
+            score_threshold=min_score,
+            filter_payload={"must": must},
+            tenant_id=tenant_id,
+        )
+        if min_confidence:
+            floor_by_name = {"low": 0.0, "medium": 0.65, "high": 0.9}
+            floor = floor_by_name.get(str(min_confidence).strip().lower())
+            if floor is None:
+                raise ValidationError("min_confidence must be one of low / medium / high")
+
+            def _confidence_score(hit: JsonDict) -> float:
+                payload = hit.get("payload") if isinstance(hit.get("payload"), dict) else {}
+                raw = payload.get("dream_confidence_score")
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    name = str(payload.get("dream_confidence") or "").strip().lower()
+                    return floor_by_name.get(name, 0.0)
+
+            hits = [hit for hit in hits if _confidence_score(hit) >= floor]
+        return hits[: max(1, int(limit))]
+
     def run_nap_cycle(
         self,
         agent_id: str,
@@ -6325,6 +6397,7 @@ class ControlPlane:
         actor: Optional[str] = None,
         vector_writer: Optional[Any] = None,
         embed_into_medium: bool = True,
+        emit_dream_artifacts: bool = True,
     ) -> JsonDict:
         """mem-08 autonomy: drive an agent through one full nap.
 
@@ -6368,6 +6441,7 @@ class ControlPlane:
                     agent_id,
                     nap_run_id=run.id,
                     embed_into_medium=embed_into_medium,
+                    emit_dream_artifacts=emit_dream_artifacts,
                     vector_writer=vector_writer,
                     created_by=actor or "nap-cycle:%s" % agent_id,
                 )
@@ -6487,6 +6561,7 @@ class ControlPlane:
         since: Optional[str] = None,
         nap_run_id: Optional[str] = None,
         embed_into_medium: bool = True,
+        emit_dream_artifacts: bool = True,
         vector_writer: Optional[Any] = None,
         created_by: Optional[str] = None,
     ) -> JsonDict:
@@ -6508,6 +6583,7 @@ class ControlPlane:
             since=since,
             nap_run_id=nap_run_id,
             embed_into_medium=embed_into_medium,
+            emit_dream_artifacts=emit_dream_artifacts,
             created_by=created_by,
         )
 

@@ -124,7 +124,7 @@ class MemoryService:
 
     #: Curated, durable knowledge that decay must never touch. Salience here is
     #: high by construction (these are explicitly-remembered facts/lessons).
-    PROTECTED_MEMORY_PREFIXES = ("beads_memory", "deployment_learning", "user", "project", "feedback")
+    PROTECTED_MEMORY_PREFIXES = ("beads_memory", "deployment_learning", "dream", "user", "project", "feedback")
 
     def decay_memory(
         self,

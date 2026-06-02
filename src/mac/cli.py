@@ -1067,6 +1067,26 @@ def cmd_memory_recall(args: argparse.Namespace) -> None:
     _print(cp.recall_memory(args.query, **kwargs))
 
 
+def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
+    """Recall typed dream artifacts using scope/kind/confidence filters."""
+    cp = _plane(args)
+    qdrant_url = getattr(args, "qdrant_url", None)
+    kwargs = {
+        "tier": args.tier,
+        "limit": args.limit,
+        "min_score": args.min_score,
+        "project": args.project,
+        "agent_id": args.agent_id,
+        "scope": args.scope,
+        "kind": args.kind,
+        "min_confidence": args.min_confidence,
+        "tenant_id": args.tenant_id,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.recall_dream_artifacts(args.query, **kwargs))
+
+
 def cmd_nap_cycle(args: argparse.Namespace) -> None:
     """mem-08 autonomy: begin + consolidate + complete in one shot."""
     cp = _plane(args)
@@ -1079,6 +1099,7 @@ def cmd_nap_cycle(args: argparse.Namespace) -> None:
             actor=args.actor,
             vector_writer=writer,
             embed_into_medium=not args.no_embed,
+            emit_dream_artifacts=not args.no_dreams,
         )
     )
 
@@ -1108,6 +1129,7 @@ def cmd_nap_consolidate(args: argparse.Namespace) -> None:
             since=args.since,
             nap_run_id=args.nap_run_id,
             embed_into_medium=not args.no_embed,
+            emit_dream_artifacts=not args.no_dreams,
             vector_writer=writer,
             created_by=args.created_by,
         )
@@ -1834,6 +1856,7 @@ def build_parser() -> argparse.ArgumentParser:
     nap_cycle.add_argument("agent_id")
     nap_cycle.add_argument("--actor")
     nap_cycle.add_argument("--no-embed", action="store_true")
+    nap_cycle.add_argument("--no-dreams", action="store_true")
     nap_cycle.add_argument("--qdrant-url")
     _set(cmd_nap_cycle, nap_cycle)
 
@@ -1875,6 +1898,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip the vector-writer handoff (summary-only mode; useful "
         "when Qdrant is offline)",
+    )
+    nap_consolidate.add_argument(
+        "--no-dreams",
+        action="store_true",
+        help="write nap_summary rows only; skip typed mac.dream.v1 artifacts",
     )
     nap_consolidate.add_argument(
         "--qdrant-url",
@@ -2143,7 +2171,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_decay = memory.add_parser(
         "decay",
         help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
-        "curated knowledge (user/project/feedback/deployment_learning/beads_memory) is preserved",
+        "curated knowledge (user/project/feedback/deployment_learning/dream/beads_memory) is preserved",
     )
     memory_decay.add_argument("--ttl-days", type=float, default=90.0)
     memory_decay.add_argument("--limit", type=int, default=500)
@@ -2257,6 +2285,46 @@ def build_parser() -> argparse.ArgumentParser:
         "Hub mode reads MAC_QDRANT_URL on the hub.",
     )
     _set(cmd_memory_recall, memory_recall)
+
+    memory_recall_dreams = memory.add_parser(
+        "recall-dreams",
+        help="recall typed dream artifacts with scope/kind/confidence filters",
+    )
+    memory_recall_dreams.add_argument("query")
+    memory_recall_dreams.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_recall_dreams.add_argument("--limit", type=int, default=5)
+    memory_recall_dreams.add_argument(
+        "--min-score",
+        type=float,
+        help="drop vector hits below this cosine score (0.0-1.0)",
+    )
+    memory_recall_dreams.add_argument("--project")
+    memory_recall_dreams.add_argument("--agent-id")
+    memory_recall_dreams.add_argument(
+        "--scope", choices=("agent", "project", "fleet")
+    )
+    memory_recall_dreams.add_argument(
+        "--kind",
+        choices=(
+            "decision_rule",
+            "failure_pattern",
+            "knowledge_snippet",
+            "tool_pattern",
+            "routing_signal",
+        ),
+    )
+    memory_recall_dreams.add_argument(
+        "--min-confidence", choices=("low", "medium", "high")
+    )
+    memory_recall_dreams.add_argument("--tenant-id")
+    memory_recall_dreams.add_argument(
+        "--qdrant-url",
+        help="override Qdrant URL when running in local mode (--db). "
+        "Hub mode reads MAC_QDRANT_URL on the hub.",
+    )
+    _set(cmd_memory_recall_dreams, memory_recall_dreams)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
     rollout_create = rollout.add_parser("create")
