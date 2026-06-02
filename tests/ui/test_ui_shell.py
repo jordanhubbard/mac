@@ -65,6 +65,14 @@ def test_ui_html_contains_all_nav_views():
         assert 'data-view="%s"' % view in html, "missing nav view: %s" % view
 
 
+def test_ui_html_groups_nav_views_for_discoverability():
+    html = _client().get("/ui").text
+    assert 'class="nav-section"' in html
+    for label in ("Home", "Work", "Fleet", "Operations", "Security"):
+        assert 'class="nav-section-label">%s</span>' % label in html
+    assert 'data-view="overview" aria-current="page"' in html
+
+
 def test_ui_html_loads_app_js_with_cache_bust():
     html = _client().get("/ui").text
     assert '/ui/assets/app.js?v=' in html
@@ -108,6 +116,15 @@ def test_css_contains_service_link_styles():
     assert ".service-link-btn" in css
 
 
+def test_css_contains_discoverability_and_focus_styles():
+    css = (_UI_ROOT / "styles.css").read_text(encoding="utf-8")
+    assert ".launchpad" in css
+    assert ".launchpad-action" in css
+    assert ".nav-section" in css
+    assert ":focus-visible" in css
+    assert "scroll-snap-type" in css
+
+
 # ---------------------------------------------------------------------------
 # JS — token bootstrap and login screen wiring
 # ---------------------------------------------------------------------------
@@ -145,6 +162,16 @@ def test_app_js_opens_service_url_in_new_tab():
     assert "window.open" in js
     assert "_blank" in js
     assert "noreferrer" in js
+
+
+def test_app_js_has_launchpad_keyboard_and_destructive_guards():
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    assert "Top-line dashboard actions" in js
+    assert "data-dashboard-go" in js
+    assert "handleContentKeydown" in js
+    assert "aria-current" in js
+    assert "confirmDestructive" in js
+    assert "This cannot be undone." in js
 
 
 # ---------------------------------------------------------------------------

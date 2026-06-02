@@ -31,20 +31,35 @@
           <span class="brand-name">Control Plane</span>
         </div>
         <nav class="nav" id="viewNav" aria-label="Dashboard views">
-          <button class="nav-item is-active" type="button" data-view="overview">Overview</button>
-          <button class="nav-item" type="button" data-view="work">Work</button>
-          <button class="nav-item" type="button" data-view="projects">Projects</button>
-          <button class="nav-item" type="button" data-view="map">Map</button>
-          <button class="nav-item" type="button" data-view="fleets">Fleets</button>
-          <button class="nav-item" type="button" data-view="agents">Agents</button>
-          <button class="nav-item" type="button" data-view="tasks">Tasks</button>
-          <button class="nav-item" type="button" data-view="workflows">Workflows</button>
-          <button class="nav-item" type="button" data-view="hermes">Hermes</button>
-          <button class="nav-item" type="button" data-view="ops">Operations</button>
-          <button class="nav-item" type="button" data-view="integrations">Integrations</button>
-          <button class="nav-item" type="button" data-view="runtime">Runtime</button>
-          <button class="nav-item" type="button" data-view="observability">Observability</button>
-          <button class="nav-item" type="button" data-view="secrets">Secrets</button>
+          <div class="nav-section">
+            <span class="nav-section-label">Home</span>
+            <button class="nav-item is-active" type="button" data-view="overview" aria-current="page">Overview</button>
+          </div>
+          <div class="nav-section">
+            <span class="nav-section-label">Work</span>
+            <button class="nav-item" type="button" data-view="work">Work</button>
+            <button class="nav-item" type="button" data-view="projects">Projects</button>
+            <button class="nav-item" type="button" data-view="tasks">Tasks</button>
+            <button class="nav-item" type="button" data-view="workflows">Workflows</button>
+          </div>
+          <div class="nav-section">
+            <span class="nav-section-label">Fleet</span>
+            <button class="nav-item" type="button" data-view="map">Map</button>
+            <button class="nav-item" type="button" data-view="fleets">Fleets</button>
+            <button class="nav-item" type="button" data-view="agents">Agents</button>
+          </div>
+          <div class="nav-section">
+            <span class="nav-section-label">Operations</span>
+            <button class="nav-item" type="button" data-view="hermes">Hermes</button>
+            <button class="nav-item" type="button" data-view="ops">Operations</button>
+            <button class="nav-item" type="button" data-view="integrations">Integrations</button>
+            <button class="nav-item" type="button" data-view="runtime">Runtime</button>
+            <button class="nav-item" type="button" data-view="observability">Observability</button>
+          </div>
+          <div class="nav-section">
+            <span class="nav-section-label">Security</span>
+            <button class="nav-item" type="button" data-view="secrets">Secrets</button>
+          </div>
         </nav>
         <div id="serviceLinks" class="service-links" hidden></div>
         <form class="token-form" id="tokenForm">

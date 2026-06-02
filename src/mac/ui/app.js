@@ -1,5 +1,6 @@
-// Browser output for app.ts. Keep this file checked in so mac does not need a
-// Node.js / npm toolchain to serve the dashboard. Regenerate with:
+// Maintained dashboard source. The browser module is checked in as app.js so
+// mac does not require Node.js/npm to serve or install the UI.
+// Regenerate with:
 //   cd src/mac/ui && npx -y -p typescript@5 tsc --target es2021 --module es2020 \
 //     --lib dom,es2021 --strict false --skipLibCheck --outDir /tmp/uib app.ts
 //   cp /tmp/uib/app.js app.js
@@ -49,6 +50,11 @@ const VIEW_TITLES = {
     secrets: "Secrets",
 };
 const VIEW_KEYS = new Set(Object.keys(VIEW_TITLES));
+const DESTRUCTIVE_ACTION_LABELS = {
+    Project: "Delete this project?",
+    Agent: "Delete this agent?",
+    Task: "Delete this task?",
+};
 const DEFAULT_URL_STATE = readUrlState();
 // Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
 // Stored into sessionStorage and then stripped from the URL so it doesn't
@@ -135,6 +141,7 @@ function bindEvents() {
     });
     nodes.refresh.addEventListener("click", () => loadDashboard());
     nodes.content.addEventListener("click", handleContentClick);
+    nodes.content.addEventListener("keydown", handleContentKeydown);
     nodes.content.addEventListener("submit", handleActionSubmit);
     nodes.content.addEventListener("change", handleContentChange);
     nodes.loginForm.addEventListener("submit", (event) => {
@@ -244,7 +251,12 @@ function renderServiceLinksSidebar(services) {
 }
 function render() {
     document.querySelectorAll("[data-view]").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.view === state.activeView);
+        const active = button.dataset.view === state.activeView;
+        button.classList.toggle("is-active", active);
+        if (active)
+            button.setAttribute("aria-current", "page");
+        else
+            button.removeAttribute("aria-current");
     });
     nodes.title.textContent = VIEW_TITLES[state.activeView];
     renderSyncState();
@@ -432,7 +444,14 @@ function renderOverview() {
     const startup = data.hermes_startup;
     const startupStatus = startup?.operator_health?.status || (startup?.ready ? "healthy" : "degraded");
     const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
+    const attentionCount = data.agents.filter((item) => !item.availability.eligible).length +
+        data.dead_letters.length +
+        data.rollouts.filter((item) => ["rescuing", "failed"].includes(String(item.rollout.status))).length +
+        data.dispatch.tasks.filter((item) => item.eligible_agent_count === 0).length;
+    const pendingNotifications = data.notifications.filter((item) => item.status === "pending").length;
+    const openFindings = data.integration_findings.filter((item) => item.status === "open").length;
     return `
+    ${overviewLaunchpad(data, attentionCount, pendingNotifications, openFindings)}
     <section class="metric-grid">
       ${metric("Fleets", counts.fleets || 0, `${data.fleets.reduce((sum, fleet) => sum + (fleet.agent_ids || []).length, 0)} fleet memberships`)}
       ${metric("Agents", counts.agents || 0, `${counts.healthy_agents || 0} healthy, ${counts.busy_agents || 0} busy`)}
@@ -459,6 +478,31 @@ function renderOverview() {
         ${attentionList(data)}
       </div>
     </section>
+  `;
+}
+function overviewLaunchpad(data, attentionCount, pendingNotifications, openFindings) {
+    const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
+    const blockedAgents = data.agents.filter((item) => !item.availability.eligible).length;
+    return `
+    <section class="launchpad" aria-label="Top-line dashboard actions">
+      ${launchpadAction("Review Work", "Project frontier, active stories, and dependencies", "work", `${readyStories} ready`)}
+      ${launchpadAction("Create Task", "Open the task board and add new work", "tasks", `${data.tasks.length} tasks`)}
+      ${launchpadAction("Add Agent", "Register capacity and inspect fleet health", "agents", `${blockedAgents} blocked`)}
+      ${launchpadAction("Watch Incidents", "Notifications, findings, audits, and live stream", "observability", `${attentionCount + pendingNotifications + openFindings} signals`)}
+      ${launchpadAction("Runtime Rollouts", "Runtimes, canaries, health, and rescue controls", "runtime", `${data.rollouts.length} rollouts`)}
+      ${launchpadAction("Secret Access", "Request handles and audit redacted access", "secrets", `${data.secrets.length} secrets`)}
+    </section>
+  `;
+}
+function launchpadAction(title, detail, view, badge) {
+    return `
+    <button class="launchpad-action" type="button" data-dashboard-go="${escapeHtml(view)}">
+      <span>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(detail)}</span>
+      </span>
+      ${chip(badge, "info")}
+    </button>
   `;
 }
 function renderWork() {
@@ -984,10 +1028,11 @@ function workflowGraph(workflow) {
         const type = String(node.node_type || "task").toLowerCase();
         const pos = positions.get(key) || { x: 120, y: 60 };
         const selected = key === selectedNodeKey ? " is-selected" : "";
+        const pressed = key === selectedNodeKey ? "true" : "false";
         return `
         <g class="graph-node graph-node-${type}${selected}" transform="translate(${pos.x},${pos.y})"
            data-action="workflowNodeOpen" data-node-key="${escapeHtml(key)}"
-           tabindex="0" role="button"
+           tabindex="0" role="button" aria-pressed="${pressed}"
            aria-label="${escapeHtml(`${key} (${type})`)}">
           <rect x="-86" y="-24" width="172" height="48" rx="8"></rect>
           ${workflowNodeIcon(type)}
@@ -1938,7 +1983,8 @@ function napRunRecord(run) {
   `;
 }
 function beadsRepositoryRecord(repo) {
-    const health = (repo.metadata && typeof repo.metadata === "object" ? repo.metadata.health : {});
+    const metadata = (repo.metadata && typeof repo.metadata === "object" ? repo.metadata : {});
+    const health = (metadata.health && typeof metadata.health === "object" ? metadata.health : {});
     const healthStatus = String(health.status || (repo.last_error ? "unhealthy" : "healthy"));
     const healthReason = String(health.reason || repo.last_error || "canonical");
     return `
@@ -3030,7 +3076,29 @@ function handleContentChange(event) {
         return;
     }
 }
+function handleContentKeydown(event) {
+    if (event.key !== "Enter" && event.key !== " ")
+        return;
+    const target = event.target;
+    const workflowNode = target?.closest("[data-action='workflowNodeOpen']");
+    const launchpad = target?.closest("[data-dashboard-go]");
+    if (!workflowNode && !launchpad)
+        return;
+    event.preventDefault();
+    if (workflowNode) {
+        toggleWorkflowNode(workflowNode);
+    }
+    else if (launchpad) {
+        navigateDashboardView(launchpad.dataset.dashboardGo);
+    }
+}
 async function handleContentClick(event) {
+    const launchpad = event.target?.closest("[data-dashboard-go]");
+    if (launchpad) {
+        event.preventDefault();
+        navigateDashboardView(launchpad.dataset.dashboardGo);
+        return;
+    }
     const projectDelete = event.target?.closest("[data-project-delete]");
     if (projectDelete) {
         event.preventDefault();
@@ -3105,9 +3173,7 @@ async function handleContentClick(event) {
     }
     const nodeOpen = event.target?.closest("[data-action='workflowNodeOpen']");
     if (nodeOpen) {
-        const key = nodeOpen.dataset.nodeKey || "";
-        state.selectedNodeKey = state.selectedNodeKey === key ? "" : key;
-        render();
+        toggleWorkflowNode(nodeOpen);
         return;
     }
     const nodeClose = event.target?.closest("[data-action='workflowNodeClose']");
@@ -3126,7 +3192,22 @@ async function handleContentClick(event) {
     updateUrlState();
     render();
 }
+function navigateDashboardView(view) {
+    if (!view || !VIEW_KEYS.has(view))
+        return;
+    state.activeView = view;
+    state.actionMessage = null;
+    updateUrlState();
+    render();
+}
+function toggleWorkflowNode(node) {
+    const key = node.dataset.nodeKey || "";
+    state.selectedNodeKey = state.selectedNodeKey === key ? "" : key;
+    render();
+}
 async function runDirectDelete(button, label, path, onSuccess = () => { }) {
+    if (!confirmDestructive(label))
+        return;
     button.disabled = true;
     try {
         const result = await deleteJSON(path);
@@ -3142,6 +3223,10 @@ async function runDirectDelete(button, label, path, onSuccess = () => { }) {
     finally {
         button.disabled = false;
     }
+}
+function confirmDestructive(label) {
+    const title = DESTRUCTIVE_ACTION_LABELS[label] || `${label} delete?`;
+    return window.confirm(`${title}\n\nThis cannot be undone.`);
 }
 function syncObservabilitySubscription() {
     if (state.activeView === "observability" && state.data) {
