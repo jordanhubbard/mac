@@ -296,8 +296,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     qdrant_data_dir = prompt("Qdrant data directory override (blank for default /var/lib/<fleet>/qdrant)", default="")
     firecrawl_port = 3002
     firecrawl_url = qdrant_url_from_hub(hub_url, firecrawl_port)
-    tokenhub_port = 8090
-    tokenhub_url = qdrant_url_from_hub(hub_url, tokenhub_port)
 
     print("")
     print("Fleet mesh networking connects agents across networks without manual VPN config.")
@@ -331,7 +329,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             ):
                 hub_url = "http://%s:%d" % (ts_hub_name, control_port)
                 firecrawl_url = "http://%s:%d" % (ts_hub_name, firecrawl_port)
-                tokenhub_url = "http://%s:%d" % (ts_hub_name, tokenhub_port)
                 if prompt_bool(
                     "Set Qdrant URL to http://%s:%d?" % (ts_hub_name, qdrant_port),
                     default=True,
@@ -383,7 +380,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         ):
             hub_url = "http://%s.mac.internal:%d" % (hs_host, control_port)
             firecrawl_url = "http://%s.mac.internal:%d" % (hs_host, firecrawl_port)
-            tokenhub_url = "http://%s.mac.internal:%d" % (hs_host, tokenhub_port)
             if prompt_bool(
                 "Set Qdrant URL to http://%s.mac.internal:%d?" % (hs_host, qdrant_port),
                 default=False,
@@ -460,15 +456,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                 "bind_addr": "",
                 "port": firecrawl_port,
             },
-            "tokenhub": {
-                "install": "auto",
-                "required": True,
-                "url": tokenhub_url,
-                "bind_addr": "",
-                "port": tokenhub_port,
-                "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                "ref": "",
-            },
             "network": {
                 "provider": network_provider,
                 "install": network_install,
@@ -492,7 +479,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "agents": agents,
     }
 
-    # Provider credentials — at least one required for TokenHub to route requests.
+    # Provider credentials — at least one required for the in-mac router to route requests.
     _KNOWN_PROVIDERS: Dict[str, tuple] = {
         "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
         "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
@@ -501,7 +488,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     }
     provider_env_values: Dict[str, str] = {}
     print("")
-    print("TokenHub requires at least one upstream LLM provider.")
+    print("The in-mac router requires at least one upstream LLM provider.")
     print("Keys are written to %s (mode 0600, never committed to git)." % env_file)
     print("Known providers: %s" % ", ".join(_KNOWN_PROVIDERS))
     print("")
@@ -637,7 +624,6 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
     else:
         qdrant_port = int(defaults.get("qdrant", {}).get("port", 6333))
         firecrawl_port = int(defaults.get("firecrawl", {}).get("port", 3002))
-        tokenhub_port = int(defaults.get("tokenhub", {}).get("port", 8090))
         fleet_config = {
             "sample": False,
             "fleet_name": fleet_name,
@@ -671,15 +657,6 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
                     "url": qdrant_url_from_hub(hub_url, firecrawl_port),
                     "bind_addr": "",
                     "port": firecrawl_port,
-                },
-                "tokenhub": {
-                    "install": "none",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
-                    "bind_addr": "",
-                    "port": tokenhub_port,
-                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                    "ref": "",
                 },
             },
             "agents": [new_agent],
@@ -786,7 +763,6 @@ def main(argv: List[str]) -> int:
         hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
         qdrant_port = 6333
         firecrawl_port = 3002
-        tokenhub_port = 8090
         headscale_login_server = args.headscale_login_server.strip()
         if args.network_provider == "headscale" and not headscale_login_server:
             print("--network-provider headscale requires --headscale-login-server", file=sys.stderr)
@@ -829,15 +805,6 @@ def main(argv: List[str]) -> int:
                     "url": qdrant_url_from_hub(hub_url, firecrawl_port),
                     "bind_addr": "",
                     "port": firecrawl_port,
-                },
-                "tokenhub": {
-                    "install": "auto",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
-                    "bind_addr": "",
-                    "port": tokenhub_port,
-                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                    "ref": "",
                 },
                 "network": {
                     "provider": args.network_provider,
@@ -891,7 +858,8 @@ def main(argv: List[str]) -> int:
         )
 
     print("mac fleet setup wizard")
-    print("Do not paste provider API keys here. Put upstream model/provider keys in TokenHub.")
+    print("Do not put provider API keys in the fleet config YAML. The wizard collects")
+    print("them into ~/.mac/.env (mode 0600); deploy escrows them into mac's vault.")
     print("")
 
     running_locally = prompt_bool(

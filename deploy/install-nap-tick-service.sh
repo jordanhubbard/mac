@@ -5,8 +5,9 @@
 # autonomous; without this an operator has to call `mac nap cycle` by hand.
 #
 # Configure embeddings in /etc/mac/nap-tick.env (defaults to the hash
-# stub when unset):
-#   MAC_MEMORY_EMBED_BACKEND=tokenhub
+# stub when unset). With "auto" (the default) a model + base_url + key
+# turns on real semantic embeddings:
+#   MAC_MEMORY_EMBED_BACKEND=auto
 #   MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
 #   MAC_QDRANT_URL=http://...:6333
 set -euo pipefail
@@ -47,10 +48,10 @@ fi
 sudo install -d -m 0755 "$(dirname "$ENV_DEST")"
 if [ ! -f "$ENV_DEST" ]; then
   sudo tee "$ENV_DEST" >/dev/null <<'ENV'
-# Set MAC_MEMORY_EMBED_BACKEND=tokenhub + MAC_MEMORY_EMBED_MODEL to get
-# real semantic recall. Leaving these unset uses the deterministic hash
-# stub — round-trip works but recall isn't semantic.
-#MAC_MEMORY_EMBED_BACKEND=tokenhub
+# Set MAC_MEMORY_EMBED_MODEL (with MAC_MEMORY_EMBED_BACKEND=auto, the
+# default) to get real semantic recall. Leaving these unset uses the
+# deterministic hash stub — round-trip works but recall isn't semantic.
+#MAC_MEMORY_EMBED_BACKEND=auto
 #MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
 #MAC_MEMORY_EMBED_INPUT_TYPE=passage
 ENV

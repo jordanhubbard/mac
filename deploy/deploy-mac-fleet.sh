@@ -551,7 +551,6 @@ for name in selected:
     worker = merge_dicts(defaults.get("worker", {}) if isinstance(defaults.get("worker"), dict) else {}, agent.get("worker", {}) if isinstance(agent.get("worker"), dict) else {})
     qdrant = merge_dicts(defaults.get("qdrant", {}) if isinstance(defaults.get("qdrant"), dict) else {}, agent.get("qdrant", {}) if isinstance(agent.get("qdrant"), dict) else {})
     firecrawl = merge_dicts(defaults.get("firecrawl", {}) if isinstance(defaults.get("firecrawl"), dict) else {}, agent.get("firecrawl", {}) if isinstance(agent.get("firecrawl"), dict) else {})
-    tokenhub = merge_dicts(defaults.get("tokenhub", {}) if isinstance(defaults.get("tokenhub"), dict) else {}, agent.get("tokenhub", {}) if isinstance(agent.get("tokenhub"), dict) else {})
     network = merge_dicts(defaults.get("network", {}) if isinstance(defaults.get("network"), dict) else {}, agent.get("network", {}) if isinstance(agent.get("network"), dict) else {})
     network_provider = text_field(network.get("provider"))
     if not network_provider:
@@ -606,13 +605,6 @@ for name in selected:
         "true",
         os.environ.get("MAC_DEPLOY_FIRECRAWL_BIND_ADDR") or text_field(firecrawl.get("bind_addr")),
         os.environ.get("MAC_DEPLOY_FIRECRAWL_PORT") or text_field(firecrawl.get("port") or "3002"),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_URL") or text_field(tokenhub.get("url")),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_INSTALL") or text_field(tokenhub.get("install") or "auto"),
-        os.environ.get("MAC_DEPLOY_REQUIRE_TOKENHUB") or bool_field(tokenhub.get("required"), True),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_BIND_ADDR") or text_field(tokenhub.get("bind_addr")),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_PORT") or text_field(tokenhub.get("port") or "8090"),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_REPO_URL") or text_field(tokenhub.get("repo_url") or "https://github.com/jordanhubbard/tokenhub.git"),
-        os.environ.get("MAC_DEPLOY_TOKENHUB_REF") or text_field(tokenhub.get("ref")),
         network_provider,
         text_field(network.get("install") or "auto"),
         text_field(network.get("hostname_prefix")),
@@ -777,8 +769,8 @@ REMOTE
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" tokenhub_api_key="${4:-}" allow_degraded_services="${5:-0}" github_review_key_b64="${6:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port tokenhub_url tokenhub_install tokenhub_required tokenhub_bind_addr tokenhub_port tokenhub_repo_url tokenhub_ref network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix remote_archive ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port tokenhub_url tokenhub_install tokenhub_required tokenhub_bind_addr tokenhub_port tokenhub_repo_url tokenhub_ref network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix <<<"$spec"
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix remote_archive ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -810,7 +802,7 @@ deploy_host() {
 
   echo "==> ${agent}: running one-time deploy"
   if ! ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_OS=$(shell_quote "$os") MAC_DEPLOY_ARCHIVE=$(shell_quote "$remote_archive") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GIT_URL=$(shell_quote "$GIT_URL") MAC_DEPLOY_GIT_BRANCH=$(shell_quote "$GIT_BRANCH") MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME=$(shell_quote "$home_channel") MAC_DEPLOY_HERMES_GATEWAY_MODEL=$(shell_quote "$gateway_model") MAC_DEPLOY_HERMES_GATEWAY_PROVIDER=$(shell_quote "$gateway_provider") MAC_DEPLOY_HERMES_GATEWAY_BASE_URL=$(shell_quote "$gateway_base_url") MAC_DEPLOY_HUB_URL=$(shell_quote "$hub_url") MAC_DEPLOY_HUB_TOKEN=$(shell_quote "$hub_token") MAC_DEPLOY_CONTROL_BIND_HOST=$(shell_quote "$bind_host") MAC_DEPLOY_WORKER_MODE=$(shell_quote "$worker_mode") MAC_DEPLOY_WORKER_CAPABILITIES=$(shell_quote "$worker_capabilities") MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=$(shell_quote "$worker_allowed_projects") MAC_DEPLOY_WORKER_REQUIRED_METADATA=$(shell_quote "$worker_required_metadata") MAC_DEPLOY_WORKER_REQUIRE_CANARY=$(shell_quote "$worker_require_canary") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT=$(shell_quote "$shared_services_manager") MAC_DEPLOY_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_DEPLOY_QDRANT_INSTALL=$(shell_quote "$qdrant_install") MAC_DEPLOY_REQUIRE_QDRANT_MEMORY=$(shell_quote "$qdrant_required") MAC_DEPLOY_QDRANT_BIND_ADDR=$(shell_quote "$qdrant_bind_addr") MAC_DEPLOY_QDRANT_PORT=$(shell_quote "$qdrant_port") MAC_DEPLOY_QDRANT_IMAGE=$(shell_quote "$qdrant_image") MAC_DEPLOY_QDRANT_MEMORY_LIMIT=$(shell_quote "$qdrant_memory_limit") MAC_DEPLOY_TARGET=$(shell_quote "$target") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") MAC_DEPLOY_CONTROL_PORT=$(shell_quote "$control_port") MAC_DEPLOY_QDRANT_DATA_DIR=$(shell_quote "$qdrant_data_dir") MAC_DEPLOY_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_DEPLOY_FIRECRAWL_INSTALL=$(shell_quote "$firecrawl_install") MAC_DEPLOY_REQUIRE_FIRECRAWL=$(shell_quote "$firecrawl_required") MAC_DEPLOY_FIRECRAWL_BIND_ADDR=$(shell_quote "$firecrawl_bind_addr") MAC_DEPLOY_FIRECRAWL_PORT=$(shell_quote "$firecrawl_port") MAC_DEPLOY_TOKENHUB_URL=$(shell_quote "$tokenhub_url") MAC_DEPLOY_TOKENHUB_INSTALL=$(shell_quote "$tokenhub_install") MAC_DEPLOY_REQUIRE_TOKENHUB=$(shell_quote "$tokenhub_required") MAC_DEPLOY_TOKENHUB_BIND_ADDR=$(shell_quote "$tokenhub_bind_addr") MAC_DEPLOY_TOKENHUB_PORT=$(shell_quote "$tokenhub_port") MAC_DEPLOY_TOKENHUB_REPO_URL=$(shell_quote "$tokenhub_repo_url") MAC_DEPLOY_TOKENHUB_REF=$(shell_quote "$tokenhub_ref") MAC_DEPLOY_TOKENHUB_API_KEY=$(shell_quote "$tokenhub_api_key") MAC_DEPLOY_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_DEPLOY_NETWORK_INSTALL=$(shell_quote "$network_install") MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX=$(shell_quote "$network_hostname_prefix") MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV=$(shell_quote "$tailscale_auth_key_env") MAC_DEPLOY_HEADSCALE_MANAGE=$(shell_quote "$headscale_manage") MAC_DEPLOY_HEADSCALE_LOGIN_SERVER=$(shell_quote "$headscale_login_server") MAC_DEPLOY_HEADSCALE_HEALTH_URL=$(shell_quote "$headscale_health_url") MAC_DEPLOY_HEADSCALE_FLEET_URL=$(shell_quote "$headscale_fleet_url") MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE=$(shell_quote "$headscale_preauth_key_source") MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_ENV=$(shell_quote "$headscale_preauth_key_env") MAC_DEPLOY_HEADSCALE_PORT=$(shell_quote "$headscale_port") MAC_DEPLOY_HEADSCALE_PUBLIC_ADDR=$(shell_quote "$headscale_public_addr") MAC_DEPLOY_HEADSCALE_DNS=$(shell_quote "$headscale_dns") MAC_DEPLOY_HEADSCALE_IP_PREFIX=$(shell_quote "$headscale_ip_prefix") MAC_DEPLOY_DRAIN_MODE=$(shell_quote "${MAC_DEPLOY_DRAIN_MODE:-}") MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}") MAC_DEPLOY_DRAIN_POLL_SECONDS=$(shell_quote "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}") MAC_DEPLOY_HUB_TUNNEL_PUBKEY=$(shell_quote "$hub_tunnel_pubkey") MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=$(shell_quote "${allow_degraded_services:-0}") MAC_DEPLOY_GITHUB_REVIEW_KEY_B64=$(shell_quote "$github_review_key_b64") MAC_DEPLOY_MEMORY_EMBED_MODEL=$(shell_quote "$mem_embed_model") MAC_DEPLOY_ROUTER_BACKEND=$(shell_quote "$router_backend") MAC_DEPLOY_ROUTER_PROVIDERS=$(shell_quote "$router_providers") MAC_DEPLOY_ROUTER_DEFAULT_MODEL=$(shell_quote "$router_default_model") MAC_DEPLOY_ROUTER_WILDCARD_MODELS=$(shell_quote "$router_wildcard_models") NVIDIA_API_KEY=$(shell_quote "$nvidia_api_key") NVIDIA_API_BASE=$(shell_quote "$nvidia_api_base") NVIDIA_BASE_URL=$(shell_quote "$nvidia_base_url") OPENAI_API_KEY=$(shell_quote "$openai_api_key") OPENAI_BASE_URL=$(shell_quote "$openai_base_url") ANTHROPIC_API_KEY=$(shell_quote "$anthropic_api_key") ANTHROPIC_BASE_URL=$(shell_quote "$anthropic_base_url") PERPLEXITY_API_KEY=$(shell_quote "$perplexity_api_key") PERPLEXITY_BASE_URL=$(shell_quote "$perplexity_base_url") PERPLEXITY_API_BASE=$(shell_quote "$perplexity_api_base") bash -s" <<'REMOTE'
+    "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_OS=$(shell_quote "$os") MAC_DEPLOY_ARCHIVE=$(shell_quote "$remote_archive") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GIT_URL=$(shell_quote "$GIT_URL") MAC_DEPLOY_GIT_BRANCH=$(shell_quote "$GIT_BRANCH") MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME=$(shell_quote "$home_channel") MAC_DEPLOY_HERMES_GATEWAY_MODEL=$(shell_quote "$gateway_model") MAC_DEPLOY_HERMES_GATEWAY_PROVIDER=$(shell_quote "$gateway_provider") MAC_DEPLOY_HERMES_GATEWAY_BASE_URL=$(shell_quote "$gateway_base_url") MAC_DEPLOY_HUB_URL=$(shell_quote "$hub_url") MAC_DEPLOY_HUB_TOKEN=$(shell_quote "$hub_token") MAC_DEPLOY_CONTROL_BIND_HOST=$(shell_quote "$bind_host") MAC_DEPLOY_WORKER_MODE=$(shell_quote "$worker_mode") MAC_DEPLOY_WORKER_CAPABILITIES=$(shell_quote "$worker_capabilities") MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=$(shell_quote "$worker_allowed_projects") MAC_DEPLOY_WORKER_REQUIRED_METADATA=$(shell_quote "$worker_required_metadata") MAC_DEPLOY_WORKER_REQUIRE_CANARY=$(shell_quote "$worker_require_canary") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT=$(shell_quote "$shared_services_manager") MAC_DEPLOY_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_DEPLOY_QDRANT_INSTALL=$(shell_quote "$qdrant_install") MAC_DEPLOY_REQUIRE_QDRANT_MEMORY=$(shell_quote "$qdrant_required") MAC_DEPLOY_QDRANT_BIND_ADDR=$(shell_quote "$qdrant_bind_addr") MAC_DEPLOY_QDRANT_PORT=$(shell_quote "$qdrant_port") MAC_DEPLOY_QDRANT_IMAGE=$(shell_quote "$qdrant_image") MAC_DEPLOY_QDRANT_MEMORY_LIMIT=$(shell_quote "$qdrant_memory_limit") MAC_DEPLOY_TARGET=$(shell_quote "$target") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") MAC_DEPLOY_CONTROL_PORT=$(shell_quote "$control_port") MAC_DEPLOY_QDRANT_DATA_DIR=$(shell_quote "$qdrant_data_dir") MAC_DEPLOY_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_DEPLOY_FIRECRAWL_INSTALL=$(shell_quote "$firecrawl_install") MAC_DEPLOY_REQUIRE_FIRECRAWL=$(shell_quote "$firecrawl_required") MAC_DEPLOY_FIRECRAWL_BIND_ADDR=$(shell_quote "$firecrawl_bind_addr") MAC_DEPLOY_FIRECRAWL_PORT=$(shell_quote "$firecrawl_port") MAC_DEPLOY_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_DEPLOY_NETWORK_INSTALL=$(shell_quote "$network_install") MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX=$(shell_quote "$network_hostname_prefix") MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV=$(shell_quote "$tailscale_auth_key_env") MAC_DEPLOY_HEADSCALE_MANAGE=$(shell_quote "$headscale_manage") MAC_DEPLOY_HEADSCALE_LOGIN_SERVER=$(shell_quote "$headscale_login_server") MAC_DEPLOY_HEADSCALE_HEALTH_URL=$(shell_quote "$headscale_health_url") MAC_DEPLOY_HEADSCALE_FLEET_URL=$(shell_quote "$headscale_fleet_url") MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE=$(shell_quote "$headscale_preauth_key_source") MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_ENV=$(shell_quote "$headscale_preauth_key_env") MAC_DEPLOY_HEADSCALE_PORT=$(shell_quote "$headscale_port") MAC_DEPLOY_HEADSCALE_PUBLIC_ADDR=$(shell_quote "$headscale_public_addr") MAC_DEPLOY_HEADSCALE_DNS=$(shell_quote "$headscale_dns") MAC_DEPLOY_HEADSCALE_IP_PREFIX=$(shell_quote "$headscale_ip_prefix") MAC_DEPLOY_DRAIN_MODE=$(shell_quote "${MAC_DEPLOY_DRAIN_MODE:-}") MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}") MAC_DEPLOY_DRAIN_POLL_SECONDS=$(shell_quote "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}") MAC_DEPLOY_HUB_TUNNEL_PUBKEY=$(shell_quote "$hub_tunnel_pubkey") MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=$(shell_quote "${allow_degraded_services:-0}") MAC_DEPLOY_GITHUB_REVIEW_KEY_B64=$(shell_quote "$github_review_key_b64") MAC_DEPLOY_MEMORY_EMBED_MODEL=$(shell_quote "$mem_embed_model") MAC_DEPLOY_ROUTER_BACKEND=$(shell_quote "$router_backend") MAC_DEPLOY_ROUTER_PROVIDERS=$(shell_quote "$router_providers") MAC_DEPLOY_ROUTER_DEFAULT_MODEL=$(shell_quote "$router_default_model") MAC_DEPLOY_ROUTER_WILDCARD_MODELS=$(shell_quote "$router_wildcard_models") NVIDIA_API_KEY=$(shell_quote "$nvidia_api_key") NVIDIA_API_BASE=$(shell_quote "$nvidia_api_base") NVIDIA_BASE_URL=$(shell_quote "$nvidia_base_url") OPENAI_API_KEY=$(shell_quote "$openai_api_key") OPENAI_BASE_URL=$(shell_quote "$openai_base_url") ANTHROPIC_API_KEY=$(shell_quote "$anthropic_api_key") ANTHROPIC_BASE_URL=$(shell_quote "$anthropic_base_url") PERPLEXITY_API_KEY=$(shell_quote "$perplexity_api_key") PERPLEXITY_BASE_URL=$(shell_quote "$perplexity_base_url") PERPLEXITY_API_BASE=$(shell_quote "$perplexity_api_base") bash -s" <<'REMOTE'
 set -euo pipefail
 
 AGENT="${MAC_DEPLOY_AGENT:?}"
@@ -850,14 +842,6 @@ FIRECRAWL_INSTALL="${MAC_DEPLOY_FIRECRAWL_INSTALL:-auto}"
 FIRECRAWL_REQUIRE="1"
 FIRECRAWL_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_BIND_ADDR:-}"
 FIRECRAWL_PORT_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_PORT:-3002}"
-TOKENHUB_URL_CONFIGURED="${MAC_DEPLOY_TOKENHUB_URL:-}"
-TOKENHUB_INSTALL="${MAC_DEPLOY_TOKENHUB_INSTALL:-auto}"
-TOKENHUB_REQUIRE="${MAC_DEPLOY_REQUIRE_TOKENHUB:-1}"
-TOKENHUB_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_TOKENHUB_BIND_ADDR:-}"
-TOKENHUB_PORT_CONFIGURED="${MAC_DEPLOY_TOKENHUB_PORT:-8090}"
-TOKENHUB_REPO_URL_CONFIGURED="${MAC_DEPLOY_TOKENHUB_REPO_URL:-https://github.com/jordanhubbard/tokenhub.git}"
-TOKENHUB_REF_CONFIGURED="${MAC_DEPLOY_TOKENHUB_REF:-}"
-TOKENHUB_API_KEY_CONFIGURED="${MAC_DEPLOY_TOKENHUB_API_KEY:-}"
 NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"
 NETWORK_INSTALL="${MAC_DEPLOY_NETWORK_INSTALL:-auto}"
 NETWORK_HOSTNAME_PREFIX="${MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX:-}"
@@ -2428,313 +2412,14 @@ else:
 PY
 }
 
-sync_hermes_tokenhub_client_env() {
-  # th-merge-07: when the in-mac router is the backend, do NOT pin the Hermes
-  # client env to TokenHub's :8090 base_url — the router (mac /v1) is the gateway.
-  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
-    inproc) log "skipping Hermes TokenHub client env sync (in-mac router active)"; return 0 ;;
-  esac
-  log "syncing Hermes TokenHub client environment"
-  "$PY" - "$ENV_FILE" "$HOME/.hermes/.env" <<'PY'
-import json
-from pathlib import Path
-import sys
-from datetime import datetime, timezone
-
-source_path = Path(sys.argv[1])
-target_path = Path(sys.argv[2])
-
-
-def read_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.exists():
-        return values
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-def write_env(path: Path, updates: dict[str, str | None]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines() if path.exists() else []
-    seen: set[str] = set()
-    output: list[str] = []
-    for line in lines:
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            output.append(line)
-            continue
-        key = line.split("=", 1)[0].strip()
-        if key in updates:
-            seen.add(key)
-            if updates[key] is not None:
-                output.append(f"{key}={updates[key]}")
-        else:
-            output.append(line)
-    for key in sorted(updates):
-        if key not in seen and updates[key] is not None:
-            output.append(f"{key}={updates[key]}")
-    path.write_text("\n".join(output) + "\n", encoding="utf-8")
-    path.chmod(0o600)
-
-
-def sync_tokenhub_credential_pool(hermes_home: Path, tokenhub_url: str, tokenhub_key: str) -> bool:
-    if not tokenhub_url or not tokenhub_key:
-        return False
-    auth_path = hermes_home / "auth.json"
-    try:
-        auth_store = json.loads(auth_path.read_text(encoding="utf-8")) if auth_path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        auth_store = {}
-    if not isinstance(auth_store, dict):
-        auth_store = {}
-    pool = auth_store.get("credential_pool")
-    if not isinstance(pool, dict):
-        pool = {}
-        auth_store["credential_pool"] = pool
-    entries = pool.get("custom:tokenhub")
-    if not isinstance(entries, list) or not entries:
-        entries = [
-            {
-                "id": "mac-tokenhub",
-                "label": "tokenhub",
-                "auth_type": "api_key",
-                "priority": 0,
-                "source": "mac-tokenhub-sync",
-            }
-        ]
-    now = datetime.now(timezone.utc).isoformat()
-    entry = entries[0] if isinstance(entries[0], dict) else {}
-    entry.update(
-        {
-            "label": entry.get("label") or "tokenhub",
-            "auth_type": "api_key",
-            "priority": int(entry.get("priority") or 0),
-            "source": "mac-tokenhub-sync",
-            "access_token": tokenhub_key,
-            "base_url": tokenhub_url.rstrip("/") + "/v1",
-            "last_status": "ok",
-            "last_status_at": now,
-            "last_error_code": None,
-            "last_error_reason": None,
-            "last_error_message": None,
-            "last_error_reset_at": None,
-        }
-    )
-    if not str(entry.get("id") or "").strip():
-        entry["id"] = "mac-tokenhub"
-    entries[0] = entry
-    pool["custom:tokenhub"] = entries
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    auth_path.write_text(json.dumps(auth_store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    auth_path.chmod(0o600)
-    return True
-
-
-source = read_env(source_path)
-tokenhub_url = source.get("TOKENHUB_URL", "").strip().rstrip("/")
-tokenhub_key = (source.get("TOKENHUB_API_KEY") or source.get("TOKENHUB_AGENT_KEY") or "").strip()
-if not tokenhub_url and not tokenhub_key:
-    print("TokenHub client env: skipped; TOKENHUB_URL/TOKENHUB_API_KEY absent")
-    raise SystemExit(0)
-
-updates: dict[str, str | None] = {
-    # Preserve a provided NVIDIA_API_KEY (the NIM image-gen backend reads it).
-    # The NVIDIA *base URLs* are still stripped below so chat never routes to
-    # NVIDIA directly — the gateway provider stays pinned to "custom"/TokenHub.
-    "NVIDIA_API_KEY": (source.get("NVIDIA_API_KEY") or "").strip() or None,
-    "NVIDIA_API_BASE": None,
-    "NVIDIA_BASE_URL": None,
-    "ANTHROPIC_API_KEY": None,
-    "ANTHROPIC_BASE_URL": None,
-    "PERPLEXITY_API_KEY": None,
-    "PERPLEXITY_BASE_URL": None,
-    "PERPLEXITY_API_BASE": None,
-    "LLM_KEY": None,
-    "LLM_URL": None,
-}
-if tokenhub_url:
-    tokenhub_v1 = tokenhub_url + "/v1"
-    updates.update(
-        {
-            "TOKENHUB_URL": tokenhub_url,
-            "OPENAI_BASE_URL": tokenhub_v1,
-            "CUSTOM_BASE_URL": tokenhub_v1,
-            "MAC_HERMES_GATEWAY_BASE_URL": tokenhub_v1,
-            "ACC_HERMES_GATEWAY_BASE_URL": tokenhub_v1,
-            "MAC_HERMES_GATEWAY_PROVIDER": "custom",
-            "ACC_HERMES_GATEWAY_PROVIDER": "custom",
-            "HERMES_INFERENCE_PROVIDER": "custom",
-            "MAC_REQUIRE_TOKENHUB": source.get("MAC_REQUIRE_TOKENHUB") or "1",
-            "MAC_TOKENHUB_PORT": source.get("MAC_TOKENHUB_PORT") or "8090",
-        }
-    )
-if tokenhub_key:
-    updates["TOKENHUB_API_KEY"] = tokenhub_key
-    updates["OPENAI_API_KEY"] = tokenhub_key
-    updates["MAC_HERMES_GATEWAY_API_KEY"] = tokenhub_key
-    updates["ACC_HERMES_GATEWAY_API_KEY"] = tokenhub_key
-else:
-    updates["TOKENHUB_API_KEY"] = None
-    updates["OPENAI_API_KEY"] = None
-    updates["MAC_HERMES_GATEWAY_API_KEY"] = None
-    updates["ACC_HERMES_GATEWAY_API_KEY"] = None
-
-model = (
-    source.get("MAC_HERMES_GATEWAY_MODEL")
-    or source.get("HERMES_INFERENCE_MODEL")
-    or source.get("ACC_HERMES_GATEWAY_MODEL")
-    or source.get("ACC_LLM_MODEL")
-    or ""
-).strip()
-if model == "*":
-    model = ""
-updates["MAC_HERMES_GATEWAY_MODEL"] = model or None
-updates["ACC_HERMES_GATEWAY_MODEL"] = model or None
-updates["HERMES_INFERENCE_MODEL"] = model or None
-updates["ACC_LLM_MODEL"] = model or None
-
-write_env(target_path, updates)
-pool_synced = sync_tokenhub_credential_pool(target_path.parent, tokenhub_url, tokenhub_key)
-print("TokenHub client env: synced to %s credential_pool=%s" % (target_path, "synced" if pool_synced else "skipped"))
-PY
-}
-
-sync_hermes_tokenhub_runtime_config() {
-  # th-merge-07: in router mode TokenHub is retired — don't re-pin config.yaml's
-  # model.provider/base_url to TokenHub. The gateway base_url comes from the
-  # MAC_HERMES_GATEWAY_BASE_URL env override (the local /v1 router) instead.
-  case "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" in
-    inproc) log "skipping Hermes TokenHub runtime config sync (in-mac router active)"; return 0 ;;
-  esac
-  log "syncing Hermes TokenHub runtime config"
-  "$VENV/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-import yaml
-
-config_path = Path(sys.argv[1])
-env_path = Path(sys.argv[2])
-
-
-def read_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.exists():
-        return values
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-env = read_env(env_path)
-tokenhub_url = str(env.get("TOKENHUB_URL") or "").strip().rstrip("/")
-tokenhub_key = str(env.get("TOKENHUB_API_KEY") or env.get("TOKENHUB_AGENT_KEY") or "").strip()
-if not tokenhub_url:
-    print("TokenHub runtime config: skipped; TOKENHUB_URL absent")
-    raise SystemExit(0)
-
-config_path.parent.mkdir(parents=True, exist_ok=True)
-if config_path.exists():
-    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8", errors="ignore")) or {}
-else:
-    loaded = {}
-config = loaded if isinstance(loaded, dict) else {}
-tokenhub_v1 = tokenhub_url.rstrip("/") + "/v1/"
-model = (
-    str(env.get("HERMES_INFERENCE_MODEL") or "").strip()
-    or str(env.get("MAC_HERMES_GATEWAY_MODEL") or "").strip()
-)
-if model == "*":
-    model = ""
-
-model_config = config.get("model") if isinstance(config.get("model"), dict) else {}
-model_config = dict(model_config)
-if model:
-    model_config["default"] = model
-else:
-    model_config.pop("default", None)
-model_config["provider"] = "tokenhub"
-model_config["base_url"] = tokenhub_v1
-# Keep the client key in .env and point Hermes at it. Inline keys in config.yaml
-# can outlive a TokenHub redeploy and silently break every oneshot worker.
-model_config.pop("api_key", None)
-config["model"] = model_config
-
-providers = config.get("providers") if isinstance(config.get("providers"), dict) else {}
-providers = dict(providers)
-tokenhub_provider = providers.get("tokenhub") if isinstance(providers.get("tokenhub"), dict) else {}
-tokenhub_provider = dict(tokenhub_provider)
-tokenhub_provider.update(
-    {
-        "name": "tokenhub",
-        "api": tokenhub_v1,
-        "key_env": "TOKENHUB_API_KEY",
-        "transport": "chat_completions",
-    }
-)
-if model:
-    tokenhub_provider["default_model"] = model
-else:
-    tokenhub_provider.pop("default_model", None)
-tokenhub_provider.pop("api_key", None)
-providers["tokenhub"] = tokenhub_provider
-config["providers"] = providers
-
-if tokenhub_key:
-    # Ensure the env file has the key name referenced by config.yaml even when
-    # the deploy input used TOKENHUB_AGENT_KEY.
-    lines = env_path.read_text(encoding="utf-8", errors="ignore").splitlines() if env_path.exists() else []
-    seen = False
-    output: list[str] = []
-    for line in lines:
-        if line.strip().startswith("TOKENHUB_API_KEY="):
-            output.append("TOKENHUB_API_KEY=%s" % tokenhub_key)
-            seen = True
-        else:
-            output.append(line)
-    if not seen:
-        output.append("TOKENHUB_API_KEY=%s" % tokenhub_key)
-    env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
-    env_path.chmod(0o600)
-
-# Image generation backend: when this agent carries an NVIDIA_API_KEY (a NIM
-# image key the operator opted into via the fleet config), make NVIDIA the
-# active ``image_gen`` provider so the core ``image_generate`` tool surfaces.
-# Chat is unaffected — it stays pinned to the "tokenhub" model/provider above.
-nvidia_image_key = str(env.get("NVIDIA_API_KEY") or "").strip()
-if nvidia_image_key:
-    image_gen_cfg = config.get("image_gen") if isinstance(config.get("image_gen"), dict) else {}
-    image_gen_cfg = dict(image_gen_cfg)
-    image_gen_cfg["provider"] = "nvidia"
-    image_gen_cfg.setdefault("model", "flux.1-dev")
-    config["image_gen"] = image_gen_cfg
-    print("Image generation: NVIDIA NIM backend enabled (model=%s)" % image_gen_cfg["model"])
-
-config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-config_path.chmod(0o600)
-print("TokenHub runtime config: synced to %s" % config_path)
-PY
-}
-
 fetch_slack_secrets_from_vault() {
-  # Pull this agent's Slack tokens from TokenHub vault (centralized
-  # secret store). Replaces per-host .env scattering. Idempotent;
-  # writes ~/.hermes/slack_accounts.json and updates SLACK_BOT_TOKEN /
-  # SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
-  #
-  # th-merge-07: in router mode TokenHub is retired, so read this agent's Slack
-  # secrets from mac's OWN vault (the hub's SecretsService, via /secrets +
-  # /secrets/<name>/resolve) instead of TokenHub. Secrets were migrated by
-  # scripts/migrate-tokenhub-vault.sh.
+  # Pull this agent's Slack tokens from mac's OWN vault (the hub's
+  # SecretsService, via /secrets + /secrets/<name>/resolve) — the
+  # centralized secret store that replaces per-host .env scattering.
+  # Idempotent; writes ~/.hermes/slack_accounts.json and updates
+  # SLACK_BOT_TOKEN / SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
+  # (Secrets were migrated off the retired TokenHub by
+  # scripts/migrate-tokenhub-vault.sh.)
   local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
   if [ ! -f "$fetcher" ]; then
     log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
@@ -2765,23 +2450,6 @@ fetch_slack_secrets_from_vault() {
         log "WARNING: mac-vault Slack fetch failed for ${AGENT}; existing slack config preserved"
     return 0
   fi
-  local th_env="$HOME/.tokenhub/env"
-  local th_admin="${TOKENHUB_ADMIN_TOKEN:-}"
-  if [ -z "$th_admin" ] && [ -f "$th_env" ]; then
-    th_admin="$(awk -F= '/^TOKENHUB_ADMIN_TOKEN=/{print $2}' "$th_env" | head -1)"
-  fi
-  local th_url="${TOKENHUB_URL:-${MAC_DEPLOY_TOKENHUB_URL:-http://127.0.0.1:${MAC_DEPLOY_TOKENHUB_PORT:-8090}}}"
-  if [ -z "$th_admin" ]; then
-    log "skipping Slack vault fetch: TOKENHUB_ADMIN_TOKEN unavailable on $HOME"
-    return 0
-  fi
-  log "fetching Slack secrets for ${AGENT} from TokenHub vault ($th_url)"
-  MAC_AGENT_NAME="$AGENT" \
-    TOKENHUB_URL="$th_url" \
-    TOKENHUB_ADMIN_TOKEN="$th_admin" \
-    HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
-    "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
-      log "WARNING: Slack vault fetch failed for ${AGENT}; will fall back to existing files"
 }
 
 sync_hermes_slack_identity_env() {
@@ -2831,10 +2499,10 @@ def write_env(path: Path, updates: dict[str, str | None]) -> None:
 
 def read_config_env_slack_tokens(config_path: Path) -> dict[str, str]:
     """Extract SLACK_BOT_TOKEN/SLACK_APP_TOKEN from the top-level env: block of
-    config.yaml. This covers spokes whose Slack *vault fetch* is skipped (no
-    TOKENHUB_ADMIN_TOKEN) but whose config.yaml already carries the tokens: the
-    gateway wrapper sources ~/.hermes/.env, so the tokens must live there too or
-    a restarted gateway comes up "No messaging platforms enabled"."""
+    config.yaml. This covers spokes whose Slack *vault fetch* is skipped but
+    whose config.yaml already carries the tokens: the gateway wrapper sources
+    ~/.hermes/.env, so the tokens must live there too or a restarted gateway
+    comes up "No messaging platforms enabled"."""
     out: dict[str, str] = {}
     if not config_path.exists():
         return out
@@ -3442,7 +3110,7 @@ rm -f "$ARCHIVE"
 install_github_cli || true
 
 log "creating/updating mac environment file"
-"$PY" - "$ENV_FILE" "$MAC_HOME" "$HOME" "$MAC_PORT" "$HERMES_SLACK_HOME_CHANNEL_NAME" "$HERMES_GATEWAY_MODEL" "$HERMES_GATEWAY_PROVIDER" "$HERMES_GATEWAY_BASE_URL" "$HUB_URL" "$HUB_TOKEN" "$CONTROL_BIND_HOST" "$WORKER_MODE" "$WORKER_CAPABILITIES" "$WORKER_ALLOWED_PROJECTS" "$WORKER_REQUIRED_METADATA" "$WORKER_REQUIRE_CANARY" "$AGENT" "$SUPERVISOR_KIND" "$SHARED_SERVICES_MANAGER_AGENT" "$QDRANT_URL_CONFIGURED" "$QDRANT_REQUIRE" "$QDRANT_PORT_CONFIGURED" "$FIRECRAWL_URL_CONFIGURED" "$FIRECRAWL_REQUIRE" "$FIRECRAWL_PORT_CONFIGURED" "$TOKENHUB_URL_CONFIGURED" "$TOKENHUB_REQUIRE" "$TOKENHUB_PORT_CONFIGURED" "$TOKENHUB_API_KEY_CONFIGURED" <<'PY'
+"$PY" - "$ENV_FILE" "$MAC_HOME" "$HOME" "$MAC_PORT" "$HERMES_SLACK_HOME_CHANNEL_NAME" "$HERMES_GATEWAY_MODEL" "$HERMES_GATEWAY_PROVIDER" "$HERMES_GATEWAY_BASE_URL" "$HUB_URL" "$HUB_TOKEN" "$CONTROL_BIND_HOST" "$WORKER_MODE" "$WORKER_CAPABILITIES" "$WORKER_ALLOWED_PROJECTS" "$WORKER_REQUIRED_METADATA" "$WORKER_REQUIRE_CANARY" "$AGENT" "$SUPERVISOR_KIND" "$SHARED_SERVICES_MANAGER_AGENT" "$QDRANT_URL_CONFIGURED" "$QDRANT_REQUIRE" "$QDRANT_PORT_CONFIGURED" "$FIRECRAWL_URL_CONFIGURED" "$FIRECRAWL_REQUIRE" "$FIRECRAWL_PORT_CONFIGURED" <<'PY'
 from pathlib import Path
 import os
 import re
@@ -3477,10 +3145,6 @@ configured_qdrant_port = sys.argv[22].strip() or "6333"
 configured_firecrawl_url = sys.argv[23].strip()
 configured_firecrawl_required = "1"
 configured_firecrawl_port = sys.argv[25].strip() or "3002"
-configured_tokenhub_url = sys.argv[26].strip()
-configured_tokenhub_required = sys.argv[27].strip() or "1"
-configured_tokenhub_port = sys.argv[28].strip() or "8090"
-configured_tokenhub_api_key = sys.argv[29].strip()
 network_provider = (
     os.environ.get("MAC_DEPLOY_NETWORK_PROVIDER")
     or os.environ.get("NETWORK_PROVIDER")
@@ -3642,7 +3306,7 @@ provider_secret_keys = (
     # NVIDIA_API_KEY is intentionally NOT stripped: it's the NVIDIA NIM
     # image-generation backend's key. Chat routing is unaffected because the
     # NVIDIA base URLs (below) are still removed and the gateway provider is
-    # pinned to "custom"/TokenHub.
+    # pinned to "custom"/the in-mac router.
     "NVIDIA_API_BASE",
     "NVIDIA_BASE_URL",
     "ANTHROPIC_API_KEY",
@@ -3656,77 +3320,6 @@ provider_secret_keys = (
 for key in provider_secret_keys:
     values.pop(key, None)
 
-def tokenhub_url():
-    if configured_tokenhub_url:
-        return configured_tokenhub_url.rstrip("/")
-    # Use the derived MAC_HUB_URL (not the raw spec hub URL) to detect whether
-    # this agent accesses the hub via a reverse SSH tunnel. MAC_HUB_URL is set
-    # to 127.0.0.1:18789 for tunnel-connected workers and 127.0.0.1:<port> for
-    # the hub itself — the raw configured_hub_url is always the native port.
-    mac_hub_url = values.get("MAC_HUB_URL") or configured_hub_url or "http://127.0.0.1:8789"
-    parsed = urllib.parse.urlsplit(mac_hub_url)
-    if not parsed.scheme or not parsed.hostname:
-        return ""
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = "[%s]" % host
-    th_port = int(configured_tokenhub_port or "8090")
-    native_hub_port = int(port or "8789")
-    hub_port = parsed.port or native_hub_port
-    # Workers access the hub via a reverse SSH tunnel where the local port is
-    # native_port + 10000 (e.g. 8789 -> 18789). Apply the same offset to tokenhub
-    # so workers use the tunnel-forwarded tokenhub port (e.g. 8090 -> 18090).
-    if hub_port == native_hub_port + 10000:
-        th_port += 10000
-    return urllib.parse.urlunsplit((parsed.scheme, "%s:%s" % (host, th_port), "", "", ""))
-
-derived_tokenhub_url = tokenhub_url()
-if derived_tokenhub_url:
-    tokenhub_v1 = derived_tokenhub_url.rstrip("/") + "/v1"
-    values["TOKENHUB_URL"] = derived_tokenhub_url
-    values["MAC_REQUIRE_TOKENHUB"] = configured_tokenhub_required
-    values["MAC_TOKENHUB_PORT"] = configured_tokenhub_port
-    values["OPENAI_BASE_URL"] = tokenhub_v1
-    values["CUSTOM_BASE_URL"] = tokenhub_v1
-    values["MAC_HERMES_GATEWAY_BASE_URL"] = tokenhub_v1
-    values["ACC_HERMES_GATEWAY_BASE_URL"] = tokenhub_v1
-    values["MAC_HERMES_GATEWAY_PROVIDER"] = "custom"
-    values["ACC_HERMES_GATEWAY_PROVIDER"] = "custom"
-    values["HERMES_INFERENCE_PROVIDER"] = "custom"
-    if configured_gateway_model:
-        values["MAC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
-        values["ACC_HERMES_GATEWAY_MODEL"] = configured_gateway_model
-        values["HERMES_INFERENCE_MODEL"] = configured_gateway_model
-        values["ACC_LLM_MODEL"] = configured_gateway_model
-    else:
-        values.pop("MAC_HERMES_GATEWAY_MODEL", None)
-        values.pop("ACC_HERMES_GATEWAY_MODEL", None)
-        values.pop("HERMES_INFERENCE_MODEL", None)
-        values.pop("ACC_LLM_MODEL", None)
-    if configured_tokenhub_api_key:
-        values["TOKENHUB_API_KEY"] = configured_tokenhub_api_key
-        values["OPENAI_API_KEY"] = configured_tokenhub_api_key
-        values["MAC_HERMES_GATEWAY_API_KEY"] = configured_tokenhub_api_key
-        values["ACC_HERMES_GATEWAY_API_KEY"] = configured_tokenhub_api_key
-    else:
-        values.pop("OPENAI_API_KEY", None)
-        values.pop("MAC_HERMES_GATEWAY_API_KEY", None)
-        values.pop("ACC_HERMES_GATEWAY_API_KEY", None)
-elif not truthy(configured_tokenhub_required):
-    for key in (
-        "TOKENHUB_URL",
-        "TOKENHUB_API_KEY",
-        "TOKENHUB_AGENT_KEY",
-        "OPENAI_API_KEY",
-        "MAC_HERMES_GATEWAY_API_KEY",
-        "ACC_HERMES_GATEWAY_API_KEY",
-        "OPENAI_BASE_URL",
-        "CUSTOM_BASE_URL",
-        "MAC_HERMES_GATEWAY_BASE_URL",
-        "ACC_HERMES_GATEWAY_BASE_URL",
-        "MAC_REQUIRE_TOKENHUB",
-    ):
-        values.pop(key, None)
 values.setdefault("MAC_WORKER_WORKSPACE", str(mac_home / "agent-workspaces"))
 values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
 values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
@@ -3745,7 +3338,7 @@ if _mem_embed_model:
 # th-merge-02 canary: optional in-mac model router. When this agent's
 # MAC_ROUTER_BACKEND=inproc and providers are configured, its mac API mounts the
 # /v1 OpenAI front door (streaming + failover + recovering breaker) and its own
-# gateway is cut over to that LOCAL router instead of the tokenhub base_url.
+# gateway is cut over to that LOCAL router instead of a remote gateway base_url.
 # Additive + gated: with no MAC_ROUTER_* set, the fleet is unchanged.
 _router_backend = (os.environ.get("MAC_DEPLOY_ROUTER_BACKEND") or "").strip()
 _router_providers = (os.environ.get("MAC_DEPLOY_ROUTER_PROVIDERS") or "").strip()
@@ -3842,7 +3435,6 @@ log "using vendored in-tree Hermes runtime (ADR 0001 hu-04; no upstream clone)"
 git -C "$SRC_DIR" rev-parse HEAD > "$LOG_DIR/hermes-vendored-rev.txt" 2>/dev/null || true
 cat "$HERMES_VENDORED/SNAPSHOT_PIN" > "$LOG_DIR/hermes-vendored-pin.txt" 2>/dev/null || true
 initialize_hermes_home
-sync_hermes_tokenhub_runtime_config
 ensure_hermes_identity_memory_continuity
 apply_hermes_gateway_runtime_shim
 install_hermes_web_deps
@@ -4037,25 +3629,8 @@ export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
 export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export HERMES_REDACT_SECRETS=true
-if [ -z "${CUSTOM_BASE_URL:-}" ] && [ -n "${TOKENHUB_URL:-}" ]; then
-  export CUSTOM_BASE_URL="${TOKENHUB_URL%/}/v1"
-fi
 if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
   export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
-fi
-if [ -z "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
 fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
@@ -4199,25 +3774,8 @@ set +a
 export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export HERMES_REDACT_SECRETS=true
-if [ -z "${CUSTOM_BASE_URL:-}" ] && [ -n "${TOKENHUB_URL:-}" ]; then
-  export CUSTOM_BASE_URL="${TOKENHUB_URL%/}/v1"
-fi
 if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
   export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
-fi
-if [ -z "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
 fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
@@ -4350,9 +3908,6 @@ context_path = Path(
     os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE")
     or hermes_home / "mac-runtime-context.json"
 )
-tokenhub_url = str(os.environ.get("TOKENHUB_URL") or "").rstrip("/")
-tokenhub_key = os.environ.get("TOKENHUB_API_KEY") or os.environ.get("TOKENHUB_AGENT_KEY") or ""
-tokenhub_required = truthy(os.environ.get("MAC_REQUIRE_TOKENHUB") or "1")
 qdrant_url = str(
     os.environ.get("QDRANT_URL")
     or os.environ.get("QDRANT_ADDRESS")
@@ -4384,7 +3939,6 @@ checks: dict[str, object] = {
     "runtime_context": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
-    "tokenhub_runtime": False,
     "hermes_chat": False,
 }
 runtime_provider: dict[str, object] = {}
@@ -4444,10 +3998,6 @@ if context:
             problems.append(f"runtime context mismatch {key}: expected {expected!r}, got {actual!r}")
     checks["runtime_context"] = not any("runtime context" in problem for problem in problems)
 
-if tokenhub_required and not tokenhub_url:
-    problems.append("TOKENHUB_URL is required but not configured")
-if tokenhub_required and not tokenhub_key:
-    problems.append("TOKENHUB_API_KEY is required but not configured")
 
 if not truthy(qdrant_required_flag):
     problems.append("MAC_REQUIRE_QDRANT_MEMORY must be true")
@@ -4484,28 +4034,11 @@ try:
     runtime_provider = resolve_runtime_provider(
         target_model=os.environ.get("HERMES_INFERENCE_MODEL") or None
     )
-    runtime_key = str(runtime_provider.get("api_key") or "")
-    runtime_base_url = str(runtime_provider.get("base_url") or "").rstrip("/")
-    expected_base_url = f"{tokenhub_url}/v1" if tokenhub_url else ""
-    key_matches_env = bool(tokenhub_key and runtime_key == tokenhub_key)
-    base_url_matches_env = bool(
-        not expected_base_url or runtime_base_url == expected_base_url.rstrip("/")
-    )
     runtime_provider = {
         "provider": runtime_provider.get("provider"),
         "source": runtime_provider.get("source"),
         "model": runtime_provider.get("model"),
-        "base_url_matches_env": base_url_matches_env,
-        "key_matches_env": key_matches_env,
     }
-    if tokenhub_key and not key_matches_env:
-        problems.append("Hermes runtime provider key does not match TOKENHUB_API_KEY")
-    if expected_base_url and not base_url_matches_env:
-        problems.append("Hermes runtime provider base_url does not match TOKENHUB_URL")
-    checks["tokenhub_runtime"] = not any(
-        problem.startswith("Hermes runtime provider") or problem.startswith("TOKENHUB_")
-        for problem in problems
-    )
 except Exception as exc:
     runtime_provider = {"error": safe_error(exc)}
     problems.append(f"Hermes runtime provider resolution failed: {safe_error(exc)}")
@@ -4638,25 +4171,8 @@ set +a
 export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export HERMES_REDACT_SECRETS=true
-if [ -z "${CUSTOM_BASE_URL:-}" ] && [ -n "${TOKENHUB_URL:-}" ]; then
-  export CUSTOM_BASE_URL="${TOKENHUB_URL%/}/v1"
-fi
 if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
   export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export OPENAI_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
-fi
-if [ -z "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  if [ -n "${TOKENHUB_API_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_API_KEY"
-  elif [ -n "${TOKENHUB_AGENT_KEY:-}" ]; then
-    export MAC_HERMES_GATEWAY_API_KEY="$TOKENHUB_AGENT_KEY"
-  fi
 fi
 if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
   export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
@@ -5364,14 +4880,12 @@ worker_can_reach_hub_url() {
 
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey tokenhub_api_key tokenhub_api_key_name github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
+  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_token_key="$(fleet_scoped_name MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_tunnel_pubkey="$(fleet_scoped_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_agent")"
-  tokenhub_api_key="$(fleet_scoped_env MAC_DEPLOY_TOKENHUB_API_KEY "$hub_agent")"
-  tokenhub_api_key_name="$(fleet_scoped_name MAC_DEPLOY_TOKENHUB_API_KEY "$hub_agent")"
   deployed_count=0
   echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
   github_review_key_b64="$(ensure_local_github_review_key)"
@@ -5384,7 +4898,7 @@ main() {
     local_target="${spec_fields[1]}"
     hub_url_field="${spec_fields[7]:-}"
     fleet_name_field="${spec_fields[23]:-mac}"
-    network_provider_field="${spec_fields[38]:-none}"
+    network_provider_field="${spec_fields[31]:-none}"
     direct_mesh_hub=0
     if [ "$agent" != "$hub_agent" ] \
       && uses_direct_mesh_hub "$network_provider_field" "$hub_url_field" \
@@ -5395,22 +4909,19 @@ main() {
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
     fi
-    # th-merge-07: TokenHub is retired — spokes no longer fetch a TokenHub agent
-    # key from the hub (they route via the in-mac router). tokenhub_api_key stays
-    # empty.
     allow_degraded_services=0
     if [ "$agent" != "$hub_agent" ] && [ "$direct_mesh_hub" != "1" ]; then
       # Detect brand-new nodes: if the remote mac API is unreachable before deploy,
-      # the hub tunnel key has not been authorized yet. Allow TokenHub to be
-      # degraded for this first deploy; Qdrant and Firecrawl remain mandatory
-      # and are checked after the tunnel is established below.
+      # the hub tunnel key has not been authorized yet. Allow Qdrant and Firecrawl
+      # to be degraded for this first deploy; they are re-checked after the tunnel
+      # is established below.
       if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 "$local_target" \
         "curl -fsS --max-time 3 http://127.0.0.1:8789/health >/dev/null 2>&1" 2>/dev/null; then
         allow_degraded_services=1
-        echo "==> ${agent}: first deploy (no existing mac API); TokenHub degraded override active"
+        echo "==> ${agent}: first deploy (no existing mac API); shared-services degraded override active"
       fi
       # Update the hub's reverse-tunnel conf and wait for it BEFORE deploying the
-      # worker. The worker validates hub-managed TokenHub, Qdrant, and Firecrawl
+      # worker. The worker validates hub-managed Qdrant and Firecrawl
       # through tunnel-forwarded ports during deploy; the tunnel must be
       # established first.
       install_reverse_tunnel_on_hub "$agent" "$local_target" "$hub_target_str" "$fleet_name_field"
@@ -5426,7 +4937,7 @@ main() {
         fi
       done
     fi
-    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$tokenhub_api_key" "$allow_degraded_services" "$github_review_key_b64"
+    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$allow_degraded_services" "$github_review_key_b64"
     deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"

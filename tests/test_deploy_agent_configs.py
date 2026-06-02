@@ -202,9 +202,6 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     firecrawl_installer = (ROOT / "deploy" / "install-firecrawl-gateway.sh").read_text(
         encoding="utf-8"
     )
-    tokenhub_installer = (ROOT / "deploy" / "install-tokenhub-service.sh").read_text(
-        encoding="utf-8"
-    )
     env_example = parse_env(ROOT / "deploy" / "systemd" / "mac.env.example")
     cfg = load_sample_fleet_config()
 
@@ -226,7 +223,6 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert 'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")' in script
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "install_or_validate_shared_services" in script
-    assert "install_or_validate_tokenhub_service" in script
     assert "mac.hermes.memory_topology.v1" in script
     assert '"long_term_memory": "memories/MEMORY.md"' in script
     assert '"legacy_long_term_memory": "MEMORY.md"' in script
@@ -272,32 +268,20 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract():
     assert env_example["MAC_REQUIRE_FIRECRAWL"] == "1"
     assert env_example["FIRECRAWL_API_URL"] == "http://hub.example.internal:3002"
     assert "MAC_FIRECRAWL_ALLOW_DEGRADED" not in env_example
-    assert cfg["defaults"]["tokenhub"]["install"] == "auto"
-    assert cfg["defaults"]["tokenhub"]["required"] is True
-    assert cfg["defaults"]["tokenhub"]["port"] == 8090
     assert "provider_secret_keys" in script
     assert "values.pop(key, None)" in script
-    assert "install-tokenhub-service.sh" in script
-    assert "Before=${FLEET_NAME}.service" in tokenhub_installer
-    assert 'TOKENHUB_VAULT_ENABLED="${TOKENHUB_VAULT_ENABLED:-true}"' in tokenhub_installer
-    assert 'health_urls+=("http://${TOKENHUB_BIND_ADDR}:${TOKENHUB_PORT}/healthz")' in tokenhub_installer
-    assert 'base.startswith("tokenhubctl-")' in tokenhub_installer
-    assert 'base.startswith("tokenhub-")' in tokenhub_installer
-    assert "activate_tokenhub_binaries()" in tokenhub_installer
-    assert 'mv -f "$dest" "$old"' in tokenhub_installer
-    assert 'mv -f "$src" "$dest"' in tokenhub_installer
-    assert "cleanup_replaced_tokenhub_binaries" in tokenhub_installer
-    assert "wait_for_tokenhub\ncleanup_replaced_tokenhub_binaries" in tokenhub_installer
-    assert '"https://inference-api.nvidia.com/v1"' in tokenhub_installer
-    assert 'api_key.startswith("tokenhub_")' in tokenhub_installer
-    assert "provider_ids = set(by_id)" in tokenhub_installer
     assert 'nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"' in script
-    assert "OPENAI_API_KEY" in tokenhub_installer
-    assert "MAC_HERMES_GATEWAY_API_KEY" in tokenhub_installer
-    assert env_example["MAC_REQUIRE_TOKENHUB"] == "1"
-    assert env_example["TOKENHUB_URL"] == "http://hub.example.internal:8090"
-    assert env_example["MAC_HERMES_GATEWAY_API_KEY"] == "tokenhub_REPLACE_ME"
-    assert env_example["OPENAI_BASE_URL"] == "http://hub.example.internal:8090/v1"
+    # TokenHub is retired (the in-mac router cutover replaced it): no installer,
+    # no fleet-config contract, no TokenHub env in the sample. Chat now routes
+    # through the agent's own local /v1 router.
+    assert "tokenhub" not in cfg["defaults"]
+    assert "install_or_validate_tokenhub_service" not in script
+    assert not (ROOT / "deploy" / "install-tokenhub-service.sh").exists()
+    assert "MAC_REQUIRE_TOKENHUB" not in env_example
+    assert "TOKENHUB_URL" not in env_example
+    assert env_example["MAC_ROUTER_BACKEND"] == "inproc"
+    assert env_example["MAC_HERMES_GATEWAY_API_KEY"] == "mac_REPLACE_ME"
+    assert env_example["OPENAI_BASE_URL"] == "http://127.0.0.1:8789/v1"
 
 
 def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities():
@@ -339,7 +323,7 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
     assert "ExecStart=$VENV/bin/uvicorn" not in linux_service
 
 
-def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
+def test_fleet_deploy_routes_provider_secrets_through_in_mac_router():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     startup = (ROOT / "src" / "mac" / "hermes_startup.py").read_text(encoding="utf-8")
     gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
@@ -349,34 +333,39 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
         'cat > "$executor_py" <<', 1
     )[0]
 
+    # th-merge-07: TokenHub is retired. Messaging config (Slack secrets +
+    # identity + home channels) is synced as one unit AFTER the mac.service
+    # (re)start, before the gateway comes up.
+    assert "sync_messaging_config()" in script
     assert (
-        "reload_mac_env\n"
-        "install_or_validate_tokenhub_service\n"
-        "reload_mac_env\n"
-        "sync_hermes_tokenhub_client_env\n"
-        "reload_mac_env\n"
-        "fetch_slack_secrets_from_vault\n"
-        "reload_mac_env\n"
-        "sync_hermes_slack_identity_env"
+        "  reload_mac_env\n"
+        "  fetch_slack_secrets_from_vault\n"
+        "  reload_mac_env\n"
+        "  sync_hermes_slack_identity_env\n"
+        "  sync_hermes_home_channels"
     ) in script
     assert "fetch_slack_secrets_from_vault()" in script
     assert "scripts/mac-fetch-slack-secrets.py" in script
-    assert 'unset TOKENHUB_URL' in script
     assert "provider_secret_keys" in script
-    assert 'values["TOKENHUB_URL"] = derived_tokenhub_url' in script
-    assert 'values["OPENAI_API_KEY"] = configured_tokenhub_api_key' in script
-    assert 'values["MAC_HERMES_GATEWAY_API_KEY"] = configured_tokenhub_api_key' in script
-    assert 'updates["TOKENHUB_API_KEY"] = tokenhub_key' in script
-    assert 'updates["MAC_HERMES_GATEWAY_API_KEY"] = tokenhub_key' in script
-    assert 'write_env(target_path, updates)' in script
-    assert "sync_tokenhub_credential_pool" in script
-    assert 'pool["custom:tokenhub"] = entries' in script
-    assert '"source": "mac-tokenhub-sync"' in script
-    assert "sync_hermes_tokenhub_runtime_config()" in script
-    assert 'model_config["provider"] = "tokenhub"' in script
-    assert 'model_config.pop("api_key", None)' in script
-    assert '"key_env": "TOKENHUB_API_KEY"' in script
-    assert 'tokenhub_provider.pop("api_key", None)' in script
+
+    # The TokenHub install/sync/runtime machinery is gone — no installer call, no
+    # client-env sync, no credential-pool sync, no TokenHub env injected.
+    assert "install_or_validate_tokenhub_service" not in script
+    assert "sync_hermes_tokenhub_client_env" not in script
+    assert "sync_tokenhub_credential_pool" not in script
+    assert 'values["TOKENHUB_URL"]' not in script
+    assert "TOKENHUB_API_KEY" not in script
+
+    # Chat now routes through the agent's OWN local /v1 router (MAC_ROUTER_BACKEND
+    # =inproc). The router holds the upstream provider key; the gateway only
+    # presents this agent's local mac token (agent scope) to the local /v1.
+    assert 'if _router_backend.lower() == "inproc" and _router_providers:' in script
+    assert 'values["MAC_ROUTER_BACKEND"] = _router_backend' in script
+    assert '_local_router_v1 = "http://127.0.0.1:%s/v1" % port' in script
+    assert 'values["MAC_HERMES_GATEWAY_BASE_URL"] = _local_router_v1' in script
+    assert 'values["OPENAI_API_KEY"] = _local_tok' in script
+    assert 'values["MAC_HERMES_GATEWAY_API_KEY"] = _local_tok' in script
+
     # loop-01: the executor logic was extracted from a ~500-line bash heredoc
     # into the tested mac.task_executor module. The deploy now writes only a
     # shim that delegates to it.
@@ -395,11 +384,10 @@ def test_fleet_deploy_uses_tokenhub_instead_of_direct_provider_secret_paths():
     assert 'name": "executor.%s"' in executor_module or '"executor.%s"' in executor_module
     assert "def recall_deployment_lessons(" in executor_module
     assert "def record_deployment_learning(" in executor_module
-    # ADR 0001 hu-03: the gateway provider/model override is now owned, in-process
-    # code (mac.agent_provider) routing through TokenHub — not runtime
-    # string-surgery of an upstream checkout. Verify the owned mechanism.
+    # ADR 0001 hu-03: the gateway provider/model override is owned, in-process
+    # code (mac.agent_provider) — not runtime string-surgery of an upstream
+    # checkout. Verify the owned mechanism survives the TokenHub retirement.
     agent_provider = (ROOT / "src" / "mac" / "agent_provider.py").read_text(encoding="utf-8")
-    assert '"TOKENHUB_URL"' in agent_provider
     assert "mac-gateway-explicit" in agent_provider
     assert '[ -f "$HOME/.acc/.env" ]' not in gateway_wrapper
     assert '[ -f "$HOME/.acc/.env" ]' not in executor_wrapper
@@ -509,8 +497,8 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert cfg["defaults"]["qdrant"]["url"] == "http://hub.example.internal:6333"
     assert cfg["defaults"]["firecrawl"]["required"] is True
     assert cfg["defaults"]["firecrawl"]["url"] == "http://hub.example.internal:3002"
-    assert cfg["defaults"]["tokenhub"]["required"] is True
-    assert cfg["defaults"]["tokenhub"]["url"] == "http://hub.example.internal:8090"
+    # TokenHub is retired — the wizard no longer writes a tokenhub config block.
+    assert "tokenhub" not in cfg["defaults"]
     assert cfg["defaults"]["network"]["provider"] == "tailscale"
     assert cfg["defaults"]["network"]["install"] == "auto"
     assert cfg["defaults"]["network"]["headscale"]["manage"] is False
@@ -756,7 +744,6 @@ def test_worker_wrapper_runs_agent_side_startup_self_test():
     assert "MAC_REQUIRE_QDRANT_MEMORY must be true" in selftest
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
-    assert '"key_matches_env": key_matches_env' in selftest
     assert '[python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"]' in selftest
     assert "def output_text" in selftest
     assert "output_text(exc.stdout)" in selftest
