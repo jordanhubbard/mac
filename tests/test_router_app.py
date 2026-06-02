@@ -102,6 +102,46 @@ def test_mount_adds_routes_when_inproc_with_providers():
     assert "/v1/chat/completions" in paths and "/v1/embeddings" in paths
 
 
+def test_route_logging_is_configured_to_emit_info():
+    # Regression: uvicorn --log-level info only configures uvicorn's own loggers,
+    # so mac.router INFO propagated to a handler-less root and was dropped. The
+    # router must attach its own INFO handler so `router: route …` reaches the journal.
+    import logging
+
+    from mac.router_app import _configure_route_logging
+    from mac.router_app import logger as router_logger
+
+    saved = (
+        router_logger.level,
+        router_logger.propagate,
+        list(router_logger.handlers),
+        getattr(router_logger, "_mac_route_logging_configured", False),
+    )
+    try:
+        router_logger.handlers.clear()
+        router_logger.propagate = True
+        router_logger.setLevel(logging.NOTSET)
+        if hasattr(router_logger, "_mac_route_logging_configured"):
+            del router_logger._mac_route_logging_configured
+
+        _configure_route_logging()
+        assert router_logger.isEnabledFor(logging.INFO)
+        assert router_logger.hasHandlers()
+
+        # idempotent: a second mount must not stack handlers
+        n = len(router_logger.handlers)
+        _configure_route_logging()
+        assert len(router_logger.handlers) == n
+    finally:
+        router_logger.setLevel(saved[0])
+        router_logger.propagate = saved[1]
+        router_logger.handlers[:] = saved[2]
+        if saved[3]:
+            router_logger._mac_route_logging_configured = True
+        elif hasattr(router_logger, "_mac_route_logging_configured"):
+            del router_logger._mac_route_logging_configured
+
+
 def test_build_proxy_from_env_reads_providers():
     env = {"MAC_ROUTER_PROVIDERS": "p=http://p/v1,0,key=P_KEY;s=http://s/v1,1", "MAC_ROUTER_BACKEND": "inproc"}
     proxy = build_proxy_from_env(env)
