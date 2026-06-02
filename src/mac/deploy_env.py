@@ -128,46 +128,47 @@ class DeployEnvConfig:
     worker: WorkerConfig
     services: SharedServicesConfig
     identity: DeployIdentity
-
-    @property
-    def env_file(self) -> Path:
-        return self.paths.env_file
-
-    @property
-    def mac_home(self) -> Path:
-        return self.paths.mac_home
-
-    @property
-    def home(self) -> Path:
-        return self.paths.home
-
-    @property
-    def port(self) -> str:
-        return self.control.port
-
-    @property
-    def is_hub(self) -> bool:
-        return self.identity.is_hub
+    # No passthrough shims: callers reach through the groups directly
+    # (cfg.paths.env_file, cfg.control.port, cfg.identity.is_hub).
 
 
-def _parse_env_assignment(line: str) -> Optional[tuple[str, str]]:
-    try:
-        tokens = shlex.split(line, comments=False, posix=True)
-    except ValueError:
-        tokens = []
-    if tokens:
-        if tokens[0] == "export":
-            tokens = tokens[1:]
-        if tokens and "=" in tokens[0]:
-            key, value = tokens[0].split("=", 1)
-            return key.strip(), value
-
+def _raw_env_assignment(line: str) -> Optional[tuple[str, str]]:
+    """Plain ``KEY=VALUE`` split for quote-free lines (no shell interpretation)."""
     if line.startswith("export "):
         line = line[len("export "):]
     if "=" not in line:
         return None
     key, value = line.split("=", 1)
     return key.strip(), value.strip()
+
+
+def _parse_env_assignment(line: str) -> Optional[tuple[str, str]]:
+    """Parse one ``KEY=VALUE`` (optionally ``export``-prefixed) env line.
+
+    Well-formed lines go through ``shlex`` so quoted/escaped values round-trip
+    exactly with ``render_env``'s ``shlex.quote``. Documented edge semantics:
+
+    - **Malformed shell quoting** (e.g. an unbalanced quote): the line is treated
+      as corrupt and skipped (``None``) rather than silently storing a
+      half-parsed value — *unless* it is quote-free, in which case the plain
+      ``KEY=VALUE`` split is unambiguous and is used.
+    - **Trailing unquoted tokens** (``KEY=val extra``): the leading assignment
+      wins (``val``); trailing tokens are ignored. ``render_env`` never emits
+      this (unsafe values are quoted), so it only arises from hand-edited files.
+    """
+    try:
+        tokens = shlex.split(line, comments=False, posix=True)
+    except ValueError:
+        if '"' in line or "'" in line:
+            return None
+        return _raw_env_assignment(line)
+    if tokens:
+        if tokens[0] == "export":
+            tokens = tokens[1:]
+        if tokens and "=" in tokens[0]:
+            key, value = tokens[0].split("=", 1)
+            return key.strip(), value
+    return _raw_env_assignment(line)
 
 
 def parse_env_text(text: str) -> Dict[str, str]:
@@ -411,34 +412,41 @@ def _deploy_router_config(env: Mapping[str, str]) -> Dict[str, str]:
     }
 
 
-def _apply_inproc_router(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> None:
+def _apply_inproc_router_hub(
+    values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> None:
+    """Hub: run the router locally and point the hub's own gateway at its local
+    /v1, so the hub's upstream keys (held only here) serve every agent."""
     router = _deploy_router_config(env)
-    _clear(values, INPROC_MANAGED_KEYS)
-    if cfg.is_hub:
-        values["MAC_ROUTER_BACKEND"] = router["backend"]
-        if router["default_model"]:
-            values["MAC_ROUTER_DEFAULT_MODEL"] = router["default_model"]
-        if router["wildcard_models"]:
-            values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
-        if router["providers"]:
-            values["MAC_ROUTER_PROVIDERS"] = router["providers"]
-            local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
-            values["OPENAI_BASE_URL"] = local_router_v1
-            values["CUSTOM_BASE_URL"] = local_router_v1
-            values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
-            values["ACC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
-            local_token = values.get("MAC_API_TOKEN") or ""
-            if local_token:
-                values["OPENAI_API_KEY"] = local_token
-                values["MAC_HERMES_GATEWAY_API_KEY"] = local_token
-                values["ACC_HERMES_GATEWAY_API_KEY"] = local_token
-        if (env.get("NVIDIA_API_KEY") or "").strip():
-            values["MAC_ROUTER_IMAGE_UPSTREAM"] = (
-                env.get("MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM") or "https://ai.api.nvidia.com/v1/genai"
-            )
-            values["MAC_ROUTER_IMAGE_KEY"] = "secret:nvidia-image"
-        return
+    values["MAC_ROUTER_BACKEND"] = router["backend"]
+    if router["default_model"]:
+        values["MAC_ROUTER_DEFAULT_MODEL"] = router["default_model"]
+    if router["wildcard_models"]:
+        values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
+    if router["providers"]:
+        values["MAC_ROUTER_PROVIDERS"] = router["providers"]
+        local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
+        values["OPENAI_BASE_URL"] = local_router_v1
+        values["CUSTOM_BASE_URL"] = local_router_v1
+        values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
+        values["ACC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
+        local_token = values.get("MAC_API_TOKEN") or ""
+        if local_token:
+            values["OPENAI_API_KEY"] = local_token
+            values["MAC_HERMES_GATEWAY_API_KEY"] = local_token
+            values["ACC_HERMES_GATEWAY_API_KEY"] = local_token
+    if (env.get("NVIDIA_API_KEY") or "").strip():
+        values["MAC_ROUTER_IMAGE_UPSTREAM"] = (
+            env.get("MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM") or "https://ai.api.nvidia.com/v1/genai"
+        )
+        values["MAC_ROUTER_IMAGE_KEY"] = "secret:nvidia-image"
 
+
+def _apply_inproc_router_spoke(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
+    """Spoke: route the gateway (chat + image) through the hub's /v1 with the
+    hub-facing token and hold no upstream keys. Leaves the gateway unconfigured
+    when there is no usable hub token — never points at the hub with the
+    degenerate local token."""
     hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").rstrip("/")
     local_token = values.get("MAC_API_TOKEN") or ""
     hub_token = cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or ""
@@ -456,6 +464,18 @@ def _apply_inproc_router(values: MutableMapping[str, str], cfg: DeployEnvConfig,
     values["ACC_HERMES_GATEWAY_API_KEY"] = hub_token
     values["NVIDIA_API_KEY"] = hub_token
     values["NVIDIA_IMAGE_BASE_URL"] = "%s/v1/genai" % hub_base
+
+
+def _apply_inproc_router(
+    values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> None:
+    """Clear stale routing/provider state, then configure the hub to run the
+    router or a spoke to route through it (credentials centralize on the hub)."""
+    _clear(values, INPROC_MANAGED_KEYS)
+    if cfg.identity.is_hub:
+        _apply_inproc_router_hub(values, cfg, env)
+    else:
+        _apply_inproc_router_spoke(values, cfg)
 
 
 def _apply_non_inproc_router(values: MutableMapping[str, str], env: Mapping[str, str]) -> None:
@@ -532,15 +552,60 @@ def write_mac_env_file(
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
-    values = build_mac_env(read_env_file(cfg.env_file), cfg, environ=environ)
-    write_env_file(cfg.env_file, values)
+    values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
+    write_env_file(cfg.paths.env_file, values)
     return values
 
 
+@dataclass(frozen=True)
+class LegacyDeployArgs:
+    """Named view over the 25 positional arguments that deploy-mac-fleet.sh passes
+    to ``write-mac-env`` (in the order it passes them). This is the single place
+    the positional contract lives, so ``config_from_legacy_args`` below reads by
+    name instead of by magic index. ``*_require`` mirror the deploy script's
+    Qdrant/Firecrawl "required" flags but are intentionally unused here (the env
+    model always sets the requirement on)."""
+
+    env_file: str
+    mac_home: str
+    home: str
+    port: str
+    home_channel: str
+    gateway_model: str
+    gateway_provider: str
+    gateway_base_url: str
+    hub_url: str
+    hub_token: str
+    bind_host: str
+    worker_mode: str
+    worker_capabilities: str
+    worker_allowed_projects: str
+    worker_required_metadata: str
+    worker_require_canary: str
+    agent: str
+    supervisor_kind: str
+    shared_services_manager: str
+    qdrant_url: str
+    qdrant_require: str
+    qdrant_port: str
+    firecrawl_url: str
+    firecrawl_require: str
+    firecrawl_port: str
+
+    ARITY = 25
+
+    @classmethod
+    def from_argv(cls, args: Sequence[str]) -> "LegacyDeployArgs":
+        if len(args) != cls.ARITY:
+            raise SystemExit(
+                "write-mac-env expects %d positional arguments; got %d" % (cls.ARITY, len(args))
+            )
+        return cls(*args)
+
+
 def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> DeployEnvConfig:
-    if len(args) != 25:
-        raise SystemExit("write-mac-env expects 25 positional arguments; got %d" % len(args))
-    gateway_model = args[5].strip()
+    a = LegacyDeployArgs.from_argv(args)
+    gateway_model = a.gateway_model.strip()
     if gateway_model == "*":
         gateway_model = ""
     network_provider = (
@@ -548,43 +613,43 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
         or env.get("NETWORK_PROVIDER")
         or "tailscale"
     ).strip().lower()
-    agent = args[16].strip()
+    agent = a.agent.strip()
     return DeployEnvConfig(
         paths=DeployPaths(
-            env_file=Path(args[0]),
-            mac_home=Path(args[1]),
-            home=Path(args[2]),
+            env_file=Path(a.env_file),
+            mac_home=Path(a.mac_home),
+            home=Path(a.home),
         ),
         control=ControlConfig(
-            port=args[3],
-            hub_url=args[8].strip(),
-            hub_token=args[9].strip(),
-            bind_host=args[10].strip() or "127.0.0.1",
-            supervisor_kind=args[17].strip(),
+            port=a.port,
+            hub_url=a.hub_url.strip(),
+            hub_token=a.hub_token.strip(),
+            bind_host=a.bind_host.strip() or "127.0.0.1",
+            supervisor_kind=a.supervisor_kind.strip(),
             network_provider=network_provider,
         ),
         gateway=GatewayConfig(
-            home_channel=args[4].strip().lstrip("#"),
+            home_channel=a.home_channel.strip().lstrip("#"),
             model=gateway_model,
-            provider=args[6].strip(),
-            base_url=args[7].strip(),
+            provider=a.gateway_provider.strip(),
+            base_url=a.gateway_base_url.strip(),
         ),
         worker=WorkerConfig(
-            mode=args[11].strip() or "heartbeat",
-            capabilities=args[12].strip() or DEFAULT_WORKER_CAPABILITIES,
-            allowed_projects=args[13].strip(),
-            required_metadata=args[14].strip(),
-            require_canary=args[15].strip() or "1",
+            mode=a.worker_mode.strip() or "heartbeat",
+            capabilities=a.worker_capabilities.strip() or DEFAULT_WORKER_CAPABILITIES,
+            allowed_projects=a.worker_allowed_projects.strip(),
+            required_metadata=a.worker_required_metadata.strip(),
+            require_canary=a.worker_require_canary.strip() or "1",
         ),
         services=SharedServicesConfig(
-            qdrant_url=args[19].strip(),
-            qdrant_port=args[21].strip() or "6333",
-            firecrawl_url=args[22].strip(),
-            firecrawl_port=args[24].strip() or "3002",
+            qdrant_url=a.qdrant_url.strip(),
+            qdrant_port=a.qdrant_port.strip() or "6333",
+            firecrawl_url=a.firecrawl_url.strip(),
+            firecrawl_port=a.firecrawl_port.strip() or "3002",
         ),
         identity=DeployIdentity(
             agent=agent,
-            shared_services_manager=args[18].strip() or agent,
+            shared_services_manager=a.shared_services_manager.strip() or agent,
             fleet_name=env.get("FLEET_NAME") or "mac",
         ),
     )

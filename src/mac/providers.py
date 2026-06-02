@@ -17,7 +17,7 @@ Consumers:
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, NamedTuple
+from typing import Dict, Iterable, List, NamedTuple, Tuple
 
 
 class Provider(NamedTuple):
@@ -28,19 +28,20 @@ class Provider(NamedTuple):
 
 
 # OpenAI-compatible chat/embedding providers the in-mac router can front.
-# nvidia is preferred (priority 0 = first).
-ROUTER_PROVIDERS: List[Provider] = [
+# nvidia is preferred (priority 0 = first). Tuples: these are read-only registry
+# tables — an immutable type prevents accidental in-place mutation by a consumer.
+ROUTER_PROVIDERS: Tuple[Provider, ...] = (
     Provider("nvidia", "NVIDIA_API_KEY", "NVIDIA_BASE_URL", "https://inference-api.nvidia.com/v1"),
     Provider("openai", "OPENAI_API_KEY", "OPENAI_BASE_URL", "https://api.openai.com/v1"),
     Provider("anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
     Provider("perplexity", "PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
-]
+)
 
 # Additional upstream provider env vars managed with chat provider keys when the
 # in-mac router owns routing. These are not first-class chat providers in
 # ROUTER_PROVIDERS, but they are still upstream/provider credentials or alternate
 # base-url spellings that must not survive stale local env state.
-EXTRA_UPSTREAM_PROVIDER_ENV: List[str] = [
+EXTRA_UPSTREAM_PROVIDER_ENV: Tuple[str, ...] = (
     "NVIDIA_API_BASE",
     "NVIDIA_IMAGE_BASE_URL",
     "PERPLEXITY_API_BASE",
@@ -49,15 +50,15 @@ EXTRA_UPSTREAM_PROVIDER_ENV: List[str] = [
     "HAIMAKER_API_KEY",
     "LLM_KEY",
     "LLM_URL",
-]
+)
 
 # External shared-service secrets scrubbed from spoke gateway envs. These are
 # intentionally not cleared from mac.env's inproc routing state, because shared
 # service setup may write benign local defaults such as FIRECRAWL_API_KEY=none.
-EXTRA_SPOKE_SCRUB_SECRET_ENV: List[str] = [
+EXTRA_SPOKE_SCRUB_SECRET_ENV: Tuple[str, ...] = (
     "QDRANT_API_KEY",
     "FIRECRAWL_API_KEY",
-]
+)
 
 
 def router_secret_name(provider_id: str) -> str:
