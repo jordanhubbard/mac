@@ -7949,6 +7949,9 @@ class ControlPlane:
     def rotate_secret(self, *args: Any, **kwargs: Any) -> SecretRecord:
         return self.secrets.rotate_secret(*args, **kwargs)
 
+    def delete_secret(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self.secrets.delete_secret(*args, **kwargs)
+
     def list_secret_audits(self, *args: Any, **kwargs: Any) -> List[SecretAccess]:
         return self.secrets.list_audits(*args, **kwargs)
 

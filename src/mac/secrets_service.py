@@ -155,6 +155,17 @@ class SecretsService:
             )
         return self.get_secret(secret.id)
 
+    def delete_secret(self, secret_id_or_name: str, actor: str = "operator") -> Dict[str, Any]:
+        """Hard-delete a secret: scrub its ciphertext + remove the row so the value
+        is gone and the name can be reused (used to clean up stale/decommissioned
+        secrets, e.g. a spoke's now-unused router key after key centralization).
+        Raises NotFoundError if absent. Its access-audit rows cascade away; the
+        deletion is recorded by the caller (CLI/API log)."""
+        secret = self.get_secret(secret_id_or_name)
+        with self.store.transaction() as conn:
+            conn.execute("DELETE FROM secrets WHERE id = ?", (secret.id,))
+        return {"id": secret.id, "name": secret.name, "deleted": True, "deleted_by": actor or "operator"}
+
     def list_audits(self, secret_id: Optional[str] = None) -> List[SecretAccess]:
         if secret_id:
             rows = self.store.query_all(

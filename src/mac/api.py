@@ -3694,6 +3694,21 @@ def create_app(
             raise NotFoundError("secret not found or disabled: %s" % name)
         return {"name": name, "value": value}
 
+    @app.delete("/secrets/{name}")
+    def delete_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Hard-delete a secret (scrub the value + remove the row). Requires the
+        # `secret` scope (admin inherits it; covered by _required_scope for
+        # /secrets*). Used to clean up stale/decommissioned secrets, e.g. a spoke's
+        # now-unused router key after key centralization.
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        actor = getattr(principal, "agent_id", None) or "operator"
+        return cp.delete_secret(name, actor=actor)
+
     @app.get("/secret-audits")
     def list_secret_audits(secret_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
         return [audit.to_dict() for audit in cp.list_secret_audits(secret_id)]
