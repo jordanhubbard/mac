@@ -878,15 +878,14 @@ def _firecrawl_web_search_report() -> Dict[str, Any]:
 
 
 def _tokenhub_endpoint_from_env() -> Tuple[Optional[str], Optional[str]]:
+    # th-merge-07: TokenHub is retired. Only an EXPLICIT TokenHub URL counts — do
+    # NOT fall back to CUSTOM_BASE_URL/OPENAI_BASE_URL: on a spoke that is the hub's
+    # in-mac router /v1, and health-checking it as a "TokenHub" yields a spurious
+    # 403 + degraded status. With no explicit endpoint the report is "retired".
     for name in ("TOKENHUB_URL", "MAC_TOKENHUB_URL"):
         value = os.environ.get(name)
         if value and value.strip():
             return value.strip().rstrip("/"), name
-    custom = os.environ.get("CUSTOM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
-    if custom and custom.strip():
-        value = custom.strip().rstrip("/")
-        if value.endswith("/v1"):
-            return value[:-3].rstrip("/"), "CUSTOM_BASE_URL" if os.environ.get("CUSTOM_BASE_URL") else "OPENAI_BASE_URL"
     return None, None
 
 
@@ -933,6 +932,10 @@ def _tokenhub_report() -> Dict[str, Any]:
         return report
     if not endpoint:
         if not required:
+            # No explicit TokenHub endpoint + not required = the retired state
+            # (e.g. a spoke routing chat through the hub). Report it as such so the
+            # operator sees "retired", not a vague "disabled".
+            report["status"] = "retired"
             return report
         report["ready"] = bool(degraded_allowed)
         report["status"] = "degraded_allowed" if degraded_allowed else "missing_endpoint"
