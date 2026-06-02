@@ -98,7 +98,6 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
         "mac_hermes_cli",
         "shell_execution",
         "workspace_file_access",
-        "hgmac_agent_ops_cli",
         "ticket_mirror",
         "mac_task_cli",
         "git_source_control",

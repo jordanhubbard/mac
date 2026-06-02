@@ -586,7 +586,6 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     assert "/ui?view=agents&selected={agent_id}" in report["task_project_runtime"]["first_class_objects"]["agents"]["dashboard_urls"]
     assert report["task_project_runtime"]["markdown_contract"]["ready"] is True
     assert report["task_project_runtime"]["markdown_contract"]["missing_snippets"] == []
-    assert "hgmac_agent_ops_cli" in report["task_project_runtime"]["session_capability_names"]
     assert "shell_execution" in report["task_project_runtime"]["session_capability_names"]
     assert "workspace_file_access" in report["task_project_runtime"]["session_capability_names"]
     assert "ticket_mirror" in report["task_project_runtime"]["session_capability_names"]
@@ -604,7 +603,6 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
         "mac_hermes_cli",
         "shell_execution",
         "workspace_file_access",
-        "hgmac_agent_ops_cli",
         "ticket_mirror",
         "mac_task_cli",
         "quality_gate",
