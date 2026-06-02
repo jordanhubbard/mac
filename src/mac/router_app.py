@@ -327,6 +327,43 @@ def build_proxy_from_env(
     )
 
 
+def mount_image_proxy(
+    app: Any,
+    *,
+    env: Optional[Dict[str, str]] = None,
+    secret_resolver: Optional[SecretResolver] = None,
+) -> bool:
+    """Mount ``POST /v1/genai/{path}`` forwarding to an external image backend
+    (e.g. NVIDIA NIM) with a vault-resolved key, so spokes route image generation
+    through the HUB instead of holding the image key locally (Stream B "hub serves
+    them"). Gated on MAC_ROUTER_IMAGE_UPSTREAM + MAC_ROUTER_IMAGE_KEY; no-op
+    otherwise. NIM image-gen is a synchronous POST returning base64 inline, so a
+    transparent reverse-proxy suffices — no async/polling/URL-rewrite. The /v1/*
+    prefix is agent-scoped (api._required_scope), so a spoke presents its hub
+    token and the hub swaps in the vault key (MAC_ROUTER_IMAGE_KEY=secret:<name>)
+    on the way upstream."""
+    env = env or os.environ
+    upstream = (env.get("MAC_ROUTER_IMAGE_UPSTREAM") or "").strip().rstrip("/")
+    key_spec = (env.get("MAC_ROUTER_IMAGE_KEY") or "").strip()
+    if not upstream or not key_spec:
+        return False
+    try:
+        timeout = float(env.get("MAC_ROUTER_IMAGE_TIMEOUT") or 180.0)
+    except ValueError:
+        timeout = 180.0
+    image_provider = Provider(name="image", base_url=upstream, api_key_env=key_spec)
+    from fastapi.responses import JSONResponse
+
+    @app.post("/v1/genai/{path:path}")
+    def _genai(path: str, body: Dict[str, Any]) -> Any:  # noqa: ANN401
+        status, out = urllib_forwarder(
+            image_provider, "/" + path, body, timeout=timeout, secret_resolver=secret_resolver
+        )
+        return JSONResponse(out if isinstance(out, dict) else {}, status_code=status or 502)
+
+    return True
+
+
 def mount_router(
     app: Any,
     *,
@@ -334,15 +371,19 @@ def mount_router(
     proxy: Optional[ProviderProxy] = None,
     secret_resolver: Optional[SecretResolver] = None,
 ) -> bool:
-    """Mount /v1/chat/completions + /v1/embeddings on ``app`` when
-    MAC_ROUTER_BACKEND=inproc. Returns True if mounted. Default backend is
-    'tokenhub' → no-op, so an existing fleet is unchanged until flipped."""
+    """Mount /v1/chat/completions + /v1/embeddings (+ /v1/genai image proxy) on
+    ``app`` when MAC_ROUTER_BACKEND=inproc. Returns True if anything mounted.
+    Default backend is 'tokenhub' → no-op, so an existing fleet is unchanged until
+    flipped."""
     env = env or os.environ
     if (env.get("MAC_ROUTER_BACKEND") or "tokenhub").strip().lower() != "inproc":
         return False
+    # The image proxy is independent of the chat providers (a fixed upstream, no
+    # failover), so mount it even when no chat providers are configured.
+    mounted = mount_image_proxy(app, env=env, secret_resolver=secret_resolver)
     proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver)
     if proxy is None:
-        return False
+        return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
 
     @app.post("/v1/chat/completions")

@@ -262,6 +262,63 @@ def test_urllib_forwarder_uses_secret_resolver(monkeypatch):
     assert captured["auth"] == "Bearer escrowed-key"
 
 
+def test_image_proxy_forwards_to_upstream_with_vault_key(monkeypatch):
+    # Stream B "hub serves them": a spoke POSTs image-gen to the hub's /v1/genai
+    # with its hub token; the hub swaps in the vault image key and forwards to NIM.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"artifacts":[{"base64":"IMG"}]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=60.0):
+        captured["url"] = req.full_url
+        captured["auth"] = req.headers.get("Authorization")
+        return _Resp()
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_IMAGE_UPSTREAM": "https://ai.api.nvidia.com/v1/genai",
+        "MAC_ROUTER_IMAGE_KEY": "secret:nvidia-image",
+    }
+    # image proxy mounts even with NO chat providers configured
+    assert mount_router(app, env=env, secret_resolver={"nvidia-image": "escrowed-image-key"}.get) is True
+
+    client = TestClient(app)
+    r = client.post("/v1/genai/black-forest-labs/flux.1-dev", json={"prompt": "a cat"})
+    assert r.status_code == 200
+    assert r.json() == {"artifacts": [{"base64": "IMG"}]}
+    # forwarded to <upstream>/<path>, with the spoke's token swapped for the vault key
+    assert captured["url"] == "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
+    assert captured["auth"] == "Bearer escrowed-image-key"
+
+
+def test_image_proxy_noop_without_config():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    # inproc but no MAC_ROUTER_IMAGE_* and no chat providers -> nothing mounted
+    assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}) is False
+    r = TestClient(app).post("/v1/genai/x/y", json={})
+    assert r.status_code == 404
+
+
 def test_mount_streams_through_fastapi():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
