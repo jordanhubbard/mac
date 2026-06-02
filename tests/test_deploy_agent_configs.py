@@ -109,6 +109,29 @@ def test_deploy_env_render_round_trips_shell_quoted_values():
     }
 
 
+def test_parse_env_text_skips_malformed_quoted_lines():
+    # A line with unbalanced shell quoting is corrupt: it must be skipped, not
+    # stored as a half-parsed value, and must not poison the good lines around it.
+    text = (
+        "GOOD=ok\n"
+        'BROKEN="unterminated\n'   # unbalanced double quote
+        "ALSO_BROKEN=it's mine\n"  # unbalanced single quote
+        "NEXT=fine\n"
+    )
+    parsed = parse_env_text(text)
+    assert parsed == {"GOOD": "ok", "NEXT": "fine"}
+    assert "BROKEN" not in parsed
+    assert "ALSO_BROKEN" not in parsed
+
+
+def test_parse_env_text_trailing_unquoted_tokens_take_leading_assignment():
+    # Documented fallback semantics: with trailing unquoted tokens the leading
+    # KEY=val wins and the rest is ignored (render_env never emits this — unsafe
+    # values are quoted — so it only arises from a hand-edited file).
+    assert parse_env_text("KEY=val extra garbage\n") == {"KEY": "val"}
+    assert parse_env_text("export RAW=plainvalue\n") == {"RAW": "plainvalue"}
+
+
 def test_sample_fleet_config_is_generic_and_externalized():
     cfg = load_sample_fleet_config()
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
