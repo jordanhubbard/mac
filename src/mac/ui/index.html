@@ -4,7 +4,26 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>MAC Control Plane</title>
-    <link rel="stylesheet" href="/ui/assets/styles.css">
+    <link rel="stylesheet" href="/ui/assets/styles.css?v=20260602-theme-toggle">
+    <script>
+      // No-FOUC theme bootstrap: apply the stored/preferred theme before the
+      // first paint. app.js re-applies the same logic and wires the toggle.
+      (function () {
+        try {
+          var stored = localStorage.getItem("mac.dashboard.theme");
+          var theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia &&
+                  window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="loginScreen" class="login-screen" hidden>
@@ -76,6 +95,6 @@
       </main>
     </div>
     <!-- app.ts is the maintained source; app.js is checked-in browser output. -->
-    <script type="module" src="/ui/assets/app.js?v=20260527-agent-fleets"></script>
+    <script type="module" src="/ui/assets/app.js?v=20260602-theme-toggle"></script>
   </body>
 </html>
