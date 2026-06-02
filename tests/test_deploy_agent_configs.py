@@ -525,6 +525,78 @@ def test_env_writer_spoke_without_hub_token_leaves_gateway_unconfigured(tmp_path
     assert out.get("MAC_HERMES_GATEWAY_API_KEY") != local
 
 
+def _extract_bash_fn(name):
+    import re as _re
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    m = _re.search(r"\n%s\(\) \{\n(.*?)\n\}\n" % _re.escape(name), script, _re.S)
+    assert m, "function %s not found" % name
+    return "%s() {\n%s\n}\n" % (name, m.group(1))
+
+
+def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
+    import subprocess as _sp
+    (tmp_path / ".hermes").mkdir(parents=True, exist_ok=True)
+    henv = tmp_path / ".hermes" / ".env"
+    henv.write_text(hermes_env_text, encoding="utf-8")
+    fn = _extract_bash_fn("scrub_spoke_provider_secrets")
+    script = (
+        "set -euo pipefail\n"
+        "log() { :; }\n"
+        'DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n'
+        'HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n' % (str(tmp_path), agent, hub_agent)
+        + fn
+        + "scrub_spoke_provider_secrets\n"
+    )
+    r = _sp.run(["bash", "-c", script], text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr
+    keys = set()
+    for line in henv.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.startswith("#"):
+            keys.add(line.split("=", 1)[0].replace("export ", "").strip())
+    return keys
+
+
+_HERMES_ENV = (
+    "SLACK_BOT_TOKEN=xoxb-real\n"
+    "SLACK_APP_TOKEN=xapp-real\n"
+    "MATTERMOST_BOT_TOKEN=mm-real\n"
+    "OPENAI_API_KEY=sk-stale-provider\n"
+    "NVIDIA_API_KEY=nvapi-stale\n"
+    "FAL_KEY=fal-stale\n"
+    "ANTHROPIC_API_KEY=sk-ant-stale\n"
+    "PERPLEXITY_API_KEY=pplx-stale\n"
+    "FIRECRAWL_API_KEY=none\n"
+    "MESSAGING_CWD=/home/jkh/.mac/src/mac\n"
+    "MAC_HERMES_GATEWAY_API_KEY=hub-token\n"
+)
+
+
+def test_scrub_spoke_provider_secrets_clean_invariant(tmp_path):
+    # Re-deploy must converge a spoke's gateway env to a clean invariant: NO
+    # upstream provider keys, but messaging tokens + gateway creds preserved.
+    keys = _run_scrub(tmp_path, agent="natasha", hub_agent="rocky", hermes_env_text=_HERMES_ENV)
+    # upstream provider keys stripped
+    for gone in ("OPENAI_API_KEY", "NVIDIA_API_KEY", "FAL_KEY", "ANTHROPIC_API_KEY",
+                 "PERPLEXITY_API_KEY", "FIRECRAWL_API_KEY"):
+        assert gone not in keys, "%s should be scrubbed from a spoke gateway env" % gone
+    # messaging connections + gateway creds + config preserved
+    for kept in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "MATTERMOST_BOT_TOKEN",
+                 "MESSAGING_CWD", "MAC_HERMES_GATEWAY_API_KEY"):
+        assert kept in keys, "%s must be preserved" % kept
+
+
+def test_scrub_spoke_provider_secrets_is_noop_on_hub(tmp_path):
+    # The hub legitimately holds provider keys (it runs the router) — never scrub it.
+    keys = _run_scrub(tmp_path, agent="rocky", hub_agent="rocky", hermes_env_text=_HERMES_ENV)
+    assert "NVIDIA_API_KEY" in keys and "OPENAI_API_KEY" in keys
+
+
+def test_scrub_called_for_both_os_flows():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    # symmetric with the hub escrow: escrow (hub) then scrub (spoke) before messaging
+    assert script.count("\n  escrow_router_provider_keys\n  scrub_spoke_provider_secrets\n  sync_messaging_config\n") == 2
+
+
 def test_deploy_host_blanks_provider_keys_for_spokes():
     # Stream B: deploy_host must NOT ship upstream provider keys to spokes (only
     # the hub keeps them). It blanks them before building the remote SSH command.
