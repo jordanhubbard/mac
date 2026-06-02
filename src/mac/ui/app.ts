@@ -1029,12 +1029,12 @@ function renderProjects(): string {
     <section class="split">
       <div class="surface">
         <h2>Create Project</h2>
-        <form class="action-form aligned-form" data-action="projectCreate">
+        <form class="action-form aligned-form project-create-form" data-action="projectCreate">
           <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
-          <label>Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
           <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
-          <label>Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
-          <button type="submit" ${disabledAttr(!writable)}>Create</button>
+          <label class="field-full">Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
+          <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
+          <div class="field-full form-actions"><button type="submit" ${disabledAttr(!writable)}>Create</button></div>
         </form>
       </div>
       <div class="surface">
