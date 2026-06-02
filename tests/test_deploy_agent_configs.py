@@ -1171,15 +1171,28 @@ def test_setup_fleet_wizard_new_hub_is_noninteractive_and_custom_port_aware(tmp_
     assert "MAC_SECRET_KEY=" in env_file.read_text(encoding="utf-8")
 
 
-def test_setup_sh_new_hub_path_delegates_to_deploy_wrapper():
+def test_setup_entrypoints_are_python_driven_and_make_exposed():
     script = (ROOT / "setup.sh").read_text(encoding="utf-8")
+    setup_py = (ROOT / "setup.py").read_text(encoding="utf-8")
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 
-    assert "deploy/deploy-mac-fleet.sh" in script
-    assert "--hub|--hub=*|--new-hub|--new-hub=*" in script
-    assert "--configure-only|--no-deploy" in script
-    assert "--deploy-plan-file" in script
-    assert 'set -a' in script
+    assert script.startswith("#!/bin/sh")
+    assert "exec \"$PYTHON\" \"$ROOT/setup.py\" \"$@\"" in script
+    assert "BASH_SOURCE" not in script
+    assert "read -r -d" not in script
+    assert "DEPLOY_FLEET = ROOT / \"deploy\" / \"deploy-mac-fleet.sh\"" in setup_py
+    assert "DEFAULT_ENV_FILE = Path.home() / \".mac\" / \".env\"" in setup_py
+    assert "def parse_setup_args" in setup_py
+    assert "def configure_then_deploy" in setup_py
+    assert "def deploy_env" in setup_py
+    assert "PYTHON ?= $(shell for candidate in python3 python" in makefile
+    assert "sys.version_info >= (3, 9)" in makefile
+    assert "setup: require-python" in makefile
+    assert "deploy: require-python" in makefile
+    assert "--(hub|new-hub)" in makefile
+    assert "resolve_python_bin" in deploy
+    assert "\"$PYTHON_BIN\" \"${setup_args[@]}\"" in deploy
     assert "--fleet-name)" in deploy
     assert "setup_args+=(--fleet-name" in deploy
     assert "setup_args+=(--control-port" in deploy

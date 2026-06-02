@@ -34,6 +34,18 @@ NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
 NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 
+resolve_python_bin() {
+  local candidate
+  for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" python3 python; do
+    [ -n "$candidate" ] || continue
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Usage:
@@ -271,6 +283,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if ! PYTHON_BIN="$(resolve_python_bin)"; then
+  echo "ERROR: Python 3.9+ is required (python3 or python)" >&2
+  exit 127
+fi
+
 if [ -n "$NEW_HUB_NAME" ]; then
   if [ -z "$NEW_HUB_TARGET" ]; then
     echo "ERROR: --new-hub requires --target user@host[:port]" >&2
@@ -315,14 +332,14 @@ if [ -n "$NEW_HUB_NAME" ]; then
   if [ -n "$NEW_HUB_HEADSCALE_PREAUTH_KEY" ]; then
     setup_args+=(--headscale-preauth-key "$NEW_HUB_HEADSCALE_PREAUTH_KEY")
   fi
-  python3 "${setup_args[@]}"
+  "$PYTHON_BIN" "${setup_args[@]}"
   REQUESTED_AGENTS=("$NEW_HUB_NAME")
 fi
 
 fleet_config_query() {
   local mode="$1"
   shift || true
-  python3 - "$mode" "$FLEET_CONFIG" "$FLEET_REGISTRY_CONFIG" "$HUB_SELECTOR" "$@" <<'PY'
+  "$PYTHON_BIN" - "$mode" "$FLEET_CONFIG" "$FLEET_REGISTRY_CONFIG" "$HUB_SELECTOR" "$@" <<'PY'
 from __future__ import annotations
 
 import os
@@ -493,7 +510,7 @@ if registry_present:
 else:
     if base.get("sample") and os.environ.get("MAC_DEPLOY_ALLOW_SAMPLE_CONFIG") != "1":
         print(
-            "ERROR: no fleet registry found at %s. Run bash setup.sh to create one, "
+            "ERROR: no fleet registry found at %s. Run make setup to create one, "
             "or pass --fleets-config /path/to/fleets.yaml. The checked-in %s is "
             "a sample only." % (registry_path, base_path),
             file=sys.stderr,
@@ -648,7 +665,7 @@ shell_quote() {
 
 parse_ssh_target_fields() {
   local raw_target="$1"
-  python3 - "$raw_target" "${SSH_PORT_OVERRIDE:-}" <<'PY'
+  "$PYTHON_BIN" - "$raw_target" "${SSH_PORT_OVERRIDE:-}" <<'PY'
 import sys
 
 text = (sys.argv[1] or "").strip()
@@ -694,7 +711,7 @@ env_value_or_empty() {
 
 fleet_scoped_name() {
   local key="$1" fleet="$2"
-  python3 - "$key" "$fleet" <<'PY'
+  "$PYTHON_BIN" - "$key" "$fleet" <<'PY'
 import re
 import sys
 
@@ -748,7 +765,7 @@ if ! grep -q "deploy complete" "$deploy_log"; then
   echo "remote reconciliation failed: deploy log lacks completion marker" >&2
   exit 1
 fi
-python3 - "$manifest" "$agent" <<'PY'
+"$PYTHON_BIN" - "$manifest" "$agent" <<'PY'
 import json
 import sys
 manifest_path, expected_agent = sys.argv[1], sys.argv[2]
@@ -1367,7 +1384,7 @@ install_github_review_key() {
   local config_file="$ssh_dir/config"
   mkdir -p "$ssh_dir"
   chmod 700 "$ssh_dir"
-  python3 -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))" "$key_file" "$GITHUB_REVIEW_KEY_B64"
+  "$PYTHON_BIN" -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))" "$key_file" "$GITHUB_REVIEW_KEY_B64"
   chmod 600 "$key_file"
   log "installed GitHub review deploy key at $key_file"
   ssh-keyscan -H github.com 2>/dev/null >> "$ssh_dir/known_hosts"
@@ -4742,7 +4759,7 @@ ensure_local_github_review_key() {
     cat "${key_file}.pub" >&2
   fi
   chmod 600 "$key_file"
-  python3 -c "import base64, sys; print(base64.b64encode(open(sys.argv[1],'rb').read()).decode(), end='')" "$key_file"
+  "$PYTHON_BIN" -c "import base64, sys; print(base64.b64encode(open(sys.argv[1],'rb').read()).decode(), end='')" "$key_file"
 }
 
 install_reverse_tunnel_on_hub() {

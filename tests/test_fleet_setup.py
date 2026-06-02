@@ -66,7 +66,7 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
         in plan["env_values"]["MAC_ROUTER_PROVIDERS"]
     )
     assert plan["env_values"]["NVIDIA_API_KEY"] == "nv-secret"
-    assert "bash deploy/deploy-mac-fleet.sh --hub horde-hub" in plan["next_steps"][1]
+    assert 'make deploy HUB=horde-hub ARGS="horde-hub"' in plan["next_steps"][0]
 
     redacted = public_plan(plan)
     assert redacted["env_values"]["NVIDIA_API_KEY"] == "<set>"
@@ -123,7 +123,7 @@ def test_setup_fleet_spec_mode_writes_registry_and_env(tmp_path):
     assert "MAC_ROUTER_BACKEND=inproc" in env_text
     assert "MAC_ROUTER_PROVIDERS=" in env_text
     assert "NVIDIA_API_KEY=nv-secret" in env_text
-    assert "bash deploy/deploy-mac-fleet.sh --hub horde-hub" in result.stdout
+    assert 'make deploy HUB=horde-hub ARGS="horde-hub"' in result.stdout
 
 
 def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):

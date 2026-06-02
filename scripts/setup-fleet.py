@@ -248,8 +248,7 @@ def write_generated_files(
         for step in next_steps:
             print("  %s" % step)
     else:
-        print("  set -a; . %s; set +a" % env_file)
-        print("  bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name)
+        print("  make deploy HUB=%s" % hub_name)
     return 0
 
 
@@ -558,12 +557,11 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
 
     if running_locally:
         next_steps = [
-            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
+            "make deploy HUB=%s" % hub_name,
         ]
     else:
         next_steps = [
-            "set -a; . %s; set +a" % env_file,
-            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
+            "make deploy HUB=%s" % hub_name,
         ]
 
     return write_generated_files(
@@ -700,12 +698,11 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
 
     if running_locally:
         next_steps = [
-            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+            'make deploy HUB=%s ARGS="%s"' % (hub_name, agent_name),
         ]
     else:
         next_steps = [
-            "set -a; . %s; set +a" % env_file,
-            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+            'make deploy HUB=%s ARGS="%s"' % (hub_name, agent_name),
         ]
 
     return write_generated_files(
@@ -734,7 +731,7 @@ def main(argv: List[str]) -> int:
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
     parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
-    parser.add_argument("--deploy-plan-file", default="", help="Write a setup.sh deployment plan JSON file.")
+    parser.add_argument("--deploy-plan-file", default="", help="Write a setup deployment plan JSON file.")
     parser.add_argument("--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup.")
     parser.add_argument(
         "--validate-only",

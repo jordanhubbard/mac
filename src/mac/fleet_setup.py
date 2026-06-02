@@ -197,10 +197,11 @@ def build_setup_plan(
         for agent in _list(spec.get("deploy_agents"))
         if _str(agent)
     ] or [hub_name]
+    deploy_command = "make deploy HUB=%s" % hub_name
+    if deploy_agents:
+        deploy_command += ' ARGS="%s"' % " ".join(deploy_agents)
     next_steps = [
-        "set -a; . %s; set +a" % (env_file or fleets_config.with_name(".env")),
-        "bash deploy/deploy-mac-fleet.sh --hub %s%s"
-        % (hub_name, " " + " ".join(deploy_agents) if deploy_agents and deploy_agents != [hub_name] else ""),
+        deploy_command,
         "mac --fleet %s fleet snapshot" % hub_name,
         "mac --fleet %s memory health" % hub_name,
     ]

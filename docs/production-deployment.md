@@ -103,7 +103,7 @@ First-time deployments should use the setup wizard instead of hand-editing
 deployment YAML:
 
 ```bash
-bash setup.sh
+make setup
 ```
 
 The wizard asks for the hub, agents, SSH targets, OS families, supervisors,
@@ -117,8 +117,7 @@ hub token. It writes:
 To deploy after the wizard:
 
 ```bash
-set -a; . ~/.mac/.env; set +a
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 ## Declarative Setup For Agents
@@ -161,14 +160,14 @@ export NVIDIA_API_KEY=...
 
 mac fleet validate --spec fleet-setup.yaml
 mac fleet doctor --spec fleet-setup.yaml
-bash setup.sh --spec fleet-setup.yaml --force
+make setup ARGS="--spec fleet-setup.yaml --force"
 ```
 
-`setup.sh --spec` writes `~/.mac/fleets.yaml` and `~/.mac/.env`, then deploys
-the generated plan. To configure only:
+`make setup ARGS="--spec ..."` writes `~/.mac/fleets.yaml` and `~/.mac/.env`,
+then deploys the generated plan. To configure only:
 
 ```bash
-bash setup.sh --configure-only --spec fleet-setup.yaml --force
+make setup ARGS="--configure-only --spec fleet-setup.yaml --force"
 ```
 
 If a provider key such as `NVIDIA_API_KEY` is absent from both the environment
@@ -193,7 +192,7 @@ Hub is directly routable — no tunnel needed:
 curl http://<hub-host>:8789/health
 
 # Deploy
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 ### SSH port forward (K8s, bastion, or private subnets)
@@ -240,7 +239,7 @@ defaults:
 ```bash
 # Hub is reachable at its Tailscale IP, e.g. 100.x.x.x:8789
 curl http://100.x.x.x:8789/health
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 `MAC_DEPLOY_TAILSCALE_AUTH_KEY` must be set in `~/.mac/.env` before deploy.
@@ -268,7 +267,7 @@ defaults:
 ```bash
 # Hub reachable at its headscale-assigned IP or MagicDNS name
 curl http://hub.headscale.example.com:8789/health
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 `MAC_DEPLOY_HEADSCALE_PREAUTHKEY` must be set in `~/.mac/.env`. With
@@ -277,10 +276,10 @@ headscale server on the hub node itself.
 
 ## One-Time ACC Replacement Deploy
 
-For a configured fleet, use the fleet deploy script:
+For a configured fleet, use the Make deploy target:
 
 ```bash
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 Fleet deploy reads `~/.mac/fleets.yaml` by default. Override
