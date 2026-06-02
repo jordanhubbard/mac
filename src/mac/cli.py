@@ -771,6 +771,10 @@ def cmd_secret_list(args: argparse.Namespace) -> None:
     _print([secret.to_dict() for secret in _plane(args).list_secrets()])
 
 
+def cmd_secret_delete(args: argparse.Namespace) -> None:
+    _print(_plane(args).delete_secret(args.secret, actor=args.actor))
+
+
 def cmd_secret_access(args: argparse.Namespace) -> None:
     _print(_plane(args).request_secret(args.secret, args.agent_id, args.purpose))
 
@@ -2004,6 +2008,10 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_secret_set, secret_set)
     secret_list = secret.add_parser("list")
     _set(cmd_secret_list, secret_list)
+    secret_delete = secret.add_parser("delete", help="hard-delete a secret (scrub its value)")
+    secret_delete.add_argument("secret", help="secret id or name")
+    secret_delete.add_argument("--actor", default="operator")
+    _set(cmd_secret_delete, secret_delete)
     secret_access = secret.add_parser("access")
     secret_access.add_argument("secret")
     secret_access.add_argument("agent_id")

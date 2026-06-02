@@ -2496,6 +2496,26 @@ def test_secrets_are_scoped_redacted_audited_and_not_stored_plaintext(cp):
     assert [audit.result for audit in audits] == ["granted", "denied"]
 
 
+def test_delete_secret_scrubs_value_and_allows_name_reuse(cp):
+    secret = cp.create_secret(
+        "stale-router-key", "old-upstream-value", {"capabilities": ["router-upstream"]}, "deploy"
+    )
+    assert any(s.name == "stale-router-key" for s in cp.list_secrets())
+    # hard-delete scrubs the value + removes the row
+    result = cp.delete_secret("stale-router-key", actor="operator")
+    assert result["deleted"] is True and result["name"] == "stale-router-key"
+    assert cp.store.query_one("SELECT * FROM secrets WHERE name = ?", ("stale-router-key",)) is None
+    assert not any(s.name == "stale-router-key" for s in cp.list_secrets())
+    # deleting an absent secret raises
+    with pytest.raises(NotFoundError):
+        cp.delete_secret("stale-router-key")
+    # the name is reusable after deletion
+    again = cp.create_secret(
+        "stale-router-key", "new-value", {"capabilities": ["router-upstream"]}, "deploy"
+    )
+    assert again.name == "stale-router-key"
+
+
 def test_runtime_boundary_pins_manifests_and_blocks_secret_values(cp):
     manifest = {
         "image": "python:3.12@sha256:abc123",
