@@ -3391,13 +3391,12 @@ if _router_inproc and _is_hub:
     # the LOCAL /v1 with the local mac token. The router uses each provider's own
     # key (MAC_ROUTER_PROVIDERS key=..., e.g. secret:<name> from the vault) upstream.
     values["MAC_ROUTER_BACKEND"] = _router_backend
-    if _router_providers:
-        values["MAC_ROUTER_PROVIDERS"] = _router_providers
     if _router_default_model:
         values["MAC_ROUTER_DEFAULT_MODEL"] = _router_default_model
     if _router_wildcard_models:
         values["MAC_ROUTER_WILDCARD_MODELS"] = _router_wildcard_models
     if _router_providers:
+        values["MAC_ROUTER_PROVIDERS"] = _router_providers
         _local_router_v1 = "http://127.0.0.1:%s/v1" % port
         values["OPENAI_BASE_URL"] = _local_router_v1
         values["CUSTOM_BASE_URL"] = _local_router_v1
@@ -3678,6 +3677,21 @@ def existing_names():
     with urllib.request.urlopen(req, timeout=15) as resp:
         return {s.get("name") for s in json.load(resp)}
 
+def post_secret(name, value, capabilities):
+    body = json.dumps({
+        "name": name,
+        "value": value,
+        "scopes": {"capabilities": capabilities},
+        "created_by": "deploy",
+    }).encode()
+    req = urllib.request.Request(
+        "http://127.0.0.1:%s/secrets" % port, data=body,
+        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
+        method="POST",
+    )
+    resp = urllib.request.urlopen(req, timeout=15)
+    print("escrowed %r (HTTP %s, %d-char value)" % (name, resp.status, len(value)))
+
 # Explicit provider -> source-env-var map (mirrors setup-fleet.py _KNOWN_PROVIDERS).
 # NOT derived from the provider id: a provider whose key env var isn't exactly
 # <ID>_API_KEY would otherwise be skipped silently. An unmapped provider warns loudly.
@@ -3713,19 +3727,7 @@ for chunk in providers.split(";"):
         print("escrow: %s empty/unset for secret %r; skip" % (env_var, name))
         skipped += 1
         continue
-    body = json.dumps({
-        "name": name,
-        "value": value,
-        "scopes": {"capabilities": ["router-upstream"]},
-        "created_by": "deploy",
-    }).encode()
-    req = urllib.request.Request(
-        "http://127.0.0.1:%s/secrets" % port, data=body,
-        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
-        method="POST",
-    )
-    resp = urllib.request.urlopen(req, timeout=15)
-    print("escrowed %r (HTTP %s, %d-char value)" % (name, resp.status, len(value)))
+    post_secret(name, value, ["router-upstream"])
     escrowed += 1
 # Image-gen key: the hub /v1/genai proxy resolves MAC_ROUTER_IMAGE_KEY
 # (secret:<name>) from the vault. Escrow NVIDIA_API_KEY there (the same NVIDIA
@@ -3742,19 +3744,7 @@ if image_key_spec.startswith("secret:"):
         print("escrow: NVIDIA_API_KEY empty/unset for image secret %r; skip" % iname)
         skipped += 1
     else:
-        body = json.dumps({
-            "name": iname,
-            "value": ivalue,
-            "scopes": {"capabilities": ["router-upstream", "image"]},
-            "created_by": "deploy",
-        }).encode()
-        req = urllib.request.Request(
-            "http://127.0.0.1:%s/secrets" % port, data=body,
-            headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
-            method="POST",
-        )
-        resp = urllib.request.urlopen(req, timeout=15)
-        print("escrowed %r (HTTP %s, %d-char value)" % (iname, resp.status, len(ivalue)))
+        post_secret(iname, ivalue, ["router-upstream", "image"])
         escrowed += 1
 print("router key escrow: %d escrowed, %d skipped" % (escrowed, skipped))
 PY
