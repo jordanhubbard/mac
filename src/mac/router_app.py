@@ -38,12 +38,19 @@ logic is unit-testable without a live provider.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 from mac.provider_router import Provider, ProviderRouter, providers_from_env
+
+# Per-route visibility: every routed request logs which provider served it, so
+# "when did the hub use madmax?" is answerable from the mac service journal
+# (`journalctl -u mac | grep 'router: route'`). Attributable per provider, unlike
+# a provider's own /metrics which can't tell hub traffic from direct traffic.
+logger = logging.getLogger("mac.router")
 
 __all__ = [
     "ProviderProxy",
@@ -152,10 +159,12 @@ class ProviderProxy:
                 if _is_provider_failure(status):
                     self._router.record_failure(provider.name)
                     attempts.append({"provider": provider.name, "status": status})
+                    logger.info("route model=%s provider=%s status=%s failover", model, provider.name, status)
                     continue
                 # The provider answered (healthy), so close its breaker.
                 self._router.record_success(provider.name)
                 provider_answered = True
+                logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
                     break
