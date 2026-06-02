@@ -164,6 +164,18 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     assert "apply_hermes_gateway_runtime_shim\nsync_hermes_chat_config\n" in script
 
 
+def test_fleet_deploy_exports_python_bin_to_remote():
+    # PYTHON_BIN is used in the remote-executed deploy (e.g. install_github_review_key),
+    # so it must be in the `export` list shipped to the remote env — like PY — or the
+    # remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    export_line = next(
+        (ln for ln in script.splitlines() if ln.startswith("export AGENT FLEET_NAME")),
+        "",
+    )
+    assert "PYTHON_BIN" in export_line.split(), "PYTHON_BIN must be exported to the remote deploy env"
+
+
 def test_sample_fleet_config_is_generic_and_externalized():
     cfg = load_sample_fleet_config()
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
