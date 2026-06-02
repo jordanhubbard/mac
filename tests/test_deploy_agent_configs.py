@@ -152,6 +152,18 @@ def test_deploy_env_import_is_dependency_light():
     assert "OK" in result.stdout
 
 
+def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
+    # The Hermes runtime reads ~/.hermes/.env + config.yaml (not mac.env) for its
+    # chat provider; the deploy must sync those from mac.env or agents dial the
+    # retired TokenHub :8090 / send a stale bearer (403) and self-test degrades.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert "sync_hermes_chat_config()" in script
+    assert "-m mac.hermes_chat_config" in script
+    assert '--mac-env "$ENV_FILE"' in script
+    # runs in the main flow right after the gateway runtime shim, before services
+    assert "apply_hermes_gateway_runtime_shim\nsync_hermes_chat_config\n" in script
+
+
 def test_sample_fleet_config_is_generic_and_externalized():
     cfg = load_sample_fleet_config()
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

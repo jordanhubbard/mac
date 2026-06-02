@@ -2689,6 +2689,18 @@ if configured and (patch.get("error") or not report.get("gateway_runtime_shim_pr
 PY
 }
 
+sync_hermes_chat_config() {
+  # The Hermes runtime reads ~/.hermes/.env + config.yaml (+ auth.json pool) for
+  # its chat provider, NOT mac.env — and those retained stale TokenHub state
+  # (:8090 / provider: tokenhub / custom:* pool) across the retirement, so the
+  # agent self-test + task execution dialed the dead endpoint or sent a rejected
+  # bearer (403). Mirror mac.env's router endpoint + token into the runtime
+  # config. Non-fatal: a failure leaves chat degraded but doesn't abort deploy.
+  log "syncing Hermes chat config (in-mac-router endpoint + provider) from mac.env"
+  "$VENV/bin/python" -m mac.hermes_chat_config --hermes-home "$HOME/.hermes" --mac-env "$ENV_FILE" \
+    || log "WARNING: hermes chat config sync failed; agent chat self-test may stay degraded"
+}
+
 initialize_hermes_home() {
   log "initializing Hermes home with upstream Hermes defaults"
   "$VENV/bin/python" - <<'PY'
@@ -3268,6 +3280,7 @@ cat "$HERMES_VENDORED/SNAPSHOT_PIN" > "$LOG_DIR/hermes-vendored-pin.txt" 2>/dev/
 initialize_hermes_home
 ensure_hermes_identity_memory_continuity
 apply_hermes_gateway_runtime_shim
+sync_hermes_chat_config
 install_hermes_web_deps
 install_hermes_messaging_deps
 repair_hermes_kanban_schema
