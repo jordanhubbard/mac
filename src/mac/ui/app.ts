@@ -2996,8 +2996,8 @@ function agentCard(item: AgentItem, data: DashboardData): string {
 function taskLane(taskState: string, tasks: TaskDetail[], agents: AgentItem[]): string {
   const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
   return `
-    <div class="task-lane">
-      <h2><span>${escapeHtml(labelize(taskState))}</span><span class="pill">${laneTasks.length}</span></h2>
+    <div class="task-lane status-${escapeHtml(taskState)}">
+      <h2><span class="lane-title">${escapeHtml(labelize(taskState))}</span><span class="pill lane-count">${laneTasks.length}</span></h2>
       ${laneTasks.length ? laneTasks.map((detail) => taskCard(detail, agents)).join("") : `<div class="empty-state">Empty</div>`}
     </div>
   `;
@@ -3009,11 +3009,14 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
   const origin = taskOrigin(task);
   const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
   const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
+  const isSelected = state.selectedId === task.id;
+  const recentHistory = detail.history.slice(-3);
+  const summaryText = String(detail.summary?.summary || "");
   return `
-    <article class="task-card ${selectedClass(task.id)}">
+    <article class="task-card status-${escapeHtml(task.state)} ${selectedClass(task.id)}">
       <div class="record-header">
-        <div><h3>${escapeHtml(task.title)}</h3><p class="muted small mono">${escapeHtml(task.id)}</p></div>
-        <button class="link-button" type="button" data-select-id="${escapeHtml(task.id)}">Select</button>
+        <div class="task-card-heading"><h3>${escapeHtml(task.title)}</h3><p class="muted small mono task-id" title="${escapeHtml(task.id)}">${escapeHtml(task.id)}</p></div>
+        <button class="select-button${isSelected ? " is-selected" : ""}" type="button" data-select-id="${escapeHtml(task.id)}" aria-pressed="${isSelected ? "true" : "false"}">${isSelected ? "Selected" : "Select"}</button>
       </div>
       <div class="chip-row">
         ${chip(`P${task.priority || 0}`, "info")}
@@ -3021,15 +3024,18 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
         ${owner ? chip(owner.name, "info") : chip("unowned", "warn")}
         ${origin.hermes_instance_id ? chip("Hermes origin", "info") : ""}
       </div>
-      <div class="row-grid compact-fields">
-        ${field("Started", task.started_at ? formatAge(task.started_at) : "not started")}
-        ${field("Completed", task.completed_at ? formatAge(task.completed_at) : "not completed")}
-        ${field("Updated", formatAge(task.last_updated_at || task.updated_at))}
+      <div class="time-summary">
+        <span class="time-cell"><span class="time-label">Started</span><span class="time-value">${escapeHtml(task.started_at ? formatAge(task.started_at) : "not started")}</span></span>
+        <span class="time-cell"><span class="time-label">Completed</span><span class="time-value">${escapeHtml(task.completed_at ? formatAge(task.completed_at) : "not completed")}</span></span>
+        <span class="time-cell"><span class="time-label">Updated</span><span class="time-value">${escapeHtml(formatAge(task.last_updated_at || task.updated_at))}</span></span>
       </div>
-      <p class="small muted">${escapeHtml(String(detail.summary?.summary || ""))}</p>
-      <div class="timeline">
-        ${detail.history.slice(-3).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}
-      </div>
+      ${summaryText ? `<p class="small muted">${escapeHtml(summaryText)}</p>` : ""}
+      ${recentHistory.length ? `<details class="activity-disclosure">
+        <summary><span class="activity-show">Show activity</span><span class="activity-hide">Hide activity</span></summary>
+        <div class="timeline">
+          ${recentHistory.map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}
+        </div>
+      </details>` : ""}
       <div class="record-actions">
         <details class="row-actions edit-disclosure">
           <summary>Edit</summary>

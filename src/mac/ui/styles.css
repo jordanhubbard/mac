@@ -72,9 +72,9 @@
   --accent-ink: #aee6da;
   --accent-soft: #1d3631;
   --accent-line: #2f5a51;
-  --warning: #e0a34a;
+  --warning: #f0b860;
   --warning-soft: #3a2f1c;
-  --warning-line: #5c4a28;
+  --warning-line: #6e5630;
   --danger: #f08376;
   --danger-soft: #3a2320;
   --danger-line: #5e3631;
@@ -1007,6 +1007,51 @@ details.action-box summary {
   padding: 2px 0 2px 10px;
 }
 
+/* Activity log collapses behind a chevron disclosure so cards stay compact. */
+.activity-disclosure {
+  margin-top: 12px;
+}
+
+.activity-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.activity-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.activity-disclosure > summary::after {
+  content: "\25be"; /* down chevron */
+  font-size: 0.8em;
+}
+
+.activity-disclosure[open] > summary::after {
+  content: "\25b4"; /* up chevron */
+}
+
+.activity-disclosure .activity-hide {
+  display: none;
+}
+
+.activity-disclosure[open] .activity-show {
+  display: none;
+}
+
+.activity-disclosure[open] .activity-hide {
+  display: inline;
+}
+
+.activity-disclosure .timeline {
+  margin-top: 10px;
+}
+
 .record-header,
 .agent-header,
 .runtime-header,
@@ -1121,28 +1166,96 @@ details.action-box summary {
   gap: 10px;
   min-height: 120px;
   border: 1px solid var(--line);
+  border-top: 3px solid var(--lane-accent, var(--line));
   border-radius: 8px;
   background: var(--surface-sunken);
   padding: 12px;
 }
 
+/* Per-status lane accent colours give an at-a-glance status cue. */
+.task-lane.status-completed {
+  --lane-accent: var(--accent);
+}
+
+.task-lane.status-failed,
+.task-lane.status-cancelled {
+  --lane-accent: var(--danger);
+}
+
+.task-lane.status-blocked {
+  --lane-accent: var(--warning);
+}
+
+.task-lane.status-running,
+.task-lane.status-claimed,
+.task-lane.status-reviewing,
+.task-lane.status-needs_review {
+  --lane-accent: var(--blue);
+}
+
 .task-lane h2 {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 2px;
 }
 
+.task-lane h2 .lane-title {
+  text-transform: capitalize;
+}
+
+.task-lane h2 .lane-count {
+  min-height: 22px;
+  border-color: var(--lane-accent, var(--line));
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 8px;
+  font-size: 0.78rem;
+}
+
 .task-card {
   border: 1px solid var(--line);
+  border-left: 3px solid var(--lane-accent, var(--line));
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--panel);
   padding: 12px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+/* Inherit the lane status accent on the card's left border. */
+.task-lane.status-completed .task-card {
+  --lane-accent: var(--accent);
+}
+
+.task-lane.status-failed .task-card,
+.task-lane.status-cancelled .task-card {
+  --lane-accent: var(--danger);
+}
+
+.task-lane.status-blocked .task-card {
+  --lane-accent: var(--warning);
+}
+
+.task-lane.status-running .task-card,
+.task-lane.status-claimed .task-card,
+.task-lane.status-reviewing .task-card,
+.task-lane.status-needs_review .task-card {
+  --lane-accent: var(--blue);
+}
+
+.task-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .task-card .record-header {
+  min-width: 0;
+  align-items: center;
+}
+
+.task-card .task-card-heading {
   min-width: 0;
 }
 
@@ -1153,11 +1266,71 @@ details.action-box summary {
   word-break: break-word;
 }
 
-/* Cards live in narrow lanes; collapse the field grid so boxes
-   never overflow their container. */
-.task-card .row-grid,
-.compact-fields {
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+/* Long machine-generated task ids are low value when scanning: keep them to a
+   single truncated line with the full id available on hover. */
+.task-card .task-id {
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Proper button affordance for selection instead of raw blue text. */
+.select-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.select-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.select-button.is-selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Compact single-line time summary (was a three-box grid). */
+.time-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 12px;
+  font-size: 0.8rem;
+}
+
+.time-summary .time-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.time-summary .time-cell + .time-cell::before {
+  content: "\b7"; /* middot separator */
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+.time-summary .time-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.time-summary .time-value {
+  color: var(--ink);
 }
 
 .task-card .chip {
