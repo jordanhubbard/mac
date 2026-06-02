@@ -52,6 +52,25 @@ from mac.provider_router import Provider, ProviderRouter, providers_from_env
 # a provider's own /metrics which can't tell hub traffic from direct traffic.
 logger = logging.getLogger("mac.router")
 
+
+def _configure_route_logging() -> None:
+    """Make ``router: route …`` lines reach the mac service journal.
+
+    uvicorn's ``--log-level info`` only configures uvicorn's own loggers; a
+    non-uvicorn logger like ``mac.router`` propagates to the root, whose
+    last-resort handler emits WARNING+ only — so INFO route lines were dropped.
+    Attach a dedicated INFO stderr handler (once) when the router mounts so the
+    per-route provider attribution is visible in ``journalctl -u mac``."""
+    if getattr(logger, "_mac_route_logging_configured", False):
+        return
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    logger._mac_route_logging_configured = True
+
+
 __all__ = [
     "ProviderProxy",
     "resolve_provider_key",
@@ -387,6 +406,7 @@ def mount_router(
     env = env or os.environ
     if (env.get("MAC_ROUTER_BACKEND") or "tokenhub").strip().lower() != "inproc":
         return False
+    _configure_route_logging()
     # The image proxy is independent of the chat providers (a fixed upstream, no
     # failover), so mount it even when no chat providers are configured.
     mounted = mount_image_proxy(app, env=env, secret_resolver=secret_resolver)
