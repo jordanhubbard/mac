@@ -432,6 +432,30 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     assert '[ "${allow_degraded_services:-0}" = "1" ]' in script
 
 
+def test_hub_escrows_router_provider_keys_into_vault():
+    # Stream B (B2): the hub escrows each router provider's upstream key into its
+    # encrypted vault under the secret:<name> the provider spec references, so the
+    # router resolves it from secure storage — keys never plaintext-spread to spokes.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert "escrow_router_provider_keys() {" in script
+    fn = script.split("escrow_router_provider_keys() {", 1)[1].split(
+        "\nsync_messaging_config() {", 1
+    )[0]
+    # HUB-only, and only when a provider references a vault secret
+    assert '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0' in fn
+    assert 'case "${MAC_DEPLOY_ROUTER_PROVIDERS:-}" in *key=secret:*)' in fn
+    # idempotent: skip names already in the vault
+    assert "already in vault; skip" in fn
+    # derive <PROVIDER>_API_KEY from the provider id and POST to the LOCAL /secrets
+    assert 'env_var = pid.upper() + "_API_KEY"' in fn
+    assert '"http://127.0.0.1:%s/secrets" % port' in fn
+    assert '"created_by": "deploy"' in fn
+    # failure is loud but non-fatal (chat won't route until the key is escrowed)
+    assert "router provider key escrow failed" in fn
+    # invoked on the hub after the API is up, before the gateway, in both OS flows
+    assert script.count("\n  escrow_router_provider_keys\n") == 2
+
+
 def test_setup_fleet_build_router_provider_spec():
     # The wizard wires the in-mac router from the providers it collects, using the
     # plain env-var key form the router resolves at use (no vault escrow needed).
@@ -444,14 +468,17 @@ def test_setup_fleet_build_router_provider_spec():
     spec.loader.exec_module(mod)
     build = mod.build_router_provider_spec
 
+    # Stream B (B2): keys are referenced as secret:<name> (resolved from the hub
+    # vault, escrowed by the deploy), never plaintext-spread as env-var names.
+    assert mod.router_secret_name("nvidia") == "nvidia-upstream"
     assert build({}) == ""
-    assert build({"OPENAI_API_KEY": "sk"}) == "openai=https://api.openai.com/v1,1,key=OPENAI_API_KEY"
+    assert build({"OPENAI_API_KEY": "sk"}) == "openai=https://api.openai.com/v1,1,key=secret:openai-upstream"
     # nvidia is preferred (priority 0); a custom base url is honored.
     assert build(
         {"NVIDIA_API_KEY": "k", "OPENAI_API_KEY": "sk", "OPENAI_BASE_URL": "https://x/v1"}
     ) == (
-        "nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY"
-        ";openai=https://x/v1,1,key=OPENAI_API_KEY"
+        "nvidia=https://inference-api.nvidia.com/v1,0,key=secret:nvidia-upstream"
+        ";openai=https://x/v1,1,key=secret:openai-upstream"
     )
     # The spec round-trips through the router's own parser.
     from mac.provider_router import providers_from_env
@@ -460,7 +487,7 @@ def test_setup_fleet_build_router_provider_spec():
         {"MAC_ROUTER_PROVIDERS": build({"NVIDIA_API_KEY": "k"})}
     )
     assert [p.name for p in providers] == ["nvidia"]
-    assert providers[0].api_key_env == "NVIDIA_API_KEY"
+    assert providers[0].api_key_env == "secret:nvidia-upstream"
 
 
 def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
@@ -579,7 +606,7 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     # replacement) from the collected providers, or a fresh fleet has no chat
     # routing. The test adds the "openai" provider with key "sk-test".
     assert "MAC_DEPLOY_ROUTER_BACKEND=inproc" in env
-    assert "MAC_DEPLOY_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=OPENAI_API_KEY" in env
+    assert "MAC_DEPLOY_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
     assert "OPENAI_API_KEY=sk-test" in env
     assert "MAC_API_TOKEN" not in env
 

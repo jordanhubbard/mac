@@ -264,20 +264,27 @@ _KNOWN_PROVIDERS: Dict[str, tuple] = {
 }
 
 
+def router_secret_name(provider_id: str) -> str:
+    """Vault secret name the router resolves a provider's upstream key from."""
+    return "%s-upstream" % provider_id
+
+
 def build_router_provider_spec(provider_env_values: Dict[str, str]) -> str:
     """Build MAC_ROUTER_PROVIDERS from the provider keys the wizard collected.
 
     Format (mac.provider_router.providers_from_env): ``name=base_url,priority,
-    key=ENVVAR`` joined by ';'. ``key`` is the plain env-var NAME — router_app
-    resolves it from the agent env at use (the deploy plumbs these provider keys
-    through), so no vault escrow is needed to route. Emitted in _KNOWN_PROVIDERS
-    order (nvidia preferred, priority 0)."""
+    key=secret:<name>`` joined by ';'. The key is referenced as ``secret:<name>``
+    so the (hub-only) router resolves it from the encrypted vault at use — keys
+    stay in secure storage on the hub, never plaintext-spread to spokes. The
+    deploy escrows each provider's <PROVIDER>_API_KEY into the vault under
+    router_secret_name(provider) before the router needs it. Emitted in
+    _KNOWN_PROVIDERS order (nvidia preferred, priority 0)."""
     specs = []
     for prio, (pid, (key_var, base_var, default_base)) in enumerate(_KNOWN_PROVIDERS.items()):
         if key_var not in provider_env_values:
             continue
         base = provider_env_values.get(base_var) or default_base
-        specs.append("%s=%s,%d,key=%s" % (pid, base, prio, key_var))
+        specs.append("%s=%s,%d,key=secret:%s" % (pid, base, prio, router_secret_name(pid)))
     return ";".join(specs)
 
 
@@ -542,14 +549,17 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
     }
     env_values.update(provider_env_values)
-    # Wire the in-mac router — the replacement for the retired TokenHub. With
-    # MAC_ROUTER_BACKEND=inproc + providers, the deploy mounts each agent's local
-    # /v1 front door and points its gateway there (see deploy-mac-fleet.sh router
-    # block). Without this a freshly-generated fleet would have no chat routing.
+    # Wire the in-mac router — the replacement for the retired TokenHub. Keys stay
+    # centralized: only the HUB runs the router (MAC_ROUTER_BACKEND=inproc), and it
+    # references each provider's upstream key as secret:<name>, which the deploy
+    # escrows into the hub's encrypted vault. SPOKES route through the hub's /v1
+    # and carry no upstream key (see deploy-mac-fleet.sh router block). Without this
+    # a freshly-generated fleet would have no chat routing.
     env_values["MAC_DEPLOY_ROUTER_BACKEND"] = "inproc"
     env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] = build_router_provider_spec(provider_env_values)
     print("")
-    print("Wired in-mac router: MAC_ROUTER_BACKEND=inproc")
+    print("Wired in-mac router (hub-only; keys escrowed to the hub vault on deploy):")
+    print("  MAC_ROUTER_BACKEND=inproc")
     print("  providers: %s" % (env_values["MAC_DEPLOY_ROUTER_PROVIDERS"] or "(none)"))
     print("  (set MAC_DEPLOY_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
