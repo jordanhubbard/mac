@@ -502,6 +502,46 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
 
 
+def _fleet_setup_plan_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan
+
+    root = Path(__file__).resolve().parents[2]
+    fleets_config = Path(args.fleets_config).expanduser()
+    env_file = Path(args.env_file).expanduser()
+    spec = load_setup_spec(Path(args.spec).expanduser())
+    return public_plan(
+        build_setup_plan(
+            spec,
+            root=root,
+            fleets_config=fleets_config,
+            env_file=env_file,
+        )
+    )
+
+
+def cmd_fleet_validate_setup(args: argparse.Namespace) -> None:
+    """Validate a declarative mac.fleet_setup.v1 spec."""
+    _print(_fleet_setup_plan_from_args(args))
+
+
+def cmd_fleet_doctor_setup(args: argparse.Namespace) -> None:
+    """Run LLM-friendly setup doctor checks for a declarative fleet spec."""
+    plan = _fleet_setup_plan_from_args(args)
+    _print(
+        {
+            "schema": "mac.fleet_setup_doctor.v1",
+            "status": plan.get("status"),
+            "hub": plan.get("hub"),
+            "fleet_name": plan.get("fleet_name"),
+            "checks": plan.get("checks"),
+            "required_env": plan.get("required_env"),
+            "warnings": plan.get("warnings"),
+            "errors": plan.get("errors"),
+            "next_steps": plan.get("next_steps"),
+        }
+    )
+
+
 def cmd_mood_set(args: argparse.Namespace) -> None:
     _print(
         _plane(args).set_mood(
@@ -1756,6 +1796,36 @@ def build_parser() -> argparse.ArgumentParser:
         "or ~/.hermes/mac-runtime-context.md)",
     )
     _set(cmd_fleet_refresh_context, fleet_refresh)
+
+    fleet_validate = fleet.add_parser(
+        "validate",
+        help="validate a declarative mac.fleet_setup.v1 setup spec",
+    )
+    fleet_validate.add_argument("--spec", required=True)
+    fleet_validate.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+    )
+    fleet_validate.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+    )
+    _set(cmd_fleet_validate_setup, fleet_validate)
+
+    fleet_doctor = fleet.add_parser(
+        "doctor",
+        help="run setup doctor checks for a declarative fleet spec",
+    )
+    fleet_doctor.add_argument("--spec", required=True)
+    fleet_doctor.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+    )
+    fleet_doctor.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+    )
+    _set(cmd_fleet_doctor_setup, fleet_doctor)
 
     mood = sub.add_parser(
         "mood",

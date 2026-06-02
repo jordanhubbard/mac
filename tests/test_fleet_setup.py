@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+from mac.fleet_setup import build_setup_plan, public_plan
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _spec() -> dict:
+    return {
+        "schema": "mac.fleet_setup.v1",
+        "fleet": {
+            "name": "horde",
+            "hub": "horde-hub",
+            "hub_url": "http://horde-hub:8789",
+        },
+        "agents": [
+            {
+                "name": "horde-hub",
+                "target": "ubuntu@10.0.0.10:2201",
+                "os": "linux",
+                "model": "nvidia/test-model",
+                "worker": {"mode": "loop"},
+            },
+            {
+                "name": "horde-worker",
+                "target": "ubuntu@10.0.0.11",
+                "os": "linux",
+                "worker": {"mode": "heartbeat"},
+            },
+        ],
+        "router": {
+            "backend": "inproc",
+            "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],
+        },
+        "network": {"provider": "none"},
+    }
+
+
+def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
+    plan = build_setup_plan(
+        _spec(),
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+
+    assert plan["status"] == "pass"
+    assert plan["hub"] == "horde-hub"
+    assert plan["fleet_config"]["sample"] is False
+    assert plan["fleet_config"]["hub_agent"] == "horde-hub"
+    assert plan["fleet_config"]["agents"][0]["target"] == "ubuntu@10.0.0.10:2201"
+    assert plan["fleet_config"]["agents"][0]["control_bind_host"] == "0.0.0.0"
+    assert plan["env_values"]["MAC_ROUTER_BACKEND"] == "inproc"
+    assert (
+        "nvidia=https://inference-api.nvidia.com/v1,0,key=secret:nvidia-upstream"
+        in plan["env_values"]["MAC_ROUTER_PROVIDERS"]
+    )
+    assert plan["env_values"]["NVIDIA_API_KEY"] == "nv-secret"
+    assert "bash deploy/deploy-mac-fleet.sh --hub horde-hub" in plan["next_steps"][1]
+
+    redacted = public_plan(plan)
+    assert redacted["env_values"]["NVIDIA_API_KEY"] == "<set>"
+    assert redacted["env_values"]["MAC_API_TOKEN"] == "<set>"
+
+
+def test_declarative_setup_plan_reports_missing_provider_env(tmp_path):
+    plan = build_setup_plan(
+        _spec(),
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={},
+    )
+
+    assert plan["status"] == "fail"
+    assert plan["required_env"] == ["NVIDIA_API_KEY"]
+    env_check = [check for check in plan["checks"] if check["name"] == "env.required"][0]
+    assert env_check["status"] == "fail"
+    assert "NVIDIA_API_KEY" in env_check["detail"]
+
+
+def test_setup_fleet_spec_mode_writes_registry_and_env(tmp_path):
+    spec_path = tmp_path / "fleet.yaml"
+    fleets_config = tmp_path / "fleets.yaml"
+    env_file = tmp_path / ".env"
+    spec_path.write_text(yaml.safe_dump(_spec()), encoding="utf-8")
+    env = {**os.environ, "NVIDIA_API_KEY": "nv-secret"}
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "setup-fleet.py"),
+            "--spec",
+            str(spec_path),
+            "--fleets-config",
+            str(fleets_config),
+            "--env-file",
+            str(env_file),
+            "--force",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    registry = yaml.safe_load(fleets_config.read_text(encoding="utf-8"))
+    assert registry["fleets"]["horde-hub"]["hub_url"] == "http://horde-hub:8789"
+    assert registry["fleets"]["horde-hub"]["agents"][1]["name"] == "horde-worker"
+    env_text = env_file.read_text(encoding="utf-8")
+    assert "MAC_ROUTER_BACKEND=inproc" in env_text
+    assert "MAC_ROUTER_PROVIDERS=" in env_text
+    assert "NVIDIA_API_KEY=nv-secret" in env_text
+    assert "bash deploy/deploy-mac-fleet.sh --hub horde-hub" in result.stdout
+
+
+def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
+    spec_path = tmp_path / "fleet.yaml"
+    spec_path.write_text(yaml.safe_dump(_spec()), encoding="utf-8")
+    env = {**os.environ, "NVIDIA_API_KEY": "nv-secret"}
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mac.cli",
+            "fleet",
+            "doctor",
+            "--spec",
+            str(spec_path),
+            "--fleets-config",
+            str(tmp_path / "fleets.yaml"),
+            "--env-file",
+            str(tmp_path / ".env"),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["schema"] == "mac.fleet_setup_doctor.v1"
+    assert report["status"] == "pass"
+    assert report["hub"] == "horde-hub"
+    assert any(check["name"] == "router.providers" for check in report["checks"])

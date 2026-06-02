@@ -221,6 +221,17 @@ and write completed operational context back to MAC.
 After the local quickstart makes sense, deploy a hub. The fleet registry is
 home-scoped at `~/.mac/fleets.yaml`; it is not checked into the repository.
 
+For an LLM-driven setup, write a `mac.fleet_setup.v1` YAML spec and run:
+
+```bash
+mac fleet validate --spec fleet-setup.yaml
+mac fleet doctor --spec fleet-setup.yaml
+bash setup.sh --spec fleet-setup.yaml --force
+```
+
+The doctor report is JSON and calls out missing provider env vars, bad targets,
+sample-config mistakes, and the exact next commands.
+
 For a new hub:
 
 ```bash

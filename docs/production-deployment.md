@@ -121,6 +121,60 @@ set -a; . ~/.mac/.env; set +a
 bash deploy/deploy-mac-fleet.sh --hub <hub-node>
 ```
 
+## Declarative Setup For Agents
+
+LLM-driven setup should prefer a spec file over the interactive wizard. The
+setup spec is validated before files are written, and the doctor output lists
+missing env vars and next commands in machine-readable JSON.
+
+Example `fleet-setup.yaml`:
+
+```yaml
+schema: mac.fleet_setup.v1
+fleet:
+  name: horde
+  hub: horde-hub
+  hub_url: http://horde-hub:8789
+agents:
+  - name: horde-hub
+    target: ubuntu@10.0.0.10:2201
+    os: linux
+    model: nvidia/llama-3.3-nemotron-super-49b-v1
+    worker:
+      mode: loop
+  - name: horde-worker
+    target: ubuntu@10.0.0.11
+    os: linux
+router:
+  backend: inproc
+  providers:
+    - id: nvidia
+      key_env: NVIDIA_API_KEY
+network:
+  provider: tailscale
+```
+
+Recommended LLM flow:
+
+```bash
+export NVIDIA_API_KEY=...
+
+mac fleet validate --spec fleet-setup.yaml
+mac fleet doctor --spec fleet-setup.yaml
+bash setup.sh --spec fleet-setup.yaml --force
+```
+
+`setup.sh --spec` writes `~/.mac/fleets.yaml` and `~/.mac/.env`, then deploys
+the generated plan. To configure only:
+
+```bash
+bash setup.sh --configure-only --spec fleet-setup.yaml --force
+```
+
+If a provider key such as `NVIDIA_API_KEY` is absent from both the environment
+and the spec, validation fails before deployment so the fleet cannot silently
+come up without chat routing.
+
 The checked-in `deploy/fleet/config.yaml` is a generic sample only. It is
 marked `sample: true`, and `deploy/deploy-mac-fleet.sh` refuses to deploy from
 it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.

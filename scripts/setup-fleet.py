@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
 from mac.deploy_env import build_router_provider_spec  # noqa: E402
+from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan  # noqa: E402
 from mac.providers import ROUTER_PROVIDERS, router_secret_name  # noqa: E402
 
 
@@ -734,6 +735,17 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
     parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
     parser.add_argument("--deploy-plan-file", default="", help="Write a setup.sh deployment plan JSON file.")
+    parser.add_argument("--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup.")
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate --spec and print the redacted setup plan.",
+    )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Run setup doctor checks for --spec and print the report.",
+    )
     parser.add_argument("--new-hub", help="Create a one-node first-hub fleet non-interactively.")
     parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
     parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
@@ -762,8 +774,51 @@ def main(argv: List[str]) -> int:
     fleets_config = Path(args.fleets_config).expanduser()
     env_file = Path(args.env_file).expanduser()
 
+    if args.spec:
+        try:
+            spec = load_setup_spec(Path(args.spec).expanduser())
+            plan = build_setup_plan(
+                spec,
+                root=ROOT,
+                fleets_config=fleets_config,
+                env_file=env_file,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print("setup spec failed to load: %s" % exc, file=sys.stderr)
+            return 2
+        redacted = public_plan(plan)
+        if args.validate_only or args.doctor:
+            print(json.dumps(redacted, indent=2, sort_keys=True))
+            return 0 if plan.get("status") != "fail" else 1
+        if plan.get("status") == "fail":
+            print(json.dumps(redacted, indent=2, sort_keys=True), file=sys.stderr)
+            print("setup spec is not deployable; fix failed checks before writing config", file=sys.stderr)
+            return 2
+        if (
+            not args.force
+            and not args.dry_run
+            and any(path.exists() for path in (fleets_config, env_file))
+        ):
+            print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
+            return 2
+        return write_generated_files(
+            args=args,
+            fleets_config=fleets_config,
+            env_file=env_file,
+            hub_name=str(plan["hub"]),
+            fleet_config=plan["fleet_config"],
+            env_values=plan["env_values"],
+            next_steps=plan["next_steps"],
+            deploy_agents=plan["deploy_agents"],
+        )
+
     noninteractive = bool(args.new_hub)
-    if not args.force and noninteractive and any(path.exists() for path in (fleets_config, env_file)):
+    if (
+        not args.force
+        and noninteractive
+        and not args.dry_run
+        and any(path.exists() for path in (fleets_config, env_file))
+    ):
         print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
         return 2
     if not args.force and not noninteractive:
