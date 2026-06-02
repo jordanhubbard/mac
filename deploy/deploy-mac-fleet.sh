@@ -3622,6 +3622,77 @@ EOF
   chmod 700 "$wrapper"
 }
 
+escrow_router_provider_keys() {
+  # Stream B (B2): on the HUB, escrow each router provider's upstream key into the
+  # local encrypted vault under the secret:<name> the provider spec references, so
+  # the in-mac router resolves it from secure storage rather than a plaintext env
+  # var. Keys stay centralized on the hub; spokes hold none and never run a router.
+  # HUB-only, idempotent (skips names already in the vault), best-effort with a
+  # loud warning on failure (chat will not route until the key is in the vault).
+  # The provider key values + MAC_DEPLOY_ROUTER_PROVIDERS arrive in the deploy env;
+  # the per-provider source var is <PROVIDER>_API_KEY (e.g. nvidia -> NVIDIA_API_KEY).
+  [ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0
+  case "${MAC_DEPLOY_ROUTER_PROVIDERS:-}" in *key=secret:*) ;; *) return 0 ;; esac
+  reload_mac_env
+  log "escrowing router provider keys into the hub vault"
+  if "$PY" - >> "$DEPLOY_LOG" 2>&1 <<'PY'
+import json, os, re, urllib.request, urllib.error
+providers = os.environ.get("MAC_DEPLOY_ROUTER_PROVIDERS", "")
+port = os.environ.get("MAC_PORT", "8789")
+tok = os.environ.get("MAC_API_TOKEN", "")
+
+def existing_names():
+    req = urllib.request.Request(
+        "http://127.0.0.1:%s/secrets" % port,
+        headers={"Authorization": "Bearer " + tok},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return {s.get("name") for s in json.load(resp)}
+
+have = existing_names()
+escrowed = skipped = 0
+for chunk in providers.split(";"):
+    chunk = chunk.strip()
+    if not chunk:
+        continue
+    pid = chunk.split("=", 1)[0].strip()
+    m = re.search(r"key=secret:([^,;]+)", chunk)
+    if not m:
+        continue
+    name = m.group(1).strip()
+    if name in have:
+        print("escrow: %r already in vault; skip" % name)
+        skipped += 1
+        continue
+    env_var = pid.upper() + "_API_KEY"
+    value = (os.environ.get(env_var) or "").strip()
+    if not value:
+        print("escrow: %s empty/unset for secret %r; skip" % (env_var, name))
+        skipped += 1
+        continue
+    body = json.dumps({
+        "name": name,
+        "value": value,
+        "scopes": {"capabilities": ["router-upstream"]},
+        "created_by": "deploy",
+    }).encode()
+    req = urllib.request.Request(
+        "http://127.0.0.1:%s/secrets" % port, data=body,
+        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
+        method="POST",
+    )
+    resp = urllib.request.urlopen(req, timeout=15)
+    print("escrowed %r (HTTP %s, %d-char value)" % (name, resp.status, len(value)))
+    escrowed += 1
+print("router key escrow: %d escrowed, %d skipped" % (escrowed, skipped))
+PY
+  then
+    :
+  else
+    log "WARNING: router provider key escrow failed; chat will not route until the upstream key(s) are escrowed into the hub vault (mac secret create)"
+  fi
+}
+
 sync_messaging_config() {
   # th-merge-07: fetch Slack secrets + resolve the home channel AFTER the mac API
   # is (re)started, so the hub reads its OWN freshly-up /v1 vault instead of
@@ -3674,6 +3745,7 @@ EOF
   sleep 3
   sudo systemctl --no-pager -l status "$MAC_SERVICE_NAME" || true
   sudo journalctl -u "$MAC_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-service-journal.txt" || true
+  escrow_router_provider_keys
   sync_messaging_config
   install_linux_hermes_service
 }
@@ -4478,6 +4550,7 @@ EOF
   launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
   sleep 3
   launchctl list "$MAC_LAUNCHD_LABEL" || true
+  escrow_router_provider_keys
   sync_messaging_config
   install_darwin_hermes_service "$uid"
   install_darwin_agent_service "$uid"
