@@ -3719,6 +3719,37 @@ PY
   fi
 }
 
+scrub_spoke_provider_secrets() {
+  # Clean invariant (NOT mutate-in-place): a spoke routes every provider call
+  # through the hub, so its gateway env (~/.hermes/.env) must hold NO upstream
+  # provider/API keys — only messaging connection tokens (SLACK_*/MATTERMOST_*,
+  # which the gateway needs to connect directly) and the hub-token gateway creds
+  # mac.env supplies. The Slack/identity sync upserts specific keys and PRESERVES
+  # the rest, so a pre-centralization deploy's provider secrets would otherwise
+  # survive re-deploy forever. Strip the known upstream-provider secrets every
+  # deploy so re-deploy converges to the clean invariant. HUB keeps its keys (it
+  # runs the router + escrows them). Spoke-only, idempotent, backs up first.
+  [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0
+  local henv="$HOME/.hermes/.env"
+  [ -f "$henv" ] || return 0
+  # Upstream provider/API keys + their base-url companions (the spoke gets these
+  # from the hub now). Messaging tokens (SLACK_*, MATTERMOST_*) and MAC_*/gateway
+  # creds are intentionally NOT listed — the gateway needs them locally.
+  local strip='NVIDIA_API_KEY|NVIDIA_API_BASE|NVIDIA_BASE_URL|NVIDIA_IMAGE_BASE_URL|OPENAI_API_KEY|OPENAI_BASE_URL|ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|PERPLEXITY_API_KEY|PERPLEXITY_BASE_URL|PERPLEXITY_API_BASE|FAL_KEY|VLLM_API_KEY|HAIMAKER_API_KEY|QDRANT_API_KEY|FIRECRAWL_API_KEY'
+  local hits
+  hits="$(grep -cE "^(export )?($strip)=" "$henv" 2>/dev/null || true)"
+  if [ "${hits:-0}" -eq 0 ]; then
+    log "spoke gateway env already clean of upstream provider keys"
+    return 0
+  fi
+  log "scrubbing ${hits} stale upstream provider key(s) from spoke gateway env (clean invariant)"
+  grep -nE "^(export )?($strip)=" "$henv" | sed -E 's/=.*/=<redacted>/' | sed 's/^/      /' >> "$DEPLOY_LOG" 2>&1 || true
+  cp -pf "$henv" "$henv.bak-scrub-${DEPLOY_TS}"
+  awk -v p="^(export )?($strip)=" '$0 !~ p' "$henv" > "$henv.scrub.$$"
+  chmod 600 "$henv.scrub.$$"
+  mv -f "$henv.scrub.$$" "$henv"
+}
+
 sync_messaging_config() {
   # th-merge-07: fetch Slack secrets + resolve the home channel AFTER the mac API
   # is (re)started, so the hub reads its OWN freshly-up /v1 vault instead of
@@ -3772,6 +3803,7 @@ EOF
   sudo systemctl --no-pager -l status "$MAC_SERVICE_NAME" || true
   sudo journalctl -u "$MAC_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-service-journal.txt" || true
   escrow_router_provider_keys
+  scrub_spoke_provider_secrets
   sync_messaging_config
   install_linux_hermes_service
 }
@@ -4577,6 +4609,7 @@ EOF
   sleep 3
   launchctl list "$MAC_LAUNCHD_LABEL" || true
   escrow_router_provider_keys
+  scrub_spoke_provider_secrets
   sync_messaging_config
   install_darwin_hermes_service "$uid"
   install_darwin_agent_service "$uid"
