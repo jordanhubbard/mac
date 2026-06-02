@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -174,6 +175,12 @@ def test_fleet_deploy_exports_python_bin_to_remote():
         "",
     )
     assert "PYTHON_BIN" in export_line.split(), "PYTHON_BIN must be exported to the remote deploy env"
+    # Export alone is insufficient: the remote payload (the `bash -s` heredoc) must
+    # also ASSIGN it — `resolve_python_bin` only runs in the local driver. Isolate the
+    # one-time-deploy payload and require a PYTHON_BIN assignment within it.
+    payload = script.split('"$remote_cmd" <<\'REMOTE\'', 1)[-1].split("\nREMOTE\n", 1)[0]
+    assert re.search(r"^\s*PYTHON_BIN=", payload, re.MULTILINE), \
+        "remote payload must ASSIGN PYTHON_BIN (e.g. PYTHON_BIN=\"$PY\"), not just export it"
 
 
 def test_sample_fleet_config_is_generic_and_externalized():
