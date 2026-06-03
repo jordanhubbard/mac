@@ -115,10 +115,16 @@ class RolesService:
             # Resolve to confirm the parent exists in the same tenant.
             parent = self.get_role(reports_to, tenant_id=tenant_id)
             reports_to = parent.id
-        existing = self.store.query_one(
-            "SELECT id FROM agent_roles WHERE slug = ? AND (tenant_id IS ? OR tenant_id = ?)",
-            (slug_value, tenant_id, tenant_id),
-        )
+        if tenant_id is None:
+            existing = self.store.query_one(
+                "SELECT id FROM agent_roles WHERE slug = ? AND tenant_id IS NULL",
+                (slug_value,),
+            )
+        else:
+            existing = self.store.query_one(
+                "SELECT id FROM agent_roles WHERE slug = ? AND tenant_id = ?",
+                (slug_value, tenant_id),
+            )
         if existing is not None and role_id is None:
             role_id = existing["id"]
         rid = role_id or new_id("role")

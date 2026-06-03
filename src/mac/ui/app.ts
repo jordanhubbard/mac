@@ -465,9 +465,55 @@ interface DashboardNodes {
   loginForm: HTMLFormElement;
   loginTokenInput: HTMLInputElement;
   serviceLinks: HTMLElement;
+  themeToggle: HTMLButtonElement;
 }
 
 const TOKEN_KEY = "mac.dashboard.token";
+const THEME_KEY = "mac.dashboard.theme";
+type ThemeName = "light" | "dark";
+
+function readStoredTheme(): ThemeName {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    stored = null;
+  }
+  if (stored === "light" || stored === "dark") return stored;
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  ) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyTheme(theme: ThemeName): void {
+  document.documentElement.setAttribute("data-theme", theme);
+  const toggle = document.querySelector<HTMLButtonElement>("#themeToggle");
+  if (toggle) {
+    const isDark = theme === "dark";
+    toggle.setAttribute("aria-pressed", String(isDark));
+    const label = toggle.querySelector<HTMLElement>(".theme-toggle-label");
+    if (label) label.textContent = isDark ? "Light" : "Dark";
+  }
+}
+
+function setTheme(theme: ThemeName): void {
+  applyTheme(theme);
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    /* storage unavailable — theme still applies for this session */
+  }
+}
+
+function toggleTheme(): void {
+  const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  setTheme(current === "dark" ? "light" : "dark");
+}
 const TASK_STATES = [
   "open",
   "blocked",
@@ -582,9 +628,11 @@ const nodes: DashboardNodes = {
   loginForm: requiredElement<HTMLFormElement>("#loginForm"),
   loginTokenInput: requiredElement<HTMLInputElement>("#loginTokenInput"),
   serviceLinks: requiredElement("#serviceLinks"),
+  themeToggle: requiredElement<HTMLButtonElement>("#themeToggle"),
 };
 const api = createDashboardApi(() => state.token);
 
+applyTheme(readStoredTheme());
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
 bindEvents();
@@ -605,6 +653,7 @@ function bindEvents(): void {
     render();
   });
   nodes.refresh.addEventListener("click", () => loadDashboard());
+  nodes.themeToggle.addEventListener("click", () => toggleTheme());
   nodes.content.addEventListener("click", handleContentClick);
   nodes.content.addEventListener("keydown", handleContentKeydown);
   nodes.content.addEventListener("submit", handleActionSubmit);
@@ -1034,12 +1083,12 @@ function renderProjects(): string {
     <section class="split">
       <div class="surface">
         <h2>Create Project</h2>
-        <form class="action-form aligned-form" data-action="projectCreate">
+        <form class="action-form aligned-form project-create-form" data-action="projectCreate">
           <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
-          <label>Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
           <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
-          <label>Metadata JSON <textarea name="metadata" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
-          <button type="submit" ${disabledAttr(!writable)}>Create</button>
+          <label class="field-full">Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
+          <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
+          <div class="field-full form-actions"><button type="submit" ${disabledAttr(!writable)}>Create</button></div>
         </form>
       </div>
       <div class="surface">
@@ -2619,7 +2668,7 @@ function projectTableRow(project: ProjectSummary, data: DashboardData): string {
   const description = String(project.description || "");
   const status = String(project.status || (durable ? "active" : "derived"));
   const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
-  const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata) : "{}";
+  const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata, null, 2) : "{}";
   const disabled = disabledAttr(!editable);
   return `
     <tr class="${state.projectFilter === project.project ? "is-selected" : ""}">
@@ -2633,7 +2682,7 @@ function projectTableRow(project: ProjectSummary, data: DashboardData): string {
       </td>
       <td>${select("status", ["active", "inactive", "archived"], statusValue, !editable, formId)}</td>
       <td><textarea form="${escapeHtml(formId)}" name="description" ${disabled}>${escapeHtml(description)}</textarea></td>
-      <td><textarea form="${escapeHtml(formId)}" name="metadata" ${disabled}>${escapeHtml(metadata)}</textarea></td>
+      <td><textarea class="json-editor" form="${escapeHtml(formId)}" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" rows="4" ${disabled}>${escapeHtml(metadata)}</textarea></td>
       <td>
         <span class="mono">${project.task_count}</span>
         <div class="chip-row">
@@ -3003,8 +3052,8 @@ function agentCard(item: AgentItem, data: DashboardData): string {
 function taskLane(taskState: string, tasks: TaskDetail[], agents: AgentItem[]): string {
   const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
   return `
-    <div class="task-lane">
-      <h2><span>${escapeHtml(labelize(taskState))}</span><span class="pill">${laneTasks.length}</span></h2>
+    <div class="task-lane status-${escapeHtml(taskState)}">
+      <h2><span class="lane-title">${escapeHtml(labelize(taskState))}</span><span class="pill lane-count">${laneTasks.length}</span></h2>
       ${laneTasks.length ? laneTasks.map((detail) => taskCard(detail, agents)).join("") : `<div class="empty-state">Empty</div>`}
     </div>
   `;
@@ -3016,11 +3065,14 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
   const origin = taskOrigin(task);
   const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
   const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
+  const isSelected = state.selectedId === task.id;
+  const recentHistory = detail.history.slice(-3);
+  const summaryText = String(detail.summary?.summary || "");
   return `
-    <article class="task-card ${selectedClass(task.id)}">
+    <article class="task-card status-${escapeHtml(task.state)} ${selectedClass(task.id)}">
       <div class="record-header">
-        <div><h3>${escapeHtml(task.title)}</h3><p class="muted small mono">${escapeHtml(task.id)}</p></div>
-        <button class="link-button" type="button" data-select-id="${escapeHtml(task.id)}">Select</button>
+        <div class="task-card-heading"><h3>${escapeHtml(task.title)}</h3><p class="muted small mono task-id" title="${escapeHtml(task.id)}">${escapeHtml(task.id)}</p></div>
+        <button class="select-button${isSelected ? " is-selected" : ""}" type="button" data-select-id="${escapeHtml(task.id)}" aria-pressed="${isSelected ? "true" : "false"}">${isSelected ? "Selected" : "Select"}</button>
       </div>
       <div class="chip-row">
         ${chip(`P${task.priority || 0}`, "info")}
@@ -3028,15 +3080,18 @@ function taskCard(detail: TaskDetail, agents: AgentItem[]): string {
         ${owner ? chip(owner.name, "info") : chip("unowned", "warn")}
         ${origin.hermes_instance_id ? chip("Hermes origin", "info") : ""}
       </div>
-      <div class="row-grid compact-fields">
-        ${field("Started", task.started_at ? formatAge(task.started_at) : "not started")}
-        ${field("Completed", task.completed_at ? formatAge(task.completed_at) : "not completed")}
-        ${field("Updated", formatAge(task.last_updated_at || task.updated_at))}
+      <div class="time-summary">
+        <span class="time-cell"><span class="time-label">Started</span><span class="time-value">${escapeHtml(task.started_at ? formatAge(task.started_at) : "not started")}</span></span>
+        <span class="time-cell"><span class="time-label">Completed</span><span class="time-value">${escapeHtml(task.completed_at ? formatAge(task.completed_at) : "not completed")}</span></span>
+        <span class="time-cell"><span class="time-label">Updated</span><span class="time-value">${escapeHtml(formatAge(task.last_updated_at || task.updated_at))}</span></span>
       </div>
-      <p class="small muted">${escapeHtml(String(detail.summary?.summary || ""))}</p>
-      <div class="timeline">
-        ${detail.history.slice(-3).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}
-      </div>
+      ${summaryText ? `<p class="small muted">${escapeHtml(summaryText)}</p>` : ""}
+      ${recentHistory.length ? `<details class="activity-disclosure">
+        <summary><span class="activity-show">Show activity</span><span class="activity-hide">Hide activity</span></summary>
+        <div class="timeline">
+          ${recentHistory.map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}
+        </div>
+      </details>` : ""}
       <div class="record-actions">
         <details class="row-actions edit-disclosure">
           <summary>Edit</summary>
@@ -4391,9 +4446,15 @@ function mustData(): DashboardData {
 function parseJsonObject(value: unknown): JsonObject {
   const text = String(value || "").trim();
   if (!text) return {};
-  const parsed = JSON.parse(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid JSON: ${detail}`);
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("expected a JSON object");
+    throw new Error("metadata must be a JSON object, e.g. {\"key\": \"value\"}");
   }
   return parsed as JsonObject;
 }
