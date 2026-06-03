@@ -3099,7 +3099,12 @@ def create_app(
 
     @app.post("/observability/logs")
     def record_observability_log(body: ObservabilityLogCreate) -> Dict[str, Any]:
-        return cp.record_log(**_data(body)).to_dict()
+        # record_log returns None when the log name is a silenced high-volume
+        # idle-poll emitter (mem-04 dropped 1.83M/2.09M rows from these). That's
+        # an intentional drop, not an error — report it as filtered rather than
+        # calling .to_dict() on None, which 500'd on every silenced poll log.
+        event = cp.record_log(**_data(body))
+        return event.to_dict() if event is not None else {"filtered": True}
 
     @app.get("/observability/metrics")
     def list_observability_metrics(

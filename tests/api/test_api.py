@@ -1709,6 +1709,28 @@ def test_observability_api_records_lists_and_streams_metrics_and_logs():
     assert [line["id"] for line in lines[:2]] == [metric["id"], log["id"]]
 
 
+def test_observability_logs_silenced_poll_name_is_filtered_not_500():
+    """mem-04 silences high-volume idle-poll log names (record_log -> None).
+    The endpoint must report that as filtered, not 500 on .to_dict() of None."""
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    # a silenced idle-poll name is dropped: 200 + {"filtered": True}, never 500
+    dropped = client.post(
+        "/observability/logs",
+        json={"name": "worker.no_task", "level": "info", "layer": "worker", "source": "rocky"},
+    )
+    assert dropped.status_code == 200
+    assert dropped.json() == {"filtered": True}
+
+    # a normal log name still records and returns the event
+    kept = client.post(
+        "/observability/logs",
+        json={"name": "worker.dispatch.waiting", "level": "warning", "layer": "worker", "source": "rocky"},
+    )
+    assert kept.status_code == 200
+    assert kept.json()["name"] == "worker.dispatch.waiting"
+
+
 def test_http_observation_middleware_is_off_by_default_and_writes_one_row_when_on():
     off_cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=off_cp))
