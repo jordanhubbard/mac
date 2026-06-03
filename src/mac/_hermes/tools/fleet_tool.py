@@ -13,8 +13,16 @@ plumbing. Three actions behind one tool:
   fleet message <agent>   → send a quick message to another agent (agentbus)
   fleet inbox             → read recent messages addressed to me (agentbus)
 
-All hub I/O is best-effort + read-mostly; the only write is a point-to-point
-agentbus message the user/agent explicitly sends.
+This module ALSO registers a companion ``tasks`` tool (tasks-01) on the same hub
+plumbing. That one is the chat agent's read/write window onto the SHARED hub task
+ledger — the same durable store the autonomous worker and the ``mac task`` CLI
+use. It exists because the only other task tool a chat agent has is ``todo``,
+which is in-memory and per-session: when one agent "filed tasks for itself" via
+``todo`` the rest of the fleet couldn't see them. ``tasks`` fixes that — work
+filed/claimed/closed there is visible fleet-wide.
+
+The fleet actions are best-effort + read-mostly (the only write is an agentbus
+message); the ``tasks`` tool deliberately writes to the shared ledger.
 """
 
 from __future__ import annotations
@@ -244,4 +252,187 @@ registry.register(
     requires_env=[],
     is_async=False,
     emoji="🛰️",
+)
+
+
+# ---------------------------------------------------------------------------
+# Shared task ledger (tasks-01)
+# ---------------------------------------------------------------------------
+# The chat agent's window onto the SAME hub task store the autonomous worker
+# and the `mac task` CLI use. Unlike `todo` (in-memory, per-session, invisible
+# to others), everything here is durable and visible fleet-wide — so when one
+# agent files or claims work, the rest of the fleet sees it. Reuses the fleet
+# tool's _hub_request / _self_agent_id (same hub URL + token in the agent env).
+
+
+def format_task_list(tasks: List[Dict[str, Any]], limit: int = 40) -> str:
+    """Render the shared backlog compactly (id / state / title / owner)."""
+    if not tasks:
+        return "No tasks on the shared ledger."
+    shown = tasks[:limit]
+    header = "Shared fleet tasks (%d shown%s):" % (
+        len(shown), "" if len(tasks) <= limit else " of %d" % len(tasks))
+    lines = [header]
+    for t in shown:
+        lines.append(
+            "- %s [%s] %s (owner: %s)"
+            % (
+                str(t.get("id") or "?")[:18],
+                t.get("state", "?"),
+                (t.get("title") or "")[:70],
+                t.get("owner_agent_id") or "-",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _action_tasks_list(state: str) -> str:
+    path = "/tasks"
+    if state:
+        path += "?%s" % urlencode({"state": state})
+    tasks = _hub_request("GET", path) or []
+    if not isinstance(tasks, list):
+        tasks = []
+    return format_task_list(tasks)
+
+
+def _action_tasks_create(title: str, description: str, priority: int) -> str:
+    if not title:
+        return tool_error("tasks create requires a title")
+    me = _self_agent_id()
+    payload = {
+        "title": title,
+        "description": description or "",
+        "priority": int(priority or 0),
+        "actor": me or "agent",
+    }
+    t = _hub_request("POST", "/tasks", payload) or {}
+    return json.dumps({
+        "success": True,
+        "task_id": t.get("id"),
+        "state": t.get("state"),
+        "title": t.get("title"),
+        "note": "Filed on the shared fleet ledger — visible to every agent.",
+    })
+
+
+def _action_tasks_claim(task_id: str) -> str:
+    if not task_id:
+        return tool_error("tasks claim requires a task_id")
+    me = _self_agent_id()
+    if not me:
+        return tool_error("cannot determine my own agent id (MAC_AGENT_ID unset)")
+    res = _hub_request(
+        "POST",
+        "/tasks/%s/claim?%s" % (quote(task_id, safe=""), urlencode({"agent_id": me})),
+    ) or {}
+    task = res.get("task") if isinstance(res, dict) else None
+    return json.dumps({
+        "success": True,
+        "claimed": task_id,
+        "owner": me,
+        "state": (task or {}).get("state"),
+    })
+
+
+def _action_tasks_close(task_id: str, cancelled: bool, reason: str) -> str:
+    if not task_id:
+        return tool_error("tasks close requires a task_id")
+    me = _self_agent_id()
+    target = "cancelled" if cancelled else "completed"
+    payload = {
+        "target_state": target,
+        "actor": me or "agent",
+        "detail": {"reason": reason} if reason else {},
+    }
+    res = _hub_request("POST", "/tasks/%s/transition" % quote(task_id, safe=""), payload) or {}
+    return json.dumps({
+        "success": True,
+        "task_id": task_id,
+        "state": res.get("state") or target,
+    })
+
+
+def _action_tasks_show(task_id: str) -> str:
+    if not task_id:
+        return tool_error("tasks show requires a task_id")
+    return json.dumps(_hub_request("GET", "/tasks/%s" % quote(task_id, safe="")) or {})
+
+
+TASKS_SCHEMA = {
+    "name": "tasks",
+    "description": (
+        "The SHARED, fleet-wide task ledger — the same durable store the rest of the "
+        "fleet (and the autonomous worker) sees. Use this, NOT the session-local `todo` "
+        "tool, for any real work that should be tracked, handed off, or visible to other "
+        "agents. Anything you file here, the whole fleet can see and pick up.\n\n"
+        "Actions:\n"
+        "- list:   the shared backlog (optionally filter by state: open / claimed / "
+        "running / needs_review / completed / cancelled)\n"
+        "- create: file a new task (title required) — returns its task_id\n"
+        "- claim:  take ownership of a task so others know you're on it\n"
+        "- close:  finish a task (completed, or cancelled=true to abandon) with an "
+        "optional reason\n"
+        "- show:   full detail of one task\n\n"
+        "Reserve the `todo` tool for private, within-this-conversation scratch steps that "
+        "nobody else needs to see."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "create", "claim", "close", "show"],
+                "description": "what to do against the shared ledger",
+            },
+            "title": {"type": "string", "description": "for action=create: the task title"},
+            "description": {"type": "string", "description": "for action=create: longer detail (optional)"},
+            "priority": {"type": "integer", "description": "for action=create: higher = more urgent (default 0)"},
+            "task_id": {"type": "string", "description": "for claim/close/show: the task id"},
+            "state": {"type": "string", "description": "for action=list: optional state filter"},
+            "cancelled": {"type": "boolean", "description": "for action=close: true to cancel/abandon instead of completing (default false)"},
+            "reason": {"type": "string", "description": "for action=close: short reason / outcome note"},
+        },
+        "required": ["action"],
+    },
+}
+
+
+def _handle_tasks(args, **kw):
+    action = str(args.get("action") or "").strip().lower()
+    try:
+        if action == "list":
+            return _action_tasks_list(str(args.get("state") or "").strip())
+        if action == "create":
+            return _action_tasks_create(
+                str(args.get("title") or "").strip(),
+                str(args.get("description") or "").strip(),
+                args.get("priority") or 0,
+            )
+        if action == "claim":
+            return _action_tasks_claim(str(args.get("task_id") or "").strip())
+        if action == "close":
+            return _action_tasks_close(
+                str(args.get("task_id") or "").strip(),
+                bool(args.get("cancelled")),
+                str(args.get("reason") or "").strip(),
+            )
+        if action == "show":
+            return _action_tasks_show(str(args.get("task_id") or "").strip())
+        return tool_error("unknown tasks action %r (use list/create/claim/close/show)" % action)
+    except RuntimeError as exc:
+        return tool_error(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return tool_error("tasks tool error: %s" % exc)
+
+
+registry.register(
+    name="tasks",
+    toolset="fleet",
+    schema=TASKS_SCHEMA,
+    handler=_handle_tasks,
+    check_fn=check_fleet_requirements,
+    requires_env=[],
+    is_async=False,
+    emoji="🗂️",
 )
