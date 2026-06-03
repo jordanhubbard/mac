@@ -1,6 +1,7 @@
 ---
 id: gketun-02
-status: open
+status: closed
+resolved_by: "#59"
 deps: []
 links: [gketun-01, gketun-03]
 created: 2026-06-03T00:00:00Z
@@ -45,3 +46,7 @@ Under `network: none` (reverse-tunnel topology), set the spoke's Qdrant and
 Firecrawl URLs to the tunnel-forwarded localhost ports
 (`127.0.0.1:16333` / `127.0.0.1:13002`) rather than the hub FQDN — mirroring how
 `MAC_HUB_URL` already uses `127.0.0.1:18789`.
+
+## Resolution
+
+Resolved by #59 (network=none spokes use the tunnel-forwarded `127.0.0.1:16333`/`:13002` instead of the hub FQDN). Validated: the worker agent self-test's qdrant/firecrawl checks pass through the tunnel.

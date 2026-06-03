@@ -1,6 +1,7 @@
 ---
 id: gketun-01
-status: open
+status: closed
+resolved_by: "#59"
 deps: []
 links: [gketun-02, gketun-03]
 created: 2026-06-03T00:00:00Z
@@ -44,3 +45,7 @@ first deploy.
 After the spoke authorized the key, `sudo supervisorctl restart
 <fleet>-tunnel-<worker>` on the hub brought both tunnels to RUNNING and the
 spokes reached the hub at `127.0.0.1:18789` (200).
+
+## Resolution
+
+Resolved by #59 (`startretries=1000` on the supervisord tunnel program). Validated 2026-06-03: both jordanh-GKE worker tunnels reachable in 5s on a clean redeploy — no FATAL, no second deploy needed.

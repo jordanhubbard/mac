@@ -1,6 +1,7 @@
 ---
 id: gketun-03
-status: open
+status: closed
+resolved_by: "#59"
 deps: [gketun-02]
 links: [gketun-01, gketun-02]
 created: 2026-06-03T00:00:00Z
@@ -32,3 +33,7 @@ clean self-test (vs. a separate auth/endpoint problem in the register call).
 
 A fresh `network: none` spoke, after deploy, appears in the hub `/agents` list
 with a healthy status, without manual intervention.
+
+## Resolution
+
+Resolved by #59 via [[gketun-02]]. Validated: all three jordanh-GKE agents (jordanh-hub, jordanh-worker1, jordanh-worker2) registered `idle` from a clean redeploy, unaided.
