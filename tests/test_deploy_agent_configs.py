@@ -876,8 +876,8 @@ def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
     assert "nvidia-smi -L" in fn  # GPU gate
     assert 'deploy/skills/omniverse-skills.tar.gz' in fn
     assert '"$HOME/.hermes/skills"' in fn
-    # invoked in the agent setup flow
-    assert "\nsync_hermes_chat_config\ninstall_omniverse_gpu_skills\n" in script
+    # invoked in the agent setup flow (right after the fleet-wide skill install)
+    assert "\ninstall_fleet_skills\ninstall_omniverse_gpu_skills\n" in script
 
 
 def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
