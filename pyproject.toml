@@ -15,6 +15,8 @@ dependencies = [
     "uvicorn[standard]>=0.29,<1.0",
     "cryptography>=42,<46",
     "slack-sdk>=3.27,<4.0",
+    # --- agent numerical computation (so agents can do more than text/code) ---
+    "numpy>=1.26,<3.0",
     # --- vendored Hermes runtime core (ADR 0001; see deploy/hermes/SNAPSHOT.md) ---
     # Exact-pinned per Hermes' supply-chain discipline. The two overlaps with
     # mac (httpx, pyyaml) fell within mac's ranges, so we adopt Hermes' pins.
@@ -67,7 +69,7 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
+# packages already sweeps in all of src/mac, including the src/mac/ui static
+# assets — a force-include of src/mac/ui would double-add them and fail the
+# build ("a second file ... at the same path").
 packages = ["src/mac"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/mac/ui" = "mac/ui"
