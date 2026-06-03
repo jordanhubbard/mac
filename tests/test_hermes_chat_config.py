@@ -105,3 +105,66 @@ def test_sync_migrates_tokenhub_runtime_config_to_router(tmp_path):
     cfg2 = (home / "config.yaml").read_text(encoding="utf-8")
     assert cfg2.count("  custom:\n") == 1
     assert cfg2.count("api_key: %s" % TOKEN) == 1
+
+
+def test_sync_creates_chat_config_on_stub_config(tmp_path):
+    # Regression: a freshly-initialized node's config.yaml is a stub with no
+    # `model:`/`providers:` scaffold. The patch-only version no-op'd, leaving the
+    # node with no chat provider (HTTP 403). sync must CREATE the structure.
+    import yaml
+
+    mac = _mac_env(tmp_path)
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / ".env").write_text("SLACK_BOT_TOKEN=xoxb-keepme\n", encoding="utf-8")
+    (home / "config.yaml").write_text("web:\n  search_backend: firecrawl\n", encoding="utf-8")
+
+    result = sync(home, mac)
+    assert result["config_custom_provider"] is True
+
+    d = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+    assert d["model"]["provider"] == "custom"
+    assert d["model"]["base_url"] == "http://127.0.0.1:8789/v1/"
+    assert d["providers"]["custom"]["api_key"] == TOKEN
+    assert d["providers"]["custom"]["api"] == "http://127.0.0.1:8789/v1/"
+    assert d["providers"]["custom"]["transport"] == "chat_completions"
+    # unrelated existing section preserved
+    assert d["web"]["search_backend"] == "firecrawl"
+
+    # idempotent: re-running keeps exactly one custom block
+    sync(home, mac)
+    cfg2 = (home / "config.yaml").read_text(encoding="utf-8")
+    assert cfg2.count("  custom:\n") == 1
+    assert cfg2.count("api_key: %s" % TOKEN) == 1
+
+
+def test_router_env_emits_wildcard_models_from_spec(tmp_path):
+    # Regression (#3): the spec's router.wildcard_models must flow to
+    # MAC_ROUTER_WILDCARD_MODELS so the router substitutes `*` for an allowed model.
+    from pathlib import Path
+
+    from mac.fleet_setup import build_setup_plan
+
+    spec = {
+        "schema": "mac.fleet_setup.v1",
+        "fleet": {"name": "gke", "hub": "gke-hub", "hub_url": "http://gke-hub:8789"},
+        "agents": [{"name": "gke-hub", "target": "horde@gke-hub", "os": "linux"}],
+        "router": {
+            "backend": "inproc",
+            "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],
+            "wildcard_models": "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini",
+            "default_model": "us/azure/openai/gpt-4.1-mini",
+        },
+        "network": {"provider": "none"},
+    }
+    plan = build_setup_plan(
+        spec,
+        root=Path(__file__).resolve().parents[1],
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+    assert plan["status"] == "pass"
+    ev = plan["env_values"]
+    assert ev["MAC_ROUTER_WILDCARD_MODELS"] == "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini"
+    assert ev["MAC_ROUTER_DEFAULT_MODEL"] == "us/azure/openai/gpt-4.1-mini"

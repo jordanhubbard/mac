@@ -78,8 +78,11 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
     tmp_path: Path,
 ):
     root = Path(__file__).resolve().parents[1]
-    mac_agent = shutil.which("mac-agent")
-    assert mac_agent is not None, "mac-agent console script must be installed for E2E"
+    # Prefer the installed console script; fall back to `python -m mac.worker`
+    # (the same `mac.worker:main` entry point) so the E2E runs in environments
+    # without an editable install on PATH. worker_env carries PYTHONPATH=src below.
+    mac_agent_bin = shutil.which("mac-agent")
+    mac_agent = [mac_agent_bin] if mac_agent_bin else [sys.executable, "-m", "mac.worker"]
 
     token = "worker-process-e2e-token-with-enough-entropy"
     port = _free_port()
@@ -152,7 +155,7 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
         worker_env = hub_env.copy()
         workspace = tmp_path / "worker-workspaces"
         common = [
-            mac_agent,
+            *mac_agent,
             "--url",
             base_url,
             "--token",

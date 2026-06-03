@@ -4354,6 +4354,18 @@ EOF
   run_supervisorctl update >/dev/null
   run_supervisorctl restart "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$MAC_SUPERVISORD_PROG" >/dev/null
   sleep 3
+  # Escrow the router upstream key + scrub spoke secrets + sync messaging BEFORE
+  # the gateway/agent start, mirroring the systemd (install_linux_hermes_service)
+  # and launchd paths. Without this the supervisord path left the hub vault empty,
+  # so the router forwarded keyless (upstream 401) and the agent self-test failed.
+  # Needs the control plane reachable, so wait briefly for it.
+  for _i in $(seq 1 30); do
+    curl -fsS -o /dev/null "http://127.0.0.1:${MAC_PORT:-8789}/ui" 2>/dev/null && break
+    sleep 1
+  done
+  escrow_router_provider_keys
+  scrub_spoke_provider_secrets
+  sync_messaging_config
   run_supervisorctl restart "$HERMES_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$HERMES_SUPERVISORD_PROG" >/dev/null
   sleep 5
   run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null

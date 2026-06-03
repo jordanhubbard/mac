@@ -98,11 +98,26 @@ def sync_hermes_env(hermes_home: Path, mac_env: Dict[str, str]) -> List[str]:
 def sync_config_yaml(hermes_home: Path, base_url: str, api_key: str) -> bool:
     """Point model.{provider,base_url} at the router and (re)define a `custom`
     provider with the bearer in `api_key` (the schema field). Line-based to
-    preserve the rest of the file. Returns True if the custom provider was set."""
+    preserve the rest of the file. Returns True if the custom provider was set.
+
+    Robust to a freshly-initialized config.yaml that is only a stub (e.g. just a
+    `web:` block): when the `model:` block or the `providers:` section is absent
+    it is *created*, not just patched. The original patch-only version silently
+    no-op'd on such configs, leaving fresh nodes with no chat provider (HTTP 403
+    "unknown bearer token")."""
     cfg = hermes_home / "config.yaml"
     if not cfg.exists() or not base_url or not api_key:
         return False
     base = base_url.rstrip("/")
+
+    def custom_block() -> List[str]:
+        return [
+            "  custom:",
+            "    api: %s/" % base,
+            "    name: custom",
+            "    transport: chat_completions",
+            "    api_key: %s" % api_key,
+        ]
 
     # 1) drop any existing top-level `  custom:` provider block (idempotent).
     pruned: List[str] = []
@@ -117,15 +132,20 @@ def sync_config_yaml(hermes_home: Path, base_url: str, api_key: str) -> bool:
             skip = False
         pruned.append(ln)
 
-    # 2) fix the model: block, then insert providers.custom after `providers:`.
+    # 2) patch the model: block + insert providers.custom after `providers:`,
+    #    backfilling provider/base_url lines if the existing model block lacks them.
     res: List[str] = []
-    in_model = did_provider = did_base = did_custom = False
+    model_seen = in_model = did_provider = did_base = did_custom = False
     for ln in pruned:
         if re.match(r"^model:\s*$", ln):
-            in_model = True
+            model_seen = in_model = True
             res.append(ln)
             continue
         if in_model and re.match(r"^\S", ln):
+            if not did_provider:
+                res.append("  provider: custom"); did_provider = True
+            if not did_base:
+                res.append("  base_url: %s/" % base); did_base = True
             in_model = False
         if in_model and not did_provider and re.match(r"^\s+provider:\s", ln):
             res.append(re.sub(r"(provider:\s*).*", r"\g<1>custom", ln))
@@ -137,14 +157,23 @@ def sync_config_yaml(hermes_home: Path, base_url: str, api_key: str) -> bool:
             continue
         res.append(ln)
         if re.match(r"^providers:\s*$", ln) and not did_custom:
-            res += [
-                "  custom:",
-                "    api: %s/" % base,
-                "    name: custom",
-                "    transport: chat_completions",
-                "    api_key: %s" % api_key,
-            ]
+            res += custom_block()
             did_custom = True
+
+    # close an open model block at EOF
+    if in_model:
+        if not did_provider:
+            res.append("  provider: custom")
+        if not did_base:
+            res.append("  base_url: %s/" % base)
+
+    # 3) create whichever top-level structures were missing entirely.
+    if not model_seen:
+        res += ["model:", "  provider: custom", "  base_url: %s/" % base]
+    if not did_custom:
+        res += ["providers:"] + custom_block()
+        did_custom = True
+
     cfg.write_text("\n".join(res) + "\n", encoding="utf-8")
     _chmod_600(cfg)
     return did_custom

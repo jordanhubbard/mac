@@ -783,10 +783,11 @@ def test_scrub_spoke_provider_secrets_is_noop_on_hub(tmp_path):
     assert "NVIDIA_API_KEY" in keys and "OPENAI_API_KEY" in keys
 
 
-def test_scrub_called_for_both_os_flows():
+def test_scrub_called_for_all_service_flows():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    # symmetric with the hub escrow: escrow (hub) then scrub (spoke) before messaging
-    assert script.count("\n  escrow_router_provider_keys\n  scrub_spoke_provider_secrets\n  sync_messaging_config\n") == 2
+    # symmetric with the hub escrow: escrow (hub) then scrub (spoke) before messaging,
+    # in each of the three service flows (systemd, launchd, supervisord)
+    assert script.count("\n  escrow_router_provider_keys\n  scrub_spoke_provider_secrets\n  sync_messaging_config\n") == 3
 
 
 def test_deploy_host_blanks_provider_keys_for_spokes():
@@ -831,8 +832,9 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert 'ivalue = (os.environ.get("NVIDIA_API_KEY")' in fn
     # failure is loud but non-fatal (chat won't route until the key is escrowed)
     assert "router provider key escrow failed" in fn
-    # invoked on the hub after the API is up, before the gateway, in both OS flows
-    assert script.count("\n  escrow_router_provider_keys\n") == 2
+    # invoked on the hub after the API is up, before the gateway, in all three
+    # service flows (systemd, launchd, supervisord)
+    assert script.count("\n  escrow_router_provider_keys\n") == 3
 
 
 def test_setup_fleet_build_router_provider_spec():

@@ -410,6 +410,16 @@ def _router_env(
             provider_env_values[base_env] = base_url
     if router_specs:
         provider_env_values["MAC_ROUTER_PROVIDERS"] = ";".join(router_specs)
+    # Upstream keys are often scoped to a fixed model set, so the bare wildcard
+    # `*` a runtime emits must be substituted to a concrete allowed model. Carry
+    # the ladder + default from the spec; without it a fresh fleet's chat dies on
+    # "key can only access models=[...]. Tried to access *".
+    wildcard_models = _str(router.get("wildcard_models"))
+    if wildcard_models:
+        provider_env_values["MAC_ROUTER_WILDCARD_MODELS"] = wildcard_models
+    default_model = _str(router.get("default_model"))
+    if default_model:
+        provider_env_values["MAC_ROUTER_DEFAULT_MODEL"] = default_model
     backend = _str(router.get("backend")) or "inproc"
     return {"backend": backend, "providers": ";".join(router_specs)}, provider_env_values, required_env, warnings
 
