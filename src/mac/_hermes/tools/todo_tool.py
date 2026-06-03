@@ -209,8 +209,12 @@ def check_todo_requirements() -> bool:
 TODO_SCHEMA = {
     "name": "todo",
     "description": (
-        "Manage your task list for the current session. Use for complex tasks "
-        "with 3+ steps or when the user provides multiple tasks. "
+        "Manage your PRIVATE, session-local task list — in-memory scratch for "
+        "decomposing a complex request within THIS conversation. It is NOT shared: "
+        "other agents cannot see it and it is lost when the session ends. For work "
+        "that should be tracked, handed off, or visible to the rest of the fleet, use "
+        "the `tasks` tool (the shared hub ledger) instead. "
+        "Use for complex tasks with 3+ steps or when the user provides multiple tasks. "
         "Call with no parameters to read the current list.\n\n"
         "Writing:\n"
         "- Provide 'todos' array to create/update items\n"
