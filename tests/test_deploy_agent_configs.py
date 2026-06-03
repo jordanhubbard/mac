@@ -850,6 +850,36 @@ def test_network_none_spoke_uses_tunnel_forwarded_service_ports():
     assert 'FIRECRAWL_URL_CONFIGURED="http://127.0.0.1:13002"' in script
 
 
+def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
+    # Omniverse/physical-AI 3D skills are vendored + installed GPU-only (nvidia-smi
+    # gate), durably re-extracted on every deploy.
+    import tarfile
+
+    asset = ROOT / "deploy" / "skills" / "omniverse-skills.tar.gz"
+    assert asset.exists(), "vendored omniverse-skills.tar.gz must be present"
+    with tarfile.open(asset) as tf:
+        skills = sorted(n.split("/")[1] for n in tf.getnames() if n.endswith("SKILL.md"))
+    for expected in (
+        "omniverse-kit-app",
+        "omniverse-realtime-viewer",
+        "omniverse-cad-to-simready",
+        "omniverse-usd-performance-tuning",
+        "physical-ai-neural-reconstruction",
+        "physical-ai-defect-image-generation",
+        "physical-ai-video-data-augmentation",
+        "physical-ai-infrastructure-setup-and-resilient-scaling",
+    ):
+        assert expected in skills, f"{expected} missing from vendored skills asset"
+
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    fn = script.split("install_omniverse_gpu_skills() {", 1)[1].split("\ninitialize_hermes_home() {", 1)[0]
+    assert "nvidia-smi -L" in fn  # GPU gate
+    assert 'deploy/skills/omniverse-skills.tar.gz' in fn
+    assert '"$HOME/.hermes/skills"' in fn
+    # invoked in the agent setup flow
+    assert "\nsync_hermes_chat_config\ninstall_omniverse_gpu_skills\n" in script
+
+
 def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
     # gketun-01: install_reverse_tunnel_on_hub runs before the spoke authorizes the
     # hub key, so the tunnel program must keep retrying instead of going FATAL after
