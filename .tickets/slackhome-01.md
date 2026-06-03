@@ -1,6 +1,7 @@
 ---
 id: slackhome-01
-status: open
+status: closed
+resolved_by: "#62"
 deps: []
 links: [gketun-03]
 created: 2026-06-03T00:00:00Z
@@ -39,3 +40,22 @@ single global `home_channel`. Likely needs per-account home channels on the Slac
 
 Cron / cross-platform delivery reaches the configured home channel in **each**
 connected Slack workspace, not just the first one in `slack_home_channels.json`.
+
+## Resolution
+
+Broadcast home-channel deliveries now reach **every** connected Slack workspace,
+not just `homes[0]`:
+
+- `config.py`: added `_slack_homes_from_resolved_file()` (all entries) and
+  `GatewayConfig.get_home_channels(platform)` (one `HomeChannel` per workspace
+  for Slack; the single configured home for other platforms).
+- `run.py`: the gateway **online/offline** notifications now iterate
+  `get_home_channels(platform)` and notify each workspace's home channel (the
+  Slack adapter routes each `send(channel_id)` to the owning workspace via its
+  channel→team map).
+
+The single-conversation **cron handoff** (`_process_handoff`) still targets the
+primary home channel **by design** — one CLI session maps to one gateway
+session/destination, so it can't fan out to multiple workspaces. True
+per-workspace cron *results* would require per-workspace cron jobs; that's a
+separate enhancement, not tracked here.
