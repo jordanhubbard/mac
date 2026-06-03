@@ -66,6 +66,7 @@ SANDBOX_ALLOWED_TOOLS = frozenset([
     "search_files",
     "patch",
     "terminal",
+    "embed",
 ])
 
 # Resource limit defaults (overridable via config.yaml → code_execution.*)
@@ -253,6 +254,12 @@ _TOOL_STUBS = {
         '"""Run a shell command (foreground only). Returns dict with "output" and "exit_code"."""',
         '{"command": command, "timeout": timeout, "workdir": workdir}',
     ),
+    "embed": (
+        "embed",
+        "text, model: str = None",
+        '"""Embed a string or list of strings via the fleet embedding model. Returns dict {model, dim, count, embeddings:[[float,...],...]}. Pair with centroid()/cosine_similarity()/nearest_neighbors() for memory/dream review."""',
+        '{"input": text, "model": model}',
+    ),
 }
 
 
@@ -328,6 +335,51 @@ def retry(fn, max_attempts=3, delay=2):
             if attempt < max_attempts - 1:
                 time.sleep(delay * (2 ** attempt))
     raise last_err
+
+
+# --- Vector math (numpy) for embeddings: review memories/dreams/concepts ------
+# Typical flow:
+#   e = embed(["concept a", "concept b", ...]); V = e["embeddings"]
+#   c = centroid(V); ranked = nearest_neighbors(c, V, k=3)
+# numpy is imported lazily so importing hermes_tools never fails without it.
+
+def _np():
+    try:
+        import numpy as _n
+    except ImportError as exc:  # pragma: no cover - guidance only
+        raise RuntimeError("numpy is required for vector math (pip install numpy)") from exc
+    return _n
+
+
+def centroid(vectors):
+    """Mean (centroid) of a list of embedding vectors. Returns a list of floats."""
+    return _np().asarray(vectors, dtype=float).mean(axis=0).tolist()
+
+
+def cosine_similarity(a, b):
+    """Cosine similarity of two vectors, a float in [-1, 1]."""
+    np = _np()
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    na = np.linalg.norm(a)
+    nb = np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(a.dot(b) / (na * nb))
+
+
+def nearest_neighbors(query, candidates, k=5):
+    """Rank candidate vectors by cosine similarity to query (highest first).
+    Returns [{"index": i, "score": float}, ...]; k<=0 returns all."""
+    np = _np()
+    q = np.asarray(query, dtype=float)
+    C = np.asarray(candidates, dtype=float)
+    denom = np.linalg.norm(q) * np.linalg.norm(C, axis=1)
+    sims = np.divide(C.dot(q), denom, out=np.zeros(C.shape[0]), where=denom > 0)
+    order = np.argsort(-sims)
+    if k and k > 0:
+        order = order[:k]
+    return [{"index": int(i), "score": float(sims[i])} for i in order]
 
 '''
 
