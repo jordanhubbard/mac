@@ -2732,6 +2732,30 @@ sync_hermes_chat_config() {
     || log "WARNING: hermes chat config sync failed; agent chat self-test may stay degraded"
 }
 
+install_omniverse_gpu_skills() {
+  # GPU-only: the vendored NVIDIA Omniverse + physical-AI agent skills (and our
+  # omniverse-kit-app build skill) are only useful where the Kit SDK / CUDA can
+  # run, so gate on an actual NVIDIA GPU. This auto-scopes to GPU nodes without a
+  # per-agent fleet-config flag, and re-extracting every deploy keeps it durable
+  # + repeatable. Non-fatal. Asset is re-vendored via deploy/skills/README.md.
+  if ! { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }; then
+    log "Omniverse 3D skills: no NVIDIA GPU on $AGENT; skipping (GPU-only)"
+    return 0
+  fi
+  local asset="$SRC_DIR/deploy/skills/omniverse-skills.tar.gz"
+  local skills_dir="$HOME/.hermes/skills"
+  if [ ! -f "$asset" ]; then
+    log "Omniverse 3D skills: vendored asset missing ($asset); skipping"
+    return 0
+  fi
+  mkdir -p "$skills_dir"
+  if tar xzf "$asset" -C "$skills_dir" 2>/dev/null; then
+    log "Omniverse 3D skills installed (GPU node $AGENT): $(tar tzf "$asset" 2>/dev/null | grep -c 'SKILL.md$') skills under $skills_dir"
+  else
+    log "WARNING: Omniverse 3D skills extraction failed on $AGENT"
+  fi
+}
+
 initialize_hermes_home() {
   log "initializing Hermes home with upstream Hermes defaults"
   "$VENV/bin/python" - <<'PY'
@@ -3312,6 +3336,7 @@ initialize_hermes_home
 ensure_hermes_identity_memory_continuity
 apply_hermes_gateway_runtime_shim
 sync_hermes_chat_config
+install_omniverse_gpu_skills
 install_hermes_web_deps
 install_hermes_messaging_deps
 repair_hermes_kanban_schema
