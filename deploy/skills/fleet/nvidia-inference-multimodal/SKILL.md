@@ -42,36 +42,33 @@ curl -s -X POST "$MAC_HUB_URL/v1/chat/completions" \
 `"model":"*"` lets the router pick the configured chat model (it's vision-capable).
 Verified: the chat path returns 200 and analyzes the image.
 
-## 2) Generate an image (text-to-image) — proxy wired; needs an image-capable key
+## 2) Generate an image (text-to-image) — verified working via FLUX
 POST to the router's image proxy `POST /v1/genai/<model>`; it forwards to NVIDIA's
-hosted image models. Two common ones:
+hosted image models. Use **FLUX** (verified on this fleet — HTTP 200 → base64 image):
 
 ```bash
-# SDXL-Turbo (fast)
-curl -s -X POST "$MAC_HUB_URL/v1/genai/stabilityai/sdxl-turbo" \
-  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Accept: application/json' -H 'Content-Type: application/json' \
-  -d '{"text_prompts":[{"text":"a red cube on a white table"}],"steps":2,"seed":0}' -o out.json
-
-# FLUX.1-schnell (higher quality)
+# FLUX.1-schnell — fast (steps 4). Recommended default.
 curl -s -X POST "$MAC_HUB_URL/v1/genai/black-forest-labs/flux.1-schnell" \
-  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Accept: application/json' -H 'Content-Type: application/json' \
   -d '{"prompt":"a red cube on a white table","steps":4,"seed":0}' -o out.json
+
+# FLUX.1-dev — higher quality (steps MUST be >= 5, else HTTP 422)
+curl -s -X POST "$MAC_HUB_URL/v1/genai/black-forest-labs/flux.1-dev" \
+  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"prompt":"a red cube on a white table","steps":8,"seed":0}' -o out.json
 ```
-The response carries the image as base64 (e.g. `artifacts[].base64` for SDXL, or an
-`image`/`b64_json` field); decode it to a `.png`:
+The response carries the image as base64 in `artifacts[0].base64`; decode it:
 ```bash
 python3 -c "import json,base64,sys; d=json.load(open('out.json'));
-import re; b=(d.get('artifacts') or [{}])[0].get('base64') or d.get('image') or d.get('b64_json');
-open('out.png','wb').write(base64.b64decode(b)) if b else sys.exit('no image in response: '+str(d)[:200])"
+b=(d.get('artifacts') or [{}])[0].get('base64') or d.get('image') or d.get('b64_json');
+open('out.png','wb').write(base64.b64decode(b)) if b else sys.exit('no image: '+str(d)[:200])"
 ```
-
-### If image-gen returns HTTP 401 "Authentication failed"
-The hub's **`nvidia-image`** vault key lacks access to the public image API
-(`ai.api.nvidia.com`). The internal chat-gateway key does **not** cover it. Fix:
-escrow a `build.nvidia.com` personal API key (`nvapi-…`) with image-model access
-as the `nvidia-image` secret on the hub (the deploy escrows `NVIDIA_API_KEY` →
-`nvidia-image`; provide an image-capable key, or `mac secret create nvidia-image`).
-No code change is needed — the proxy + format above are already correct.
+Notes:
+- Older `stabilityai/sdxl-turbo` / `stable-diffusion-xl` return **404** on this
+  account — prefer the FLUX models above.
+- `HTTP 401 "Authentication failed"` means the hub's `nvidia-image` vault key isn't
+  a `build.nvidia.com` image key. It is set on this fleet; if it regresses,
+  re-escrow a `build.nvidia.com` `nvapi-…` key as the `nvidia-image` secret.
 
 ## When you'd run a model locally instead
 Only for models not on the hub, data that can't leave (privacy), very high
