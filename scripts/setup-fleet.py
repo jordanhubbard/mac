@@ -543,6 +543,33 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     print("  MAC_ROUTER_BACKEND=inproc")
     print("  providers: %s" % (env_values["MAC_ROUTER_PROVIDERS"] or "(none)"))
     print("  (set MAC_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
+    # Optional modality reverse-proxies: image generation (+ speech ASR/TTS, video).
+    # These use an endpoint + key DISTINCT from the chat/OpenAI key (hosted image/
+    # speech/video NIMs have separate endpoints + keys). All optional — blank to
+    # skip. The hub escrows the key as secret:nvidia-<m>; spokes route via the hub.
+    # Interactive-only (a tty); automation should set router.{image,audio,video} in
+    # the --spec so input alignment can't drift.
+    if sys.stdin.isatty():
+        print("")
+        print("Optional generative modalities (separate URL + key from the chat key):")
+        for modality, default_url in (
+            ("image", "https://ai.api.nvidia.com/v1/genai"),
+            ("audio", ""),
+            ("video", ""),
+        ):
+            try:
+                key = input("  %s-gen API key (build.nvidia.com nvapi-… ; blank to skip): " % modality).strip()
+            except EOFError:
+                break
+            if not key:
+                continue
+            url = input("  %s-gen upstream URL [%s]: " % (modality, default_url or "(required)")).strip() or default_url
+            if not url:
+                print("  Skipped %s — no URL." % modality)
+                continue
+            env_values["NVIDIA_%s_API_KEY" % modality.upper()] = key
+            env_values["MAC_DEPLOY_ROUTER_%s_UPSTREAM" % modality.upper()] = url
+            print("  Wired %s-gen → %s (key escrowed as secret:nvidia-%s on the hub)." % (modality, url, modality))
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):

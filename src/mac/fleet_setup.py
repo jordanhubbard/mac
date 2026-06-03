@@ -420,6 +420,23 @@ def _router_env(
     default_model = _str(router.get("default_model"))
     if default_model:
         provider_env_values["MAC_ROUTER_DEFAULT_MODEL"] = default_model
+    # Modality reverse-proxies (image/audio/video): each takes an optional upstream
+    # URL + a key DISTINCT from the chat/OpenAI key (hosted image/speech/video NIMs
+    # use separate endpoints + keys). The url -> MAC_DEPLOY_ROUTER_<M>_UPSTREAM; the
+    # key -> NVIDIA_<M>_API_KEY (inline, else read from the environment). The hub
+    # escrows it as secret:nvidia-<m>; spokes route through the hub.
+    for modality in ("image", "audio", "video"):
+        block = _mapping(router.get(modality))
+        if not block:
+            continue
+        url = _str(block.get("url") or block.get("upstream"))
+        if url:
+            provider_env_values["MAC_DEPLOY_ROUTER_%s_UPSTREAM" % modality.upper()] = url
+        key_env = _str(block.get("key_env")) or "NVIDIA_%s_API_KEY" % modality.upper()
+        if _str(block.get("key")):
+            provider_env_values[key_env] = _str(block["key"])
+        elif _str(env.get(key_env)):
+            provider_env_values[key_env] = _str(env[key_env])
     backend = _str(router.get("backend")) or "inproc"
     return {"backend": backend, "providers": ";".join(router_specs)}, provider_env_values, required_env, warnings
 

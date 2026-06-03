@@ -168,3 +168,41 @@ def test_router_env_emits_wildcard_models_from_spec(tmp_path):
     ev = plan["env_values"]
     assert ev["MAC_ROUTER_WILDCARD_MODELS"] == "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini"
     assert ev["MAC_ROUTER_DEFAULT_MODEL"] == "us/azure/openai/gpt-4.1-mini"
+
+
+def test_router_env_emits_modality_upstreams_and_keys_from_spec(tmp_path):
+    # Cluster-init: optional image/audio/video URL + key (DISTINCT from the chat
+    # key) flow to MAC_DEPLOY_ROUTER_<M>_UPSTREAM + NVIDIA_<M>_API_KEY for the
+    # deploy to wire the router proxies + escrow as secret:nvidia-<m>.
+    from pathlib import Path
+
+    from mac.fleet_setup import build_setup_plan
+
+    spec = {
+        "schema": "mac.fleet_setup.v1",
+        "fleet": {"name": "gke", "hub": "gke-hub", "hub_url": "http://gke-hub:8789"},
+        "agents": [{"name": "gke-hub", "target": "horde@gke-hub", "os": "linux"}],
+        "router": {
+            "backend": "inproc",
+            "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],
+            "image": {"url": "https://ai.api.nvidia.com/v1/genai", "key": "nvapi-img"},
+            "audio": {"url": "https://ai.api.nvidia.com/v1/audio", "key": "nvapi-aud"},
+            "video": {"url": "https://video.example/v1/video", "key_env": "MY_VIDEO_KEY"},
+        },
+        "network": {"provider": "none"},
+    }
+    plan = build_setup_plan(
+        spec,
+        root=Path(__file__).resolve().parents[1],
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret", "MY_VIDEO_KEY": "vid-secret"},
+    )
+    assert plan["status"] == "pass"
+    ev = plan["env_values"]
+    assert ev["MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM"] == "https://ai.api.nvidia.com/v1/genai"
+    assert ev["NVIDIA_IMAGE_API_KEY"] == "nvapi-img"  # inline key, distinct from chat key
+    assert ev["MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM"] == "https://ai.api.nvidia.com/v1/audio"
+    assert ev["NVIDIA_AUDIO_API_KEY"] == "nvapi-aud"
+    assert ev["MAC_DEPLOY_ROUTER_VIDEO_UPSTREAM"] == "https://video.example/v1/video"
+    assert ev["MY_VIDEO_KEY"] == "vid-secret"  # key_env read from the environment

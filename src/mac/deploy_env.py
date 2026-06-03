@@ -36,6 +36,10 @@ ROUTER_KEYS = (
     "MAC_ROUTER_IMAGE_UPSTREAM",
     "MAC_ROUTER_IMAGE_KEY",
     "MAC_ROUTER_IMAGE_TIMEOUT",
+    "MAC_ROUTER_AUDIO_UPSTREAM",
+    "MAC_ROUTER_AUDIO_KEY",
+    "MAC_ROUTER_VIDEO_UPSTREAM",
+    "MAC_ROUTER_VIDEO_KEY",
 )
 
 GATEWAY_ROUTING_KEYS = (
@@ -435,11 +439,24 @@ def _apply_inproc_router_hub(
             values["OPENAI_API_KEY"] = local_token
             values["MAC_HERMES_GATEWAY_API_KEY"] = local_token
             values["ACC_HERMES_GATEWAY_API_KEY"] = local_token
-    if (env.get("NVIDIA_API_KEY") or "").strip():
-        values["MAC_ROUTER_IMAGE_UPSTREAM"] = (
-            env.get("MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM") or "https://ai.api.nvidia.com/v1/genai"
-        )
-        values["MAC_ROUTER_IMAGE_KEY"] = "secret:nvidia-image"
+    # Modality reverse-proxies (image/audio/video): set the upstream + vault key
+    # ref when a key for that modality is available. The image key is DISTINCT
+    # from the chat key — prefer NVIDIA_IMAGE_API_KEY (set at cluster init), fall
+    # back to NVIDIA_API_KEY for back-compat. Audio/video have no default upstream
+    # (hosted paths vary) — wired only when configured at init via
+    # MAC_DEPLOY_ROUTER_<M>_UPSTREAM. The key VALUE is escrowed separately
+    # (deploy escrow → secret:nvidia-<m>).
+    _modalities = (
+        ("image", "https://ai.api.nvidia.com/v1/genai",
+         (env.get("NVIDIA_IMAGE_API_KEY") or env.get("NVIDIA_API_KEY") or "").strip()),
+        ("audio", "", (env.get("NVIDIA_AUDIO_API_KEY") or "").strip()),
+        ("video", "", (env.get("NVIDIA_VIDEO_API_KEY") or "").strip()),
+    )
+    for _m, _default_upstream, _key_present in _modalities:
+        _up = (env.get("MAC_DEPLOY_ROUTER_%s_UPSTREAM" % _m.upper()) or _default_upstream).strip()
+        if _up and _key_present:
+            values["MAC_ROUTER_%s_UPSTREAM" % _m.upper()] = _up
+            values["MAC_ROUTER_%s_KEY" % _m.upper()] = "secret:nvidia-%s" % _m
 
 
 def _apply_inproc_router_spoke(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
