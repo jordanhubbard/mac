@@ -8988,7 +8988,13 @@ class GatewayRunner:
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
-            if not os.getenv(env_key):
+            # A home channel may be configured either via the legacy
+            # <PLATFORM>_HOME_CHANNEL env var OR via config (e.g. the mac deploy
+            # retires SLACK_HOME_CHANNEL in favour of slack_home_channels.json,
+            # which is applied to config.home_channel). Only prompt when neither
+            # is present, otherwise a correctly-configured fleet is told to run
+            # /sethome even though cron delivery already has a home channel.
+            if not os.getenv(env_key) and self.config.get_home_channel(source.platform) is None:
                 # Slack dispatches all Hermes commands through a single
                 # parent slash command `/hermes`; bare `/sethome` is not
                 # registered and would fail with "app did not respond".
