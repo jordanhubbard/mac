@@ -162,14 +162,6 @@ def _session_capability_contract(
                 "purpose": "Read and write repository source files in the MAC workspace before committing work.",
             },
             {
-                "name": "hgmac_agent_ops_cli",
-                "kind": "cli",
-                "required": True,
-                "command": "hgmac agents list",
-                "expected_path": str(mac_home / "venv" / "bin" / "hgmac"),
-                "purpose": "Full CRUD and operational control for MAC fleets, agents, tasks, and projects.",
-            },
-            {
                 "name": "ticket_mirror",
                 "kind": "filesystem",
                 "required": True,

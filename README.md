@@ -318,9 +318,8 @@ mac-hermes --url http://127.0.0.1:8000 writeback hermes_... task_...
 
 Fleet deployment reads generic defaults from `deploy/fleet/config.yaml` and
 real topology from the home-scoped registry `~/.mac/fleets.yaml`. Run
-`bash setup.sh` to create `~/.mac/fleets.yaml` and `~/.mac/.env`. Each fleet is
-keyed by its hub node name; deploy with
-`bash deploy/deploy-mac-fleet.sh --hub <hub-node>`.
+`make setup` to create `~/.mac/fleets.yaml` and `~/.mac/.env`. Each fleet is
+keyed by its hub node name; deploy with `make deploy HUB=<hub-node>`.
 Fleet mesh networking is selected in that registry with `network.provider`;
 `tailscale` is the default, while `headscale` is advanced opt-in and requires an
 explicit login server, enrollment-key source, DNS assumption, and health check.

@@ -94,7 +94,7 @@ Start here before deploying a real fleet.
 Prerequisites:
 
 - A terminal: a text window where you run commands.
-- Python 3.9 or newer.
+- Python 3.9 or newer for setup orchestration.
 - This repository checked out locally.
 - `uv` installed, or a Python environment that can install the dependencies.
 
@@ -221,31 +221,41 @@ and write completed operational context back to MAC.
 After the local quickstart makes sense, deploy a hub. The fleet registry is
 home-scoped at `~/.mac/fleets.yaml`; it is not checked into the repository.
 
+For an LLM-driven setup, write a `mac.fleet_setup.v1` YAML spec and run:
+
+```bash
+mac fleet validate --spec fleet-setup.yaml
+mac fleet doctor --spec fleet-setup.yaml
+make setup ARGS="--spec fleet-setup.yaml --force"
+```
+
+The doctor report is JSON and calls out missing provider env vars, bad targets,
+sample-config mistakes, and the exact next commands.
+
 For a new hub:
 
 ```bash
-bash deploy/deploy-mac-fleet.sh \
-  --new-hub horde \
-  --target horde@20.115.163.162:2201
+make deploy ARGS="--new-hub horde --target horde@20.115.163.162:2201"
 ```
 
 Use `--ssh-port 2201` instead of an inline `:2201` when the target is an SSH
 alias or otherwise contains a colon:
 
 ```bash
-bash deploy/deploy-mac-fleet.sh \
-  --new-hub horde \
-  --target horde@20.115.163.162 \
-  --ssh-port 2201
+make deploy ARGS="--new-hub horde --target horde@20.115.163.162 --ssh-port 2201"
 ```
 
 Re-run deployment for an existing hub:
 
 ```bash
-set -a
-. ~/.mac/.env
-set +a
-bash deploy/deploy-mac-fleet.sh --hub horde
+make deploy HUB=horde
+```
+
+The Make targets pick a Python 3.9+ `python3` or `python` automatically:
+
+```bash
+make setup
+make deploy HUB=horde
 ```
 
 MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. TokenHub,

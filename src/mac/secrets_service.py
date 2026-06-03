@@ -155,6 +155,17 @@ class SecretsService:
             )
         return self.get_secret(secret.id)
 
+    def delete_secret(self, secret_id_or_name: str, actor: str = "operator") -> Dict[str, Any]:
+        """Hard-delete a secret: scrub its ciphertext + remove the row so the value
+        is gone and the name can be reused (used to clean up stale/decommissioned
+        secrets, e.g. a spoke's now-unused router key after key centralization).
+        Raises NotFoundError if absent. Its access-audit rows cascade away; the
+        deletion is recorded by the caller (CLI/API log)."""
+        secret = self.get_secret(secret_id_or_name)
+        with self.store.transaction() as conn:
+            conn.execute("DELETE FROM secrets WHERE id = ?", (secret.id,))
+        return {"id": secret.id, "name": secret.name, "deleted": True, "deleted_by": actor or "operator"}
+
     def list_audits(self, secret_id: Optional[str] = None) -> List[SecretAccess]:
         if secret_id:
             rows = self.store.query_all(
@@ -207,6 +218,38 @@ class SecretsService:
             ).fetchone()
         if row is None:
             raise NotFoundError("secret not found or disabled: %s" % secret_id)
+        return self._decrypt(row["ciphertext"])
+
+    def resolve_secret_value(
+        self,
+        name: str,
+        *,
+        purpose: str = "router",
+        accessor: str = "router",
+    ) -> Optional[str]:
+        """Audited, in-process resolution of a secret's plaintext for a consumer
+        co-located with the control plane on the hub — specifically the model
+        router (th-merge-04) fetching an upstream provider key.
+
+        ``request_secret``/``reveal_secret`` gate *remote* agents behind a
+        single-use, time-limited handle. This is different: the hub is
+        decrypting a secret it already owns, so there is no handle dance — but it
+        is still audited (every upstream-key use is traceable) and respects the
+        ``enabled`` flag. Returns ``None`` when the secret is absent or disabled
+        so the caller can fall back to env or fail the provider, rather than
+        raising into the request path."""
+        try:
+            secret = self.get_secret(name)
+        except NotFoundError:
+            return None
+        if not secret.enabled:
+            return None
+        self.record_access(secret.id, accessor, purpose, SecretAuditResult.GRANTED.value)
+        row = self.store.query_one(
+            "SELECT ciphertext FROM secrets WHERE id = ? AND enabled = 1", (secret.id,)
+        )
+        if row is None:
+            return None
         return self._decrypt(row["ciphertext"])
 
     # Audit + scope helpers ---------------------------------------------

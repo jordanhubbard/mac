@@ -16,7 +16,7 @@ def test_deploy_drains_worker_before_stopping_services():
     assert "wait_for_agent_active_leases" in text
     assert "MAC_DEPLOY_DRAIN_MODE" in text
     assert "MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS" in text
-    assert 'MAC_DEPLOY_DRAIN_MODE=$(shell_quote "${MAC_DEPLOY_DRAIN_MODE:-}")' in text
+    assert 'add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"' in text
     assert 'timeout = float(os.environ.get("MAC_DEPLOY_API_TIMEOUT_SECONDS") or "30")' in text
     assert 'health_status":"degraded' in text
 

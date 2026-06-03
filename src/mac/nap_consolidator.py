@@ -37,22 +37,35 @@ Design notes
 """
 from __future__ import annotations
 
-import os
-from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional
+from collections import Counter, defaultdict
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mac.models import (
     JsonDict,
     MacMemoryTier,
     MemoryRecord,
-    NotFoundError,
     ValidationError,
+    json_dumps,
+    json_loads,
     utcnow,
 )
 
 # A summarizer takes a list of records + a context dict (e.g., the
 # group key, agent_id, time window) and returns the summary string.
 SummarizerFn = Callable[[List[MemoryRecord], Dict[str, Any]], str]
+DreamerFn = Callable[[List[MemoryRecord], Dict[str, Any]], List[JsonDict]]
+
+DREAM_SCHEMA = "mac.dream.v1"
+DREAM_RECORD_PREFIX = "dream"
+DREAM_KINDS = {
+    "decision_rule",
+    "failure_pattern",
+    "knowledge_snippet",
+    "tool_pattern",
+    "routing_signal",
+}
+DREAM_SCOPES = {"agent", "project", "fleet"}
+_CONFIDENCE_SCORES = {"low": 0.35, "medium": 0.65, "high": 0.9}
 
 
 def _default_summarizer(records: List[MemoryRecord], context: Dict[str, Any]) -> str:
@@ -89,9 +102,117 @@ def _default_summarizer(records: List[MemoryRecord], context: Dict[str, Any]) ->
     return "\n".join(header_lines + body_lines)
 
 
+def _record_payload(record: MemoryRecord) -> JsonDict:
+    try:
+        loaded = json_loads(record.content, {})
+    except Exception:  # noqa: BLE001 - malformed memories are still evidence
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _record_observation(record: MemoryRecord) -> str:
+    payload = _record_payload(record)
+    if payload.get("schema") == "mac.deployment_learning.v1":
+        outcome = str(payload.get("outcome") or "?")
+        title = str(payload.get("task_title") or payload.get("task_id") or "task")
+        evidence_type = str(payload.get("evidence_type") or "?")
+        error = str(payload.get("error_signature") or "").strip()
+        line = "[%s] %s (%s)" % (outcome, title, evidence_type)
+        if error:
+            line += " failed with %s" % error
+        return line[:300]
+    content = (record.content or "").strip().replace("\n", " ")
+    return content[:300] if content else "%s memory %s" % (record.record_type, record.id)
+
+
+def _evidence_for_records(records: List[MemoryRecord]) -> List[JsonDict]:
+    return [
+        {
+            "memory_id": record.id,
+            "task_id": record.task_id,
+            "record_type": record.record_type,
+            "subject_type": record.subject_type,
+            "subject_id": record.subject_id,
+            "created_at": record.created_at,
+        }
+        for record in records
+    ]
+
+
+def _dream_kind(records: List[MemoryRecord]) -> str:
+    joined = "\n".join("%s\n%s" % (record.record_type, record.content) for record in records).lower()
+    if "failure" in joined or "failed" in joined or "error" in joined:
+        return "failure_pattern"
+    if any(record.record_type.startswith("deployment_learning") for record in records):
+        return "decision_rule"
+    if "tool" in joined or "command" in joined:
+        return "tool_pattern"
+    return "knowledge_snippet"
+
+
+def _confidence_for_records(records: List[MemoryRecord]) -> Tuple[str, float]:
+    support = len(records)
+    if support >= 3:
+        return "high", _CONFIDENCE_SCORES["high"]
+    if support == 2:
+        return "medium", _CONFIDENCE_SCORES["medium"]
+    return "low", _CONFIDENCE_SCORES["low"]
+
+
+def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> List[JsonDict]:
+    """Emit one structured, evidence-backed dream artifact per group.
+
+    This is deliberately conservative: it does not pretend to do deep
+    meta-reasoning without an LLM. It builds a typed, recall-friendly
+    artifact with provenance so production callers can swap in a richer
+    ``dreamer_fn`` without changing storage, embedding, or retrieval.
+    """
+    if not records:
+        return []
+    kind = _dream_kind(records)
+    confidence, confidence_score = _confidence_for_records(records)
+    project = context.get("project")
+    scope = "project" if project else "agent"
+    record_types = Counter(record.record_type for record in records)
+    observations = [_record_observation(record) for record in records[:5]]
+    title = "%s for %s" % (kind.replace("_", " "), context.get("group_label") or "group")
+    summary = (
+        "%s. Supported by %d memory record(s): %s"
+        % (title, len(records), "; ".join(observations[:3]))
+    )
+    query_terms = sorted(
+        {
+            kind,
+            scope,
+            str(project or ""),
+            str(context.get("agent_id") or ""),
+            *record_types.keys(),
+        }
+        - {""}
+    )
+    return [
+        {
+            "kind": kind,
+            "scope": scope,
+            "confidence": confidence,
+            "confidence_score": confidence_score,
+            "summary": summary[:1200],
+            "observations": observations,
+            "record_type_counts": dict(sorted(record_types.items())),
+            "retrieval": {
+                "agent_id": context.get("agent_id"),
+                "project": project,
+                "scope": scope,
+                "kinds": [kind],
+                "query_terms": query_terms,
+                "min_confidence": confidence,
+            },
+        }
+    ]
+
+
 class NapConsolidatorService:
-    """Walks an agent's memory_records since its last nap and writes
-    one `nap_summary` row per (task_id, project) group."""
+    """Walk recent agent memory and write summaries plus typed dream artifacts."""
 
     def __init__(
         self,
@@ -99,11 +220,13 @@ class NapConsolidatorService:
         memory: Any,
         *,
         summarizer_fn: Optional[SummarizerFn] = None,
+        dreamer_fn: Optional[DreamerFn] = None,
         vector_writer: Optional[Any] = None,
     ) -> None:
         self.store = store
         self.memory = memory
         self._summarizer_fn = summarizer_fn or _default_summarizer
+        self._dreamer_fn = dreamer_fn or _default_dreamer
         self._vector_writer = vector_writer
 
     # -- Public API ---------------------------------------------------------
@@ -115,6 +238,7 @@ class NapConsolidatorService:
         since: Optional[str] = None,
         nap_run_id: Optional[str] = None,
         embed_into_medium: bool = True,
+        emit_dream_artifacts: bool = True,
         created_by: Optional[str] = None,
     ) -> JsonDict:
         """Consolidate everything the agent has written since `since`.
@@ -133,55 +257,100 @@ class NapConsolidatorService:
         records = self._records_for_agent_since(agent_id, window_start)
         groups = self._group_records(records)
         summary_ids: List[str] = []
+        dream_ids: List[str] = []
         embedded_count = 0
+        dream_embedded_count = 0
         per_group_errors: List[JsonDict] = []
 
         for group_key, group_records in groups.items():
+            context = {
+                "agent_id": agent_id,
+                "nap_run_id": nap_run_id,
+                "group_label": self._group_label(group_key),
+                "window_start": window_start or "<beginning>",
+                "window_end": window_end,
+                "task_id": group_key[0],
+                "project": group_key[1],
+                "record_count": len(group_records),
+            }
             try:
-                context = {
-                    "agent_id": agent_id,
-                    "nap_run_id": nap_run_id,
-                    "group_label": self._group_label(group_key),
-                    "window_start": window_start or "<beginning>",
-                    "window_end": window_end,
-                    "task_id": group_key[0],
-                    "project": group_key[1],
-                }
                 content = self._summarizer_fn(group_records, context)
                 if not content.strip():
-                    continue
-                summary = self.memory.add_memory(
-                    task_id=group_key[0],
-                    subject_type="nap_summary",
-                    subject_id=agent_id,
-                    record_type="nap_summary",
-                    content=content,
-                    evidence_id=None,
-                    created_by=creator,
-                )
-                summary_ids.append(summary.id)
-                if embed_into_medium and self._vector_writer is not None:
-                    try:
-                        self._vector_writer.embed_memory(
-                            summary.id,
-                            tier=MacMemoryTier.MEDIUM.value,
-                            created_by=creator,
-                        )
-                        embedded_count += 1
-                    except Exception as exc:  # noqa: BLE001
-                        per_group_errors.append(
-                            {
-                                "group": list(group_key),
-                                "phase": "embed",
-                                "summary_id": summary.id,
-                                "error": str(exc),
-                            }
-                        )
+                    summary = None
+                else:
+                    summary = self.memory.add_memory(
+                        task_id=group_key[0],
+                        subject_type="nap_summary",
+                        subject_id=agent_id,
+                        record_type="nap_summary",
+                        content=content,
+                        evidence_id=None,
+                        created_by=creator,
+                    )
+                    summary_ids.append(summary.id)
+                    if embed_into_medium and self._vector_writer is not None:
+                        try:
+                            self._vector_writer.embed_memory(
+                                summary.id,
+                                tier=MacMemoryTier.MEDIUM.value,
+                                created_by=creator,
+                            )
+                            embedded_count += 1
+                        except Exception as exc:  # noqa: BLE001
+                            per_group_errors.append(
+                                {
+                                    "group": list(group_key),
+                                    "phase": "embed_summary",
+                                    "summary_id": summary.id,
+                                    "error": str(exc),
+                                }
+                            )
             except Exception as exc:  # noqa: BLE001
                 per_group_errors.append(
                     {
                         "group": list(group_key),
-                        "phase": "summarize_or_write",
+                        "phase": "summarize_or_write_summary",
+                        "error": str(exc),
+                    }
+                )
+
+            if not emit_dream_artifacts:
+                continue
+            try:
+                artifacts = self._normalized_dream_artifacts(group_records, context)
+                for artifact in artifacts:
+                    dream = self.memory.add_memory(
+                        task_id=group_key[0],
+                        subject_type="dream",
+                        subject_id=self._dream_subject_id(artifact),
+                        record_type="%s:%s" % (DREAM_RECORD_PREFIX, artifact["kind"]),
+                        content=json_dumps(artifact),
+                        evidence_id=None,
+                        created_by=creator,
+                    )
+                    dream_ids.append(dream.id)
+                    if embed_into_medium and self._vector_writer is not None:
+                        try:
+                            self._vector_writer.embed_memory(
+                                dream.id,
+                                tier=MacMemoryTier.MEDIUM.value,
+                                created_by=creator,
+                            )
+                            dream_embedded_count += 1
+                        except Exception as exc:  # noqa: BLE001
+                            per_group_errors.append(
+                                {
+                                    "group": list(group_key),
+                                    "phase": "embed_dream",
+                                    "dream_id": dream.id,
+                                    "error": str(exc),
+                                }
+                            )
+            except Exception as exc:  # noqa: BLE001
+                per_group_errors.append(
+                    {
+                        "group": list(group_key),
+                        "phase": "dream_or_write_artifacts",
                         "error": str(exc),
                     }
                 )
@@ -195,6 +364,9 @@ class NapConsolidatorService:
             "summaries_written": len(summary_ids),
             "summary_memory_ids": summary_ids,
             "summaries_embedded": embedded_count,
+            "dream_artifacts_written": len(dream_ids),
+            "dream_memory_ids": dream_ids,
+            "dream_artifacts_embedded": dream_embedded_count,
             "errors": per_group_errors,
         }
 
@@ -205,8 +377,8 @@ class NapConsolidatorService:
     ) -> List[MemoryRecord]:
         """Memory records the agent authored after `since`, excluding
         prior nap_summary rows (don't summarize summaries)."""
-        clauses = ["created_by = ?", "record_type != ?"]
-        params: List[Any] = [agent_id, "nap_summary"]
+        clauses = ["created_by = ?", "record_type != ?", "record_type NOT LIKE ?"]
+        params: List[Any] = [agent_id, "nap_summary", "%s:%%" % DREAM_RECORD_PREFIX]
         if since:
             clauses.append("created_at > ?")
             params.append(since)
@@ -271,18 +443,137 @@ class NapConsolidatorService:
         records that don't belong to a task, the group key is (None,
         subject_id) which buckets project-level facts together."""
         groups: Dict[tuple, List[MemoryRecord]] = defaultdict(list)
+        task_projects: Dict[str, Optional[str]] = {}
         for rec in records:
             if rec.task_id:
-                key = (rec.task_id, None)
+                if rec.task_id not in task_projects:
+                    task_projects[rec.task_id] = self._project_for_task(rec.task_id)
+                key = (rec.task_id, task_projects[rec.task_id])
             else:
                 # Subject id is the closest stable grouping key for
                 # ambient records (e.g., subject_type=project).
-                key = (None, rec.subject_id or rec.subject_type)
+                if rec.subject_type == "project" and rec.subject_id:
+                    key = (None, rec.subject_id)
+                else:
+                    key = (None, rec.subject_id or rec.subject_type)
             groups[key].append(rec)
         return groups
 
     def _group_label(self, key: tuple) -> str:
-        task_id, ambient = key
+        task_id, project = key
         if task_id:
-            return "task=%s" % task_id
-        return "ambient=%s" % (ambient or "<unscoped>")
+            suffix = " project=%s" % project if project else ""
+            return "task=%s%s" % (task_id, suffix)
+        return "ambient=%s" % (project or "<unscoped>")
+
+    def _project_for_task(self, task_id: str) -> Optional[str]:
+        row = self.store.query_one("SELECT project FROM tasks WHERE id = ?", (task_id,))
+        if row is None:
+            return None
+        return row["project"]
+
+    def _normalized_dream_artifacts(
+        self,
+        records: List[MemoryRecord],
+        context: Dict[str, Any],
+    ) -> List[JsonDict]:
+        candidates = self._dreamer_fn(records, context)
+        if not candidates:
+            return []
+        if not isinstance(candidates, list):
+            raise ValidationError("dreamer_fn must return a list of objects")
+        artifacts: List[JsonDict] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise ValidationError("dream artifact candidate must be an object")
+            artifact = self._normalize_dream_candidate(candidate, records, context)
+            if artifact is not None:
+                artifacts.append(artifact)
+        return artifacts
+
+    def _normalize_dream_candidate(
+        self,
+        candidate: JsonDict,
+        records: List[MemoryRecord],
+        context: Dict[str, Any],
+    ) -> Optional[JsonDict]:
+        summary = str(candidate.get("summary") or candidate.get("lesson") or "").strip()
+        if not summary:
+            return None
+        kind = str(candidate.get("kind") or _dream_kind(records)).strip().lower()
+        if kind not in DREAM_KINDS:
+            raise ValidationError("unknown dream artifact kind: %s" % kind)
+        default_scope = "project" if context.get("project") else "agent"
+        scope = str(candidate.get("scope") or default_scope).strip().lower()
+        if scope not in DREAM_SCOPES:
+            raise ValidationError("unknown dream artifact scope: %s" % scope)
+        confidence = str(candidate.get("confidence") or "low").strip().lower()
+        if confidence not in _CONFIDENCE_SCORES:
+            raise ValidationError("unknown dream artifact confidence: %s" % confidence)
+        confidence_score = candidate.get("confidence_score")
+        if confidence_score is None:
+            confidence_score = _CONFIDENCE_SCORES[confidence]
+        confidence_score = max(0.0, min(1.0, float(confidence_score)))
+        evidence = candidate.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            evidence = _evidence_for_records(records)
+        retrieval = candidate.get("retrieval")
+        if not isinstance(retrieval, dict):
+            retrieval = {}
+        project = candidate.get("project") or context.get("project") or retrieval.get("project")
+        agent_id = candidate.get("agent_id") or context.get("agent_id") or retrieval.get("agent_id")
+        query_terms = retrieval.get("query_terms")
+        if not isinstance(query_terms, list):
+            query_terms = []
+        query_terms = sorted(
+            {
+                str(term).strip()
+                for term in [
+                    *query_terms,
+                    kind,
+                    scope,
+                    project or "",
+                    agent_id or "",
+                ]
+                if str(term).strip()
+            }
+        )
+        normalized: JsonDict = {
+            "schema": DREAM_SCHEMA,
+            "kind": kind,
+            "scope": scope,
+            "confidence": confidence,
+            "confidence_score": confidence_score,
+            "salience": float(candidate.get("salience") or confidence_score),
+            "summary": summary[:2000],
+            "agent_id": agent_id,
+            "project": project,
+            "task_id": candidate.get("task_id") or context.get("task_id"),
+            "nap_run_id": candidate.get("nap_run_id") or context.get("nap_run_id"),
+            "source_window": {
+                "start": context.get("window_start"),
+                "end": context.get("window_end"),
+            },
+            "evidence": evidence,
+            "retrieval": {
+                **retrieval,
+                "agent_id": agent_id,
+                "project": project,
+                "scope": scope,
+                "kinds": [kind],
+                "query_terms": query_terms,
+                "min_confidence": confidence,
+            },
+            "created_at": context.get("window_end"),
+        }
+        for optional_key in ("observations", "record_type_counts", "decision_rule", "avoid", "apply_when"):
+            if optional_key in candidate:
+                normalized[optional_key] = candidate[optional_key]
+        return normalized
+
+    def _dream_subject_id(self, artifact: JsonDict) -> str:
+        if artifact.get("scope") == "project" and artifact.get("project"):
+            return "project:%s" % artifact["project"]
+        if artifact.get("scope") == "fleet":
+            return "fleet"
+        return "agent:%s" % (artifact.get("agent_id") or "unknown")

@@ -68,12 +68,12 @@ def test_parse_env_file_handles_quotes_and_exports(tmp_path: Path):
         '\n'
         'MAC_API_TOKEN=plain-value\n'
         'export MAC_DEPLOY_HUB_TOKEN="quoted value with spaces"\n'
-        "MAC_DEPLOY_TOKENHUB_API_KEY='single-quoted'\n"
+        "MAC_DEPLOY_ROUTER_DEFAULT_MODEL='single-quoted'\n"
     )
     parsed = fleet_env.parse_env_file(env_path)
     assert parsed["MAC_API_TOKEN"] == "plain-value"
     assert parsed["MAC_DEPLOY_HUB_TOKEN"] == "quoted value with spaces"
-    assert parsed["MAC_DEPLOY_TOKENHUB_API_KEY"] == "single-quoted"
+    assert parsed["MAC_DEPLOY_ROUTER_DEFAULT_MODEL"] == "single-quoted"
 
 
 def test_migrate_env_file_adds_scoped_variants(tmp_path: Path):

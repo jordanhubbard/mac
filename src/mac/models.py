@@ -1068,6 +1068,11 @@ class MacVectorPayload:
     agent_id: Optional[str] = None
     tenant_id: Optional[str] = None
     evidence_type: Optional[str] = None
+    record_type: Optional[str] = None
+    dream_kind: Optional[str] = None
+    dream_scope: Optional[str] = None
+    dream_confidence: Optional[str] = None
+    dream_confidence_score: Optional[float] = None
     tags: List[str] = field(default_factory=list)
     schema: str = MAC_MEMORY_PAYLOAD_SCHEMA
 
@@ -1117,6 +1122,17 @@ class MacVectorPayload:
             tenant_id=str(raw["tenant_id"]) if raw.get("tenant_id") else None,
             evidence_type=(
                 str(raw["evidence_type"]) if raw.get("evidence_type") else None
+            ),
+            record_type=str(raw["record_type"]) if raw.get("record_type") else None,
+            dream_kind=str(raw["dream_kind"]) if raw.get("dream_kind") else None,
+            dream_scope=str(raw["dream_scope"]) if raw.get("dream_scope") else None,
+            dream_confidence=(
+                str(raw["dream_confidence"]) if raw.get("dream_confidence") else None
+            ),
+            dream_confidence_score=(
+                float(raw["dream_confidence_score"])
+                if raw.get("dream_confidence_score") is not None
+                else None
             ),
             tags=list(raw.get("tags") or []),
         )

@@ -3,7 +3,7 @@
 # This file is a checked-in schema/defaults sample only. Real fleet topology
 # lives outside Git in ~/.mac/fleets.yaml, keyed by hub node name. Do not put
 # bearer tokens or provider keys in YAML. Upstream LLM/search/embed provider
-# credentials belong in TokenHub on the hub node.
+# credentials live in mac's encrypted vault (SecretsService) on the hub node.
 
 sample: true
 fleet_name: example
@@ -48,14 +48,6 @@ defaults:
     url: ""
     bind_addr: ""
     port: 3002
-  tokenhub:
-    install: auto
-    required: true
-    url: ""
-    bind_addr: ""
-    port: 8090
-    repo_url: https://github.com/jordanhubbard/tokenhub.git
-    ref: ""
   network:
     provider: none
     install: auto

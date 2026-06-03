@@ -46,6 +46,7 @@ def test_decay_apply_forgets_only_stale_uncurated():
 def test_decay_protects_curated_even_when_ancient():
     cp = ControlPlane.in_memory()
     _add(cp, "deployment_learning:demo", age_days=9999)
+    _add(cp, "dream:knowledge_snippet", age_days=9999, subject_type="dream", subject_id="project:demo")
     _add(cp, "project", age_days=9999)
     report = cp.decay_memory(ttl_days=1, dry_run=False)
     assert report["forgettable"] == 0 and report["deleted"] == 0

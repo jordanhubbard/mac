@@ -266,6 +266,75 @@ def test_env_backend_unknown_value_rejected(cp, monkeypatch):
         VectorWriterService(memory=cp.memory, qdrant_url="http://x:1")
 
 
+# mem-store-02: real embeddings are the default ("auto") whenever a model +
+# endpoint are configured; otherwise a safe hash fallback.
+
+def test_auto_backend_uses_real_embedder_when_configured(monkeypatch):
+    import mac.vector_writer_service as v
+    monkeypatch.delenv("MAC_MEMORY_EMBED_BACKEND", raising=False)  # default = auto
+    monkeypatch.setenv("MAC_MEMORY_EMBED_BASE_URL", "http://hub/v1")
+    monkeypatch.setenv("MAC_MEMORY_EMBED_API_KEY", "k")
+    monkeypatch.setenv("MAC_MEMORY_EMBED_MODEL", "embed-1")
+    assert v.resolve_embed_fn_from_env() is not None  # real embedder, no opt-in needed
+
+
+def test_auto_backend_falls_back_to_hash_when_unconfigured(monkeypatch):
+    import mac.vector_writer_service as v
+    for k in (
+        "MAC_MEMORY_EMBED_BACKEND", "MAC_MEMORY_EMBED_MODEL", "MAC_MEMORY_EMBED_BASE_URL",
+        "MAC_MEMORY_EMBED_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    assert v.resolve_embed_fn_from_env() is None  # hash stub
+
+
+def test_batch_embed_preserves_order_and_short_circuits(monkeypatch):
+    import json
+    import mac.vector_writer_service as v
+
+    class _Resp:
+        def __init__(self, b): self._b = b
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data.decode())
+        captured["n"] = len(body["input"])
+        # return OUT OF ORDER to prove we sort by index
+        data = [{"index": i, "embedding": [float(i)]} for i in reversed(range(len(body["input"])))]
+        return _Resp(json.dumps({"data": data}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    fn = v.tokenhub_embedding_batch_fn(base_url="http://h/v1", api_key="k", model="m")
+    assert fn([]) == []                       # empty short-circuits (no call)
+    out = fn(["a", "b", "c"])
+    assert out == [[0.0], [1.0], [2.0]]        # sorted back into input order
+    assert captured["n"] == 3                  # one call for all three
+
+
+def test_batch_embed_rejects_count_mismatch(monkeypatch):
+    import json
+    import mac.vector_writer_service as v
+    from mac.models import ValidationError
+
+    class _Resp:
+        def __init__(self, b): self._b = b
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=None: _Resp(json.dumps({"data": [{"index": 0, "embedding": [1.0]}]}).encode()),
+    )
+    fn = v.tokenhub_embedding_batch_fn(base_url="http://h/v1", api_key="k", model="m")
+    with pytest.raises(ValidationError, match="returned 1 vectors for 2 inputs"):
+        fn(["a", "b"])
+
+
 def test_env_backend_hash_default_keeps_static_dim(cp, monkeypatch, fake_qdrant):
     """With the hash backend (default), dim comes from the kwarg or
     MAC_MEMORY_DEFAULT_EMBEDDING_DIM — no probe call."""

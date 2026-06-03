@@ -49,6 +49,33 @@ def vault_get(base: str, token: str, key: str) -> str:
         return json.loads(resp.read()).get("value") or ""
 
 
+# th-merge-07: read Slack secrets from mac's OWN encrypted vault (SecretsService)
+# instead of TokenHub. list = GET /secrets (names only); get = POST
+# /secrets/<name>/resolve (audited reveal-by-name, `secret` scope). Used when
+# MAC_SECRET_VAULT_URL/TOKEN are set (router mode); TokenHub is retired.
+def mac_vault_list(base: str, token: str) -> list[str]:
+    req = urllib.request.Request(
+        "%s/secrets" % base.rstrip("/"),
+        headers={"Authorization": "Bearer %s" % token},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    rows = data if isinstance(data, list) else data.get("secrets") or data.get("items") or []
+    return [r.get("name") for r in rows if isinstance(r, dict) and r.get("name")]
+
+
+def mac_vault_get(base: str, token: str, key: str) -> str:
+    safe = urllib.parse.quote(key, safe="")
+    req = urllib.request.Request(
+        "%s/secrets/%s/resolve" % (base.rstrip("/"), safe),
+        method="POST",
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        data=b"{}",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read()).get("value") or ""
+
+
 def auth_test(token: str) -> tuple[bool, dict]:
     """Optional last-mile verification before applying. Returns
     (ok, response). Network failures count as ok=False so we don't
@@ -161,24 +188,76 @@ def write_slack_accounts(hermes_home: Path, accounts: list[dict]) -> None:
         pass
 
 
+def upsert_env_file(env_path: Path, kvs: dict[str, str]) -> bool:
+    """Idempotently set KEY=VALUE lines in a .env file, preserving everything
+    else. Returns True if the file changed.
+
+    This is the durable fix for the gateway coming up "No messaging platforms
+    enabled" after a restart: the gateway wrapper sources ~/.hermes/.env, so the
+    Slack tokens must live THERE (not only in config.yaml's env: block, which a
+    freshly systemd-launched gateway doesn't reliably load before deciding which
+    platforms to enable).
+    """
+    if not kvs:
+        return False
+    existing = ""
+    if env_path.exists():
+        existing = env_path.read_text(encoding="utf-8", errors="ignore")
+    lines = existing.splitlines()
+    out: list[str] = []
+    handled: set[str] = set()
+    changed = False
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if ("=" in line and not line.lstrip().startswith("#")) else None
+        if key in kvs:
+            new_line = "%s=%s" % (key, kvs[key])
+            if new_line != line:
+                changed = True
+            out.append(new_line)
+            handled.add(key)
+        else:
+            out.append(line)
+    for key, value in kvs.items():
+        if key not in handled:
+            out.append("%s=%s" % (key, value))
+            changed = True
+    if changed:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass
+    return changed
+
+
 def main() -> int:
     agent = (os.environ.get("MAC_AGENT_NAME") or "").strip().lower()
     if not agent:
         print("MAC_AGENT_NAME is required", file=sys.stderr)
         return 2
-    base = os.environ.get("TOKENHUB_URL", "http://127.0.0.1:8090")
-    token = os.environ.get("TOKENHUB_ADMIN_TOKEN", "")
-    if not token:
-        print("TOKENHUB_ADMIN_TOKEN is required", file=sys.stderr)
-        return 2
+    # th-merge-07: prefer mac's own vault (SecretsService) when configured;
+    # fall back to TokenHub for backward compat.
+    mac_url = (os.environ.get("MAC_SECRET_VAULT_URL") or "").strip()
+    mac_token = (os.environ.get("MAC_SECRET_VAULT_TOKEN") or "").strip()
+    if mac_url and mac_token:
+        base, token, source = mac_url, mac_token, "mac-vault"
+        list_fn, get_fn = mac_vault_list, mac_vault_get
+    else:
+        base = os.environ.get("TOKENHUB_URL", "http://127.0.0.1:8090")
+        token = os.environ.get("TOKENHUB_ADMIN_TOKEN", "")
+        source, list_fn, get_fn = "tokenhub", vault_list, vault_get
+        if not token:
+            print("TOKENHUB_ADMIN_TOKEN is required (or set MAC_SECRET_VAULT_URL/TOKEN)", file=sys.stderr)
+            return 2
     hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser()
     hermes_home.mkdir(parents=True, exist_ok=True)
     config_path = hermes_home / "config.yaml"
 
     try:
-        all_secrets = vault_list(base, token)
+        all_secrets = list_fn(base, token)
     except Exception as exc:
-        print("vault_list failed:", exc, file=sys.stderr)
+        print("vault_list (%s) failed:" % source, exc, file=sys.stderr)
         return 3
 
     # Find secrets for this agent
@@ -196,9 +275,9 @@ def main() -> int:
             continue
         _, _, workspace, kind = parts[0], parts[1], parts[2], parts[3]
         try:
-            value = vault_get(base, token, key)
+            value = get_fn(base, token, key)
         except Exception as exc:
-            print("vault_get %s failed: %s" % (key, exc), file=sys.stderr)
+            print("vault_get (%s) %s failed: %s" % (source, key, exc), file=sys.stderr)
             continue
         if not value:
             continue
@@ -280,12 +359,21 @@ def main() -> int:
     if config_path.exists() and env_updates:
         config_changed = update_yaml_env_block(config_path, env_updates)
 
+    # Durable fix: also write the primary tokens into ~/.hermes/.env, which the
+    # gateway wrapper sources at startup. Without this, a systemd-restarted
+    # gateway has no SLACK_BOT_TOKEN/SLACK_APP_TOKEN in its process env and comes
+    # up "No messaging platforms enabled" (Slack silent), even though the tokens
+    # are present in config.yaml.
+    env_file_changed = upsert_env_file(hermes_home / ".env", env_updates)
+
     print(json.dumps({
         "agent": agent,
         "workspaces": summary,
         "slack_accounts_path": str(hermes_home / "slack_accounts.json"),
         "config_yaml_path": str(config_path),
         "config_yaml_changed": config_changed,
+        "env_file_changed": env_file_changed,
+        "env_file_path": str(hermes_home / ".env"),
     }, indent=2))
     return 0
 

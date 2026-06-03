@@ -502,6 +502,46 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
 
 
+def _fleet_setup_plan_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan
+
+    root = Path(__file__).resolve().parents[2]
+    fleets_config = Path(args.fleets_config).expanduser()
+    env_file = Path(args.env_file).expanduser()
+    spec = load_setup_spec(Path(args.spec).expanduser())
+    return public_plan(
+        build_setup_plan(
+            spec,
+            root=root,
+            fleets_config=fleets_config,
+            env_file=env_file,
+        )
+    )
+
+
+def cmd_fleet_validate_setup(args: argparse.Namespace) -> None:
+    """Validate a declarative mac.fleet_setup.v1 spec."""
+    _print(_fleet_setup_plan_from_args(args))
+
+
+def cmd_fleet_doctor_setup(args: argparse.Namespace) -> None:
+    """Run LLM-friendly setup doctor checks for a declarative fleet spec."""
+    plan = _fleet_setup_plan_from_args(args)
+    _print(
+        {
+            "schema": "mac.fleet_setup_doctor.v1",
+            "status": plan.get("status"),
+            "hub": plan.get("hub"),
+            "fleet_name": plan.get("fleet_name"),
+            "checks": plan.get("checks"),
+            "required_env": plan.get("required_env"),
+            "warnings": plan.get("warnings"),
+            "errors": plan.get("errors"),
+            "next_steps": plan.get("next_steps"),
+        }
+    )
+
+
 def cmd_mood_set(args: argparse.Namespace) -> None:
     _print(
         _plane(args).set_mood(
@@ -815,6 +855,10 @@ def cmd_secret_list(args: argparse.Namespace) -> None:
     _print([secret.to_dict() for secret in _plane(args).list_secrets()])
 
 
+def cmd_secret_delete(args: argparse.Namespace) -> None:
+    _print(_plane(args).delete_secret(args.secret, actor=args.actor))
+
+
 def cmd_secret_access(args: argparse.Namespace) -> None:
     _print(_plane(args).request_secret(args.secret, args.agent_id, args.purpose))
 
@@ -1107,6 +1151,26 @@ def cmd_memory_recall(args: argparse.Namespace) -> None:
     _print(cp.recall_memory(args.query, **kwargs))
 
 
+def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
+    """Recall typed dream artifacts using scope/kind/confidence filters."""
+    cp = _plane(args)
+    qdrant_url = getattr(args, "qdrant_url", None)
+    kwargs = {
+        "tier": args.tier,
+        "limit": args.limit,
+        "min_score": args.min_score,
+        "project": args.project,
+        "agent_id": args.agent_id,
+        "scope": args.scope,
+        "kind": args.kind,
+        "min_confidence": args.min_confidence,
+        "tenant_id": args.tenant_id,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.recall_dream_artifacts(args.query, **kwargs))
+
+
 def cmd_nap_cycle(args: argparse.Namespace) -> None:
     """mem-08 autonomy: begin + consolidate + complete in one shot."""
     cp = _plane(args)
@@ -1119,14 +1183,9 @@ def cmd_nap_cycle(args: argparse.Namespace) -> None:
             actor=args.actor,
             vector_writer=writer,
             embed_into_medium=not args.no_embed,
+            emit_dream_artifacts=not args.no_dreams,
         )
     )
-
-
-def cmd_tokenhub_refresh_wildcards(args: argparse.Namespace) -> None:
-    """mac-nyx7: refresh TokenHub's wildcard model ladder (what the weekly
-    timer calls). Clean no-op without TOKENHUB_URL + admin token."""
-    _print(_plane(args).refresh_tokenhub_wildcards())
 
 
 def cmd_nap_due(args: argparse.Namespace) -> None:
@@ -1154,6 +1213,7 @@ def cmd_nap_consolidate(args: argparse.Namespace) -> None:
             since=args.since,
             nap_run_id=args.nap_run_id,
             embed_into_medium=not args.no_embed,
+            emit_dream_artifacts=not args.no_dreams,
             vector_writer=writer,
             created_by=args.created_by,
         )
@@ -1781,6 +1841,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_fleet_refresh_context, fleet_refresh)
 
+    fleet_validate = fleet.add_parser(
+        "validate",
+        help="validate a declarative mac.fleet_setup.v1 setup spec",
+    )
+    fleet_validate.add_argument("--spec", required=True)
+    fleet_validate.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+    )
+    fleet_validate.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+    )
+    _set(cmd_fleet_validate_setup, fleet_validate)
+
+    fleet_doctor = fleet.add_parser(
+        "doctor",
+        help="run setup doctor checks for a declarative fleet spec",
+    )
+    fleet_doctor.add_argument("--spec", required=True)
+    fleet_doctor.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+    )
+    fleet_doctor.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+    )
+    _set(cmd_fleet_doctor_setup, fleet_doctor)
+
     mood = sub.add_parser(
         "mood",
         help="agent mood overlays (agents self-report; operators query)",
@@ -1880,6 +1970,7 @@ def build_parser() -> argparse.ArgumentParser:
     nap_cycle.add_argument("agent_id")
     nap_cycle.add_argument("--actor")
     nap_cycle.add_argument("--no-embed", action="store_true")
+    nap_cycle.add_argument("--no-dreams", action="store_true")
     nap_cycle.add_argument("--qdrant-url")
     _set(cmd_nap_cycle, nap_cycle)
 
@@ -1901,18 +1992,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_nap_due, nap_due)
 
-    # mac-nyx7: weekly refresh of TokenHub's wildcard model ladder.
-    tokenhub = sub.add_parser(
-        "tokenhub", help="TokenHub integration commands"
-    ).add_subparsers(dest="tokenhub_command", required=True)
-    tokenhub_refresh = tokenhub.add_parser(
-        "refresh-wildcards",
-        help="refresh TokenHub's wildcard model ladder from current "
-        "availability/quality/cost (what the weekly timer calls). No-op "
-        "without TOKENHUB_URL and a TokenHub admin token.",
-    )
-    _set(cmd_tokenhub_refresh_wildcards, tokenhub_refresh)
-
     # mem-08: build per-(task/project) memory summaries for an agent.
     nap_consolidate = nap.add_parser(
         "consolidate",
@@ -1933,6 +2012,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip the vector-writer handoff (summary-only mode; useful "
         "when Qdrant is offline)",
+    )
+    nap_consolidate.add_argument(
+        "--no-dreams",
+        action="store_true",
+        help="write nap_summary rows only; skip typed mac.dream.v1 artifacts",
     )
     nap_consolidate.add_argument(
         "--qdrant-url",
@@ -2083,6 +2167,10 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_secret_set, secret_set)
     secret_list = secret.add_parser("list")
     _set(cmd_secret_list, secret_list)
+    secret_delete = secret.add_parser("delete", help="hard-delete a secret (scrub its value)")
+    secret_delete.add_argument("secret", help="secret id or name")
+    secret_delete.add_argument("--actor", default="operator")
+    _set(cmd_secret_delete, secret_delete)
     secret_access = secret.add_parser("access")
     secret_access.add_argument("secret")
     secret_access.add_argument("agent_id")
@@ -2214,7 +2302,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_decay = memory.add_parser(
         "decay",
         help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
-        "curated knowledge (user/project/feedback/deployment_learning/beads_memory) is preserved",
+        "curated knowledge (user/project/feedback/deployment_learning/dream/beads_memory) is preserved",
     )
     memory_decay.add_argument("--ttl-days", type=float, default=90.0)
     memory_decay.add_argument("--limit", type=int, default=500)
@@ -2328,6 +2416,46 @@ def build_parser() -> argparse.ArgumentParser:
         "Hub mode reads MAC_QDRANT_URL on the hub.",
     )
     _set(cmd_memory_recall, memory_recall)
+
+    memory_recall_dreams = memory.add_parser(
+        "recall-dreams",
+        help="recall typed dream artifacts with scope/kind/confidence filters",
+    )
+    memory_recall_dreams.add_argument("query")
+    memory_recall_dreams.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_recall_dreams.add_argument("--limit", type=int, default=5)
+    memory_recall_dreams.add_argument(
+        "--min-score",
+        type=float,
+        help="drop vector hits below this cosine score (0.0-1.0)",
+    )
+    memory_recall_dreams.add_argument("--project")
+    memory_recall_dreams.add_argument("--agent-id")
+    memory_recall_dreams.add_argument(
+        "--scope", choices=("agent", "project", "fleet")
+    )
+    memory_recall_dreams.add_argument(
+        "--kind",
+        choices=(
+            "decision_rule",
+            "failure_pattern",
+            "knowledge_snippet",
+            "tool_pattern",
+            "routing_signal",
+        ),
+    )
+    memory_recall_dreams.add_argument(
+        "--min-confidence", choices=("low", "medium", "high")
+    )
+    memory_recall_dreams.add_argument("--tenant-id")
+    memory_recall_dreams.add_argument(
+        "--qdrant-url",
+        help="override Qdrant URL when running in local mode (--db). "
+        "Hub mode reads MAC_QDRANT_URL on the hub.",
+    )
+    _set(cmd_memory_recall_dreams, memory_recall_dreams)
 
     rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
     rollout_create = rollout.add_parser("create")

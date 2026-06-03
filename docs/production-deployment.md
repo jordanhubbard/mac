@@ -115,7 +115,7 @@ First-time deployments should use the setup wizard instead of hand-editing
 deployment YAML:
 
 ```bash
-bash setup.sh
+make setup
 ```
 
 The wizard asks for the hub, agents, SSH targets, OS families, supervisors,
@@ -129,9 +129,62 @@ hub token. It writes:
 To deploy after the wizard:
 
 ```bash
-set -a; . ~/.mac/.env; set +a
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
+
+## Declarative Setup For Agents
+
+LLM-driven setup should prefer a spec file over the interactive wizard. The
+setup spec is validated before files are written, and the doctor output lists
+missing env vars and next commands in machine-readable JSON.
+
+Example `fleet-setup.yaml`:
+
+```yaml
+schema: mac.fleet_setup.v1
+fleet:
+  name: horde
+  hub: horde-hub
+  hub_url: http://horde-hub:8789
+agents:
+  - name: horde-hub
+    target: ubuntu@10.0.0.10:2201
+    os: linux
+    model: nvidia/llama-3.3-nemotron-super-49b-v1
+    worker:
+      mode: loop
+  - name: horde-worker
+    target: ubuntu@10.0.0.11
+    os: linux
+router:
+  backend: inproc
+  providers:
+    - id: nvidia
+      key_env: NVIDIA_API_KEY
+network:
+  provider: tailscale
+```
+
+Recommended LLM flow:
+
+```bash
+export NVIDIA_API_KEY=...
+
+mac fleet validate --spec fleet-setup.yaml
+mac fleet doctor --spec fleet-setup.yaml
+make setup ARGS="--spec fleet-setup.yaml --force"
+```
+
+`make setup ARGS="--spec ..."` writes `~/.mac/fleets.yaml` and `~/.mac/.env`,
+then deploys the generated plan. To configure only:
+
+```bash
+make setup ARGS="--configure-only --spec fleet-setup.yaml --force"
+```
+
+If a provider key such as `NVIDIA_API_KEY` is absent from both the environment
+and the spec, validation fails before deployment so the fleet cannot silently
+come up without chat routing.
 
 The checked-in `deploy/fleet/config.yaml` is a generic sample only. It is
 marked `sample: true`, and `deploy/deploy-mac-fleet.sh` refuses to deploy from
@@ -151,7 +204,7 @@ Hub is directly routable — no tunnel needed:
 curl http://<hub-host>:8789/health
 
 # Deploy
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 ### SSH port forward (K8s, bastion, or private subnets)
@@ -198,7 +251,7 @@ defaults:
 ```bash
 # Hub is reachable at its Tailscale IP, e.g. 100.x.x.x:8789
 curl http://100.x.x.x:8789/health
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 `MAC_DEPLOY_TAILSCALE_AUTH_KEY` must be set in `~/.mac/.env` before deploy.
@@ -226,7 +279,7 @@ defaults:
 ```bash
 # Hub reachable at its headscale-assigned IP or MagicDNS name
 curl http://hub.headscale.example.com:8789/health
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 `MAC_DEPLOY_HEADSCALE_PREAUTHKEY` must be set in `~/.mac/.env`. With
@@ -235,10 +288,10 @@ headscale server on the hub node itself.
 
 ## One-Time ACC Replacement Deploy
 
-For a configured fleet, use the fleet deploy script:
+For a configured fleet, use the Make deploy target:
 
 ```bash
-bash deploy/deploy-mac-fleet.sh --hub <hub-node>
+make deploy HUB=<hub-node>
 ```
 
 Fleet deploy reads `~/.mac/fleets.yaml` by default. Override

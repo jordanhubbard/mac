@@ -947,6 +947,12 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return None
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if path == "/v1" or path.startswith("/v1/"):
+        # In-mac model router (th-merge-02): LLM inference is an agent action, so
+        # the OpenAI front door requires the agent scope (admin inherits it),
+        # regardless of method. This keeps the router from being an open proxy
+        # when the API is bound to a network interface (e.g. the hub node).
+        return "agent"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -1930,12 +1936,9 @@ def create_app(
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp
     app.state.auth_tokens = tokens
-    # ADR 0001 hu-05: stream TokenHub's routing decisions into observability so
-    # "why am I on provider X / model Y?" is answerable. No-op unless
-    # MAC_TOKENHUB_EVENTS_URL / TOKENHUB_URL (+ admin token) is configured.
-    from mac.tokenhub_feed import start_background_consumer
-
-    app.state.tokenhub_feed_thread = start_background_consumer(cp.observability)
+    # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
+    # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
+    # integration. Routing decisions now come from the in-mac router.
     app.state.hermes_startup = build_hermes_startup_report()
     if (
         os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
@@ -3728,6 +3731,41 @@ def create_app(
             "value": cp.reveal_secret(secret_id, body.audit_id, body.accessor_agent_id),
         }
 
+    @app.post("/secrets/{name}/resolve")
+    def resolve_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # th-merge-07: audited admin reveal-by-name for in-fleet consumers — the
+        # Slack fetcher reads slack.<agent>.* from mac's vault now that TokenHub is
+        # retired. Requires the `secret` scope (admin inherits it); decrypt-at-use
+        # and access-audited via SecretsService.resolve_secret_value. Distinct from
+        # the request/reveal handle flow (which is for per-agent scoped access).
+        _enforce_secret_rate_limit(principal, "resolve")  # mac-xc8u
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        accessor = getattr(principal, "agent_id", None) or "fleet-fetch"
+        value = secrets.resolve_secret_value(name, purpose="fleet-fetch", accessor=accessor)
+        if value is None:
+            raise NotFoundError("secret not found or disabled: %s" % name)
+        return {"name": name, "value": value}
+
+    @app.delete("/secrets/{name}")
+    def delete_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Hard-delete a secret (scrub the value + remove the row). Requires the
+        # `secret` scope (admin inherits it; covered by _required_scope for
+        # /secrets*). Used to clean up stale/decommissioned secrets, e.g. a spoke's
+        # now-unused router key after key centralization.
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        actor = getattr(principal, "agent_id", None) or "operator"
+        return cp.delete_secret(name, actor=actor)
+
     @app.get("/secret-audits")
     def list_secret_audits(secret_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
         return [audit.to_dict() for audit in cp.list_secret_audits(secret_id)]
@@ -3879,6 +3917,33 @@ def create_app(
             tenant_id=tenant_id,
         )
 
+    @app.get("/v1/memory/dreams/recall")
+    def recall_dream_artifacts(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
+        scope: Optional[str] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        min_confidence: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_dream_artifacts(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            agent_id=agent_id,
+            scope=scope,
+            kind=kind,
+            min_confidence=min_confidence,
+            tenant_id=tenant_id,
+        )
+
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:
         return cp.create_eval_set(**_data(body)).to_dict()
@@ -3948,6 +4013,29 @@ def create_app(
     def rescue_rollout(rollout_id: str, body: RolloutRescue) -> Dict[str, Any]:
         rollout, task = cp.rescue_rollout(rollout_id, body.actor, body.reason, body.detail)
         return {"rollout": rollout.to_dict(), "task": task.to_dict()}
+
+    # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
+    # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub
+    # path is unchanged by default.
+    try:
+        from mac.router_app import mount_router
+
+        # th-merge-04: let a provider key be `secret:<name>`, resolved (audited,
+        # decrypt-at-use) from the in-mac encrypted key store so upstream
+        # credentials are never stored in plaintext env on the hub.
+        def _router_secret_resolver(name: str) -> Optional[str]:
+            secrets = getattr(cp, "secrets", None)
+            if secrets is None:
+                return None
+            try:
+                return secrets.resolve_secret_value(name, purpose="router-upstream")
+            except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
+                return None
+
+        if mount_router(app, secret_resolver=_router_secret_resolver):
+            _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
+    except Exception as exc:  # noqa: BLE001 - the router must never block app startup
+        _log.warning("in-mac model router not mounted: %s", exc)
 
     return app
 

@@ -552,7 +552,27 @@ class GatewayConfig:
         if config:
             return config.home_channel
         return None
-    
+
+    def get_home_channels(self, platform: Platform) -> "List[HomeChannel]":
+        """All home channels for a platform — one per connected workspace.
+
+        Slack can be connected to several workspaces at once, each with its own
+        resolved home channel (slack_home_channels.json). Broadcast-style
+        deliveries (gateway online/offline notices) should reach every
+        workspace's home channel, not just the first. Other platforms have at
+        most the single configured home channel. The adapter routes each
+        ``send(channel_id)`` to the owning workspace via its channel→team map."""
+        if platform == Platform.SLACK:
+            homes = [
+                HomeChannel(platform=Platform.SLACK, chat_id=chan, name=name)
+                for chan, name in _slack_homes_from_resolved_file()
+                if chan
+            ]
+            if homes:
+                return homes
+        home = self.get_home_channel(platform)
+        return [home] if home and home.chat_id else []
+
     def get_reset_policy(
         self, 
         platform: Optional[Platform] = None,
@@ -1245,6 +1265,49 @@ def _validate_gateway_config(config: "GatewayConfig") -> None:
                 pconfig.enabled = False
 
 
+def _slack_home_from_resolved_file(default_name: str = "") -> "tuple[str, str]":
+    """th-merge-07: read the primary resolved Slack home channel from
+    ``<hermes_home>/slack_home_channels.json`` (written by the deploy's
+    home-channel sync from the fleet's configured channel name). Returns
+    ``(channel_id, name)`` or ``("", default_name)`` if unavailable."""
+    try:
+        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
+        with open(path, "r", encoding="utf-8") as fh:
+            homes = json.load(fh)
+        if isinstance(homes, list) and homes:
+            entry = homes[0]
+            chan = str(entry.get("channel_id") or "")
+            name = str(entry.get("channel_name") or "").lstrip("#") or default_name
+            return chan, name
+    except Exception:
+        pass
+    return "", default_name
+
+
+def _slack_homes_from_resolved_file() -> "List[tuple[str, str]]":
+    """All resolved Slack home channels — one per connected workspace — from
+    ``<hermes_home>/slack_home_channels.json``. Returns ``[(channel_id, name), …]``
+    (empty on any failure). The single-home reader above keeps the first entry as
+    the primary; this is for broadcast deliveries that should reach every
+    workspace."""
+    out: "List[tuple[str, str]]" = []
+    try:
+        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
+        with open(path, "r", encoding="utf-8") as fh:
+            homes = json.load(fh)
+        if isinstance(homes, list):
+            for entry in homes:
+                if not isinstance(entry, dict):
+                    continue
+                chan = str(entry.get("channel_id") or "")
+                name = str(entry.get("channel_name") or "").lstrip("#")
+                if chan:
+                    out.append((chan, name))
+    except Exception:
+        pass
+    return out
+
+
 def _apply_env_overrides(config: GatewayConfig) -> None:
     """Apply environment variable overrides to config."""
     
@@ -1346,11 +1409,19 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
         # send Slack messages can use it without activating the gateway adapter.
         config.platforms[Platform.SLACK].token = slack_token
     slack_home = os.getenv("SLACK_HOME_CHANNEL")
+    slack_home_name = os.getenv("SLACK_HOME_CHANNEL_NAME", "")
+    if not slack_home:
+        # th-merge-07: the deploy retires the legacy SLACK_HOME_CHANNEL env in
+        # favour of the multi-account slack_home_channels.json (resolved from the
+        # fleet's configured home-channel name). Load the primary resolved channel
+        # so get_home_channel(SLACK) is populated and Hermes stops reporting
+        # "No home channel set".
+        slack_home, slack_home_name = _slack_home_from_resolved_file(slack_home_name)
     if slack_home and Platform.SLACK in config.platforms:
         config.platforms[Platform.SLACK].home_channel = HomeChannel(
             platform=Platform.SLACK,
             chat_id=slack_home,
-            name=os.getenv("SLACK_HOME_CHANNEL_NAME", ""),
+            name=slack_home_name,
             thread_id=os.getenv("SLACK_HOME_CHANNEL_THREAD_ID") or None,
         )
     

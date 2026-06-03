@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
+from mac.deploy_env import build_router_provider_spec  # noqa: E402
+from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan  # noqa: E402
+from mac.providers import ROUTER_PROVIDERS, router_secret_name  # noqa: E402
 
 
 def prompt(
@@ -245,13 +248,20 @@ def write_generated_files(
         for step in next_steps:
             print("  %s" % step)
     else:
-        print("  set -a; . %s; set +a" % env_file)
-        print("  bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name)
+        print("  make deploy HUB=%s" % hub_name)
     return 0
 
 
 def _default_worker_capabilities() -> List[str]:
     return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
+
+
+# Known OpenAI-compatible upstreams the wizard can wire into the in-mac router,
+# derived from the single source of truth (mac.providers). provider id ->
+# (key env var, base-url env var, default base url).
+_KNOWN_PROVIDERS: Dict[str, tuple] = {
+    p.id: (p.key_env, p.base_env, p.default_base_url) for p in ROUTER_PROVIDERS
+}
 
 
 def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
@@ -296,8 +306,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     qdrant_data_dir = prompt("Qdrant data directory override (blank for default /var/lib/<fleet>/qdrant)", default="")
     firecrawl_port = 3002
     firecrawl_url = qdrant_url_from_hub(hub_url, firecrawl_port)
-    tokenhub_port = 8090
-    tokenhub_url = qdrant_url_from_hub(hub_url, tokenhub_port)
 
     print("")
     print("Fleet mesh networking connects agents across networks without manual VPN config.")
@@ -331,7 +339,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             ):
                 hub_url = "http://%s:%d" % (ts_hub_name, control_port)
                 firecrawl_url = "http://%s:%d" % (ts_hub_name, firecrawl_port)
-                tokenhub_url = "http://%s:%d" % (ts_hub_name, tokenhub_port)
                 if prompt_bool(
                     "Set Qdrant URL to http://%s:%d?" % (ts_hub_name, qdrant_port),
                     default=True,
@@ -383,7 +390,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         ):
             hub_url = "http://%s.mac.internal:%d" % (hs_host, control_port)
             firecrawl_url = "http://%s.mac.internal:%d" % (hs_host, firecrawl_port)
-            tokenhub_url = "http://%s.mac.internal:%d" % (hs_host, tokenhub_port)
             if prompt_bool(
                 "Set Qdrant URL to http://%s.mac.internal:%d?" % (hs_host, qdrant_port),
                 default=False,
@@ -460,15 +466,6 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                 "bind_addr": "",
                 "port": firecrawl_port,
             },
-            "tokenhub": {
-                "install": "auto",
-                "required": True,
-                "url": tokenhub_url,
-                "bind_addr": "",
-                "port": tokenhub_port,
-                "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                "ref": "",
-            },
             "network": {
                 "provider": network_provider,
                 "install": network_install,
@@ -492,16 +489,10 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "agents": agents,
     }
 
-    # Provider credentials — at least one required for TokenHub to route requests.
-    _KNOWN_PROVIDERS: Dict[str, tuple] = {
-        "nvidia":     ("NVIDIA_API_KEY",     "NVIDIA_BASE_URL",     "https://inference-api.nvidia.com/v1"),
-        "openai":     ("OPENAI_API_KEY",     "OPENAI_BASE_URL",     "https://api.openai.com/v1"),
-        "anthropic":  ("ANTHROPIC_API_KEY",  "ANTHROPIC_BASE_URL",  "https://api.anthropic.com"),
-        "perplexity": ("PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
-    }
+    # Provider credentials — at least one required for the in-mac router to route requests.
     provider_env_values: Dict[str, str] = {}
     print("")
-    print("TokenHub requires at least one upstream LLM provider.")
+    print("The in-mac router requires at least one upstream LLM provider.")
     print("Keys are written to %s (mode 0600, never committed to git)." % env_file)
     print("Known providers: %s" % ", ".join(_KNOWN_PROVIDERS))
     print("")
@@ -534,6 +525,24 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
     }
     env_values.update(provider_env_values)
+    # Wire the in-mac router — the replacement for the retired TokenHub. Keys stay
+    # centralized: only the HUB runs the router (MAC_ROUTER_BACKEND=inproc), and it
+    # references each provider's upstream key as secret:<name>, which the deploy
+    # escrows into the hub's encrypted vault. SPOKES route through the hub's /v1
+    # and carry no upstream key (see deploy-mac-fleet.sh router block). Without this
+    # a freshly-generated fleet would have no chat routing.
+    # NOTE: these are the RUNTIME names the deploy reads via fleet_scoped_env
+    # (deploy-mac-fleet.sh: `fleet_scoped_env MAC_ROUTER_BACKEND`), exactly like the
+    # provider keys (NVIDIA_API_KEY, ...). They are NOT MAC_DEPLOY_*-prefixed —
+    # deploy_host re-exports them as MAC_DEPLOY_ROUTER_* into the remote env itself.
+    # Writing MAC_DEPLOY_ROUTER_* here would be inert (the deploy never reads it).
+    env_values["MAC_ROUTER_BACKEND"] = "inproc"
+    env_values["MAC_ROUTER_PROVIDERS"] = build_router_provider_spec(provider_env_values)
+    print("")
+    print("Wired in-mac router (hub-only; keys escrowed to the hub vault on deploy):")
+    print("  MAC_ROUTER_BACKEND=inproc")
+    print("  providers: %s" % (env_values["MAC_ROUTER_PROVIDERS"] or "(none)"))
+    print("  (set MAC_ROUTER_DEFAULT_MODEL in %s if your gateway model is '*')" % env_file)
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):
@@ -548,12 +557,11 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
 
     if running_locally:
         next_steps = [
-            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
+            "make deploy HUB=%s" % hub_name,
         ]
     else:
         next_steps = [
-            "set -a; . %s; set +a" % env_file,
-            "bash deploy/deploy-mac-fleet.sh --hub %s" % hub_name,
+            "make deploy HUB=%s" % hub_name,
         ]
 
     return write_generated_files(
@@ -637,7 +645,6 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
     else:
         qdrant_port = int(defaults.get("qdrant", {}).get("port", 6333))
         firecrawl_port = int(defaults.get("firecrawl", {}).get("port", 3002))
-        tokenhub_port = int(defaults.get("tokenhub", {}).get("port", 8090))
         fleet_config = {
             "sample": False,
             "fleet_name": fleet_name,
@@ -672,15 +679,6 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
                     "bind_addr": "",
                     "port": firecrawl_port,
                 },
-                "tokenhub": {
-                    "install": "none",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
-                    "bind_addr": "",
-                    "port": tokenhub_port,
-                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                    "ref": "",
-                },
             },
             "agents": [new_agent],
         }
@@ -700,12 +698,11 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
 
     if running_locally:
         next_steps = [
-            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+            'make deploy HUB=%s ARGS="%s"' % (hub_name, agent_name),
         ]
     else:
         next_steps = [
-            "set -a; . %s; set +a" % env_file,
-            "bash deploy/deploy-mac-fleet.sh --hub %s %s" % (hub_name, agent_name),
+            'make deploy HUB=%s ARGS="%s"' % (hub_name, agent_name),
         ]
 
     return write_generated_files(
@@ -734,7 +731,18 @@ def main(argv: List[str]) -> int:
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
     parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
-    parser.add_argument("--deploy-plan-file", default="", help="Write a setup.sh deployment plan JSON file.")
+    parser.add_argument("--deploy-plan-file", default="", help="Write a setup deployment plan JSON file.")
+    parser.add_argument("--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup.")
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate --spec and print the redacted setup plan.",
+    )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Run setup doctor checks for --spec and print the report.",
+    )
     parser.add_argument("--new-hub", help="Create a one-node first-hub fleet non-interactively.")
     parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
     parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
@@ -763,8 +771,51 @@ def main(argv: List[str]) -> int:
     fleets_config = Path(args.fleets_config).expanduser()
     env_file = Path(args.env_file).expanduser()
 
+    if args.spec:
+        try:
+            spec = load_setup_spec(Path(args.spec).expanduser())
+            plan = build_setup_plan(
+                spec,
+                root=ROOT,
+                fleets_config=fleets_config,
+                env_file=env_file,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print("setup spec failed to load: %s" % exc, file=sys.stderr)
+            return 2
+        redacted = public_plan(plan)
+        if args.validate_only or args.doctor:
+            print(json.dumps(redacted, indent=2, sort_keys=True))
+            return 0 if plan.get("status") != "fail" else 1
+        if plan.get("status") == "fail":
+            print(json.dumps(redacted, indent=2, sort_keys=True), file=sys.stderr)
+            print("setup spec is not deployable; fix failed checks before writing config", file=sys.stderr)
+            return 2
+        if (
+            not args.force
+            and not args.dry_run
+            and any(path.exists() for path in (fleets_config, env_file))
+        ):
+            print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
+            return 2
+        return write_generated_files(
+            args=args,
+            fleets_config=fleets_config,
+            env_file=env_file,
+            hub_name=str(plan["hub"]),
+            fleet_config=plan["fleet_config"],
+            env_values=plan["env_values"],
+            next_steps=plan["next_steps"],
+            deploy_agents=plan["deploy_agents"],
+        )
+
     noninteractive = bool(args.new_hub)
-    if not args.force and noninteractive and any(path.exists() for path in (fleets_config, env_file)):
+    if (
+        not args.force
+        and noninteractive
+        and not args.dry_run
+        and any(path.exists() for path in (fleets_config, env_file))
+    ):
         print("Refusing to overwrite existing setup files without --force.", file=sys.stderr)
         return 2
     if not args.force and not noninteractive:
@@ -786,7 +837,6 @@ def main(argv: List[str]) -> int:
         hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
         qdrant_port = 6333
         firecrawl_port = 3002
-        tokenhub_port = 8090
         headscale_login_server = args.headscale_login_server.strip()
         if args.network_provider == "headscale" and not headscale_login_server:
             print("--network-provider headscale requires --headscale-login-server", file=sys.stderr)
@@ -830,15 +880,6 @@ def main(argv: List[str]) -> int:
                     "bind_addr": "",
                     "port": firecrawl_port,
                 },
-                "tokenhub": {
-                    "install": "auto",
-                    "required": True,
-                    "url": qdrant_url_from_hub(hub_url, tokenhub_port),
-                    "bind_addr": "",
-                    "port": tokenhub_port,
-                    "repo_url": "https://github.com/jordanhubbard/tokenhub.git",
-                    "ref": "",
-                },
                 "network": {
                     "provider": args.network_provider,
                     "install": "auto",
@@ -877,6 +918,12 @@ def main(argv: List[str]) -> int:
             "MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT": hub_name,
             "MAC_SECRET_KEY": secrets.token_urlsafe(48),
             "MAC_API_TOKEN": secrets.token_urlsafe(32),
+            # Make the in-mac router the routing backend (mounts as a no-op until
+            # providers are added). --new-hub collects no provider keys, so set
+            # MAC_ROUTER_PROVIDERS + the provider key(s) in the env file before
+            # deploy or chat will have no upstream. Runtime name (fleet_scoped_env),
+            # NOT MAC_DEPLOY_*-prefixed — see _setup_hub.
+            "MAC_ROUTER_BACKEND": "inproc",
         }
         if args.headscale_preauth_key:
             env_values[headscale_preauth_key_env] = args.headscale_preauth_key
@@ -891,7 +938,8 @@ def main(argv: List[str]) -> int:
         )
 
     print("mac fleet setup wizard")
-    print("Do not paste provider API keys here. Put upstream model/provider keys in TokenHub.")
+    print("Do not put provider API keys in the fleet config YAML. The wizard collects")
+    print("them into ~/.mac/.env (mode 0600) and wires the in-mac router to read them.")
     print("")
 
     running_locally = prompt_bool(

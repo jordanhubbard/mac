@@ -117,13 +117,25 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   letter-spacing: 0;
 }
 
 button {
   cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid rgba(36, 92, 143, 0.35);
+  outline-offset: 2px;
 }
 
 .login-screen {
@@ -172,7 +184,7 @@ button {
 
 .login-form input {
   width: 100%;
-  height: 42px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--input-bg);
@@ -182,7 +194,7 @@ button {
 
 .login-form .primary-button {
   width: 100%;
-  height: 42px;
+  height: 44px;
 }
 
 .app-shell {
@@ -192,9 +204,13 @@ button {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  max-height: 100vh;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
   background: var(--sidebar);
   padding: 24px 18px;
@@ -226,11 +242,24 @@ button {
 
 .nav {
   display: grid;
+  gap: 18px;
+}
+
+.nav-section {
+  display: grid;
   gap: 6px;
 }
 
+.nav-section-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .nav-item {
-  min-height: 40px;
+  min-height: 44px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -310,7 +339,7 @@ button {
 .toolbar input,
 .toolbar select {
   width: 100%;
-  height: 38px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--input-bg);
@@ -328,7 +357,7 @@ button {
 .primary-button,
 .toolbar button,
 .link-button {
-  height: 38px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -481,6 +510,45 @@ h3 {
   padding: 24px 28px 36px;
 }
 
+.launchpad {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.launchpad-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 88px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 16px;
+  text-align: left;
+}
+
+.launchpad-action:hover {
+  border-color: #bdd4e9;
+  background: #fbfdff;
+}
+
+.launchpad-action > span:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.launchpad-action strong {
+  font-size: 0.98rem;
+}
+
+.launchpad-action span span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(140px, 1fr));
@@ -615,7 +683,7 @@ h3 {
 .action-form select,
 .action-form textarea {
   width: 100%;
-  height: 36px;
+  height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--input-bg);
@@ -649,7 +717,7 @@ h3 {
 .action-form button,
 .action-strip button {
   width: 100%;
-  height: 36px;
+  min-height: 42px;
   border: 1px solid var(--accent-strong);
   border-radius: 8px;
   background: var(--accent);
@@ -692,7 +760,7 @@ h3 {
 
 .danger-button {
   min-width: 96px;
-  height: 36px;
+  min-height: 42px;
   border: 1px solid var(--danger);
   border-radius: 8px;
   background: var(--danger);
@@ -768,7 +836,7 @@ details.action-box summary {
 .agent-pill,
 .bucket-row {
   width: 100%;
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -883,7 +951,7 @@ details.action-box summary {
 }
 
 .inline-form button {
-  min-height: 30px;
+  min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -1805,16 +1873,34 @@ details.action-box summary {
   .sidebar {
     position: static;
     gap: 16px;
+    max-height: none;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    padding: 16px 20px;
   }
 
   .nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+
+  .nav-section {
+    display: contents;
+  }
+
+  .nav-section-label {
+    display: none;
   }
 
   .nav-item {
-    padding: 0 6px;
+    flex: 0 0 auto;
+    min-width: 116px;
+    padding: 0 10px;
+    scroll-snap-align: start;
     text-align: center;
   }
 
@@ -1849,6 +1935,7 @@ details.action-box summary {
   .metric-grid,
   .row-grid,
   .task-lanes,
+  .launchpad,
   .toolbar,
   .action-form,
   .action-form.compact {

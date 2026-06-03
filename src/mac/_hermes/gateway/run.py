@@ -3619,10 +3619,6 @@ class GatewayRunner:
         # ``RuntimeError: dictionary changed size during iteration`` —
         # observed in a user report during gateway shutdown.
         for platform, adapter in list(self.adapters.items()):
-            home = self.config.get_home_channel(platform)
-            if not home or not home.chat_id:
-                continue
-
             platform_cfg = self.config.platforms.get(platform)
             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
                 logger.info(
@@ -3631,38 +3627,44 @@ class GatewayRunner:
                 )
                 continue
 
-            dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
-            if dedup_key in notified:
-                continue
+            # One home channel per connected workspace (Slack can have several);
+            # notify each so every workspace sees the gateway going offline.
+            for home in self.config.get_home_channels(platform):
+                if not home or not home.chat_id:
+                    continue
 
-            try:
-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
-                if metadata:
-                    result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
-                else:
-                    result = await adapter.send(str(home.chat_id), msg)
-                if result is not None and getattr(result, "success", True) is False:
+                dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+                if dedup_key in notified:
+                    continue
+
+                try:
+                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
+                    if metadata:
+                        result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
+                    else:
+                        result = await adapter.send(str(home.chat_id), msg)
+                    if result is not None and getattr(result, "success", True) is False:
+                        logger.debug(
+                            "Failed to send shutdown notification to home channel %s:%s: %s",
+                            platform.value,
+                            home.chat_id,
+                            getattr(result, "error", "send returned success=False"),
+                        )
+                        continue
+
+                    notified.add(dedup_key)
+                    logger.info(
+                        "Sent shutdown notification to home channel %s:%s",
+                        platform.value,
+                        home.chat_id,
+                    )
+                except Exception as e:
                     logger.debug(
                         "Failed to send shutdown notification to home channel %s:%s: %s",
                         platform.value,
                         home.chat_id,
-                        getattr(result, "error", "send returned success=False"),
+                        e,
                     )
-                    continue
-
-                notified.add(dedup_key)
-                logger.info(
-                    "Sent shutdown notification to home channel %s:%s",
-                    platform.value,
-                    home.chat_id,
-                )
-            except Exception as e:
-                logger.debug(
-                    "Failed to send shutdown notification to home channel %s:%s: %s",
-                    platform.value,
-                    home.chat_id,
-                    e,
-                )
 
     def _finalize_shutdown_agents(self, active_agents: Dict[str, Any]) -> None:
         for agent in active_agents.values():
@@ -8988,7 +8990,13 @@ class GatewayRunner:
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
-            if not os.getenv(env_key):
+            # A home channel may be configured either via the legacy
+            # <PLATFORM>_HOME_CHANNEL env var OR via config (e.g. the mac deploy
+            # retires SLACK_HOME_CHANNEL in favour of slack_home_channels.json,
+            # which is applied to config.home_channel). Only prompt when neither
+            # is present, otherwise a correctly-configured fleet is told to run
+            # /sethome even though cron delivery already has a home channel.
+            if not os.getenv(env_key) and self.config.get_home_channel(source.platform) is None:
                 # Slack dispatches all Hermes commands through a single
                 # parent slash command `/hermes`; bare `/sethome` is not
                 # registered and would fail with "app did not respond".
@@ -14885,10 +14893,6 @@ class GatewayRunner:
         message = "♻️ Gateway online — Hermes is back and ready."
 
         for platform, adapter in self.adapters.items():
-            home = self.config.get_home_channel(platform)
-            if not home or not home.chat_id:
-                continue
-
             platform_cfg = self.config.platforms.get(platform)
             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
                 logger.info(
@@ -14897,38 +14901,44 @@ class GatewayRunner:
                 )
                 continue
 
-            target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
-            if target in skipped or target in delivered:
-                continue
+            # One home channel per connected workspace (Slack can have several);
+            # notify each so every workspace sees the gateway is back.
+            for home in self.config.get_home_channels(platform):
+                if not home or not home.chat_id:
+                    continue
 
-            try:
-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
-                if metadata:
-                    result = await adapter.send(str(home.chat_id), message, metadata=metadata)
-                else:
-                    result = await adapter.send(str(home.chat_id), message)
-                if result is not None and getattr(result, "success", True) is False:
+                target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+                if target in skipped or target in delivered:
+                    continue
+
+                try:
+                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
+                    if metadata:
+                        result = await adapter.send(str(home.chat_id), message, metadata=metadata)
+                    else:
+                        result = await adapter.send(str(home.chat_id), message)
+                    if result is not None and getattr(result, "success", True) is False:
+                        logger.warning(
+                            "Home-channel startup notification failed for %s:%s: %s",
+                            platform.value,
+                            home.chat_id,
+                            getattr(result, "error", "send returned success=False"),
+                        )
+                        continue
+
+                    delivered.add(target)
+                    logger.info(
+                        "Sent home-channel startup notification to %s:%s",
+                        platform.value,
+                        home.chat_id,
+                    )
+                except Exception as exc:
                     logger.warning(
                         "Home-channel startup notification failed for %s:%s: %s",
                         platform.value,
                         home.chat_id,
-                        getattr(result, "error", "send returned success=False"),
+                        exc,
                     )
-                    continue
-
-                delivered.add(target)
-                logger.info(
-                    "Sent home-channel startup notification to %s:%s",
-                    platform.value,
-                    home.chat_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Home-channel startup notification failed for %s:%s: %s",
-                    platform.value,
-                    home.chat_id,
-                    exc,
-                )
 
         return delivered
 

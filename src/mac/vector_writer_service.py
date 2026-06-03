@@ -56,6 +56,7 @@ from mac.models import (
 )
 
 EmbedFn = Callable[[str], List[float]]
+BatchEmbedFn = Callable[[List[str]], List[List[float]]]
 
 
 _HTTP_TIMEOUT_SEC = 10
@@ -141,6 +142,60 @@ def tokenhub_embedding_fn(
     return _embed
 
 
+def tokenhub_embedding_batch_fn(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    input_type: str = "passage",
+    timeout: float = 60.0,
+) -> BatchEmbedFn:
+    """Batched embeddings (mem-store-02): one OpenAI-compatible /v1/embeddings
+    call for N texts, returned in input order. At 50-200 agents per hub the
+    write/backfill path embeds many records; batching turns N HTTP round-trips
+    into one. ``data[]`` carries an ``index`` we sort by so order is preserved
+    even if the provider reorders."""
+    if not base_url or not api_key or not model:
+        raise ValidationError("tokenhub_embedding_batch_fn requires base_url, api_key, and model")
+
+    def _embed_batch(texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        body = {"model": model, "input": list(texts), "input_type": input_type}
+        data = json.dumps(body).encode("utf-8")
+        url = "%s/embeddings" % base_url.rstrip("/")
+        headers = {
+            "Authorization": "Bearer %s" % api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValidationError("tokenhub embeddings HTTP %s %s: %s" % (exc.code, exc.reason, detail[:400]))
+        except urllib.error.URLError as exc:
+            raise ValidationError("tokenhub embeddings unreachable at %s: %s" % (url, exc.reason))
+        payload = json.loads(raw) if raw else {}
+        items = payload.get("data") or []
+        if len(items) != len(texts):
+            raise ValidationError(
+                "tokenhub embeddings returned %d vectors for %d inputs" % (len(items), len(texts))
+            )
+        items = sorted(items, key=lambda d: d.get("index", 0) if isinstance(d, dict) else 0)
+        out: List[List[float]] = []
+        for it in items:
+            vec = it.get("embedding") if isinstance(it, dict) else None
+            if not isinstance(vec, list) or not all(isinstance(x, (int, float)) for x in vec):
+                raise ValidationError("tokenhub embeddings returned a non-numeric vector")
+            out.append([float(x) for x in vec])
+        return out
+
+    return _embed_batch
+
+
 def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
     """Build an embed_fn from environment variables. Returns None when
     nothing is configured (callers then fall back to the hash stub).
@@ -148,7 +203,14 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
     Recognized env vars (TokenHub on the rocky fleet ships these
     pre-set in /etc/mac/mac.env):
 
-      MAC_MEMORY_EMBED_BACKEND   = tokenhub | hash (default: hash)
+      MAC_MEMORY_EMBED_BACKEND   = auto | tokenhub | hash (default: auto)
+        auto:     use a real OpenAI-compatible embedder when a model + base_url
+                  + key are resolvable; otherwise fall back to the hash stub.
+                  This makes real (semantic) embeddings the default whenever the
+                  hub is configured for them (mem-store-02) — no explicit opt-in
+                  needed — while staying safe offline/in tests.
+        tokenhub: require the real embedder (raise if unconfigured).
+        hash:     force the deterministic offline stub (non-semantic).
       MAC_MEMORY_EMBED_MODEL     = e.g. nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
       MAC_MEMORY_EMBED_BASE_URL  = e.g. http://100.125.137.89:8090/v1
                                     (falls back to OPENAI_BASE_URL)
@@ -156,11 +218,13 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
                                     (falls back to OPENAI_API_KEY)
       MAC_MEMORY_EMBED_INPUT_TYPE = passage|query (default: passage)
     """
-    backend = os.environ.get("MAC_MEMORY_EMBED_BACKEND", "hash").strip().lower()
-    if backend in {"", "hash"}:
+    backend = os.environ.get("MAC_MEMORY_EMBED_BACKEND", "auto").strip().lower()
+    if backend == "hash":
         return None
-    if backend != "tokenhub":
-        raise ValidationError("unknown MAC_MEMORY_EMBED_BACKEND: %s" % backend)
+    if backend not in {"auto", "tokenhub"}:
+        raise ValidationError(
+            "unknown MAC_MEMORY_EMBED_BACKEND: %s (use auto|tokenhub|hash)" % backend
+        )
     base_url = (
         os.environ.get("MAC_MEMORY_EMBED_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
@@ -176,11 +240,14 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
         os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
     ).strip()
     if not (base_url and api_key and model):
-        raise ValidationError(
-            "MAC_MEMORY_EMBED_BACKEND=tokenhub requires MAC_MEMORY_EMBED_MODEL "
-            "and either MAC_MEMORY_EMBED_BASE_URL / MAC_MEMORY_EMBED_API_KEY or "
-            "the OPENAI_BASE_URL / OPENAI_API_KEY fallbacks."
-        )
+        if backend == "tokenhub":
+            raise ValidationError(
+                "MAC_MEMORY_EMBED_BACKEND=tokenhub requires MAC_MEMORY_EMBED_MODEL "
+                "and either MAC_MEMORY_EMBED_BASE_URL / MAC_MEMORY_EMBED_API_KEY or "
+                "the OPENAI_BASE_URL / OPENAI_API_KEY fallbacks."
+            )
+        # auto: nothing (or not enough) configured -> safe hash fallback.
+        return None
     return tokenhub_embedding_fn(
         base_url=base_url, api_key=api_key, model=model, input_type=input_type
     )
@@ -411,19 +478,80 @@ class VectorWriterService:
     # -- Internals ----------------------------------------------------------
 
     def _build_payload(self, record: MemoryRecord, *, tier: str) -> MacVectorPayload:
+        content_payload: JsonDict = {}
+        try:
+            loaded = json.loads(record.content)
+            if isinstance(loaded, dict):
+                content_payload = loaded
+        except Exception:  # noqa: BLE001 - freeform memories are valid
+            content_payload = {}
+
+        project: Optional[str] = None
+        tenant_id: Optional[str] = None
+        agent_id: Optional[str] = record.created_by if record.created_by else None
+        dream_kind: Optional[str] = None
+        dream_scope: Optional[str] = None
+        dream_confidence: Optional[str] = None
+        dream_confidence_score: Optional[float] = None
+        summary = record.content[:2000]
+        tags = [record.record_type] if record.record_type else []
+
+        if record.subject_type == "project" and record.subject_id:
+            project = record.subject_id
+        if record.subject_type == "nap_summary" and record.subject_id:
+            agent_id = record.subject_id
+
+        if content_payload.get("schema") == "mac.deployment_learning.v1":
+            project = str(content_payload.get("project") or project or "") or None
+
+        if content_payload.get("schema") == "mac.dream.v1":
+            retrieval = content_payload.get("retrieval")
+            if not isinstance(retrieval, dict):
+                retrieval = {}
+            dream_kind = str(content_payload.get("kind") or "").strip() or None
+            dream_scope = str(content_payload.get("scope") or "").strip() or None
+            dream_confidence = str(content_payload.get("confidence") or "").strip() or None
+            raw_score = content_payload.get("confidence_score")
+            if raw_score is not None:
+                try:
+                    dream_confidence_score = float(raw_score)
+                except (TypeError, ValueError):
+                    dream_confidence_score = None
+            project = str(content_payload.get("project") or retrieval.get("project") or project or "") or None
+            tenant_id = str(content_payload.get("tenant_id") or retrieval.get("tenant_id") or "") or None
+            agent_id = str(content_payload.get("agent_id") or retrieval.get("agent_id") or agent_id or "") or None
+            summary = str(content_payload.get("summary") or summary)[:2000]
+            tags.extend(
+                tag
+                for tag in (
+                    "dream",
+                    "dream:%s" % dream_kind if dream_kind else "",
+                    "dream_scope:%s" % dream_scope if dream_scope else "",
+                    "dream_confidence:%s" % dream_confidence if dream_confidence else "",
+                )
+                if tag
+            )
+
         return MacVectorPayload(
             tier=tier,
             subject_type=record.subject_type or record.record_type,
             subject_id=record.subject_id or record.id,
             memory_id=record.id,
-            summary=record.content[:2000],
+            summary=summary,
             created_at=record.created_at,
             embedded_at=utcnow(),
             embedding_model=self._embedding_model,
             task_id=record.task_id,
-            agent_id=record.created_by if record.created_by else None,
+            project=project,
+            agent_id=agent_id,
+            tenant_id=tenant_id,
             evidence_type=None,
-            tags=[record.record_type] if record.record_type else [],
+            record_type=record.record_type,
+            dream_kind=dream_kind,
+            dream_scope=dream_scope,
+            dream_confidence=dream_confidence,
+            dream_confidence_score=dream_confidence_score,
+            tags=sorted(set(tags)),
             schema=MAC_MEMORY_PAYLOAD_SCHEMA,
         )
 
