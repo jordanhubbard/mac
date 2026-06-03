@@ -31,3 +31,13 @@ done
 tar xzf deploy/skills/omniverse-skills.tar.gz -C /tmp/omv-stage omniverse-kit-app 2>/dev/null || true
 tar czf deploy/skills/omniverse-skills.tar.gz -C /tmp/omv-stage .
 ```
+
+## Fleet-wide skills (`fleet/`, no GPU gate)
+
+`deploy/skills/fleet/<skill>/` is installed into `$HOME/.hermes/skills` on **every**
+agent by `install_fleet_skills` — these drive the hub's hosted models via the
+in-mac router and need no local GPU:
+
+- `nvidia-inference-multimodal` — vision (send images in chat) + image generation
+  (`/v1/genai` proxy). Image-gen needs the hub's `nvidia-image` key to have public
+  image-API (`ai.api.nvidia.com`) access; the internal chat-gateway key returns 401.

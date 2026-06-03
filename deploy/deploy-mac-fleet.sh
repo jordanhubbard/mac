@@ -2732,6 +2732,22 @@ sync_hermes_chat_config() {
     || log "WARNING: hermes chat config sync failed; agent chat self-test may stay degraded"
 }
 
+install_fleet_skills() {
+  # Fleet-wide (no GPU gate): these skills drive the hub's hosted models through
+  # the in-mac router (vision + image generation), so every agent benefits — no
+  # local GPU needed. Re-copied each deploy → durable + repeatable. Non-fatal.
+  local src="$SRC_DIR/deploy/skills/fleet"
+  local skills_dir="$HOME/.hermes/skills"
+  [ -d "$src" ] || return 0
+  mkdir -p "$skills_dir"
+  local n=0 d
+  for d in "$src"/*/; do
+    [ -f "$d/SKILL.md" ] || continue
+    cp -r "$d" "$skills_dir/" && n=$((n + 1))
+  done
+  log "fleet skills installed on $AGENT: $n skill(s) under $skills_dir"
+}
+
 install_omniverse_gpu_skills() {
   # GPU-only: the vendored NVIDIA Omniverse + physical-AI agent skills (and our
   # omniverse-kit-app build skill) are only useful where the Kit SDK / CUDA can
@@ -3336,6 +3352,7 @@ initialize_hermes_home
 ensure_hermes_identity_memory_continuity
 apply_hermes_gateway_runtime_shim
 sync_hermes_chat_config
+install_fleet_skills
 install_omniverse_gpu_skills
 install_hermes_web_deps
 install_hermes_messaging_deps
