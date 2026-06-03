@@ -348,6 +348,52 @@ def test_image_proxy_forwards_to_upstream_with_vault_key(monkeypatch):
     assert captured["auth"] == "Bearer escrowed-image-key"
 
 
+def test_audio_and_video_proxies_forward_to_their_upstreams(monkeypatch):
+    # Speech (ASR/TTS) and video-gen are independent modality proxies, each gated
+    # on its own upstream+key and routing through the hub with a vault key.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = []
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"ok":true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        router_app.urllib.request, "urlopen",
+        lambda req, timeout=60.0: captured.append((req.full_url, req.headers.get("Authorization"))) or _Resp(),
+    )
+
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_AUDIO_UPSTREAM": "https://ai.api.nvidia.com/v1/audio",
+        "MAC_ROUTER_AUDIO_KEY": "secret:nvidia-audio",
+        "MAC_ROUTER_VIDEO_UPSTREAM": "https://ai.api.nvidia.com/v1/video",
+        "MAC_ROUTER_VIDEO_KEY": "secret:nvidia-video",
+    }
+    resolver = {"nvidia-audio": "audio-key", "nvidia-video": "video-key"}.get
+    assert mount_router(app, env=env, secret_resolver=resolver) is True
+
+    client = TestClient(app)
+    assert client.post("/v1/audio/transcriptions", json={"x": 1}).status_code == 200
+    assert client.post("/v1/video/nvidia/cosmos-predict", json={"prompt": "x"}).status_code == 200
+
+    urls = dict(captured)
+    assert urls["https://ai.api.nvidia.com/v1/audio/transcriptions"] == "Bearer audio-key"
+    assert urls["https://ai.api.nvidia.com/v1/video/nvidia/cosmos-predict"] == "Bearer video-key"
+
+
 def test_image_proxy_noop_without_config():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

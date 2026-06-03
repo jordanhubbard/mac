@@ -896,6 +896,20 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_ROUTER_PROVIDERS "$router_providers"
   add_remote_env MAC_DEPLOY_ROUTER_DEFAULT_MODEL "$router_default_model"
   add_remote_env MAC_DEPLOY_ROUTER_WILDCARD_MODELS "$router_wildcard_models"
+  # Modality reverse-proxy upstreams + keys (image/audio/video), supplied at
+  # cluster init and DISTINCT from the chat key. The image upstream defaults in
+  # deploy_env; audio/video are wired only when an upstream is configured. Keys
+  # are escrowed on the HUB only — blank for inproc spokes (they route via the hub).
+  add_remote_env MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM "${MAC_DEPLOY_ROUTER_IMAGE_UPSTREAM:-}"
+  add_remote_env MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM "${MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM:-}"
+  add_remote_env MAC_DEPLOY_ROUTER_VIDEO_UPSTREAM "${MAC_DEPLOY_ROUTER_VIDEO_UPSTREAM:-}"
+  local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
+  if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
+    img_key="" ; aud_key="" ; vid_key=""
+  fi
+  add_remote_env NVIDIA_IMAGE_API_KEY "$img_key"
+  add_remote_env NVIDIA_AUDIO_API_KEY "$aud_key"
+  add_remote_env NVIDIA_VIDEO_API_KEY "$vid_key"
   add_remote_env NVIDIA_API_KEY "$nvidia_api_key"
   add_remote_env NVIDIA_API_BASE "$nvidia_api_base"
   add_remote_env NVIDIA_BASE_URL "$nvidia_base_url"
@@ -3547,23 +3561,28 @@ for chunk in providers.split(";"):
         continue
     post_secret(name, value, ["router-upstream"])
     escrowed += 1
-# Image-gen key: the hub /v1/genai proxy resolves MAC_ROUTER_IMAGE_KEY
-# (secret:<name>) from the vault. Escrow NVIDIA_API_KEY there (the same NVIDIA
-# account key, which must have image-NIM access). MAC_ROUTER_IMAGE_KEY is read
-# from the freshly written mac.env (reload_mac_env ran before this step).
-image_key_spec = (os.environ.get("MAC_ROUTER_IMAGE_KEY") or "").strip()
-if image_key_spec.startswith("secret:"):
-    iname = image_key_spec[len("secret:"):]
-    ivalue = (os.environ.get("NVIDIA_API_KEY") or "").strip()
-    if iname in have:
-        print("escrow: %r already in vault; skip" % iname)
-        skipped += 1
-    elif not ivalue:
-        print("escrow: NVIDIA_API_KEY empty/unset for image secret %r; skip" % iname)
-        skipped += 1
+# Modality upstream keys: the hub's /v1/{genai,audio,video} proxies resolve
+# MAC_ROUTER_<M>_KEY (secret:<name>) from the vault. The IMAGE key is DISTINCT from
+# the chat key — prefer NVIDIA_IMAGE_API_KEY (supplied at cluster init), fall back
+# to NVIDIA_API_KEY for back-compat; audio/video use their own keys. MAC_ROUTER_<M>_KEY
+# is read from the freshly written mac.env (reload_mac_env ran before this step).
+for _modality, _spec_env, _src in (
+    ("image", "MAC_ROUTER_IMAGE_KEY",
+     os.environ.get("NVIDIA_IMAGE_API_KEY") or os.environ.get("NVIDIA_API_KEY") or ""),
+    ("audio", "MAC_ROUTER_AUDIO_KEY", os.environ.get("NVIDIA_AUDIO_API_KEY") or ""),
+    ("video", "MAC_ROUTER_VIDEO_KEY", os.environ.get("NVIDIA_VIDEO_API_KEY") or ""),
+):
+    _spec = (os.environ.get(_spec_env) or "").strip()
+    if not _spec.startswith("secret:"):
+        continue
+    _name = _spec[len("secret:"):]
+    _value = _src.strip()
+    if _name in have:
+        print("escrow: %r already in vault; skip" % _name); skipped += 1
+    elif not _value:
+        print("escrow: no source key for %s secret %r; skip" % (_modality, _name)); skipped += 1
     else:
-        post_secret(iname, ivalue, ["router-upstream", "image"])
-        escrowed += 1
+        post_secret(_name, _value, ["router-upstream", _modality]); escrowed += 1
 print("router key escrow: %d escrowed, %d skipped" % (escrowed, skipped))
 PY
   then

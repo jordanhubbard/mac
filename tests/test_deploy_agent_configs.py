@@ -826,10 +826,12 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert "WARNING no source env var mapped for provider" in fn
     assert '"http://127.0.0.1:%s/secrets" % port' in fn
     assert '"created_by": "deploy"' in fn
-    # also escrows the image-gen key (NVIDIA_API_KEY -> secret:nvidia-image) so the
-    # hub /v1/genai proxy can resolve it (Phase 1, image-gen via the hub)
-    assert 'image_key_spec = (os.environ.get("MAC_ROUTER_IMAGE_KEY")' in fn
-    assert 'ivalue = (os.environ.get("NVIDIA_API_KEY")' in fn
+    # also escrows the modality-proxy keys (image/audio/video) so the hub's
+    # /v1/{genai,audio,video} proxies can resolve them. The IMAGE key is DISTINCT
+    # from the chat key (NVIDIA_IMAGE_API_KEY, falling back to NVIDIA_API_KEY).
+    assert '"MAC_ROUTER_IMAGE_KEY"' in fn and '"MAC_ROUTER_AUDIO_KEY"' in fn and '"MAC_ROUTER_VIDEO_KEY"' in fn
+    assert 'NVIDIA_IMAGE_API_KEY' in fn and 'NVIDIA_AUDIO_API_KEY' in fn and 'NVIDIA_VIDEO_API_KEY' in fn
+    assert 'post_secret(_name, _value, ["router-upstream", _modality])' in fn
     # failure is loud but non-fatal (chat won't route until the key is escrowed)
     assert "router provider key escrow failed" in fn
     # invoked on the hub after the API is up, before the gateway, in all three

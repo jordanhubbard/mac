@@ -70,6 +70,26 @@ Notes:
   a `build.nvidia.com` image key. It is set on this fleet; if it regresses,
   re-escrow a `build.nvidia.com` `nvapi-…` key as the `nvidia-image` secret.
 
+## 3) Speech (ASR/TTS) and video — when configured
+The hub also proxies `POST /v1/audio/{path}` and `POST /v1/video/{path}` to
+configurable upstreams, wired only when the operator set them at cluster init
+(separate URL + key per modality). If configured:
+```bash
+# Speech-to-text (ASR)
+curl -s -X POST "$MAC_HUB_URL/v1/audio/transcriptions" \
+  -H "Authorization: Bearer $MAC_API_TOKEN" -F file=@clip.wav -F model=<asr-model>
+# Text-to-speech (TTS)
+curl -s -X POST "$MAC_HUB_URL/v1/audio/synthesize" \
+  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"hello","voice":"<voice>"}' -o speech.wav
+# Video generation
+curl -s -X POST "$MAC_HUB_URL/v1/video/<org>/<model>" \
+  -H "Authorization: Bearer $MAC_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"prompt":"a drone shot over a forest","seed":0}' -o out.json
+```
+A **404** on these means the modality isn't configured on this hub yet — the
+operator sets `router.audio` / `router.video` (URL + key) at init.
+
 ## When you'd run a model locally instead
 Only for models not on the hub, data that can't leave (privacy), very high
 throughput, or custom/fine-tuned models — then a GPU node can host a NIM / vLLM /

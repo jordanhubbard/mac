@@ -355,41 +355,83 @@ def build_proxy_from_env(
     )
 
 
+# Modality reverse-proxies the hub exposes beyond chat/embeddings. Each is a
+# transparent ``POST <prefix>/{path}`` forwarder to a configurable upstream with a
+# vault-resolved key, so spokes route through the HUB and never hold the upstream
+# key locally (Stream B "hub serves them"). Each is INDEPENDENT and gated on its
+# own UPSTREAM+KEY (no-op otherwise) — the upstream URL + key are supplied at
+# cluster init (distinct from the chat/OpenAI key), since hosted paths differ by
+# account/NIM. (name, route_prefix, upstream_env, key_env, timeout_env, default_timeout)
+_MODALITY_PROXIES = (
+    ("image", "/v1/genai", "MAC_ROUTER_IMAGE_UPSTREAM", "MAC_ROUTER_IMAGE_KEY", "MAC_ROUTER_IMAGE_TIMEOUT", 180.0),
+    ("audio", "/v1/audio", "MAC_ROUTER_AUDIO_UPSTREAM", "MAC_ROUTER_AUDIO_KEY", "MAC_ROUTER_AUDIO_TIMEOUT", 120.0),
+    ("video", "/v1/video", "MAC_ROUTER_VIDEO_UPSTREAM", "MAC_ROUTER_VIDEO_KEY", "MAC_ROUTER_VIDEO_TIMEOUT", 600.0),
+)
+
+
+def _mount_one_modality_proxy(
+    app: Any,
+    *,
+    name: str,
+    route_prefix: str,
+    upstream_env: str,
+    key_env: str,
+    timeout_env: str,
+    default_timeout: float,
+    env: Dict[str, str],
+    secret_resolver: Optional[SecretResolver],
+) -> bool:
+    """Mount ``POST {route_prefix}/{path}`` → ``env[upstream_env]`` with the
+    vault key ``env[key_env]`` (``secret:<name>``). The /v1/* prefix is
+    agent-scoped (api._required_scope), so a spoke presents its hub token and the
+    hub swaps in the vault key on the way upstream. No-op if either is unset."""
+    upstream = (env.get(upstream_env) or "").strip().rstrip("/")
+    key_spec = (env.get(key_env) or "").strip()
+    if not upstream or not key_spec:
+        return False
+    try:
+        timeout = float(env.get(timeout_env) or default_timeout)
+    except ValueError:
+        timeout = default_timeout
+    provider = Provider(name=name, base_url=upstream, api_key_env=key_spec)
+    from fastapi.responses import JSONResponse
+
+    @app.post(route_prefix + "/{path:path}")
+    def _proxy(path: str, body: Dict[str, Any]) -> Any:  # noqa: ANN401
+        status, out = urllib_forwarder(
+            provider, "/" + path, body, timeout=timeout, secret_resolver=secret_resolver
+        )
+        return JSONResponse(out if isinstance(out, dict) else {}, status_code=status or 502)
+
+    return True
+
+
 def mount_image_proxy(
     app: Any,
     *,
     env: Optional[Dict[str, str]] = None,
     secret_resolver: Optional[SecretResolver] = None,
 ) -> bool:
-    """Mount ``POST /v1/genai/{path}`` forwarding to an external image backend
-    (e.g. NVIDIA NIM) with a vault-resolved key, so spokes route image generation
-    through the HUB instead of holding the image key locally (Stream B "hub serves
-    them"). Gated on MAC_ROUTER_IMAGE_UPSTREAM + MAC_ROUTER_IMAGE_KEY; no-op
-    otherwise. NIM image-gen is a synchronous POST returning base64 inline, so a
-    transparent reverse-proxy suffices — no async/polling/URL-rewrite. The /v1/*
-    prefix is agent-scoped (api._required_scope), so a spoke presents its hub
-    token and the hub swaps in the vault key (MAC_ROUTER_IMAGE_KEY=secret:<name>)
-    on the way upstream."""
+    """Mount the hub's modality reverse-proxies (image `/v1/genai`, speech
+    `/v1/audio` for ASR/TTS, and video `/v1/video`). Synchronous POSTs returning
+    inline payloads, so transparent reverse-proxies suffice. Returns True if any
+    mounted. Kept named for back-compat; each modality is independently gated."""
     env = env or os.environ
-    upstream = (env.get("MAC_ROUTER_IMAGE_UPSTREAM") or "").strip().rstrip("/")
-    key_spec = (env.get("MAC_ROUTER_IMAGE_KEY") or "").strip()
-    if not upstream or not key_spec:
-        return False
-    try:
-        timeout = float(env.get("MAC_ROUTER_IMAGE_TIMEOUT") or 180.0)
-    except ValueError:
-        timeout = 180.0
-    image_provider = Provider(name="image", base_url=upstream, api_key_env=key_spec)
-    from fastapi.responses import JSONResponse
-
-    @app.post("/v1/genai/{path:path}")
-    def _genai(path: str, body: Dict[str, Any]) -> Any:  # noqa: ANN401
-        status, out = urllib_forwarder(
-            image_provider, "/" + path, body, timeout=timeout, secret_resolver=secret_resolver
-        )
-        return JSONResponse(out if isinstance(out, dict) else {}, status_code=status or 502)
-
-    return True
+    mounted = False
+    for name, route_prefix, upstream_env, key_env, timeout_env, default_timeout in _MODALITY_PROXIES:
+        if _mount_one_modality_proxy(
+            app,
+            name=name,
+            route_prefix=route_prefix,
+            upstream_env=upstream_env,
+            key_env=key_env,
+            timeout_env=timeout_env,
+            default_timeout=default_timeout,
+            env=env,
+            secret_resolver=secret_resolver,
+        ):
+            mounted = True
+    return mounted
 
 
 def mount_router(
