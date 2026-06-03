@@ -125,6 +125,14 @@ def test_css_contains_discoverability_and_focus_styles():
     assert "scroll-snap-type" in css
 
 
+def test_css_contains_object_inspector_and_mobile_cards():
+    css = (_UI_ROOT / "styles.css").read_text(encoding="utf-8")
+    assert ".object-inspector" in css
+    assert ".mobile-card-list" in css
+    assert ".responsive-table" in css
+    assert ".runtime-control-grid" in css
+
+
 # ---------------------------------------------------------------------------
 # JS — token bootstrap and login screen wiring
 # ---------------------------------------------------------------------------
@@ -172,6 +180,22 @@ def test_app_js_has_launchpad_keyboard_and_destructive_guards():
     assert "aria-current" in js
     assert "confirmDestructive" in js
     assert "This cannot be undone." in js
+
+
+def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    for marker in (
+        "Project Inspector",
+        "Agent Inspector",
+        "Task Inspector",
+        "Rollout Inspector",
+        "Secret Inspector",
+        "mobile-card-list",
+        "runtimeCreate",
+        "rolloutVerifyArtifact",
+        "secretCreate",
+    ):
+        assert marker in js
 
 
 # ---------------------------------------------------------------------------

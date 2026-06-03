@@ -946,6 +946,46 @@ details.action-box summary {
   min-width: 960px;
 }
 
+.mobile-card-list {
+  display: none;
+  gap: 12px;
+}
+
+.mobile-card-list.always-visible {
+  display: grid;
+  margin-top: 12px;
+}
+
+.mobile-object-card {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 14px;
+  text-align: left;
+}
+
+.mobile-object-card.compact {
+  box-shadow: none;
+}
+
+button.mobile-object-card {
+  cursor: pointer;
+}
+
+.mobile-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-card-actions > * {
+  flex: 1 1 120px;
+}
+
 .inline-form {
   display: inline-grid;
 }
@@ -1044,6 +1084,10 @@ details.action-box summary {
   border-color: var(--danger-line);
 }
 
+.mobile-object-card.is-blocked {
+  border-color: var(--danger-line);
+}
+
 .is-selected {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
@@ -1057,6 +1101,65 @@ details.action-box summary {
   border-top: 1px solid var(--line);
   margin-top: 14px;
   padding-top: 12px;
+}
+
+.danger-zone {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+}
+
+.object-inspector {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid var(--blue-line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 16px;
+}
+
+.object-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.object-inspector-header h2 {
+  margin-bottom: 4px;
+}
+
+.inspector-form {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.inspector-form label:nth-last-of-type(1),
+.inspector-form label:nth-last-of-type(2) {
+  grid-column: span 2;
+}
+
+.inspector-actions {
+  margin-top: 0;
+}
+
+.json-block {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.runtime-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
 }
 
 .record-section h3 {
@@ -1938,7 +2041,33 @@ details.action-box summary {
   .launchpad,
   .toolbar,
   .action-form,
-  .action-form.compact {
+  .action-form.compact,
+  .action-form.aligned-form,
+  .action-form.project-create-form,
+  .inspector-form,
+  .runtime-control-grid {
     grid-template-columns: 1fr;
+  }
+
+  .responsive-table {
+    display: none;
+  }
+
+  .mobile-card-list {
+    display: grid;
+  }
+
+  .object-inspector-header,
+  .record-header,
+  .agent-header,
+  .runtime-header,
+  .rollout-header {
+    display: grid;
+  }
+
+  .inspector-form label:nth-last-of-type(1),
+  .inspector-form label:nth-last-of-type(2),
+  .action-form.project-create-form .field-full {
+    grid-column: auto;
   }
 }

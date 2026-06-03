@@ -96,6 +96,7 @@ const DESTRUCTIVE_ACTION_LABELS = {
     Project: "Delete this project?",
     Agent: "Delete this agent?",
     Task: "Delete this task?",
+    Secret: "Delete this secret?",
 };
 const DEFAULT_URL_STATE = readUrlState();
 // Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
@@ -653,6 +654,7 @@ function renderProjects() {
         </div>
       </div>
       ${projectTable(projects, data)}
+      ${projectInspector(projects, data)}
     </section>
   `;
 }
@@ -802,6 +804,7 @@ function renderAgents() {
         <span class="muted small">Rows ${agents.length ? start + 1 : 0}-${start + visible.length} of ${agents.length}</span>
         <button type="button" id="agentNextPage" ${state.agentPage >= pageCount ? "disabled" : ""}>Next</button>
       </div>
+      ${agentInspector(data)}
     </section>
     <section class="split">
       <div class="surface">
@@ -846,6 +849,7 @@ function renderTasks() {
         .map((taskState) => taskLane(taskState, tasks, data.agents))
         .join("")}
     </section>
+    ${taskInspector(tasks, data)}
   `;
 }
 function renderWorkflows() {
@@ -1093,6 +1097,14 @@ function workflowGraph(workflow) {
         ${edgeSvg}
         ${nodeSvg}
       </svg>
+    </div>
+    <div class="mobile-card-list graph-mobile-list">
+      ${nodes.map((node) => `
+        <button class="mobile-object-card compact ${state.selectedNodeKey === String(node.node_key) ? "is-selected" : ""}" type="button" data-action="workflowNodeOpen" data-node-key="${escapeHtml(String(node.node_key))}">
+          <span><strong>${escapeHtml(String(node.node_key))}</strong></span>
+          <span class="muted small">${escapeHtml(String(node.node_type || "task"))} / ${escapeHtml(String(node.role_required || "any role"))}</span>
+        </button>
+      `).join("")}
     </div>
   `;
 }
@@ -1595,29 +1607,112 @@ function renderIntegrations() {
 }
 function renderRuntime() {
     const data = mustData();
+    const activeRollouts = data.rollouts.filter((item) => ["active", "canary", "promoting"].includes(String(item.rollout.status))).length;
+    const runningRuns = data.runtime_runs.filter((run) => run.status === "running").length;
     return `
+    <section class="metric-grid">
+      ${metric("Runtimes", data.runtimes.length, "execution environments")}
+      ${metric("Runtime Runs", data.runtime_runs.length, `${runningRuns} running`)}
+      ${metric("Rollouts", data.rollouts.length, `${activeRollouts} active`)}
+      ${metric("Eval Gates", data.eval_sets.length, "available rollout gates")}
+    </section>
     <section class="split">
       <div class="surface">
-        <h2>Runtime Environments</h2>
+        <h2>Create Runtime</h2>
+        <form class="action-form aligned-form" data-action="runtimeCreate">
+          <label>Name <input name="name" required></label>
+          <label>Created by <input name="created_by" value="human"></label>
+          <label>Manifest JSON <textarea class="json-editor" name="manifest" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+          <button type="submit">Create Runtime</button>
+        </form>
+      </div>
+      <div class="surface">
+        <h2>Create Rollout</h2>
+        <form class="action-form aligned-form" data-action="rolloutCreate">
+          <label>Version <input name="version" required placeholder="2026.06.03"></label>
+          <label>Strategy ${select("strategy", ["canary", "blue_green", "rolling"], "canary")}</label>
+          <label>Target % <input name="target_percent" type="number" min="0" max="100" value="10"></label>
+          <label>Runtime ${runtimeSelect("runtime_environment_id", data.runtimes, "")}</label>
+          <label>Tenant ID <input name="tenant_id" placeholder="global"></label>
+          <label>Channel <input name="channel" value="fleet"></label>
+          <label>Artifact URI <input name="artifact_uri" placeholder="artifact://..."></label>
+          <label>Artifact hash <input name="artifact_hash" placeholder="sha256:..."></label>
+          <label>Eval gate ${evalSetSelect("required_eval_set_id", data.eval_sets, "")}</label>
+          <label>Created by <input name="created_by" value="human"></label>
+          <label>Health policy JSON <textarea class="json-editor" name="health_policy" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+          <button type="submit">Create Rollout</button>
+        </form>
+      </div>
+    </section>
+    <section class="surface">
+      <h2>Runtime Runs</h2>
+      <div class="runtime-control-grid">
+        <form class="action-form aligned-form" data-action="runtimeRunCreate">
+          <label>Task ${taskSelect("task_id", data.tasks, "")}</label>
+          <label>Agent ${agentSelect("agent_id", data.agents, "")}</label>
+          <label>Runtime ${runtimeSelect("environment_id", data.runtimes, "")}</label>
+          <button type="submit">Start Run</button>
+        </form>
+        <form class="action-form aligned-form" data-action="runtimeRunComplete">
+          <label>Run ${runtimeRunSelect("run_id", data.runtime_runs, "")}</label>
+          <label>Evidence ID <input name="evidence_id" required></label>
+          <label>Status ${select("status", ["completed", "failed", "cancelled"], "completed")}</label>
+          <button type="submit">Complete Run</button>
+        </form>
+      </div>
+      <div class="mobile-card-list always-visible">
+        ${data.runtime_runs.length ? data.runtime_runs.slice(0, 12).map((run) => runtimeRunCard(run, data)).join("") : `<div class="empty-state">No runtime runs</div>`}
+      </div>
+    </section>
+    <section class="split">
+      <div class="surface">
+        <div class="surface-heading">
+          <h2>Runtime Environments</h2>
+          ${chip(`${data.runtimes.length} configured`, data.runtimes.length ? "info" : "warn")}
+        </div>
         <div class="runtime-list">
           ${data.runtimes.length ? data.runtimes.map((runtime) => runtimeRecord(runtime, data)).join("") : `<div class="empty-state">No runtimes</div>`}
         </div>
       </div>
       <div class="surface">
-        <h2>Rollouts</h2>
+        <div class="surface-heading">
+          <h2>Rollouts</h2>
+          ${chip(`${data.rollouts.length} tracked`, data.rollouts.length ? "info" : "warn")}
+        </div>
         <div class="rollout-list">
           ${data.rollouts.length ? data.rollouts.map((status) => rolloutRecord(status, data)).join("") : `<div class="empty-state">No rollouts</div>`}
         </div>
       </div>
     </section>
+    ${runtimeInspector(data)}
   `;
 }
 function renderSecrets() {
     const data = mustData();
+    const grantedAudits = data.secret_audits.filter((audit) => audit.result === "granted").length;
     return `
+    <section class="metric-grid">
+      ${metric("Secrets", data.secrets.length, "redacted records")}
+      ${metric("Enabled", data.secrets.filter((secret) => secret.enabled).length, "available for scoped access")}
+      ${metric("Audit Events", data.secret_audits.length, `${grantedAudits} granted`)}
+      ${metric("Agents", data.agents.length, "eligible accessors")}
+    </section>
+    <section class="surface">
+      <h2>Create Secret</h2>
+      <form class="action-form aligned-form" data-action="secretCreate">
+        <label>Name <input name="name" required></label>
+        <label>Created by <input name="created_by" value="human"></label>
+        <label>Value <input name="value" type="password" required autocomplete="new-password"></label>
+        <label>Scopes JSON <textarea class="json-editor" name="scopes" placeholder='{"agents":[]}' spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+        <button type="submit">Create Secret</button>
+      </form>
+    </section>
     <section class="split">
       <div class="surface">
-        <h2>Secrets</h2>
+        <div class="surface-heading">
+          <h2>Secrets</h2>
+          ${chip(`${data.secrets.length} records`, data.secrets.length ? "info" : "warn")}
+        </div>
         <div class="record-list">
           ${data.secrets.length ? data.secrets.map((secret) => secretRecord(secret, data.agents)).join("") : `<div class="empty-state">No secrets</div>`}
         </div>
@@ -1629,6 +1724,7 @@ function renderSecrets() {
         </div>
       </div>
     </section>
+    ${secretInspector(data)}
   `;
 }
 function renderObservability() {
@@ -2157,39 +2253,36 @@ function projectTable(projects, data) {
     if (!projects.length)
         return `<div class="empty-state">No projects</div>`;
     return `
-    <div class="table-wrap">
+    <div class="table-wrap responsive-table">
       <table class="data-table project-table">
         <thead>
-          <tr><th>Project</th><th>Status</th><th>Description</th><th>Metadata</th><th>Stories</th><th>Agents</th><th></th></tr>
+          <tr><th>Project</th><th>Status</th><th>Description</th><th>Stories</th><th>Agents</th><th>Repositories</th><th></th></tr>
         </thead>
         <tbody>${projects.map((project) => projectTableRow(project, data)).join("")}</tbody>
       </table>
+    </div>
+    <div class="mobile-card-list">
+      ${projects.map((project) => projectMobileCard(project, data)).join("")}
     </div>
   `;
 }
 function projectTableRow(project, data) {
     const writable = canWrite(data);
     const durable = !!project.project_id;
-    const editable = writable && durable;
-    const formId = `project-form-${safeDomId(project.project)}`;
     const description = String(project.description || "");
     const status = String(project.status || (durable ? "active" : "derived"));
-    const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
-    const metadata = project.metadata && typeof project.metadata === "object" ? JSON.stringify(project.metadata, null, 2) : "{}";
-    const disabled = disabledAttr(!editable);
     return `
     <tr class="${state.projectFilter === project.project ? "is-selected" : ""}">
       <td>
-        <form id="${escapeHtml(formId)}" data-action="projectUpdate" data-project="${escapeHtml(project.project)}"></form>
-        <input form="${escapeHtml(formId)}" name="name" value="${escapeHtml(project.project)}" ${disabled}>
+        <strong>${escapeHtml(project.project)}</strong>
+        <br><span class="muted small mono">${escapeHtml(project.project_id || "derived")}</span>
         <div class="chip-row">
           ${chip(durable ? "record" : "derived", durable ? "good" : "warn")}
-          ${chip(`${project.repository_count} repos`, project.repository_count ? "info" : "warn")}
+          ${writable ? chip("writable", "good") : chip("read-only", "warn")}
         </div>
       </td>
-      <td>${select("status", ["active", "inactive", "archived"], statusValue, !editable, formId)}</td>
-      <td><textarea form="${escapeHtml(formId)}" name="description" ${disabled}>${escapeHtml(description)}</textarea></td>
-      <td><textarea class="json-editor" form="${escapeHtml(formId)}" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" rows="4" ${disabled}>${escapeHtml(metadata)}</textarea></td>
+      <td>${chip(status, durable ? projectTone(status) : "warn")}</td>
+      <td>${escapeHtml(description || "none")}</td>
       <td>
         <span class="mono">${project.task_count}</span>
         <div class="chip-row">
@@ -2198,14 +2291,97 @@ function projectTableRow(project, data) {
         </div>
       </td>
       <td>${escapeHtml(project.active_agent_names.join(", ") || "none")}</td>
+      <td>${escapeHtml(String(project.repository_count || 0))}</td>
       <td>
         <div class="table-actions">
+          <button class="link-button" type="button" data-select-id="${escapeHtml(project.project)}">Inspect</button>
           <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
-          <button form="${escapeHtml(formId)}" type="submit" ${disabled}>Save</button>
-          <button class="danger-button" type="button" data-project-delete="${escapeHtml(project.project)}" ${disabled}>Delete</button>
         </div>
       </td>
     </tr>
+  `;
+}
+function projectMobileCard(project, data) {
+    const durable = !!project.project_id;
+    const status = String(project.status || (durable ? "active" : "derived"));
+    return `
+    <article class="mobile-object-card ${state.projectFilter === project.project ? "is-selected" : ""}">
+      <div class="record-header">
+        <div>
+          <h3>${escapeHtml(project.project)}</h3>
+          <p class="muted small mono">${escapeHtml(project.project_id || "derived")}</p>
+        </div>
+        ${chip(status, durable ? projectTone(status) : "warn")}
+      </div>
+      <div class="chip-row">
+        ${chip(`${project.task_count} stories`, "info")}
+        ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
+        ${chip(`${project.active_agent_ids.length} agents`, project.active_agent_ids.length ? "good" : "warn")}
+        ${chip(`${project.repository_count} repos`, project.repository_count ? "info" : "warn")}
+      </div>
+      <p class="muted small">${escapeHtml(project.description || "No description")}</p>
+      <div class="mobile-card-actions">
+        <button class="link-button" type="button" data-select-id="${escapeHtml(project.project)}">Inspect</button>
+        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+      </div>
+    </article>
+  `;
+}
+function projectInspector(projects, data) {
+    if (!projects.length)
+        return "";
+    const selected = projects.find((project) => project.project === state.selectedId)
+        || projects.find((project) => project.project === state.projectFilter)
+        || projects[0];
+    if (!selected)
+        return "";
+    const writable = canWrite(data);
+    const durable = !!selected.project_id;
+    const editable = writable && durable;
+    const status = String(selected.status || (durable ? "active" : "derived"));
+    const statusValue = ["active", "inactive", "archived"].includes(status) ? status : "active";
+    const metadata = selected.metadata && typeof selected.metadata === "object" ? JSON.stringify(selected.metadata, null, 2) : "{}";
+    const disabled = disabledAttr(!editable);
+    return `
+    <section class="object-inspector">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Project Inspector</p>
+          <h2>${escapeHtml(selected.project)}</h2>
+          <p class="muted small mono">${escapeHtml(selected.project_id || "derived project")}</p>
+        </div>
+        <div class="chip-row">
+          ${chip(durable ? "record-backed" : "derived-only", durable ? "good" : "warn")}
+          ${writable ? chip("write token", "good") : chip("read-only token", "warn")}
+        </div>
+      </div>
+      <div class="row-grid">
+        ${field("Stories", selected.task_count)}
+        ${field("Ready", selected.ready_count)}
+        ${field("Blocked", selected.blocked_count)}
+        ${field("Review", selected.review_count)}
+        ${field("Active agents", selected.active_agent_names.join(", ") || "none")}
+        ${field("Dependencies", selected.dependency_edge_count)}
+        ${field("Cross-project", selected.cross_project_dependency_count)}
+        ${field("Repositories", selected.repository_count)}
+      </div>
+      <form class="action-form inspector-form" data-action="projectUpdate" data-project="${escapeHtml(selected.project)}">
+        <label>Name <input name="name" value="${escapeHtml(selected.project)}" ${disabled}></label>
+        <label>Status ${select("status", ["active", "inactive", "archived"], statusValue, !editable)}</label>
+        <label>Description <textarea name="description" ${disabled}>${escapeHtml(String(selected.description || ""))}</textarea></label>
+        <label>Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(metadata)}</textarea></label>
+        <button type="submit" ${disabled}>Save Project</button>
+      </form>
+      <div class="record-section danger-zone">
+        <div class="record-header">
+          <div>
+            <h3>Delete Project</h3>
+            <p class="muted small">Deletes the durable project record. Derived projects cannot be deleted from this surface.</p>
+          </div>
+          <button class="danger-button" type="button" data-project-delete="${escapeHtml(selected.project)}" ${disabled}>Delete</button>
+        </div>
+      </div>
+    </section>
   `;
 }
 function fleetMembershipSummary(data) {
@@ -2450,13 +2626,16 @@ function agentTable(agents, data, compact = false) {
     if (!agents.length)
         return `<div class="empty-state">No matching agents</div>`;
     return `
-    <div class="table-wrap">
+    <div class="table-wrap responsive-table">
       <table class="data-table ${compact ? "compact-table" : ""}">
         <thead><tr><th>Agent</th><th>Fleet</th><th>Role</th><th>Project</th><th>Status</th><th>Health</th><th>Capacity</th><th>Machine</th><th>Last Seen</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
         <tbody>
           ${agents.map((item) => agentRow(item, data)).join("")}
         </tbody>
       </table>
+    </div>
+    <div class="mobile-card-list">
+      ${agents.map((item) => agentMobileCard(item, data)).join("")}
     </div>
   `;
 }
@@ -2478,27 +2657,104 @@ function agentRow(item, data) {
       <td>${task ? storyButton(task) : `<span class="muted small">none</span>`}</td>
       <td>
         <div class="table-actions">
+          <button class="link-button" type="button" data-select-id="${escapeHtml(item.agent.id)}">Inspect</button>
           <form class="inline-form" data-action="agentBulkUpdate">
             <input type="hidden" name="agent_ids" value="${escapeHtml(item.agent.id)}">
             <input type="hidden" name="status" value="draining">
             <button type="submit" ${disabledAttr(!writable)}>Drain</button>
           </form>
-          <details class="row-actions edit-disclosure">
-            <summary>Edit</summary>
-            <form class="action-form compact" data-action="agentUpdate" data-agent-id="${escapeHtml(item.agent.id)}">
-              <label>Name <input name="name" value="${escapeHtml(item.agent.name)}" ${disabledAttr(!writable)}></label>
-              <label>Status ${select("status", ["idle", "busy", "draining", "offline"], item.agent.status, !writable)}</label>
-              <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], item.agent.health_status, !writable)}</label>
-              <label>Hermes Instance ID <input name="hermes_instance_id" value="${escapeHtml(item.agent.hermes_instance_id || "")}" ${disabledAttr(!writable)}></label>
-              <label>Capabilities <input name="capabilities" value="${escapeHtml((item.agent.capabilities || []).join(","))}" ${disabledAttr(!writable)}></label>
-              <label>Resources JSON <textarea name="resources" ${disabledAttr(!writable)}>${escapeHtml(JSON.stringify(item.agent.resources || {}))}</textarea></label>
-              <button type="submit" ${disabledAttr(!writable)}>Save</button>
-            </form>
-          </details>
-          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(item.agent.id)}" ${disabledAttr(!writable)}>Delete</button>
         </div>
       </td>
     </tr>
+  `;
+}
+function agentMobileCard(item, data) {
+    const task = item.active_tasks[0];
+    const writable = canWrite(data);
+    return `
+    <article class="mobile-object-card ${item.availability.eligible ? "" : "is-blocked"} ${selectedClass(item.agent.id)}">
+      <div class="record-header">
+        <div>
+          <h3>${escapeHtml(item.agent.name)}</h3>
+          <p class="muted small mono">${escapeHtml(item.agent.id)}</p>
+        </div>
+        <div class="chip-row">${chip(item.agent.status, statusTone(item.agent.status))}${chip(item.agent.health_status, healthTone(item.agent.health_status))}</div>
+      </div>
+      <div class="row-grid compact-grid">
+        ${field("Fleet", agentFleetLabel(data, item.agent.id))}
+        ${field("Role", roleLabel(data, item.agent.role_id))}
+        ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Machine", item.machine?.hostname || "missing")}
+      </div>
+      <div class="chip-row">
+        ${(item.agent.capabilities || []).slice(0, 6).map((capability) => chip(capability, "info")).join("")}
+        ${task ? chip(task.title, "warn") : chip("idle", "good")}
+      </div>
+      <div class="mobile-card-actions">
+        <button class="link-button" type="button" data-select-id="${escapeHtml(item.agent.id)}">Inspect</button>
+        <form class="inline-form" data-action="agentBulkUpdate">
+          <input type="hidden" name="agent_ids" value="${escapeHtml(item.agent.id)}">
+          <input type="hidden" name="status" value="draining">
+          <button type="submit" ${disabledAttr(!writable)}>Drain</button>
+        </form>
+      </div>
+    </article>
+  `;
+}
+function agentInspector(data) {
+    const agents = filteredAgents(data);
+    const item = agents.find((candidate) => candidate.agent.id === state.selectedId)
+        || data.agents.find((candidate) => candidate.agent.id === state.selectedId)
+        || agents[0];
+    if (!item)
+        return "";
+    const agent = item.agent;
+    const writable = canWrite(data);
+    const reasons = item.availability.eligible
+        ? chip("dispatch eligible", "good")
+        : item.availability.reasons.map((reason) => chip(reason, "bad")).join("");
+    return `
+    <section class="object-inspector">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Agent Inspector</p>
+          <h2>${escapeHtml(agent.name)}</h2>
+          <p class="muted small mono">${escapeHtml(agent.id)}</p>
+        </div>
+        <div class="chip-row">${chip(agent.status, statusTone(agent.status))}${chip(agent.health_status, healthTone(agent.health_status))}${writable ? chip("write token", "good") : chip("read-only token", "warn")}</div>
+      </div>
+      <div class="row-grid">
+        ${field("Fleet", agentFleetLabel(data, agent.id))}
+        ${field("Role", roleLabel(data, agent.role_id))}
+        ${field("Machine", item.machine?.hostname || "missing")}
+        ${field("Trusted", item.machine?.trusted ? "yes" : "no")}
+        ${field("Last seen", formatAge(agent.last_seen_at))}
+        ${field("Capacity", `${item.active_lease_count} / ${item.capacity}`)}
+        ${field("Hermes", agent.hermes_instance_id || "unbound")}
+        ${field("Projects", (item.active_projects || []).join(", ") || "idle")}
+        ${field("Current task", item.active_tasks[0]?.title || agent.current_task_id || "none")}
+        ${field("Machine resources", jsonSummary(item.machine?.resources))}
+      </div>
+      <div class="chip-row">${reasons}</div>
+      <form class="action-form inspector-form" data-action="agentUpdate" data-agent-id="${escapeHtml(agent.id)}">
+        <label>Name <input name="name" value="${escapeHtml(agent.name)}" ${disabledAttr(!writable)}></label>
+        <label>Status ${select("status", ["idle", "busy", "draining", "offline"], agent.status, !writable)}</label>
+        <label>Health ${select("health_status", ["healthy", "degraded", "unhealthy"], agent.health_status, !writable)}</label>
+        <label>Hermes Instance ID <input name="hermes_instance_id" value="${escapeHtml(agent.hermes_instance_id || "")}" ${disabledAttr(!writable)}></label>
+        <label>Capabilities <input name="capabilities" value="${escapeHtml((agent.capabilities || []).join(","))}" ${disabledAttr(!writable)}></label>
+        <label>Resources JSON <textarea class="json-editor" name="resources" ${disabledAttr(!writable)}>${escapeHtml(JSON.stringify(agent.resources || {}, null, 2))}</textarea></label>
+        <button type="submit" ${disabledAttr(!writable)}>Save Agent</button>
+      </form>
+      <div class="record-section danger-zone">
+        <div class="record-header">
+          <div>
+            <h3>Delete Agent</h3>
+            <p class="muted small">Removes the agent inventory record and any associated view state.</p>
+          </div>
+          <button class="danger-button" type="button" data-agent-delete="${escapeHtml(agent.id)}" ${disabledAttr(!writable)}>Delete</button>
+        </div>
+      </div>
+    </section>
   `;
 }
 function swarmBuckets(items) {
@@ -2559,8 +2815,6 @@ function taskCard(detail, agents) {
     const task = detail.task;
     const owner = agents.find((item) => item.agent.id === task.owner_agent_id)?.agent;
     const origin = taskOrigin(task);
-    const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
-    const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
     const isSelected = state.selectedId === task.id;
     const recentHistory = detail.history.slice(-3);
     const summaryText = String(detail.summary?.summary || "");
@@ -2568,7 +2822,7 @@ function taskCard(detail, agents) {
     <article class="task-card status-${escapeHtml(task.state)} ${selectedClass(task.id)}">
       <div class="record-header">
         <div class="task-card-heading"><h3>${escapeHtml(task.title)}</h3><p class="muted small mono task-id" title="${escapeHtml(task.id)}">${escapeHtml(task.id)}</p></div>
-        <button class="select-button${isSelected ? " is-selected" : ""}" type="button" data-select-id="${escapeHtml(task.id)}" aria-pressed="${isSelected ? "true" : "false"}">${isSelected ? "Selected" : "Select"}</button>
+        <button class="select-button${isSelected ? " is-selected" : ""}" type="button" data-select-id="${escapeHtml(task.id)}" aria-pressed="${isSelected ? "true" : "false"}">${isSelected ? "Selected" : "Inspect"}</button>
       </div>
       <div class="chip-row">
         ${chip(`P${task.priority || 0}`, "info")}
@@ -2589,28 +2843,81 @@ function taskCard(detail, agents) {
         </div>
       </details>` : ""}
       <div class="record-actions">
-        <details class="row-actions edit-disclosure">
-          <summary>Edit</summary>
-        <form class="action-form" data-action="taskUpdate" data-task-id="${escapeHtml(task.id)}">
-          <label>Title <input name="title" value="${escapeHtml(task.title)}"></label>
-          <label>Description <textarea name="description">${escapeHtml(String(task.description || ""))}</textarea></label>
-          <label>Project <input name="project" value="${escapeHtml(task.project || "")}"></label>
-          <label>Priority <input name="priority" type="number" value="${escapeHtml(task.priority || 0)}"></label>
-          <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}"></label>
-          <label>Dependencies <input name="dependencies" value="${escapeHtml((task.dependencies || []).join(","))}"></label>
-          <label>Metadata JSON <textarea name="metadata">${escapeHtml(JSON.stringify(task.metadata || {}))}</textarea></label>
-          <button type="submit">Save</button>
-        </form>
-        </details>
-        <button class="danger-button" type="button" data-task-delete="${escapeHtml(task.id)}">Delete</button>
+        <button class="link-button" type="button" data-select-id="${escapeHtml(task.id)}">Inspect</button>
       </div>
-      <details class="action-box">
-        <summary>Task actions</summary>
+    </article>
+  `;
+}
+function taskInspector(tasks, data) {
+    if (!tasks.length)
+        return "";
+    const detail = tasks.find((candidate) => candidate.task.id === state.selectedId)
+        || data.tasks.find((candidate) => candidate.task.id === state.selectedId)
+        || tasks[0];
+    if (!detail)
+        return "";
+    const task = detail.task;
+    const owner = data.agents.find((item) => item.agent.id === task.owner_agent_id)?.agent;
+    const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
+    const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
+    return `
+    <section class="object-inspector">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Task Inspector</p>
+          <h2>${escapeHtml(task.title)}</h2>
+          <p class="muted small mono">${escapeHtml(task.id)}</p>
+        </div>
+        <div class="chip-row">
+          ${chip(task.state, statusTone(task.state))}
+          ${chip(`P${task.priority || 0}`, "info")}
+          ${owner ? chip(owner.name, "info") : chip("unowned", "warn")}
+        </div>
+      </div>
+      <div class="row-grid">
+        ${field("Project", taskProject(task))}
+        ${field("Owner", owner?.name || task.owner_agent_id || "none")}
+        ${field("Attempts", `${task.attempt_count || 0} / ${task.max_attempts || 0}`)}
+        ${field("Dependencies", (task.dependencies || []).join(", ") || "none")}
+        ${field("Required", (task.required_capabilities || []).join(", ") || "none")}
+        ${field("Evidence", detail.evidence.length)}
+        ${field("Reviews", detail.reviews.length)}
+        ${field("Updated", formatAge(task.last_updated_at || task.updated_at))}
+      </div>
+      <form class="action-form inspector-form" data-action="taskUpdate" data-task-id="${escapeHtml(task.id)}">
+        <label>Title <input name="title" value="${escapeHtml(task.title)}"></label>
+        <label>Project <input name="project" value="${escapeHtml(task.project || "")}"></label>
+        <label>Priority <input name="priority" type="number" value="${escapeHtml(task.priority || 0)}"></label>
+        <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}"></label>
+        <label>Dependencies <input name="dependencies" value="${escapeHtml((task.dependencies || []).join(","))}"></label>
+        <label>Description <textarea name="description">${escapeHtml(String(task.description || ""))}</textarea></label>
+        <label>Metadata JSON <textarea class="json-editor" name="metadata">${escapeHtml(JSON.stringify(task.metadata || {}, null, 2))}</textarea></label>
+        <button type="submit">Save Task</button>
+      </form>
+      <details class="action-box" open>
+        <summary>Lifecycle</summary>
         <form class="action-form compact" data-action="taskClaim" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", agents, task.owner_agent_id || "")}</label>
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
           <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1"></label>
           <button type="submit">Claim</button>
         </form>
+        <form class="action-form compact" data-action="taskStart" data-task-id="${escapeHtml(task.id)}">
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
+          <button type="submit">Start</button>
+        </form>
+        <form class="action-form compact" data-action="taskSubmitReview" data-task-id="${escapeHtml(task.id)}">
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
+          <button type="submit">Submit Review</button>
+        </form>
+        <form class="action-form" data-action="taskTransition" data-task-id="${escapeHtml(task.id)}">
+          <label>State ${select("target_state", TASK_STATES, task.state)}</label>
+          <label>Actor <input name="actor" value="human"></label>
+          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}"></textarea></label>
+          <button type="submit">Transition</button>
+        </form>
+      </details>
+      <details class="action-box">
+        <summary>Children, Evidence, Reviews</summary>
         <form class="action-form compact" data-action="taskAddChild" data-task-id="${escapeHtml(task.id)}">
           <label>Child title <input name="title" required></label>
           <label>Description <textarea name="description"></textarea></label>
@@ -2619,20 +2926,6 @@ function taskCard(detail, agents) {
           <label>Dependencies <input name="dependencies"></label>
           <label>Actor <input name="actor" value="human"></label>
           <button type="submit">Add Child</button>
-        </form>
-        <form class="action-form compact" data-action="taskStart" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", agents, task.owner_agent_id || "")}</label>
-          <button type="submit">Start</button>
-        </form>
-        <form class="action-form compact" data-action="taskSubmitReview" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", agents, task.owner_agent_id || "")}</label>
-          <button type="submit">Submit Review</button>
-        </form>
-        <form class="action-form" data-action="taskTransition" data-task-id="${escapeHtml(task.id)}">
-          <label>State ${select("target_state", TASK_STATES, task.state)}</label>
-          <label>Actor <input name="actor" value="human"></label>
-          <label>Detail JSON <textarea name="detail" placeholder="{}"></textarea></label>
-          <button type="submit">Transition</button>
         </form>
         <form class="action-form" data-action="addEvidence" data-task-id="${escapeHtml(task.id)}">
           <label>Kind ${select("kind", ["test", "review", "artifact", "publication", "log", "eval"], "test")}</label>
@@ -2643,7 +2936,7 @@ function taskCard(detail, agents) {
           <button type="submit">Add Evidence</button>
         </form>
         <form class="action-form compact" data-action="requestReview" data-task-id="${escapeHtml(task.id)}">
-          <label>Reviewer ${agentSelect("reviewer_agent_id", agents, "")}</label>
+          <label>Reviewer ${agentSelect("reviewer_agent_id", data.agents, "")}</label>
           <label>Actor <input name="actor" value="dispatcher"></label>
           <button type="submit">Request Review</button>
         </form>
@@ -2663,7 +2956,22 @@ function taskCard(detail, agents) {
           <button type="submit">Publish</button>
         </form>
       </details>
-    </article>
+      <div class="record-section">
+        <h3>History</h3>
+        <div class="timeline">
+          ${detail.history.length ? detail.history.slice(-8).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("") : `<div class="empty-state">No history</div>`}
+        </div>
+      </div>
+      <div class="record-section danger-zone">
+        <div class="record-header">
+          <div>
+            <h3>Delete Task</h3>
+            <p class="muted small">Deletes the selected task record.</p>
+          </div>
+          <button class="danger-button" type="button" data-task-delete="${escapeHtml(task.id)}">Delete</button>
+        </div>
+      </div>
+    </section>
   `;
 }
 function hermesRecord(instance, data) {
@@ -2895,8 +3203,11 @@ function runtimeRecord(runtime, data) {
     const rollouts = data.rollouts.filter((item) => item.rollout.runtime_environment_id === runtime.id);
     const runs = data.runtime_runs.filter((run) => run.environment_id === runtime.id);
     return `
-    <article class="runtime-record">
-      <div class="runtime-header"><div><h3>${escapeHtml(runtime.name)}</h3><p class="muted small mono">${escapeHtml(runtime.id)}</p></div>${chip(shortHash(runtime.digest), "good")}</div>
+    <article class="runtime-record ${selectedClass(String(runtime.id))}">
+      <div class="runtime-header">
+        <div><h3>${escapeHtml(runtime.name)}</h3><p class="muted small mono">${escapeHtml(runtime.id)}</p></div>
+        <div class="chip-row">${chip(shortHash(runtime.digest), "good")}<button class="link-button" type="button" data-select-id="${escapeHtml(runtime.id)}">Inspect</button></div>
+      </div>
       <div class="row-grid">
         ${field("Created by", runtime.created_by)}
         ${field("Created", formatAge(String(runtime.created_at || "")))}
@@ -2911,8 +3222,11 @@ function rolloutRecord(status, data) {
     const rollout = status.rollout;
     const evalSet = data.eval_sets.find((item) => item.id === rollout.required_eval_set_id);
     return `
-    <article class="rollout-record">
-      <div class="rollout-header"><div><h3>${escapeHtml(rollout.version)}</h3><p class="muted small mono">${escapeHtml(rollout.id)}</p></div>${chip(rollout.status, rolloutTone(String(rollout.status)))}</div>
+    <article class="rollout-record ${selectedClass(String(rollout.id))}">
+      <div class="rollout-header">
+        <div><h3>${escapeHtml(rollout.version)}</h3><p class="muted small mono">${escapeHtml(rollout.id)}</p></div>
+        <div class="chip-row">${chip(rollout.status, rolloutTone(String(rollout.status)))}<button class="link-button" type="button" data-select-id="${escapeHtml(rollout.id)}">Inspect</button></div>
+      </div>
       <div class="row-grid">
         ${field("Strategy", rollout.strategy)}
         ${field("Target", `${rollout.target_percent}%`)}
@@ -2924,17 +3238,125 @@ function rolloutRecord(status, data) {
         ${field("Health policy", jsonSummary(rollout.health_policy))}
       </div>
       <div class="timeline">${status.events.slice(-4).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("")}</div>
-      <details class="action-box">
-        <summary>Rollout actions</summary>
+    </article>
+  `;
+}
+function secretRecord(secret, agents) {
+    return `
+    <article class="record ${selectedClass(String(secret.id))}">
+      <div class="record-header">
+        <div><h3>${escapeHtml(secret.name)}</h3><p class="muted small mono">${escapeHtml(secret.id)}</p></div>
+        <div class="chip-row">${chip(secret.enabled ? "enabled" : "disabled", secret.enabled ? "good" : "bad")}<button class="link-button" type="button" data-select-id="${escapeHtml(secret.id)}">Inspect</button></div>
+      </div>
+      <div class="row-grid">
+        ${field("Value", "***REDACTED***")}
+        ${field("Scopes", jsonSummary(secret.scopes))}
+        ${field("Created by", secret.created_by)}
+        ${field("Rotated", secret.rotated_at || "never")}
+      </div>
+    </article>
+  `;
+}
+function runtimeRunCard(run, data) {
+    const task = data.tasks.find((detail) => detail.task.id === run.task_id)?.task;
+    const agent = data.agents.find((item) => item.agent.id === run.agent_id)?.agent;
+    const runtime = data.runtimes.find((item) => item.id === run.environment_id);
+    return `
+    <article class="mobile-object-card compact ${selectedClass(String(run.id))}">
+      <div class="record-header">
+        <div>
+          <h3>${escapeHtml(task?.title || run.task_id || run.id)}</h3>
+          <p class="muted small mono">${escapeHtml(run.id)}</p>
+        </div>
+        ${chip(run.status || "unknown", String(run.status) === "running" ? "info" : String(run.status) === "completed" ? "good" : "warn")}
+      </div>
+      <div class="row-grid compact-grid">
+        ${field("Agent", agent?.name || run.agent_id)}
+        ${field("Runtime", runtime?.name || run.environment_id)}
+        ${field("Evidence", run.evidence_id || "none")}
+        ${field("Updated", formatAge(String(run.updated_at || "")))}
+      </div>
+    </article>
+  `;
+}
+function runtimeInspector(data) {
+    const selectedRuntime = data.runtimes.find((runtime) => runtime.id === state.selectedId) || data.runtimes[0];
+    const selectedRollout = data.rollouts.find((item) => item.rollout.id === state.selectedId) || data.rollouts[0];
+    if (!selectedRuntime && !selectedRollout)
+        return "";
+    const runtimeRollouts = selectedRuntime
+        ? data.rollouts.filter((item) => item.rollout.runtime_environment_id === selectedRuntime.id)
+        : [];
+    const runtimeRuns = selectedRuntime
+        ? data.runtime_runs.filter((run) => run.environment_id === selectedRuntime.id)
+        : [];
+    return `
+    <section class="object-inspector">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Runtime Inspector</p>
+          <h2>${escapeHtml(selectedRuntime?.name || selectedRollout?.rollout.version || "Runtime")}</h2>
+          <p class="muted small mono">${escapeHtml(selectedRuntime?.id || selectedRollout?.rollout.id || "")}</p>
+        </div>
+        <div class="chip-row">
+          ${selectedRuntime ? chip(`${runtimeRollouts.length} rollouts`, "info") : ""}
+          ${selectedRuntime ? chip(`${runtimeRuns.length} runs`, runtimeRuns.length ? "good" : "warn") : ""}
+        </div>
+      </div>
+      ${selectedRuntime ? `
+        <div class="row-grid">
+          ${field("Created by", selectedRuntime.created_by)}
+          ${field("Created", formatAge(String(selectedRuntime.created_at || "")))}
+          ${field("Digest", shortHash(selectedRuntime.digest))}
+          ${field("Runs", runtimeRuns.length)}
+        </div>
+        <pre class="json-block">${escapeHtml(JSON.stringify(selectedRuntime.manifest || {}, null, 2))}</pre>
+      ` : ""}
+      ${selectedRollout ? rolloutInspector(selectedRollout, data) : ""}
+    </section>
+  `;
+}
+function rolloutInspector(status, data) {
+    const rollout = status.rollout;
+    const evalSet = data.eval_sets.find((item) => item.id === rollout.required_eval_set_id);
+    return `
+    <div class="record-section">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Rollout Inspector</p>
+          <h2>${escapeHtml(rollout.version)}</h2>
+          <p class="muted small mono">${escapeHtml(rollout.id)}</p>
+        </div>
+        <div class="chip-row">${chip(rollout.status, rolloutTone(String(rollout.status)))}${evalSet ? chip(`eval ${evalSet.name}`, "info") : chip("no eval gate", "warn")}</div>
+      </div>
+      <div class="row-grid">
+        ${field("Strategy", rollout.strategy)}
+        ${field("Target", `${rollout.target_percent}%`)}
+        ${field("Tenant", rollout.tenant_id || "global")}
+        ${field("Channel", rollout.channel)}
+        ${field("Runtime", status.runtime?.name || rollout.runtime_environment_id || "none")}
+        ${field("Artifact URI", rollout.artifact_uri || "none")}
+        ${field("Artifact hash", rollout.artifact_hash || "unverified")}
+        ${field("Latest eval", status.latest_eval_run ? `${status.latest_eval_run.score} ${status.latest_eval_run.passed ? "pass" : "fail"}` : "none")}
+      </div>
+      <div class="runtime-control-grid">
         <form class="action-form" data-action="rolloutAdvance" data-rollout-id="${escapeHtml(rollout.id)}">
           <label>Action ${select("action", ["start_canary", "promote", "pause", "resume", "rollback"], "start_canary")}</label>
           <label>Actor <input name="actor" value="human"></label>
-          <label>Detail JSON <textarea name="detail" placeholder="{}"></textarea></label>
+          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}"></textarea></label>
           <button type="submit">Advance</button>
         </form>
+        <form class="action-form" data-action="rolloutVerifyArtifact" data-rollout-id="${escapeHtml(rollout.id)}">
+          <label>Artifact URI <input name="artifact_uri" value="${escapeHtml(rollout.artifact_uri || "")}" required></label>
+          <label>Artifact hash <input name="artifact_hash" value="${escapeHtml(rollout.artifact_hash || "")}" required></label>
+          <label>Actor <input name="actor" value="human"></label>
+          <button type="submit">Verify Artifact</button>
+        </form>
+      </div>
+      <div class="runtime-control-grid">
         <form class="action-form compact" data-action="rolloutHealth" data-rollout-id="${escapeHtml(rollout.id)}">
           <label>Actor <input name="actor" value="monitor"></label>
-          <label>Checks JSON <textarea name="checks" placeholder='{"runtime":"healthy"}'></textarea></label>
+          <label>Checks JSON <textarea class="json-editor" name="checks" placeholder='{"runtime":"healthy"}'></textarea></label>
           <button type="submit">Record Health</button>
         </form>
         <form class="action-form compact danger-action" data-action="rolloutRescue" data-rollout-id="${escapeHtml(rollout.id)}">
@@ -2942,27 +3364,56 @@ function rolloutRecord(status, data) {
           <label>Reason <input name="reason" placeholder="why rescue is needed"></label>
           <button type="submit">Rescue</button>
         </form>
-      </details>
-    </article>
+      </div>
+      <div class="timeline">${status.events.length ? status.events.slice(-8).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("") : `<div class="empty-state">No rollout events</div>`}</div>
+    </div>
   `;
 }
-function secretRecord(secret, agents) {
+function secretInspector(data) {
+    const secret = data.secrets.find((item) => item.id === state.selectedId) || data.secrets[0];
+    if (!secret)
+        return "";
+    const audits = data.secret_audits.filter((audit) => audit.secret_id === secret.id);
     return `
-    <article class="record">
-      <div class="record-header"><div><h3>${escapeHtml(secret.name)}</h3><p class="muted small mono">${escapeHtml(secret.id)}</p></div>${chip(secret.enabled ? "enabled" : "disabled", secret.enabled ? "good" : "bad")}</div>
+    <section class="object-inspector">
+      <div class="object-inspector-header">
+        <div>
+          <p class="eyebrow">Secret Inspector</p>
+          <h2>${escapeHtml(secret.name)}</h2>
+          <p class="muted small mono">${escapeHtml(secret.id)}</p>
+        </div>
+        <div class="chip-row">${chip(secret.enabled ? "enabled" : "disabled", secret.enabled ? "good" : "bad")}${chip(`${audits.length} audits`, audits.length ? "info" : "warn")}</div>
+      </div>
       <div class="row-grid">
         ${field("Value", "***REDACTED***")}
         ${field("Scopes", jsonSummary(secret.scopes))}
         ${field("Created by", secret.created_by)}
+        ${field("Created", formatAge(String(secret.created_at || "")))}
+        ${field("Updated", formatAge(String(secret.updated_at || "")))}
         ${field("Rotated", secret.rotated_at || "never")}
       </div>
-      <form class="action-form compact" data-action="secretAccess" data-secret-id="${escapeHtml(secret.id)}">
-        <label>Accessor ${agentSelect("accessor_agent_id", agents, "")}</label>
+      <form class="action-form inspector-form" data-action="secretAccess" data-secret-id="${escapeHtml(secret.id)}">
+        <label>Accessor ${agentSelect("accessor_agent_id", data.agents, "")}</label>
         <label>Purpose <input name="purpose" placeholder="deploy, test, audit"></label>
         <label>TTL seconds <input name="ttl_seconds" type="number" value="300" min="1"></label>
         <button type="submit">Request Handle</button>
       </form>
-    </article>
+      <div class="record-section">
+        <h3>Recent Access</h3>
+        <div class="record-list">
+          ${audits.length ? audits.slice(-8).map(secretAuditRecord).join("") : `<div class="empty-state">No audit records for this secret</div>`}
+        </div>
+      </div>
+      <div class="record-section danger-zone">
+        <div class="record-header">
+          <div>
+            <h3>Delete Secret</h3>
+            <p class="muted small">Hard-deletes the secret row and scrubs the stored value.</p>
+          </div>
+          <button class="danger-button" type="button" data-secret-delete="${escapeHtml(secret.id)}">Delete</button>
+        </div>
+      </div>
+    </section>
   `;
 }
 function secretAuditRecord(audit) {
@@ -3184,6 +3635,18 @@ async function handleContentClick(event) {
             return;
         await runDirectDelete(taskDelete, "Task", `/tasks/${encodeURIComponent(taskId)}?actor=human`, () => {
             if (state.selectedId === taskId)
+                state.selectedId = "";
+        });
+        return;
+    }
+    const secretDelete = event.target?.closest("[data-secret-delete]");
+    if (secretDelete) {
+        event.preventDefault();
+        const secretId = secretDelete.dataset.secretDelete || "";
+        if (!secretId)
+            return;
+        await runDirectDelete(secretDelete, "Secret", `/secrets/${encodeURIComponent(secretId)}`, () => {
+            if (state.selectedId === secretId)
                 state.selectedId = "";
         });
         return;
@@ -3526,11 +3989,54 @@ async function runAction(action, form, values) {
         }
         return postJSON("/agents/bulk", body);
     }
+    if (action === "runtimeCreate") {
+        return postJSON("/runtimes", {
+            name: requiredString(values.name),
+            manifest: parseJsonObject(values.manifest),
+            created_by: requiredString(values.created_by),
+        });
+    }
+    if (action === "runtimeRunCreate") {
+        return postJSON("/runtime-runs", {
+            task_id: requiredString(values.task_id),
+            agent_id: requiredString(values.agent_id),
+            environment_id: requiredString(values.environment_id),
+        });
+    }
+    if (action === "runtimeRunComplete") {
+        const runId = requiredString(values.run_id);
+        return postJSON(`/runtime-runs/${encodeURIComponent(runId)}/complete`, {
+            evidence_id: requiredString(values.evidence_id),
+            status: requiredString(values.status),
+        });
+    }
+    if (action === "rolloutCreate") {
+        return postJSON("/rollouts", {
+            version: requiredString(values.version),
+            strategy: requiredString(values.strategy),
+            target_percent: numberValue(values.target_percent, 0),
+            created_by: requiredString(values.created_by),
+            tenant_id: emptyToNull(values.tenant_id),
+            channel: requiredString(values.channel),
+            runtime_environment_id: emptyToNull(values.runtime_environment_id),
+            artifact_uri: emptyToNull(values.artifact_uri),
+            artifact_hash: emptyToNull(values.artifact_hash),
+            health_policy: parseJsonObject(values.health_policy),
+            required_eval_set_id: emptyToNull(values.required_eval_set_id),
+        });
+    }
     if (action === "rolloutAdvance") {
         return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/advance`, {
             action: requiredString(values.action),
             actor: requiredString(values.actor),
             detail: parseJsonObject(values.detail),
+        });
+    }
+    if (action === "rolloutVerifyArtifact") {
+        return postJSON(`/rollouts/${encodeURIComponent(requiredDataset(form, "rolloutId"))}/artifact`, {
+            artifact_uri: requiredString(values.artifact_uri),
+            artifact_hash: requiredString(values.artifact_hash),
+            actor: requiredString(values.actor),
         });
     }
     if (action === "rolloutHealth") {
@@ -3544,6 +4050,14 @@ async function runAction(action, form, values) {
             actor: requiredString(values.actor),
             reason: requiredString(values.reason),
             detail: {},
+        });
+    }
+    if (action === "secretCreate") {
+        return postJSON("/secrets", {
+            name: requiredString(values.name),
+            value: requiredString(values.value),
+            scopes: parseJsonObject(values.scopes),
+            created_by: requiredString(values.created_by),
         });
     }
     if (action === "secretAccess") {
@@ -3684,6 +4198,14 @@ function relationshipGraph(data) {
         ${edgeSvg}
         ${nodeSvg}
       </svg>
+    </div>
+    <div class="mobile-card-list graph-mobile-list">
+      ${nodes.map((node) => `
+        <button class="mobile-object-card compact ${selectedClass(node.id)}" type="button" data-select-id="${escapeHtml(node.id)}">
+          <span><strong>${escapeHtml(node.label)}</strong></span>
+          <span class="muted small">${escapeHtml(labelize(node.kind))} / ${escapeHtml(node.id)}</span>
+        </button>
+      `).join("")}
     </div>
   `;
 }
@@ -3858,9 +4380,6 @@ function sessionAccessBadge(data) {
 function disabledAttr(disabled) {
     return disabled ? "disabled" : "";
 }
-function safeDomId(value) {
-    return value.replace(/[^A-Za-z0-9_-]/g, "_") || "item";
-}
 function uniqueObservations(items) {
     const seen = new Set();
     const unique = [];
@@ -3894,6 +4413,18 @@ function timelineItem(eventType, actor, createdAt) {
 }
 function agentSelect(name, agents, selected, disabled = false) {
     return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select agent</option>${agents.map((item) => option(item.agent.id, item.agent.name, selected)).join("")}</select>`;
+}
+function taskSelect(name, tasks, selected, disabled = false) {
+    return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select task</option>${tasks.map((detail) => option(detail.task.id, detail.task.title, selected)).join("")}</select>`;
+}
+function runtimeSelect(name, runtimes, selected, disabled = false) {
+    return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select runtime</option>${runtimes.map((runtime) => option(String(runtime.id), String(runtime.name || runtime.id), selected)).join("")}</select>`;
+}
+function runtimeRunSelect(name, runs, selected, disabled = false) {
+    return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select run</option>${runs.map((run) => option(String(run.id), `${String(run.status || "run")} / ${String(run.task_id || run.id)}`, selected)).join("")}</select>`;
+}
+function evalSetSelect(name, evalSets, selected, disabled = false) {
+    return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">No eval gate</option>${evalSets.map((evalSet) => option(String(evalSet.id), String(evalSet.name || evalSet.id), selected)).join("")}</select>`;
 }
 function machineSelect(name, machines, selected, disabled = false) {
     return `<select name="${escapeHtml(name)}"${disabled ? " disabled" : ""}><option value="">Select machine</option>${machines.map((machine) => option(machine.id, machine.hostname, selected)).join("")}</select>`;
@@ -4020,6 +4551,13 @@ function statusTone(status) {
     if (status === "draining")
         return "warn";
     return "bad";
+}
+function projectTone(status) {
+    if (status === "active")
+        return "good";
+    if (status === "inactive" || status === "archived")
+        return "warn";
+    return "info";
 }
 function healthTone(status) {
     if (["healthy", "ready", "configured"].includes(status))
