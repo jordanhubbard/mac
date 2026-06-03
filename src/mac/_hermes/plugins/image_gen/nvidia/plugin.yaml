@@ -1,7 +1,10 @@
 name: nvidia
 version: 1.0.0
-description: "NVIDIA NIM image generation backend (FLUX.1, SDXL via ai.api.nvidia.com/v1/genai). Saves generated images to $HERMES_HOME/cache/images/."
+description: "NVIDIA NIM image generation (FLUX.1, SDXL). Routes through the in-mac router's /v1/genai proxy by default (uses the hub's escrowed nvidia-image key; works on spokes too), or set NVIDIA_IMAGE_BASE_URL for a direct/on-prem endpoint. Saves images to $HERMES_HOME/cache/images/."
 author: mac
 kind: backend
-requires_env:
-  - NVIDIA_API_KEY
+# No requires_env: a bundled backend auto-loads and is_available() gates at
+# runtime on the gateway bearer (MAC_HERMES_GATEWAY_API_KEY / OPENAI_API_KEY),
+# present wherever chat works — including spokes, where raw provider keys are
+# intentionally absent. Falls back to a direct NVIDIA key if no gateway is set.
+requires_env: []

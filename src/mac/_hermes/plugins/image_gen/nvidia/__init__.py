@@ -52,15 +52,38 @@ DEFAULT_BASE_URL = "https://ai.api.nvidia.com/v1/genai"
 
 
 def _base_url() -> str:
-    """Resolve the genai image base URL (env override, else the public host).
+    """Resolve the genai image base URL.
 
-    NVIDIA's *image* NIMs live under ``ai.api.nvidia.com/v1/genai`` — a
-    different host from the OpenAI-compatible chat base (``NVIDIA_BASE_URL`` /
-    ``integrate.api.nvidia.com``), so we don't reuse that. Override with
-    ``NVIDIA_IMAGE_BASE_URL`` for an on-prem NIM.
+    Default: route through the **in-mac router** like chat does. The agent's
+    gateway base is ``<hub>/v1`` and the router exposes the image proxy at
+    ``/v1/genai`` (``MAC_ROUTER_IMAGE_*``), so the hub's escrowed image key
+    (``secret:nvidia-image`` — distinct from the chat key) is used and spokes
+    route through the hub. ``NVIDIA_IMAGE_BASE_URL`` overrides (on-prem NIM /
+    direct host); falls back to NVIDIA's public host only if no gateway is set.
     """
     raw = (os.environ.get("NVIDIA_IMAGE_BASE_URL") or "").strip()
-    return (raw or DEFAULT_BASE_URL).rstrip("/")
+    if raw:
+        return raw.rstrip("/")
+    gw = (
+        os.environ.get("MAC_HERMES_GATEWAY_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if gw:
+        return gw + "/genai"  # <hub>/v1 -> <hub>/v1/genai (the router image proxy)
+    return DEFAULT_BASE_URL
+
+
+def _bearer() -> str:
+    """The bearer to present. Default to the agent's hub/gateway token (the same
+    one chat uses) so requests go through the router, which swaps in the vault
+    image key. Falls back to a raw NVIDIA key for the direct-host setup."""
+    return (
+        os.environ.get("MAC_HERMES_GATEWAY_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("NVIDIA_API_KEY")
+        or ""
+    ).strip()
 
 
 # ``endpoint`` is the model path appended to the base URL. ``dialect`` selects
@@ -232,7 +255,10 @@ class NvidiaImageGenProvider(ImageGenProvider):
         return "NVIDIA NIM"
 
     def is_available(self) -> bool:
-        return bool(os.environ.get("NVIDIA_API_KEY"))
+        # Available whenever the agent has a hub/gateway bearer (it routes image-gen
+        # through the in-mac router, which holds the image key) — so it works on
+        # spokes too, where raw provider keys are intentionally absent.
+        return bool(_bearer())
 
     def list_models(self) -> List[Dict[str, Any]]:
         return [
@@ -280,13 +306,14 @@ class NvidiaImageGenProvider(ImageGenProvider):
                 aspect_ratio=aspect,
             )
 
-        api_key = os.environ.get("NVIDIA_API_KEY")
+        api_key = _bearer()
         if not api_key:
             return error_response(
                 error=(
-                    "NVIDIA_API_KEY not set. The fleet plumbs this for chat "
-                    "routing; ensure it's present in the agent env and has "
-                    "image-NIM access at build.nvidia.com."
+                    "No gateway bearer available (MAC_HERMES_GATEWAY_API_KEY / "
+                    "OPENAI_API_KEY). Image-gen routes through the in-mac router, "
+                    "which holds the image key — ensure the agent's gateway env "
+                    "is configured (it is, wherever chat works)."
                 ),
                 error_type="auth_required",
                 provider="nvidia",
