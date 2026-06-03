@@ -163,6 +163,7 @@ class ProviderProxy:
         breaker. Returns ``(status, body_or_iterator)``."""
         candidates = self._candidate_models(payload)
         last: Optional[Tuple[int, Any]] = None
+        retried_401 = False  # per-request: at most one transient-401 retry
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
             outgoing = {**payload, "model": model}
@@ -184,6 +185,15 @@ class ProviderProxy:
                 self._router.record_success(provider.name)
                 provider_answered = True
                 logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
+                # A 401 from upstream is usually a real auth problem, but some
+                # gateways briefly mislabel a transient backend hiccup (e.g.
+                # "can't reach key-verification DB") as 401. One same-provider
+                # retry turns that seconds-long blip into a non-event; a genuine
+                # bad key 401s again and is returned. Bounded to a single retry.
+                if int(status) == 401 and not retried_401:
+                    retried_401 = True
+                    logger.info("route model=%s provider=%s status=401 transient-retry", model, provider.name)
+                    status, obj = forward(provider, path, outgoing, timeout=timeout)
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
                     break

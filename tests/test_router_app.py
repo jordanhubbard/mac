@@ -62,6 +62,39 @@ def test_network_error_status_none_fails_over():
     assert r.status()["primary"]["state"] == "open"
 
 
+def test_transient_401_is_retried_once_on_same_provider():
+    """A transient upstream 401 (e.g. NVIDIA gateway momentarily can't reach its
+    key-verification DB) must not kill a long agent session. The router retries
+    the SAME provider once; if the retry succeeds, the client never sees the
+    blip."""
+    r = _router()
+    seq = iter([(401, {"error": {"message": "Can't reach database server", "code": "401"}}),
+                (200, {"ok": True})])
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return next(seq)
+
+    status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "primary-model"})
+    assert status == 200 and body == {"ok": True}
+
+
+def test_persistent_401_returned_after_bounded_retry():
+    """A genuine bad-key 401 keeps returning 401 on retry. The router must NOT
+    loop forever: it retries once, still gets 401, returns it to the client."""
+    r = _router()
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append(provider.name)
+        return 401, {"error": {"message": "invalid api key"}}
+
+    status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "primary-model"})
+    assert status == 401
+    # bounded: the same provider is tried at most twice (initial + one retry),
+    # never an unbounded loop.
+    assert calls.count("primary") <= 2
+
+
 def test_4xx_is_returned_not_failed_over():
     # A 400 is a bad request, not a provider health problem: return it, keep the
     # provider healthy, and do NOT pointlessly retry the same bad request elsewhere.
