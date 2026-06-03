@@ -1,0 +1,33 @@
+# Permissions for mac-k8s-runner: create + read + delete batch/v1 Jobs
+# in the `mac` namespace. Nothing else. Particularly NOT cluster-wide;
+# tasks of different tenants/roles can be isolated by deploying a
+# runner per namespace if you need stronger isolation later.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mac-k8s-runner
+  namespace: mac
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mac-k8s-runner
+  namespace: mac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mac-k8s-runner
+subjects:
+  - kind: ServiceAccount
+    name: mac-k8s-runner
+    namespace: mac

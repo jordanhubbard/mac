@@ -1,6 +1,6 @@
 # Production Deployment
 
-Two supported topologies:
+Three supported topologies:
 
 1. **Single host, systemd** — one machine, one SQLite database, one FastAPI
    process. Suitable for dev fleets, personal Hermes runtimes, and pilot
@@ -9,22 +9,34 @@ Two supported topologies:
    topology, but lifecycle is managed by the container runtime (Docker,
    Podman, k8s as a single-replica deployment). See the container section
    below.
+3. **Kubernetes, multi-replica, Postgres-backed** — stateless `mac-api`
+   Deployment in front of an externally-managed Postgres 17 cluster.
+   Multiple `mac-api` replicas share the same durable state via
+   `MAC_DATABASE_URL`. The cluster itself (CloudNativePG, RDS, Cloud
+   SQL, vendor-managed, etc.) is provisioned outside this repo and its
+   DSN is supplied via the `mac-api-config` Secret. See
+   [`deploy/k8s/README.md`](../deploy/k8s/README.md) and
+   [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md).
 
 `mac` is not designed for horizontal scale-out on SQLite. SQLite WAL handles
 concurrent reads well and serializes writes through filesystem locks — so
-`uvicorn --workers > 1` against the same DB *works*, but every write call
-contends on the same lock. For read-heavy fleets this is fine; for write-heavy
-loads (busy dispatcher, many heartbeats) the throughput ceiling is the single
-writer. For multi-host or multi-region, swap `mac.store.SQLiteStore` for a
-Postgres backend (the read/write helpers are small and isolated) before
-deploying more than one writer.
+`uvicorn --workers > 1` against the same SQLite DB *works*, but every write
+call contends on the same lock. For multi-host, multi-replica, or
+write-heavy fleets, use topology (3) (Postgres) instead.
+
+The backend selection is runtime: setting `MAC_DATABASE_URL` to a
+`postgresql://...` DSN switches `mac-api` to `PostgresStore` without any
+code change; leaving it unset keeps the legacy `SQLiteStore` path. Both
+backends ship in the same wheel/image; pick at deploy time.
 
 ## Required configuration
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `MAC_SECRET_KEY` | yes | 32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it. |
-| `MAC_DB` | no | SQLite file path. Default `./mac.db`. |
+| `MAC_DATABASE_URL` | no | Postgres DSN (`postgresql://...` or `postgres://...`). When set, `mac-api` uses `PostgresStore` and ignores `MAC_DB`. The Postgres schema is auto-applied on startup (idempotent). |
+| `MAC_PG_POOL_SIZE` | no | `psycopg_pool` max connections per `mac-api` replica. Default `10`. |
+| `MAC_DB` | no | SQLite file path used when `MAC_DATABASE_URL` is unset. Default `./mac.db`. |
 | `MAC_API_TOKEN` | no | Single admin bearer token. Set empty string is rejected. |
 | `MAC_API_TOKENS` | no | JSON `{token: [scopes,...]}` for scoped auth. Mutually exclusive with `MAC_API_TOKEN`. |
 | `HERMES_HOME` | no | Hermes state directory checked at startup. Default `~/.hermes`. |
@@ -759,8 +771,53 @@ notification outbox.
 If a migration fails, restore the snapshot and pin the prior version. The
 project does not yet support downgrades through schema deletes.
 
+## Kubernetes (K8s-native topology)
+
+For multi-replica `mac-api`, deploy the manifests under `deploy/k8s/`.
+The Postgres cluster itself is **not** managed from this repo — bring
+your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.) and
+supply the DSN via the `mac-api-config` Secret. Likewise, ArgoCD
+`Application` manifests are not shipped here; point one Application
+per kustomize tree from your platform-config repo if you sync with ArgoCD.
+
+```bash
+# 1. Create the namespace + operator-supplied Secret carrying the DSN
+#    and bearer tokens (or apply your ExternalSecret).
+kubectl create namespace mac
+kubectl -n mac create secret generic mac-api-config \
+  --from-literal=MAC_DATABASE_URL='postgresql://user:pass@host:5432/mac' \
+  --from-literal=MAC_SECRET_KEY="$(openssl rand -base64 48)" \
+  --from-literal=MAC_WORKER_TOKEN="$(openssl rand -hex 32)"
+
+# 2. mac-api Deployment + Service (replicas: 2, no PVC).
+kubectl apply -k deploy/k8s/mac-api
+
+# 3. (Phase 4) mac-k8s-runner — claims ready tasks and creates one
+#    batch/v1 Job per claim (mac-task-runner runs inside each Job).
+kubectl apply -k deploy/k8s/mac-runner
+
+# 4. (Phase 5) mac-k8s-controller — reconciles stuck Jobs against
+#    mac-api lease state, optional worker-pool scaling.
+kubectl apply -k deploy/k8s/mac-controller
+```
+
+The full apply order and ExternalSecret wiring are documented in
+[`deploy/k8s/README.md`](../deploy/k8s/README.md). The persistence layer
+is portable across SQLite and Postgres because every `mac-api` SQL
+string is in SQLite dialect; the `PostgresStore` translates placeholders
+and provides a `json_extract` SQL function shim so the ~50 service
+modules need no per-backend branching. See
+[`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md) for the
+Phase 3-5 roadmap.
+
 ## Known limitations
 
-- Single-writer SQLite. See topology note above.
+- SQLite topology is single-writer. Use the Kubernetes + Postgres
+  topology for multi-replica deployments.
 - No built-in TLS. Put a reverse proxy in front.
 - `MAC_SECRET_KEY` rotation is manual.
+- Live SQLite → Postgres data migration tool is not yet shipped (K8s
+  Phase 3.7 — pending). Greenfield Postgres deploys start with an
+  empty schema applied automatically by `PostgresStore.initialize()`;
+  existing SQLite deployments upgrading to the K8s topology must
+  currently re-create state.

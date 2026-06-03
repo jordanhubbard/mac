@@ -15,7 +15,7 @@ emits the matching observability events, and idles the owning agent.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
     Agent,
@@ -31,6 +31,7 @@ from mac.models import (
     TaskState,
     TransitionError,
     ValidationError,
+    json_dumps,
     new_id,
     utcnow,
 )
@@ -196,11 +197,15 @@ class ReviewService:
                         "review approval requires signed review_verdict evidence: %s"
                         % ("; ".join(problems) if problems else "no verdict found")
                     )
+        rejected_feedback = None
+        if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
+            rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
         now = utcnow()
         # mac-p5a4: the review status UPDATE and the task.review_completed
         # history row were two bare store.execute calls — a crash between
         # them left the review APPROVED with no audit row. Wrap them in
         # one transaction so either both land or neither does.
+        task_for_feedback = self._get_task(review.task_id) if rejected_feedback is not None else None
         with self.store.transaction() as conn:
             conn.execute(
                 """
@@ -210,6 +215,21 @@ class ReviewService:
                 """,
                 (status_value, reason, evidence_id, now, review_id),
             )
+            if rejected_feedback is not None:
+                metadata = dict(task_for_feedback.metadata)
+                block = metadata.get("review_feedback") if isinstance(metadata.get("review_feedback"), dict) else {}
+                history = list(block.get("history") or [])
+                latest = block.get("latest")
+                if isinstance(latest, dict):
+                    history.insert(0, latest)
+                metadata["review_feedback"] = self._bounded_review_feedback_block(
+                    rejected_feedback,
+                    history,
+                )
+                conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(metadata), now, review.task_id),
+                )
             self._record_history(
                 review.task_id,
                 "task.review_completed",
@@ -504,6 +524,60 @@ class ReviewService:
             policy.get("require_publication_evidence")
             or policy.get("publication_evidence_required")
         )
+
+    # Feedback persistence helpers ---------------------------------------
+
+    def _bounded_review_findings(self, value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        out: List[Dict[str, Any]] = []
+        for item in value[:20]:
+            if not isinstance(item, dict):
+                continue
+            out.append({
+                "severity": str(item.get("severity") or "")[:64],
+                "path": str(item.get("path") or "")[:512],
+                "line": item.get("line") if isinstance(item.get("line"), int) else None,
+                "message": str(item.get("message") or "")[:2000],
+                "recommendation": str(item.get("recommendation") or "")[:2000],
+            })
+        return out
+
+    def _bounded_review_feedback_block(self, latest: Dict[str, Any], history: List[Any]) -> Dict[str, Any]:
+        block = {"latest": latest, "history": history[:5]}
+        encoded = json.dumps(block, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) <= 24 * 1024:
+            return block
+        trimmed_latest = dict(latest)
+        trimmed_latest["feedback"] = str(trimmed_latest.get("feedback") or "")[:4000] + "\n[truncated]"
+        trimmed_latest["summary"] = str(trimmed_latest.get("summary") or "")[:1000]
+        trimmed_latest["findings"] = list(trimmed_latest.get("findings") or [])[:5]
+        block = {"latest": trimmed_latest, "history": []}
+        encoded = json.dumps(block, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) <= 24 * 1024:
+            return block
+        trimmed_latest["feedback"] = str(trimmed_latest.get("feedback") or "")[:1000] + "\n[truncated]"
+        trimmed_latest["findings"] = []
+        return {"latest": trimmed_latest, "history": []}
+
+    def _review_feedback_from_evidence(self, review: Review, evidence_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not evidence_id:
+            return None
+        evidence = self._get_evidence(evidence_id)
+        manifest = evidence.metadata.get("verification") if isinstance(evidence.metadata, dict) else None
+        if not isinstance(manifest, dict):
+            return None
+        return {
+            "review_id": review.id,
+            "reviewer_agent_id": review.reviewer_agent_id,
+            "verdict_evidence_id": evidence.id,
+            "reviewed_evidence_id": str(manifest.get("reviewed_evidence_id") or ""),
+            "verdict": str(manifest.get("verdict") or ""),
+            "summary": str(manifest.get("summary") or "")[:4000],
+            "feedback": str(manifest.get("feedback") or "")[:8000],
+            "findings": self._bounded_review_findings(manifest.get("findings")),
+            "created_at": evidence.created_at,
+        }
 
     # Row hydration ----------------------------------------------------
 

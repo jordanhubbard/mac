@@ -108,7 +108,7 @@ from mac.agent_state_service import AgentStateService
 from mac.agentbus_service import AgentBusService
 from mac.beads_bridge_service import BeadsBridgeService
 from mac.deploy_service import DeployService
-from mac.evidence_validators import validate_evidence_type
+from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
 from mac.identity_service import IdentityService
 from mac.memory_service import MemoryService
@@ -120,7 +120,7 @@ from mac.review_service import ReviewService
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
@@ -534,10 +534,14 @@ class ControlPlane:
 
     def __init__(
         self,
-        store: Optional[SQLiteStore] = None,
+        store: Optional[Store] = None,
         secret_key: Optional[str] = None,
     ) -> None:
-        self.store = store or SQLiteStore()
+        # When no store is injected, pick a backend from the environment:
+        # MAC_DATABASE_URL -> PostgresStore, otherwise SQLiteStore at MAC_DB.
+        # This is what makes multi-replica mac-api stateless — every
+        # replica hits the shared CNPG cluster without any code change.
+        self.store: Store = store or make_store_from_env()
         raw_key = secret_key if secret_key is not None else os.environ.get("MAC_SECRET_KEY")
         if not raw_key:
             raise ValidationError(
@@ -2644,6 +2648,69 @@ class ControlPlane:
 
     # Task ledger
 
+    def _apply_project_task_defaults(
+        self,
+        project: Optional[str],
+        required_capabilities: List[str],
+        metadata: Dict[str, Any],
+    ) -> Tuple[List[str], JsonDict]:
+        normalized = ensure_json_object(metadata)
+        caps = list(required_capabilities)
+        if not project:
+            return caps, normalized
+        try:
+            record = self.get_project_record(project)
+        except NotFoundError:
+            return caps, normalized
+        project_meta = ensure_json_object(record.metadata)
+        defaults = project_meta.get("task_defaults")
+        if not isinstance(defaults, dict):
+            return caps, normalized
+
+        role = str(defaults.get("role") or "").strip()
+        if role and not str(normalized.get("required_role") or "").strip():
+            try:
+                self.roles.get_role(role)
+            except NotFoundError as exc:
+                raise ValidationError(
+                    "unknown project default role for %s: %s" % (project, role)
+                ) from exc
+            normalized["required_role"] = role
+
+        default_caps = defaults.get("required_capabilities")
+        if not caps and isinstance(default_caps, list):
+            caps = [str(item).strip() for item in default_caps if str(item).strip()]
+
+        # Capability policy (untrusted LLM input guard): when a project pins
+        # an allow-list of hard runtime capabilities, any requested capability
+        # outside it (e.g. domain/language labels like "typescript",
+        # "frontend", "design" hallucinated by Hermes) is stripped from the
+        # scheduler's hard requirements and preserved as domain context so the
+        # task stays claimable while keeping the LLM's classification intent.
+        allowed_caps = defaults.get("allowed_capabilities")
+        if caps and isinstance(allowed_caps, list):
+            allowed = [str(item).strip() for item in allowed_caps if str(item).strip()]
+            allowed_set = set(allowed)
+            accepted: List[str] = []
+            filtered: List[str] = []
+            for cap in caps:
+                (accepted if cap in allowed_set else filtered).append(cap)
+            if filtered:
+                existing_domain = normalized.get("domain_capabilities")
+                domain = list(existing_domain) if isinstance(existing_domain, list) else []
+                for cap in filtered:
+                    if cap not in domain:
+                        domain.append(cap)
+                normalized["domain_capabilities"] = domain
+                normalized["capability_policy"] = {
+                    "source": "project.task_defaults.allowed_capabilities",
+                    "allowed": allowed,
+                    "accepted": accepted,
+                    "filtered": filtered,
+                }
+            caps = accepted
+        return caps, normalized
+
     def create_task(
         self,
         title: str,
@@ -2665,10 +2732,15 @@ class ControlPlane:
         now = utcnow()
         task_id = new_id("task")
         state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
-        normalized_metadata = self._normalize_task_execution_contract(
-            ensure_json_object(metadata),
+        task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
             coerce_list(required_capabilities),
+            ensure_json_object(metadata),
+        )
+        normalized_metadata = self._normalize_task_execution_contract(
+            task_metadata,
+            project,
+            task_capabilities,
         )
         self.store.execute(
             """
@@ -2686,7 +2758,7 @@ class ControlPlane:
                 project,
                 int(priority),
                 state,
-                json_dumps(coerce_list(required_capabilities)),
+                json_dumps(task_capabilities),
                 json_dumps(dep_ids),
                 json_dumps(normalized_metadata),
                 int(max_attempts),
@@ -2702,7 +2774,7 @@ class ControlPlane:
             state,
             {
                 "title": title,
-                "required_capabilities": coerce_list(required_capabilities),
+                "required_capabilities": task_capabilities,
                 "dependencies": dep_ids,
                 "execution_contract_type": (
                     normalized_metadata.get("execution_contract", {}).get("type")
@@ -2724,7 +2796,7 @@ class ControlPlane:
                 subject_id=task_id,
                 detail={
                     "project": project,
-                    "required_capabilities": coerce_list(required_capabilities),
+                    "required_capabilities": task_capabilities,
                     "reason": normalized_metadata["execution_contract"].get("reason"),
                 },
             )
@@ -2871,7 +2943,7 @@ class ControlPlane:
         detail: JsonDict = {}
         new_project = task.project
         new_capabilities = list(task.required_capabilities)
-        new_metadata = task.metadata
+        new_metadata = ensure_json_object(task.metadata)
         if title is not None:
             title_value = str(title or "").strip()
             if not title_value:
@@ -2892,11 +2964,6 @@ class ControlPlane:
             updates.append("priority = ?")
             params.append(int(priority))
             detail["priority"] = int(priority)
-        if required_capabilities is not None:
-            new_capabilities = coerce_list(required_capabilities)
-            updates.append("required_capabilities = ?")
-            params.append(json_dumps(new_capabilities))
-            detail["required_capabilities"] = new_capabilities
         if dependencies is not None:
             dep_ids = coerce_list(dependencies)
             if task_id in dep_ids:
@@ -2911,24 +2978,33 @@ class ControlPlane:
                 updates.append("state = ?")
                 params.append(next_state)
                 detail["state"] = next_state
+        should_reconcile_metadata = metadata is not None or project is not None or required_capabilities is not None
+        explicit_required_capabilities_update = required_capabilities is not None
+        if required_capabilities is not None:
+            new_capabilities = coerce_list(required_capabilities)
         if metadata is not None:
+            new_metadata = ensure_json_object(metadata)
+        if should_reconcile_metadata:
+            new_capabilities, new_metadata = self._apply_project_task_defaults(
+                new_project,
+                new_capabilities,
+                ensure_json_object(new_metadata),
+            )
+            if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
+                updates.append("required_capabilities = ?")
+                params.append(json_dumps(new_capabilities))
+                detail["required_capabilities"] = new_capabilities
             new_metadata = self._normalize_task_execution_contract(
-                ensure_json_object(metadata),
+                new_metadata,
                 new_project,
                 new_capabilities,
             )
             updates.append("metadata = ?")
             params.append(json_dumps(new_metadata))
-            detail["metadata_changed"] = True
-        elif project is not None or required_capabilities is not None:
-            new_metadata = self._normalize_task_execution_contract(
-                dict(task.metadata),
-                new_project,
-                new_capabilities,
-            )
-            updates.append("metadata = ?")
-            params.append(json_dumps(new_metadata))
-            detail["metadata_reconciled"] = True
+            if metadata is not None:
+                detail["metadata_changed"] = True
+            else:
+                detail["metadata_reconciled"] = True
         if max_attempts is not None:
             if int(max_attempts) < 1:
                 raise ValidationError("max_attempts must be >= 1")
@@ -4722,7 +4798,10 @@ class ControlPlane:
 
     def start_task(self, task_id: str, agent_id: str, *, drain_outbox: bool = True) -> Task:
         task = self.get_task(task_id)
-        if task.owner_agent_id != agent_id:
+        # PR2c (spec §6.3): accept either the lease owner OR a delegated
+        # actor (recorded via delegate_lease). Renewal / release stay
+        # strictly owner-only and are unchanged.
+        if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
         return self.transition_task(
             task_id,
@@ -4740,7 +4819,9 @@ class ControlPlane:
         drain_outbox: bool = True,
     ) -> Task:
         task = self.get_task(task_id)
-        if task.owner_agent_id != agent_id:
+        # PR2c (spec §6.3): accept either the lease owner OR a delegated
+        # actor (recorded via delegate_lease).
+        if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
         self._require_review_ready(task)
         reviewed = self.transition_task(
@@ -4779,6 +4860,9 @@ class ControlPlane:
         sync_beads: bool = True,
     ) -> Evidence:
         task = self.get_task(task_id)
+        if task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
+            if not self._lease_actor_allowed(task, created_by):
+                raise AuthorizationError("agent does not own task lease")
         if not kind or not uri or not summary:
             raise ValidationError("evidence requires kind, uri, and summary")
         if kind not in EVIDENCE_KINDS:
@@ -4990,6 +5074,7 @@ class ControlPlane:
         self._record_history(lease.task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
         heartbeat_agent = self.get_agent(agent_id)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
+        self._maybe_drain_notifications_on_heartbeat(heartbeat_agent)
         return self.get_lease(lease_id)
 
     def get_lease(self, lease_id: str) -> Lease:
@@ -4997,6 +5082,71 @@ class ControlPlane:
         if row is None:
             raise NotFoundError("lease not found: %s" % lease_id)
         return self._lease_from_row(row)
+
+    def delegate_lease(
+        self,
+        lease_id: str,
+        owner_agent_id: str,
+        to_agent_id: str,
+    ) -> Lease:
+        """Delegate lifecycle authorship on a lease's task to another agent.
+
+        Per spec §6.3 (Option B), the dispatcher (``mac-runner``) holds
+        the lease but the role-specialised Job pod authors lifecycle
+        transitions and evidence. This call records the delegation so
+        ``start_task`` / ``submit_for_review`` / ``add_evidence`` accept
+        the delegate as a legitimate actor.
+
+        Renewal and release stay strictly owner-only — see the spec.
+        """
+        lease = self.get_lease(lease_id)
+        if lease.agent_id != owner_agent_id:
+            raise AuthorizationError("only the lease owner can delegate")
+        # Verify the target agent exists; this also implicitly enforces
+        # the agents-table FK that the schema declares so SQLite (no FK
+        # enforcement by default) matches Postgres semantics.
+        self.get_agent(to_agent_id)
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE leases
+                SET delegated_agent_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (to_agent_id, now, lease_id),
+            )
+            self._record_history(
+                lease.task_id,
+                "task.lease_delegated",
+                owner_agent_id,
+                None,
+                None,
+                {"lease_id": lease_id, "delegated_agent_id": to_agent_id},
+                conn=conn,
+            )
+        return self.get_lease(lease_id)
+
+    def _lease_actor_allowed(self, task: Task, agent_id: str) -> bool:
+        """Return True if ``agent_id`` may author lifecycle transitions
+        on ``task`` per spec §6.3 (Option B).
+
+        Allowed actors:
+          * the task's current owner (``task.owner_agent_id``); or
+          * the agent recorded in the task's active lease's
+            ``delegated_agent_id`` (set via :meth:`delegate_lease`).
+        """
+        if task.owner_agent_id and task.owner_agent_id == agent_id:
+            return True
+        if not task.lease_id:
+            return False
+        try:
+            lease = self.get_lease(task.lease_id)
+        except NotFoundError:
+            return False
+        if lease.status != LeaseStatus.ACTIVE.value:
+            return False
+        return bool(lease.delegated_agent_id) and lease.delegated_agent_id == agent_id
 
     def expire_leases(
         self, now: Optional[str] = None, *, grace_seconds: Optional[int] = None
@@ -5951,6 +6101,7 @@ class ControlPlane:
                 )
         agent = self.get_agent(agent_id)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
+        self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
 
     def _maybe_poll_beads_bridge_on_heartbeat(self, agent: Agent) -> None:
@@ -6002,6 +6153,59 @@ class ControlPlane:
                 pass
         finally:
             self._beads_heartbeat_poll_lock.release()
+
+    def _maybe_drain_notifications_on_heartbeat(self, agent: Agent) -> None:
+        """Drain ``pending`` operator notifications on hub-agent heartbeat.
+
+        Mirrors :meth:`_maybe_advance_reviews_on_heartbeat`: only the
+        designated hub agent triggers the drain so a fleet of N agents
+        doesn't make N concurrent delivery attempts. Without this, the
+        ``deliver_pending`` method would sit idle — no other code path
+        runs it periodically.
+        """
+        if not _truthy_env("MAC_NOTIFIER_DRAIN_ON_HEARTBEAT", "1"):
+            return
+        hub_agent = os.environ.get(
+            "MAC_NOTIFIER_DRAIN_HUB_AGENT",
+            os.environ.get(
+                "MAC_REVIEW_TICK_HUB_AGENT",
+                os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
+            ),
+        ).strip()
+        if not hub_agent:
+            return
+        if agent.name != hub_agent and agent.id != hub_agent:
+            return
+        try:
+            limit = int(os.environ.get("MAC_NOTIFIER_DRAIN_LIMIT", "100"))
+        except ValueError:
+            limit = 100
+        if limit <= 0:
+            return
+        try:
+            result = self.deliver_pending_notifications(limit=limit)
+            delivered = (
+                int(result.get("delivered", 0)) if isinstance(result, dict) else 0
+            )
+            if delivered:
+                self.record_log(
+                    "notifier.heartbeat_drain",
+                    layer="control_plane",
+                    source=agent.id,
+                    level="info",
+                    detail={"delivered": delivered, "limit": limit},
+                )
+        except Exception as exc:  # noqa: BLE001 - heartbeat liveness must survive delivery failures.
+            try:
+                self.record_log(
+                    "notifier.heartbeat_drain_failed",
+                    layer="control_plane",
+                    source=agent.id,
+                    level="warning",
+                    detail={"error": str(exc)},
+                )
+            except Exception:
+                pass
 
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):
@@ -6815,6 +7019,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]] = None,
         require_canary: bool = False,
         dry_run: bool = False,
+        capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
     ) -> Optional[JsonDict]:
         return self.dispatch.claim_next_for_agent(
@@ -6824,6 +7029,7 @@ class ControlPlane:
             required_metadata=required_metadata,
             require_canary=require_canary,
             dry_run=dry_run,
+            capabilities=capabilities,
             sync_beads=sync_beads,
         )
 
@@ -6835,6 +7041,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]] = None,
         require_canary: bool = False,
         dry_run: bool = False,
+        capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
     ) -> Optional[JsonDict]:
         """Claim the next dispatch-eligible task for one worker.
@@ -6855,6 +7062,7 @@ class ControlPlane:
             required_metadata=required_metadata,
             require_canary=require_canary,
             dry_run=dry_run,
+            capabilities=capabilities,
         )
         rejected_policy: Dict[str, int] = {}
         rejected_dispatch = 0
@@ -11341,7 +11549,22 @@ class ControlPlane:
         )
 
     def _lease_from_row(self, row: Any) -> Lease:
-        return Lease(row["id"], row["task_id"], row["agent_id"], row["expires_at"], row["status"], row["created_at"], row["updated_at"])
+        # PR2c: ``delegated_agent_id`` is the additive column added by
+        # the lease-delegation migration. Older DBs (pre-migration) or
+        # row mappings that do not surface the column still resolve to
+        # None, keeping legacy call sites bit-for-bit compatible.
+        keys = row.keys() if hasattr(row, "keys") else []
+        delegated = row["delegated_agent_id"] if "delegated_agent_id" in keys else None
+        return Lease(
+            row["id"],
+            row["task_id"],
+            row["agent_id"],
+            row["expires_at"],
+            row["status"],
+            row["created_at"],
+            row["updated_at"],
+            delegated,
+        )
 
     def _machine_from_row(self, row: Any) -> Machine:
         keys = row.keys() if hasattr(row, "keys") else []
@@ -11786,6 +12009,7 @@ class ControlPlane:
         required_metadata: Optional[Dict[str, Any]],
         require_canary: bool,
         dry_run: bool,
+        capabilities: Optional[Iterable[str]] = None,
     ) -> JsonDict:
         return {
             "allowed_projects": sorted(
@@ -11798,12 +12022,24 @@ class ControlPlane:
             "required_metadata": ensure_json_object(required_metadata or {}),
             "require_canary": bool(require_canary),
             "dry_run": bool(dry_run),
+            "capabilities": sorted(
+                {
+                    str(cap).strip()
+                    for cap in (capabilities or [])
+                    if str(cap).strip()
+                }
+            ),
         }
 
     def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"
+        capabilities = set(policy.get("capabilities") or [])
+        if capabilities:
+            required = set(getattr(task, "required_capabilities", None) or [])
+            if required and not required.issubset(capabilities):
+                return False, "capability_not_allowed"
         metadata = ensure_json_object(task.metadata)
         if policy.get("require_canary") and not (
             metadata.get("canary") is True
@@ -11861,14 +12097,36 @@ class ControlPlane:
         # below stays the dominant matcher for un-roled fleets.
         required_role = task.metadata.get("required_role") if isinstance(task.metadata, dict) else None
         if required_role:
-            if agent.role_id is None:
-                return False
+            # Look up the target role first. An unknown role can never be
+            # served, regardless of whether the agent is role-bound or a
+            # multi-role dispatcher — fail closed.
             try:
-                role = self.roles.get_role(agent.role_id)
+                target_role = self.roles.get_role(str(required_role))
             except NotFoundError:
                 return False
-            if role.slug != required_role:
-                return False
+            if agent.role_id is not None:
+                # Role-bound agent: keep the strict slug match so a tenant
+                # using role-specific agents still gets the original
+                # routing guarantee.
+                try:
+                    bound_role = self.roles.get_role(agent.role_id)
+                except NotFoundError:
+                    return False
+                if bound_role.slug != required_role:
+                    return False
+            else:
+                # Dispatcher case (job-per-task roles spec §6.1 Option B):
+                # the runner agent has no role_id but carries the union of
+                # role capabilities and re-attributes the work to a
+                # role-specific identity at Job-launch time. Allow the
+                # claim iff the dispatcher's capabilities cover the
+                # target role's required_capabilities. The task-level
+                # capabilities are still enforced by the union check at
+                # the end of this method.
+                if not set(target_role.required_capabilities).issubset(
+                    set(agent.capabilities)
+                ):
+                    return False
         role_required_caps: set = set()
         if agent.role_id is not None:
             try:
@@ -12491,12 +12749,19 @@ class ControlPlane:
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
                 continue
-            if verdict == "rejected":
-                return evidence, []
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
                 problems.append("verdict %s requires worktree_digest sha256" % evidence.id)
                 continue
+            if verdict == "rejected":
+                feedback_problems = rejected_verdict_feedback_problems(manifest)
+                if feedback_problems:
+                    problems.extend(
+                        "verdict %s %s" % (evidence.id, problem)
+                        for problem in feedback_problems
+                    )
+                    continue
+                return evidence, []
             executor_repo = executor_manifest.get("repo")
             if isinstance(executor_repo, dict):
                 repo_problems = self._require_pushed_repo_anchor(manifest)
@@ -12551,8 +12816,6 @@ class ControlPlane:
         manifest = evidence.metadata.get("verification") or {}
         verdict = str(manifest.get("verdict") or "").strip().lower()
         # Fail closed: an unknown/malformed verdict must NOT auto-approve.
-        # (Adopted from Vikaspogu/mac 7b02877; the rejected-requires-feedback
-        # validator from that commit is intentionally left out for now.)
         return verdict if verdict in {"approved", "rejected"} else "rejected"
 
     def _retract_default_review(self, review: Review, actor: str, reason: str) -> None:
@@ -12722,8 +12985,25 @@ class ControlPlane:
         if executor_persona_slug is None:
             executor_persona_slug = self._task_executor_persona_slug(task)
         agent_tenant, agent_persona_slug = self._agent_tenant_and_persona(agent)
-        if task_tenant is not None and (agent_tenant is None or agent_tenant != task_tenant):
-            return "reviewer_wrong_tenant"
+        if task_tenant is not None:
+            if agent_tenant is None:
+                # Headless worker (no hermes_instance_id => no persona
+                # tenant). Persona-boundary tenancy fails closed for these
+                # agents, which would park every tenant-scoped Hermes task
+                # forever in needs_review. Fall back to the hardware
+                # boundary — the same gate the executor path uses
+                # (_agent_available_for) — so a headless reviewer on a
+                # machine whose tenant policy permits the task's tenant
+                # stays eligible, while one on a disallowed machine is
+                # still refused.
+                try:
+                    machine = self.get_machine(agent.machine_id)
+                except NotFoundError:
+                    return "reviewer_wrong_tenant"
+                if not self._machine_allows_tenant(machine, task_tenant):
+                    return "reviewer_wrong_tenant"
+            elif agent_tenant != task_tenant:
+                return "reviewer_wrong_tenant"
         if (
             executor_persona_slug is not None
             and agent_persona_slug is not None
@@ -12831,6 +13111,33 @@ class ControlPlane:
             beads_id = acc_metadata.get("beads_id")
             if isinstance(beads_id, str) and beads_id.strip():
                 return "beads://%s" % beads_id.strip()
+        # Fall back to the task's registered project metadata so an
+        # operator can configure a single publication target per project
+        # (e.g. for autonomous coding tasks that all complete the same
+        # way) instead of stamping every task individually.
+        project_target = self._project_publication_target(task)
+        if project_target:
+            return project_target
+        return None
+
+    def _project_publication_target(self, task: Task) -> Optional[str]:
+        project_name = str(getattr(task, "project", "") or "").strip()
+        if not project_name:
+            return None
+        try:
+            record = self.get_project_record(project_name)
+        except NotFoundError:
+            return None
+        meta = ensure_json_object(record.metadata)
+        for key in ("publication_target", "publish_target"):
+            value = meta.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        publication = meta.get("publication")
+        if isinstance(publication, dict):
+            target = publication.get("target")
+            if isinstance(target, str) and target.strip():
+                return target.strip()
         return None
 
     def _record_default_review_observation(

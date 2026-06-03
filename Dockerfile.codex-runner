@@ -1,0 +1,32 @@
+ARG MAC_BASE_IMAGE=gitea.omv.a113.casa/vpogu/mac:bea1534a50d5
+FROM ${MAC_BASE_IMAGE}
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git ca-certificates curl nodejs npm && \
+    npm install -g @openai/codex && \
+    npm install -g opencode-ai && \
+    npm cache clean --force && \
+    apt-get purge -y npm && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | \
+        UV_INSTALL_DIR=/usr/local/bin sh && \
+    chmod a+rx /usr/local/bin/uv* 2>/dev/null || true
+
+COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
+COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review
+COPY deploy/codex-runner/mac-task-executor-opencode-build /usr/local/bin/mac-task-executor-opencode-build
+COPY deploy/codex-runner/mac-task-executor-opencode-review /usr/local/bin/mac-task-executor-opencode-review
+RUN chmod a+rx /usr/local/bin/mac-task-executor-codex \
+               /usr/local/bin/mac-task-executor-codex-review \
+               /usr/local/bin/mac-task-executor-opencode-build \
+               /usr/local/bin/mac-task-executor-opencode-review
+
+USER mac
+WORKDIR /var/lib/mac
+
+CMD ["sleep", "infinity"]

@@ -27,7 +27,7 @@ from mac.agentbus_control import (
 from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, default_db_path
+from mac.store import SQLiteStore, StoreError, make_store_from_env
 
 _log = logging.getLogger(__name__)
 
@@ -554,6 +554,13 @@ class LeaseRenewRequest(BaseModel):
     lease_seconds: int = 900
 
 
+class LeaseDelegateRequest(BaseModel):
+    # PR2c: the OWNER agent_id (caller) — must match lease.agent_id.
+    agent_id: str
+    # The role/worker agent to which lifecycle authorship is delegated.
+    to_agent_id: str
+
+
 class DispatchRequest(BaseModel):
     lease_seconds: int = 900
     limit: int = 100
@@ -566,6 +573,7 @@ class AgentClaimNextRequest(BaseModel):
     required_metadata: Dict[str, Any] = Field(default_factory=dict)
     require_canary: bool = False
     dry_run: bool = False
+    capabilities: List[str] = Field(default_factory=list)
 
 
 class CommandAuditCreate(BaseModel):
@@ -697,6 +705,19 @@ class PublicationCreate(BaseModel):
     target: str
     created_by: str
     evidence_id: Optional[str] = None
+
+
+class IntegrationFindingCreate(BaseModel):
+    source_kind: str
+    source_id: str
+    finding_type: str
+    title: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    severity: str = "info"
+    fingerprint: Optional[str] = None
+    notify: bool = False
+    channels: Optional[List[str]] = None
+    notification_body: Optional[str] = None
 
 
 class SecretCreate(BaseModel):
@@ -1882,9 +1903,15 @@ def create_app(
     auth_tokens: Optional[AuthTokenMapping] = None,
     record_http_observations: Optional[bool] = None,
 ) -> FastAPI:
-    cp = control_plane or ControlPlane(
-        SQLiteStore(db_path or default_db_path())
-    )
+    # db_path is the explicit SQLite override (e.g. for tests). When it is
+    # None, fall through to make_store_from_env so MAC_DATABASE_URL can
+    # switch the API process to Postgres for the stateless mac-api topology.
+    if control_plane is not None:
+        cp = control_plane
+    elif db_path is not None:
+        cp = ControlPlane(SQLiteStore(db_path))
+    else:
+        cp = ControlPlane(make_store_from_env())
     tokens: Dict[str, TokenPrincipal] = (
         _normalize_auth_tokens(auth_tokens)
         if auth_tokens is not None
@@ -1959,7 +1986,7 @@ def create_app(
                 level=level,
                 detail=detail,
             )
-        except (MACError, sqlite3.Error):
+        except (MACError, StoreError, sqlite3.Error):
             _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
 
     @app.middleware("http")
@@ -2372,6 +2399,15 @@ def create_app(
     @app.post("/leases/{lease_id}/renew")
     def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:
         return cp.renew_lease(lease_id, body.agent_id, body.lease_seconds).to_dict()
+
+    @app.post("/leases/{lease_id}/delegate")
+    def delegate_lease(lease_id: str, body: LeaseDelegateRequest) -> Dict[str, Any]:
+        # PR2c (spec §6.3, Option B): the dispatcher holds the lease but
+        # the role agent spawned in the task Job authors start /
+        # submit_for_review / evidence. This endpoint records the
+        # delegation so those calls accept the delegate as a valid
+        # actor. Owner remains the sole renew/release authority.
+        return cp.delegate_lease(lease_id, body.agent_id, body.to_agent_id).to_dict()
 
     @app.post("/tasks/{task_id}/start")
     def start_task(
@@ -2996,6 +3032,7 @@ def create_app(
             required_metadata=body.required_metadata,
             require_canary=body.require_canary,
             dry_run=body.dry_run,
+            capabilities=body.capabilities,
             sync_beads=False,
         )
         if assignment and not body.dry_run:
@@ -3205,6 +3242,26 @@ def create_app(
                 limit=limit,
             )
         ]
+
+    @app.post("/integrations/findings")
+    def record_integration_finding_endpoint(
+        body: IntegrationFindingCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        finding = cp.record_integration_finding(
+            body.source_kind,
+            body.source_id,
+            body.finding_type,
+            body.title,
+            body.detail,
+            severity=body.severity,
+            fingerprint=body.fingerprint,
+            notify=body.notify,
+            channels=body.channels,
+            notification_body=body.notification_body,
+        )
+        return finding.to_dict()
 
     @app.get("/integrations/findings")
     def list_integration_findings(

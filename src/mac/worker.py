@@ -426,6 +426,16 @@ class MacWorker:
 
         task = assignment["task"]
         lease = assignment["lease"]
+        return self.execute_assignment(task, lease)
+
+    def execute_assignment(self, task: JsonDict, lease: JsonDict) -> WorkerRunResult:
+        """Execute a task whose lease is already claimed.
+
+        Caller is responsible for the claim; this method only does
+        start -> prepare -> execute -> record -> publish -> submit-for-review.
+        Suitable for K8s-mode where the runner has pre-claimed the task
+        and the Job pod just needs to execute it.
+        """
         task_id = task["id"]
         self._observe_log(
             "worker.task_claimed",
@@ -1300,15 +1310,39 @@ class MacWorker:
         origin = _repository_task_origin(task)
         if origin is None:
             return None
-        source = self._resolve_repository_source_path(origin)
-        if not source.exists():
-            raise RuntimeError(
-                "repository source path does not exist: %s; tried %s"
-                % (
-                    origin.get("repository_path"),
-                    ", ".join(str(candidate) for candidate in _repository_source_candidates(origin, self.self_update_repo)),
+        # K8s mode: when there is no usable local source on disk, fall
+        # back to ``git clone <remote>`` into the task workspace. The
+        # local-path branch is preferred when both are available (host
+        # workers continue to use their pre-existing checkout). See
+        # CLAUDE.md fork-audit notes for context.
+        repository_path = str(origin.get("repository_path") or "").strip()
+        local_source: Optional[Path] = None
+        if repository_path:
+            candidate = self._resolve_repository_source_path(origin)
+            if candidate.exists():
+                local_source = candidate
+        remote_url = self._resolve_repository_remote_url(origin)
+        if local_source is None:
+            if remote_url:
+                return self._prepare_repository_worktree_from_remote(
+                    task, lease, task_dir, origin, remote_url
                 )
+            if repository_path:
+                raise RuntimeError(
+                    "repository source path does not exist: %s; tried %s"
+                    % (
+                        repository_path,
+                        ", ".join(
+                            str(c)
+                            for c in _repository_source_candidates(origin, self.self_update_repo)
+                        ),
+                    )
+                )
+            raise RuntimeError(
+                "repository task origin has neither a local repository_path "
+                "nor a repository_url (or MAC_TASK_REPO_URL env)"
             )
+        source = local_source
 
         top_level = _run_git(source, ["rev-parse", "--show-toplevel"])
         if top_level.returncode != 0 or not top_level.stdout.strip():
@@ -1401,6 +1435,99 @@ class MacWorker:
             if candidate.exists():
                 return candidate
         return Path(str(origin.get("repository_path") or "")).expanduser()
+
+    def _resolve_repository_remote_url(self, origin: JsonDict) -> str:
+        """Return the remote clone URL for the K8s clone path, or "".
+
+        The task ``origin.repository_url`` takes precedence; if the task
+        does not carry one, ``MAC_TASK_REPO_URL`` from the environment is
+        consulted (the K8s Job pod injects this). Empty string means
+        "no remote URL available."""
+        raw = str(origin.get("repository_url") or "").strip()
+        if not raw:
+            raw = os.environ.get("MAC_TASK_REPO_URL", "").strip()
+        if not raw:
+            return ""
+        return _validate_git_remote_url(raw)
+
+    def _prepare_repository_worktree_from_remote(
+        self,
+        task: JsonDict,
+        lease: JsonDict,
+        task_dir: Path,
+        origin: JsonDict,
+        remote_url: str,
+    ) -> JsonDict:
+        """K8s-mode repository preparation: clone the remote into a
+        per-lease directory and check out a task branch.
+
+        This produces the same ``mac.repository_task_worktree.v1`` context
+        shape as the local-worktree branch so downstream evidence,
+        ``_load_repository_context`` and verification stay unchanged.
+        """
+        worktree_dir = task_dir / (
+            "repo-" + _safe_path_component(str(lease.get("id") or "lease"))
+        )
+        if worktree_dir.exists():
+            shutil.rmtree(worktree_dir)
+        worktree_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        default_branch = str(origin.get("default_branch") or "").strip()
+        if not default_branch:
+            default_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
+        if not default_branch:
+            default_branch = "main"
+        _validate_git_ref(default_branch)
+
+        auth_url = _inject_git_remote_auth(remote_url)
+        clone_args = ["clone", "--depth=1", "--branch", default_branch, "--", auth_url, str(worktree_dir)]
+        # ``git -C`` requires an existing directory; clone runs from the
+        # parent so we use a separate code path (the helper expects the
+        # repo arg to be cwd, so call git directly here).
+        clone = _run_git_in(task_dir, clone_args)
+        if clone.returncode != 0:
+            raise RuntimeError(
+                "could not clone repository for K8s task: %s"
+                % ((clone.stderr or clone.stdout or "").strip() or remote_url)
+            )
+
+        head = _run_git(worktree_dir, ["rev-parse", "HEAD"])
+        if head.returncode != 0 or not head.stdout.strip():
+            raise RuntimeError(
+                "could not resolve cloned repository HEAD: %s"
+                % ((head.stderr or head.stdout or "").strip() or worktree_dir)
+            )
+        base_sha = head.stdout.strip()
+        branch = _task_worktree_branch(
+            self.agent_id, str(task.get("id") or ""), str(lease.get("id") or "")
+        )
+        checkout = _run_git(worktree_dir, ["checkout", "-b", branch])
+        if checkout.returncode != 0:
+            raise RuntimeError(
+                "could not create task branch in cloned repository: %s"
+                % ((checkout.stderr or checkout.stdout or "").strip() or branch)
+            )
+
+        # Mirror the local-worktree context shape exactly; downstream
+        # readers (evidence validators, _load_repository_context) treat
+        # the K8s clone identically to a host-mode git worktree.
+        context: JsonDict = {
+            "schema": "mac.repository_task_worktree.v1",
+            "checkout_policy": "k8s_task_owned_clone",
+            "repository_declared_path": str(origin.get("repository_path") or ""),
+            "repository_source_path": str(worktree_dir),
+            "repository_worktree": str(worktree_dir),
+            "repository_branch": branch,
+            "repository_base_sha": base_sha,
+            "repository_origin_remote": remote_url,
+        }
+        self._observe_log(
+            "worker.repository.worktree_prepared",
+            subject_type="task",
+            subject_id=str(task.get("id") or ""),
+            detail=context,
+        )
+        return context
 
     def _prepare_review_workspace(
         self,
@@ -2118,7 +2245,11 @@ def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
     if not isinstance(origin, dict):
         return None
     repository_path = str(origin.get("repository_path") or "").strip()
-    if not repository_path:
+    repository_url = str(origin.get("repository_url") or "").strip()
+    # mac-k8s clone path: allow tasks that ship only a remote URL (the
+    # Job pod has no local source). Either a local path or a remote URL
+    # is now sufficient to identify a repository-mode task.
+    if not repository_path and not repository_url:
         return None
 
     # Dirty-source remediation tasks are the one explicit exception: their
@@ -2629,6 +2760,32 @@ def _run_git(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
         timeout=timeout,
         check=False,
     )
+
+
+def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
+    """Run ``git <args>`` with ``cwd`` as the working directory.
+
+    Used for clone where the target directory does not yet exist (so
+    ``git -C <target>`` is invalid). Mirrors ``_run_git`` for timeout
+    + capture behaviour so the K8s clone path is testable via the
+    same monkeypatch surface."""
+    try:
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))
+    except ValueError:
+        timeout = 120.0
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _inject_git_remote_auth(url: str) -> str:
+    from mac.gitops import inject_git_remote_auth as _impl
+    return _impl(url)
 
 
 def _stable_id(prefix: str, value: str) -> str:

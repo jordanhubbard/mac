@@ -1,0 +1,123 @@
+name: Build and Push Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Poll-build for the GitHub->Gitea pull-mirror. A mirror sync does not
+    # emit a push event, so cron picks up the freshly-synced default-branch
+    # HEAD and the change-guard below ensures we only build a given commit
+    # once. Keep this interval >= the repo's mirror sync interval.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ${{ gitea.server_url }}
+  IMAGE_NAME: mac
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: pip install uv --break-system-packages
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run API tests
+        run: uv run --extra dev pytest -q --tb=short -m api tests/
+
+      - name: Run CLI tests
+        run: uv run --extra dev pytest -q --tb=short -m cli tests/
+
+      - name: Run UI tests
+        run: uv run --extra dev pytest -q --tb=short -m ui tests/
+
+      - name: Run full regression suite
+        run: uv run --extra dev pytest -q --tb=short
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    # Don't push images for pull_request validation runs.
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to Gitea Container Registry
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "${{ env.REGISTRY }}" -u "${{ gitea.actor }}" --password-stdin
+
+      - name: Change-guard — skip if this commit was already built
+        id: guard
+        run: |
+          REGISTRY_HOST=$(echo "$REGISTRY" | sed 's|https://||;s|http://||')
+          OWNER="${{ gitea.repository_owner }}"
+          IMAGE="${REGISTRY_HOST}/${OWNER}/${IMAGE_NAME}"
+          SHA="${{ gitea.sha }}"
+          SHA_TAG="sha-${SHA}"
+          # Each successful build pushes an immutable sha-<full-sha> tag.
+          # If it already exists in the registry, this commit is built — skip.
+          # Always build on tag pushes (releases) and manual dispatch.
+          if [ "${{ gitea.event_name }}" = "schedule" ]; then
+            if docker manifest inspect "${IMAGE}:${SHA_TAG}" >/dev/null 2>&1; then
+              echo "Commit ${SHA} already built (${IMAGE}:${SHA_TAG} exists) — skipping."
+              echo "build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New commit ${SHA} — will build."
+              echo "build=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Event ${{ gitea.event_name }} — building unconditionally."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image
+        if: steps.guard.outputs.build == 'true'
+        run: |
+          REGISTRY_HOST=$(echo "$REGISTRY" | sed 's|https://||;s|http://||')
+          SHA="${{ gitea.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          OWNER="${{ gitea.repository_owner }}"
+          IMAGE="${REGISTRY_HOST}/${OWNER}/${IMAGE_NAME}"
+          TS_TAG="$(date -u +%Y%m%d%H%M%S)-${SHORT_SHA}"
+          SHA_TAG="sha-${SHA}"
+
+          echo "Building ${IMAGE} from Dockerfile"
+          docker build \
+            -f Dockerfile \
+            --label "org.opencontainers.image.source=${{ gitea.server_url }}/${{ gitea.repository }}" \
+            --label "org.opencontainers.image.revision=${{ gitea.sha }}" \
+            -t "mac-build" \
+            .
+
+          if [ "${{ gitea.ref }}" = "refs/heads/main" ] || [ "${{ gitea.event_name }}" = "schedule" ] || [ "${{ gitea.event_name }}" = "workflow_dispatch" ]; then
+            docker tag "mac-build" "${IMAGE}:${TS_TAG}"
+            docker push "${IMAGE}:${TS_TAG}"
+            docker tag "mac-build" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+            # Immutable per-commit tag — read by the change-guard above.
+            docker tag "mac-build" "${IMAGE}:${SHA_TAG}"
+            docker push "${IMAGE}:${SHA_TAG}"
+            echo "Pushed ${IMAGE}:${TS_TAG}, :latest, and :${SHA_TAG}"
+          fi
+
+          if echo "${{ gitea.ref }}" | grep -qE '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION=$(echo "${{ gitea.ref }}" | sed 's|refs/tags/v||')
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+            for T in "$VERSION" "$MINOR" "$MAJOR"; do
+              docker tag "mac-build" "${IMAGE}:${T}"
+              docker push "${IMAGE}:${T}"
+            done
+            echo "Pushed semver tags: ${VERSION}, ${MINOR}, ${MAJOR}"
+          fi
