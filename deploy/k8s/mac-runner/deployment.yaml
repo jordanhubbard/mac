@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mac-k8s-runner
+  namespace: mac
+  labels:
+    app.kubernetes.io/name: mac-k8s-runner
+    app.kubernetes.io/component: runner
+spec:
+  # Multi-replica is safe: claim-next is atomic at the database layer
+  # (uniq_leases_active_per_task partial unique index). Two runners
+  # racing for the same task is a no-op.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mac-k8s-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mac-k8s-runner
+        app.kubernetes.io/component: runner
+    spec:
+      serviceAccountName: mac-k8s-runner
+      automountServiceAccountToken: true   # needed for in-cluster K8s API
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mac-k8s-runner
+          # Same mac image as mac-api; selection is via console-script.
+          image: ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME
+          imagePullPolicy: IfNotPresent
+          command: ["mac-k8s-runner"]
+          env:
+            - name: MAC_URL
+              value: "http://mac-api.mac.svc:80"
+            - name: MAC_AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name   # deterministic per-pod id
+            - name: MAC_RUNNER_NAMESPACE
+              value: "mac"
+            - name: MAC_RUNNER_TASK_SERVICE_ACCOUNT
+              value: "mac-task-runner"
+            - name: MAC_RUNNER_DEFAULT_IMAGE
+              value: "ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME"
+            - name: MAC_RUNNER_POLL_INTERVAL_SECONDS
+              value: "5"
+            - name: MAC_RUNNER_ACTIVE_DEADLINE_SECONDS
+              value: "1800"
+            - name: MAC_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mac-api-config
+                  key: MAC_WORKER_TOKEN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "mac-k8s-runner"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: mac-k8s-runner

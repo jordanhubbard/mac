@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mac-api
+  namespace: mac
+  labels:
+    app.kubernetes.io/name: mac-api
+    app.kubernetes.io/component: control-plane
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mac-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

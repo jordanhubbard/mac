@@ -1100,6 +1100,57 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
+def test_default_review_workflow_falls_back_to_project_publication_target(cp):
+    """A task with no publication_target of its own must inherit the
+    target from its registered project, so autonomous tasks complete
+    instead of stalling in REVIEWING (waiting_for_publication_target)."""
+    from tests.conftest import submit_review_verdict
+
+    cp.create_project(
+        "demo-proj",
+        metadata={"publication_target": "test://project-publish"},
+    )
+    worker = register_agent(cp, "worker", ["ops"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Plan project",
+        required_capabilities=["ops"],
+        project="demo-proj",
+        metadata={},  # no publication_target on the task itself
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Work produced",
+            "result": "Edited files and opened MR.",
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://operator-result",
+        "Work produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    first = cp.advance_default_review_workflow(task.id)
+    assert first["status"] == "waiting_for_reviewer_verdict"
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    publications = cp.list_publications(task.id)
+    assert publications[-1].target == "test://project-publish"
+
+
 def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
     from tests.conftest import submit_review_verdict
 
@@ -1213,7 +1264,7 @@ def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
 
     first_review = cp.advance_default_review_workflow(task.id)
     assert first_review["reviewer_agent_id"] == beta.id
-    submit_review_verdict(cp, task.id, beta.id, first_evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, beta.id, first_evidence.id, verdict="rejected", feedback="Rejected.")
     rejected = cp.advance_default_review_workflow(task.id)
     assert rejected["status"] == "review_not_approved"
     assert cp.get_task(task.id).state == TaskState.OPEN.value
@@ -2159,6 +2210,83 @@ def test_default_review_refuses_reviewer_from_different_tenant(cp):
     assert cp.list_reviews(task.id) == []
 
 
+def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(cp):
+    """mac: a headless K8s reviewer (no hermes_instance_id, so no persona
+    tenant) must still be drafted for a tenant-scoped task when its
+    machine's tenant policy permits that tenant. Persona-boundary
+    tenancy fails closed for headless workers; the hardware boundary
+    (_machine_allows_tenant) is the correct gate, mirroring how the
+    executor path admits the same workers. Without this, every Hermes
+    (tenant-scoped) task parks forever in needs_review because no
+    souled reviewer exists in the fleet."""
+    tenant = cp.register_tenant("personal", tenant_id="personal")
+    # Shared machine (default tenant policy => allows any tenant).
+    machine = cp.register_machine("k8s-shared-host", resources={"cpu": 4, "memory_gb": 8})
+    worker = cp.register_agent(machine.id, "worker", capabilities=["python"])
+    # Headless reviewer: no hermes_instance_id => agent_tenant is None.
+    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
+    assert reviewer.hermes_instance_id is None
+
+    task = cp.create_task(
+        "tenant-scoped-work",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://headless",
+            "origin": {"tenant_id": tenant.id},
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+    # The headless reviewer on a tenant-permitting machine must be drafted.
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert len(cp.list_reviews(task.id)) == 1
+
+
+def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(cp):
+    """mac: the hardware-boundary tenancy gate must still fail closed.
+    A headless reviewer whose machine's tenant policy does NOT permit
+    the task's tenant must not be drafted — otherwise the fallback would
+    leak cross-tenant review onto disallowed hardware."""
+    tenant = cp.register_tenant("personal", tenant_id="personal")
+    worker_machine = cp.register_machine("worker-host", resources={"cpu": 4, "memory_gb": 8})
+    # Reviewer machine is private to a different tenant => denies "personal".
+    reviewer_machine = cp.register_machine(
+        "private-host",
+        resources={"cpu": 4, "memory_gb": 8},
+        labels={"tenant_policy": {"mode": "private", "tenant_ids": ["other-tenant"]}},
+    )
+    worker = cp.register_agent(worker_machine.id, "worker", capabilities=["python"])
+    reviewer = cp.register_agent(reviewer_machine.id, "reviewer", capabilities=["review"])
+    assert reviewer.hermes_instance_id is None
+
+    task = cp.create_task(
+        "tenant-scoped-work",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://denied",
+            "origin": {"tenant_id": tenant.id},
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+    # The only review-capable agent lives on a machine that denies this
+    # tenant — the workflow must refuse to draft it.
+    assert result["status"] == "waiting_for_reviewer"
+    assert cp.list_reviews(task.id) == []
+
+
 def test_renew_lease_refuses_on_transitioning_task(cp):
     """mac-eow: renew_lease must refuse when the underlying task is no
     longer CLAIMED/RUNNING. Previous silent-update behavior was a
@@ -2375,6 +2503,40 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
         row.name == "worker.routing.claimed" and row.subject_id == canary.id
         for row in cp.list_observability(layer="control_plane", limit=20)
     )
+
+
+def test_claim_next_capabilities_filter_narrows_dispatch(cp):
+    """``capabilities=[...]`` lets a worker narrow which tasks it claims
+    below what its agent record's capabilities would otherwise allow.
+
+    Regression for the silent no-op bug where mac-k8s-runner sent
+    ``capabilities`` in the claim-next body but ``AgentClaimNextRequest``
+    didn't declare the field, so pydantic dropped it.
+    """
+    worker = register_agent(cp, "worker", ["python", "review"])
+    python_task = cp.create_task(
+        "python-task", required_capabilities=["python"]
+    )
+    review_task = cp.create_task(
+        "review-task", required_capabilities=["review"]
+    )
+
+    # Narrow to python only — review task must be skipped.
+    claimed = cp.claim_next_for_agent(worker.id, capabilities=["python"])
+    assert claimed is not None
+    assert claimed["task"]["id"] == python_task.id
+
+    # The review task stays open (it was filtered out, not consumed).
+    assert cp.get_task(review_task.id).state == TaskState.OPEN.value
+
+
+def test_claim_next_capabilities_filter_empty_is_noop(cp):
+    """An empty capabilities list does NOT narrow — preserves old
+    behaviour for callers that pass [] or omit the field."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("any", required_capabilities=["python"])
+    claimed = cp.claim_next_for_agent(worker.id, capabilities=[])
+    assert claimed is not None and claimed["task"]["id"] == task.id
 
 
 def test_claim_next_can_defer_beads_claim_side_effects(cp, tmp_path, monkeypatch):
@@ -4888,6 +5050,8 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
         "evidence_type": "review_verdict",
         "verdict": "rejected",
         "reviewed_evidence_id": executor_evidence.id,
+        "worktree_digest": "sha256:" + ("0" * 64),
+        "feedback": "Dirty checkout; not publishable.",
         "repo": {
             "head_sha": "fedcba9876543210fedcba9876543210fedcba98",
             "pushed": False,
@@ -4943,7 +5107,7 @@ def test_rejected_review_verdict_fails_exhausted_task(cp):
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="No more attempts.")
 
     result = cp.advance_default_review_workflow(task.id)
 
@@ -4978,7 +5142,7 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp):
     )
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected")
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="Stale.")
     rejected = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
     assert rejected["status"] == "review_not_approved"
@@ -5822,6 +5986,125 @@ def test_failed_to_open_requeue_resets_attempt_count(cp):
     # Claim must succeed (would raise if attempt_count were still >= max).
     cp.claim_task(task.id, worker.id)
     assert cp.get_task(task.id).attempt_count == 1
+
+
+# ----------------------------------------------------------------------
+# PR2c: lease delegation. The dispatcher (runner) owns the lease, but
+# the role-specialised Job pod is the actor that calls start_task /
+# submit_for_review / add_evidence. delegate_lease records the
+# delegation so the hub accepts the delegate; renew/release stay
+# strictly owner-only.
+# ----------------------------------------------------------------------
+
+
+def _claim_with_delegate(cp):
+    """Set up: a dispatcher claims, then delegates to a separate role agent."""
+    dispatcher = register_agent(cp, "dispatcher", ["python"])
+    delegate = register_agent(cp, "delegate", ["python"])
+    task = cp.create_task("Build widget", required_capabilities=["python"])
+    _task, lease = cp.claim_task(task.id, dispatcher.id)
+    return task, dispatcher, delegate, lease
+
+
+def test_delegate_lease_happy_path(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    updated = cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    assert updated.id == lease.id
+    assert updated.agent_id == dispatcher.id
+    assert updated.delegated_agent_id == delegate.id
+
+
+def test_delegate_lease_rejects_non_owner_caller(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    # Caller claims to be the delegate (or any non-owner) — must be refused.
+    with pytest.raises(AuthorizationError):
+        cp.delegate_lease(lease.id, delegate.id, delegate.id)
+    # And the lease must be unchanged.
+    fresh = cp.get_lease(lease.id)
+    assert fresh.delegated_agent_id is None
+
+
+def test_delegate_lease_rejects_unknown_to_agent_id(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    with pytest.raises(NotFoundError):
+        cp.delegate_lease(lease.id, dispatcher.id, "agent-does-not-exist")
+    fresh = cp.get_lease(lease.id)
+    assert fresh.delegated_agent_id is None
+
+
+def test_start_task_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    # The delegate (not the owner) can now author start_task. Before
+    # PR2c this raised AuthorizationError.
+    started = cp.start_task(task.id, delegate.id)
+    assert started.state == TaskState.RUNNING.value
+
+
+def test_submit_for_review_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    cp.start_task(task.id, delegate.id)
+    # Delegate adds evidence + submits — both must accept the delegate.
+    cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "tests passed",
+        delegate.id,
+        metadata=verified_repo_metadata(cp, delegate.id),
+    )
+    reviewed = cp.submit_for_review(task.id, delegate.id)
+    assert reviewed.state == TaskState.NEEDS_REVIEW.value
+
+
+def test_start_task_still_rejects_unrelated_agent(cp):
+    """Negative: an agent that is neither the owner nor the delegate
+    must still be refused — delegation does not open the door for
+    arbitrary callers."""
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    other = register_agent(cp, "other", ["python"])
+    with pytest.raises(AuthorizationError):
+        cp.start_task(task.id, other.id)
+
+
+def test_add_evidence_accepts_delegated_agent(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    cp.start_task(task.id, delegate.id)
+
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "tests passed",
+        delegate.id,
+        metadata=verified_repo_metadata(cp, delegate.id),
+    )
+
+    assert evidence.created_by == delegate.id
+
+
+def test_add_evidence_rejects_unrelated_agent_on_active_lease(cp):
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    other = register_agent(cp, "other", ["python"])
+
+    with pytest.raises(AuthorizationError):
+        cp.add_evidence(task.id, "test", "artifact://pytest", "tests passed", other.id)
+
+
+def test_renew_and_release_remain_owner_only(cp):
+    """Spec §6.3: renewal + release stay strictly owner-only even
+    after delegation. The delegate may transition state but cannot
+    touch lease lifecycle."""
+    task, dispatcher, delegate, lease = _claim_with_delegate(cp)
+    cp.delegate_lease(lease.id, dispatcher.id, delegate.id)
+    with pytest.raises(AuthorizationError):
+        cp.renew_lease(lease.id, delegate.id)
+    with pytest.raises(AuthorizationError):
+        cp.release_lease(lease.id, delegate.id)
 
 
 def test_release_lease_refuses_to_clobber_after_takeover(cp):
@@ -6968,3 +7251,515 @@ def test_agentbus_enforces_recipient_chunk_size_and_stream_id_shape(cp):
             payload={"blob": "x" * (256 * 1024 + 1)},
         )
     assert cp.read_agentbus_chunks(recipient.id, stream.id) == []
+
+
+def test_create_task_inherits_project_default_role(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task("Fix UI", project="mac")
+
+    assert task.metadata["required_role"] == "python-coder-opencode"
+    assert task.required_capabilities == []
+
+
+def test_create_task_preserves_explicit_required_role(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.roles.create_role(
+        "custom-coder",
+        "Custom Coder",
+        "Custom coding role",
+        "You are a custom coder.",
+        "ic",
+        default_capabilities=["python"],
+        required_capabilities=["python"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task(
+        "Custom role work",
+        project="mac",
+        metadata={"required_role": "custom-coder"},
+    )
+
+    assert task.metadata["required_role"] == "custom-coder"
+
+
+def test_create_task_rejects_unknown_project_default_role(cp):
+    import pytest
+    from mac.models import ValidationError
+
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    with pytest.raises(ValidationError, match="unknown project default role"):
+        cp.create_task("Unroutable", project="mac")
+
+
+def test_update_task_without_routing_change_tolerates_later_bad_project_default(cp):
+    task = cp.create_task("work", project="mac", metadata={"required_role": "custom"})
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    updated = cp.update_task(task.id, title="renamed")
+
+    assert updated.title == "renamed"
+    assert updated.metadata["required_role"] == "custom"
+
+
+def test_update_task_rejects_newly_applied_unknown_project_default(cp):
+    import pytest
+    from mac.models import ValidationError
+
+    task = cp.create_task("work")
+    cp.create_project("mac", metadata={"task_defaults": {"role": "missing-role"}})
+
+    with pytest.raises(ValidationError, match="unknown project default role"):
+        cp.update_task(task.id, project="mac")
+
+
+def test_update_task_uses_explicit_metadata_when_applying_project_defaults(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+    task = cp.create_task("work")
+
+    updated = cp.update_task(task.id, project="mac", metadata={"source": "explicit"})
+
+    assert updated.metadata["source"] == "explicit"
+    assert updated.metadata["required_role"] == "python-coder-opencode"
+
+
+def test_verdict_value_unknown_fails_closed(cp):
+    from mac.models import Evidence
+
+    evidence = Evidence(
+        "ev_test",
+        "task_test",
+        "review",
+        "artifact://verdict",
+        "bad verdict",
+        None,
+        {"verification": {"verdict": "needs_changes"}},
+        "reviewer",
+        "2026-01-01T00:00:00+00:00",
+    )
+
+    assert cp._verdict_value(evidence) == "rejected"
+
+
+def test_review_verdict_validator_rejected_requires_feedback():
+    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+
+    manifest = VerificationManifest.parse(
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": "rejected",
+            "reviewed_evidence_id": "ev_executor",
+            "worktree_digest": "sha256:" + "0" * 64,
+        }
+    )
+    problems = ReviewVerdictValidator().validate(
+        manifest,
+        EvidenceValidationContext(passed_check_count=lambda _m: 0),
+    )
+
+    assert "rejected review_verdict requires feedback, findings, or summary" in problems
+
+
+def test_review_verdict_validator_rejected_accepts_feedback():
+    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+
+    manifest = VerificationManifest.parse(
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": "rejected",
+            "reviewed_evidence_id": "ev_executor",
+            "worktree_digest": "sha256:" + "0" * 64,
+            "feedback": "Fix the failing contract test.",
+        }
+    )
+    problems = ReviewVerdictValidator().validate(
+        manifest,
+        EvidenceValidationContext(passed_check_count=lambda _m: 0),
+    )
+
+    assert problems == []
+
+
+def _add_signed_repo_evidence(cp, task_id, agent_id):
+    return cp.add_evidence(
+        task_id,
+        "log",
+        "artifact://repo-change",
+        "repo changed",
+        agent_id,
+        metadata=verified_repo_metadata(cp, agent_id),
+    )
+
+
+def test_find_review_verdict_rejected_requires_digest(cp):
+    from mac.services import sign_verification_manifest
+
+    task = cp.create_task("work", required_capabilities=["python"])
+    executor = register_agent(cp, "executor", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
+    evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
+    key = cp._agent_attestation_key(reviewer.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "rejected",
+        "reviewed_evidence_id": evidence.id,
+        "feedback": "Needs changes.",
+        "signed_by": reviewer.id,
+    }
+    manifest["signature"] = sign_verification_manifest(key, manifest)
+    cp.add_evidence(
+        task.id,
+        "review",
+        "artifact://verdict",
+        "rejected",
+        reviewer.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+
+    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+
+    assert found is None
+    assert any("worktree_digest" in problem for problem in problems)
+
+
+def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
+    from mac.services import sign_verification_manifest
+
+    task = cp.create_task("work", required_capabilities=["python"])
+    executor = register_agent(cp, "executor", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
+    evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
+    key = cp._agent_attestation_key(reviewer.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "rejected",
+        "reviewed_evidence_id": evidence.id,
+        "worktree_digest": "sha256:" + "0" * 64,
+        "feedback": "Branch is not publishable; fix the tests.",
+        "signed_by": reviewer.id,
+    }
+    manifest["signature"] = sign_verification_manifest(key, manifest)
+    verdict = cp.add_evidence(
+        task.id,
+        "review",
+        "artifact://verdict",
+        "rejected",
+        reviewer.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+
+    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+
+    assert found is not None
+    assert found.id == verdict.id
+    assert problems == []
+
+
+def test_rejected_review_persists_feedback_and_reopens(cp):
+    from tests.conftest import submit_review_verdict
+    from mac.models import ReviewStatus, TaskState
+
+    task = cp.create_task("work", required_capabilities=["python"], max_attempts=3)
+    executor = register_agent(cp, "executor", capabilities=["python"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change",
+        "repo changed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        verdict="rejected",
+        feedback="Fix the failing contract test.",
+    )
+
+    cp.submit_review(review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=verdict_id)
+    updated = cp.get_task(task.id)
+
+    assert updated.state == "open"
+    latest = updated.metadata["review_feedback"]["latest"]
+    assert latest["review_id"] == review.id
+    assert latest["verdict_evidence_id"] == verdict_id
+    assert latest["feedback"] == "Fix the failing contract test."
+
+
+def test_project_task_review_reject_retry_approve_publish_loop(cp):
+    from tests.conftest import submit_review_verdict
+    from mac.models import ReviewStatus, TaskState
+
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {"role": "python-coder-opencode"},
+            "publication_target": "gitea://merge-request",
+        },
+    )
+    executor = register_agent(cp, "executor", capabilities=["python", "ops"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
+
+    task = cp.create_task("Fix task UI", project="mac", max_attempts=3)
+    assert task.metadata["required_role"] == "python-coder-opencode"
+
+    # First attempt: executor works, reviewer rejects
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    first_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change-1",
+        "repo changed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    first_review = cp.request_review(task.id, reviewer.id)
+    rejected_verdict = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        first_evidence.id,
+        verdict="rejected",
+        feedback="Fix layout overflow on the task cards.",
+    )
+    cp.submit_review(first_review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=rejected_verdict)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == "open"
+    assert reopened.metadata["review_feedback"]["latest"]["feedback"] == "Fix layout overflow on the task cards."
+
+    # Second attempt: executor addresses feedback, reviewer approves
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    second_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repo-change-2",
+        "repo changed after feedback",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    second_review = cp.request_review(task.id, reviewer.id)
+    approved_verdict = submit_review_verdict(cp, task.id, reviewer.id, second_evidence.id)
+    cp.submit_review(second_review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=approved_verdict)
+
+    publication = cp.publish_task(task.id, "gitea://merge-request", reviewer.id, evidence_id=second_evidence.id)
+    completed = cp.get_task(task.id)
+
+    assert publication.target == "gitea://merge-request"
+    assert completed.state == "completed"
+
+
+def test_create_task_filters_disallowed_capabilities_to_metadata(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "Fix metadata JSON textbox in Projects UI",
+        project="mac",
+        required_capabilities=["typescript", "python"],
+    )
+
+    assert task.required_capabilities == ["python"]
+    assert task.metadata["required_role"] == "python-coder-opencode"
+    assert task.metadata["domain_capabilities"] == ["typescript"]
+    policy = task.metadata["capability_policy"]
+    assert policy["source"] == "project.task_defaults.allowed_capabilities"
+    assert policy["allowed"] == ["python", "ops"]
+    assert policy["accepted"] == ["python"]
+    assert policy["filtered"] == ["typescript"]
+
+
+def test_create_task_without_allowed_capabilities_preserves_caps(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={"task_defaults": {"role": "python-coder-opencode"}},
+    )
+
+    task = cp.create_task(
+        "Legacy capability task",
+        project="mac",
+        required_capabilities=["typescript"],
+    )
+
+    assert task.required_capabilities == ["typescript"]
+    assert "domain_capabilities" not in task.metadata
+    assert "capability_policy" not in task.metadata
+
+
+def test_create_task_all_allowed_capabilities_no_policy_noise(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "Backend change",
+        project="mac",
+        required_capabilities=["python"],
+    )
+
+    assert task.required_capabilities == ["python"]
+    assert "domain_capabilities" not in task.metadata
+    assert "capability_policy" not in task.metadata
+
+
+def test_create_task_merges_existing_domain_capabilities(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+
+    task = cp.create_task(
+        "UI work",
+        project="mac",
+        required_capabilities=["frontend"],
+        metadata={"domain_capabilities": ["ui"]},
+    )
+
+    assert task.required_capabilities == []
+    assert task.metadata["domain_capabilities"] == ["ui", "frontend"]
+
+
+def test_update_task_filters_disallowed_capabilities(cp):
+    cp.roles.create_role(
+        "python-coder-opencode",
+        "Python Coder Opencode",
+        "Coding role",
+        "You are a Python coder.",
+        "ic",
+        default_capabilities=["python", "ops"],
+        required_capabilities=["python", "ops"],
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "task_defaults": {
+                "role": "python-coder-opencode",
+                "allowed_capabilities": ["python", "ops"],
+            }
+        },
+    )
+    task = cp.create_task("work", project="mac")
+
+    updated = cp.update_task(task.id, required_capabilities=["typescript", "ops"])
+
+    assert updated.required_capabilities == ["ops"]
+    assert updated.metadata["domain_capabilities"] == ["typescript"]

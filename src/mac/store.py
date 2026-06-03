@@ -5,7 +5,83 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Sequence
+from typing import (
+    Any,
+    ContextManager,
+    Iterable,
+    Iterator,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
+
+
+class StoreError(Exception):
+    """Backend-neutral persistence error.
+
+    SQLiteStore continues to surface ``sqlite3.Error`` subclasses directly
+    so existing callers that catch ``sqlite3.IntegrityError`` keep working.
+    Non-SQLite backends (e.g. PostgresStore) wrap their driver-native
+    errors in ``StoreError``. Code that must handle either backend should
+    catch ``(StoreError, sqlite3.Error)``.
+    """
+
+
+@runtime_checkable
+class StoreConnection(Protocol):
+    """Connection-like object yielded by ``Store.transaction()``."""
+
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Any: ...
+
+
+@runtime_checkable
+class Store(Protocol):
+    """Backend-agnostic persistence interface used by the control plane.
+
+    Implementations accept SQL written in SQLite dialect. Non-SQLite
+    backends translate placeholders and dialect-specific functions
+    internally so service-layer SQL stays SQLite-shaped across the ~50
+    service modules.
+    """
+
+    path: str
+
+    def close(self) -> None: ...
+    def transaction(self) -> ContextManager[StoreConnection]: ...
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Any: ...
+    def executemany(
+        self, sql: str, params: Iterable[Sequence[Any]]
+    ) -> Any: ...
+    def query_one(
+        self, sql: str, params: Sequence[Any] = ()
+    ) -> Optional[Any]: ...
+    def query_all(
+        self, sql: str, params: Sequence[Any] = ()
+    ) -> list: ...
+
+
+def make_store_from_env(
+    sqlite_path: Optional[str] = None,
+) -> "Store":
+    """Backend-selecting store factory.
+
+    Returns a `PostgresStore` when ``MAC_DATABASE_URL`` is set to a
+    ``postgres://`` or ``postgresql://`` DSN; otherwise a `SQLiteStore`
+    at ``sqlite_path`` (falling back to ``MAC_DB`` / `default_db_path()`).
+    The Postgres backend auto-applies the bundled schema on first
+    construction so a fresh CNPG cluster comes up ready; SQLite already
+    runs `_initialize` from its constructor for the same effect.
+    """
+    dsn = os.environ.get("MAC_DATABASE_URL", "").strip()
+    if dsn and dsn.startswith(("postgres://", "postgresql://")):
+        from mac.store_postgres import PostgresStore
+
+        pool_size = int(os.environ.get("MAC_PG_POOL_SIZE", "10") or "10")
+        store = PostgresStore(dsn, pool_size=pool_size)
+        store.initialize()
+        return store
+    return SQLiteStore(sqlite_path)
 
 
 def default_db_path() -> str:
@@ -258,7 +334,12 @@ class SQLiteStore:
                     expires_at TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    -- PR2c (spec §6.3, Option B): dispatcher (lease owner)
+                    -- may delegate lifecycle authorship to the role agent
+                    -- spawned in the task Job. NULL = no delegation; the
+                    -- owner is the sole authoriser.
+                    delegated_agent_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_leases_task_status
                     ON leases (task_id, status);
@@ -1148,6 +1229,9 @@ class SQLiteStore:
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")
         self._ensure_column("tasks", "workflow_run_id", "workflow_run_id TEXT")
         self._ensure_column("tasks", "workflow_node_key", "workflow_node_key TEXT")
+        # PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
+        # lifecycle authorship to the role agent spawned in the task Job.
+        self._ensure_column("leases", "delegated_agent_id", "delegated_agent_id TEXT")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}
