@@ -837,6 +837,28 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert script.count("\n  escrow_router_provider_keys\n") == 3
 
 
+def test_network_none_spoke_uses_tunnel_forwarded_service_ports():
+    # gketun-02: cross-pod service ports are blocked under network=none, so a spoke
+    # must reach hub Qdrant/Firecrawl via the reverse tunnel's localhost forwards
+    # (16333/13002), not the hub FQDN.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert (
+        'if [ "$NETWORK_PROVIDER" = "none" ] && [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then'
+        in script
+    )
+    assert 'QDRANT_URL_CONFIGURED="http://127.0.0.1:16333"' in script
+    assert 'FIRECRAWL_URL_CONFIGURED="http://127.0.0.1:13002"' in script
+
+
+def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
+    # gketun-01: install_reverse_tunnel_on_hub runs before the spoke authorizes the
+    # hub key, so the tunnel program must keep retrying instead of going FATAL after
+    # the default 3 attempts.
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    fn = script.split("install_reverse_tunnel_on_hub() {", 1)[1].split("\nuses_direct_mesh_hub", 1)[0]
+    assert "startretries=1000" in fn
+
+
 def test_setup_fleet_build_router_provider_spec():
     # The wizard wires the in-mac router from the providers it collects, using the
     # plain env-var key form the router resolves at use (no vault escrow needed).
