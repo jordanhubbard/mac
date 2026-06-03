@@ -950,6 +950,16 @@ FIRECRAWL_REQUIRE="1"
 FIRECRAWL_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_BIND_ADDR:-}"
 FIRECRAWL_PORT_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_PORT:-3002}"
 NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"
+# gketun-02: network=none spokes reach hub-managed shared services through the
+# reverse tunnel's localhost forwards (install_reverse_tunnel_on_hub:
+# -R 127.0.0.1:16333:hub:6333, -R 127.0.0.1:13002:hub:3002), NOT the hub FQDN —
+# cross-pod service ports are typically blocked (only port 22 is), which is the
+# whole reason the SSH tunnel exists. Mirror MAC_HUB_URL's 127.0.0.1:18789
+# convention so the agent self-test + runtime hit the tunnel-forwarded ports.
+if [ "$NETWORK_PROVIDER" = "none" ] && [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then
+  QDRANT_URL_CONFIGURED="http://127.0.0.1:16333"
+  FIRECRAWL_URL_CONFIGURED="http://127.0.0.1:13002"
+fi
 NETWORK_INSTALL="${MAC_DEPLOY_NETWORK_INSTALL:-auto}"
 NETWORK_HOSTNAME_PREFIX="${MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX:-}"
 TAILSCALE_AUTH_KEY_ENV="${MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV:-MAC_DEPLOY_TAILSCALE_AUTH_KEY}"
@@ -4843,6 +4853,11 @@ user=$(whoami)
 autostart=true
 autorestart=true
 startsecs=5
+; gketun-01: this program is (re)installed before the spoke authorizes the hub
+; tunnel key (install runs before deploy_host), so its first ssh attempts exit
+; immediately. Keep retrying instead of going FATAL after the default 3 tries, so
+; the tunnel auto-establishes once the spoke authorizes the key mid-deploy.
+startretries=1000
 stopwaitsecs=10
 stdout_logfile=$HOME/.mac/logs/tunnel-${worker_agent}.log
 stderr_logfile=$HOME/.mac/logs/tunnel-${worker_agent}.log
