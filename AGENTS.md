@@ -38,6 +38,40 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 
 > Pass multi-line / shell-hostile content (parens, backticks, `$VAR`, newlines) via the `--<name>-file` variants instead of inline quotes. `--<name>-file -` reads from stdin.
 
+## Mandatory Pre-Push Test Gate (all code executor tasks)
+
+Every code-executor worker (`mac-worker-python-coder-opencode` and any
+other code executor) enforces a **mandatory pre-push verification gate**
+before it pushes a branch or opens a Merge Request. The gate is
+implemented at the worker execution layer in
+`deploy/codex-runner/mac-task-executor-opencode-build` so it **cannot be
+bypassed** by task-level instructions or per-project config, and it
+applies uniformly to **every** repo (`mac`, `ivan-plugin`,
+`hermes-agent-custom`, and any future repo).
+
+Sequence before any `git push` / MR:
+
+1. **Detect test command** — `package.json` (`test` script) → `npm test`;
+   `pyproject.toml`/`pytest.ini`/`setup.cfg`/`setup.py` → `pytest`;
+   `Makefile` (`test` target) → `make test`; otherwise scan
+   `README.md`/`CONTRIBUTING.md`. If none can be detected the gate does
+   **not** skip — the task is routed to `needs_review` ("could not detect
+   test command — manual verification required").
+2. **Lint/format** (auto-fix attempted; non-blocking) — `npm run lint`
+   (`-- --fix`), `eslint .` (`--fix`), `prettier --check .` (`--write`),
+   `ruff check .` (`--fix`), or `flake8 .`. Lint failures are recorded in
+   evidence but do not block; tests are the hard gate.
+3. **Run tests** — execute the detected command in the repo root,
+   capturing full stdout+stderr.
+4. **Gate decision** — exit 0 → push + open MR; non-zero → STOP (no push,
+   no MR), transition to `needs_review` with full evidence.
+
+Every coding task's `mac.worker_evidence.v1` manifest therefore always
+carries numbered evidence items: `1 | Lint/Format`, `2 | Tests`, and on
+success `3 | Push` + `4 | MR`; on test failure item 3 becomes
+`Test Failures` (full output, failing test names, suggested fix) and no
+push/MR items are present.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

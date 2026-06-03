@@ -188,6 +188,241 @@ authed_url() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# Mandatory pre-push verification gate.
+#
+# Before ANY branch push or MR is created, the worker MUST run the project's
+# lint/format and test suites. This gate lives in the executor (the lowest
+# layer that performs the push + MR), so it CANNOT be bypassed by task-level
+# instructions or per-project config. It applies uniformly to every repo
+# (mac, ivan-plugin, hermes-agent-custom, and any future repo).
+#
+# Contract:
+#   * Step A — detect the test command from the repo (package.json/pyproject/
+#     Makefile/README...). If it cannot be detected, the gate FAILS (we never
+#     silently skip — the task is routed to needs_review for manual
+#     verification).
+#   * Step B — run lint/format with an auto-fix attempt; lint failures are
+#     recorded as evidence but do NOT block (tests are the hard gate).
+#   * Step C — run the detected test command, capturing full stdout+stderr.
+#   * Step D — gate decision: tests pass (exit 0) -> allow push+MR; tests
+#     fail (or no command) -> block push+MR and surface evidence.
+#
+# These functions write their results into the GATE_* globals consumed when
+# building the evidence manifest below.
+# ---------------------------------------------------------------------------
+
+# Lint/format results.
+GATE_LINT_COMMAND=""
+GATE_LINT_STATUS="not_run"      # pass | fail | not_run
+GATE_LINT_AUTOFIXED="no"        # yes | no
+GATE_LINT_OUTPUT=""
+
+# Test results.
+GATE_TEST_COMMAND=""
+GATE_TEST_STATUS="not_run"      # pass | fail | not_detected | not_run
+GATE_TEST_RC=""
+GATE_TEST_OUTPUT=""
+GATE_TEST_DURATION_S=""
+GATE_TEST_FAILING=""            # newline-joined failing test names/files
+GATE_TEST_SUGGESTION=""
+# Overall gate verdict: "pass" allows push+MR; anything else blocks.
+GATE_VERDICT="not_run"          # pass | fail
+GATE_REASON=""
+
+# Truncate a captured output string to its last N lines (default 200) and
+# prefix a marker when truncation occurred. Reads from $1 (a file path).
+_gate_tail_output() {
+    local path="$1" max="${2:-200}" total
+    [ -f "${path}" ] || return 0
+    total="$(wc -l < "${path}" 2>/dev/null | tr -d ' ')"
+    if [ -n "${total}" ] && [ "${total}" -gt "${max}" ]; then
+        printf '[... truncated %s earlier lines; showing last %s ...]\n' \
+            "$((total - max))" "${max}"
+        tail -n "${max}" "${path}"
+    else
+        cat "${path}"
+    fi
+}
+
+# Step A: detect the test command. Echoes the command on stdout, or nothing
+# if it cannot be determined. Detection precedence mirrors the directive in
+# AGENTS.md.
+gate_detect_test_command() {
+    local d="$1"
+    # 1. Node: package.json with a `test` script.
+    if [ -f "${d}/package.json" ]; then
+        if python3 - "${d}/package.json" <<'PYEOF' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        pkg = json.load(fh)
+except Exception:
+    sys.exit(1)
+scripts = pkg.get("scripts") or {}
+sys.exit(0 if scripts.get("test") else 1)
+PYEOF
+        then
+            echo "npm test"
+            return 0
+        fi
+    fi
+    # 2. Python: pyproject/pytest.ini/setup.cfg/setup.py -> pytest.
+    if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/pytest.ini" ] \
+        || [ -f "${d}/setup.cfg" ] || [ -f "${d}/setup.py" ]; then
+        echo "pytest"
+        return 0
+    fi
+    # 3. Make: Makefile with a `test` target.
+    if [ -f "${d}/Makefile" ]; then
+        if grep -Eq '^test:' "${d}/Makefile" 2>/dev/null; then
+            echo "make test"
+            return 0
+        fi
+    fi
+    # 4. README/CONTRIBUTING: scan for an explicit test command.
+    local doc cmd
+    for doc in README.md CONTRIBUTING.md; do
+        if [ -f "${d}/${doc}" ]; then
+            cmd="$(grep -Eio '(npm (run )?test|pytest[^\n]*|make test|uv run[^\n]*pytest[^\n]*|cargo test|go test [^\n]*)' "${d}/${doc}" 2>/dev/null | head -1)"
+            if [ -n "${cmd}" ]; then
+                echo "${cmd}"
+                return 0
+            fi
+        fi
+    done
+    # Could not detect.
+    return 1
+}
+
+# Step B: run lint/format with an auto-fix attempt. Never blocks the gate.
+gate_run_lint() {
+    local d="$1" out lint_rc
+    out="$(mktemp)"
+    cd "${d}"
+
+    _try() {
+        # $1 = description/command set into GATE_LINT_COMMAND
+        local desc="$1"; shift
+        GATE_LINT_COMMAND="${desc}"
+        set +e
+        "$@" > "${out}" 2>&1
+        lint_rc=$?
+        set -e
+        return ${lint_rc}
+    }
+
+    if [ -f "${d}/package.json" ] && python3 - "${d}/package.json" <<'PYEOF' 2>/dev/null
+import json, sys
+try:
+    pkg = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if (pkg.get("scripts") or {}).get("lint") else 1)
+PYEOF
+    then
+        if _try "npm run lint" npm run lint; then
+            GATE_LINT_STATUS="pass"
+        else
+            if _try "npm run lint -- --fix" npm run lint -- --fix; then
+                GATE_LINT_STATUS="pass"; GATE_LINT_AUTOFIXED="yes"
+            else
+                GATE_LINT_STATUS="fail"; GATE_LINT_AUTOFIXED="yes"
+            fi
+        fi
+    elif ls "${d}"/.eslintrc* >/dev/null 2>&1; then
+        if _try "eslint ." eslint .; then
+            GATE_LINT_STATUS="pass"
+        else
+            if _try "eslint . --fix" eslint . --fix; then
+                GATE_LINT_STATUS="pass"; GATE_LINT_AUTOFIXED="yes"
+            else
+                GATE_LINT_STATUS="fail"; GATE_LINT_AUTOFIXED="yes"
+            fi
+        fi
+    elif ls "${d}"/.prettierrc* >/dev/null 2>&1; then
+        if _try "prettier --check ." prettier --check .; then
+            GATE_LINT_STATUS="pass"
+        else
+            if _try "prettier --write ." prettier --write .; then
+                GATE_LINT_STATUS="pass"; GATE_LINT_AUTOFIXED="yes"
+            else
+                GATE_LINT_STATUS="fail"; GATE_LINT_AUTOFIXED="yes"
+            fi
+        fi
+    elif [ -f "${d}/ruff.toml" ] || ( [ -f "${d}/pyproject.toml" ] && grep -q 'ruff' "${d}/pyproject.toml" 2>/dev/null ); then
+        if _try "ruff check ." ruff check .; then
+            GATE_LINT_STATUS="pass"
+        else
+            if _try "ruff check --fix ." ruff check --fix .; then
+                GATE_LINT_STATUS="pass"; GATE_LINT_AUTOFIXED="yes"
+            else
+                GATE_LINT_STATUS="fail"; GATE_LINT_AUTOFIXED="yes"
+            fi
+        fi
+    elif [ -f "${d}/.flake8" ] || ( [ -f "${d}/setup.cfg" ] && grep -q 'flake8' "${d}/setup.cfg" 2>/dev/null ); then
+        if _try "flake8 ." flake8 .; then
+            GATE_LINT_STATUS="pass"
+        else
+            GATE_LINT_STATUS="fail"
+        fi
+    else
+        GATE_LINT_STATUS="not_run"
+        GATE_LINT_COMMAND=""
+    fi
+
+    if [ -n "${GATE_LINT_COMMAND}" ]; then
+        GATE_LINT_OUTPUT="$(_gate_tail_output "${out}" 200)"
+    fi
+    rm -f "${out}"
+    echo "[opencode-build] lint: cmd='${GATE_LINT_COMMAND}' status=${GATE_LINT_STATUS} autofixed=${GATE_LINT_AUTOFIXED}"
+}
+
+# Step C + D: run the detected test command and decide the gate verdict.
+# Sets GATE_VERDICT to "pass" (push allowed) or "fail" (push blocked).
+gate_run_tests() {
+    local d="$1" out start end rc
+    cd "${d}"
+
+    GATE_TEST_COMMAND="$(gate_detect_test_command "${d}" || true)"
+    if [ -z "${GATE_TEST_COMMAND}" ]; then
+        GATE_TEST_STATUS="not_detected"
+        GATE_VERDICT="fail"
+        GATE_REASON="could not detect test command — manual verification required"
+        echo "[opencode-build] gate: ${GATE_REASON}"
+        return 0
+    fi
+
+    out="$(mktemp)"
+    echo "[opencode-build] gate: running tests via '${GATE_TEST_COMMAND}'"
+    start="$(date +%s)"
+    set +e
+    # shellcheck disable=SC2086
+    bash -c "${GATE_TEST_COMMAND}" > "${out}" 2>&1
+    rc=$?
+    set -e
+    end="$(date +%s)"
+    GATE_TEST_RC="${rc}"
+    GATE_TEST_DURATION_S="$((end - start))"
+    GATE_TEST_OUTPUT="$(_gate_tail_output "${out}" 200)"
+
+    # Parse failing test names/files (best-effort; pytest + jest shapes).
+    GATE_TEST_FAILING="$(grep -E '^(FAILED|FAIL) ' "${out}" 2>/dev/null | head -50 || true)"
+
+    if [ "${rc}" -eq 0 ]; then
+        GATE_TEST_STATUS="pass"
+        GATE_VERDICT="pass"
+        echo "[opencode-build] gate: tests PASSED (${GATE_TEST_DURATION_S}s) — push allowed"
+    else
+        GATE_TEST_STATUS="fail"
+        GATE_VERDICT="fail"
+        GATE_REASON="tests failed (rc=${rc}) — push and MR blocked"
+        GATE_TEST_SUGGESTION="Review the failing tests above, reproduce locally with '${GATE_TEST_COMMAND}', fix the implementation or the tests, then re-run the task."
+        echo "[opencode-build] gate: tests FAILED rc=${rc} — push and MR BLOCKED"
+    fi
+    rm -f "${out}"
+}
+
 WORKDIR=""
 TASK_BRANCH="mac/${MAC_AGENT_ID}/${MAC_TASK_ID}"
 BASE_SHA=""
@@ -249,6 +484,8 @@ PR_NUMBER=""
 PR_OPENED="false"
 GIT_STATUS=""
 GIT_CWD=""
+# Set to "true" when the mandatory pre-push test gate refused the push.
+GATE_BLOCKED="false"
 # When a working tree exists, the build agent is expected to edit files.
 # If opencode returns rc=0 but leaves the tree clean (it "planned" but
 # never called an edit tool), or if the commit can't be pushed, or the
@@ -309,6 +546,24 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         FILES_CHANGED="${FILES_CHANGED:-$(git diff --name-only "${BASE_SHA}" "${WORK_REF}" 2>/dev/null | tr '\n' ',' | sed 's/,$//')}"
         HEAD_SHA="$(git rev-parse "${WORK_REF}" 2>/dev/null || true)"
         echo "[opencode-build] head=${HEAD_SHA} files=${FILES_CHANGED}"
+
+        # MANDATORY PRE-PUSH GATE. Make sure the work ref is the checked-out
+        # tree so lint/tests run against the agent's actual changes, then run
+        # lint (non-blocking, with auto-fix) followed by the hard test gate.
+        git checkout -q "${WORK_REF}" 2>/dev/null || git checkout -q "${TASK_BRANCH}" 2>/dev/null || true
+        gate_run_lint "${WORKDIR}"
+        gate_run_tests "${WORKDIR}"
+
+        if [ "${GATE_VERDICT}" != "pass" ]; then
+            # Tests failed (or no test command could be detected). Do NOT
+            # push and do NOT open an MR. Surface the failure as evidence and
+            # mark the run failed so it transitions to needs_review/retry
+            # instead of being submitted as complete.
+            echo "[opencode-build] PRE-PUSH GATE BLOCKED: ${GATE_REASON}"
+            echo "[opencode-build] refusing to push or open MR; routing to needs_review"
+            GATE_BLOCKED="true"
+            NO_EFFECTIVE_CHANGE="true"
+        else
         set +e
         # Push whatever ref carries the work TO the task branch on origin,
         # so the review/PR path is consistent regardless of which branch
@@ -358,13 +613,19 @@ except Exception:
             echo "[opencode-build] push failed rc=$push_rc"
             NO_EFFECTIVE_CHANGE="true"
         fi
+        fi  # end gate-pass branch
     else
         echo "[opencode-build] opencode made no file changes"
         NO_EFFECTIVE_CHANGE="true"
     fi
 fi
 export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER
-export PR_OPENED GIT_STATUS GIT_CWD ORIGINAL_OPENCODE_RC OPENCODE_MODEL
+export PR_OPENED GIT_STATUS GIT_CWD ORIGINAL_OPENCODE_RC OPENCODE_MODEL GATE_BLOCKED
+# Pre-push gate results consumed by the manifest builder below.
+export GATE_LINT_COMMAND GATE_LINT_STATUS GATE_LINT_AUTOFIXED GATE_LINT_OUTPUT
+export GATE_TEST_COMMAND GATE_TEST_STATUS GATE_TEST_RC GATE_TEST_OUTPUT
+export GATE_TEST_DURATION_S GATE_TEST_FAILING GATE_TEST_SUGGESTION
+export GATE_VERDICT GATE_REASON
 
 # If we had a working tree but produced no pushed+MR'd change, force a
 # non-zero effective return code. job_executor.py keys submit-for-review
@@ -500,6 +761,96 @@ stdout_raw = read_bytes("opencode_stdout")
 stderr_raw = read_bytes("opencode_stderr")
 
 status = "complete" if rc == 0 else "incomplete"
+
+# --- Mandatory pre-push gate evidence items -----------------------------
+# Every coding task MUST carry these evidence items. Numbering follows the
+# required-evidence contract:
+#   1 | Lint/Format
+#   2 | Tests
+#   3 | Push        (only when tests passed)  OR  Test Failures (on failure)
+#   4 | MR          (only when tests passed)
+gate_lint_status = os.environ.get("GATE_LINT_STATUS", "not_run")
+gate_test_status = os.environ.get("GATE_TEST_STATUS", "not_run")
+gate_test_rc_env = os.environ.get("GATE_TEST_RC", "")
+gate_verdict = os.environ.get("GATE_VERDICT", "not_run")
+tests_passed = gate_verdict == "pass"
+
+evidence_items = []
+
+# 1 | Lint/Format — command run, pass/fail, auto-fixed, output summary.
+evidence_items.append(
+    {
+        "kind": "evidence_item",
+        "item": 1,
+        "label": "Lint/Format",
+        "command": os.environ.get("GATE_LINT_COMMAND", ""),
+        "status": gate_lint_status,
+        "auto_fixed": os.environ.get("GATE_LINT_AUTOFIXED", "no") == "yes",
+        "output_summary": os.environ.get("GATE_LINT_OUTPUT", "")[:8000],
+    }
+)
+
+# 2 | Tests — command run, pass/fail, test rc, duration.
+try:
+    gate_test_rc = int(gate_test_rc_env) if gate_test_rc_env != "" else None
+except ValueError:
+    gate_test_rc = None
+evidence_items.append(
+    {
+        "kind": "evidence_item",
+        "item": 2,
+        "label": "Tests",
+        "command": os.environ.get("GATE_TEST_COMMAND", ""),
+        "status": gate_test_status,
+        "returncode": gate_test_rc,
+        "duration_seconds": os.environ.get("GATE_TEST_DURATION_S", ""),
+        "output": os.environ.get("GATE_TEST_OUTPUT", "")[:64000],
+    }
+)
+
+if tests_passed:
+    # 3 | Push — branch + commit SHA (only present when tests passed).
+    evidence_items.append(
+        {
+            "kind": "evidence_item",
+            "item": 3,
+            "label": "Push",
+            "branch": os.environ.get("TASK_BRANCH", ""),
+            "commit_sha": os.environ.get("HEAD_SHA", ""),
+            "pushed": os.environ.get("PUSHED", "false") == "true",
+        }
+    )
+    # 4 | MR — MR URL (only present when tests passed).
+    evidence_items.append(
+        {
+            "kind": "evidence_item",
+            "item": 4,
+            "label": "MR",
+            "mr_url": os.environ.get("PR_URL", ""),
+            "mr_opened": os.environ.get("PR_OPENED", "false") == "true",
+        }
+    )
+else:
+    # 3 | Test Failures — full output, failing test names, suggested fix.
+    # Replaces the Push + MR items because nothing was pushed.
+    failing = [
+        f.strip()
+        for f in (os.environ.get("GATE_TEST_FAILING", "") or "").splitlines()
+        if f.strip()
+    ]
+    evidence_items.append(
+        {
+            "kind": "evidence_item",
+            "item": 3,
+            "label": "Test Failures",
+            "reason": os.environ.get("GATE_REASON", ""),
+            "command": os.environ.get("GATE_TEST_COMMAND", ""),
+            "output": os.environ.get("GATE_TEST_OUTPUT", "")[:64000],
+            "failing_tests": failing,
+            "suggested_fix": os.environ.get("GATE_TEST_SUGGESTION", ""),
+        }
+    )
+
 manifest = {
     "schema": "mac.worker_evidence.v1",
     "status": status,
@@ -514,10 +865,12 @@ manifest = {
     "returncode": rc,
     "original_opencode_rc": original_rc,
     "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
+    "gate_blocked": os.environ.get("GATE_BLOCKED", "false") == "true",
+    "gate_verdict": gate_verdict,
     "started_at": os.environ.get("started_at", ""),
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
-    "findings": [
+    "findings": evidence_items + [
         stream_finding("opencode_stdout", stdout_raw),
         stream_finding("opencode_stderr", stderr_raw),
         dict(event_summary(stdout_raw), kind="opencode_event_summary"),
@@ -540,7 +893,20 @@ manifest = {
             # &finding_type=pull_request_opened.
         },
     ],
-    "checks": [{"name": "executor_returncode", "status": "pass" if rc == 0 else "fail", "returncode": rc}],
+    "checks": [
+        {"name": "executor_returncode", "status": "pass" if rc == 0 else "fail", "returncode": rc},
+        {
+            "name": "pre_push_test_gate",
+            "status": "pass" if tests_passed else "fail",
+            "test_command": os.environ.get("GATE_TEST_COMMAND", ""),
+            "test_status": gate_test_status,
+        },
+        {
+            "name": "lint_format",
+            "status": gate_lint_status,
+            "lint_command": os.environ.get("GATE_LINT_COMMAND", ""),
+        },
+    ],
     "notes": "opencode build executor; signing handled by mac-evidence sign.",
 }
 with open(out_path, "w", encoding="utf-8") as fh:

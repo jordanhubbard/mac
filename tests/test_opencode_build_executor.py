@@ -69,6 +69,11 @@ def _make_fake_bin(
     pr_json: str = '{"url": "https://example.test/mr/1", "number": 1}',
     opencode_config: Optional[str] = None,
     task_metadata: Optional[dict] = None,
+    seed_test_command: Optional[str] = "pytest",
+    test_rc: int = 0,
+    test_output: str = "1 passed in 0.01s\n",
+    seed_lint: bool = False,
+    lint_rc: int = 0,
 ) -> None:
     """Create fake opencode/git/curl/mac/python helpers on PATH.
 
@@ -76,24 +81,59 @@ def _make_fake_bin(
     stdout/stderr and exits with ``opencode_rc``; ``git`` simulates a
     clone (creating a working tree + optional change) and a push; ``mac
     pull-request open`` returns canned PR JSON or fails.
+
+    The mandatory pre-push gate runs lint + tests against the cloned
+    working tree before the push. To keep the fakes hermetic, the fake
+    ``opencode run`` seeds a ``pyproject.toml`` (so ``pytest`` is the
+    detected test command) and a fake ``pytest`` binary is placed on PATH
+    that exits with ``test_rc`` and prints ``test_output``. Set
+    ``seed_test_command=None`` to simulate a repo where no test command can
+    be detected (the gate must then block the push).
     """
     bindir.mkdir(parents=True, exist_ok=True)
+
+    # The cloned working tree lives at /tmp/work-${MAC_TASK_ID}; the fake
+    # opencode (which cd's into it) seeds the test/lint markers there so the
+    # gate's detection + execution exercise the real code path.
+    seed_lines = ["#!/usr/bin/env bash\n"]
+    if seed_test_command == "pytest":
+        seed_lines.append('printf "[project]\\nname = \\"x\\"\\n" > pyproject.toml\n')
+    if seed_lint:
+        # Add a ruff section so the lint detector picks ruff.
+        seed_lines.append('printf "[tool.ruff]\\n" >> pyproject.toml\n')
 
     # opencode: only `run` matters; `--version` returns a banner.
     oc_out = bindir / "_opencode_stdout.txt"
     oc_out.write_text(opencode_stdout)
     oc_err = bindir / "_opencode_stderr.txt"
     oc_err.write_text(opencode_stderr)
+    seed_block = "".join(seed_lines[1:])  # drop the shebang line for embedding
     _write_exec(
         bindir / "opencode",
         "#!/usr/bin/env bash\n"
         'if [ "$1" = "--version" ]; then echo "opencode 1.2.3"; exit 0; fi\n'
         'if [ "$1" = "run" ]; then\n'
+        f"{seed_block}"
         f'  cat "{oc_out}"\n'
         f'  cat "{oc_err}" >&2\n'
         f'  exit {opencode_rc}\n'
         "fi\n"
         "exit 0\n",
+    )
+
+    # Fake pytest: emits canned output and exits with test_rc.
+    _write_exec(
+        bindir / "pytest",
+        "#!/usr/bin/env bash\n"
+        f"printf '%s' {json.dumps(test_output)}\n"
+        f"exit {test_rc}\n",
+    )
+    # Fake ruff: lint detector picks this when seed_lint is set.
+    _write_exec(
+        bindir / "ruff",
+        "#!/usr/bin/env bash\n"
+        'echo "ruff check output"\n'
+        f"exit {lint_rc}\n",
     )
 
     # git: clone makes the workdir a git repo; checkout/config/add/commit
@@ -409,6 +449,172 @@ def test_successful_push_and_pr_records_pr_and_full_files(tmp_path: Path) -> Non
     assert repo["files_changed"] == ["a.txt", "b.txt"]
 
 
+def _evidence_items(manifest: dict) -> Dict[int, dict]:
+    """Index the required numbered evidence items (Lint/Format=1, Tests=2,
+    Push/Test Failures=3, MR=4) by their `item` number."""
+    out: Dict[int, dict] = {}
+    for finding in manifest.get("findings", []):
+        if finding.get("kind") == "evidence_item":
+            out[int(finding["item"])] = finding
+    return out
+
+
+# --- Mandatory pre-push test gate --------------------------------------
+
+
+def test_gate_blocks_push_and_mr_when_tests_fail(tmp_path: Path) -> None:
+    """A deliberate test failure must STOP the run: no push, no MR, and the
+    task is routed to needs_review (non-zero rc) with full test evidence."""
+    bindir = tmp_path / "bin"
+    stdout = json.dumps({"type": "step_finish", "reason": "stop"}) + "\n"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=stdout,
+        opencode_rc=0,
+        make_change=True,
+        push_rc=0,
+        pr_rc=0,
+        seed_test_command="pytest",
+        test_rc=1,  # tests FAIL
+        test_output="FAILED tests/test_x.py::test_one - assert 1 == 2\n1 failed\n",
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    # Failing tests must fail the run so it is not submitted as complete.
+    assert result.returncode != 0, (
+        "test failure must block; stdout=%s" % result.stdout
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["returncode"] != 0
+    assert manifest["gate_blocked"] is True
+    assert manifest["gate_verdict"] == "fail"
+
+    # No push, no MR.
+    repo = _findings_by_kind(manifest)["repo_change_summary"]
+    assert repo["pushed"] is False
+    assert repo.get("pr_opened") is False
+
+    items = _evidence_items(manifest)
+    # Tests item (2) records the failing command + output.
+    assert items[2]["label"] == "Tests"
+    assert items[2]["status"] == "fail"
+    assert items[2]["command"] == "pytest"
+    # Item 3 is "Test Failures" (NOT Push) and carries full output + a fix.
+    assert items[3]["label"] == "Test Failures"
+    assert "FAILED" in items[3]["output"]
+    assert any("test_one" in f for f in items[3]["failing_tests"])
+    assert items[3]["suggested_fix"]
+    # Push (3 as Push) and MR (4) items must be absent on failure.
+    assert "MR" not in {it.get("label") for it in items.values()}
+
+
+def test_gate_blocks_when_no_test_command_detected(tmp_path: Path) -> None:
+    """No detectable test command must NOT silently skip — the gate blocks
+    and reports that manual verification is required."""
+    bindir = tmp_path / "bin"
+    stdout = json.dumps({"type": "step_finish", "reason": "stop"}) + "\n"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=stdout,
+        opencode_rc=0,
+        make_change=True,
+        push_rc=0,
+        pr_rc=0,
+        seed_test_command=None,  # repo has no detectable test command
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    assert result.returncode != 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["gate_blocked"] is True
+    repo = _findings_by_kind(manifest)["repo_change_summary"]
+    assert repo["pushed"] is False
+    assert repo.get("pr_opened") is False
+
+    items = _evidence_items(manifest)
+    assert items[2]["status"] == "not_detected"
+    assert "could not detect test command" in items[3]["reason"]
+
+
+def test_gate_evidence_items_always_present_on_success(tmp_path: Path) -> None:
+    """A passing coding task must always carry Lint/Format + Tests + Push +
+    MR evidence items, and lint auto-fix must be attempted/recorded."""
+    bindir = tmp_path / "bin"
+    stdout = json.dumps({"type": "step_finish", "reason": "stop"}) + "\n"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=stdout,
+        opencode_rc=0,
+        make_change=True,
+        push_rc=0,
+        pr_rc=0,
+        seed_test_command="pytest",
+        test_rc=0,
+        seed_lint=True,
+        lint_rc=0,
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    assert result.returncode == 0, "stdout=%s" % result.stdout
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["gate_verdict"] == "pass"
+    assert manifest["gate_blocked"] is False
+
+    items = _evidence_items(manifest)
+    # 1 Lint/Format, 2 Tests, 3 Push, 4 MR.
+    assert items[1]["label"] == "Lint/Format"
+    assert items[1]["command"] == "ruff check ."
+    assert items[1]["status"] == "pass"
+    assert items[2]["label"] == "Tests"
+    assert items[2]["status"] == "pass"
+    assert items[2]["command"] == "pytest"
+    assert items[3]["label"] == "Push"
+    assert items[3]["branch"]
+    assert items[3]["commit_sha"]
+    assert items[4]["label"] == "MR"
+    assert items[4]["mr_url"] == "https://example.test/mr/1"
+
+    # The gate check is recorded for reviewers.
+    checks = {c["name"]: c for c in manifest["checks"]}
+    assert checks["pre_push_test_gate"]["status"] == "pass"
+    assert checks["lint_format"]["status"] == "pass"
+
+
+def test_gate_lint_autofix_attempted_on_failure_but_does_not_block(
+    tmp_path: Path,
+) -> None:
+    """Lint failures must trigger an auto-fix attempt and be recorded, but
+    must NOT block the gate — tests are the hard gate."""
+    bindir = tmp_path / "bin"
+    stdout = json.dumps({"type": "step_finish", "reason": "stop"}) + "\n"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=stdout,
+        opencode_rc=0,
+        make_change=True,
+        push_rc=0,
+        pr_rc=0,
+        seed_test_command="pytest",
+        test_rc=0,
+        seed_lint=True,
+        lint_rc=1,  # lint fails -> auto-fix attempted
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    # Lint failure does NOT block: tests pass, so push proceeds.
+    assert result.returncode == 0, "stdout=%s" % result.stdout
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    items = _evidence_items(manifest)
+    assert items[1]["label"] == "Lint/Format"
+    assert items[1]["auto_fixed"] is True  # --fix was attempted
+    repo = _findings_by_kind(manifest)["repo_change_summary"]
+    assert repo["pushed"] is True
+
+
 def test_signed_manifest_with_rich_findings_passes_review_gate(
     tmp_path: Path,
 ) -> None:
@@ -521,6 +727,8 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
     seed.mkdir()
     _git(["init", "-b", "main", str(seed)], cwd=tmp_path)
     (seed / "a.txt").write_text("original\n")
+    # A pyproject so the pre-push gate detects `pytest` as the test command.
+    (seed / "pyproject.toml").write_text('[project]\nname = "x"\n')
     _git(["add", "-A"], cwd=seed)
     _git(["commit", "-m", "seed"], cwd=seed)
     _git(["remote", "add", "origin", str(remote)], cwd=seed)
@@ -529,6 +737,13 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
     repo_url = "file://%s" % remote
     bindir = tmp_path / "bin"
     bindir.mkdir(parents=True)
+
+    # Fake pytest on PATH: the pre-push gate runs it before pushing; exit 0
+    # so the gate passes and the agent-committed branch is pushed.
+    _write_exec(
+        bindir / "pytest",
+        "#!/usr/bin/env bash\necho '1 passed'\nexit 0\n",
+    )
 
     # fake opencode: act like the agent — checkout its OWN branch, edit a
     # file, commit. Leaves the script's checked-out branch + tree clean.
