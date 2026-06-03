@@ -3518,6 +3518,44 @@ def test_task_claim_records_history_and_outbox_in_same_transaction(cp):
     assert outbox[0].detail["lease_id"] == lease.id
 
 
+def test_outbox_drains_in_enqueue_order_with_identical_created_at(cp):
+    """mac: a single task transition enqueues several outbox rows
+    (task.lifecycle, beads.ledger, beads.reopen) sharing the exact same
+    created_at. list_outbox must return them in stable ENQUEUE order so
+    downstream side effects (e.g. the beads ledger note before the reopen
+    --status note) fire deterministically. Previously the secondary sort
+    key was a random uuid4 id, so the drain order was non-deterministic
+    and flaky."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("ordering", required_capabilities=["python"])
+    # Drain any rows from create so we isolate the enqueue below.
+    cp.drain_task_transition_outbox(task_id=task.id)
+
+    now = "2026-06-01T00:00:00.000000+00:00"
+    expected = []
+    with cp.store.transaction() as conn:
+        for event_type in (
+            "task.lifecycle",
+            "beads.ledger",
+            "beads.reopen",
+            "workflow.advance",
+        ):
+            cp.task_ledger.enqueue_outbox(
+                conn,
+                task_id=task.id,
+                event_type=event_type,
+                actor=worker.id,
+                from_state="running",
+                to_state="failed",
+                detail={"reason": "x"},
+                created_at=now,  # identical timestamp for all rows
+            )
+            expected.append(event_type)
+
+    pending = cp.list_task_transition_outbox(task_id=task.id)
+    assert [item.event_type for item in pending] == expected
+
+
 def test_beads_bridge_syncs_claim_and_failure_to_beads(cp, tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
     repo = tmp_path / "repo"

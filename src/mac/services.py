@@ -12550,7 +12550,10 @@ class ControlPlane:
     def _verdict_value(self, evidence: Evidence) -> str:
         manifest = evidence.metadata.get("verification") or {}
         verdict = str(manifest.get("verdict") or "").strip().lower()
-        return verdict if verdict in {"approved", "rejected"} else "approved"
+        # Fail closed: an unknown/malformed verdict must NOT auto-approve.
+        # (Adopted from Vikaspogu/mac 7b02877; the rejected-requires-feedback
+        # validator from that commit is intentionally left out for now.)
+        return verdict if verdict in {"approved", "rejected"} else "rejected"
 
     def _retract_default_review(self, review: Review, actor: str, reason: str) -> None:
         now = utcnow()

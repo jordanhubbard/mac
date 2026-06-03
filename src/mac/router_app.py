@@ -119,6 +119,25 @@ def _is_provider_failure(status: Optional[int]) -> bool:
 _MODEL_RETRY_CODES = frozenset({404, 422})
 
 
+# th-merge: params some OpenAI-compatible upstreams reject with
+# 400 "unknown_parameter" (e.g. opencode sends `reasoningSummary` for GPT-5
+# reasoning models). The router is the single chokepoint that sanitizes the
+# request body, so no per-agent config has to know each upstream's quirks.
+# Overridable via MAC_ROUTER_DROP_PARAMS (comma-separated) at build time.
+_DEFAULT_DROP_PARAMS = ("reasoningSummary", "reasoning_summary")
+
+
+def _normalize_payload(payload: Dict[str, Any], drop_params: Tuple[str, ...]) -> Dict[str, Any]:
+    """Strip known-unsupported top-level params before forwarding upstream.
+    Leaves everything else untouched. Returns a new dict (does not mutate)."""
+    if not drop_params:
+        return payload
+    drop = set(drop_params)
+    if not any(k in payload for k in drop):
+        return payload
+    return {k: v for k, v in payload.items() if k not in drop}
+
+
 class ProviderProxy:
     def __init__(
         self,
@@ -130,6 +149,7 @@ class ProviderProxy:
         wildcard_models: Tuple[str, ...] = (),
         timeout: float = 60.0,
         stream_timeout: float = 300.0,
+        drop_params: Tuple[str, ...] = _DEFAULT_DROP_PARAMS,
     ) -> None:
         self._router = router
         self._forward = forward_fn
@@ -140,6 +160,7 @@ class ProviderProxy:
         self._wildcard_models = tuple(m for m in wildcard_models if m)
         self._timeout = timeout
         self._stream_timeout = stream_timeout
+        self._drop_params = tuple(drop_params)
 
     # -- model resolution ----------------------------------------------------
 
@@ -163,9 +184,10 @@ class ProviderProxy:
         breaker. Returns ``(status, body_or_iterator)``."""
         candidates = self._candidate_models(payload)
         last: Optional[Tuple[int, Any]] = None
+        retried_401 = False  # per-request: at most one transient-401 retry
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
-            outgoing = {**payload, "model": model}
+            outgoing = {**_normalize_payload(payload, self._drop_params), "model": model}
             attempts = []
             provider_answered = False
             # Bounded: one try per provider (+1 so a half-open probe can be
@@ -184,6 +206,15 @@ class ProviderProxy:
                 self._router.record_success(provider.name)
                 provider_answered = True
                 logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
+                # A 401 from upstream is usually a real auth problem, but some
+                # gateways briefly mislabel a transient backend hiccup (e.g.
+                # "can't reach key-verification DB") as 401. One same-provider
+                # retry turns that seconds-long blip into a non-event; a genuine
+                # bad key 401s again and is returned. Bounded to a single retry.
+                if int(status) == 401 and not retried_401:
+                    retried_401 = True
+                    logger.info("route model=%s provider=%s status=401 transient-retry", model, provider.name)
+                    status, obj = forward(provider, path, outgoing, timeout=timeout)
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
                     break
@@ -344,6 +375,12 @@ def build_proxy_from_env(
     wildcard_models = tuple(
         m.strip() for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|") if m.strip()
     )
+    drop_raw = env.get("MAC_ROUTER_DROP_PARAMS")
+    drop_params = (
+        tuple(p.strip() for p in drop_raw.split(",") if p.strip())
+        if drop_raw is not None
+        else _DEFAULT_DROP_PARAMS
+    )
     return ProviderProxy(
         router,
         _fwd,
@@ -352,6 +389,7 @@ def build_proxy_from_env(
         wildcard_models=wildcard_models,
         timeout=_f("MAC_ROUTER_TIMEOUT", 60.0),
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),
+        drop_params=drop_params,
     )
 
 

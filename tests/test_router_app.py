@@ -62,6 +62,39 @@ def test_network_error_status_none_fails_over():
     assert r.status()["primary"]["state"] == "open"
 
 
+def test_transient_401_is_retried_once_on_same_provider():
+    """A transient upstream 401 (e.g. NVIDIA gateway momentarily can't reach its
+    key-verification DB) must not kill a long agent session. The router retries
+    the SAME provider once; if the retry succeeds, the client never sees the
+    blip."""
+    r = _router()
+    seq = iter([(401, {"error": {"message": "Can't reach database server", "code": "401"}}),
+                (200, {"ok": True})])
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return next(seq)
+
+    status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "primary-model"})
+    assert status == 200 and body == {"ok": True}
+
+
+def test_persistent_401_returned_after_bounded_retry():
+    """A genuine bad-key 401 keeps returning 401 on retry. The router must NOT
+    loop forever: it retries once, still gets 401, returns it to the client."""
+    r = _router()
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append(provider.name)
+        return 401, {"error": {"message": "invalid api key"}}
+
+    status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "primary-model"})
+    assert status == 401
+    # bounded: the same provider is tried at most twice (initial + one retry),
+    # never an unbounded loop.
+    assert calls.count("primary") <= 2
+
+
 def test_4xx_is_returned_not_failed_over():
     # A 400 is a bad request, not a provider health problem: return it, keep the
     # provider healthy, and do NOT pointlessly retry the same bad request elsewhere.
@@ -80,6 +113,43 @@ def test_all_providers_failing_returns_503_failfast():
     assert status == 503
     assert body["error"]["type"] == "all_providers_unavailable"
     assert {a["provider"] for a in body["error"]["attempts"]} == {"primary", "secondary"}
+
+
+def test_strips_unsupported_reasoning_summary_param_before_forwarding():
+    """A client (opencode) may send `reasoningSummary` for an OpenAI reasoning
+    model; some upstreams reject it with 400 unknown_parameter. The router must
+    strip known-unsupported params before forwarding so the request succeeds,
+    while leaving normal params untouched."""
+    r = _router()
+    seen = {}
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        seen.update(payload)
+        return 200, {"ok": True}
+
+    proxy = ProviderProxy(r, fwd)
+    status, _ = proxy.complete(
+        "/chat/completions",
+        {"model": "gpt-5.5", "messages": [{"role": "user", "content": "hi"}], "reasoningSummary": "auto"},
+    )
+    assert status == 200
+    assert "reasoningSummary" not in seen  # stripped
+    assert seen["model"] == "gpt-5.5"  # normal params preserved
+    assert seen["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_build_proxy_drop_params_overridable_via_env():
+    """Operators can extend the stripped-param set declaratively via
+    MAC_ROUTER_DROP_PARAMS (comma-separated) without a code change."""
+    proxy = build_proxy_from_env(
+        env={
+            "MAC_ROUTER_PROVIDERS": "primary=http://p/v1,0",
+            "MAC_ROUTER_DROP_PARAMS": "reasoningSummary,foo_param",
+        }
+    )
+    assert proxy is not None
+    assert "reasoningSummary" in proxy._drop_params
+    assert "foo_param" in proxy._drop_params
 
 
 def test_mount_is_noop_unless_inproc(monkeypatch):

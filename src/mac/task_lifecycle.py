@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+import itertools
+import threading
 from typing import Any, Dict, List, Optional
 
 from mac.models import JsonDict, TaskTransitionOutbox, json_dumps, json_loads, new_id, utcnow
+
+# Outbox rows from a single transition share an identical ``created_at``.
+# ``list_outbox`` orders by ``created_at, id``; if ``id`` is a random uuid
+# the secondary sort is non-deterministic and side effects (e.g. the beads
+# ledger note vs the reopen --status note) can fire out of enqueue order.
+# A process-wide monotonic counter baked into the id makes the id sort in
+# enqueue order, so the drain order is stable. Store-agnostic, no schema
+# change. The counter resets per process, which is fine because it only
+# acts as a tiebreaker within the same created_at timestamp.
+_outbox_seq = itertools.count()
+_outbox_seq_lock = threading.Lock()
+
+
+def _next_outbox_seq() -> int:
+    with _outbox_seq_lock:
+        return next(_outbox_seq)
 
 
 class TaskLedgerService:
@@ -16,6 +34,7 @@ class TaskLedgerService:
     def __init__(self, store: Any) -> None:
         self.store = store
 
+
     def enqueue_outbox(
         self,
         conn: Any,
@@ -28,7 +47,7 @@ class TaskLedgerService:
         detail: Optional[Dict[str, Any]] = None,
         created_at: Optional[str] = None,
     ) -> str:
-        outbox_id = new_id("tout")
+        outbox_id = "tout_%016x_%s" % (_next_outbox_seq(), new_id("").lstrip("_"))
         conn.execute(
             """
             INSERT INTO task_transition_outbox (
