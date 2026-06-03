@@ -552,7 +552,27 @@ class GatewayConfig:
         if config:
             return config.home_channel
         return None
-    
+
+    def get_home_channels(self, platform: Platform) -> "List[HomeChannel]":
+        """All home channels for a platform — one per connected workspace.
+
+        Slack can be connected to several workspaces at once, each with its own
+        resolved home channel (slack_home_channels.json). Broadcast-style
+        deliveries (gateway online/offline notices) should reach every
+        workspace's home channel, not just the first. Other platforms have at
+        most the single configured home channel. The adapter routes each
+        ``send(channel_id)`` to the owning workspace via its channel→team map."""
+        if platform == Platform.SLACK:
+            homes = [
+                HomeChannel(platform=Platform.SLACK, chat_id=chan, name=name)
+                for chan, name in _slack_homes_from_resolved_file()
+                if chan
+            ]
+            if homes:
+                return homes
+        home = self.get_home_channel(platform)
+        return [home] if home and home.chat_id else []
+
     def get_reset_policy(
         self, 
         platform: Optional[Platform] = None,
@@ -1262,6 +1282,30 @@ def _slack_home_from_resolved_file(default_name: str = "") -> "tuple[str, str]":
     except Exception:
         pass
     return "", default_name
+
+
+def _slack_homes_from_resolved_file() -> "List[tuple[str, str]]":
+    """All resolved Slack home channels — one per connected workspace — from
+    ``<hermes_home>/slack_home_channels.json``. Returns ``[(channel_id, name), …]``
+    (empty on any failure). The single-home reader above keeps the first entry as
+    the primary; this is for broadcast deliveries that should reach every
+    workspace."""
+    out: "List[tuple[str, str]]" = []
+    try:
+        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
+        with open(path, "r", encoding="utf-8") as fh:
+            homes = json.load(fh)
+        if isinstance(homes, list):
+            for entry in homes:
+                if not isinstance(entry, dict):
+                    continue
+                chan = str(entry.get("channel_id") or "")
+                name = str(entry.get("channel_name") or "").lstrip("#")
+                if chan:
+                    out.append((chan, name))
+    except Exception:
+        pass
+    return out
 
 
 def _apply_env_overrides(config: GatewayConfig) -> None:
