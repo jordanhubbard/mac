@@ -5513,6 +5513,103 @@ def test_notifier_dedupes_on_notification_id_in_payload(cp):
     assert seeded.id in delivered, "dedup should return the pre-seeded message id"
 
 
+def test_notifier_delivery_claim_prevents_concurrent_duplicate_messages(cp):
+    tenant = cp.register_tenant("ops")
+    persona = cp.register_persona(
+        tenant.id,
+        "Rocky",
+        soul_ref="hermes://ops/rocky/SOUL.md",
+        memory_scope="hermes://ops/rocky/memory",
+    )
+    hermes = cp.register_hermes_instance(
+        tenant.id,
+        "rocky",
+        persona_id=persona.id,
+        home_ref="hermes://ops/rocky",
+    )
+    binding = cp.register_platform_binding(
+        tenant.id,
+        hermes.id,
+        "slack",
+        "T123/C456",
+        display_name="#mac-home",
+        scopes={"channels": ["C456"]},
+    )
+    machine = cp.register_machine("host")
+    agent = cp.register_agent(
+        machine.id,
+        "worker",
+        capabilities=["python"],
+        hermes_instance_id=hermes.id,
+    )
+    cp.configure_notifier_channel(
+        "slack-home",
+        "slack",
+        event_types=["task.*"],
+        target={"platform_binding_id": binding.id},
+    )
+
+    task = cp.create_task("notify once", required_capabilities=["python"])
+    cp.claim_task(task.id, agent.id)
+    notification = next(
+        item
+        for item in cp.list_notifications(subject_id=task.id)
+        if item.event_type == "task.claimed"
+    )
+
+    original_send = cp.notifiers._send_message
+    first_send_started = threading.Event()
+    release_first_send = threading.Event()
+    send_lock = threading.Lock()
+    send_count = 0
+    results = []
+    errors = []
+
+    def slow_first_send(*args, **kwargs):
+        nonlocal send_count
+        with send_lock:
+            send_count += 1
+            current = send_count
+        if current == 1:
+            first_send_started.set()
+            assert release_first_send.wait(5)
+        return original_send(*args, **kwargs)
+
+    def deliver_once() -> None:
+        try:
+            results.append(cp.deliver_pending_notifications(notification_id=notification.id))
+        except Exception as exc:  # pragma: no cover - surfaced by assertion below
+            errors.append(exc)
+
+    cp.notifiers._send_message = slow_first_send
+    try:
+        first = threading.Thread(target=deliver_once)
+        first.start()
+        assert first_send_started.wait(5)
+
+        second = threading.Thread(target=deliver_once)
+        second.start()
+        second.join(5)
+        assert not second.is_alive()
+
+        release_first_send.set()
+        first.join(5)
+        assert not first.is_alive()
+    finally:
+        cp.notifiers._send_message = original_send
+        release_first_send.set()
+
+    assert errors == []
+    assert sum(int(result["delivered"]) for result in results) == 1
+    assert send_count == 1
+    messages = [
+        message
+        for message in cp.list_messages(agent.id)
+        if message.payload["notification"]["id"] == notification.id
+    ]
+    assert len(messages) == 1
+
+
 def test_command_audit_scrubs_argv_secrets(cp):
     """mac-6m14: argv on subprocess audit must have password-like flags
     and bare high-entropy strings redacted before persisting to

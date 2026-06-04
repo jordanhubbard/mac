@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from mac.models import (
@@ -48,6 +49,7 @@ class NotifierService:
     """
 
     SUPPORTED_CHANNEL_TYPES = {"hermes", "slack", "telegram"}
+    DELIVERY_CLAIM_TIMEOUT_SECONDS = 600
 
     def __init__(
         self,
@@ -159,20 +161,35 @@ class NotifierService:
         limit: int = 50,
         notification_id: Optional[str] = None,
     ) -> JsonDict:
+        stale_before = self._claim_stale_before()
         if notification_id is not None:
             rows = self.store.query_all(
-                "SELECT * FROM operator_notifications WHERE id = ? AND status = 'pending'",
-                (notification_id,),
+                """
+                SELECT * FROM operator_notifications
+                WHERE id = ?
+                  AND (
+                    status = 'pending'
+                    OR (
+                      status = 'delivering'
+                      AND (delivered_at IS NULL OR delivered_at < ?)
+                    )
+                  )
+                """,
+                (notification_id, stale_before),
             )
         else:
             rows = self.store.query_all(
                 """
                 SELECT * FROM operator_notifications
                 WHERE status = 'pending'
+                   OR (
+                     status = 'delivering'
+                     AND (delivered_at IS NULL OR delivered_at < ?)
+                   )
                 ORDER BY created_at, id
                 LIMIT ?
                 """,
-                (min(max(1, int(limit)), 500),),
+                (stale_before, min(max(1, int(limit)), 500)),
             )
         delivered = 0
         failed = 0
@@ -180,6 +197,8 @@ class NotifierService:
         results = []
         for row in rows:
             notification = self._notification_from_row(row)
+            if not self._claim_notification(notification.id):
+                continue
             try:
                 message_ids = self._deliver_notification(notification)
             except Exception as exc:  # noqa: BLE001 - delivery runner must keep draining.
@@ -217,6 +236,30 @@ class NotifierService:
             "skipped": skipped,
             "results": results,
         }
+
+    def _claim_stale_before(self) -> str:
+        return (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=self.DELIVERY_CLAIM_TIMEOUT_SECONDS)
+        ).isoformat(timespec="microseconds")
+
+    def _claim_notification(self, notification_id: str) -> bool:
+        result = self.store.execute(
+            """
+            UPDATE operator_notifications
+            SET status = 'delivering', delivered_at = ?
+            WHERE id = ?
+              AND (
+                status = 'pending'
+                OR (
+                  status = 'delivering'
+                  AND (delivered_at IS NULL OR delivered_at < ?)
+                )
+              )
+            """,
+            (utcnow(), notification_id, self._claim_stale_before()),
+        )
+        return int(getattr(result, "rowcount", 0) or 0) == 1
 
     def _deliver_notification(self, notification: OperatorNotification) -> List[str]:
         # mac-zipf: notifier delivery is two non-atomic statements
