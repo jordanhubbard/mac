@@ -6141,9 +6141,16 @@ class ControlPlane:
         if status_value in {AgentStatus.IDLE.value, AgentStatus.OFFLINE.value}:
             updates.append("current_task_id = NULL")
         params.append(agent_id)
+        # Only log a lifecycle/observability event when something MEANINGFUL
+        # changed (status / health / running_digest) — not on resource jitter,
+        # which differs on essentially every heartbeat. Writing a durable
+        # agent_lifecycle_events row (+ mirrored observability_event) on every
+        # beat was the dominant source of hub-db bloat: ~527K lifecycle + ~228K
+        # obs rows in ~4 days on rocky, almost all just CPU/mem jitter.
+        meaningful_changes = [f for f in changed_fields if f != "resources"]
         with self.store.transaction() as conn:
             conn.execute("UPDATE agents SET %s WHERE id = ?" % ", ".join(updates), tuple(params))
-            if status is not None or health_status is not None or resources is not None or running_digest is not None:
+            if meaningful_changes:
                 self._record_agent_lifecycle_event(
                     conn,
                     agent_id,
@@ -6152,7 +6159,7 @@ class ControlPlane:
                     {
                         "agent_id": agent_id,
                         "agent_name": agent_before.name,
-                        "changed_fields": sorted(set(changed_fields)),
+                        "changed_fields": sorted(set(meaningful_changes)),
                         "previous_status": agent_before.status,
                         "status": status_value or agent_before.status,
                         "previous_health_status": agent_before.health_status,

@@ -1876,8 +1876,12 @@ def test_default_review_workflow_refuses_without_publication_target(cp):
     # Task remains in REVIEWING — the review approval landed but
     # publication is held until a target is configured.
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    # The waiting condition is asserted via result["status"] above. The
+    # 'no_publication_target' log is silenced (mem-04): the review tick re-emits
+    # it every cycle for a stuck task — 262K durable rows in ~4 days on rocky —
+    # so it must NOT land as an observability event.
     names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.no_publication_target" in names
+    assert "workflow.default_review.no_publication_target" not in names
 
 
 def test_default_review_rejects_alias_evidence_taxonomy(cp):
@@ -7881,3 +7885,39 @@ def test_update_task_filters_disallowed_capabilities(cp):
 
     assert updated.required_capabilities == ["ops"]
     assert updated.metadata["domain_capabilities"] == ["typescript"]
+
+
+def test_heartbeat_only_logs_meaningful_changes():
+    """Hub-db bloat fix: a heartbeat must not write a durable lifecycle/obs row
+    on resource jitter — only on a meaningful change (status/health/digest).
+    Resource churn on every beat was ~527K+228K rows in ~4 days on rocky."""
+    cp = ControlPlane.in_memory()
+    agent = register_agent(cp, "worker", ["python"])
+
+    def hb_events():
+        return cp.store.query_one(
+            "SELECT COUNT(*) AS c FROM agent_lifecycle_events "
+            "WHERE event_type = 'agent.heartbeat_updated'"
+        )["c"]
+
+    before = hb_events()
+    # resource-only heartbeats (CPU/mem jitter) must NOT create lifecycle events
+    cp.heartbeat_agent(agent.id, resources={"cpu_percent": 12.3})
+    cp.heartbeat_agent(agent.id, resources={"cpu_percent": 88.0})
+    assert hb_events() == before, "resource jitter must not log heartbeat events"
+
+    # a meaningful status change DOES log exactly one event
+    cp.heartbeat_agent(agent.id, status="draining")
+    assert hb_events() == before + 1
+
+    # repeating the same status (with more jitter) is a no-op
+    cp.heartbeat_agent(agent.id, status="draining", resources={"cpu_percent": 5.0})
+    assert hb_events() == before + 1
+
+
+def test_no_publication_target_is_silenced():
+    """The review-tick 'no_publication_target' steady-state log is silenced
+    (mem-04) so it can't re-bloat the db every tick."""
+    from mac.observability_service import _VERBOSE_POLL_LOG_NAMES
+
+    assert "workflow.default_review.no_publication_target" in _VERBOSE_POLL_LOG_NAMES
