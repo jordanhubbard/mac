@@ -217,16 +217,18 @@ def _chmod_600(path: Path) -> None:
         pass
 
 
-def ensure_image_gen_provider(hermes_home: Path, default: str = "nvidia") -> str:
-    """Default image generation to the hub-routed ``nvidia`` provider when the
+def ensure_image_gen_provider(hermes_home: Path, default: str = "mac-hub") -> str:
+    """Default image generation to the hub-routed ``mac-hub`` provider when the
     operator hasn't picked one.
 
-    That backend routes text-to-image through the in-mac router's ``/v1/genai``
-    proxy (using the hub's escrowed image key), so agents render images with NO
-    per-agent ``FAL_KEY`` — and it works on spokes, which carry no raw provider
+    ``mac-hub`` (media-01) routes text-to-image through the in-mac router's
+    canonical ``/v1/media/image.generate`` endpoint, which resolves the provider
+    binding(s), adapts the request, and fails over — so agents render images with
+    NO per-agent ``FAL_KEY``, and it works on spokes, which carry no raw provider
     keys. Without this default, the registry's legacy fallback prefers ``fal``
     (which reports available via the managed gateway but has no usable key here),
-    so image generation fails fleet-wide even though ``/v1/genai`` works.
+    so image generation fails fleet-wide even though the router works. (The older
+    ``nvidia`` provider, which posts straight to ``/v1/genai``, stays available.)
 
     Respects an explicit ``image_gen.provider`` (never overrides it). Line-based
     to preserve the rest of the file. Returns the provider now in effect (``""``
