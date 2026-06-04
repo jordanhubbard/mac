@@ -738,6 +738,11 @@ class SecretRevealRequest(BaseModel):
     accessor_agent_id: str
 
 
+class SecretRotate(BaseModel):
+    value: str
+    actor: str = "operator"
+
+
 class ArtifactRegister(BaseModel):
     kind: str
     digest: str
@@ -3817,6 +3822,21 @@ def create_app(
             raise NotFoundError("secret store unavailable")
         actor = getattr(principal, "agent_id", None) or "operator"
         return cp.delete_secret(name, actor=actor)
+
+    @app.post("/secrets/{name}/rotate")
+    def rotate_secret(
+        name: str,
+        body: SecretRotate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Rotate a secret's value in place, audited as a rotation — vs the
+        # DELETE + re-POST dance an operator otherwise has to do (and which loses
+        # the secret's id/scopes). Requires the `secret` scope (admin inherits
+        # it; covered by _required_scope for /secrets*). Used to swap an upstream
+        # provider key in the hub vault, e.g. correcting a media key that was
+        # escrowed from the wrong source (nvidia-image vs the chat key).
+        actor = getattr(principal, "agent_id", None) or body.actor or "operator"
+        return cp.rotate_secret(name, body.value, actor).to_dict()
 
     @app.get("/secret-audits")
     def list_secret_audits(secret_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:

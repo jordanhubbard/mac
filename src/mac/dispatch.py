@@ -635,6 +635,14 @@ class RemoteDispatch:
             )
         )
 
+    def rotate_secret(self, name: str, value: str, actor: str = "operator") -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/secrets/%s/rotate" % quote(name, safe=""),
+                {"value": value, "actor": actor},
+            )
+        )
+
     def list_secrets(self) -> List[_Dictish]:
         return _wrap_list(self._get("/secrets"))
 

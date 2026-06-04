@@ -960,6 +960,11 @@ def cmd_secret_delete(args: argparse.Namespace) -> None:
     _print(_plane(args).delete_secret(args.secret, actor=args.actor))
 
 
+def cmd_secret_rotate(args: argparse.Namespace) -> None:
+    value = _resolve_secret_value(args)
+    _print(_plane(args).rotate_secret(args.name, value, actor=args.actor))
+
+
 def cmd_secret_access(args: argparse.Namespace) -> None:
     _print(_plane(args).request_secret(args.secret, args.agent_id, args.purpose))
 
@@ -2361,6 +2366,13 @@ def build_parser() -> argparse.ArgumentParser:
     secret_delete.add_argument("secret", help="secret id or name")
     secret_delete.add_argument("--actor", default="operator")
     _set(cmd_secret_delete, secret_delete)
+    secret_rotate = secret.add_parser("rotate", help="rotate a secret's value in place (audited)")
+    secret_rotate.add_argument("name", help="secret id or name")
+    secret_rotate.add_argument("value", nargs="?", default=None, help="new value (avoid; prefer --from-stdin / --from-file)")
+    secret_rotate.add_argument("--from-stdin", action="store_true", help="read the new value from stdin")
+    secret_rotate.add_argument("--from-file", help="read the new value from a file path")
+    secret_rotate.add_argument("--actor", default="operator")
+    _set(cmd_secret_rotate, secret_rotate)
     secret_access = secret.add_parser("access")
     secret_access.add_argument("secret")
     secret_access.add_argument("agent_id")

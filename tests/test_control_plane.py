@@ -2662,6 +2662,19 @@ def test_secrets_are_scoped_redacted_audited_and_not_stored_plaintext(cp):
     assert [audit.result for audit in audits] == ["granted", "denied"]
 
 
+def test_rotate_secret_updates_value_in_place_and_audits(cp):
+    deployer = register_agent(cp, "rotdep", ["deploy"])
+    secret = cp.create_secret(
+        "img-key", "old-value", {"capabilities": ["deploy"]}, "human"
+    )
+    rotated = cp.rotate_secret("img-key", "new-value", "operator")
+    assert rotated.id == secret.id  # same row — id + scopes preserved, not a new secret
+    handle = cp.request_secret(secret.id, deployer.id, "use")
+    assert cp.reveal_secret(secret.id, handle.audit_id, deployer.id) == "new-value"
+    # the rotation is audited (not stored plaintext, like every other access)
+    assert any(audit.result == "rotated" for audit in cp.list_secret_audits(secret.id))
+
+
 def test_delete_secret_scrubs_value_and_allows_name_reuse(cp):
     secret = cp.create_secret(
         "stale-router-key", "old-upstream-value", {"capabilities": ["router-upstream"]}, "deploy"
