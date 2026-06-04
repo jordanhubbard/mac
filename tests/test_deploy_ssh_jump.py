@@ -73,3 +73,13 @@ def test_ssh_conn_opts_emits_proxyjump_dynamically():
         capture_output=True, text=True,
     ).stdout
     assert none.strip() == ""
+
+
+def test_load_ssh_jump_config_is_operator_side_safe():
+    """load_ssh_jump_config runs on the operator, where the script's log() is
+    NOT defined (it lives only inside the remote <<'REMOTE' node payload, so on
+    macOS `log` resolves to /usr/bin/log and aborts under set -e). It must use
+    the operator-side echo "==>" convention instead."""
+    fn = _extract("load_ssh_jump_config")
+    assert 'log "' not in fn, "operator-side function must not call the remote-only log()"
+    assert 'echo "==>' in fn

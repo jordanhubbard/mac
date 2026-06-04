@@ -746,7 +746,11 @@ load_ssh_jump_config() {
   [ "$SSH_STRICT" = "0" ] && SSH_CONN_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   [ -n "$SSH_JUMP" ] && SSH_CONN_OPTS="${SSH_CONN_OPTS:+$SSH_CONN_OPTS }-o ProxyJump=$SSH_JUMP"
   if [ -n "$SSH_JUMP" ]; then
-    log "ssh: operator->node via -o ProxyJump=${SSH_JUMP} (strict host-key checking: $([ "$SSH_STRICT" = "0" ] && echo off || echo on))"
+    # Operator-side message: log() is defined only inside the remote node
+    # payload (the <<'REMOTE' heredoc), so on the operator it resolves to the
+    # macOS /usr/bin/log binary and would abort under set -e. Use the same
+    # echo "==> ..." convention as the rest of main()'s operator-side output.
+    echo "==> ssh: operator->node via -o ProxyJump=${SSH_JUMP} (strict host-key checking: $([ "$SSH_STRICT" = "0" ] && echo off || echo on))"
   fi
 }
 
@@ -1858,15 +1862,27 @@ cp.register_hermes_instance(
 )
 if agent == shared_services_manager:
     fleet_metadata = {"source": "mac-deploy", "fleet": fleet, "hub_agent": agent}
-    try:
-        existing_fleet = cp.get_fleet(fleet)
-    except NotFoundError:
+    # Idempotent get-or-create. create_fleet derives the id via
+    # stable_id("fleet", fleet), which lowercases the name — so a prior deploy of
+    # the same fleet under different case (e.g. "jordanh-GKE" vs "jordanh-gke")
+    # shares the id but NOT the case-sensitive name. Look up by the stable id as
+    # well as the name, or a re-deploy hits a fleets.id UNIQUE collision instead
+    # of reconciling the fleet that is already there.
+    fleet_fid = stable_id("fleet", fleet)
+    existing_fleet = None
+    for _key in (fleet, fleet_fid):
+        try:
+            existing_fleet = cp.get_fleet(_key)
+            break
+        except NotFoundError:
+            continue
+    if existing_fleet is None:
         cp.create_fleet(
             fleet,
             description="Auto-registered deployment fleet",
             metadata=fleet_metadata,
             tenant_id=tenant_id,
-            fleet_id=stable_id("fleet", fleet),
+            fleet_id=fleet_fid,
             actor="mac-deploy",
         )
     else:
