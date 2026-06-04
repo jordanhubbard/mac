@@ -67,3 +67,51 @@ def test_refresh_is_idempotent_replaces_and_clears(tmp_path):
     refresh_mood_section(md, render_mood_section(None))
     t3 = md.read_text()
     assert t3.count(MOOD_SECTION_BEGIN) == 1 and "Current mood" not in t3
+
+
+def test_hub_get_mood_fetches_from_hub(monkeypatch):
+    """The fleet-context refresh must pull mood from the hub (not local SQLite),
+    so a spoke sees a hub-set mood."""
+    import json as _json
+    import urllib.request as _u
+
+    from mac.cli import _hub_get_mood
+
+    monkeypatch.setenv("MAC_HUB_URL", "http://hub:8789")
+    monkeypatch.setenv("MAC_API_TOKEN", "tok")
+    captured = {}
+
+    class _R:
+        def __init__(self, payload):
+            self._b = _json.dumps(payload).encode()
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["auth"] = req.get_header("Authorization")
+        return _R({"mode": "warm", "reason": "good chat"})
+
+    monkeypatch.setattr(_u, "urlopen", fake)
+    out = _hub_get_mood("agent_rocky")
+    assert out == {"mode": "warm", "reason": "good chat"}
+    assert captured["url"] == "http://hub:8789/agents/agent_rocky/mood"
+    assert captured["auth"] == "Bearer tok"
+
+
+def test_hub_get_mood_none_without_env_or_agent(monkeypatch):
+    from mac.cli import _hub_get_mood
+
+    for k in ("MAC_HUB_URL", "MAC_URL", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    assert _hub_get_mood("agent_rocky") is None
+    monkeypatch.setenv("MAC_HUB_URL", "http://h")
+    monkeypatch.setenv("MAC_API_TOKEN", "t")
+    assert _hub_get_mood(None) is None

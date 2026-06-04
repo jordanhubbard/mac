@@ -487,6 +487,33 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """GET the agent's current mood overlay straight from the hub HTTP API.
+
+    The fleet-context refresh otherwise runs against local SQLite ($MAC_DB wins
+    in CLI resolution), so on a spoke a hub-set mood would never be seen. This
+    talks to the hub directly (same URL + token the worker uses). Returns the
+    overlay dict, or None on any error / no active mood."""
+    import json as _json
+    import os as _os
+    import urllib.request as _u
+
+    base = (_os.environ.get("MAC_HUB_URL") or _os.environ.get("MAC_URL") or "").rstrip("/")
+    token = (_os.environ.get("MAC_WORKER_TOKEN") or _os.environ.get("MAC_API_TOKEN") or "").strip()
+    if not (base and token and agent_id):
+        return None
+    req = _u.Request("%s/agents/%s/mood" % (base, agent_id), method="GET")
+    req.add_header("Authorization", "Bearer %s" % token)
+    req.add_header("Accept", "application/json")
+    try:
+        with _u.urlopen(req, timeout=10) as resp:  # noqa: S310 (operator-configured hub)
+            raw = resp.read().decode("utf-8", "replace")
+        data = _json.loads(raw) if raw.strip() else None
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - mood is best-effort
+        return None
+
+
 def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     """fleet-02 + mood-01: refresh the live Fleet section AND this agent's mood
     overlay in its runtime-context markdown, so its next session knows what
@@ -510,20 +537,10 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     path = _Path(markdown)
     refresh_fleet_section(path, render_fleet_section(snapshot))
 
-    # mood-01: render this agent's current mood overlay into the same context so
-    # a set mood colors behaviour. Best-effort — never break the fleet refresh.
-    overlay = None
-    if agent:
-        try:
-            current = plane.get_current_mood(agent)
-            if current is None:
-                overlay = None
-            elif hasattr(current, "to_dict"):
-                overlay = current.to_dict()
-            elif isinstance(current, dict):
-                overlay = current
-        except Exception:  # noqa: BLE001
-            overlay = None
+    # mood-01: fetch this agent's mood straight from the hub HTTP API so a spoke
+    # picks it up even though $MAC_DB pins the rest of the CLI to local SQLite
+    # (fleet_snapshot above isn't wrapped in hub mode, so it stays local). Best-effort.
+    overlay = _hub_get_mood(agent) if agent else None
     refresh_mood_section(path, render_mood_section(overlay))
     _print(
         {
