@@ -149,6 +149,7 @@ const state = {
 const nodes = {
     nav: requiredElement("#viewNav"),
     title: requiredElement("#viewTitle"),
+    viewSelect: requiredElement("#viewSelect"),
     banner: requiredElement("#banner"),
     content: requiredElement("#content"),
     refresh: requiredElement("#refreshButton"),
@@ -186,6 +187,9 @@ function bindEvents() {
     });
     nodes.refresh.addEventListener("click", () => loadDashboard());
     nodes.themeToggle.addEventListener("click", () => toggleTheme());
+    nodes.viewSelect.addEventListener("change", () => {
+        navigateDashboardView(nodes.viewSelect.value);
+    });
     nodes.content.addEventListener("click", handleContentClick);
     nodes.content.addEventListener("keydown", handleContentKeydown);
     nodes.content.addEventListener("submit", handleActionSubmit);
@@ -305,6 +309,7 @@ function render() {
             button.removeAttribute("aria-current");
     });
     nodes.title.textContent = VIEW_TITLES[state.activeView];
+    nodes.viewSelect.value = state.activeView;
     renderSyncState();
     renderBanner();
     if (state.data) {
@@ -350,6 +355,25 @@ function render() {
     nodes.content.innerHTML = `${action}${body}`;
     bindViewControls();
     syncObservabilitySubscription();
+}
+function renderPreservingFocusedControl() {
+    const active = document.activeElement;
+    const id = active?.id || "";
+    const selectionStart = active && "selectionStart" in active ? active.selectionStart : null;
+    const selectionEnd = active && "selectionEnd" in active ? active.selectionEnd : null;
+    render();
+    if (!id)
+        return;
+    const next = document.getElementById(id);
+    if (!next)
+        return;
+    next.focus();
+    if (selectionStart !== null
+        && selectionEnd !== null
+        && "setSelectionRange" in next
+        && next instanceof HTMLInputElement) {
+        next.setSelectionRange(selectionStart, selectionEnd);
+    }
 }
 function renderSyncState() {
     nodes.syncState.textContent = state.loading
@@ -505,15 +529,18 @@ function renderOverview() {
       ${metric("Active Work", counts.active_tasks || 0, `${counts.dead_letters || 0} dead letters`)}
       ${metric("Hermes", counts.hermes_instances || 0, `${startupStatus}, ${counts.platform_bindings || 0} bindings`)}
     </section>
-    <section class="surface">
-      <h2>Dispatch</h2>
+    <details class="surface action-drawer">
+      <summary>
+        <span>Dispatch Controls</span>
+        <span class="muted small">Manual lease tick for operators</span>
+      </summary>
       <form class="action-form compact" data-action="dispatchTick">
         <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1"></label>
         <label>Limit <input name="limit" type="number" value="100" min="1"></label>
         <label>Stale after <input name="stale_after_seconds" type="number" placeholder="optional"></label>
         <button type="submit">Run Tick</button>
       </form>
-    </section>
+    </details>
     <section class="split">
       <div class="surface">
         <h2>Task States</h2>
@@ -625,8 +652,11 @@ function renderProjects() {
     </section>
     ${writable ? "" : `<section class="action-status">Read-only token: project fields can be inspected but not edited.</section>`}
     <section class="split">
-      <div class="surface">
-        <h2>Create Project</h2>
+      <details class="surface action-drawer">
+        <summary>
+          <span>Create Project</span>
+          <span class="muted small">Add a durable project record</span>
+        </summary>
         <form class="action-form aligned-form project-create-form" data-action="projectCreate">
           <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
           <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
@@ -634,7 +664,7 @@ function renderProjects() {
           <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
           <div class="field-full form-actions"><button type="submit" ${disabledAttr(!writable)}>Create</button></div>
         </form>
-      </div>
+      </details>
       <div class="surface">
         <h2>Project Metrics</h2>
         <section class="metric-grid compact-metrics">
@@ -773,8 +803,11 @@ function renderAgents() {
       ${sessionAccessBadge(data)}
     </section>
     ${writable ? "" : `<section class="action-status">Read-only token: agent records can be inspected but not changed.</section>`}
-    <section class="surface">
-      <h2>Create Agent</h2>
+    <details class="surface action-drawer">
+      <summary>
+        <span>Create Agent</span>
+        <span class="muted small">Register capacity after the machine is known</span>
+      </summary>
       <form class="action-form aligned-form" data-action="agentCreate">
         <label>Machine ${machineSelect("machine_id", data.machines, "", !writable)}</label>
         <label>Fleet ${fleetSelect("fleet_id", data.fleets, defaultFleetId(data), !writable)}</label>
@@ -786,7 +819,7 @@ function renderAgents() {
         <label>Actor <input name="actor" value="human" ${disabledAttr(!writable)}></label>
         <button type="submit" ${disabledAttr(!writable)}>Create</button>
       </form>
-    </section>
+    </details>
     <section class="surface">
       <div class="surface-heading">
         <h2>Agent Resource Table</h2>
@@ -831,8 +864,11 @@ function renderTasks() {
       </select>
       <button type="button" id="clearTaskFilter">Clear</button>
     </section>
-    <section class="surface">
-      <h2>Create Task</h2>
+    <details class="surface action-drawer">
+      <summary>
+        <span>New Task</span>
+        <span class="muted small">Create work only when the queue needs a human-authored item</span>
+      </summary>
       <form class="action-form" data-action="taskCreate">
         <label>Title <input name="title" required></label>
         <label>Description <textarea name="description"></textarea></label>
@@ -843,7 +879,7 @@ function renderTasks() {
         <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
         <button type="submit">Create</button>
       </form>
-    </section>
+    </details>
     <section class="task-lanes">
       ${TASK_STATES.filter((taskState) => state.taskFilter === "all" || state.taskFilter === taskState)
         .map((taskState) => taskLane(taskState, tasks, data.agents))
@@ -1563,8 +1599,8 @@ function renderIntegrations() {
     const failingEvalRuns = data.eval_runs.filter((run) => run.passed === false);
     return `
     <section class="metric-grid">
-      ${metric("Beads Repos", data.beads_repositories.length, "registered issue sources")}
-      ${metric("Bridge Items", data.bridge_items.length, "imported project items")}
+      ${metric("Legacy Repos", data.beads_repositories.length, "retired import sources")}
+      ${metric("Imported Items", data.bridge_items.length, "project items from import bridges")}
       ${metric("Service UIs", data.service_links.length, "linked control surfaces")}
       ${metric("Artifacts", data.artifacts.length, "registered outputs")}
       ${metric("Eval Runs", data.eval_runs.length, `${failingEvalRuns.length} failing`)}
@@ -1575,9 +1611,9 @@ function renderIntegrations() {
     </section>
     <section class="split">
       <div class="surface">
-        <h2>Beads Bridge</h2>
+        <h2>Legacy Imports</h2>
         <div class="record-list">
-          ${data.beads_repositories.length ? data.beads_repositories.map(beadsRepositoryRecord).join("") : `<div class="empty-state">No Beads repositories</div>`}
+          ${data.beads_repositories.length ? data.beads_repositories.map(beadsRepositoryRecord).join("") : `<div class="empty-state">No legacy repositories</div>`}
           ${data.bridge_items.length ? data.bridge_items.slice(0, 30).map(bridgeItemRecord).join("") : ""}
         </div>
       </div>
@@ -1607,7 +1643,9 @@ function renderIntegrations() {
 }
 function renderRuntime() {
     const data = mustData();
-    const activeRollouts = data.rollouts.filter((item) => ["active", "canary", "promoting"].includes(String(item.rollout.status))).length;
+    const writable = canWrite(data);
+    const disabled = disabledAttr(!writable);
+    const activeRollouts = data.rollouts.filter((item) => ["planned", "canarying", "paused", "rescuing"].includes(String(item.rollout.status))).length;
     const runningRuns = data.runtime_runs.filter((run) => run.status === "running").length;
     const activeDeltas = data.runtime_deltas.filter((delta) => ["proposed", "validated"].includes(String(delta.status))).length;
     return `
@@ -1618,59 +1656,90 @@ function renderRuntime() {
       ${metric("Rollouts", data.rollouts.length, `${activeRollouts} active`)}
       ${metric("Eval Gates", data.eval_sets.length, "available rollout gates")}
     </section>
-    <section class="split">
-      <div class="surface">
-        <h2>Create Runtime</h2>
+    <section class="command-drawer-grid">
+      <details class="surface action-drawer">
+        <summary>
+          <span>Create Runtime</span>
+          <span class="muted small">Register a new execution environment manifest</span>
+        </summary>
         <form class="action-form aligned-form" data-action="runtimeCreate">
-          <label>Name <input name="name" required></label>
-          <label>Created by <input name="created_by" value="human"></label>
-          <label>Manifest JSON <textarea class="json-editor" name="manifest" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
-          <button type="submit">Create Runtime</button>
+          <label>Name <input name="name" required ${disabled}></label>
+          <label>Created by <input name="created_by" value="human" ${disabled}></label>
+          <label>Manifest JSON <textarea class="json-editor" name="manifest" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Create Runtime</button>
         </form>
-      </div>
-      <div class="surface">
-        <h2>Create Rollout</h2>
+      </details>
+      <details class="surface action-drawer">
+        <summary>
+          <span>Create Rollout</span>
+          <span class="muted small">Stage a canary, full promotion, or rescue rollout</span>
+        </summary>
         <form class="action-form aligned-form" data-action="rolloutCreate">
-          <label>Version <input name="version" required placeholder="2026.06.03"></label>
-          <label>Strategy ${select("strategy", ["canary", "blue_green", "rolling"], "canary")}</label>
-          <label>Target % <input name="target_percent" type="number" min="0" max="100" value="10"></label>
-          <label>Runtime ${runtimeSelect("runtime_environment_id", data.runtimes, "")}</label>
-          <label>Tenant ID <input name="tenant_id" placeholder="global"></label>
-          <label>Channel <input name="channel" value="fleet"></label>
-          <label>Artifact URI <input name="artifact_uri" placeholder="artifact://..."></label>
-          <label>Artifact hash <input name="artifact_hash" placeholder="sha256:..."></label>
-          <label>Eval gate ${evalSetSelect("required_eval_set_id", data.eval_sets, "")}</label>
-          <label>Created by <input name="created_by" value="human"></label>
-          <label>Health policy JSON <textarea class="json-editor" name="health_policy" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
-          <button type="submit">Create Rollout</button>
+          <label>Version <input name="version" required placeholder="2026.06.03" ${disabled}></label>
+          <label>Strategy ${select("strategy", ["canary", "full", "rescue"], "canary", !writable)}</label>
+          <label>Target % <input name="target_percent" type="number" min="0" max="100" value="10" ${disabled}></label>
+          <label>Runtime ${runtimeSelect("runtime_environment_id", data.runtimes, "", !writable)}</label>
+          <label>Tenant ID <input name="tenant_id" placeholder="global" ${disabled}></label>
+          <label>Channel <input name="channel" value="fleet" ${disabled}></label>
+          <label>Artifact URI <input name="artifact_uri" placeholder="artifact://..." ${disabled}></label>
+          <label>Artifact hash <input name="artifact_hash" placeholder="sha256:..." ${disabled}></label>
+          <label>Eval gate ${evalSetSelect("required_eval_set_id", data.eval_sets, "", !writable)}</label>
+          <label>Created by <input name="created_by" value="human" ${disabled}></label>
+          <label>Health policy JSON <textarea class="json-editor" name="health_policy" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Create Rollout</button>
         </form>
-      </div>
+      </details>
     </section>
     <section class="surface">
       <div class="surface-heading">
         <h2>Runtime Deltas</h2>
         ${chip(`${activeDeltas} pending`, activeDeltas ? "warn" : "good")}
       </div>
+      <details class="action-drawer inline-drawer">
+        <summary>
+          <span>Propose Runtime Delta</span>
+          <span class="muted small">Record a task-local environment extension for validation</span>
+        </summary>
+        <form class="action-form aligned-form" data-action="runtimeDeltaPropose">
+          <label>Task ${taskSelect("task_id", data.tasks, "", !writable)}</label>
+          <label>Agent ${agentSelect("agent_id", data.agents, "", !writable)}</label>
+          <label>Package manager ${select("package_manager", ["pip", "uv", "npm", "pnpm"], "uv", !writable)}</label>
+          <label>Base runtime ${runtimeSelect("base_runtime_id", data.runtimes, "", !writable)}</label>
+          <label>Project <input name="project" placeholder="optional" ${disabled}></label>
+          <label>Lockfile path <input name="lockfile_path" placeholder="uv.lock, package-lock.json" ${disabled}></label>
+          <label>Lockfile digest <input name="lockfile_digest" placeholder="sha256:..." ${disabled}></label>
+          <label>Evidence ID <input name="evidence_id" placeholder="optional" ${disabled}></label>
+          <label>Reason <input name="reason" required placeholder="why this dependency is needed" ${disabled}></label>
+          <label>Commands JSON <textarea class="json-editor" name="commands" placeholder='["uv add httpx==0.28.1"]' spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}></textarea></label>
+          <label>Dependencies JSON <textarea class="json-editor" name="added_dependencies" placeholder='["httpx==0.28.1"]' spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Propose Delta</button>
+        </form>
+      </details>
       <div class="runtime-list">
         ${data.runtime_deltas.length ? data.runtime_deltas.map((delta) => runtimeDeltaRecord(delta, data)).join("") : `<div class="empty-state">No runtime deltas</div>`}
       </div>
     </section>
     <section class="surface">
-      <h2>Runtime Runs</h2>
-      <div class="runtime-control-grid">
+      <details class="action-drawer inline-drawer">
+        <summary>
+          <span>Runtime Run Controls</span>
+          <span class="muted small">Start or complete run records manually</span>
+        </summary>
+        <div class="runtime-control-grid">
         <form class="action-form aligned-form" data-action="runtimeRunCreate">
-          <label>Task ${taskSelect("task_id", data.tasks, "")}</label>
-          <label>Agent ${agentSelect("agent_id", data.agents, "")}</label>
-          <label>Runtime ${runtimeSelect("environment_id", data.runtimes, "")}</label>
-          <button type="submit">Start Run</button>
+          <label>Task ${taskSelect("task_id", data.tasks, "", !writable)}</label>
+          <label>Agent ${agentSelect("agent_id", data.agents, "", !writable)}</label>
+          <label>Runtime ${runtimeSelect("environment_id", data.runtimes, "", !writable)}</label>
+          <button type="submit" ${disabled}>Start Run</button>
         </form>
         <form class="action-form aligned-form" data-action="runtimeRunComplete">
-          <label>Run ${runtimeRunSelect("run_id", data.runtime_runs, "")}</label>
-          <label>Evidence ID <input name="evidence_id" required></label>
-          <label>Status ${select("status", ["completed", "failed", "cancelled"], "completed")}</label>
-          <button type="submit">Complete Run</button>
+          <label>Run ${runtimeRunSelect("run_id", data.runtime_runs, "", !writable)}</label>
+          <label>Evidence ID <input name="evidence_id" required ${disabled}></label>
+          <label>Status ${select("status", ["completed", "failed", "cancelled"], "completed", !writable)}</label>
+          <button type="submit" ${disabled}>Complete Run</button>
         </form>
-      </div>
+        </div>
+      </details>
       <div class="mobile-card-list always-visible">
         ${data.runtime_runs.length ? data.runtime_runs.slice(0, 12).map((run) => runtimeRunCard(run, data)).join("") : `<div class="empty-state">No runtime runs</div>`}
       </div>
@@ -1708,8 +1777,11 @@ function renderSecrets() {
       ${metric("Audit Events", data.secret_audits.length, `${grantedAudits} granted`)}
       ${metric("Agents", data.agents.length, "eligible accessors")}
     </section>
-    <section class="surface">
-      <h2>Create Secret</h2>
+    <details class="surface action-drawer">
+      <summary>
+        <span>Create Secret</span>
+        <span class="muted small">Add a scoped, audited secret record</span>
+      </summary>
       <form class="action-form aligned-form" data-action="secretCreate">
         <label>Name <input name="name" required></label>
         <label>Created by <input name="created_by" value="human"></label>
@@ -1717,7 +1789,7 @@ function renderSecrets() {
         <label>Scopes JSON <textarea class="json-editor" name="scopes" placeholder='{"agents":[]}' spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
         <button type="submit">Create Secret</button>
       </form>
-    </section>
+    </details>
     <section class="split">
       <div class="surface">
         <div class="surface-heading">
@@ -2905,8 +2977,11 @@ function taskInspector(tasks, data) {
         <label>Metadata JSON <textarea class="json-editor" name="metadata">${escapeHtml(JSON.stringify(task.metadata || {}, null, 2))}</textarea></label>
         <button type="submit">Save Task</button>
       </form>
-      <details class="action-box" open>
-        <summary>Lifecycle</summary>
+      <details class="action-box action-drawer inline-drawer">
+        <summary>
+          <span>Lifecycle Actions</span>
+          <span class="muted small">Claim, start, review, or transition this task</span>
+        </summary>
         <form class="action-form compact" data-action="taskClaim" data-task-id="${escapeHtml(task.id)}">
           <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
           <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1"></label>
@@ -2927,8 +3002,11 @@ function taskInspector(tasks, data) {
           <button type="submit">Transition</button>
         </form>
       </details>
-      <details class="action-box">
-        <summary>Children, Evidence, Reviews</summary>
+      <details class="action-box action-drawer inline-drawer">
+        <summary>
+          <span>Children, Evidence, Reviews</span>
+          <span class="muted small">Attach proof or create follow-on work</span>
+        </summary>
         <form class="action-form compact" data-action="taskAddChild" data-task-id="${escapeHtml(task.id)}">
           <label>Child title <input name="title" required></label>
           <label>Description <textarea name="description"></textarea></label>
@@ -3552,7 +3630,7 @@ function bindViewControls() {
             state.agentQuery = event.target.value;
             state.agentPage = 1;
             updateUrlState(true);
-            render();
+            renderPreservingFocusedControl();
         });
     const projectFilter = document.querySelector("#projectFilter");
     if (projectFilter)
@@ -3662,7 +3740,7 @@ function bindAuditControl(selector, key, replace = false) {
     control.addEventListener("input", (event) => {
         state[key] = event.target.value;
         updateUrlState(replace);
-        render();
+        renderPreservingFocusedControl();
     });
     control.addEventListener("change", (event) => {
         state[key] = event.target.value;
@@ -3943,6 +4021,7 @@ async function handleActionSubmit(event) {
     event.preventDefault();
     const action = form.dataset.action || "";
     const values = formValues(form);
+    setFormBusy(form, true);
     try {
         const result = await runAction(action, form, values);
         state.actionMessage = `${labelize(action)} ok: ${redactedJson(result)}`;
@@ -3952,6 +4031,25 @@ async function handleActionSubmit(event) {
         state.actionMessage = `${labelize(action)} failed: ${error instanceof Error ? error.message : String(error)}`;
         render();
     }
+    finally {
+        if (form.isConnected)
+            setFormBusy(form, false);
+    }
+}
+function setFormBusy(form, busy) {
+    form.setAttribute("aria-busy", busy ? "true" : "false");
+    form.querySelectorAll("button, input, select, textarea").forEach((control) => {
+        if (busy) {
+            if (!control.disabled) {
+                control.dataset.busyDisabled = "1";
+                control.disabled = true;
+            }
+        }
+        else if (control.dataset.busyDisabled === "1") {
+            control.disabled = false;
+            delete control.dataset.busyDisabled;
+        }
+    });
 }
 async function runAction(action, form, values) {
     if (action === "dispatchTick") {
@@ -4122,6 +4220,21 @@ async function runAction(action, form, values) {
         return postJSON(`/runtime-runs/${encodeURIComponent(runId)}/complete`, {
             evidence_id: requiredString(values.evidence_id),
             status: requiredString(values.status),
+        });
+    }
+    if (action === "runtimeDeltaPropose") {
+        return postJSON("/runtime-deltas", {
+            task_id: requiredString(values.task_id),
+            agent_id: requiredString(values.agent_id),
+            package_manager: requiredString(values.package_manager),
+            commands: parseJsonStringArray(values.commands),
+            added_dependencies: parseJsonAnyArray(values.added_dependencies),
+            reason: requiredString(values.reason),
+            project: emptyToNull(values.project),
+            base_runtime_id: emptyToNull(values.base_runtime_id),
+            lockfile_path: emptyToNull(values.lockfile_path),
+            lockfile_digest: emptyToNull(values.lockfile_digest),
+            evidence_id: emptyToNull(values.evidence_id),
         });
     }
     if (action === "runtimeDeltaValidate") {
@@ -4609,6 +4722,19 @@ function parseJsonArray(value) {
         throw new Error("expected a JSON array");
     }
     return parsed;
+}
+function parseJsonAnyArray(value) {
+    const text = String(value || "").trim();
+    if (!text)
+        return [];
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) {
+        throw new Error("expected a JSON array");
+    }
+    return parsed;
+}
+function parseJsonStringArray(value) {
+    return parseJsonAnyArray(value).map((item) => String(item)).filter((item) => item.trim());
 }
 function requiredString(value) {
     const text = String(value || "").trim();

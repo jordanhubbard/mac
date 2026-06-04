@@ -386,6 +386,9 @@ a:focus-visible,
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -393,6 +396,7 @@ a:focus-visible,
   min-height: 96px;
   border-bottom: 1px solid var(--line);
   background: var(--topbar);
+  backdrop-filter: blur(18px);
   padding: 22px 28px;
 }
 
@@ -415,6 +419,19 @@ h1 {
   margin-bottom: 0;
   font-size: clamp(1.45rem, 1.2rem + 0.8vw, 2.1rem);
   line-height: 1.1;
+}
+
+.view-select {
+  display: none;
+  width: 100%;
+  height: 42px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--ink);
+  padding: 0 10px;
+  font-weight: 700;
 }
 
 h2 {
@@ -551,7 +568,7 @@ h3 {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
 }
 
@@ -593,7 +610,7 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: 0 10px 30px rgba(32, 33, 36, 0.05);
   padding: 18px;
 }
 
@@ -725,6 +742,68 @@ h3 {
   padding: 0 12px;
   font-weight: 800;
   align-self: end;
+}
+
+.action-form[aria-busy="true"] {
+  opacity: 0.72;
+}
+
+.action-drawer {
+  overflow: hidden;
+}
+
+.action-drawer > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 800;
+}
+
+.action-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.action-drawer > summary::after {
+  content: "+";
+  display: inline-grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.action-drawer[open] > summary::after {
+  content: "-";
+}
+
+.action-drawer > summary > span:first-child {
+  min-width: 0;
+}
+
+.action-drawer > summary > .muted {
+  margin-left: auto;
+  text-align: right;
+}
+
+.inline-drawer {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  padding: 12px;
+}
+
+.command-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
 }
 
 .action-status {
@@ -1326,16 +1405,23 @@ button.mobile-object-card {
 }
 
 .task-lanes {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(210px, 1fr));
+  display: flex;
   gap: 12px;
   align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
 }
 
 .task-lane {
+  flex: 0 0 292px;
   display: grid;
   gap: 10px;
   min-height: 120px;
+  max-height: 640px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-align: start;
   border: 1px solid var(--line);
   border-top: 3px solid var(--lane-accent, var(--line));
   border-radius: 8px;
@@ -1365,11 +1451,17 @@ button.mobile-object-card {
 }
 
 .task-lane h2 {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 2px;
+  margin: -12px -12px 2px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+  padding: 12px;
 }
 
 .task-lane h2 .lane-title {
@@ -1956,10 +2048,17 @@ button.mobile-object-card {
   text-align: center;
 }
 
+.observability-feed {
+  max-height: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
 @media (max-width: 1120px) {
   .metric-grid,
   .row-grid,
-  .task-lanes {
+  .command-drawer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1984,11 +2083,7 @@ button.mobile-object-card {
   }
 
   .nav {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    scroll-snap-type: x proximity;
+    display: none;
   }
 
   .nav-section {
@@ -2005,6 +2100,10 @@ button.mobile-object-card {
     padding: 0 10px;
     scroll-snap-align: start;
     text-align: center;
+  }
+
+  .view-select {
+    display: block;
   }
 
   .token-form {
@@ -2040,6 +2139,7 @@ button.mobile-object-card {
   .task-lanes,
   .launchpad,
   .toolbar,
+  .command-drawer-grid,
   .action-form,
   .action-form.compact,
   .action-form.aligned-form,
@@ -2047,6 +2147,24 @@ button.mobile-object-card {
   .inspector-form,
   .runtime-control-grid {
     grid-template-columns: 1fr;
+  }
+
+  .task-lane {
+    flex: 0 0 min(86vw, 360px);
+    max-height: 68vh;
+    scroll-snap-align: start;
+  }
+
+  .observability-feed {
+    max-height: 390px;
+  }
+
+  .action-drawer > summary {
+    align-items: flex-start;
+  }
+
+  .action-drawer > summary > .muted {
+    display: none;
   }
 
   .responsive-table {

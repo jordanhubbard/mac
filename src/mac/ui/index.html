@@ -95,6 +95,32 @@
           <div>
             <p class="eyebrow">MAC</p>
             <h1 id="viewTitle">Overview</h1>
+            <select id="viewSelect" class="view-select" aria-label="Dashboard view">
+              <optgroup label="Home">
+                <option value="overview">Overview</option>
+              </optgroup>
+              <optgroup label="Work">
+                <option value="work">Work</option>
+                <option value="projects">Projects</option>
+                <option value="tasks">Tasks</option>
+                <option value="workflows">Workflows</option>
+              </optgroup>
+              <optgroup label="Fleet">
+                <option value="map">Map</option>
+                <option value="fleets">Fleets</option>
+                <option value="agents">Agents</option>
+              </optgroup>
+              <optgroup label="Operations">
+                <option value="hermes">Hermes</option>
+                <option value="ops">Operations</option>
+                <option value="integrations">Integrations</option>
+                <option value="runtime">Runtime</option>
+                <option value="observability">Observability</option>
+              </optgroup>
+              <optgroup label="Security">
+                <option value="secrets">Secrets</option>
+              </optgroup>
+            </select>
           </div>
           <div class="topbar-actions">
             <span class="sync-state" id="syncState">Not loaded</span>
