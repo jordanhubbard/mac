@@ -10,11 +10,17 @@ User=__MAC_USER__
 WorkingDirectory=__MAC_HOME__
 EnvironmentFile=-__MAC_HOME__/mac.env
 
-# fleet-02: refresh the live "Fleet — your teammates" block in this agent's
-# runtime-context markdown, so each new hermes session always knows what the
-# other agents are doing. --agent excludes the caller from its own view.
+# fleet-02 + mood-01: refresh the live "Fleet — your teammates" block AND the
+# agent's mood overlay in its runtime-context markdown, so each new hermes
+# session knows what teammates are doing and behaves in its current mood.
+# --agent excludes the caller from its own fleet view.
+#
+# Unset MAC_DB so the CLI resolves to the hub ($MAC_URL/$MAC_HUB_URL) rather than
+# this host's local SQLite — $MAC_DB outranks the hub URL in resolution, so a
+# spoke would otherwise refresh from an empty local db (members=0, no hub mood).
 ExecStart=/bin/bash -lc '\
-  __MAC_HOME__/venv/bin/mac fleet refresh-context \
+  unset MAC_DB; \
+  exec __MAC_HOME__/venv/bin/mac fleet refresh-context \
     --agent "${MAC_AGENT_ID:-${MAC_WORKER_AGENT_ID:-}}"'
 
 StandardOutput=journal
