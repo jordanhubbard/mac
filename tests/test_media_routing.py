@@ -3,14 +3,19 @@ POST /v1/media/{op} endpoint with priority failover."""
 from __future__ import annotations
 
 import io
+import json
 import urllib.error
 
 from mac.media_routing import (
     DEFAULT_IMAGE_MODEL,
     build_media_table,
     extract_b64,
+    fal_request,
+    fal_response,
     nvidia_genai_request,
     nvidia_genai_response,
+    openai_images_request,
+    openai_images_response,
 )
 
 
@@ -93,6 +98,7 @@ def _fake_urlopen_factory(captured, by_url):
 
     def fake_urlopen(req, timeout=60.0):
         captured.setdefault("urls", []).append(req.full_url)
+        captured.setdefault("auths", []).append(req.get_header("Authorization"))
         for needle, (status, raw) in by_url.items():
             if needle in req.full_url:
                 if status >= 400:
@@ -243,3 +249,64 @@ def test_media_endpoint_rejects_path_traversal_model(monkeypatch):
     r = TestClient(app).post("/v1/media/image.generate", json={"prompt": "x", "model": "../../etc/passwd"})
     assert r.status_code == 200  # fell back to the binding default model
     assert captured["urls"][0].endswith("/v1/genai/" + DEFAULT_IMAGE_MODEL)
+
+
+# --- openai_images + fal adapters -------------------------------------------
+
+def test_openai_images_adapter_request_and_response():
+    path, body = openai_images_request("image.generate", {"prompt": "x", "width": 1024, "height": 1024}, "dall-e-3")
+    assert path == "/images/generations"
+    assert body == {"prompt": "x", "size": "1024x1024", "n": 1, "response_format": "b64_json", "model": "dall-e-3"}
+    assert openai_images_response(200, {"data": [{"b64_json": "AB"}]}) == {"artifacts": [{"base64": "AB"}]}
+    assert "error" in openai_images_response(401, {"error": {"message": "no"}})
+
+
+def test_fal_adapter_request_and_url_response():
+    path, body = fal_request("image.generate", {"prompt": "x", "seed": 7, "steps": 4, "n": 2}, "fal-ai/flux/schnell")
+    assert path == "/fal-ai/flux/schnell"
+    assert body["prompt"] == "x" and body["seed"] == 7 and body["num_inference_steps"] == 4 and body["num_images"] == 2
+    # FAL returns image URLs -> canonical `url` artifacts (the agent downloads them)
+    assert fal_response(200, {"images": [{"url": "https://cdn/x.png"}]}) == {"artifacts": [{"url": "https://cdn/x.png"}]}
+
+
+def test_build_table_reads_auth_scheme():
+    env = {"MAC_ROUTER_MEDIA_JSON": json.dumps(
+        {"image.generate": [{"provider": "fal", "base_url": "https://fal.run", "model": "m",
+                             "key": "secret:fal", "adapter": "fal", "auth_scheme": "Key"}]}
+    )}
+    (binding,) = build_media_table(env)["image.generate"]
+    assert binding.auth_scheme == "Key"
+
+
+def test_default_binding_auth_scheme_is_bearer():
+    (binding,) = build_media_table(
+        {"MAC_ROUTER_IMAGE_UPSTREAM": "https://u", "MAC_ROUTER_IMAGE_KEY": "k"}
+    )["image.generate"]
+    assert binding.auth_scheme == "Bearer"
+
+
+def test_mount_forwards_with_binding_auth_scheme(monkeypatch):
+    """A fal binding must send `Authorization: Key <...>`, not Bearer."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+    monkeypatch.setattr(
+        router_app.urllib.request, "urlopen",
+        _fake_urlopen_factory(captured, {"flux/schnell": (200, b'{"images":[{"url":"https://cdn/x.png"}]}')}),
+    )
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_MEDIA_JSON": json.dumps(
+            {"image.generate": [{"provider": "fal", "base_url": "https://fal.run",
+                                 "model": "fal-ai/flux/schnell", "key": "secret:fal",
+                                 "adapter": "fal", "auth_scheme": "Key"}]}
+        ),
+    }
+    assert router_app.mount_router(app, env=env, secret_resolver={"fal": "FALKEY"}.get) is True
+    r = TestClient(app).post("/v1/media/image.generate", json={"prompt": "x"})
+    assert r.status_code == 200
+    assert r.json()["artifacts"] == [{"url": "https://cdn/x.png"}]
+    assert captured["auths"][0] == "Key FALKEY"  # Key scheme, not Bearer

@@ -163,7 +163,22 @@ class MacHubImageGenProvider(ImageGenProvider):
                                   prompt=prompt, aspect_ratio=aspect)
 
         artifacts = data.get("artifacts") if isinstance(data, dict) else None
-        b64 = artifacts[0].get("base64") if isinstance(artifacts, list) and artifacts and isinstance(artifacts[0], dict) else None
+        first = artifacts[0] if isinstance(artifacts, list) and artifacts and isinstance(artifacts[0], dict) else {}
+        b64 = first.get("base64")
+        if not b64 and first.get("url"):
+            # URL artifact (FAL-style): download + base64-encode so it saves like
+            # any other image. The router normalized the provider response; the
+            # transport difference (inline base64 vs CDN url) is handled here.
+            try:
+                import base64 as _b64
+
+                dl = requests.get(first["url"], timeout=120)
+                dl.raise_for_status()
+                b64 = _b64.b64encode(dl.content).decode("ascii")
+            except Exception as exc:  # noqa: BLE001
+                return error_response(error="could not download image url artifact: %s" % exc,
+                                      error_type="io_error", provider="mac-hub", model=model,
+                                      prompt=prompt, aspect_ratio=aspect)
         if not b64:
             return error_response(error="router /v1/media response had no image artifact",
                                   error_type="empty_response", provider="mac-hub", model=model,
