@@ -8,10 +8,13 @@ import urllib.error
 
 from mac.media_routing import (
     DEFAULT_IMAGE_MODEL,
+    MediaBinding,
     build_media_table,
+    compose_media_table,
     extract_b64,
     fal_request,
     fal_response,
+    media_bindings_from_agents,
     nvidia_genai_request,
     nvidia_genai_response,
     openai_images_request,
@@ -310,3 +313,62 @@ def test_mount_forwards_with_binding_auth_scheme(monkeypatch):
     assert r.status_code == 200
     assert r.json()["artifacts"] == [{"url": "https://cdn/x.png"}]
     assert captured["auths"][0] == "Key FALKEY"  # Key scheme, not Bearer
+
+
+# --- capability auto-registration (live agents advertise media routes) ------
+
+def test_media_bindings_from_agents_priority_and_offline_skip():
+    agents = [
+        {"name": "bullwinkle", "status": "idle", "health_status": "healthy",
+         "resources": {"media_routes": [
+             {"op": "image.generate", "base_url": "http://bw:8189", "adapter": "openai_images", "priority": 1},
+             {"op": "image.generate", "base_url": "http://bw:8190", "adapter": "passthrough", "priority": 0}]}},
+        {"name": "down-gpu", "status": "offline",
+         "resources": {"media_routes": [{"op": "image.generate", "base_url": "http://down:9"}]}},
+        {"name": "cpu", "status": "idle", "resources": {}},
+    ]
+    table = media_bindings_from_agents(agents)
+    assert [b.base_url for b in table["image.generate"]] == ["http://bw:8190", "http://bw:8189"]  # priority asc; offline dropped
+
+
+def test_media_bindings_from_agents_skips_unhealthy():
+    agents = [{"name": "x", "status": "idle", "health_status": "unhealthy",
+               "resources": {"media_routes": [{"op": "image.generate", "base_url": "http://x:1"}]}}]
+    assert media_bindings_from_agents(agents) == {}
+
+
+def test_compose_prefers_live_agent_then_static():
+    static = {"image.generate": [MediaBinding("nvidia", "https://nv", "secret:k", "m", "nvidia_genai", 180.0)]}
+    agent = {"image.generate": [MediaBinding("bw", "http://bw:8189", "", "sdxl", "openai_images", 180.0)]}
+    assert [b.provider for b in compose_media_table(static, agent, "image.generate")] == ["bw", "nvidia"]
+
+
+def test_media_endpoint_prefers_live_agent_over_static(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+    monkeypatch.setattr(
+        router_app.urllib.request, "urlopen",
+        _fake_urlopen_factory(captured, {"bw:8189": (200, b'{"data":[{"b64_json":"GPU"}]}')}),
+    )
+    app = FastAPI()
+    env = {  # static config = cloud fallback
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_IMAGE_UPSTREAM": "https://ai.api.nvidia.com/v1/genai",
+        "MAC_ROUTER_IMAGE_KEY": "secret:nvidia-image",
+    }
+
+    def agent_table():
+        return media_bindings_from_agents([
+            {"name": "bw", "status": "idle", "health_status": "healthy",
+             "resources": {"media_routes": [{"op": "image.generate", "base_url": "http://bw:8189",
+                                             "model": "sdxl", "adapter": "openai_images"}]}}])
+
+    assert router_app.mount_router(app, env=env, secret_resolver={}.get,
+                                   media_agent_table_provider=agent_table) is True
+    r = TestClient(app).post("/v1/media/image.generate", json={"prompt": "x"})
+    assert r.status_code == 200
+    assert r.json()["provider"] == "bw"  # routed to the live GPU agent, not cloud
+    assert "bw:8189" in captured["urls"][0]

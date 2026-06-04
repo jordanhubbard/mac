@@ -4190,7 +4190,22 @@ def create_app(
             except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
                 _log.warning("failed to record llm.route observation", exc_info=True)
 
-        if mount_router(app, secret_resolver=_router_secret_resolver, route_observer=_router_route_observer):
+        # media-01 capability auto-routing: compose media bindings from LIVE
+        # agents that self-advertised resources["media_routes"] (e.g. a GPU agent
+        # announcing image.generate). Queried per request so a GPU agent coming
+        # up/down is picked up without a hub restart; a registry hiccup degrades
+        # to the static/config table (mount_media_router guards the call).
+        def _media_agent_table_provider() -> Dict[str, Any]:
+            from mac.media_routing import media_bindings_from_agents
+
+            return media_bindings_from_agents(agent.to_dict() for agent in cp.list_agents())
+
+        if mount_router(
+            app,
+            secret_resolver=_router_secret_resolver,
+            route_observer=_router_route_observer,
+            media_agent_table_provider=_media_agent_table_provider,
+        ):
             _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
     except Exception as exc:  # noqa: BLE001 - the router must never block app startup
         _log.warning("in-mac model router not mounted: %s", exc)
