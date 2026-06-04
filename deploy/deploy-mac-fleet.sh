@@ -3639,27 +3639,35 @@ for chunk in providers.split(";"):
     post_secret(name, value, ["router-upstream"])
     escrowed += 1
 # Modality upstream keys: the hub's /v1/{genai,audio,video} proxies resolve
-# MAC_ROUTER_<M>_KEY (secret:<name>) from the vault. The IMAGE key is DISTINCT from
-# the chat key — prefer NVIDIA_IMAGE_API_KEY (supplied at cluster init), fall back
-# to NVIDIA_API_KEY for back-compat; audio/video use their own keys. MAC_ROUTER_<M>_KEY
+# MAC_ROUTER_<M>_KEY (secret:<name>) from the vault. Each modality is a SEPARATE
+# entitlement from the chat key — build.nvidia.com's genai/image API rejects the
+# chat key (401) — so each escrows ONLY its own source var and NEVER falls back
+# to NVIDIA_API_KEY. Falling back escrows a key the upstream refuses, turning a
+# clean deploy-time "disabled" into a runtime 401 (media-02). MAC_ROUTER_<M>_KEY
 # is read from the freshly written mac.env (reload_mac_env ran before this step).
-for _modality, _spec_env, _src in (
-    ("image", "MAC_ROUTER_IMAGE_KEY",
-     os.environ.get("NVIDIA_IMAGE_API_KEY") or os.environ.get("NVIDIA_API_KEY") or ""),
-    ("audio", "MAC_ROUTER_AUDIO_KEY", os.environ.get("NVIDIA_AUDIO_API_KEY") or ""),
-    ("video", "MAC_ROUTER_VIDEO_KEY", os.environ.get("NVIDIA_VIDEO_API_KEY") or ""),
+media_status = []
+for _modality, _spec_env, _src_env in (
+    ("image", "MAC_ROUTER_IMAGE_KEY", "NVIDIA_IMAGE_API_KEY"),
+    ("audio", "MAC_ROUTER_AUDIO_KEY", "NVIDIA_AUDIO_API_KEY"),
+    ("video", "MAC_ROUTER_VIDEO_KEY", "NVIDIA_VIDEO_API_KEY"),
 ):
     _spec = (os.environ.get(_spec_env) or "").strip()
     if not _spec.startswith("secret:"):
         continue
     _name = _spec[len("secret:"):]
-    _value = _src.strip()
+    _value = (os.environ.get(_src_env) or "").strip()
     if _name in have:
         print("escrow: %r already in vault; skip" % _name); skipped += 1
+        media_status.append("%s=enabled(vault)" % _modality)
     elif not _value:
-        print("escrow: no source key for %s secret %r; skip" % (_modality, _name)); skipped += 1
+        print("media %s DISABLED: set %s to enable (the chat key is NOT used — "
+              "distinct entitlement); %r not escrowed" % (_modality, _src_env, _name)); skipped += 1
+        media_status.append("%s=disabled(no %s)" % (_modality, _src_env))
     else:
         post_secret(_name, _value, ["router-upstream", _modality]); escrowed += 1
+        media_status.append("%s=enabled(escrowed)" % _modality)
+if media_status:
+    print("media ops: %s" % ", ".join(media_status))
 print("router key escrow: %d escrowed, %d skipped" % (escrowed, skipped))
 PY
   then
