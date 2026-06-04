@@ -208,7 +208,7 @@ def test_router_env_emits_modality_upstreams_and_keys_from_spec(tmp_path):
     assert ev["MY_VIDEO_KEY"] == "vid-secret"  # key_env read from the environment
 
 
-# --- image_gen provider default (hub-routed nvidia) -------------------------
+# --- image_gen provider default (hub-routed mac-hub /v1/media) --------------
 from pathlib import Path  # noqa: E402
 
 from mac.hermes_chat_config import ensure_image_gen_provider  # noqa: E402
@@ -221,14 +221,14 @@ def _home_with_config(tmp_path, body: str) -> Path:
     return home
 
 
-def test_image_gen_defaults_to_nvidia_when_unset(tmp_path):
+def test_image_gen_defaults_to_mac_hub_when_unset(tmp_path):
     # Fresh config with no image_gen block -> default to the hub-routed provider.
     home = _home_with_config(tmp_path, "model:\n  provider: custom\n  base_url: http://x/v1/\n")
-    assert ensure_image_gen_provider(home) == "nvidia"
+    assert ensure_image_gen_provider(home) == "mac-hub"
     text = (home / "config.yaml").read_text(encoding="utf-8")
-    assert "image_gen:" in text and "provider: nvidia" in text
+    assert "image_gen:" in text and "provider: mac-hub" in text
     # idempotent: re-running respects the value just written
-    assert ensure_image_gen_provider(home) == "nvidia"
+    assert ensure_image_gen_provider(home) == "mac-hub"
 
 
 def test_image_gen_respects_explicit_provider(tmp_path):
@@ -239,9 +239,9 @@ def test_image_gen_respects_explicit_provider(tmp_path):
 
 def test_image_gen_inserts_provider_into_existing_block(tmp_path):
     home = _home_with_config(tmp_path, "image_gen:\n  model: flux.1-schnell\n")
-    assert ensure_image_gen_provider(home) == "nvidia"
+    assert ensure_image_gen_provider(home) == "mac-hub"
     text = (home / "config.yaml").read_text(encoding="utf-8")
-    assert "provider: nvidia" in text and "model: flux.1-schnell" in text
+    assert "provider: mac-hub" in text and "model: flux.1-schnell" in text
 
 
 def test_image_gen_noop_without_config(tmp_path):
@@ -253,4 +253,4 @@ def test_image_gen_noop_without_config(tmp_path):
 def test_sync_reports_image_gen_provider(tmp_path):
     home = _stale_hermes_home(tmp_path)
     result = sync(home, _mac_env(tmp_path))
-    assert result["image_gen_provider"] == "nvidia"
+    assert result["image_gen_provider"] == "mac-hub"

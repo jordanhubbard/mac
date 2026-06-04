@@ -853,11 +853,19 @@ def mount_media_router(
                            "type": "not_configured"}},
                 status_code=404,
             )
+        # A caller may request a specific model; it overrides the binding's
+        # default but stays confined to the binding's fixed upstream host — it's
+        # a model id, never a path (`..`/leading-slash rejected so it can't
+        # escape /v1/genai/<model>).
+        requested_model = str(body.get("model") or "").strip()
+        if ".." in requested_model or requested_model.startswith("/"):
+            requested_model = ""
         last_status: int = 502
         last_body: Dict[str, Any] = {"error": {"message": "no binding produced a response"}}
         for binding in bindings:
             to_provider, from_provider = ADAPTERS.get(binding.adapter, ADAPTERS["passthrough"])
-            path, provider_body = to_provider(op, body, binding.model)
+            model = requested_model or binding.model
+            path, provider_body = to_provider(op, body, model)
             provider = Provider(name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec)
             status, resp = urllib_forwarder(
                 provider, path, provider_body, timeout=binding.timeout, secret_resolver=secret_resolver
@@ -865,7 +873,7 @@ def mount_media_router(
             canonical = from_provider(status, resp)
             if status and 200 <= status < 300:
                 return JSONResponse(
-                    {**canonical, "provider": binding.provider, "model": binding.model},
+                    {**canonical, "provider": binding.provider, "model": model},
                     status_code=status,
                 )
             last_status, last_body = (status or 502), (canonical if isinstance(canonical, dict) else {})

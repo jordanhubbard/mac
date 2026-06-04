@@ -191,3 +191,55 @@ def test_media_endpoint_fails_over_to_next_binding(monkeypatch):
     assert r.json()["artifacts"] == [{"base64": "OK"}]
     assert r.json()["provider"] == "s"  # failed over to the secondary binding
     assert len(captured["urls"]) == 2  # tried primary, then secondary
+
+
+def test_media_endpoint_honors_caller_model(monkeypatch):
+    """A caller may request a model; it overrides the binding default but stays
+    on the binding's upstream (path traversal rejected)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+    monkeypatch.setattr(
+        router_app.urllib.request,
+        "urlopen",
+        _fake_urlopen_factory(captured, {"flux.1-dev": (200, b'{"artifacts":[{"base64":"X"}]}')}),
+    )
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_IMAGE_UPSTREAM": "https://ai.api.nvidia.com/v1/genai",
+        "MAC_ROUTER_IMAGE_KEY": "secret:nvidia-image",
+    }
+    assert router_app.mount_router(app, env=env, secret_resolver={"nvidia-image": "K"}.get) is True
+    r = TestClient(app).post(
+        "/v1/media/image.generate",
+        json={"prompt": "x", "model": "black-forest-labs/flux.1-dev"},
+    )
+    assert r.status_code == 200
+    assert r.json()["model"] == "black-forest-labs/flux.1-dev"  # caller model honored
+    assert captured["urls"][0].endswith("/v1/genai/black-forest-labs/flux.1-dev")
+
+
+def test_media_endpoint_rejects_path_traversal_model(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+    monkeypatch.setattr(
+        router_app.urllib.request,
+        "urlopen",
+        _fake_urlopen_factory(captured, {"flux.1-schnell": (200, b'{"artifacts":[{"base64":"X"}]}')}),
+    )
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_IMAGE_UPSTREAM": "https://ai.api.nvidia.com/v1/genai",
+        "MAC_ROUTER_IMAGE_KEY": "secret:nvidia-image",
+    }
+    assert router_app.mount_router(app, env=env, secret_resolver={"nvidia-image": "K"}.get) is True
+    r = TestClient(app).post("/v1/media/image.generate", json={"prompt": "x", "model": "../../etc/passwd"})
+    assert r.status_code == 200  # fell back to the binding default model
+    assert captured["urls"][0].endswith("/v1/genai/" + DEFAULT_IMAGE_MODEL)
