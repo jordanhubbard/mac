@@ -49,6 +49,10 @@ _VERBOSE_POLL_LOG_NAMES = frozenset(
         "workflow.default_review.waiting_for_verdict",
         "workflow.default_review.heartbeat_tick",
         "workflow.default_review.heartbeat_tick_failed",
+        # Re-emitted every review tick for a task stuck waiting on an operator to
+        # set metadata.publication_target — a steady-state condition, not an
+        # event. It alone wrote 262K rows in ~4 days on rocky.
+        "workflow.default_review.no_publication_target",
     }
 )
 
