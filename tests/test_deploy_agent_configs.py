@@ -272,7 +272,12 @@ def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
     assert values["MAC_FLEET_TENANT_ID"] == "tenant_test-fleet"
     assert "if agent == shared_services_manager:" in script
     assert "cp.create_fleet(" in script
-    assert 'fleet_id=stable_id("fleet", fleet)' in script
+    # Idempotent get-or-create: the id is derived once via stable_id (which
+    # lowercases the name) and the fleet is looked up by both name and that id,
+    # so a re-deploy under different name case reconciles instead of colliding.
+    assert 'fleet_fid = stable_id("fleet", fleet)' in script
+    assert "fleet_id=fleet_fid" in script
+    assert "for _key in (fleet, fleet_fid):" in script
     assert 'description="Auto-registered deployment fleet"' in script
 
 
