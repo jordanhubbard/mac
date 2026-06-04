@@ -111,6 +111,17 @@ the hub env, keys resolved via `SecretsService` — the same pattern chat uses.
   `Key` auth via `MediaBinding.auth_scheme` + `urllib_forwarder` auth_scheme;
   the mac-hub provider downloads url artifacts). image.generate is now genuine
   multi-provider failover (e.g. nvidia→fal→openai) via `MAC_ROUTER_MEDIA_JSON`.
+- **Capability auto-registration** (#94): an agent advertises what it serves via
+  `MAC_AGENT_MEDIA_ROUTES` (→ its registration `resources["media_routes"]`); the
+  hub composes the table from LIVE agents (`media_bindings_from_agents` +
+  `compose_media_table`, agent bindings preferred over the static cloud table,
+  offline/unhealthy skipped) per request (`mount_media_router(agent_table_provider)`,
+  wired from `cp.list_agents()`). So a GPU agent that announces a capability is
+  used fleet-wide with zero operator/caller knowledge and falls over to cloud
+  when down. **Last mile to actually route to bullwinkle's GPU:** run an
+  OpenAI-images-compatible (or passthrough-JSON) gen server on the agent + set
+  `MAC_AGENT_MEDIA_ROUTES` for it — no other config. bullwinkle's `~/gen` is
+  scripts today, not a running server (port 8189 was closed at last probe).
 
 ## Remaining — audio / video
 The canonical endpoint is modality-general (any `op` + `passthrough` adapter
