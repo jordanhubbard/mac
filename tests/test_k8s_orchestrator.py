@@ -249,8 +249,21 @@ def test_controller_daemon_failure_does_not_kill_runner(
 
     sleep_calls = {"n": 0}
     real_sleep = time.sleep
+    # The controller daemon runs in this named thread (orchestrator.main).
+    controller_thread_name = "mac-orchestrator-controller"
 
     def _bounded_sleep(seconds: float) -> None:
+        # Bound ONLY the controller daemon's own sleeps. `orchestrator.time` is
+        # the shared `time` module, so patching it also intercepts the runner's
+        # time.sleep(0.05) on the MAIN thread; counting those let the "stop
+        # daemon" raise fire inside the runner once the controller's two fast
+        # sleeps pushed the shared counter to >=2 first — which is exactly what
+        # happens on a loaded CI host, making main() return 1 (flaky). Scoping
+        # the bound to the controller thread makes the outcome deterministic
+        # regardless of how the threads interleave.
+        if threading.current_thread().name != controller_thread_name:
+            real_sleep(0)
+            return
         sleep_calls["n"] += 1
         if sleep_calls["n"] >= 2:
             # Kill the inner loop via outer-except path.
