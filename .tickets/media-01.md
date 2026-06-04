@@ -98,10 +98,39 @@ the hub env, keys resolved via `SecretsService` — the same pattern chat uses.
 - Fallback skips bindings with missing/invalid keys (verified: a bad key →
   next provider, not a hard error).
 
+## Delivered (2026-06-04)
+- **Router core** (#89): `mac.media_routing` (operation→[binding] table,
+  back-compat from flat `MAC_ROUTER_IMAGE_*`) + `POST /v1/media/{op}` with
+  priority failover; adapters `nvidia_genai` (flux/stability) + `passthrough`.
+- **Agent provider** (#90): `mac-hub` ImageGenProvider posts the canonical
+  request to `/v1/media/image.generate`; the deploy defaults
+  `image_gen.provider: mac-hub`. Verified end-to-end (jordanh-gke duck).
+- **Default migration** (#91): a redeploy migrates the prior deploy-managed
+  default (`nvidia`→`mac-hub`) forward; genuine alternatives respected.
+- **More image adapters** (#92): `openai_images` (b64) + `fal` (url artifacts,
+  `Key` auth via `MediaBinding.auth_scheme` + `urllib_forwarder` auth_scheme;
+  the mac-hub provider downloads url artifacts). image.generate is now genuine
+  multi-provider failover (e.g. nvidia→fal→openai) via `MAC_ROUTER_MEDIA_JSON`.
+
+## Remaining — audio / video
+The canonical endpoint is modality-general (any `op` + `passthrough` adapter
+works today via `MAC_ROUTER_MEDIA_JSON`), so a **JSON-in/JSON-out** audio/video
+NIM can already be wired with no code. The provider-specific work needs both a
+configured backend to validate against (NONE is set on any fleet today —
+`MAC_ROUTER_AUDIO/VIDEO_UPSTREAM` are empty) AND transport extensions the current
+synchronous-JSON `urllib_forwarder` lacks:
+- `audio.tts`: providers return **binary audio** (not JSON) → needs a
+  binary-response forward (canonical `{audio: base64}`).
+- `audio.asr`: **multipart** audio upload → a non-JSON request encoding.
+- `video.generate`: **async queue** (submit → poll → url) → a polling forward.
+Plus agent-side `mac-hub` providers for the existing `tts_registry` /
+`transcription_registry` / `video_gen_registry` (mirror the image one). Deferred
+until a live audio/video provider exists to validate against — shipping blind
+transport for nonexistent backends is not worth the risk.
+
 ## Notes
-- Tactical precursor (shipped): default `image_gen.provider: nvidia` so agents
-  use the keyless hub-routed `/v1/genai` path (PR for hermes_chat_config). This
-  epic makes that the general mechanism instead of an image-only special case.
+- Tactical precursor (shipped): default `image_gen.provider` so agents use the
+  keyless hub-routed path. This epic generalized it: `mac-hub` → `/v1/media`.
 - See media-02 for the credential model (per-provider vault secrets;
   `nvidia-upstream` = chat, `nvidia-image` = genai are *distinct* entitlements —
   conflating them is what 401'd image-gen on a fresh hub).
