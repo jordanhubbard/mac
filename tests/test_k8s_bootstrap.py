@@ -69,6 +69,18 @@ class _NotFound(Exception):
         super().__init__("not found")
         self.status = 404
 
+
+class _MacApiNotFound(RuntimeError):
+    """Mirrors the real mac.hermes_adapter.MacApiError on a 404: a plain
+    RuntimeError whose message carries the 'not found' detail, with NO
+    ``.status`` attribute. register_fleet must detect not-found from the
+    message, like worker.py does."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            'mac API GET %s failed: {"detail":"fleet not found: ai-k8s"}' % path
+        )
+
 class _FakeCore:
     def __init__(self, initial_data: Optional[Dict[str, str]] = None) -> None:
         self._data = initial_data
@@ -1014,7 +1026,7 @@ class TestRegisterFleet:
         posts: List[Dict[str, Any]] = []
 
         def _fleet_get(_b: Any) -> Dict[str, Any]:
-            raise _NotFound()
+            raise _MacApiNotFound("/fleets/ai-k8s")
 
         def _fleet_post(b: Dict[str, Any]) -> Dict[str, Any]:
             posts.append(b)
@@ -1073,7 +1085,7 @@ class TestRegisterFleet:
         posts: List[Dict[str, Any]] = []
         mac = _FakeMac(
             responses={
-                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_NotFound()),
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_MacApiNotFound("/fleets/ai-k8s")),
                 "POST /fleets": lambda b: posts.append(b) or {"id": "f"},
             }
         )
@@ -1104,10 +1116,26 @@ class TestRegisterFleet:
     def test_non_object_post_response_raises(self) -> None:
         mac = _FakeMac(
             responses={
-                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_NotFound()),
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_MacApiNotFound("/fleets/ai-k8s")),
                 "POST /fleets": lambda _b: "not-an-object",
             }
         )
         mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
         with pytest.raises(SystemExit, match="POST /fleets returned non-object"):
             register_fleet(mac, self._fleet_cfg())
+
+    def test_non_404_get_error_raises(self) -> None:
+        """A real GET error (not a 404) must abort, not be treated as
+        'create' — otherwise a transient 500 would silently POST a duplicate."""
+        mac = _FakeMac(
+            responses={
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(
+                    RuntimeError("mac API GET /fleets/ai-k8s failed: 500 internal")
+                ),
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        with pytest.raises(SystemExit, match="GET /fleets/ai-k8s failed"):
+            register_fleet(mac, self._fleet_cfg())
+        # Must NOT have attempted a create.
+        assert [p for p in mac.posted if p["path"] == "/fleets"] == []

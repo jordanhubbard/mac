@@ -336,7 +336,11 @@ def register_fleet(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     try:
         mac.get("/fleets/%s" % name)
     except Exception as exc:  # noqa: BLE001
-        if getattr(exc, "status", None) == 404:
+        # MacApiClient raises MacApiError (a plain RuntimeError) on a 404 with
+        # no ``.status`` attribute — the not-found detail is in the message.
+        # Detect it the same way worker.py does, not via ``.status``.
+        text = str(exc).lower()
+        if "not found" in text or "404" in text:
             exists = False
         else:
             raise SystemExit(
