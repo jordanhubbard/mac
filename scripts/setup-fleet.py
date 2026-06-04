@@ -23,7 +23,13 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
 from mac.deploy_env import build_router_provider_spec  # noqa: E402
-from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan  # noqa: E402
+from mac.fleet_setup import (  # noqa: E402
+    DEFAULT_GATEWAY_MODEL,
+    build_setup_plan,
+    load_setup_spec,
+    public_plan,
+    resolve_gateway_model,
+)
 from mac.providers import ROUTER_PROVIDERS, router_secret_name  # noqa: E402
 
 
@@ -153,23 +159,6 @@ def load_fleet_registry(path: Path) -> Dict[str, Any]:
     data.setdefault("version", 1)
     data["fleets"] = {}
     return data
-
-
-# The fleet's default chat model, materialized into fleets.yaml so the picked
-# model is ALWAYS visible there. A blank gateway_model silently fell through to
-# the router's wildcard ladder — which is exactly how the whole fleet ended up
-# running on gpt-4.1-mini unnoticed. Writing the resolved model into the config
-# would have made that regression obvious on sight.
-DEFAULT_GATEWAY_MODEL = "azure/anthropic/claude-sonnet-4-6"
-
-
-def resolve_gateway_model(model: str) -> str:
-    """Never persist a blank/'*' model: fall back to the explicit default so the
-    config file records the model that will actually be used."""
-    value = (model or "").strip()
-    if not value or value == "*":
-        return DEFAULT_GATEWAY_MODEL
-    return value
 
 
 def build_agent(
