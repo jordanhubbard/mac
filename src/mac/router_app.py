@@ -613,14 +613,17 @@ def urllib_forwarder(
     *,
     timeout: float = 60.0,
     secret_resolver: Optional[SecretResolver] = None,
+    auth_scheme: str = "Bearer",
 ):
     """Real HTTP forward to ``provider.base_url + path`` with its bearer key.
-    Returns ``(status_code|None, body)``; status None means unreachable/timeout."""
+    Returns ``(status_code|None, body)``; status None means unreachable/timeout.
+    ``auth_scheme`` is the Authorization scheme word (default ``Bearer``; FAL's
+    media API needs ``Key``)."""
     url = provider.base_url.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     key = resolve_provider_key(provider, secret_resolver)
     if key:
-        headers["Authorization"] = "Bearer %s" % key
+        headers["Authorization"] = "%s %s" % (auth_scheme or "Bearer", key)
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -868,7 +871,8 @@ def mount_media_router(
             path, provider_body = to_provider(op, body, model)
             provider = Provider(name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec)
             status, resp = urllib_forwarder(
-                provider, path, provider_body, timeout=binding.timeout, secret_resolver=secret_resolver
+                provider, path, provider_body, timeout=binding.timeout,
+                secret_resolver=secret_resolver, auth_scheme=binding.auth_scheme,
             )
             canonical = from_provider(status, resp)
             if status and 200 <= status < 300:

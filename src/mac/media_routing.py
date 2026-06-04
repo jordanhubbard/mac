@@ -51,6 +51,7 @@ class MediaBinding(NamedTuple):
     model: str  # provider model id, e.g. black-forest-labs/flux.1-schnell
     adapter: str  # adapter id (see ADAPTERS)
     timeout: float
+    auth_scheme: str = "Bearer"  # Authorization scheme; FAL uses "Key", OpenAI/NVIDIA "Bearer"
 
 
 # An adapter is a (to_provider, from_provider) pair:
@@ -167,8 +168,97 @@ def passthrough_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
+# --- openai_images adapter (synchronous, base64) ----------------------------
+# OpenAI-compatible /images/generations: the model is a body field (not the
+# path), b64_json response_format gives inline base64. Binding base_url is the
+# /v1 root (e.g. https://api.openai.com/v1); auth is Bearer (the default).
+
+_OPENAI_SIZES = {"landscape": "1792x1024", "square": "1024x1024", "portrait": "1024x1792"}
+
+
+def openai_images_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    width, height = _int(body.get("width"), 0), _int(body.get("height"), 0)
+    size = "%dx%d" % (width, height) if width and height else "1024x1024"
+    provider_body: Dict[str, Any] = {
+        "prompt": str(body.get("prompt") or "").strip(),
+        "size": size,
+        "n": _int(body.get("n"), 1),
+        "response_format": "b64_json",
+    }
+    if model:
+        provider_body["model"] = model
+    return "/images/generations", provider_body
+
+
+def openai_images_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
+    if status and 200 <= status < 300:
+        b64 = extract_b64(resp)  # handles {"data":[{"b64_json":...}]}
+        if b64:
+            return {"artifacts": [{"base64": b64}]}
+        return {"error": {"message": "no image data in OpenAI-images response",
+                          "type": "empty_response"}}
+    return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
+
+
+# --- fal adapter (synchronous fal.run; URL artifacts) -----------------------
+# FAL: POST https://fal.run/<model> with `Authorization: Key <FAL_KEY>` (NOT
+# Bearer — set the binding's auth_scheme to "Key"). Fast models return inline;
+# the result carries image *URLs* (CDN), so the canonical artifact is a `url`
+# (the mac-hub agent provider downloads it). No base64 inline.
+
+_FAL_SIZES = {"landscape": "landscape_16_9", "square": "square_hd", "portrait": "portrait_16_9"}
+
+
+def fal_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    width, height = _int(body.get("width"), 0), _int(body.get("height"), 0)
+    provider_body: Dict[str, Any] = {
+        "prompt": str(body.get("prompt") or "").strip(),
+        "num_images": _int(body.get("n"), 1),
+    }
+    if width and height:
+        provider_body["image_size"] = {"width": width, "height": height}
+    if body.get("seed") is not None:
+        provider_body["seed"] = _int(body.get("seed"), 0)
+    if body.get("steps") is not None:
+        provider_body["num_inference_steps"] = _int(body.get("steps"), 0)
+    return ("/" + model.strip("/")) if model else "/", provider_body
+
+
+def _extract_urls(data: Any) -> List[str]:
+    """Pull image URLs out of FAL's {"images":[{"url":...}]} (or {"image":{"url"}})."""
+    urls: List[str] = []
+    if not isinstance(data, dict):
+        return urls
+    images = data.get("images")
+    if isinstance(images, list):
+        for item in images:
+            if isinstance(item, dict) and isinstance(item.get("url"), str):
+                urls.append(item["url"])
+            elif isinstance(item, str):
+                urls.append(item)
+    single = data.get("image")
+    if isinstance(single, dict) and isinstance(single.get("url"), str):
+        urls.append(single["url"])
+    return urls
+
+
+def fal_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
+    if status and 200 <= status < 300:
+        urls = _extract_urls(resp)
+        if urls:
+            return {"artifacts": [{"url": u} for u in urls]}
+        # some FAL models also return inline base64
+        b64 = extract_b64(resp)
+        if b64:
+            return {"artifacts": [{"base64": b64}]}
+        return {"error": {"message": "no image url/data in FAL response", "type": "empty_response"}}
+    return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
+
+
 ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "nvidia_genai": (nvidia_genai_request, nvidia_genai_response),
+    "openai_images": (openai_images_request, openai_images_response),
+    "fal": (fal_request, fal_response),
     "passthrough": (passthrough_request, passthrough_response),
 }
 
@@ -210,6 +300,7 @@ def build_media_table(env: Optional[Mapping[str, str]] = None) -> Dict[str, List
                             model=str(b.get("model") or ""),
                             adapter=str(b.get("adapter") or "passthrough"),
                             timeout=_float(b.get("timeout"), 180.0),
+                            auth_scheme=str(b.get("auth_scheme") or "Bearer"),
                         )
                     )
                 if bindings:
