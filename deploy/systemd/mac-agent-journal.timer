@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily trigger for mac agent journal (soul + memory backup)
+Documentation=https://github.com/jordanh/mac
+
+[Timer]
+# Once a day. Persistent=true means a host that was off at the scheduled time
+# runs the snapshot on next boot rather than silently skipping a day — we never
+# want to miss capturing an agent's evolving state. The randomized delay spreads
+# the fleet's snapshots so they don't all hit the hub's backup hook at once.
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+Unit=mac-agent-journal.service
+
+[Install]
+WantedBy=timers.target

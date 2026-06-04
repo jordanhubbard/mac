@@ -1,0 +1,24 @@
+[Unit]
+Description=mac agent journal — daily snapshot of this agent's soul + memory state
+Documentation=https://github.com/jordanh/mac
+After=mac.service
+Wants=mac.service
+
+[Service]
+Type=oneshot
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+
+# HERMES_HOME, MAC_AGENT_ID come from mac.env. Set MAC_JOURNAL_BACKUP_HOOK (a
+# shell command that archives the snapshot off-host — e.g. aws/gsutil/rclone)
+# and/or MAC_JOURNAL_DIR in /etc/mac/agent-journal.env to ship copies to durable
+# storage. Without a hook this just keeps local dated journals.
+EnvironmentFile=-__MAC_HOME__/mac.env
+EnvironmentFile=-/etc/mac/agent-journal.env
+
+# Snapshot SOUL.md / USER.md / MEMORY.md / memories/ / mood state / config into
+# $HOME/.mac/journal/<date>/ and run the backup hook if configured.
+ExecStart=__MAC_HOME__/venv/bin/mac journal snapshot
+
+StandardOutput=journal
+StandardError=journal
