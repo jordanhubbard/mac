@@ -822,6 +822,59 @@ def mount_image_proxy(
     return mounted
 
 
+def mount_media_router(
+    app: Any,
+    *,
+    env: Optional[Dict[str, str]] = None,
+    secret_resolver: Optional[SecretResolver] = None,
+) -> bool:
+    """media-01: mount the canonical ``POST /v1/media/{op}`` endpoint.
+
+    Resolves an ordered list of provider bindings for the operation
+    (:func:`mac.media_routing.build_media_table`), adapts the single canonical
+    request to each provider's wire format, forwards, and falls back to the next
+    binding on failure (missing key → 401 → next, non-2xx, or unreachable). The
+    flat ``/v1/genai`` etc. proxies stay mounted for back-compat; this is the
+    operation-keyed layer above them. No-op when no media op is bound."""
+    from mac.media_routing import ADAPTERS, build_media_table
+
+    env = os.environ if env is None else env
+    table = build_media_table(env)
+    if not table:
+        return False
+    from fastapi.responses import JSONResponse
+
+    @app.post("/v1/media/{op}")
+    def _media(op: str, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
+        bindings = table.get(op)
+        if not bindings:
+            return JSONResponse(
+                {"error": {"message": "no provider bound for media op %r" % op,
+                           "type": "not_configured"}},
+                status_code=404,
+            )
+        last_status: int = 502
+        last_body: Dict[str, Any] = {"error": {"message": "no binding produced a response"}}
+        for binding in bindings:
+            to_provider, from_provider = ADAPTERS.get(binding.adapter, ADAPTERS["passthrough"])
+            path, provider_body = to_provider(op, body, binding.model)
+            provider = Provider(name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec)
+            status, resp = urllib_forwarder(
+                provider, path, provider_body, timeout=binding.timeout, secret_resolver=secret_resolver
+            )
+            canonical = from_provider(status, resp)
+            if status and 200 <= status < 300:
+                return JSONResponse(
+                    {**canonical, "provider": binding.provider, "model": binding.model},
+                    status_code=status,
+                )
+            last_status, last_body = (status or 502), (canonical if isinstance(canonical, dict) else {})
+            # non-2xx / unreachable -> try the next binding (priority failover)
+        return JSONResponse(last_body, status_code=last_status)
+
+    return True
+
+
 def mount_router(
     app: Any,
     *,
@@ -841,6 +894,10 @@ def mount_router(
     # The image proxy is independent of the chat providers (a fixed upstream, no
     # failover), so mount it even when no chat providers are configured.
     mounted = mount_image_proxy(app, env=env, secret_resolver=secret_resolver)
+    # media-01: operation-keyed canonical media routing (POST /v1/media/{op}),
+    # layered above the flat /v1/genai proxy. Independent of chat providers.
+    if mount_media_router(app, env=env, secret_resolver=secret_resolver):
+        mounted = True
     proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver, route_observer=route_observer)
     if proxy is None:
         return mounted
