@@ -847,6 +847,38 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
         headers={"Authorization": "Bearer deployer"},
         json={"name": "rt", "manifest": {"image": "python:3.12@sha256:abc123"}, "created_by": "ops"},
     ).status_code == 200
+    runtime = cp.get_runtime("rt")
+    machine = cp.register_machine("delta-host")
+    agent = cp.register_agent(machine.id, "delta-worker", capabilities=["python"])
+    task = cp.create_task("delta task", project="mac")
+    delta_payload = {
+        "task_id": task.id,
+        "agent_id": agent.id,
+        "package_manager": "pip",
+        "commands": ["python -m venv .venv", "./.venv/bin/pip install rich==13.7.1"],
+        "added_dependencies": ["rich==13.7.1"],
+        "reason": "task-local wheel",
+        "base_runtime_id": runtime.id,
+        "lockfile_path": "requirements.txt",
+        "lockfile_digest": "sha256:" + "d" * 64,
+    }
+    assert client.post(
+        "/runtime-deltas",
+        headers={"Authorization": "Bearer writer"},
+        json=delta_payload,
+    ).status_code == 403
+    delta_response = client.post(
+        "/runtime-deltas",
+        headers={"Authorization": "Bearer deployer"},
+        json=delta_payload,
+    )
+    assert delta_response.status_code == 200
+    delta_id = delta_response.json()["id"]
+    assert client.post(
+        "/runtime-deltas/%s/validate" % delta_id,
+        headers={"Authorization": "Bearer deployer"},
+        json={"actor": "ops"},
+    ).json()["status"] == "validated"
 
     # /environments also requires deploy.
     tenant = cp.register_tenant("team-a")
@@ -1037,6 +1069,28 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
         "/tasks",
         json={"title": "Dashboard task", "required_capabilities": ["python"]},
     ).json()
+    runtime = client.post(
+        "/runtimes",
+        json={
+            "name": "dashboard-runtime",
+            "manifest": {"image": "python:3.12@sha256:abc123"},
+            "created_by": "human",
+        },
+    ).json()
+    runtime_delta = client.post(
+        "/runtime-deltas",
+        json={
+            "task_id": task["id"],
+            "agent_id": agent["id"],
+            "package_manager": "pip",
+            "commands": ["python -m venv .venv", "./.venv/bin/pip install rich==13.7.1"],
+            "added_dependencies": ["rich==13.7.1"],
+            "reason": "dashboard dependency proposal",
+            "base_runtime_id": runtime["id"],
+            "lockfile_path": "requirements.txt",
+            "lockfile_digest": "sha256:" + "e" * 64,
+        },
+    ).json()
     project = client.post("/projects", json={"name": "Dashboard Project"}).json()
     fleet = client.post(
         "/fleets",
@@ -1067,6 +1121,8 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert state["secrets"][0]["value"] == "***REDACTED***"
     assert "never-render-this" not in str(state)
     assert state["secret_audits"][0]["id"] == handle["audit_id"]
+    assert state["runtime_deltas"][0]["id"] == runtime_delta["id"]
+    assert state["runtime_deltas"][0]["status"] == "proposed"
     assert "observability" in state
     assert state["observability"]["counts"]["events"] >= 1
     assert "events" in state
@@ -1898,6 +1954,8 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "Hermes CLI" in app_js
     assert "mac_cli_commands" in app_js
     assert "runtime_capabilities" in app_js
+    assert "Runtime Deltas" in app_js
+    assert "runtimeDeltaValidate" in app_js
     assert "web research" in app_js
     assert "command audit" in app_js
     assert "Objects" in app_js

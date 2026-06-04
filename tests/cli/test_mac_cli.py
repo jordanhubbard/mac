@@ -160,6 +160,63 @@ def test_mac_cli_task_create_metadata_invalid_json_errors_cleanly(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# runtime
+# ---------------------------------------------------------------------------
+
+
+def test_mac_cli_runtime_delta_lifecycle(tmp_path):
+    rc, runtime = _run(
+        tmp_path,
+        "runtime",
+        "create",
+        "cli-runtime",
+        "--manifest",
+        '{"image":"python:3.12@sha256:abc123"}',
+        "--created-by",
+        "ops",
+    )
+    assert rc == 0
+    rc, machine = _run(tmp_path, "machine", "register", "cli-host")
+    assert rc == 0
+    rc, agent = _run(tmp_path, "agent", "register", machine["id"], "cli-worker")
+    assert rc == 0
+    rc, task = _run(tmp_path, "task", "create", "CLI dependency delta")
+    assert rc == 0
+
+    rc, delta = _run(
+        tmp_path,
+        "runtime",
+        "delta",
+        "propose",
+        task["id"],
+        agent["id"],
+        "--package-manager",
+        "pip",
+        "--commands",
+        '["python -m venv .venv","./.venv/bin/pip install rich==13.7.1"]',
+        "--dependencies",
+        '["rich==13.7.1"]',
+        "--reason",
+        "cli task-local dependency",
+        "--base-runtime",
+        runtime["id"],
+        "--lockfile-path",
+        "requirements.txt",
+        "--lockfile-digest",
+        "sha256:" + "f" * 64,
+    )
+    assert rc == 0
+    assert delta["status"] == "proposed"
+
+    rc, validated = _run(tmp_path, "runtime", "delta", "validate", delta["id"])
+    assert rc == 0
+    assert validated["status"] == "validated"
+    rc, promoted = _run(tmp_path, "runtime", "delta", "promote", delta["id"])
+    assert rc == 0
+    assert promoted["status"] == "promoted"
+
+
+# ---------------------------------------------------------------------------
 # project
 # ---------------------------------------------------------------------------
 

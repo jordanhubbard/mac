@@ -926,6 +926,61 @@ def cmd_runtime_list(args: argparse.Namespace) -> None:
     _print([runtime.to_dict() for runtime in _plane(args).list_runtimes()])
 
 
+def cmd_runtime_delta_propose(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).propose_runtime_delta(
+            args.task_id,
+            args.agent_id,
+            args.package_manager,
+            _json_arg(args.commands, []),
+            _json_arg(args.dependencies, []),
+            args.reason,
+            project=args.project,
+            base_runtime_id=args.base_runtime,
+            base_runtime_digest=args.base_runtime_digest,
+            lockfile_path=args.lockfile_path,
+            lockfile_digest=args.lockfile_digest,
+            evidence_id=args.evidence_id,
+        )
+    )
+
+
+def cmd_runtime_delta_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            delta.to_dict()
+            for delta in _plane(args).list_runtime_deltas(
+                status=args.status,
+                task_id=args.task_id,
+                project=args.project,
+                limit=args.limit,
+            )
+        ]
+    )
+
+
+def cmd_runtime_delta_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_runtime_delta(args.delta).to_dict())
+
+
+def cmd_runtime_delta_validate(args: argparse.Namespace) -> None:
+    _print(_plane(args).validate_runtime_delta(args.delta, args.actor).to_dict())
+
+
+def cmd_runtime_delta_reject(args: argparse.Namespace) -> None:
+    _print(_plane(args).reject_runtime_delta(args.delta, args.actor, args.reason).to_dict())
+
+
+def cmd_runtime_delta_promote(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).promote_runtime_delta(
+            args.delta,
+            args.actor,
+            runtime_name=args.runtime_name,
+        ).to_dict()
+    )
+
+
 def cmd_artifact_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_artifact(
@@ -2273,6 +2328,44 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_runtime_create, runtime_create)
     runtime_list = runtime.add_parser("list")
     _set(cmd_runtime_list, runtime_list)
+    runtime_delta = runtime.add_parser("delta", help="runtime environment delta lifecycle").add_subparsers(dest="runtime_delta_command", required=True)
+    runtime_delta_propose = runtime_delta.add_parser("propose")
+    runtime_delta_propose.add_argument("task_id")
+    runtime_delta_propose.add_argument("agent_id")
+    runtime_delta_propose.add_argument("--package-manager", required=True, choices=("pip", "uv", "npm", "pnpm"))
+    runtime_delta_propose.add_argument("--commands", required=True, help="JSON list of install commands")
+    runtime_delta_propose.add_argument("--dependencies", required=True, help="JSON list of added dependencies")
+    runtime_delta_propose.add_argument("--reason", required=True)
+    runtime_delta_propose.add_argument("--project")
+    runtime_delta_propose.add_argument("--base-runtime", help="base runtime id or name")
+    runtime_delta_propose.add_argument("--base-runtime-digest")
+    runtime_delta_propose.add_argument("--lockfile-path")
+    runtime_delta_propose.add_argument("--lockfile-digest")
+    runtime_delta_propose.add_argument("--evidence-id")
+    _set(cmd_runtime_delta_propose, runtime_delta_propose)
+    runtime_delta_list = runtime_delta.add_parser("list")
+    runtime_delta_list.add_argument("--status", choices=("proposed", "validated", "rejected", "promoted"))
+    runtime_delta_list.add_argument("--task-id")
+    runtime_delta_list.add_argument("--project")
+    runtime_delta_list.add_argument("--limit", type=int, default=200)
+    _set(cmd_runtime_delta_list, runtime_delta_list)
+    runtime_delta_show = runtime_delta.add_parser("show")
+    runtime_delta_show.add_argument("delta")
+    _set(cmd_runtime_delta_show, runtime_delta_show)
+    runtime_delta_validate = runtime_delta.add_parser("validate")
+    runtime_delta_validate.add_argument("delta")
+    runtime_delta_validate.add_argument("--actor", default="operator")
+    _set(cmd_runtime_delta_validate, runtime_delta_validate)
+    runtime_delta_reject = runtime_delta.add_parser("reject")
+    runtime_delta_reject.add_argument("delta")
+    runtime_delta_reject.add_argument("--actor", default="operator")
+    runtime_delta_reject.add_argument("--reason", required=True)
+    _set(cmd_runtime_delta_reject, runtime_delta_reject)
+    runtime_delta_promote = runtime_delta.add_parser("promote")
+    runtime_delta_promote.add_argument("delta")
+    runtime_delta_promote.add_argument("--actor", default="operator")
+    runtime_delta_promote.add_argument("--runtime-name")
+    _set(cmd_runtime_delta_promote, runtime_delta_promote)
 
     artifact = sub.add_parser(
         "artifact",

@@ -823,6 +823,35 @@ class RuntimeCreate(BaseModel):
     created_by: str
 
 
+class RuntimeDeltaPropose(BaseModel):
+    task_id: str
+    agent_id: str
+    package_manager: str
+    commands: List[str] = Field(default_factory=list)
+    added_dependencies: List[Any] = Field(default_factory=list)
+    reason: str
+    project: Optional[str] = None
+    base_runtime_id: Optional[str] = None
+    base_runtime_digest: Optional[str] = None
+    lockfile_path: Optional[str] = None
+    lockfile_digest: Optional[str] = None
+    evidence_id: Optional[str] = None
+
+
+class RuntimeDeltaValidate(BaseModel):
+    actor: str = "operator"
+
+
+class RuntimeDeltaReject(BaseModel):
+    actor: str = "operator"
+    reason: str
+
+
+class RuntimeDeltaPromote(BaseModel):
+    actor: str = "operator"
+    runtime_name: Optional[str] = None
+
+
 class RuntimeRunCreate(BaseModel):
     task_id: str
     agent_id: str
@@ -970,6 +999,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "secret"
     if (
         path.startswith("/runtimes")
+        or path.startswith("/runtime-deltas")
         or path.startswith("/environments")
         or path.startswith("/rollouts")
     ):
@@ -1355,6 +1385,9 @@ def _dashboard_dispatch_reasons(
         reasons.append("machine tenant policy blocks task")
     if machine is not None and not cp._agent_resources_satisfy(agent, machine, task):
         reasons.append("resources do not satisfy task")
+    required_runtime_digest = cp._task_required_runtime_digest(task)
+    if required_runtime_digest and agent.running_digest != required_runtime_digest:
+        reasons.append("runtime digest mismatch")
     missing = sorted(set(task.required_capabilities) - set(agent.capabilities))
     if missing:
         reasons.append("missing capabilities: %s" % ", ".join(missing))
@@ -1763,6 +1796,7 @@ def _dashboard_state(
     nap_schedules = [schedule.to_dict() for schedule in cp.list_nap_schedules()]
     nap_runs = [run.to_dict() for run in cp.list_nap_runs()]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()]
+    runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     integration_findings = [
         finding.to_dict() for finding in cp.list_integration_findings(limit=120)
     ]
@@ -1875,6 +1909,7 @@ def _dashboard_state(
         "secrets": secrets,
         "secret_audits": secret_audits,
         "runtimes": [runtime.to_dict() for runtime in cp.list_runtimes()],
+        "runtime_deltas": runtime_deltas,
         "runtime_runs": runtime_runs,
         "rollouts": rollout_statuses,
         "eval_sets": [eval_set.to_dict() for eval_set in cp.list_eval_sets()],
@@ -3859,6 +3894,67 @@ def create_app(
     @app.get("/runtimes")
     def list_runtimes() -> List[Dict[str, Any]]:
         return [runtime.to_dict() for runtime in cp.list_runtimes()]
+
+    @app.post("/runtime-deltas")
+    def propose_runtime_delta(
+        body: RuntimeDeltaPropose,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        principal.assert_actor(body.agent_id)
+        return cp.propose_runtime_delta(**_data(body)).to_dict()
+
+    @app.get("/runtime-deltas")
+    def list_runtime_deltas(
+        status: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return [
+            delta.to_dict()
+            for delta in cp.list_runtime_deltas(
+                status=status,
+                task_id=task_id,
+                project=project,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/runtime-deltas/{delta_id}")
+    def get_runtime_delta(delta_id: str) -> Dict[str, Any]:
+        return cp.get_runtime_delta(delta_id).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/validate")
+    def validate_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaValidate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.validate_runtime_delta(delta_id, body.actor).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/reject")
+    def reject_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaReject,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.reject_runtime_delta(delta_id, body.actor, body.reason).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/promote")
+    def promote_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaPromote,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.promote_runtime_delta(
+            delta_id,
+            body.actor,
+            runtime_name=body.runtime_name,
+        ).to_dict()
 
     @app.post("/runtime-runs")
     def create_runtime_run(body: RuntimeRunCreate) -> Dict[str, Any]:

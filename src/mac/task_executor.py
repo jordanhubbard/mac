@@ -508,6 +508,8 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "Use schema mac.worker_evidence.v1 with status=complete and evidence_type set to one of repo_change, documentation, investigation, deployment, test, artifact, no_change, or operator_result.",
         "For no-repository planning or operator directive work, use evidence_type=operator_result with summary and result fields describing the completed work.",
         "For repo/code work include repo.head_sha, repo.remote_ref or repo.pr_url, repo.pushed=true, repo.dirty=false, repo.files_changed, and passing tests/checks. Passing tests/checks should use returncode=0, status=pass, result=passed, or boolean/count fields that make success unambiguous. For deployments include targets/services plus passing checks. If you cannot produce this manifest, say why; MAC will not auto-publish unverifiable work.",
+        "If the task needs new software, install it only in the task workspace or project worktree, such as a task-local .venv, uv project env, or project-local npm/pnpm install. Do not use sudo, host package managers, global npm/pip/pipx installs, or the shared Hermes/worker virtualenv.",
+        "When you add task-local dependencies, include verification.environment_delta in mac-evidence.json with package_manager, commands, added_dependencies, lockfile_path, lockfile_digest, base_runtime_digest when known, and reason. MAC records that as a proposed runtime delta; it does not mutate the fleet runtime until an operator validates and promotes it.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
     lessons_section = _lessons_section(lessons or [])

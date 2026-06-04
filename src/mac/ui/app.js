@@ -1609,10 +1609,12 @@ function renderRuntime() {
     const data = mustData();
     const activeRollouts = data.rollouts.filter((item) => ["active", "canary", "promoting"].includes(String(item.rollout.status))).length;
     const runningRuns = data.runtime_runs.filter((run) => run.status === "running").length;
+    const activeDeltas = data.runtime_deltas.filter((delta) => ["proposed", "validated"].includes(String(delta.status))).length;
     return `
     <section class="metric-grid">
       ${metric("Runtimes", data.runtimes.length, "execution environments")}
       ${metric("Runtime Runs", data.runtime_runs.length, `${runningRuns} running`)}
+      ${metric("Runtime Deltas", data.runtime_deltas.length, `${activeDeltas} pending`)}
       ${metric("Rollouts", data.rollouts.length, `${activeRollouts} active`)}
       ${metric("Eval Gates", data.eval_sets.length, "available rollout gates")}
     </section>
@@ -1642,6 +1644,15 @@ function renderRuntime() {
           <label>Health policy JSON <textarea class="json-editor" name="health_policy" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
           <button type="submit">Create Rollout</button>
         </form>
+      </div>
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>Runtime Deltas</h2>
+        ${chip(`${activeDeltas} pending`, activeDeltas ? "warn" : "good")}
+      </div>
+      <div class="runtime-list">
+        ${data.runtime_deltas.length ? data.runtime_deltas.map((delta) => runtimeDeltaRecord(delta, data)).join("") : `<div class="empty-state">No runtime deltas</div>`}
       </div>
     </section>
     <section class="surface">
@@ -3199,9 +3210,27 @@ function arrayOfStrings(value) {
         ? value.map((item) => String(item)).filter((item) => item.trim())
         : [];
 }
+function dependencySummary(value) {
+    if (!Array.isArray(value) || !value.length)
+        return "none";
+    const rendered = value.slice(0, 3).map((item) => {
+        if (typeof item === "string")
+            return item;
+        if (item && typeof item === "object") {
+            const dep = item;
+            return String(dep.requirement || dep.name || JSON.stringify(dep));
+        }
+        return String(item);
+    }).filter((item) => item.trim());
+    const suffix = value.length > rendered.length ? ` +${value.length - rendered.length}` : "";
+    return rendered.join(", ") + suffix;
+}
 function runtimeRecord(runtime, data) {
     const rollouts = data.rollouts.filter((item) => item.rollout.runtime_environment_id === runtime.id);
     const runs = data.runtime_runs.filter((run) => run.environment_id === runtime.id);
+    const deltas = data.runtime_deltas.filter((delta) => delta.base_runtime_id === runtime.id
+        || delta.base_runtime_digest === runtime.digest
+        || delta.promoted_runtime_environment_id === runtime.id);
     return `
     <article class="runtime-record ${selectedClass(String(runtime.id))}">
       <div class="runtime-header">
@@ -3213,7 +3242,54 @@ function runtimeRecord(runtime, data) {
         ${field("Created", formatAge(String(runtime.created_at || "")))}
         ${field("Rollouts", rollouts.length)}
         ${field("Runs", runs.length)}
+        ${field("Deltas", deltas.length)}
         ${field("Manifest", jsonSummary(runtime.manifest))}
+      </div>
+    </article>
+  `;
+}
+function runtimeDeltaRecord(delta, data) {
+    const task = data.tasks.find((detail) => detail.task.id === delta.task_id)?.task;
+    const agent = data.agents.find((item) => item.agent.id === delta.agent_id)?.agent;
+    const base = data.runtimes.find((runtime) => runtime.id === delta.base_runtime_id || runtime.digest === delta.base_runtime_digest);
+    const status = String(delta.status || "proposed");
+    const canValidate = status === "proposed" || status === "rejected";
+    const canPromote = status === "validated";
+    const disabled = disabledAttr(!canWrite(data));
+    const validateDisabled = disabled || disabledAttr(!canValidate);
+    const promoteDisabled = disabled || disabledAttr(!canPromote);
+    const rejectDisabled = disabled || disabledAttr(status === "promoted");
+    return `
+    <article class="runtime-record ${selectedClass(String(delta.id))}">
+      <div class="runtime-header">
+        <div>
+          <h3>${escapeHtml(task?.title || delta.reason || delta.id)}</h3>
+          <p class="muted small mono">${escapeHtml(delta.id)}</p>
+        </div>
+        <div class="chip-row">${chip(status, runtimeDeltaTone(status))}<button class="link-button" type="button" data-select-id="${escapeHtml(String(delta.id))}">Inspect</button></div>
+      </div>
+      <div class="row-grid">
+        ${field("Project", delta.project || task?.project || "default")}
+        ${field("Agent", agent?.name || delta.agent_id)}
+        ${field("Base runtime", base?.name || shortHash(delta.base_runtime_digest))}
+        ${field("Package manager", delta.package_manager)}
+        ${field("Dependencies", dependencySummary(delta.added_dependencies))}
+        ${field("Lockfile", delta.lockfile_path || "none")}
+      </div>
+      <div class="record-actions">
+        <form class="inline-form" data-action="runtimeDeltaValidate" data-delta-id="${escapeHtml(String(delta.id))}">
+          <input type="hidden" name="actor" value="operator">
+          <button type="submit" ${validateDisabled}>Validate</button>
+        </form>
+        <form class="inline-form" data-action="runtimeDeltaPromote" data-delta-id="${escapeHtml(String(delta.id))}">
+          <input type="hidden" name="actor" value="operator">
+          <button type="submit" ${promoteDisabled}>Promote</button>
+        </form>
+        <form class="inline-form" data-action="runtimeDeltaReject" data-delta-id="${escapeHtml(String(delta.id))}">
+          <input name="reason" placeholder="Reason" ${rejectDisabled}>
+          <input type="hidden" name="actor" value="operator">
+          <button type="submit" ${rejectDisabled}>Reject</button>
+        </form>
       </div>
     </article>
   `;
@@ -3280,9 +3356,14 @@ function runtimeRunCard(run, data) {
   `;
 }
 function runtimeInspector(data) {
-    const selectedRuntime = data.runtimes.find((runtime) => runtime.id === state.selectedId) || data.runtimes[0];
-    const selectedRollout = data.rollouts.find((item) => item.rollout.id === state.selectedId) || data.rollouts[0];
-    if (!selectedRuntime && !selectedRollout)
+    const selectedDelta = data.runtime_deltas.find((delta) => delta.id === state.selectedId) || null;
+    const selectedRuntime = selectedDelta
+        ? data.runtimes.find((runtime) => runtime.id === selectedDelta.base_runtime_id
+            || runtime.digest === selectedDelta.base_runtime_digest
+            || runtime.id === selectedDelta.promoted_runtime_environment_id) || null
+        : data.runtimes.find((runtime) => runtime.id === state.selectedId) || data.runtimes[0];
+    const selectedRollout = selectedDelta ? null : data.rollouts.find((item) => item.rollout.id === state.selectedId) || data.rollouts[0];
+    if (!selectedRuntime && !selectedRollout && !selectedDelta)
         return "";
     const runtimeRollouts = selectedRuntime
         ? data.rollouts.filter((item) => item.rollout.runtime_environment_id === selectedRuntime.id)
@@ -3290,30 +3371,63 @@ function runtimeInspector(data) {
     const runtimeRuns = selectedRuntime
         ? data.runtime_runs.filter((run) => run.environment_id === selectedRuntime.id)
         : [];
+    const runtimeDeltas = selectedRuntime
+        ? data.runtime_deltas.filter((delta) => delta.base_runtime_id === selectedRuntime.id
+            || delta.base_runtime_digest === selectedRuntime.digest
+            || delta.promoted_runtime_environment_id === selectedRuntime.id)
+        : [];
     return `
     <section class="object-inspector">
       <div class="object-inspector-header">
         <div>
-          <p class="eyebrow">Runtime Inspector</p>
-          <h2>${escapeHtml(selectedRuntime?.name || selectedRollout?.rollout.version || "Runtime")}</h2>
-          <p class="muted small mono">${escapeHtml(selectedRuntime?.id || selectedRollout?.rollout.id || "")}</p>
+          <p class="eyebrow">${selectedDelta ? "Runtime Delta Inspector" : "Runtime Inspector"}</p>
+          <h2>${escapeHtml(selectedDelta?.reason || selectedRuntime?.name || selectedRollout?.rollout.version || "Runtime")}</h2>
+          <p class="muted small mono">${escapeHtml(selectedDelta?.id || selectedRuntime?.id || selectedRollout?.rollout.id || "")}</p>
         </div>
         <div class="chip-row">
+          ${selectedDelta ? chip(selectedDelta.status, runtimeDeltaTone(String(selectedDelta.status))) : ""}
           ${selectedRuntime ? chip(`${runtimeRollouts.length} rollouts`, "info") : ""}
           ${selectedRuntime ? chip(`${runtimeRuns.length} runs`, runtimeRuns.length ? "good" : "warn") : ""}
+          ${selectedRuntime ? chip(`${runtimeDeltas.length} deltas`, runtimeDeltas.length ? "warn" : "good") : ""}
         </div>
       </div>
+      ${selectedDelta ? runtimeDeltaInspector(selectedDelta, data) : ""}
       ${selectedRuntime ? `
         <div class="row-grid">
           ${field("Created by", selectedRuntime.created_by)}
           ${field("Created", formatAge(String(selectedRuntime.created_at || "")))}
           ${field("Digest", shortHash(selectedRuntime.digest))}
           ${field("Runs", runtimeRuns.length)}
+          ${field("Deltas", runtimeDeltas.length)}
         </div>
         <pre class="json-block">${escapeHtml(JSON.stringify(selectedRuntime.manifest || {}, null, 2))}</pre>
       ` : ""}
       ${selectedRollout ? rolloutInspector(selectedRollout, data) : ""}
     </section>
+  `;
+}
+function runtimeDeltaInspector(delta, data) {
+    const task = data.tasks.find((detail) => detail.task.id === delta.task_id)?.task;
+    const agent = data.agents.find((item) => item.agent.id === delta.agent_id)?.agent;
+    const base = data.runtimes.find((runtime) => runtime.id === delta.base_runtime_id || runtime.digest === delta.base_runtime_digest);
+    const promoted = data.runtimes.find((runtime) => runtime.id === delta.promoted_runtime_environment_id);
+    return `
+    <div class="row-grid">
+      ${field("Task", task?.title || delta.task_id)}
+      ${field("Agent", agent?.name || delta.agent_id)}
+      ${field("Project", delta.project || task?.project || "default")}
+      ${field("Base runtime", base?.name || shortHash(delta.base_runtime_digest))}
+      ${field("Promoted runtime", promoted?.name || delta.promoted_runtime_environment_id || "none")}
+      ${field("Package manager", delta.package_manager)}
+      ${field("Dependencies", dependencySummary(delta.added_dependencies))}
+      ${field("Lockfile", delta.lockfile_path || "none")}
+      ${field("Lockfile digest", shortHash(delta.lockfile_digest))}
+      ${field("Evidence", delta.evidence_id || "manual")}
+    </div>
+    <pre class="json-block">${escapeHtml(JSON.stringify({
+        commands: delta.commands || [],
+        validation: delta.validation || {},
+    }, null, 2))}</pre>
   `;
 }
 function rolloutInspector(status, data) {
@@ -4010,6 +4124,23 @@ async function runAction(action, form, values) {
             status: requiredString(values.status),
         });
     }
+    if (action === "runtimeDeltaValidate") {
+        return postJSON(`/runtime-deltas/${encodeURIComponent(requiredDataset(form, "deltaId"))}/validate`, {
+            actor: requiredString(values.actor || "operator"),
+        });
+    }
+    if (action === "runtimeDeltaReject") {
+        return postJSON(`/runtime-deltas/${encodeURIComponent(requiredDataset(form, "deltaId"))}/reject`, {
+            actor: requiredString(values.actor || "operator"),
+            reason: requiredString(values.reason),
+        });
+    }
+    if (action === "runtimeDeltaPromote") {
+        return postJSON(`/runtime-deltas/${encodeURIComponent(requiredDataset(form, "deltaId"))}/promote`, {
+            actor: requiredString(values.actor || "operator"),
+            runtime_name: emptyToNull(values.runtime_name),
+        });
+    }
     if (action === "rolloutCreate") {
         return postJSON("/rollouts", {
             version: requiredString(values.version),
@@ -4589,6 +4720,15 @@ function rolloutTone(status) {
     if (["rescuing", "rolled_back"].includes(status))
         return "warn";
     return "bad";
+}
+function runtimeDeltaTone(status) {
+    if (status === "promoted" || status === "validated")
+        return "good";
+    if (status === "proposed")
+        return "warn";
+    if (status === "rejected")
+        return "bad";
+    return "info";
 }
 function formatAge(value) {
     const date = value ? new Date(value) : null;

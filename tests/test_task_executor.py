@@ -39,6 +39,9 @@ def test_build_task_prompt_injects_recalled_lessons():
     task = {"id": "t1", "title": "Do a thing", "project": "demo"}
     base = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
     assert "Lessons from prior runs" not in base
+    assert "verification.environment_delta" in base
+    assert "task-local .venv" in base
+    assert "shared Hermes/worker virtualenv" in base
     with_lessons = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=["push before reporting", "run the contract tests"])
     assert "Lessons from prior runs" in with_lessons
     assert "push before reporting" in with_lessons

@@ -653,6 +653,35 @@ CREATE TABLE IF NOT EXISTS runtime_environments (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_environment_deltas (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    project TEXT,
+    base_runtime_id TEXT REFERENCES runtime_environments(id) ON DELETE SET NULL,
+    base_runtime_digest TEXT,
+    package_manager TEXT NOT NULL,
+    commands TEXT NOT NULL,
+    added_dependencies TEXT NOT NULL,
+    lockfile_path TEXT,
+    lockfile_digest TEXT,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL,
+    validation TEXT NOT NULL DEFAULT '{}',
+    evidence_id TEXT REFERENCES evidence(id) ON DELETE SET NULL,
+    promoted_runtime_environment_id TEXT REFERENCES runtime_environments(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    validated_at TEXT,
+    promoted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_status
+    ON runtime_environment_deltas (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_task
+    ON runtime_environment_deltas (task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_runtime_deltas_project
+    ON runtime_environment_deltas (project, created_at);
+
 CREATE TABLE IF NOT EXISTS runtime_runs (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

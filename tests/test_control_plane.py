@@ -2695,6 +2695,124 @@ def test_runtime_boundary_pins_manifests_and_blocks_secret_values(cp):
         cp.create_runtime("leaky", {"image": "python:3.12@sha256:abc123", "env": {"TOKEN": "raw"}}, "human")
 
 
+def test_runtime_delta_lifecycle_validates_and_promotes_task_local_env(cp):
+    runtime = create_runtime(cp, "runtime-delta-base")
+    agent = register_agent(cp, "runtime-delta-worker", ["python"])
+    task = cp.create_task("Use new wheel", project="mac")
+
+    delta = cp.propose_runtime_delta(
+        task.id,
+        agent.id,
+        "pip",
+        [
+            "python -m venv .venv",
+            "./.venv/bin/pip install rich==13.7.1",
+        ],
+        ["rich==13.7.1"],
+        "task needed a pinned formatter dependency",
+        base_runtime_id=runtime.id,
+        lockfile_path="requirements.txt",
+        lockfile_digest="sha256:" + "a" * 64,
+    )
+    assert delta.status == "proposed"
+
+    validated = cp.validate_runtime_delta(delta.id, "operator")
+    assert validated.status == "validated"
+    assert validated.validation["problems"] == []
+
+    promoted = cp.promote_runtime_delta(validated.id, "operator")
+    assert promoted.status == "promoted"
+    promoted_runtime = cp.get_runtime(promoted.promoted_runtime_environment_id)
+    assert promoted_runtime.manifest["derived_from"]["runtime_environment_id"] == runtime.id
+    assert "rich==13.7.1" in promoted_runtime.manifest["dependencies"]
+    assert promoted_runtime.manifest["runtime_deltas"][0]["id"] == delta.id
+
+
+def test_runtime_delta_validation_rejects_global_installs(cp):
+    runtime = create_runtime(cp, "runtime-delta-bad-base")
+    agent = register_agent(cp, "runtime-delta-bad-worker", ["node"])
+    task = cp.create_task("Install global package", project="mac")
+
+    delta = cp.propose_runtime_delta(
+        task.id,
+        agent.id,
+        "npm",
+        ["npm install -g left-pad@1.3.0"],
+        ["left-pad@1.3.0"],
+        "global install should not pass validation",
+        base_runtime_id=runtime.id,
+        lockfile_path="package-lock.json",
+        lockfile_digest="sha256:" + "b" * 64,
+    )
+
+    rejected = cp.validate_runtime_delta(delta.id, "operator")
+    assert rejected.status == "rejected"
+    assert any("globally" in problem for problem in rejected.validation["problems"])
+
+
+def test_add_evidence_captures_environment_delta_proposal(cp):
+    runtime = create_runtime(cp, "runtime-delta-evidence-base")
+    agent = register_agent(cp, "runtime-delta-evidence-worker", ["python"])
+    task = cp.create_task("Capture dependency delta", project="mac")
+
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "stdout://worker",
+        "worker completed with environment delta",
+        agent.id,
+        metadata={
+            "returncode": 0,
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "operator_result",
+                "summary": "dependency added",
+                "environment_delta": {
+                    "package_manager": "uv",
+                    "commands": ["uv add httpx==0.27.2"],
+                    "added_dependencies": ["httpx==0.27.2"],
+                    "base_runtime_id": runtime.id,
+                    "lockfile_path": "uv.lock",
+                    "lockfile_digest": "sha256:" + "c" * 64,
+                    "reason": "task needed http client wheel",
+                },
+            },
+        },
+    )
+
+    deltas = cp.list_runtime_deltas(task_id=task.id)
+    assert len(deltas) == 1
+    assert deltas[0].evidence_id == evidence.id
+    assert deltas[0].base_runtime_id == runtime.id
+    assert deltas[0].added_dependencies == ["httpx==0.27.2"]
+
+
+def test_dispatch_runtime_digest_requirement_filters_agents(cp):
+    runtime_a = create_runtime(cp, "runtime-delta-dispatch-a")
+    runtime_b = cp.create_runtime(
+        "runtime-delta-dispatch-b",
+        {
+            "image": "python:3.12@sha256:def456",
+            "dependencies": ["fastapi==0.111.0", "rich==13.7.1"],
+            "entrypoint": ["pytest"],
+        },
+        "human",
+    )
+    agent_a = register_agent(cp, "runtime-digest-a", ["python"])
+    agent_b = register_agent(cp, "runtime-digest-b", ["python"])
+    agent_a = cp.heartbeat_agent(agent_a.id, running_digest=runtime_a.digest)
+    agent_b = cp.heartbeat_agent(agent_b.id, running_digest=runtime_b.digest)
+    task = cp.create_task(
+        "Needs promoted runtime",
+        required_capabilities=["python"],
+        metadata={"runtime": {"runtime_environment_id": runtime_b.id}},
+    )
+
+    assert cp._agent_available_for(agent_a, task) is False
+    assert cp._agent_available_for(agent_b, task) is True
+
+
 def test_project_bridge_memory_and_rollout_rescue(cp):
     item = cp.import_project_item(
         "github",

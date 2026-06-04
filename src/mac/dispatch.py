@@ -664,6 +664,80 @@ class RemoteDispatch:
     def list_runtimes(self) -> List[_Dictish]:
         return _wrap_list(self._get("/runtimes"))
 
+    def propose_runtime_delta(
+        self,
+        task_id: str,
+        agent_id: str,
+        package_manager: str,
+        commands: List[str],
+        added_dependencies: List[Any],
+        reason: str,
+        **kw: Any,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "package_manager": package_manager,
+                "commands": commands,
+                "added_dependencies": added_dependencies,
+                "reason": reason,
+                **kw,
+            }
+        )
+        return _Dictish(self._post("/runtime-deltas", body))
+
+    def list_runtime_deltas(
+        self,
+        *,
+        status: Optional[str] = None,
+        task_id: Optional[str] = None,
+        project: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/runtime-deltas",
+                status=status,
+                task_id=task_id,
+                project=project,
+                limit=limit,
+            )
+        )
+
+    def get_runtime_delta(self, delta: str) -> _Dictish:
+        return _Dictish(self._get("/runtime-deltas/%s" % quote(delta, safe="")))
+
+    def validate_runtime_delta(self, delta: str, actor: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/runtime-deltas/%s/validate" % quote(delta, safe=""),
+                {"actor": actor},
+            )
+        )
+
+    def reject_runtime_delta(self, delta: str, actor: str, reason: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/runtime-deltas/%s/reject" % quote(delta, safe=""),
+                {"actor": actor, "reason": reason},
+            )
+        )
+
+    def promote_runtime_delta(
+        self,
+        delta: str,
+        actor: str,
+        *,
+        runtime_name: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/runtime-deltas/%s/promote" % quote(delta, safe=""),
+                _drop_none({"actor": actor, "runtime_name": runtime_name}),
+            )
+        )
+
     def register_artifact(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/artifacts", _drop_none(kw)))
 

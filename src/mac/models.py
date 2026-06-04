@@ -168,6 +168,13 @@ class RuntimeRunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RuntimeDeltaStatus(StrEnum):
+    PROPOSED = "proposed"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    PROMOTED = "promoted"
+
+
 class DeploymentStatus(StrEnum):
     ACTIVE = "active"
     RETIRED = "retired"
@@ -1251,6 +1258,33 @@ class RuntimeEnvironment:
     digest: str
     created_by: str
     created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class RuntimeEnvironmentDelta:
+    id: str
+    task_id: str
+    agent_id: str
+    project: Optional[str]
+    base_runtime_id: Optional[str]
+    base_runtime_digest: Optional[str]
+    package_manager: str
+    commands: List[str]
+    added_dependencies: List[Any]
+    lockfile_path: Optional[str]
+    lockfile_digest: Optional[str]
+    reason: str
+    status: str
+    validation: JsonDict
+    evidence_id: Optional[str]
+    promoted_runtime_environment_id: Optional[str]
+    created_at: str
+    updated_at: str
+    validated_at: Optional[str]
+    promoted_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

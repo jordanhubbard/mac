@@ -75,7 +75,9 @@ else
 fi
 echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
 
-if command -v mac-evidence >/dev/null 2>&1; then
+if [ -n "${MAC_EVIDENCE_PYTHON:-}" ]; then
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PYTHON}" "-m" "mac.evidence_cli")
+elif command -v mac-evidence >/dev/null 2>&1; then
     MAC_EVIDENCE_CMD=("mac-evidence")
 else
     MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-$(command -v python3 || command -v python || true)}"

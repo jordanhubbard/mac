@@ -78,6 +78,7 @@ from mac.models import (
     RolloutStatus,
     RolloutStrategy,
     RuntimeEnvironment,
+    RuntimeEnvironmentDelta,
     RuntimeRun,
     RuntimeRunStatus,
     SecretAccess,
@@ -4908,9 +4909,71 @@ class ControlPlane:
                 conn=conn,
             )
         evidence = self.get_evidence(evidence_id)
+        self._capture_runtime_delta_from_evidence(evidence, task)
         if sync_beads:
             self.sync_evidence_side_effects(evidence_id)
         return evidence
+
+    def _capture_runtime_delta_from_evidence(
+        self,
+        evidence: Evidence,
+        task: Task,
+    ) -> None:
+        metadata = evidence.metadata if isinstance(evidence.metadata, dict) else {}
+        verification = metadata.get("verification")
+        delta = None
+        if isinstance(verification, dict) and isinstance(verification.get("environment_delta"), dict):
+            delta = verification.get("environment_delta")
+        elif isinstance(metadata.get("environment_delta"), dict):
+            delta = metadata.get("environment_delta")
+        if not isinstance(delta, dict):
+            return
+        runtime_meta = task.metadata.get("runtime") if isinstance(task.metadata, dict) else {}
+        if not isinstance(runtime_meta, dict):
+            runtime_meta = {}
+        try:
+            self.propose_runtime_delta(
+                task.id,
+                evidence.created_by,
+                str(delta.get("package_manager") or ""),
+                delta.get("commands") if isinstance(delta.get("commands"), list) else [],
+                (
+                    delta.get("added_dependencies")
+                    if isinstance(delta.get("added_dependencies"), list)
+                    else delta.get("dependencies")
+                    if isinstance(delta.get("dependencies"), list)
+                    else []
+                ),
+                str(delta.get("reason") or "worker proposed task-local dependency delta"),
+                project=str(delta.get("project") or task.project or "").strip() or None,
+                base_runtime_id=(
+                    str(delta.get("base_runtime_id") or runtime_meta.get("runtime_environment_id") or "").strip()
+                    or None
+                ),
+                base_runtime_digest=(
+                    str(delta.get("base_runtime_digest") or runtime_meta.get("runtime_digest") or "").strip()
+                    or None
+                ),
+                lockfile_path=str(delta.get("lockfile_path") or "").strip() or None,
+                lockfile_digest=str(delta.get("lockfile_digest") or "").strip() or None,
+                evidence_id=evidence.id,
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence is already durable.
+            try:
+                self.record_log(
+                    "runtime_delta.capture_failed",
+                    layer="control_plane",
+                    source=evidence.created_by,
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task.id,
+                    detail={
+                        "evidence_id": evidence.id,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                pass
 
     def _enforce_repo_coupled_evidence_type(
         self,
@@ -8285,6 +8348,24 @@ class ControlPlane:
 
     def list_runtimes(self) -> List[RuntimeEnvironment]:
         return self.deploy.list_runtimes()
+
+    def propose_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
+        return self.deploy.propose_runtime_delta(*args, **kwargs)
+
+    def get_runtime_delta(self, delta_id: str) -> RuntimeEnvironmentDelta:
+        return self.deploy.get_runtime_delta(delta_id)
+
+    def list_runtime_deltas(self, *args: Any, **kwargs: Any) -> List[RuntimeEnvironmentDelta]:
+        return self.deploy.list_runtime_deltas(*args, **kwargs)
+
+    def validate_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
+        return self.deploy.validate_runtime_delta(*args, **kwargs)
+
+    def reject_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
+        return self.deploy.reject_runtime_delta(*args, **kwargs)
+
+    def promote_runtime_delta(self, *args: Any, **kwargs: Any) -> RuntimeEnvironmentDelta:
+        return self.deploy.promote_runtime_delta(*args, **kwargs)
 
     def create_runtime_run(self, *args: Any, **kwargs: Any) -> RuntimeRun:
         return self.deploy.create_runtime_run(*args, **kwargs)
@@ -12083,6 +12164,9 @@ class ControlPlane:
         )
         if target_agent_name and agent.name != str(target_agent_name):
             return False
+        required_runtime_digest = self._task_required_runtime_digest(task)
+        if required_runtime_digest and agent.running_digest != required_runtime_digest:
+            return False
         machine = self.get_machine(agent.machine_id)
         if not machine.trusted:
             return False
@@ -12147,6 +12231,34 @@ class ControlPlane:
         capabilities = set(agent.capabilities)
         required = set(task.required_capabilities) | role_required_caps
         return required.issubset(capabilities)
+
+    def _task_required_runtime_digest(self, task: Task) -> Optional[str]:
+        metadata = ensure_json_object(task.metadata)
+        runtime = metadata.get("runtime")
+        runtime_meta = ensure_json_object(runtime) if isinstance(runtime, dict) else {}
+        for value in (
+            runtime_meta.get("required_runtime_digest"),
+            runtime_meta.get("runtime_digest"),
+            runtime_meta.get("base_runtime_digest"),
+            metadata.get("required_runtime_digest"),
+            metadata.get("runtime_digest"),
+        ):
+            text = str(value or "").strip()
+            if text:
+                return text
+        runtime_id = str(
+            runtime_meta.get("runtime_environment_id")
+            or runtime_meta.get("required_runtime_environment_id")
+            or metadata.get("runtime_environment_id")
+            or metadata.get("required_runtime_environment_id")
+            or ""
+        ).strip()
+        if not runtime_id:
+            return None
+        try:
+            return self.get_runtime(runtime_id).digest
+        except NotFoundError:
+            return "__unknown_runtime_digest__"
 
     def _default_review_policy(self, task: Task) -> JsonDict:
         metadata = ensure_json_object(task.metadata)
