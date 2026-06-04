@@ -25,6 +25,7 @@ class BootstrapConfig:
     role_definitions: List[JsonDict] = field(default_factory=list)
     attestation_keys: Optional[JsonDict] = None
     projects: List[JsonDict] = field(default_factory=list)
+    fleet: Optional[JsonDict] = None
 
     @classmethod
     def from_env(cls) -> "BootstrapConfig":
@@ -49,6 +50,7 @@ class BootstrapConfig:
                 }
                 for p in cfg_file.projects
             ],
+            fleet=cfg_file.fleet_block(),
         )
 
 class MacApiProtocol(Protocol):
@@ -290,6 +292,87 @@ def _reconcile_project_metadata(
         log.warning("project metadata reconcile: PUT failed for %s: %s", name, exc)
 
 
+def register_fleet(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
+    """Register (or reconcile) the fleet record from config.yaml.
+
+    The K8s bootstrap registers machines, agents, roles, and projects, but
+    not a fleet — so ``ControlPlane.list_fleets()`` stays empty and the UI
+    Map's fleet layer never populates. This registers an optional fleet
+    declared under the top-level ``fleet:`` block, with membership derived
+    from the dispatcher agent + every role agent.
+
+    Create-or-update: ``create_fleet`` is create-only (raises on a duplicate
+    name), so a bare re-create would crash this init container on every
+    orchestrator restart. We GET the fleet first; if absent we POST, else we
+    PUT to reconcile membership/description/status against config.yaml.
+    """
+    if cfg.fleet is None:
+        log.info("no fleet configured; skipping fleet registration")
+        return
+
+    name = str(cfg.fleet.get("name") or "").strip()
+    if not name:
+        raise SystemExit("fleet block requires a name")
+    description = str(cfg.fleet.get("description") or "")
+    status = str(cfg.fleet.get("status") or "active")
+
+    # Membership: dispatcher agent first, then each role agent, deduped while
+    # preserving first-seen order.
+    member_ids: List[str] = []
+    seen: set = set()
+    dispatcher_agent = cfg.dispatcher.get("agent") or {}
+    dispatcher_id = str(
+        dispatcher_agent.get("agent_id") or dispatcher_agent.get("id") or ""
+    ).strip()
+    for candidate in [dispatcher_id] + [
+        str(a.get("agent_id") or a.get("id") or "").strip()
+        for a in cfg.role_agents
+    ]:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            member_ids.append(candidate)
+
+    exists = True
+    try:
+        mac.get("/fleets/%s" % name)
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "status", None) == 404:
+            exists = False
+        else:
+            raise SystemExit(
+                "GET /fleets/%s failed: %s" % (name, exc)
+            ) from exc
+
+    if not exists:
+        resp = mac.post(
+            "/fleets",
+            {
+                "name": name,
+                "description": description,
+                "status": status,
+                "agent_ids": member_ids,
+                "actor": "mac-k8s-bootstrap",
+            },
+        )
+        if not isinstance(resp, dict):
+            raise SystemExit("POST /fleets returned non-object: %r" % (resp,))
+        log.info("fleet: created name=%s members=%d", name, len(member_ids))
+        return
+
+    resp = mac.put(
+        "/fleets/%s" % name,
+        {
+            "agent_ids": member_ids,
+            "description": description,
+            "status": status,
+            "actor": "mac-k8s-bootstrap",
+        },
+    )
+    if not isinstance(resp, dict):
+        raise SystemExit("PUT /fleets returned non-object: %r" % (resp,))
+    log.info("fleet: reconciled name=%s members=%d", name, len(member_ids))
+
+
 def _existing_secret_data(
     core: CoreV1Protocol, namespace: str, name: str
 ) -> tuple[Optional[Dict[str, str]], Any]:
@@ -479,6 +562,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     register_role_definitions(mac, cfg)
     seed_role_machines_and_agents(mac, cfg)
     register_projects(mac, cfg)
+    register_fleet(mac, cfg)
 
     if cfg.attestation_keys is not None:
         load_in_cluster_config()

@@ -42,6 +42,7 @@ class MacConfigFile:
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
     attestation_keys: Optional[JsonDict] = None
     projects: List[ProjectConfig] = field(default_factory=list)
+    fleet: Optional[JsonDict] = None
 
     def role_definitions(self) -> List[JsonDict]:
         """Returns one ``RoleCreate``-shaped dict per role for /roles POST.
@@ -108,6 +109,9 @@ class MacConfigFile:
 
     def role_images(self) -> Dict[str, str]:
         return {slug: role.image for slug, role in self.roles.items()}
+
+    def fleet_block(self) -> Optional[JsonDict]:
+        return dict(self.fleet) if self.fleet is not None else None
 
     def role_agent_ids(self) -> Dict[str, str]:
         return {slug: role.agent_id for slug, role in self.roles.items()}
@@ -295,6 +299,21 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
             "secret_name": att_secret,
         }
 
+    fleet_raw = data.get("fleet")
+    fleet: Optional[JsonDict] = None
+    if fleet_raw is not None:
+        if not isinstance(fleet_raw, dict):
+            raise SystemExit(
+                "fleet must be a mapping or omitted (got %s)"
+                % type(fleet_raw).__name__
+            )
+        fleet_name = _require_str(fleet_raw, "name", path="fleet")
+        fleet = {
+            "name": fleet_name,
+            "description": str(fleet_raw.get("description") or ""),
+            "status": str(fleet_raw.get("status") or "active"),
+        }
+
     return MacConfigFile(
         mac_url=mac_url,
         dispatcher={"machine": dict(machine), "agent": dict(agent)},
@@ -303,4 +322,5 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         capability_role_aliases=aliases,
         attestation_keys=attestation,
         projects=projects,
+        fleet=fleet,
     )

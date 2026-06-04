@@ -11,6 +11,7 @@ from mac.k8s.bootstrap import (
     BootstrapConfig,
     _slot_already_populated,
     register_dispatcher,
+    register_fleet,
     register_projects,
     rotate_attestation_keys,
     seed_role_machines_and_agents,
@@ -266,6 +267,48 @@ class TestBootstrapConfigFromFile:
         f = _write_yaml(tmp_path, doc)
         cfg = BootstrapConfig.from_file(str(f))
         assert cfg.attestation_keys is None
+
+    def test_fleet_block_parsed(self, tmp_path: Path) -> None:
+        doc = _config_yaml(
+            fleet={
+                "name": "ai-k8s",
+                "description": "K8s-native MAC fleet",
+                "status": "active",
+            }
+        )
+        f = _write_yaml(tmp_path, doc)
+        cfg = BootstrapConfig.from_file(str(f))
+        assert cfg.fleet == {
+            "name": "ai-k8s",
+            "description": "K8s-native MAC fleet",
+            "status": "active",
+        }
+
+    def test_fleet_block_defaults(self, tmp_path: Path) -> None:
+        doc = _config_yaml(fleet={"name": "ai-k8s"})
+        f = _write_yaml(tmp_path, doc)
+        cfg = BootstrapConfig.from_file(str(f))
+        assert cfg.fleet == {
+            "name": "ai-k8s",
+            "description": "",
+            "status": "active",
+        }
+
+    def test_fleet_block_absent_is_none(self, tmp_path: Path) -> None:
+        cfg = BootstrapConfig.from_file(str(_write_yaml(tmp_path, _config_yaml())))
+        assert cfg.fleet is None
+
+    def test_fleet_block_blank_name_raises(self, tmp_path: Path) -> None:
+        doc = _config_yaml(fleet={"name": "  "})
+        f = _write_yaml(tmp_path, doc)
+        with pytest.raises(SystemExit, match="fleet.*name"):
+            BootstrapConfig.from_file(str(f))
+
+    def test_fleet_block_not_mapping_raises(self, tmp_path: Path) -> None:
+        doc = _config_yaml(fleet=["ai-k8s"])
+        f = _write_yaml(tmp_path, doc)
+        with pytest.raises(SystemExit, match="fleet must be a mapping"):
+            BootstrapConfig.from_file(str(f))
 
     def test_missing_file_raises(self, tmp_path: Path) -> None:
         with pytest.raises(SystemExit, match="is missing"):
@@ -946,3 +989,125 @@ class TestRegisterProjects:
         )
         register_projects(mac, cfg)
         assert puts == [], "no PUT expected when metadata already matches"
+
+
+class TestRegisterFleet:
+    def _fleet_cfg(self, **overrides: Any) -> BootstrapConfig:
+        cfg = BootstrapConfig(
+            mac_url="http://x",
+            dispatcher=_dispatcher_cfg(),
+            role_agents=_role_agents(),
+            fleet={"name": "ai-k8s", "description": "desc", "status": "active"},
+        )
+        for k, v in overrides.items():
+            setattr(cfg, k, v)
+        return cfg
+
+    def test_skips_when_fleet_none(self) -> None:
+        mac = _FakeMac()
+        register_fleet(mac, self._fleet_cfg(fleet=None))
+        assert mac.posted == []
+        assert mac.gotten == []
+
+    def test_creates_when_absent(self) -> None:
+        puts: List[Dict[str, Any]] = []
+        posts: List[Dict[str, Any]] = []
+
+        def _fleet_get(_b: Any) -> Dict[str, Any]:
+            raise _NotFound()
+
+        def _fleet_post(b: Dict[str, Any]) -> Dict[str, Any]:
+            posts.append(b)
+            return {"id": "fleet_x", "name": b["name"]}
+
+        mac = _FakeMac(
+            responses={
+                "GET /fleets/ai-k8s": _fleet_get,
+                "POST /fleets": _fleet_post,
+                "PUT /fleets/ai-k8s": lambda b: puts.append(b) or {},
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        register_fleet(mac, self._fleet_cfg())
+        assert len(posts) == 1
+        assert puts == []
+        body = posts[0]
+        assert body["name"] == "ai-k8s"
+        assert body["description"] == "desc"
+        assert body["status"] == "active"
+        assert body["actor"] == "mac-k8s-bootstrap"
+        # Members = dispatcher + role agents, in order, deduped.
+        assert body["agent_ids"] == [
+            "mac-runner",
+            "mac-worker-python-coder",
+            "mac-worker-python-reviewer",
+        ]
+
+    def test_updates_when_exists(self) -> None:
+        puts: List[Dict[str, Any]] = []
+        posts: List[Dict[str, Any]] = []
+        mac = _FakeMac(
+            responses={
+                "GET /fleets/ai-k8s": lambda _b: {
+                    "id": "fleet_x",
+                    "name": "ai-k8s",
+                    "agent_ids": ["mac-runner"],
+                },
+                "POST /fleets": lambda b: posts.append(b) or {},
+                "PUT /fleets/ai-k8s": lambda b: puts.append(b) or {"name": "ai-k8s"},
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        register_fleet(mac, self._fleet_cfg())
+        assert posts == []
+        assert len(puts) == 1
+        body = puts[0]
+        assert body["actor"] == "mac-k8s-bootstrap"
+        assert body["agent_ids"] == [
+            "mac-runner",
+            "mac-worker-python-coder",
+            "mac-worker-python-reviewer",
+        ]
+
+    def test_dedups_dispatcher_in_roles(self) -> None:
+        posts: List[Dict[str, Any]] = []
+        mac = _FakeMac(
+            responses={
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_NotFound()),
+                "POST /fleets": lambda b: posts.append(b) or {"id": "f"},
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        cfg = self._fleet_cfg(
+            role_agents=[
+                {
+                    "agent_id": "mac-runner",
+                    "name": "mac-runner",
+                    "machine_id": "m",
+                    "capabilities": [],
+                },
+                {
+                    "agent_id": "mac-worker-python-coder",
+                    "name": "mac-worker-python-coder",
+                    "machine_id": "m",
+                    "capabilities": [],
+                },
+            ]
+        )
+        register_fleet(mac, cfg)
+        # Dispatcher id appears once even though a role re-declares it.
+        assert posts[0]["agent_ids"] == [
+            "mac-runner",
+            "mac-worker-python-coder",
+        ]
+
+    def test_non_object_post_response_raises(self) -> None:
+        mac = _FakeMac(
+            responses={
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_NotFound()),
+                "POST /fleets": lambda _b: "not-an-object",
+            }
+        )
+        mac.put = lambda path, body: mac._resolve("PUT " + path, body)  # type: ignore[attr-defined]
+        with pytest.raises(SystemExit, match="POST /fleets returned non-object"):
+            register_fleet(mac, self._fleet_cfg())
