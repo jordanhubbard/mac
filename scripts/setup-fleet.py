@@ -155,6 +155,23 @@ def load_fleet_registry(path: Path) -> Dict[str, Any]:
     return data
 
 
+# The fleet's default chat model, materialized into fleets.yaml so the picked
+# model is ALWAYS visible there. A blank gateway_model silently fell through to
+# the router's wildcard ladder — which is exactly how the whole fleet ended up
+# running on gpt-4.1-mini unnoticed. Writing the resolved model into the config
+# would have made that regression obvious on sight.
+DEFAULT_GATEWAY_MODEL = "azure/anthropic/claude-sonnet-4-6"
+
+
+def resolve_gateway_model(model: str) -> str:
+    """Never persist a blank/'*' model: fall back to the explicit default so the
+    config file records the model that will actually be used."""
+    value = (model or "").strip()
+    if not value or value == "*":
+        return DEFAULT_GATEWAY_MODEL
+    return value
+
+
 def build_agent(
     *,
     name: str,
@@ -175,7 +192,7 @@ def build_agent(
     }
     if control_bind_host:
         agent["control_bind_host"] = control_bind_host
-    agent["hermes"] = {"gateway_model": model}
+    agent["hermes"] = {"gateway_model": resolve_gateway_model(model)}
     agent["worker"] = {"mode": mode, "require_canary": require_canary}
     return agent
 
@@ -290,7 +307,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     )
     supervisor = prompt("Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"])
     home_channel = prompt("Slack home channel name without # (blank to skip)", default="")
-    hub_model = prompt("Hub Hermes model selector (blank to configure later)", default="")
+    hub_model = prompt("Hub Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
     hub_worker_mode = prompt("Hub worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
     hub_require_canary = prompt_bool("Require canary metadata on hub tasks?", default=False)
     qdrant_required = True
@@ -412,7 +429,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         name = prompt("Agent name", required=True)
         target = prompt("Agent SSH target", required=True)
         os_kind = prompt("Agent OS", default="linux", choices=["linux", "darwin"])
-        model = prompt("Agent Hermes model selector (blank to configure later)", default="")
+        model = prompt("Agent Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
         agent_supervisor = prompt("Agent supervisor", default=supervisor, choices=["auto", "systemd", "launchd", "supervisord"])
         mode = prompt("Agent worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
         require_canary = prompt_bool("Require canary metadata on this agent?", default=False)
@@ -644,7 +661,7 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         default=supervisor,
         choices=["auto", "systemd", "launchd", "supervisord"],
     )
-    agent_model = prompt("Worker Hermes model selector (blank to configure later)", default="")
+    agent_model = prompt("Worker Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
     agent_mode = prompt("Worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
     require_canary = prompt_bool("Require canary metadata on this worker?", default=False)
 
