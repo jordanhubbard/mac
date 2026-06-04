@@ -217,6 +217,55 @@ def _chmod_600(path: Path) -> None:
         pass
 
 
+def ensure_image_gen_provider(hermes_home: Path, default: str = "nvidia") -> str:
+    """Default image generation to the hub-routed ``nvidia`` provider when the
+    operator hasn't picked one.
+
+    That backend routes text-to-image through the in-mac router's ``/v1/genai``
+    proxy (using the hub's escrowed image key), so agents render images with NO
+    per-agent ``FAL_KEY`` — and it works on spokes, which carry no raw provider
+    keys. Without this default, the registry's legacy fallback prefers ``fal``
+    (which reports available via the managed gateway but has no usable key here),
+    so image generation fails fleet-wide even though ``/v1/genai`` works.
+
+    Respects an explicit ``image_gen.provider`` (never overrides it). Line-based
+    to preserve the rest of the file. Returns the provider now in effect (``""``
+    when there is no config.yaml).
+    """
+    cfg = hermes_home / "config.yaml"
+    if not cfg.exists():
+        return ""
+    lines = cfg.read_text(encoding="utf-8").splitlines()
+
+    # Already chosen? Find the top-level `image_gen:` block and look for a
+    # `provider:` line within it; respect any explicit value.
+    n = len(lines)
+    for i, ln in enumerate(lines):
+        if re.match(r"^image_gen:\s*$", ln):
+            j = i + 1
+            while j < n and (not lines[j].strip() or lines[j].startswith((" ", "\t"))):
+                m = re.match(r"^\s+provider:\s*(\S.*?)\s*$", lines[j])
+                if m:
+                    return m.group(1).strip().strip("'\"")
+                j += 1
+            break
+
+    # Not set: insert `provider:` under an existing `image_gen:` block, else
+    # append a fresh block at EOF.
+    res: List[str] = []
+    inserted = False
+    for ln in lines:
+        res.append(ln)
+        if not inserted and re.match(r"^image_gen:\s*$", ln):
+            res.append("  provider: %s" % default)
+            inserted = True
+    if not inserted:
+        res += ["image_gen:", "  provider: %s" % default]
+    cfg.write_text("\n".join(res) + "\n", encoding="utf-8")
+    _chmod_600(cfg)
+    return default
+
+
 def sync(hermes_home: Path, mac_env_path: Path) -> Dict[str, object]:
     mac_env = parse_env_file(mac_env_path)
     base_url = (mac_env.get("MAC_HERMES_GATEWAY_BASE_URL") or mac_env.get("OPENAI_BASE_URL") or "").strip()
@@ -227,6 +276,7 @@ def sync(hermes_home: Path, mac_env_path: Path) -> Dict[str, object]:
         "env_synced": sync_hermes_env(hermes_home, mac_env),
         "config_custom_provider": sync_config_yaml(hermes_home, base_url, api_key),
         "pool_cleared": clear_stale_custom_pool(hermes_home),
+        "image_gen_provider": ensure_image_gen_provider(hermes_home),
     }
 
 
