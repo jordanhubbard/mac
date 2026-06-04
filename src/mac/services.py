@@ -5708,10 +5708,14 @@ class ControlPlane:
 
     def _replace_fleet_members(self, conn: Any, fleet_id: str, agent_ids: List[str], now: str) -> None:
         conn.execute("DELETE FROM fleet_agents WHERE fleet_id = ?", (fleet_id,))
-        conn.executemany(
-            "INSERT INTO fleet_agents (fleet_id, agent_id, created_at) VALUES (?, ?, ?)",
-            [(fleet_id, agent_id, now) for agent_id in agent_ids],
-        )
+        # Use execute() per row, not executemany(): executemany is not part of
+        # the StoreConnection protocol — the Postgres _Transaction has no such
+        # method (only SQLite's connection happens to). Member lists are small.
+        for agent_id in agent_ids:
+            conn.execute(
+                "INSERT INTO fleet_agents (fleet_id, agent_id, created_at) VALUES (?, ?, ?)",
+                (fleet_id, agent_id, now),
+            )
 
     def register_agent(
         self,

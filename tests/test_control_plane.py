@@ -7018,6 +7018,47 @@ def test_events_view_unifies_all_audit_surfaces(cp):
     assert "agent.updated" in {event["event_type"] for event in agent_events}
 
 
+def test_replace_fleet_members_uses_only_execute(cp):
+    """_replace_fleet_members must use the StoreConnection protocol surface
+    (execute only). The Postgres _Transaction has no executemany — relying on
+    it raised AttributeError and 500'd create_fleet/update_fleet in prod while
+    SQLite (whose connection happens to expose executemany) passed."""
+
+    class _ProtocolConn:
+        """Mirrors the StoreConnection protocol: execute-only, no executemany."""
+
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, tuple(params)))
+            return None
+
+    conn = _ProtocolConn()
+    cp._replace_fleet_members(conn, "fleet_x", ["a", "b"], "2026-06-04T00:00:00Z")
+    # One DELETE + one INSERT per member (no executemany).
+    assert conn.calls[0][0].startswith("DELETE FROM fleet_agents")
+    inserts = [c for c in conn.calls if c[0].startswith("INSERT INTO fleet_agents")]
+    assert len(inserts) == 2
+    assert inserts[0][1] == ("fleet_x", "a", "2026-06-04T00:00:00Z")
+    assert inserts[1][1] == ("fleet_x", "b", "2026-06-04T00:00:00Z")
+
+
+def test_replace_fleet_members_empty_is_delete_only(cp):
+    class _ProtocolConn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, tuple(params)))
+            return None
+
+    conn = _ProtocolConn()
+    cp._replace_fleet_members(conn, "fleet_x", [], "2026-06-04T00:00:00Z")
+    assert len(conn.calls) == 1
+    assert conn.calls[0][0].startswith("DELETE FROM fleet_agents")
+
+
 def test_events_filter_by_subject_returns_only_matching_stream(cp):
     rollout = create_verified_rollout(cp, "8.1")
     cp.advance_rollout(rollout.id, "start_canary", "human")
