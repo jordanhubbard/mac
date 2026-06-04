@@ -239,16 +239,21 @@ def test_controller_daemon_failure_does_not_kill_runner(
 
     import mac.k8s.runner as runner_mod
 
+    sleep_calls = {"n": 0}
+    real_sleep = time.sleep
+
     def _slow_runner(*_a: Any, **_kw: Any) -> int:
         # Wait until the controller has crashed at least once.
         crash_event.wait(timeout=2.0)
-        time.sleep(0.05)
+        # Use the REAL sleep, not the bounded one: the bounded-sleep counter
+        # must be driven solely by the controller daemon loop. If the runner
+        # consumed it, its time.sleep could be the call that trips the bound,
+        # raising inside runner_loop and making main() return 1 under CI
+        # thread-scheduling pressure (flaky).
+        real_sleep(0.05)
         return 0
 
     monkeypatch.setattr(runner_mod, "runner_loop", _slow_runner, raising=True)
-
-    sleep_calls = {"n": 0}
-    real_sleep = time.sleep
 
     def _bounded_sleep(seconds: float) -> None:
         sleep_calls["n"] += 1
