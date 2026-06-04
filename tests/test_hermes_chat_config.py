@@ -254,3 +254,19 @@ def test_sync_reports_image_gen_provider(tmp_path):
     home = _stale_hermes_home(tmp_path)
     result = sync(home, _mac_env(tmp_path))
     assert result["image_gen_provider"] == "mac-hub"
+
+
+def test_image_gen_migrates_prior_deploy_default_nvidia_to_mac_hub(tmp_path):
+    # A fleet still carrying the old deploy default (nvidia) migrates forward;
+    # both are hub-routed to the same upstream so it's behavior-preserving.
+    home = _home_with_config(tmp_path, "image_gen:\n  provider: nvidia\n")
+    assert ensure_image_gen_provider(home) == "mac-hub"
+    text = (home / "config.yaml").read_text(encoding="utf-8")
+    assert "provider: mac-hub" in text and "provider: nvidia" not in text
+
+
+def test_image_gen_does_not_migrate_genuine_alternative(tmp_path):
+    # fal/openai/etc. are real backend choices, not deploy-managed defaults.
+    home = _home_with_config(tmp_path, "image_gen:\n  provider: openai\n")
+    assert ensure_image_gen_provider(home) == "openai"
+    assert "provider: openai" in (home / "config.yaml").read_text(encoding="utf-8")
