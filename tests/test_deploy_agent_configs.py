@@ -1433,3 +1433,17 @@ def test_source_install_pins_exact_rev_not_ff_only():
     assert 'reset --hard --quiet "$DEPLOY_REV"' in script
     # the ff-only merge *command* must be gone (a comment mentioning it is fine)
     assert 'merge --ff-only "$DEPLOY_REV"' not in script
+
+
+def test_media_key_escrow_has_no_chat_key_fallback():
+    """Media (image/audio/video) upstream keys are SEPARATE entitlements from the
+    chat key; the deploy escrow must source only the per-modality var and never
+    fall back to NVIDIA_API_KEY — escrowing the chat key under e.g. nvidia-image
+    yields a runtime 401 from NVIDIA's genai API instead of a clean disabled."""
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert '("image", "MAC_ROUTER_IMAGE_KEY", "NVIDIA_IMAGE_API_KEY")' in script
+    # the old chat-key fallback must be gone
+    assert 'os.environ.get("NVIDIA_API_KEY") or ""' not in script.split("media_status", 1)[-1]
+    # and the deploy reports which media ops are enabled vs disabled
+    assert "media ops:" in script
+    assert "DISABLED: set" in script
