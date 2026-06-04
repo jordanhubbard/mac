@@ -1422,3 +1422,14 @@ def test_mac_repository_contract_test_command_uses_hermetic_runner():
     text = runner.read_text(encoding="utf-8")
     assert 'unset "${!MAC_@}"' in text
     assert 'exec .venv/bin/python -m pytest "$@"' in text
+
+
+def test_source_install_pins_exact_rev_not_ff_only():
+    """The remote source install must pin the worktree to the operator's exact
+    $DEPLOY_REV via fetch+reset. `git merge --ff-only $DEPLOY_REV` aborts with
+    "Not possible to fast-forward" when origin/<branch> advanced past the
+    operator's local HEAD mid-session, leaving the spoke half-deployed."""
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert 'reset --hard --quiet "$DEPLOY_REV"' in script
+    # the ff-only merge *command* must be gone (a comment mentioning it is fine)
+    assert 'merge --ff-only "$DEPLOY_REV"' not in script

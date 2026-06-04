@@ -3374,8 +3374,17 @@ rm -rf "$SRC_DIR.new"
 if [ -n "$DEPLOY_GIT_URL" ] && git clone --quiet --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_URL" "$SRC_DIR.new"; then
   actual_rev="$(git -C "$SRC_DIR.new" rev-parse HEAD)"
   if [ "$actual_rev" != "$DEPLOY_REV" ]; then
-    git -C "$SRC_DIR.new" fetch --quiet origin "$DEPLOY_REV"
-    git -C "$SRC_DIR.new" merge --ff-only "$DEPLOY_REV"
+    # Pin the worktree to the operator's exact deploy revision. fetch + reset,
+    # NOT `merge --ff-only`: ff aborts with "Not possible to fast-forward"
+    # whenever $DEPLOY_REV isn't a descendant of the freshly-cloned branch HEAD
+    # — e.g. origin/$DEPLOY_GIT_BRANCH advanced past the operator's local HEAD
+    # (someone else merged mid-session), which leaves the spoke half-deployed.
+    # We want exactly $DEPLOY_REV regardless of how it relates to the branch tip.
+    if git -C "$SRC_DIR.new" fetch --quiet origin "$DEPLOY_REV"; then
+      git -C "$SRC_DIR.new" reset --hard --quiet "$DEPLOY_REV"
+    else
+      log "WARNING: could not fetch deploy rev $DEPLOY_REV from origin; using clone HEAD $actual_rev"
+    fi
   fi
 else
   log "WARNING: git clone failed or was not configured; installing archive without self-update worktree"
