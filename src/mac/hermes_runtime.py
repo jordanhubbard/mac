@@ -804,6 +804,42 @@ def refresh_fleet_section(markdown_path: Path, section: str) -> None:
     markdown_path.write_text(text, encoding="utf-8")
 
 
+# mood-01: the agent's current mood overlay, rendered into the same runtime
+# context the prompt builder injects so a set mood actually colors behaviour.
+MOOD_SECTION_BEGIN = "<!-- mac:mood:begin -->"
+MOOD_SECTION_END = "<!-- mac:mood:end -->"
+
+
+def render_mood_section(overlay: Optional[Dict[str, Any]]) -> str:
+    """Render the agent's current mood overlay (a MoodOverlay.to_dict() or None)
+    as a delimited markdown block. Returns just the empty delimiters when there
+    is no active mood (or an unknown mode) — so refresh clears any stale block."""
+    from mac.mood_policy import render_mood_overlay
+
+    body = ""
+    if overlay:
+        body = render_mood_overlay(str(overlay.get("mode") or ""), overlay.get("reason"))
+    if not body:
+        return "%s\n%s" % (MOOD_SECTION_BEGIN, MOOD_SECTION_END)
+    return "\n".join([MOOD_SECTION_BEGIN, "## Mood — how you feel right now", "", body, MOOD_SECTION_END])
+
+
+def refresh_mood_section(markdown_path: Path, section: str) -> None:
+    """Insert/replace the delimited mood block in the runtime-context markdown.
+    Idempotent; clearing the mood writes empty delimiters which is a no-op block."""
+    text = ""
+    if markdown_path.exists():
+        text = markdown_path.read_text(encoding="utf-8", errors="ignore")
+    if MOOD_SECTION_BEGIN in text and MOOD_SECTION_END in text:
+        pre = text.split(MOOD_SECTION_BEGIN, 1)[0].rstrip()
+        post = text.split(MOOD_SECTION_END, 1)[1].lstrip()
+        text = (pre + "\n\n" + section + "\n\n" + post).rstrip() + "\n"
+    else:
+        text = (text.rstrip() + "\n\n" + section + "\n").lstrip("\n")
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(text, encoding="utf-8")
+
+
 def write_runtime_context(
     *,
     context_path: Path,

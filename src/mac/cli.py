@@ -488,18 +488,51 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
 
 
 def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
-    """fleet-02: refresh the live Fleet section in this agent's runtime-context
-    markdown so its next session knows what teammates are doing. Idempotent."""
+    """fleet-02 + mood-01: refresh the live Fleet section AND this agent's mood
+    overlay in its runtime-context markdown, so its next session knows what
+    teammates are doing and actually behaves in its current mood. Idempotent."""
     import os as _os
     from pathlib import Path as _Path
-    from mac.hermes_runtime import render_fleet_section, refresh_fleet_section
 
-    snapshot = _plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None))
+    from mac.hermes_runtime import (
+        refresh_fleet_section,
+        refresh_mood_section,
+        render_fleet_section,
+        render_mood_section,
+    )
+
+    plane = _plane(args)
+    agent = getattr(args, "agent", None)
+    snapshot = plane.fleet_snapshot(exclude_agent_id=agent)
     markdown = getattr(args, "markdown", None) or _os.environ.get(
         "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"
     ) or str(_Path.home() / ".hermes" / "mac-runtime-context.md")
-    refresh_fleet_section(_Path(markdown), render_fleet_section(snapshot))
-    _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
+    path = _Path(markdown)
+    refresh_fleet_section(path, render_fleet_section(snapshot))
+
+    # mood-01: render this agent's current mood overlay into the same context so
+    # a set mood colors behaviour. Best-effort — never break the fleet refresh.
+    overlay = None
+    if agent:
+        try:
+            current = plane.get_current_mood(agent)
+            if current is None:
+                overlay = None
+            elif hasattr(current, "to_dict"):
+                overlay = current.to_dict()
+            elif isinstance(current, dict):
+                overlay = current
+        except Exception:  # noqa: BLE001
+            overlay = None
+    refresh_mood_section(path, render_mood_section(overlay))
+    _print(
+        {
+            "status": "refreshed",
+            "markdown": markdown,
+            "members": len(snapshot.get("members", [])),
+            "mood": (overlay or {}).get("mode"),
+        }
+    )
 
 
 def cmd_journal_snapshot(args: argparse.Namespace) -> None:
