@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
 
 logger = logging.getLogger("mac.media_routing")
 
@@ -322,3 +322,82 @@ def build_media_table(env: Optional[Mapping[str, str]] = None) -> Dict[str, List
                 )
             ]
     return table
+
+
+# --- capability self-registration (agents advertise media routes) -----------
+# A GPU agent advertises what it serves in its registration
+# ``resources["media_routes"]`` (a list of route dicts); the hub composes the
+# routing table from LIVE agents instead of operator hand-config. So plugging in
+# a GPU agent that announces e.g. image.generate makes the fleet start using it
+# with zero per-caller knowledge — and it's dropped automatically when the agent
+# is offline. Route dict shape (all but op/base_url optional)::
+#
+#     {"op": "image.generate", "base_url": "http://bullwinkle:8189",
+#      "model": "sdxl-turbo", "adapter": "openai_images",
+#      "key": "secret:...", "auth_scheme": "Bearer", "priority": 0, "timeout": 180}
+
+_OFFLINE_STATUSES = {"offline", "draining", "drained", "retired", "decommissioned"}
+_UNHEALTHY = {"unhealthy", "dead", "degraded"}
+
+
+def _agent_is_routable(agent: Mapping[str, Any]) -> bool:
+    """Only route to agents that are up — a down GPU agent must not be a binding
+    (failover also covers transient errors, but skipping offline agents avoids a
+    guaranteed-failing first hop on every request)."""
+    status = str(agent.get("status") or "").strip().lower()
+    health = str(agent.get("health_status") or agent.get("health") or "").strip().lower()
+    if status in _OFFLINE_STATUSES:
+        return False
+    if health in _UNHEALTHY:
+        return False
+    return True
+
+
+def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str, List[MediaBinding]]:
+    """Compose ``{op: [MediaBinding]}`` from live agent registrations.
+
+    Each routable agent's ``resources["media_routes"]`` contributes bindings,
+    sorted by the route's ``priority`` (asc). Offline/unhealthy agents are
+    skipped. Returns ``{}`` when no agent advertises anything.
+    """
+    staged: Dict[str, List[Tuple[int, MediaBinding]]] = {}
+    for agent in agents:
+        if not isinstance(agent, Mapping) or not _agent_is_routable(agent):
+            continue
+        resources = agent.get("resources")
+        routes = resources.get("media_routes") if isinstance(resources, Mapping) else None
+        if not isinstance(routes, list):
+            continue
+        for route in routes:
+            if not isinstance(route, Mapping):
+                continue
+            op = str(route.get("op") or "").strip()
+            base = str(route.get("base_url") or "").strip().rstrip("/")
+            if not op or not base:
+                continue
+            binding = MediaBinding(
+                provider=str(route.get("provider") or agent.get("name") or agent.get("id") or "agent"),
+                base_url=base,
+                key_spec=str(route.get("key") or ""),
+                model=str(route.get("model") or ""),
+                adapter=str(route.get("adapter") or "passthrough"),
+                timeout=_float(route.get("timeout"), 180.0),
+                auth_scheme=str(route.get("auth_scheme") or "Bearer"),
+            )
+            staged.setdefault(op, []).append((_int(route.get("priority"), 0), binding))
+    return {op: [b for _, b in sorted(items, key=lambda pb: pb[0])] for op, items in staged.items()}
+
+
+def compose_media_table(
+    static_table: Mapping[str, List[MediaBinding]],
+    agent_table: Optional[Mapping[str, List[MediaBinding]]],
+    op: str,
+) -> List[MediaBinding]:
+    """Bindings for ``op``: live agent-advertised first (prefer on-prem GPU),
+    then the operator's static/config bindings (cloud fallback). Either side may
+    be empty."""
+    bindings: List[MediaBinding] = []
+    if agent_table:
+        bindings.extend(agent_table.get(op, []))
+    bindings.extend(static_table.get(op, []))
+    return bindings

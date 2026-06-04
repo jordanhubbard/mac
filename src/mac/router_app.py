@@ -830,26 +830,39 @@ def mount_media_router(
     *,
     env: Optional[Dict[str, str]] = None,
     secret_resolver: Optional[SecretResolver] = None,
+    agent_table_provider: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> bool:
     """media-01: mount the canonical ``POST /v1/media/{op}`` endpoint.
 
-    Resolves an ordered list of provider bindings for the operation
-    (:func:`mac.media_routing.build_media_table`), adapts the single canonical
-    request to each provider's wire format, forwards, and falls back to the next
-    binding on failure (missing key → 401 → next, non-2xx, or unreachable). The
-    flat ``/v1/genai`` etc. proxies stay mounted for back-compat; this is the
-    operation-keyed layer above them. No-op when no media op is bound."""
-    from mac.media_routing import ADAPTERS, build_media_table
+    Resolves an ordered list of provider bindings for the operation, adapts the
+    single canonical request to each provider's wire format, forwards, and falls
+    back to the next binding on failure (missing key → 401 → next, non-2xx, or
+    unreachable). The flat ``/v1/genai`` etc. proxies stay mounted for
+    back-compat; this is the operation-keyed layer above them.
+
+    Bindings are composed per request: ``agent_table_provider`` (live GPU agents
+    that self-advertised ``resources["media_routes"]``) is consulted FIRST so the
+    fleet prefers an on-prem GPU when one is up, then the static config table
+    (:func:`mac.media_routing.build_media_table`) as cloud fallback. So a GPU
+    agent that announces a capability is used with zero operator config, and a
+    down one falls over automatically. No-op when neither side can bind anything."""
+    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table
 
     env = os.environ if env is None else env
-    table = build_media_table(env)
-    if not table:
+    static_table = build_media_table(env)
+    if not static_table and agent_table_provider is None:
         return False
     from fastapi.responses import JSONResponse
 
     @app.post("/v1/media/{op}")
     def _media(op: str, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
-        bindings = table.get(op)
+        agent_table: Dict[str, Any] = {}
+        if agent_table_provider is not None:
+            try:
+                agent_table = agent_table_provider() or {}
+            except Exception:  # noqa: BLE001 - never let registry hiccups break routing
+                agent_table = {}
+        bindings = compose_media_table(static_table, agent_table, op)
         if not bindings:
             return JSONResponse(
                 {"error": {"message": "no provider bound for media op %r" % op,
@@ -894,11 +907,13 @@ def mount_router(
     proxy: Optional[ProviderProxy] = None,
     secret_resolver: Optional[SecretResolver] = None,
     route_observer: Optional[RouteObserver] = None,
+    media_agent_table_provider: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> bool:
     """Mount /v1/chat/completions + /v1/embeddings (+ /v1/genai image proxy) on
     ``app`` when MAC_ROUTER_BACKEND=inproc. Returns True if anything mounted.
     Default backend is 'tokenhub' → no-op, so an existing fleet is unchanged until
-    flipped."""
+    flipped. ``media_agent_table_provider`` (optional) lets the media router
+    compose bindings from live self-advertising agents (capability auto-routing)."""
     env = os.environ if env is None else env
     if (env.get("MAC_ROUTER_BACKEND") or "tokenhub").strip().lower() != "inproc":
         return False
@@ -908,7 +923,10 @@ def mount_router(
     mounted = mount_image_proxy(app, env=env, secret_resolver=secret_resolver)
     # media-01: operation-keyed canonical media routing (POST /v1/media/{op}),
     # layered above the flat /v1/genai proxy. Independent of chat providers.
-    if mount_media_router(app, env=env, secret_resolver=secret_resolver):
+    if mount_media_router(
+        app, env=env, secret_resolver=secret_resolver,
+        agent_table_provider=media_agent_table_provider,
+    ):
         mounted = True
     proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver, route_observer=route_observer)
     if proxy is None:

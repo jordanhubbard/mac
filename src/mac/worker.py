@@ -238,6 +238,20 @@ def register_worker(
         raise MacApiError("agent_name is required for worker registration")
     resolved_machine_id = machine_id or _stable_id("machine", host)
     resolved_agent_id = agent_id or _stable_id("agent", name)
+    # media-01 capability self-advertisement: a GPU agent announces the media ops
+    # it serves via MAC_AGENT_MEDIA_ROUTES (JSON list of route dicts, e.g.
+    # [{"op":"image.generate","base_url":"http://host:8189","adapter":"openai_images"}]).
+    # The hub composes its /v1/media routing table from live agents'
+    # resources["media_routes"], so the fleet uses this agent with zero operator
+    # config. Merged into the registration resources here.
+    _media_routes = (os.environ.get("MAC_AGENT_MEDIA_ROUTES") or "").strip()
+    if _media_routes:
+        try:
+            _parsed_routes = json.loads(_media_routes)
+        except ValueError:
+            _parsed_routes = None
+        if isinstance(_parsed_routes, list):
+            resources = {**(resources or {}), "media_routes": _parsed_routes}
     machine = client.post(
         "/machines",
         {
