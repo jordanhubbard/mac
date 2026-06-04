@@ -32,7 +32,7 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Chat endpoint/credential vars the Hermes runtime reads; mirrored from mac.env.
 CHAT_ENV_KEYS = (
@@ -217,40 +217,62 @@ def _chmod_600(path: Path) -> None:
         pass
 
 
+# Prior deploy-managed image_gen defaults that should migrate forward to the
+# current `default` on redeploy. Both are hub-routed to the same upstream
+# (``nvidia`` posts straight to /v1/genai; ``mac-hub`` goes via the canonical
+# /v1/media), so the upgrade is behavior-preserving. A genuine alternative
+# backend (fal/openai/krea/xai) is NOT in this set, so an operator's real choice
+# is respected.
+_DEPLOY_MANAGED_IMAGE_PROVIDERS = ("nvidia", "mac-hub")
+
+
 def ensure_image_gen_provider(hermes_home: Path, default: str = "mac-hub") -> str:
-    """Default image generation to the hub-routed ``mac-hub`` provider when the
-    operator hasn't picked one.
+    """Keep ``image_gen.provider`` on the hub-routed ``mac-hub`` provider.
 
     ``mac-hub`` (media-01) routes text-to-image through the in-mac router's
     canonical ``/v1/media/image.generate`` endpoint, which resolves the provider
     binding(s), adapts the request, and fails over — so agents render images with
     NO per-agent ``FAL_KEY``, and it works on spokes, which carry no raw provider
-    keys. Without this default, the registry's legacy fallback prefers ``fal``
-    (which reports available via the managed gateway but has no usable key here),
-    so image generation fails fleet-wide even though the router works. (The older
-    ``nvidia`` provider, which posts straight to ``/v1/genai``, stays available.)
+    keys. Without a hub-routed default the registry's legacy fallback prefers
+    ``fal`` (reports available via the managed gateway but has no usable key
+    here), so image generation fails fleet-wide even though the router works.
 
-    Respects an explicit ``image_gen.provider`` (never overrides it). Line-based
-    to preserve the rest of the file. Returns the provider now in effect (``""``
-    when there is no config.yaml).
+    Sets the default when unset, and **migrates a prior deploy-managed default
+    forward** (e.g. ``nvidia`` → ``mac-hub``; behavior-preserving, both route to
+    the same upstream). A genuine alternative backend an operator chose
+    (fal/openai/krea/xai) is respected, never overridden. Line-based to preserve
+    the rest of the file. Returns the provider now in effect (``""`` when there
+    is no config.yaml).
     """
     cfg = hermes_home / "config.yaml"
     if not cfg.exists():
         return ""
     lines = cfg.read_text(encoding="utf-8").splitlines()
 
-    # Already chosen? Find the top-level `image_gen:` block and look for a
-    # `provider:` line within it; respect any explicit value.
+    # Find the top-level `image_gen:` block and the `provider:` line within it.
     n = len(lines)
+    provider_idx: Optional[int] = None
+    current: Optional[str] = None
+    indent = "  "
     for i, ln in enumerate(lines):
         if re.match(r"^image_gen:\s*$", ln):
             j = i + 1
             while j < n and (not lines[j].strip() or lines[j].startswith((" ", "\t"))):
-                m = re.match(r"^\s+provider:\s*(\S.*?)\s*$", lines[j])
+                m = re.match(r"^(\s+)provider:\s*(\S.*?)\s*$", lines[j])
                 if m:
-                    return m.group(1).strip().strip("'\"")
+                    provider_idx, indent, current = j, m.group(1), m.group(2).strip().strip("'\"")
+                    break
                 j += 1
             break
+
+    if current is not None:
+        # Respect a genuine alternative; migrate a deploy-managed default forward.
+        if current == default or current not in _DEPLOY_MANAGED_IMAGE_PROVIDERS:
+            return current
+        lines[provider_idx] = "%sprovider: %s" % (indent, default)
+        cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        _chmod_600(cfg)
+        return default
 
     # Not set: insert `provider:` under an existing `image_gen:` block, else
     # append a fresh block at EOF.
