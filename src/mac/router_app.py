@@ -81,6 +81,7 @@ __all__ = [
     "urllib_stream_forwarder",
     "build_proxy_from_env",
     "mount_router",
+    "mac_route_context_headers",
 ]
 
 # forward_fn(provider, path, payload, *, timeout) -> (status_code|None, body)
@@ -204,6 +205,56 @@ def _strip_internal_route_context(body: Dict[str, Any]) -> Dict[str, Any]:
     if not any(key in body for key in _CONTEXT_BODY_KEYS):
         return body
     return {key: value for key, value in body.items() if key not in _CONTEXT_BODY_KEYS}
+
+
+def mac_route_context_headers(
+    *,
+    agent_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    lease_id: Optional[str] = None,
+    hermes_instance_id: Optional[str] = None,
+    command_id: Optional[str] = None,
+    fleet: Optional[str] = None,
+    request_id: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Build a dict of X-MAC-* HTTP headers for stamping on LLM completion requests.
+
+    Hermes/worker clients that route through the hub's /v1 surface should call this
+    and include the result as default_headers (OpenAI SDK) or merge them into
+    the request headers before forwarding. The hub's _route_context_from_request
+    extracts them and records them in the llm.route observability event, making
+    every completion row attributable to an agent and task without depending on the
+    bearer token's optional agent binding.
+
+    When explicit values are not supplied, the function falls back to env-vars set by
+    the worker/executor runtime (MAC_AGENT_ID, MAC_TASK_ID, MAC_LEASE_ID,
+    MAC_HERMES_INSTANCE_ID). Callers that override those env-vars for a specific
+    task run do not need to pass explicit arguments.
+
+    Only non-empty values produce a header. Call sites should treat an empty return
+    dict as "no context available" (single-user interactive sessions, local dev) and
+    skip adding headers rather than sending blanks.
+    """
+    _env = os.environ if env is None else env
+
+    def _pick(explicit: Optional[str], env_var: str) -> str:
+        v = str(explicit or "").strip()
+        if v:
+            return v[:256]
+        v = str(_env.get(env_var) or "").strip()
+        return v[:256]
+
+    candidates = {
+        "x-mac-agent-id": _pick(agent_id, "MAC_AGENT_ID"),
+        "x-mac-task-id": _pick(task_id, "MAC_TASK_ID"),
+        "x-mac-lease-id": _pick(lease_id, "MAC_LEASE_ID"),
+        "x-mac-hermes-instance-id": _pick(hermes_instance_id, "MAC_HERMES_INSTANCE_ID"),
+        "x-mac-command-id": _pick(command_id, "MAC_COMMAND_ID"),
+        "x-mac-fleet": _pick(fleet, "MAC_FLEET"),
+        "x-mac-request-id": _pick(request_id, ""),
+    }
+    return {k: v for k, v in candidates.items() if v}
 
 
 class ProviderProxy:
@@ -614,7 +665,7 @@ def build_proxy_from_env(
     """Build a ProviderProxy from MAC_ROUTER_* env; None when no providers are
     configured. ``secret_resolver`` (th-merge-04) lets a provider's ``key=`` be
     ``secret:<name>``, resolved from the in-mac encrypted key store at use."""
-    env = env or os.environ
+    env = os.environ if env is None else env
     providers = providers_from_env(env)
     if not providers:
         return None
@@ -719,7 +770,7 @@ def mount_image_proxy(
     `/v1/audio` for ASR/TTS, and video `/v1/video`). Synchronous POSTs returning
     inline payloads, so transparent reverse-proxies suffice. Returns True if any
     mounted. Kept named for back-compat; each modality is independently gated."""
-    env = env or os.environ
+    env = os.environ if env is None else env
     mounted = False
     for name, route_prefix, upstream_env, key_env, timeout_env, default_timeout in _MODALITY_PROXIES:
         if _mount_one_modality_proxy(
@@ -749,7 +800,7 @@ def mount_router(
     ``app`` when MAC_ROUTER_BACKEND=inproc. Returns True if anything mounted.
     Default backend is 'tokenhub' → no-op, so an existing fleet is unchanged until
     flipped."""
-    env = env or os.environ
+    env = os.environ if env is None else env
     if (env.get("MAC_ROUTER_BACKEND") or "tokenhub").strip().lower() != "inproc":
         return False
     _configure_route_logging()

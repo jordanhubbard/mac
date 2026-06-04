@@ -637,3 +637,82 @@ def test_build_proxy_reads_wildcard_models():
     proxy = build_proxy_from_env(env)
     assert proxy is not None
     assert proxy._wildcard_models == ("meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct")
+
+
+# ---------------------------------------------------------------------------
+# mac_route_context_headers
+# ---------------------------------------------------------------------------
+
+from mac.router_app import mac_route_context_headers
+
+
+def test_mac_route_context_headers_explicit_values():
+    """Explicit arguments are echoed as lowercase header keys."""
+    headers = mac_route_context_headers(
+        agent_id="agent_abc",
+        task_id="task_xyz",
+        lease_id="lease_123",
+        hermes_instance_id="hermes_hi",
+        command_id="cmd_999",
+        fleet="fleet_main",
+        request_id="req_001",
+    )
+    assert headers["x-mac-agent-id"] == "agent_abc"
+    assert headers["x-mac-task-id"] == "task_xyz"
+    assert headers["x-mac-lease-id"] == "lease_123"
+    assert headers["x-mac-hermes-instance-id"] == "hermes_hi"
+    assert headers["x-mac-command-id"] == "cmd_999"
+    assert headers["x-mac-fleet"] == "fleet_main"
+    assert headers["x-mac-request-id"] == "req_001"
+
+
+def test_mac_route_context_headers_from_env():
+    """Falls back to env-vars when no explicit arguments are given."""
+    env = {
+        "MAC_AGENT_ID": "agent_from_env",
+        "MAC_TASK_ID": "task_from_env",
+        "MAC_LEASE_ID": "lease_from_env",
+        "MAC_HERMES_INSTANCE_ID": "hermes_from_env",
+        "MAC_COMMAND_ID": "cmd_from_env",
+        "MAC_FLEET": "fleet_from_env",
+    }
+    headers = mac_route_context_headers(env=env)
+    assert headers["x-mac-agent-id"] == "agent_from_env"
+    assert headers["x-mac-task-id"] == "task_from_env"
+    assert headers["x-mac-lease-id"] == "lease_from_env"
+    assert headers["x-mac-hermes-instance-id"] == "hermes_from_env"
+    assert headers["x-mac-command-id"] == "cmd_from_env"
+    assert headers["x-mac-fleet"] == "fleet_from_env"
+
+
+def test_mac_route_context_headers_explicit_overrides_env():
+    """Explicit argument takes precedence over env-var."""
+    env = {"MAC_AGENT_ID": "agent_env", "MAC_TASK_ID": "task_env"}
+    headers = mac_route_context_headers(agent_id="agent_explicit", env=env)
+    assert headers["x-mac-agent-id"] == "agent_explicit"
+    assert headers["x-mac-task-id"] == "task_env"
+
+
+def test_mac_route_context_headers_empty_env_omits_keys():
+    """Empty env and no explicit args returns an empty dict (no blank headers)."""
+    headers = mac_route_context_headers(env={})
+    assert headers == {}
+
+
+def test_mac_route_context_headers_truncates_long_values():
+    """Values longer than 256 characters are truncated."""
+    long_val = "a" * 300
+    headers = mac_route_context_headers(agent_id=long_val)
+    assert len(headers["x-mac-agent-id"]) == 256
+
+
+def test_mac_route_context_headers_only_nonempty_keys_included():
+    """Only non-empty values produce header entries."""
+    headers = mac_route_context_headers(agent_id="agent_x", env={})
+    assert set(headers.keys()) == {"x-mac-agent-id"}
+
+
+def test_mac_route_context_headers_is_exported():
+    """mac_route_context_headers must appear in __all__."""
+    from mac import router_app
+    assert "mac_route_context_headers" in router_app.__all__

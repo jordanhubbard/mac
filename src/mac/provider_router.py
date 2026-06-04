@@ -202,7 +202,7 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
     e.g. ``nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY;`` +
            ``openai=https://api.openai.com/v1,1,models=*,key=OPENAI_API_KEY``
     """
-    env = env or os.environ
+    env = os.environ if env is None else env
     raw = (env.get("MAC_ROUTER_PROVIDERS") or "").strip()
     providers: List[Provider] = []
     for chunk in raw.split(";"):
