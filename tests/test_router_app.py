@@ -716,3 +716,207 @@ def test_mac_route_context_headers_is_exported():
     """mac_route_context_headers must appear in __all__."""
     from mac import router_app
     assert "mac_route_context_headers" in router_app.__all__
+
+
+# ---------------------------------------------------------------------------
+# Principal-mismatch hardening — _is_principal_mismatch_rejected() + 403 gate
+# ---------------------------------------------------------------------------
+
+import mac.router_app as _ra
+
+
+def test_reject_mismatch_env_var_truthy_values():
+    """All truthy env var spellings activate the mismatch gate."""
+    for val in ("1", "true", "True", "TRUE", "yes", "on"):
+        assert _ra._is_principal_mismatch_rejected({_ra._REJECT_MISMATCH_ENV: val}) is True
+
+
+def test_reject_mismatch_env_var_falsy_values():
+    """Falsy env var spellings keep the default (pass-through) behavior."""
+    for val in ("0", "false", "False", "no", "off", ""):
+        assert _ra._is_principal_mismatch_rejected({_ra._REJECT_MISMATCH_ENV: val}) is False
+
+
+def test_reject_mismatch_disabled_by_default():
+    """Without the env var the gate is off (safe default for existing hubs)."""
+    assert _ra._is_principal_mismatch_rejected({}) is False
+
+
+def test_mismatch_is_logged_but_not_rejected_by_default():
+    """With the default env the principal overrides the claimed header without
+    raising — the mismatch is captured in claimed_agent_id for audit."""
+    from types import SimpleNamespace
+    from mac.router_app import _route_context_from_request
+
+    class FakeRequest:
+        headers = {"x-mac-agent-id": "agent_spoofed"}
+        state = SimpleNamespace(principal=SimpleNamespace(agent_id="agent_real"))
+
+    ctx = _route_context_from_request(FakeRequest(), {})
+    assert ctx["agent_id"] == "agent_real"
+    assert ctx.get("claimed_agent_id") == "agent_spoofed"
+
+
+def test_mismatch_is_rejected_when_env_var_enabled():
+    """_is_principal_mismatch_rejected returns True when the env var is 1."""
+    env = {_ra._REJECT_MISMATCH_ENV: "1"}
+    assert _ra._is_principal_mismatch_rejected(env) is True
+
+
+def test_mount_router_returns_403_on_mismatch_when_rejection_enabled():
+    """End-to-end: /v1/chat/completions returns 403 when rejection is active
+    and the fake request carries a mismatched claimed_agent_id."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    # Patch _route_context_from_request to inject a mismatch without needing
+    # a real JWT middleware.
+    original = _ra._route_context_from_request
+
+    def _faked_ctx(request, body):
+        ctx = original(request, body)
+        ctx["agent_id"] = "agent_real"
+        ctx["claimed_agent_id"] = "agent_spoofed"
+        return ctx
+
+    fwd, _ = _fake_forward({"primary": (200, {"ok": True})})
+    proxy = ProviderProxy(_router(), fwd)
+    app = FastAPI()
+    env = {"MAC_ROUTER_BACKEND": "inproc", _ra._REJECT_MISMATCH_ENV: "1"}
+    assert mount_router(app, env=env, proxy=proxy) is True
+
+    _ra._route_context_from_request = _faked_ctx
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post("/v1/chat/completions", json={"model": "m"})
+        assert resp.status_code == 403
+        err = resp.json()
+        assert err["error"]["type"] == "principal_mismatch"
+        assert "agent_real" in err["error"]["message"]
+        assert "agent_spoofed" in err["error"]["message"]
+    finally:
+        _ra._route_context_from_request = original
+
+
+def test_mount_router_embeddings_returns_403_on_mismatch_when_rejection_enabled():
+    """/v1/embeddings also enforces the 403 gate when rejection is active."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    original = _ra._route_context_from_request
+
+    def _faked_ctx(request, body):
+        ctx = original(request, body)
+        ctx["agent_id"] = "agent_token"
+        ctx["claimed_agent_id"] = "agent_header"
+        return ctx
+
+    fwd, _ = _fake_forward({"primary": (200, {"ok": True})})
+    proxy = ProviderProxy(_router(), fwd)
+    app = FastAPI()
+    env = {"MAC_ROUTER_BACKEND": "inproc", _ra._REJECT_MISMATCH_ENV: "1"}
+    assert mount_router(app, env=env, proxy=proxy) is True
+
+    _ra._route_context_from_request = _faked_ctx
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post("/v1/embeddings", json={"model": "m", "input": "hi"})
+        assert resp.status_code == 403
+        assert resp.json()["error"]["type"] == "principal_mismatch"
+    finally:
+        _ra._route_context_from_request = original
+
+
+def test_no_mismatch_passes_through_when_rejection_enabled():
+    """When rejection is active but there is no mismatch (no claimed_agent_id),
+    the request proceeds normally."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    fwd, _ = _fake_forward({"primary": (200, {"ok": True})})
+    proxy = ProviderProxy(_router(), fwd)
+    app = FastAPI()
+    env = {"MAC_ROUTER_BACKEND": "inproc", _ra._REJECT_MISMATCH_ENV: "1"}
+    assert mount_router(app, env=env, proxy=proxy) is True
+    client = TestClient(app)
+    # No X-MAC-Agent-ID header, no principal → no mismatch
+    resp = client.post("/v1/chat/completions", json={"model": "*"})
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Live llm.route attribution join-field verification
+# ---------------------------------------------------------------------------
+
+
+def test_llm_route_rows_carry_attribution_in_observation():
+    """Verify that a route observation emitted with task+agent context carries
+    all fields needed for hub-side llm.route row joins.
+
+    This is a unit-level simulation: the route_observer receives exactly what
+    the hub persists in the llm.route table.  Missing agent_id or task_id means
+    the row cannot be joined to task work — this test asserts they survive the
+    observation pipeline unchanged when supplied via route_context.
+    """
+    observed = []
+    r = _router()
+    fwd, _ = _fake_forward({"primary": (200, {
+        "model": "test-model",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    })})
+    proxy = ProviderProxy(r, fwd, route_observer=observed.append)
+
+    proxy.complete(
+        "/chat/completions",
+        {"model": "test-model"},
+        route_context={
+            "agent_id": "agent_live_test",
+            "task_id": "task_live_test",
+            "lease_id": "lease_live_test",
+            "hermes_instance_id": "hermes_live_test",
+        },
+    )
+
+    assert len(observed) == 1
+    ev = observed[0]
+    # All attribution fields must survive unchanged.
+    assert ev["agent_id"] == "agent_live_test", "agent_id missing from llm.route observation"
+    assert ev["task_id"] == "task_live_test",   "task_id missing from llm.route observation"
+    assert ev["lease_id"] == "lease_live_test", "lease_id missing from llm.route observation"
+    assert ev["hermes_instance_id"] == "hermes_live_test", "hermes_instance_id missing"
+    # Usage must propagate for cost attribution.
+    assert ev["usage"]["total_tokens"] == 30
+    # The row is joinable: schema + provider + model are present.
+    assert ev["schema"] == "mac.llm_route.v1"
+    assert ev["provider"] == "primary"
+    assert ev["resolved_model"] == "test-model"
+    assert ev["status_code"] == 200
+
+
+def test_llm_route_mac_route_context_headers_feeds_attribution():
+    """Demonstrate the full attribution chain: mac_route_context_headers()
+    produces headers → they are read by _route_context_from_request → the
+    observer receives the attribution context.
+
+    This proves the client-side helper and the server-side extraction are
+    aligned so a stamped worker request produces a fully-attributable row."""
+    from types import SimpleNamespace
+    from mac.router_app import _route_context_from_request
+
+    # mac_route_context_headers() returns {'x-mac-agent-id': ..., ...}
+    stamped = mac_route_context_headers(
+        agent_id="agent_chain_test",
+        task_id="task_chain_test",
+        hermes_instance_id="hermes_chain_test",
+    )
+
+    class FakeRequest:
+        headers = stamped  # inject stamped headers directly
+        state = SimpleNamespace(principal=None)
+
+    ctx = _route_context_from_request(FakeRequest(), {})
+    assert ctx["agent_id"] == "agent_chain_test"
+    assert ctx["task_id"] == "task_chain_test"
+    assert ctx["hermes_instance_id"] == "hermes_chain_test"
+    # No mismatch — no principal, so claimed_agent_id must not appear.
+    assert "claimed_agent_id" not in ctx

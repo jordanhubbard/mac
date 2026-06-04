@@ -197,8 +197,42 @@ def _route_context_from_request(request: Any, body: Dict[str, Any]) -> Dict[str,
         claimed_agent_id = context.get("agent_id")
         if claimed_agent_id and claimed_agent_id != principal_agent_id:
             context["claimed_agent_id"] = claimed_agent_id
+            # Log every mismatch unconditionally — ops needs to know that
+            # spoofed-agent headers are reaching the router even before the
+            # hard-rejection gate (MAC_ROUTER_REJECT_MISMATCHED_PRINCIPAL) is
+            # enabled.  This is the first line of the audit trail.
+            logger.warning(
+                "route context mismatch: token bound to agent_id=%s "
+                "but request header claimed agent_id=%s",
+                principal_agent_id,
+                claimed_agent_id,
+            )
         context["agent_id"] = principal_agent_id
     return context
+
+
+# ---------------------------------------------------------------------------
+# Principal-mismatch rejection gate
+# ---------------------------------------------------------------------------
+
+# Env-var that enables hard rejection of requests whose X-MAC-Agent-ID header
+# disagrees with the bearer-token principal.  Off by default so hubs that have
+# not yet enforced token binding are unaffected; flip to "1" once all clients
+# stamp headers via mac_route_context_headers().
+_REJECT_MISMATCH_ENV = "MAC_ROUTER_REJECT_MISMATCHED_PRINCIPAL"
+
+
+def _is_principal_mismatch_rejected(env: Optional[Dict[str, str]] = None) -> bool:
+    """Return True when ``MAC_ROUTER_REJECT_MISMATCHED_PRINCIPAL`` is truthy.
+
+    When True the router responds with HTTP 403 to any request whose
+    ``X-MAC-Agent-ID`` header does not match the bearer-token principal.
+    Disabled by default; enable once all Hermes/worker clients have been
+    updated to stamp headers via :func:`mac_route_context_headers`.
+    """
+    _env: Dict[str, str] = env if env is not None else dict(os.environ)
+    val = str(_env.get(_REJECT_MISMATCH_ENV) or "").strip().lower()
+    return val in {"1", "true", "yes", "on"}
 
 
 def _strip_internal_route_context(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -812,9 +846,36 @@ def mount_router(
         return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
 
+    # Evaluate once at mount time so the gate is consistent for the lifetime of
+    # the process (no per-request os.environ lookups; flipping the env var
+    # requires a process restart, which is the expected ops pattern).
+    _reject_mismatch = _is_principal_mismatch_rejected(env)
+
+    def _mismatch_response(route_context: Dict[str, Any]) -> Optional[Any]:
+        """Return a 403 JSONResponse when principal mismatch rejection is active
+        and the request carries a mismatched X-MAC-Agent-ID; None otherwise."""
+        if _reject_mismatch and route_context.get("claimed_agent_id"):
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": (
+                            "principal mismatch: token is bound to agent_id=%s "
+                            "but request header claimed agent_id=%s"
+                            % (route_context.get("agent_id"), route_context.get("claimed_agent_id"))
+                        ),
+                        "type": "principal_mismatch",
+                    }
+                },
+                status_code=403,
+            )
+        return None
+
     @app.post("/v1/chat/completions")
     def _chat(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
         route_context = _route_context_from_request(request, body)
+        mismatch = _mismatch_response(route_context)
+        if mismatch is not None:
+            return mismatch
         body = _strip_internal_route_context(body)
         if body.get("stream"):
             status, obj = proxy.stream_complete("/chat/completions", body, route_context=route_context)
@@ -827,6 +888,9 @@ def mount_router(
     @app.post("/v1/embeddings")
     def _embeddings(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
         route_context = _route_context_from_request(request, body)
+        mismatch = _mismatch_response(route_context)
+        if mismatch is not None:
+            return mismatch
         status, out = proxy.complete(
             "/embeddings",
             _strip_internal_route_context(body),
