@@ -40,9 +40,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
+
+from fastapi import Body, Request
 
 from mac.provider_router import Provider, ProviderRouter, providers_from_env
 
@@ -86,6 +89,8 @@ ForwardFn = Callable[..., Tuple[Optional[int], Any]]
 StreamForwardFn = Callable[..., Tuple[Optional[int], Any]]
 # secret_resolver(name) -> plaintext | None  (th-merge-04: audited hub key escrow)
 SecretResolver = Callable[[str], Optional[str]]
+# route_observer(detail) -> None. Receives only routing metadata, never prompt content.
+RouteObserver = Callable[[Dict[str, Any]], None]
 
 _SECRET_PREFIX = "secret:"
 
@@ -138,6 +143,69 @@ def _normalize_payload(payload: Dict[str, Any], drop_params: Tuple[str, ...]) ->
     return {k: v for k, v in payload.items() if k not in drop}
 
 
+_CONTEXT_HEADER_NAMES = {
+    "agent_id": "x-mac-agent-id",
+    "task_id": "x-mac-task-id",
+    "lease_id": "x-mac-lease-id",
+    "command_id": "x-mac-command-id",
+    "hermes_instance_id": "x-mac-hermes-instance-id",
+    "request_id": "x-mac-request-id",
+    "fleet": "x-mac-fleet",
+}
+_CONTEXT_BODY_KEYS = ("_mac_context", "mac_context")
+
+
+def _string_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text[:256]
+
+
+def _body_route_context(body: Dict[str, Any]) -> Dict[str, str]:
+    contexts = []
+    for key in _CONTEXT_BODY_KEYS:
+        value = body.get(key)
+        if isinstance(value, dict):
+            contexts.append(value)
+    metadata = body.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("mac", "mac_context", "_mac_context"):
+            value = metadata.get(key)
+            if isinstance(value, dict):
+                contexts.append(value)
+    out: Dict[str, str] = {}
+    for context in contexts:
+        for key in _CONTEXT_HEADER_NAMES:
+            value = _string_value(context.get(key))
+            if value and key not in out:
+                out[key] = value
+    return out
+
+
+def _route_context_from_request(request: Any, body: Dict[str, Any]) -> Dict[str, str]:
+    headers = getattr(request, "headers", {}) or {}
+    header_context = {
+        key: _string_value(headers.get(header_name))
+        for key, header_name in _CONTEXT_HEADER_NAMES.items()
+        if _string_value(headers.get(header_name))
+    }
+    body_context = _body_route_context(body)
+    context = {**body_context, **header_context}
+    principal = getattr(getattr(request, "state", None), "principal", None)
+    principal_agent_id = _string_value(getattr(principal, "agent_id", None))
+    if principal_agent_id:
+        claimed_agent_id = context.get("agent_id")
+        if claimed_agent_id and claimed_agent_id != principal_agent_id:
+            context["claimed_agent_id"] = claimed_agent_id
+        context["agent_id"] = principal_agent_id
+    return context
+
+
+def _strip_internal_route_context(body: Dict[str, Any]) -> Dict[str, Any]:
+    if not any(key in body for key in _CONTEXT_BODY_KEYS):
+        return body
+    return {key: value for key, value in body.items() if key not in _CONTEXT_BODY_KEYS}
+
+
 class ProviderProxy:
     def __init__(
         self,
@@ -150,6 +218,7 @@ class ProviderProxy:
         timeout: float = 60.0,
         stream_timeout: float = 300.0,
         drop_params: Tuple[str, ...] = _DEFAULT_DROP_PARAMS,
+        route_observer: Optional[RouteObserver] = None,
     ) -> None:
         self._router = router
         self._forward = forward_fn
@@ -161,6 +230,7 @@ class ProviderProxy:
         self._timeout = timeout
         self._stream_timeout = stream_timeout
         self._drop_params = tuple(drop_params)
+        self._route_observer = route_observer
 
     # -- model resolution ----------------------------------------------------
 
@@ -178,13 +248,26 @@ class ProviderProxy:
             return [self._default_model]
         return ["*"]
 
-    def _route(self, path: str, payload: Dict[str, Any], forward, timeout: float) -> Tuple[int, Any]:
+    def _route(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        forward,
+        timeout: float,
+        *,
+        route_context: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Any]:
         """Shared routing for streaming + non-streaming. Walks the candidate
         models (wildcard ladder); for each, walks providers with failover +
         breaker. Returns ``(status, body_or_iterator)``."""
+        started = time.monotonic()
+        route_context = route_context or {}
         candidates = self._candidate_models(payload)
         last: Optional[Tuple[int, Any]] = None
+        last_model = "*"
+        last_provider = ""
         retried_401 = False  # per-request: at most one transient-401 retry
+        route_attempts = []
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
             outgoing = {**_normalize_payload(payload, self._drop_params), "model": model}
@@ -197,14 +280,17 @@ class ProviderProxy:
                 if provider is None:
                     break
                 status, obj = forward(provider, path, outgoing, timeout=timeout)
+                route_attempts.append({"provider": provider.name, "model": model, "status": status})
                 if _is_provider_failure(status):
                     self._router.record_failure(provider.name)
                     attempts.append({"provider": provider.name, "status": status})
+                    route_attempts[-1]["outcome"] = "provider_failure"
                     logger.info("route model=%s provider=%s status=%s failover", model, provider.name, status)
                     continue
                 # The provider answered (healthy), so close its breaker.
                 self._router.record_success(provider.name)
                 provider_answered = True
+                route_attempts[-1]["outcome"] = "answered"
                 logger.info("route model=%s provider=%s status=%s", model, provider.name, status)
                 # A 401 from upstream is usually a real auth problem, but some
                 # gateways briefly mislabel a transient backend hiccup (e.g.
@@ -215,25 +301,101 @@ class ProviderProxy:
                     retried_401 = True
                     logger.info("route model=%s provider=%s status=401 transient-retry", model, provider.name)
                     status, obj = forward(provider, path, outgoing, timeout=timeout)
+                    route_attempts.append(
+                        {
+                            "provider": provider.name,
+                            "model": model,
+                            "status": status,
+                            "outcome": "transient_retry",
+                        }
+                    )
+                    if _is_provider_failure(status):
+                        self._router.record_failure(provider.name)
+                        attempts.append({"provider": provider.name, "status": status})
+                        route_attempts[-1]["outcome"] = "provider_failure_after_retry"
+                        logger.info("route model=%s provider=%s status=%s failover", model, provider.name, status)
+                        continue
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
+                    last_model = model
+                    last_provider = provider.name
+                    route_attempts[-1]["outcome"] = "model_retry"
                     break
-                return int(status), obj
+                return self._observed_return(
+                    int(status),
+                    obj,
+                    path=path,
+                    payload=payload,
+                    resolved_model=model,
+                    provider=provider.name,
+                    started=started,
+                    route_context=route_context,
+                    attempts=route_attempts,
+                )
             if not provider_answered:
                 # Every eligible provider failed or is open for this model. The
                 # same providers serve the other models, so fail fast rather than
                 # walk the rest of the ladder against dead providers.
-                return 503, self._failfast_body(model, attempts)
+                body = self._failfast_body(model, attempts)
+                return self._observed_return(
+                    503,
+                    body,
+                    path=path,
+                    payload=payload,
+                    resolved_model=model,
+                    provider="",
+                    started=started,
+                    route_context=route_context,
+                    attempts=route_attempts,
+                    outcome="all_providers_unavailable",
+                )
             # provider answered with a model-retry code and more models remain:
             # fall through to the next candidate.
-        return last if last is not None else (503, self._failfast_body("*", []))
+        if last is not None:
+            return self._observed_return(
+                int(last[0]),
+                last[1],
+                path=path,
+                payload=payload,
+                resolved_model=last_model,
+                provider=last_provider,
+                started=started,
+                route_context=route_context,
+                attempts=route_attempts,
+                outcome="model_unavailable",
+            )
+        body = self._failfast_body("*", [])
+        return self._observed_return(
+            503,
+            body,
+            path=path,
+            payload=payload,
+            resolved_model="*",
+            provider="",
+            started=started,
+            route_context=route_context,
+            attempts=route_attempts,
+            outcome="all_providers_unavailable",
+        )
 
-    def complete(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Any]:
+    def complete(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        *,
+        route_context: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Any]:
         """Route one request. ``path`` is the suffix after the provider base_url
         (e.g. ``/chat/completions``). Returns ``(status_code, body)``."""
-        return self._route(path, payload, self._forward, self._timeout)
+        return self._route(path, payload, self._forward, self._timeout, route_context=route_context)
 
-    def stream_complete(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Any]:
+    def stream_complete(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        *,
+        route_context: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Any]:
         """Route one streaming request. On 2xx the second element is an iterator
         of raw upstream byte chunks (pass straight to the client as
         ``text/event-stream``); otherwise it is an error/body dict.
@@ -244,8 +406,109 @@ class ProviderProxy:
         if self._stream_forward is None:
             # No streaming transport wired: degrade to a buffered completion so a
             # stream=true request still gets an answer rather than failing.
-            return self.complete(path, {**payload, "stream": False})
-        return self._route(path, {**payload, "stream": True}, self._stream_forward, self._stream_timeout)
+            return self.complete(path, {**payload, "stream": False}, route_context=route_context)
+        return self._route(
+            path,
+            {**payload, "stream": True},
+            self._stream_forward,
+            self._stream_timeout,
+            route_context=route_context,
+        )
+
+    def _observed_return(
+        self,
+        status: int,
+        obj: Any,
+        *,
+        path: str,
+        payload: Dict[str, Any],
+        resolved_model: str,
+        provider: str,
+        started: float,
+        route_context: Dict[str, Any],
+        attempts: Iterable[Dict[str, Any]],
+        outcome: str = "",
+    ) -> Tuple[int, Any]:
+        self._emit_route_observation(
+            path=path,
+            payload=payload,
+            resolved_model=resolved_model,
+            provider=provider,
+            status=status,
+            body=obj,
+            started=started,
+            route_context=route_context,
+            attempts=attempts,
+            outcome=outcome or self._outcome_for_status(status),
+        )
+        return status, obj
+
+    def _emit_route_observation(
+        self,
+        *,
+        path: str,
+        payload: Dict[str, Any],
+        resolved_model: str,
+        provider: str,
+        status: int,
+        body: Any,
+        started: float,
+        route_context: Dict[str, Any],
+        attempts: Iterable[Dict[str, Any]],
+        outcome: str,
+    ) -> None:
+        if self._route_observer is None:
+            return
+        detail: Dict[str, Any] = {
+            "schema": "mac.llm_route.v1",
+            "path": path,
+            "stream": bool(payload.get("stream")),
+            "requested_model": str(payload.get("model") or ""),
+            "resolved_model": resolved_model,
+            "provider": provider,
+            "status_code": status,
+            "outcome": outcome,
+            "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+            "attempts": list(attempts),
+        }
+        for key in (
+            "agent_id",
+            "task_id",
+            "lease_id",
+            "command_id",
+            "hermes_instance_id",
+            "request_id",
+            "fleet",
+            "claimed_agent_id",
+        ):
+            value = route_context.get(key)
+            if value:
+                detail[key] = value
+        if isinstance(body, dict):
+            response_model = body.get("model")
+            if response_model:
+                detail["response_model"] = str(response_model)
+            usage = body.get("usage")
+            if isinstance(usage, dict):
+                detail["usage"] = {
+                    str(k): v
+                    for k, v in usage.items()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                }
+        try:
+            self._route_observer(detail)
+        except Exception:  # noqa: BLE001 - observability must not break inference
+            logger.warning("route observer failed", exc_info=True)
+
+    @staticmethod
+    def _outcome_for_status(status: int) -> str:
+        if 200 <= status < 300:
+            return "success"
+        if status == 429 or status >= 500:
+            return "provider_error"
+        if 400 <= status < 500:
+            return "client_error"
+        return "answered"
 
     @staticmethod
     def _failfast_body(model: str, attempts) -> Dict[str, Any]:
@@ -346,6 +609,7 @@ def build_proxy_from_env(
     env: Optional[Dict[str, str]] = None,
     *,
     secret_resolver: Optional[SecretResolver] = None,
+    route_observer: Optional[RouteObserver] = None,
 ) -> Optional[ProviderProxy]:
     """Build a ProviderProxy from MAC_ROUTER_* env; None when no providers are
     configured. ``secret_resolver`` (th-merge-04) lets a provider's ``key=`` be
@@ -390,6 +654,7 @@ def build_proxy_from_env(
         timeout=_f("MAC_ROUTER_TIMEOUT", 60.0),
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),
         drop_params=drop_params,
+        route_observer=route_observer,
     )
 
 
@@ -478,6 +743,7 @@ def mount_router(
     env: Optional[Dict[str, str]] = None,
     proxy: Optional[ProviderProxy] = None,
     secret_resolver: Optional[SecretResolver] = None,
+    route_observer: Optional[RouteObserver] = None,
 ) -> bool:
     """Mount /v1/chat/completions + /v1/embeddings (+ /v1/genai image proxy) on
     ``app`` when MAC_ROUTER_BACKEND=inproc. Returns True if anything mounted.
@@ -490,24 +756,31 @@ def mount_router(
     # The image proxy is independent of the chat providers (a fixed upstream, no
     # failover), so mount it even when no chat providers are configured.
     mounted = mount_image_proxy(app, env=env, secret_resolver=secret_resolver)
-    proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver)
+    proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver, route_observer=route_observer)
     if proxy is None:
         return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
 
     @app.post("/v1/chat/completions")
-    def _chat(body: Dict[str, Any]) -> Any:  # noqa: ANN401
+    def _chat(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
+        route_context = _route_context_from_request(request, body)
+        body = _strip_internal_route_context(body)
         if body.get("stream"):
-            status, obj = proxy.stream_complete("/chat/completions", body)
+            status, obj = proxy.stream_complete("/chat/completions", body, route_context=route_context)
             if status == 200 and not isinstance(obj, dict):
                 return StreamingResponse(obj, media_type="text/event-stream")
             return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
-        status, out = proxy.complete("/chat/completions", body)
+        status, out = proxy.complete("/chat/completions", body, route_context=route_context)
         return JSONResponse(out, status_code=status)
 
     @app.post("/v1/embeddings")
-    def _embeddings(body: Dict[str, Any]) -> Any:  # noqa: ANN401
-        status, out = proxy.complete("/embeddings", body)
+    def _embeddings(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
+        route_context = _route_context_from_request(request, body)
+        status, out = proxy.complete(
+            "/embeddings",
+            _strip_internal_route_context(body),
+            route_context=route_context,
+        )
         return JSONResponse(out, status_code=status)
 
     return True

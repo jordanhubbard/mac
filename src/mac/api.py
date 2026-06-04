@@ -1050,6 +1050,18 @@ def _should_record_http_observation(path: str) -> bool:
     )
 
 
+def _safe_observation_source(value: Any, fallback: str = "router") -> str:
+    text = str(value or "").strip()
+    if (
+        text
+        and len(text) <= 128
+        and text[0].isalnum()
+        and all(ch.isalnum() or ch in "._-/: " for ch in text)
+    ):
+        return text.replace(" ", "_")
+    return fallback
+
+
 def _resolve_record_http_observations(flag: Optional[bool]) -> bool:
     if flag is not None:
         return flag
@@ -4133,7 +4145,32 @@ def create_app(
             except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
                 return None
 
-        if mount_router(app, secret_resolver=_router_secret_resolver):
+        def _router_route_observer(detail: Dict[str, Any]) -> None:
+            agent_id = str(detail.get("agent_id") or "").strip()
+            task_id = str(detail.get("task_id") or "").strip()
+            subject_type = "agent" if agent_id else "task" if task_id else None
+            subject_id = agent_id or task_id or None
+            source = _safe_observation_source(agent_id or "router")
+            try:
+                cp.record_log(
+                    "llm.route",
+                    level=(
+                        "error"
+                        if int(detail.get("status_code") or 0) >= 500
+                        else "warning"
+                        if int(detail.get("status_code") or 0) >= 400
+                        else "info"
+                    ),
+                    layer="router",
+                    source=source,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    detail=detail,
+                )
+            except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
+                _log.warning("failed to record llm.route observation", exc_info=True)
+
+        if mount_router(app, secret_resolver=_router_secret_resolver, route_observer=_router_route_observer):
             _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
     except Exception as exc:  # noqa: BLE001 - the router must never block app startup
         _log.warning("in-mac model router not mounted: %s", exc)

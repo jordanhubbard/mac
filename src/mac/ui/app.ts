@@ -143,6 +143,7 @@ interface ProjectSummary {
 interface HermesWorkContext {
   schema: string;
   authority: Record<string, string>;
+  hermes_instance?: JsonObject;
   fleets?: FleetRecord[];
   projects: ProjectSummary[];
   tasks: Array<TaskRecord & { project?: string; origin?: JsonObject }>;
@@ -2039,15 +2040,31 @@ function hermesStartupPanel(startup?: HermesStartup | null): string {
 
 function renderOperations(): string {
   const data = mustData();
+  const writable = canWrite(data);
   const workflowCounts = data.workflow_runs.counts || {};
   const pendingProvisioning = data.provisioning_requests.filter((item) => item.status === "pending");
   const openStreams = data.agentbus_streams.filter((item) => item.status === "open");
+  const operationContexts = Object.entries(data.hermes_work_contexts || {})
+    .map(([instanceId, context]) => ({ instanceId, context }))
+    .filter(({ context }) => !!context?.operations);
   return `
     <section class="metric-grid">
       ${metric("Roles", data.roles.length, "agent personas and constraints")}
       ${metric("Provisioning", pendingProvisioning.length, "pending agent requests")}
       ${metric("Workflows", data.workflows.length, `${data.workflow_runs.total || 0} runs`)}
+      ${metric("Operations", operationContexts.length, "Hermes operation contracts")}
       ${metric("AgentBus", openStreams.length, `${data.agentbus_streams.length} recent streams`)}
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>Operation Contracts</h2>
+        ${chip(`${operationContexts.length}`, operationContexts.length ? "good" : "warn")}
+      </div>
+      <div class="record-list">
+        ${operationContexts.length
+          ? operationContexts.map(({ instanceId, context }) => operationContractRecord(instanceId, context)).join("")
+          : `<div class="empty-state">No Hermes operation contracts</div>`}
+      </div>
     </section>
     <section class="split">
       <div class="surface">
@@ -2058,7 +2075,10 @@ function renderOperations(): string {
         </div>
       </div>
       <div class="surface">
-        <h2>Provisioning Requests</h2>
+        <div class="surface-heading">
+          <h2>Provisioning Requests</h2>
+          ${chip(`${pendingProvisioning.length} pending`, pendingProvisioning.length ? "warn" : "good")}
+        </div>
         <div class="record-list">
           ${data.provisioning_requests.length ? data.provisioning_requests.map(provisioningRecord).join("") : `<div class="empty-state">No provisioning requests</div>`}
         </div>
@@ -2066,7 +2086,13 @@ function renderOperations(): string {
     </section>
     <section class="split">
       <div class="surface">
-        <h2>Roles</h2>
+        <div class="surface-heading">
+          <h2>Roles</h2>
+          <form class="inline-form" data-action="roleSeed">
+            <label class="inline-checkbox"><input type="checkbox" name="replace" ${disabledAttr(!writable)}> Replace</label>
+            <button type="submit" ${disabledAttr(!writable)}>Seed Defaults</button>
+          </form>
+        </div>
         <div class="record-list">
           ${data.roles.length ? data.roles.map(roleRecord).join("") : `<div class="empty-state">No roles</div>`}
         </div>
@@ -2325,7 +2351,9 @@ function renderObservability(): string {
   const integrationFindings = data.integration_findings || [];
   const openIntegrationFindings = integrationFindings.filter((item) => item.status === "open");
   const pendingNotifications = notifications.filter((item) => item.status === "pending").length;
-  const live = filterObservability(uniqueObservations([...state.observabilityLive, ...(observability.latest || [])]));
+  const observationEvents = uniqueObservations([...state.observabilityLive, ...(observability.latest || [])]);
+  const llmRoutes = filterObservability(observationEvents.filter((item) => item.name === "llm.route"));
+  const live = filterObservability(observationEvents);
   const layerTotal = Object.values(observability.layers || {}).reduce((sum, value) => sum + Number(value || 0), 0);
   const levelTotal = Object.values(observability.levels || {}).reduce((sum, value) => sum + Number(value || 0), 0);
   return `
@@ -2380,6 +2408,15 @@ function renderObservability(): string {
       </div>
       <div class="observability-feed">
         ${auditEvents.length ? auditEvents.slice(0, 120).map(auditEventRecord).join("") : `<div class="empty-state">No matching audit events</div>`}
+      </div>
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>LLM Routes</h2>
+        ${chip(`${llmRoutes.length}`, llmRoutes.length ? "info" : "warn")}
+      </div>
+      <div class="observability-feed">
+        ${llmRoutes.length ? llmRoutes.slice(0, 80).map(llmRouteRecord).join("") : `<div class="empty-state">No LLM route records</div>`}
       </div>
     </section>
     <section class="surface">
@@ -2489,6 +2526,17 @@ function observationReferences(item: ObservabilityEvent, value: string): boolean
   if (!needle) return true;
   if (item.subject_id === needle || item.source === needle) return true;
   return JSON.stringify(item.detail || {}).includes(needle);
+}
+
+function llmRouteEvents(data: DashboardData): ObservabilityEvent[] {
+  return uniqueObservations([
+    ...state.observabilityLive,
+    ...((data.observability?.latest || []) as ObservabilityEvent[]),
+  ]).filter((item) => item.name === "llm.route");
+}
+
+function llmRoutesForTask(data: DashboardData, taskId: string): ObservabilityEvent[] {
+  return llmRouteEvents(data).filter((item) => observationReferences(item, taskId));
 }
 
 function integrationFindingRecord(item: IntegrationFinding): string {
@@ -2614,6 +2662,46 @@ function roleRecord(role: ApiRecord): string {
         ${(role.required_capabilities as string[] | undefined || []).slice(0, 6).map((cap) => chip(cap, "good")).join("")}
       </div>
       <p class="muted small">${escapeHtml(role.description || "")}</p>
+    </article>
+  `;
+}
+
+function operationContractRecord(instanceId: string, context: HermesWorkContext): string {
+  const operations = context.operations || { api: [], mac_cli: [], mac_hermes_cli: [], hgmac_cli: [] };
+  const apiOps = (operations.api || []) as JsonObject[];
+  const macCli = operations.mac_cli || [];
+  const hermesCli = operations.mac_hermes_cli || [];
+  const hgmacCli = operations.hgmac_cli || [];
+  const dashboard = ((operations as JsonObject).dashboard || {}) as JsonObject;
+  const dashboardViews = arrayOfStrings(dashboard.views);
+  const transitions = operations.task_state_transitions || {};
+  const transitionCount = Object.values(transitions).reduce((sum, targets) => (
+    sum + (Array.isArray(targets) ? targets.length : 0)
+  ), 0);
+  return `
+    <article class="record compact ${selectedClass(instanceId)}">
+      <div class="record-header">
+        <div>
+          <h3>${escapeHtml(context.hermes_instance?.name || instanceId)}</h3>
+          <p class="muted small mono">${escapeHtml(instanceId)}</p>
+        </div>
+        <button class="link-button" type="button" data-select-id="${escapeHtml(instanceId)}">Select</button>
+      </div>
+      <div class="row-grid compact-grid">
+        ${field("API operations", apiOps.length)}
+        ${field("MAC CLI", macCli.length)}
+        ${field("Hermes CLI", hermesCli.length)}
+        ${field("hgmac CLI", hgmacCli.length)}
+        ${field("Dashboard views", dashboardViews.length)}
+        ${field("Transitions", transitionCount)}
+      </div>
+      <div class="chip-row">
+        ${apiOps.slice(0, 12).map((op) => chip(`${op.method || "API"} ${op.name || op.path || ""}`, "info")).join("") || chip("api missing", "bad")}
+      </div>
+      <div class="chip-row">
+        ${dashboardViews.slice(0, 12).map((view) => chip(view, view === "ops" ? "good" : "info")).join("") || chip("dashboard contract missing", "bad")}
+      </div>
+      <div class="observation-detail mono">${escapeHtml([...hermesCli, ...hgmacCli].slice(0, 8).join(" | ") || "No CLI operations")}</div>
     </article>
   `;
 }
@@ -3450,6 +3538,7 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
   const owner = data.agents.find((item) => item.agent.id === task.owner_agent_id)?.agent;
   const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
   const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
+  const llmRoutes = llmRoutesForTask(data, task.id);
   return `
     <section class="object-inspector">
       <div class="object-inspector-header">
@@ -3552,6 +3641,12 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
           <button type="submit">Publish</button>
         </form>
       </details>
+      <div class="record-section">
+        <h3>LLM Routes</h3>
+        <div class="observability-feed">
+          ${llmRoutes.length ? llmRoutes.slice(0, 8).map(llmRouteRecord).join("") : `<div class="empty-state">No LLM routes recorded for this task</div>`}
+        </div>
+      </div>
       <div class="record-section">
         <h3>History</h3>
         <div class="timeline">
@@ -4712,6 +4807,11 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
     }
     return postJSON("/agents/bulk", body);
   }
+  if (action === "roleSeed") {
+    return postJSON("/roles/seed", {
+      replace: boolValue(values.replace) === "true",
+    });
+  }
   if (action === "runtimeCreate") {
     return postJSON("/runtimes", {
       name: requiredString(values.name),
@@ -5092,6 +5192,33 @@ function observationRecord(item: ObservabilityEvent): string {
       </div>
       <div class="muted small">${escapeHtml(item.layer)} / ${escapeHtml(item.source)} ${subject ? `· ${escapeHtml(subject)}` : ""} · ${escapeHtml(formatAge(item.created_at))}</div>
       <div class="observation-detail">${escapeHtml(item.kind === "metric" ? formatMetricValue(item) : jsonSummary(item.detail))}</div>
+    </article>
+  `;
+}
+
+function llmRouteRecord(item: ObservabilityEvent): string {
+  const detail = item.detail || {};
+  const provider = String(detail.provider || "unknown provider");
+  const resolvedModel = String(detail.response_model || detail.resolved_model || detail.requested_model || "unknown model");
+  const requestedModel = String(detail.requested_model || "");
+  const status = Number(detail.status_code || 0);
+  const duration = Number(detail.duration_ms || 0);
+  const agent = String(detail.agent_id || item.subject_id || item.source || "unknown agent");
+  const task = String(detail.task_id || "");
+  const usage = detail.usage as JsonObject | undefined;
+  const totalTokens = usage && typeof usage.total_tokens === "number" ? `${usage.total_tokens} tokens` : "";
+  const attempts = Array.isArray(detail.attempts) ? `${detail.attempts.length} attempt(s)` : "";
+  const tone = status >= 500 ? "bad" : status >= 400 ? "warn" : "good";
+  const modelNote = requestedModel && requestedModel !== resolvedModel ? `requested ${requestedModel}` : String(detail.outcome || "");
+  return `
+    <article class="observation-row tone-left-${tone}">
+      <div class="observation-main">
+        ${chip(provider, tone)}
+        <strong>${escapeHtml(resolvedModel)}</strong>
+        ${status ? chip(String(status), tone) : ""}
+      </div>
+      <div class="muted small">${escapeHtml(agent)}${task ? ` · task:${escapeHtml(task)}` : ""} · ${escapeHtml(formatAge(item.created_at))}${duration ? ` · ${escapeHtml(Math.round(duration))}ms` : ""}</div>
+      <div class="observation-detail">${escapeHtml([modelNote, totalTokens, attempts].filter(Boolean).join(" · ") || jsonSummary(detail))}</div>
     </article>
   `;
 }

@@ -36,6 +36,45 @@ def test_routes_to_primary_on_success_and_records():
     assert r.status()["primary"]["state"] == "closed"
 
 
+def test_records_secret_free_llm_route_observation_with_context():
+    observed = []
+    r = _router()
+    fwd, _ = _fake_forward(
+        {
+            "primary": (
+                200,
+                {
+                    "model": "served-model",
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+                },
+            )
+        }
+    )
+    proxy = ProviderProxy(r, fwd, default_model="resolved-model", route_observer=observed.append)
+
+    status, _ = proxy.complete(
+        "/chat/completions",
+        {"model": "*", "messages": [{"role": "user", "content": "secret prompt"}]},
+        route_context={"agent_id": "agent_1", "task_id": "task_1", "lease_id": "lease_1"},
+    )
+
+    assert status == 200
+    assert len(observed) == 1
+    event = observed[0]
+    assert event["schema"] == "mac.llm_route.v1"
+    assert event["provider"] == "primary"
+    assert event["requested_model"] == "*"
+    assert event["resolved_model"] == "resolved-model"
+    assert event["response_model"] == "served-model"
+    assert event["status_code"] == 200
+    assert event["agent_id"] == "agent_1"
+    assert event["task_id"] == "task_1"
+    assert event["lease_id"] == "lease_1"
+    assert event["usage"]["total_tokens"] == 9
+    assert "duration_ms" in event
+    assert "secret prompt" not in str(event)
+
+
 def test_fails_over_to_secondary_on_5xx():
     r = _router()
     fwd, calls = _fake_forward({"primary": (503, {"error": "down"}), "secondary": (200, {"ok": True})})
@@ -170,6 +209,43 @@ def test_mount_adds_routes_when_inproc_with_providers():
     assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}, proxy=proxy) is True
     paths = {r.path for r in app.routes}
     assert "/v1/chat/completions" in paths and "/v1/embeddings" in paths
+
+
+def test_mount_records_route_context_from_headers_and_strips_internal_body_context():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    observed = []
+    seen = {}
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        seen.update(payload)
+        return 200, {"ok": True}
+
+    app = FastAPI()
+    proxy = ProviderProxy(_router(), fwd, route_observer=observed.append)
+    assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}, proxy=proxy) is True
+
+    resp = TestClient(app).post(
+        "/v1/chat/completions",
+        headers={
+            "X-MAC-Agent-ID": "agent_header",
+            "X-MAC-Task-ID": "task_header",
+            "X-MAC-Command-ID": "cmd_header",
+        },
+        json={
+            "model": "m",
+            "messages": [{"role": "user", "content": "do work"}],
+            "_mac_context": {"agent_id": "agent_body", "task_id": "task_body"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert "_mac_context" not in seen
+    assert observed[0]["agent_id"] == "agent_header"
+    assert observed[0]["task_id"] == "task_header"
+    assert observed[0]["command_id"] == "cmd_header"
+    assert "do work" not in str(observed[0])
 
 
 def test_route_logging_is_configured_to_emit_info():

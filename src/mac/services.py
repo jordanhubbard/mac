@@ -1157,8 +1157,13 @@ class ControlPlane:
                 "fleets",
                 "agents",
                 "tasks",
+                "workflows",
                 "hermes",
+                "ops",
+                "integrations",
                 "runtime",
+                "observability",
+                "secrets",
             }
             <= set(dashboard_operation_contract.get("views") or [])
             and {
@@ -1628,7 +1633,21 @@ class ControlPlane:
         contract = {
             "schema": "mac.hermes.dashboard_url_contract.v1",
             "entrypoint": "/ui",
-            "required_views": ["work", "projects", "map", "fleets", "agents", "tasks", "hermes", "runtime", "observability"],
+            "required_views": [
+                "work",
+                "projects",
+                "map",
+                "fleets",
+                "agents",
+                "tasks",
+                "workflows",
+                "hermes",
+                "ops",
+                "integrations",
+                "runtime",
+                "observability",
+                "secrets",
+            ],
             "url_state_parameters": [
                 {"name": "view", "purpose": "selected dashboard pane"},
                 {"name": "project", "purpose": "project or epic scope"},
@@ -2341,7 +2360,21 @@ class ControlPlane:
             "dashboard": {
                 "schema": "mac.hermes.dashboard_operation_contract.v1",
                 "entrypoint": "/ui",
-                "views": ["work", "projects", "map", "fleets", "agents", "tasks", "hermes", "runtime", "observability"],
+                "views": [
+                    "work",
+                    "projects",
+                    "map",
+                    "fleets",
+                    "agents",
+                    "tasks",
+                    "workflows",
+                    "hermes",
+                    "ops",
+                    "integrations",
+                    "runtime",
+                    "observability",
+                    "secrets",
+                ],
                 "url_state_parameters": [
                     "view",
                     "project",
