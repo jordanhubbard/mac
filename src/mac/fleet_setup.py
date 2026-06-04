@@ -22,6 +22,23 @@ DEFAULT_CONTROL_PORT = 8789
 DEFAULT_QDRANT_PORT = 6333
 DEFAULT_FIRECRAWL_PORT = 3002
 
+# The fleet's default chat model, materialized into fleets.yaml so the picked
+# model is ALWAYS visible there. A blank gateway_model silently fell through to
+# the router's wildcard ladder — which is exactly how the whole fleet ended up
+# running on gpt-4.1-mini unnoticed. Both setup paths (interactive wizard and
+# this declarative --spec planner) resolve through here so neither can persist a
+# blank model that hides which model the fleet actually runs.
+DEFAULT_GATEWAY_MODEL = "azure/anthropic/claude-sonnet-4-6"
+
+
+def resolve_gateway_model(model: str) -> str:
+    """Never persist a blank/'*' model: fall back to the explicit default so the
+    config file records the model that will actually be used."""
+    value = (model or "").strip()
+    if not value or value == "*":
+        return DEFAULT_GATEWAY_MODEL
+    return value
+
 
 def default_worker_capabilities() -> List[str]:
     return [
@@ -106,6 +123,22 @@ def build_setup_plan(
     if supervisor not in {"auto", "systemd", "launchd", "supervisord"}:
         errors.append("supervisor must be one of auto/systemd/launchd/supervisord")
 
+    # Operator->node SSH ProxyJump (bastion) + host-key strictness, fleet-wide.
+    # Persisting these into fleets.yaml lets the deploy reach bastion-only nodes
+    # (e.g. GKE pods behind a jump host) with no ~/.ssh/config edits.
+    ssh_jump = _str(
+        spec.get("ssh_jump")
+        or defaults_block.get("ssh_jump")
+        or fleet_block.get("ssh_jump")
+    )
+    ssh_strict = (
+        defaults_block.get(
+            "ssh_strict_host_key_checking",
+            spec.get("ssh_strict_host_key_checking", True),
+        )
+        is not False
+    )
+
     network = _network_config(spec, defaults_block, errors)
     qdrant = _qdrant_config(spec, defaults_block, hub_url)
     firecrawl = _firecrawl_config(spec, defaults_block, hub_url)
@@ -170,6 +203,8 @@ def build_setup_plan(
         "shared_services_manager_agent": hub_name,
         "defaults": {
             "supervisor": supervisor,
+            "ssh_jump": ssh_jump,
+            "ssh_strict_host_key_checking": ssh_strict,
             "hermes": {
                 "slack_home_channel_name": _str(
                     hermes_defaults.get("slack_home_channel_name")
@@ -352,10 +387,12 @@ def _agent_configs(
             "os": os_kind,
             "supervisor": agent_supervisor,
             "hermes": {
-                "gateway_model": _str(
-                    item.get("model")
-                    or hermes.get("gateway_model")
-                    or hermes_defaults.get("gateway_model")
+                "gateway_model": resolve_gateway_model(
+                    _str(
+                        item.get("model")
+                        or hermes.get("gateway_model")
+                        or hermes_defaults.get("gateway_model")
+                    )
                 ),
             },
             "worker": {

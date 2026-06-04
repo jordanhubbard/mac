@@ -551,6 +551,14 @@ if mode == "hub-target":
     print("ERROR: hub_agent %s is not an enabled agent" % hub_agent, file=sys.stderr)
     raise SystemExit(2)
 
+if mode == "ssh-jump":
+    # Operator->node bastion ProxyJump + host-key strictness, fleet-wide.
+    # Emits "<jump>|<strict01>"; both empty/1 by default (no jump, strict on).
+    jump = text_field(defaults.get("ssh_jump"))
+    strict = "0" if defaults.get("ssh_strict_host_key_checking", True) is False else "1"
+    print("%s|%s" % (jump, strict))
+    raise SystemExit(0)
+
 by_name = {text_field(agent.get("name")): agent for agent in agents}
 selected = requested or list(by_name)
 unknown = [name for name in selected if name not in by_name]
@@ -681,9 +689,26 @@ print("%s|%s" % (user_host, parsed_port or ""))
 PY
 }
 
+# Operator->node connection options injected from the fleet config (SSH_JUMP /
+# SSH_STRICT are set once in main() from defaults.ssh_jump /
+# defaults.ssh_strict_host_key_checking in fleets.yaml). This is the single
+# chokepoint every operator->node ssh/scp flows through, so a bastion fleet (e.g.
+# GKE pods reachable only via a jump host) works without any ~/.ssh/config edits.
+# NOTE: these are operator-side only — they are never interpolated into the
+# hub->spoke reverse-tunnel heredocs, which run in-cluster without the bastion.
+ssh_conn_opts() {
+  if [ "${SSH_STRICT:-1}" = "0" ]; then
+    printf '%s\0%s\0%s\0%s\0' "-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null"
+  fi
+  if [ -n "${SSH_JUMP:-}" ]; then
+    printf '%s\0%s\0' "-o" "ProxyJump=${SSH_JUMP}"
+  fi
+}
+
 ssh_target_args() {
   local raw_target="$1" ssh_target ssh_port
   IFS='|' read -r ssh_target ssh_port < <(parse_ssh_target_fields "$raw_target")
+  ssh_conn_opts
   if [ -n "$ssh_port" ]; then
     printf '%s\0%s\0%s\0' "-p" "$ssh_port" "$ssh_target"
   else
@@ -694,10 +719,34 @@ ssh_target_args() {
 scp_target_args() {
   local raw_target="$1" ssh_target ssh_port
   IFS='|' read -r ssh_target ssh_port < <(parse_ssh_target_fields "$raw_target")
+  ssh_conn_opts
   if [ -n "$ssh_port" ]; then
     printf '%s\0%s\0%s\0' "-P" "$ssh_port" "$ssh_target"
   else
     printf '%s\0' "$ssh_target"
+  fi
+}
+
+# Populate SSH_JUMP / SSH_STRICT globals from the fleet's
+# defaults.ssh_jump / defaults.ssh_strict_host_key_checking (fleets.yaml).
+# Called once in main() before any operator->node ssh/scp.
+SSH_JUMP="${SSH_JUMP:-}"
+SSH_STRICT="${SSH_STRICT:-1}"
+# Space-joined ssh opts (no spaces within any token, so it's safe to expand
+# unquoted) for the few bare-target ssh calls that don't flow through
+# ssh_target_args (health/tunnel probes, post-deploy restarts).
+SSH_CONN_OPTS=""
+load_ssh_jump_config() {
+  local out
+  out="$(fleet_config_query ssh-jump 2>/dev/null || true)"
+  [ -n "$out" ] || return 0
+  SSH_JUMP="${out%%|*}"
+  if [ "${out##*|}" = "0" ]; then SSH_STRICT="0"; else SSH_STRICT="1"; fi
+  SSH_CONN_OPTS=""
+  [ "$SSH_STRICT" = "0" ] && SSH_CONN_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+  [ -n "$SSH_JUMP" ] && SSH_CONN_OPTS="${SSH_CONN_OPTS:+$SSH_CONN_OPTS }-o ProxyJump=$SSH_JUMP"
+  if [ -n "$SSH_JUMP" ]; then
+    log "ssh: operator->node via -o ProxyJump=${SSH_JUMP} (strict host-key checking: $([ "$SSH_STRICT" = "0" ] && echo off || echo on))"
   fi
 }
 
@@ -1052,14 +1101,17 @@ python_bin() {
     candidate="$(command -v "$candidate")"
     if "$candidate" - <<'PY' >/dev/null 2>&1
 import sys
-raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+# Must match pyproject.toml requires-python (>=3.11); a 3.10 interpreter would
+# fail `pip install -e .` partway through the remote deploy. Skip it so we pick
+# a real 3.11+ (e.g. python3.12) instead of dying mid-install.
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
     then
       printf '%s\n' "$candidate"
       return
     fi
   done
-  log "ERROR: no Python >= 3.10 found"
+  log "ERROR: no Python >= 3.11 found (mac requires-python >=3.11)"
   exit 1
 }
 
@@ -4974,6 +5026,8 @@ worker_can_reach_hub_url() {
 
 main() {
   make_archive
+  # Operator->node ssh/scp options (bastion ProxyJump etc.) from fleets.yaml.
+  load_ssh_jump_config
   local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
@@ -5009,7 +5063,7 @@ main() {
       # the hub tunnel key has not been authorized yet. Allow Qdrant and Firecrawl
       # to be degraded for this first deploy; they are re-checked after the tunnel
       # is established below.
-      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 "$local_target" \
+      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
         "curl -fsS --max-time 3 http://127.0.0.1:8789/health >/dev/null 2>&1" 2>/dev/null; then
         allow_degraded_services=1
         echo "==> ${agent}: first deploy (no existing mac API); shared-services degraded override active"
@@ -5023,7 +5077,7 @@ main() {
       local attempt tunnel_ok=0
       for attempt in $(seq 1 6); do
         sleep 5
-        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "$local_target" \
+        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
           "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
           echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
           tunnel_ok=1
@@ -5047,7 +5101,7 @@ main() {
         echo "==> ${agent}: using ${network_provider_field} hub URL ${hub_url_field}; skipping reverse tunnel"
       elif [ "${tunnel_ok:-0}" = "1" ]; then
         local agent_prog="${fleet_name_field}-agent"
-        ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$local_target" \
+        ssh -n -o BatchMode=yes -o ConnectTimeout=10 $SSH_CONN_OPTS "$local_target" \
           "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
         echo "==> ${agent}: restarted mac-agent with tunnel now available"
       elif [ "${allow_degraded_services:-0}" = "1" ]; then
@@ -5057,7 +5111,7 @@ main() {
         local attempt first_tunnel_ok=0
         for attempt in $(seq 1 12); do
           sleep 5
-          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "$local_target" \
+          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
             "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
             echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
             first_tunnel_ok=1
@@ -5066,7 +5120,7 @@ main() {
         done
         local agent_prog="${fleet_name_field}-agent"
         if [ "$first_tunnel_ok" = "1" ]; then
-          ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$local_target" \
+          ssh -n -o BatchMode=yes -o ConnectTimeout=10 $SSH_CONN_OPTS "$local_target" \
             "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
           echo "==> ${agent}: restarted mac-agent with tunnel now available"
         else

@@ -158,3 +158,22 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
     assert report["status"] == "pass"
     assert report["hub"] == "horde-hub"
     assert any(check["name"] == "router.providers" for check in report["checks"])
+
+
+def test_spec_path_materializes_default_model_never_blank(tmp_path):
+    """The --spec planner must record a concrete gateway_model for every agent:
+    an agent with an explicit model keeps it; one with none gets the default.
+    A blank model is what silently sent the fleet to gpt-4.1-mini."""
+    from mac.fleet_setup import DEFAULT_GATEWAY_MODEL
+
+    plan = build_setup_plan(
+        _spec(),
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+    models = {a["name"]: a["hermes"]["gateway_model"] for a in plan["fleet_config"]["agents"]}
+    assert models["horde-hub"] == "nvidia/test-model"  # explicit model preserved
+    assert models["horde-worker"] == DEFAULT_GATEWAY_MODEL  # blank -> default, not ""
+    assert all(v for v in models.values())  # nothing blank
