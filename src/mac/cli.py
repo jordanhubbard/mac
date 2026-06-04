@@ -502,6 +502,57 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     _print({"status": "refreshed", "markdown": markdown, "members": len(snapshot.get("members", []))})
 
 
+def cmd_journal_snapshot(args: argparse.Namespace) -> None:
+    """journal-01: snapshot this agent's soul + memory state into
+    $HOME/.mac/journal/<date>/ and run the backup hook (unless --no-hook)."""
+    from pathlib import Path as _Path
+
+    from mac import journal as _journal
+
+    root = _Path(args.dir).expanduser() if getattr(args, "dir", None) else None
+    home = _Path(args.home).expanduser() if getattr(args, "home", None) else None
+    m = _journal.snapshot(
+        home=home,
+        root=root,
+        date=getattr(args, "date", None),
+        agent_id=getattr(args, "agent", None),
+        run_hook=not getattr(args, "no_hook", False),
+    )
+    _print(
+        {
+            "date": m["date"],
+            "agent_id": m["agent_id"],
+            "captured": m["captured"],
+            "files": len(m["files"]),
+            "path": str((root or _journal.journal_root()) / m["date"]),
+            "hook": m.get("hook"),
+        }
+    )
+
+
+def cmd_journal_list(args: argparse.Namespace) -> None:
+    from pathlib import Path as _Path
+
+    from mac import journal as _journal
+
+    root = _Path(args.dir).expanduser() if getattr(args, "dir", None) else None
+    _print(_journal.list_journals(root))
+
+
+def cmd_journal_restore(args: argparse.Namespace) -> None:
+    from pathlib import Path as _Path
+
+    from mac import journal as _journal
+
+    root = _Path(args.dir).expanduser() if getattr(args, "dir", None) else None
+    home = _Path(args.home).expanduser() if getattr(args, "home", None) else None
+    _print(
+        _journal.restore(
+            args.date, home=home, root=root, dry_run=getattr(args, "dry_run", False)
+        )
+    )
+
+
 def _fleet_setup_plan_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     from mac.fleet_setup import build_setup_plan, load_setup_spec, public_plan
 
@@ -1855,6 +1906,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(Path.home() / ".mac" / ".env"),
     )
     _set(cmd_fleet_validate_setup, fleet_validate)
+
+    # journal-01: daily snapshots of an agent's soul + memory state so an
+    # evolved personality can be restored if its files are ever lost. Local
+    # file ops only — no hub/--db needed.
+    journal = sub.add_parser(
+        "journal",
+        help="snapshot / restore an agent's soul + memory state (guards against soul loss)",
+    ).add_subparsers(dest="journal_command", required=True)
+
+    journal_snap = journal.add_parser(
+        "snapshot",
+        help="snapshot SOUL/USER/MEMORY/memories/mood/config to $HOME/.mac/journal/<date>/ "
+        "and run MAC_JOURNAL_BACKUP_HOOK if set",
+    )
+    journal_snap.add_argument("--dir", help="journal root (default $MAC_JOURNAL_DIR or ~/.mac/journal)")
+    journal_snap.add_argument("--home", help="agent HERMES_HOME (default $HERMES_HOME or ~/.hermes)")
+    journal_snap.add_argument("--date", help="snapshot date label (default today, UTC)")
+    journal_snap.add_argument("--agent", help="agent id label (default $MAC_AGENT_ID)")
+    journal_snap.add_argument("--no-hook", action="store_true", help="skip the backup hook")
+    _set(cmd_journal_snapshot, journal_snap)
+
+    journal_list = journal.add_parser("list", help="list journaled snapshots")
+    journal_list.add_argument("--dir", help="journal root (default ~/.mac/journal)")
+    _set(cmd_journal_list, journal_list)
+
+    journal_restore = journal.add_parser(
+        "restore",
+        help="restore an agent's state from a journal date (snapshots current state first, so it's reversible)",
+    )
+    journal_restore.add_argument("date", help="journal date to restore (e.g. 2026-06-04)")
+    journal_restore.add_argument("--dir", help="journal root (default ~/.mac/journal)")
+    journal_restore.add_argument("--home", help="agent HERMES_HOME to restore into")
+    journal_restore.add_argument("--dry-run", action="store_true", help="show what would be restored, change nothing")
+    _set(cmd_journal_restore, journal_restore)
 
     fleet_doctor = fleet.add_parser(
         "doctor",
