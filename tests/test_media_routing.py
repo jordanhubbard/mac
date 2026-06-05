@@ -10,6 +10,7 @@ from mac.media_routing import (
     DEFAULT_IMAGE_MODEL,
     MediaBinding,
     audio_music_request,
+    audio_transcription_response,
     build_media_table,
     compose_media_table,
     dispatch_order,
@@ -25,6 +26,7 @@ from mac.media_routing import (
     nvidia_genai_response,
     op_is_binary,
     openai_audio_speech_request,
+    openai_audio_transcription_request,
     openai_images_request,
     openai_images_response,
 )
@@ -590,3 +592,89 @@ def test_media_endpoint_audio_tts_routes_binary(monkeypatch):
     assert payload["artifacts"][0]["base64"] == _b64.b64encode(wav).decode("ascii")
     assert payload["artifacts"][0]["content_type"] == "audio/wav"
     assert captured["url"].endswith("/audio/speech")
+
+
+# --- media-01 Part B2: ASR (multipart upload -> text) -----------------------
+
+def test_audio_transcription_request_is_multipart():
+    path, body = openai_audio_transcription_request("audio.asr", {"audio": "QUJD"}, "whisper-large-v3")
+    assert path == "/audio/transcriptions"
+    mp = body["__multipart__"]
+    assert mp["fields"]["model"] == "whisper-large-v3"
+    assert mp["file"]["b64"] == "QUJD" and mp["file"]["name"] == "file"
+
+
+def test_audio_transcription_response():
+    assert audio_transcription_response(200, {"text": "hello world"}) == {"text": "hello world"}
+    assert audio_transcription_response(200, {})["error"]["type"] == "empty_response"
+    assert audio_transcription_response(500, {"error": {"message": "x"}})["error"]["message"] == "x"
+
+
+def test_encode_multipart_round_trips():
+    import base64
+    from mac.router_app import _encode_multipart
+
+    ctype, body = _encode_multipart({
+        "fields": {"model": "whisper-1"},
+        "file": {"name": "file", "filename": "a.wav", "content_type": "audio/wav", "b64": base64.b64encode(b"PCMDATA").decode()},
+    })
+    assert ctype.startswith("multipart/form-data; boundary=")
+    assert b'name="model"' in body and b"whisper-1" in body
+    assert b'filename="a.wav"' in body and b"PCMDATA" in body
+
+
+def test_media_endpoint_audio_asr_multipart(monkeypatch):
+    """End-to-end ASR: POST /v1/media/audio.asr -> multipart file upload to the
+    upstream -> JSON {"text"} -> canonical {"text"}."""
+    import base64 as _b64
+    import json as _json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from mac import router_app
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=60.0):
+        captured["url"] = req.full_url
+        captured["ctype"] = req.get_header("Content-type")  # urllib title-cases header keys
+        captured["body"] = req.data
+
+        class _Resp:
+            status = 200
+
+            class _H:
+                @staticmethod
+                def get(k, d=None):
+                    return "application/json" if k.lower() == "content-type" else d
+
+            headers = _H()
+
+            def read(self):
+                return b'{"text": "the quick brown fox"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return _Resp()
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+    app = FastAPI()
+    media_json = _json.dumps({
+        "audio.asr": [{
+            "provider": "natasha", "base_url": "http://natasha:8190/v1",
+            "model": "whisper-large-v3", "adapter": "openai_audio_transcription",
+        }]
+    })
+    assert router_app.mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc", "MAC_ROUTER_MEDIA_JSON": media_json}) is True
+    audio_b64 = _b64.b64encode(b"RIFFfake-wav").decode("ascii")
+    r = TestClient(app).post("/v1/media/audio.asr", json={"audio": audio_b64})
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "the quick brown fox"
+    assert captured["url"].endswith("/audio/transcriptions")
+    assert "multipart/form-data" in (captured["ctype"] or "")
+    assert b"RIFFfake-wav" in (captured["body"] or b"")

@@ -304,12 +304,41 @@ def audio_music_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[s
     return "/audio/music", provider_body
 
 
+def openai_audio_transcription_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    """Canonical -> OpenAI-compatible /audio/transcriptions (ASR). The audio is a
+    base64 ``audio`` field; we hand the forwarder a ``__multipart__`` marker so it
+    POSTs multipart/form-data (a file upload) rather than JSON."""
+    audio_b64 = str(body.get("audio") or body.get("audio_b64") or "").strip()
+    return "/audio/transcriptions", {
+        "__multipart__": {
+            "fields": {"model": model or "whisper-1"},
+            "file": {
+                "name": "file",
+                "filename": "audio.wav",
+                "content_type": str(body.get("content_type") or "audio/wav"),
+                "b64": audio_b64,
+            },
+        }
+    }
+
+
+def audio_transcription_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
+    """ASR upstream {"text": ...} -> canonical {"text": ...} (a transcript, not an
+    artifact)."""
+    if status and 200 <= status < 300:
+        if isinstance(resp, dict) and resp.get("text") is not None:
+            return {"text": resp["text"]}
+        return {"error": {"message": "no transcript in ASR response", "type": "empty_response"}}
+    return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
+
+
 ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "nvidia_genai": (nvidia_genai_request, nvidia_genai_response),
     "openai_images": (openai_images_request, openai_images_response),
     "fal": (fal_request, fal_response),
     "openai_audio_speech": (openai_audio_speech_request, media_binary_response),
     "audio_music": (audio_music_request, media_binary_response),
+    "openai_audio_transcription": (openai_audio_transcription_request, audio_transcription_response),
     "passthrough": (passthrough_request, passthrough_response),
 }
 

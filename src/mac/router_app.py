@@ -607,6 +607,33 @@ class ProviderProxy:
         }
 
 
+def _encode_multipart(spec: Dict[str, Any]) -> tuple:
+    """Encode a ``{"fields": {...}, "file": {name,filename,content_type,b64}}``
+    spec as multipart/form-data. Returns ``(content_type_header, body_bytes)``."""
+    import base64
+    import secrets
+
+    boundary = "----macmedia%s" % secrets.token_hex(12)
+    crlf = b"\r\n"
+    parts: List[bytes] = []
+    for key, value in (spec.get("fields") or {}).items():
+        parts.append(
+            ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s'
+             % (boundary, key, value)).encode("utf-8") + crlf
+        )
+    f = spec.get("file")
+    if isinstance(f, dict):
+        header = (
+            '--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n'
+            'Content-Type: %s\r\n\r\n'
+            % (boundary, f.get("name", "file"), f.get("filename", "upload.bin"),
+               f.get("content_type", "application/octet-stream"))
+        ).encode("utf-8")
+        parts.append(header + base64.b64decode(f.get("b64") or "") + crlf)
+    parts.append(("--%s--\r\n" % boundary).encode("utf-8"))
+    return "multipart/form-data; boundary=%s" % boundary, b"".join(parts)
+
+
 def urllib_forwarder(
     provider: Provider,
     path: str,
@@ -628,7 +655,11 @@ def urllib_forwarder(
     key = resolve_provider_key(provider, secret_resolver)
     if key:
         headers["Authorization"] = "%s %s" % (auth_scheme or "Bearer", key)
-    data = json.dumps(payload).encode("utf-8")
+    if isinstance(payload, dict) and "__multipart__" in payload:
+        # ASR-style file upload: encode multipart/form-data instead of JSON.
+        headers["Content-Type"], data = _encode_multipart(payload["__multipart__"])
+    else:
+        data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (operator-configured upstream)

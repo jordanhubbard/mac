@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TTS_MODEL = os.environ.get("LOCAL_AUDIO_TTS_MODEL", "suno/bark").strip()
 MUSIC_MODEL = os.environ.get("LOCAL_AUDIO_MUSIC_MODEL", "facebook/musicgen-small").strip()
+ASR_MODEL = os.environ.get("LOCAL_AUDIO_ASR_MODEL", "openai/whisper-large-v3").strip()
 PORT = int(os.environ.get("LOCAL_GEN_PORT", "8190"))
 HOST = os.environ.get("LOCAL_GEN_HOST", "0.0.0.0")
 
@@ -75,10 +76,37 @@ def _pipeline(kind: str):
         device = _pick_device()
         if kind == "tts":
             pipe = pipeline("text-to-speech", model=_resolve_repo(TTS_MODEL), device=device)
+        elif kind == "asr":
+            pipe = pipeline("automatic-speech-recognition", model=_resolve_repo(ASR_MODEL), device=device)
         else:
             pipe = pipeline("text-to-audio", model=_resolve_repo(MUSIC_MODEL), device=device)
         _pipes[kind] = pipe
         return pipe
+
+
+def _parse_multipart_file(body: bytes, content_type: str):
+    """Extract the first file part's raw bytes from a multipart/form-data body."""
+    if "boundary=" not in (content_type or ""):
+        return None
+    boundary = content_type.split("boundary=", 1)[1].strip().strip('"')
+    delim = ("--" + boundary).encode("utf-8")
+    for part in body.split(delim):
+        head, sep, rest = part.partition(b"\r\n\r\n")
+        if sep and b"filename=" in head:
+            return rest.rsplit(b"\r\n", 1)[0] if rest.endswith(b"\r\n") else rest
+    return None
+
+
+def _transcribe(audio_bytes: bytes) -> str:
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as fh:
+        fh.write(audio_bytes)
+        fh.flush()
+        out = _pipeline("asr")(fh.name)
+    if isinstance(out, dict):
+        return str(out.get("text") or "")
+    return str(out or "")
 
 
 def _to_wav(audio, sampling_rate: int) -> bytes:
@@ -123,15 +151,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") in ("/health", "/healthz"):
-            self._json(200, {"ok": True, "tts": TTS_MODEL, "music": MUSIC_MODEL, "device": _device})
+            self._json(200, {"ok": True, "tts": TTS_MODEL, "music": MUSIC_MODEL,
+                             "asr": ASR_MODEL, "device": _device})
         else:
             self._json(404, {"error": {"message": "not found"}})
 
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/")
         length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b""
+        # ASR: multipart/form-data file upload -> {"text": ...}
+        if path in ("/v1/audio/transcriptions", "/audio/transcriptions"):
+            audio = _parse_multipart_file(raw, self.headers.get("Content-Type", ""))
+            if not audio:
+                self._json(400, {"error": {"message": "no audio file in multipart body"}})
+                return
+            try:
+                self._json(200, {"text": _transcribe(audio)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": {"message": "transcription failed: %s" % exc}})
+            return
         try:
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(raw or b"{}")
         except Exception:  # noqa: BLE001
             self._json(400, {"error": {"message": "invalid JSON body"}})
             return
