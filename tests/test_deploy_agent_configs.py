@@ -1473,3 +1473,25 @@ def test_deploy_passes_local_gen_env_to_agent():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_MODEL' in script
     assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL' in script
+
+
+def test_deploy_installs_gpu_gen_server_service():
+    """Part A: a GPU-gated, systemd, durable mac-gen-server service is installed
+    by the deploy (replacing the hand-launched nohup) and gated like Omniverse."""
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    # function defined + invoked after the supervisor dispatch
+    assert "install_gpu_gen_server() {" in script
+    assert "install_gpu_gen_server || true" in script
+    # service name derived from the fleet
+    assert 'MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"' in script
+    # GPU + systemd + gen-model gates (non-fatal skips)
+    assert "no NVIDIA GPU on $AGENT; skipping (GPU-only)" in script
+    assert 'MAC_AGENT_GEN_MODEL unset; skipping' in script
+    assert 'SUPERVISOR_KIND" != "systemd"' in script
+    # CUDA wheel-index knob carried to the remote + used for torch
+    assert "add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL" in script
+    assert "pip install torch --index-url" in script
+    # the unit runs the shipped server in the gen venv on the advertised port
+    assert "deploy/local-gen/openai_image_server.py" in script
+    assert "ExecStart=$MAC_HOME/bin/mac-gen-server" in script
+    assert "TimeoutStartSec=900" in script
