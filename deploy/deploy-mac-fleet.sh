@@ -2890,6 +2890,15 @@ install_gpu_gen_server() {
     log "gen server: server script missing ($server_script); skipping"
     return 0
   fi
+  # Resolve a catalog id (e.g. sdxl-turbo) to its HF repo using the MAC venv. The
+  # gen venv has torch/diffusers but NOT the mac package, so the server can't
+  # resolve the catalog id itself — bake the resolved repo into the wrapper, else
+  # diffusers gets a bare "sdxl-turbo" and 500s (the hub then fails over to cloud).
+  local gen_repo
+  gen_repo="$("$VENV/bin/python" -c 'import sys
+from mac.local_gen_catalog import get_model
+m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>/dev/null || true)"
+  [ -n "$gen_repo" ] || gen_repo="$gen_model"
 
   # Resolve the gen venv: reuse an existing ~/gen/venv that already has the stack
   # (e.g. a hand-provisioned GPU box), else build a dedicated $MAC_HOME/gen-venv.
@@ -2909,10 +2918,10 @@ install_gpu_gen_server() {
     if ! "$gen_venv/bin/python" -c "import torch" >/dev/null 2>&1; then
       log "gen server: installing torch${torch_index:+ (index $torch_index)}"
       if [ -n "$torch_index" ]; then
-        "$gen_venv/bin/python" -m pip install torch --index-url "$torch_index" >/dev/null 2>&1 \
+        "$gen_venv/bin/python" -m pip install torch torchvision --index-url "$torch_index" >/dev/null 2>&1 \
           || log "WARNING: torch install failed (check MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU's CUDA)"
       else
-        "$gen_venv/bin/python" -m pip install torch >/dev/null 2>&1 || log "WARNING: torch install failed"
+        "$gen_venv/bin/python" -m pip install torch torchvision >/dev/null 2>&1 || log "WARNING: torch install failed"
       fi
     fi
     if ! "$gen_venv/bin/python" -c "import diffusers" >/dev/null 2>&1; then
@@ -2937,7 +2946,8 @@ set -a
 . "\$HOME/.mac/mac.env"
 set +a
 export PATH="$gen_venv/bin:\$PATH"
-export LOCAL_GEN_MODEL="\${MAC_AGENT_GEN_MODEL:-stabilityai/sdxl-turbo}"
+# Resolved HF repo baked in at deploy time (the gen venv can't resolve catalog ids).
+export LOCAL_GEN_MODEL="$gen_repo"
 export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_PORT:-8189}"
 export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
 exec "$gen_venv/bin/python" "$server_script"
