@@ -238,6 +238,16 @@ def register_worker(
         raise MacApiError("agent_name is required for worker registration")
     resolved_machine_id = machine_id or _stable_id("machine", host)
     resolved_agent_id = agent_id or _stable_id("agent", name)
+    # Hardware self-reporting: detect the local accelerator/CPU/memory and record
+    # it in the registry so the fleet OWNS a hardware inventory (vs hand notes
+    # that drift and get an agent's silicon wrong). Best-effort — the probe never
+    # blocks registration.
+    try:
+        from mac.hardware import detect_hardware
+
+        resources = {**(resources or {}), "hardware": detect_hardware()}
+    except Exception:  # noqa: BLE001 - hardware probe must never fail registration
+        pass
     # media-01 capability self-advertisement: a GPU agent announces the media ops
     # it serves via MAC_AGENT_MEDIA_ROUTES (JSON list of route dicts, e.g.
     # [{"op":"image.generate","base_url":"http://host:8189","adapter":"openai_images"}]).

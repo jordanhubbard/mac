@@ -466,6 +466,23 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
     _print([agent.to_dict() for agent in _plane(args).list_agents()])
 
 
+def cmd_agent_hardware(args: argparse.Namespace) -> None:
+    """Fleet hardware inventory from self-reported resources["hardware"]."""
+    from mac.hardware import summarize
+
+    rows = []
+    for agent in _plane(args).list_agents():
+        data = agent.to_dict() if hasattr(agent, "to_dict") else agent
+        resources = data.get("resources") if isinstance(data.get("resources"), dict) else {}
+        hardware = resources.get("hardware") if isinstance(resources, dict) else None
+        rows.append({
+            "agent": data.get("name") or data.get("id"),
+            "accelerator": (hardware or {}).get("accelerator", "unknown") if isinstance(hardware, dict) else "unreported",
+            "hardware": summarize(hardware) if isinstance(hardware, dict) else "(no hardware reported — agent predates self-reporting; redeploy to populate)",
+        })
+    _print(rows)
+
+
 def cmd_agent_heartbeat(args: argparse.Namespace) -> None:
     _print(
         _plane(args).heartbeat_agent(
@@ -1960,6 +1977,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_list = agent.add_parser("list")
     _set(cmd_agent_list, agent_list)
+
+    agent_hardware = agent.add_parser(
+        "hardware", help="fleet hardware inventory from self-reported resources.hardware"
+    )
+    _set(cmd_agent_hardware, agent_hardware)
 
     heartbeat = agent.add_parser("heartbeat")
     heartbeat.add_argument("agent_id")
