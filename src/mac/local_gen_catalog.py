@@ -115,6 +115,35 @@ def models_for_hardware(hardware: Optional[Mapping[str, Any]]) -> List[LocalGenM
     return out
 
 
+_GEN_ACCELERATORS = frozenset({"cuda", "rocm", "metal"})
+
+
+def advertised_media_routes(
+    gen_model: str,
+    base_url: str,
+    hardware: Optional[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """The media_routes an agent should advertise for a configured local gen
+    model — catalog-driven and **GPU-gated**: returns ``[]`` unless the agent has
+    a usable accelerator (cuda/rocm/metal), a base_url, and the model is in the
+    catalog and runnable on this hardware. So a single global ``MAC_AGENT_GEN_MODEL``
+    can be set fleet-wide and only actual GPU agents self-advertise; CPU agents
+    return nothing."""
+    gen_model = (gen_model or "").strip()
+    base_url = (base_url or "").strip()
+    if not gen_model or not base_url or not isinstance(hardware, Mapping):
+        return []
+    accel = str(hardware.get("accelerator") or "none").strip().lower()
+    if accel not in _GEN_ACCELERATORS:
+        return []
+    model = get_model(gen_model)
+    if model is None or not model.routable:
+        return []
+    if model not in models_for_hardware(hardware):
+        return []  # accelerator/VRAM can't run it
+    return [media_route_for(model.id, base_url)]
+
+
 def media_route_for(model_id: str, base_url: str, *, key_spec: str = "", auth_scheme: str = "Bearer") -> Dict[str, Any]:
     """Build the ``media_routes`` advertisement dict for serving ``model_id`` at
     ``base_url`` (what a GPU agent sets in MAC_AGENT_MEDIA_ROUTES). Raises on an

@@ -249,19 +249,42 @@ def register_worker(
     except Exception:  # noqa: BLE001 - hardware probe must never fail registration
         pass
     # media-01 capability self-advertisement: a GPU agent announces the media ops
-    # it serves via MAC_AGENT_MEDIA_ROUTES (JSON list of route dicts, e.g.
-    # [{"op":"image.generate","base_url":"http://host:8189","adapter":"openai_images"}]).
-    # The hub composes its /v1/media routing table from live agents'
-    # resources["media_routes"], so the fleet uses this agent with zero operator
-    # config. Merged into the registration resources here.
-    _media_routes = (os.environ.get("MAC_AGENT_MEDIA_ROUTES") or "").strip()
-    if _media_routes:
+    # it serves in resources["media_routes"]; the hub composes its /v1/media
+    # routing table from live agents, so the fleet uses this agent with zero
+    # operator config. Two ways to set it, both honored here:
+    #   1. MAC_AGENT_MEDIA_ROUTES — explicit JSON list of route dicts (override).
+    #   2. MAC_AGENT_GEN_MODEL — a catalog model id; the route is derived from the
+    #      catalog + this agent's detected hardware (GPU-GATED: a CPU agent with
+    #      the var set advertises nothing), self-addressed via MAC_AGENT_GEN_BASE_URL
+    #      (or MAC_AGENT_GEN_HOST:MAC_AGENT_GEN_PORT). So a single global
+    #      MAC_AGENT_GEN_MODEL can be set fleet-wide and only real GPU agents serve.
+    _media_routes_env = (os.environ.get("MAC_AGENT_MEDIA_ROUTES") or "").strip()
+    _gen_model = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
+    _routes = None
+    if _media_routes_env:
         try:
-            _parsed_routes = json.loads(_media_routes)
+            parsed = json.loads(_media_routes_env)
+            if isinstance(parsed, list):
+                _routes = parsed
         except ValueError:
-            _parsed_routes = None
-        if isinstance(_parsed_routes, list):
-            resources = {**(resources or {}), "media_routes": _parsed_routes}
+            _routes = None
+    elif _gen_model:
+        try:
+            from mac.local_gen_catalog import advertised_media_routes
+
+            base = (os.environ.get("MAC_AGENT_GEN_BASE_URL") or "").strip()
+            if not base:
+                gen_host = (os.environ.get("MAC_AGENT_GEN_HOST") or host).strip()
+                gen_port = (os.environ.get("MAC_AGENT_GEN_PORT") or "8189").strip()
+                base = "http://%s:%s/v1" % (gen_host, gen_port)
+            hw = resources.get("hardware") if isinstance(resources, dict) else None
+            derived = advertised_media_routes(_gen_model, base, hw)
+            if derived:
+                _routes = derived
+        except Exception:  # noqa: BLE001 - advertisement is best-effort
+            _routes = None
+    if _routes:
+        resources = {**(resources or {}), "media_routes": _routes}
     machine = client.post(
         "/machines",
         {

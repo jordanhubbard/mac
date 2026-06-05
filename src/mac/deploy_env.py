@@ -550,6 +550,20 @@ def build_mac_env(
     memory_model = (env.get("MAC_DEPLOY_MEMORY_EMBED_MODEL") or "").strip()
     if memory_model:
         values["MAC_MEMORY_EMBED_MODEL"] = memory_model
+    # media-01 durable advertisement: carry the deploy-supplied local-gen config
+    # into mac.env so a GPU agent self-advertises a media route on registration
+    # (GPU-gated in worker.register_worker) — no hand-patched env, no per-agent
+    # JSON. A global MAC_DEPLOY_AGENT_GEN_MODEL only lights up actual GPU agents.
+    for _src, _dst in (
+        ("MAC_DEPLOY_AGENT_GEN_MODEL", "MAC_AGENT_GEN_MODEL"),
+        ("MAC_DEPLOY_AGENT_GEN_PORT", "MAC_AGENT_GEN_PORT"),
+        ("MAC_DEPLOY_AGENT_GEN_HOST", "MAC_AGENT_GEN_HOST"),
+        ("MAC_DEPLOY_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_BASE_URL"),
+        ("MAC_DEPLOY_AGENT_MEDIA_ROUTES", "MAC_AGENT_MEDIA_ROUTES"),
+    ):
+        _v = (env.get(_src) or "").strip()
+        if _v:
+            values[_dst] = _v
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
