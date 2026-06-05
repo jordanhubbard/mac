@@ -1021,6 +1021,8 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS "${MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS:-}"
   add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_PORT "${MAC_DEPLOY_AGENT_GEN_VIDEO_PORT:-}"
   add_remote_env MAC_DEPLOY_AGENT_MEDIA_ROUTES "${MAC_DEPLOY_AGENT_MEDIA_ROUTES:-}"
+  # media-01 service-role election: ops the fleet wants held (hub seeds + reconciles).
+  add_remote_env MAC_DEPLOY_SERVICE_ROLE_OPS "${MAC_DEPLOY_SERVICE_ROLE_OPS:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""

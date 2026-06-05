@@ -352,6 +352,40 @@ class SQLiteStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS uniq_leases_active_per_task
                     ON leases (task_id) WHERE status = 'active';
 
+                -- media-01 service-role election: desired media services + the
+                -- leased holds capable hosts claim (mirrors tasks+leases).
+                CREATE TABLE IF NOT EXISTS service_roles (
+                    id TEXT PRIMARY KEY,
+                    op TEXT NOT NULL,
+                    slug TEXT NOT NULL,
+                    model_id TEXT,
+                    required_capabilities TEXT NOT NULL DEFAULT '[]',
+                    hardware_requirements TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(slug, tenant_id)
+                );
+                CREATE TABLE IF NOT EXISTS service_claims (
+                    id TEXT PRIMARY KEY,
+                    service_role_id TEXT NOT NULL REFERENCES service_roles(id) ON DELETE CASCADE,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_service_claims_role_status
+                    ON service_claims (service_role_id, status);
+                CREATE INDEX IF NOT EXISTS idx_service_claims_agent_status
+                    ON service_claims (agent_id, status);
+                -- Pool model: a host holds an op at most once; multiple hosts may
+                -- hold the same op. Split-brain guard at the DB layer.
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_service_claims_active_per_role_agent
+                    ON service_claims (service_role_id, agent_id) WHERE status = 'active';
+
                 CREATE TABLE IF NOT EXISTS machines (
                     id TEXT PRIMARY KEY,
                     hostname TEXT NOT NULL,

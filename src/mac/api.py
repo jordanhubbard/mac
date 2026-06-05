@@ -583,6 +583,11 @@ class AgentClaimNextRequest(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
 
 
+class ServiceClaimsSyncRequest(BaseModel):
+    willing_ops: List[str] = Field(default_factory=list)
+    lease_seconds: int = 1800
+
+
 class CommandAuditCreate(BaseModel):
     command_id: Optional[str] = None
     phase: str
@@ -3120,6 +3125,31 @@ def create_app(
                 lease["expires_at"],
             )
         return assignment
+
+    @app.post("/agents/{agent_id}/service-claims/sync")
+    def sync_agent_service_claims(
+        agent_id: str,
+        body: ServiceClaimsSyncRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # an agent syncs only its OWN service claims
+        return cp.sync_agent_service_claims(
+            agent_id, body.willing_ops, lease_seconds=body.lease_seconds
+        )
+
+    @app.get("/service-roles")
+    def list_service_roles() -> List[Dict[str, Any]]:
+        return [r.to_dict() for r in cp.service_roles.desired_services()]
+
+    @app.get("/service-claims")
+    def list_service_claims(op: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        role_id = None
+        if op:
+            try:
+                role_id = cp.service_roles.get_role_by_slug("media:%s" % op).id
+            except Exception:  # noqa: BLE001
+                return []
+        return [c.to_dict() for c in cp.service_roles.list_active_claims(role_id=role_id)]
 
     @app.post("/agents/{agent_id}/command-audit")
     def record_agent_command_audit(

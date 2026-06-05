@@ -117,6 +117,7 @@ from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.observability_service import ObservabilityService
 from mac.provisioning_service import ProvisioningService
+from mac.service_role_service import ServiceRoleService
 from mac.review_service import ReviewService
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
@@ -588,6 +589,7 @@ class ControlPlane:
         self.observability = ObservabilityService(self.store)
         self.agentbus = AgentBusService(self.store, self.observability)
         self.provisioning = ProvisioningService(self.store, self.observability)
+        self.service_roles = ServiceRoleService(self.store, self.observability)
         self.roles = RolesService(
             self.store,
             self.observability,
@@ -6271,6 +6273,10 @@ class ControlPlane:
             updates.append("current_task_id = NULL")
         if status_value == AgentStatus.OFFLINE.value:
             self._expire_agent_active_leases(agent_id, now, "heartbeat_offline")
+            try:
+                self.service_roles.expire_agent_claims(agent_id, reason="heartbeat_offline")
+            except Exception:  # noqa: BLE001 - best-effort service-claim cleanup
+                pass
         if status_value in {AgentStatus.IDLE.value, AgentStatus.OFFLINE.value}:
             updates.append("current_task_id = NULL")
         params.append(agent_id)
@@ -7358,6 +7364,10 @@ class ControlPlane:
                 for agent in self.mark_stale_agents_offline(stale_after_seconds)
             ]
         expired = [task.to_dict() for task in self.expire_leases()]
+        try:
+            self.reconcile_service_roles()  # media-01: reap stale claims + signal zero-holder ops
+        except Exception:  # noqa: BLE001 - reconcile must never break the tick
+            pass
         self._unblock_ready_tasks()
         review_workflows = self.advance_default_review_workflows(limit=limit)
         assignments = []
@@ -13537,6 +13547,159 @@ class ControlPlane:
             if value is not None:
                 return max(1, int(value))
         return 1
+
+    # --- service-role election (media-01) -------------------------------
+
+    def _agent_eligible_for_service(self, agent: Agent, role: ServiceRole) -> bool:
+        """Capability + hardware fit (uses reported GPU hw + the catalog VRAM
+        floor). Capacity is checked separately in the sync loop."""
+        if not set(role.required_capabilities).issubset(set(agent.capabilities or [])):
+            return False
+        hw = agent.resources.get("hardware") if isinstance(agent.resources, dict) else None
+        if role.hardware_requirements:
+            from mac.roles_service import machine_hardware_satisfies
+
+            ok, _reasons = machine_hardware_satisfies(role.hardware_requirements, hw or {})
+            if not ok:
+                return False
+        if role.model_id:
+            try:
+                from mac.local_gen_catalog import get_model, models_for_hardware
+
+                model = get_model(role.model_id)
+                if model is not None and model not in models_for_hardware(hw):
+                    return False
+            except Exception:  # noqa: BLE001 - catalog is optional
+                pass
+        return True
+
+    def _service_holder_live(self, agent_id: str) -> bool:
+        try:
+            agent = self.get_agent(agent_id)
+        except Exception:  # noqa: BLE001
+            return False
+        return agent.status != AgentStatus.OFFLINE.value
+
+    def sync_agent_service_claims(
+        self, agent_id: str, willing_ops: Iterable[str], *, lease_seconds: int = 1800
+    ) -> JsonDict:
+        """A capable host declares the ops it's willing+able to run; the hub
+        renews its still-willing held ops, releases ones it no longer wants, and
+        claims new eligible ops up to the agent's capacity (so ops spread to
+        hosts with headroom). Returns the authoritative held-op set."""
+        agent = self.get_agent(agent_id)
+        willing = {str(op).strip() for op in (willing_ops or []) if str(op).strip()}
+        capacity = self._agent_capacity(agent)
+        roles_by_op = {r.op: r for r in self.service_roles.desired_services(tenant_id=None)}
+        held_ops: Dict[str, Any] = {}
+        for claim in self.service_roles.list_active_claims(agent_id=agent_id):
+            try:
+                op = self.service_roles.get_role(claim.service_role_id).op
+            except Exception:  # noqa: BLE001
+                continue
+            held_ops[op] = claim
+        # release held ops no longer willing/desired
+        for op, claim in list(held_ops.items()):
+            if op not in willing or op not in roles_by_op:
+                self.service_roles.release_service_claim(claim.id, agent_id, reason="not_willing")
+                del held_ops[op]
+        # renew still-held
+        for claim in held_ops.values():
+            self.service_roles.renew_service_claim(claim.id, agent_id, lease_seconds)
+        # claim new eligible willing ops, capacity-bounded. Prefer the LEAST-served
+        # ops (fewest current live holders) so the pool spreads to cover every op
+        # instead of every host piling onto the same one.
+        load = len(held_ops) + self._agent_active_lease_count(agent_id)
+        candidates = [
+            op for op in willing
+            if op not in held_ops and op in roles_by_op and roles_by_op[op].enabled
+        ]
+
+        def _holder_count(op: str) -> int:
+            return len(self.service_roles.list_active_claims(role_id=roles_by_op[op].id))
+
+        for op in sorted(candidates, key=lambda o: (_holder_count(o), o)):
+            if load >= capacity:
+                break  # at capacity -> leave the op for a host with headroom (spread)
+            role = roles_by_op[op]
+            if not self._agent_eligible_for_service(agent, role):
+                continue
+            try:
+                self.service_roles.claim_service(role.id, agent_id, lease_seconds)
+            except Exception:  # noqa: BLE001
+                continue
+            held_ops[op] = True
+            load += 1
+        # "managed" = ops that have a service_role (election active). Ops NOT managed
+        # are advertised unconditionally by the worker (back-compat: a fleet that
+        # seeds no service_roles keeps today's advertise-all behavior).
+        return {
+            "held": sorted(held_ops.keys()),
+            "managed": sorted(roles_by_op.keys()),
+            "capacity": capacity,
+        }
+
+    def reconcile_service_roles(self) -> JsonDict:
+        """Periodic (called from tick): seed desired ops from MAC_SERVICE_ROLE_OPS
+        (opt-in; unset = no election, agents advertise as before), expire silent/
+        overloaded holders, drop offline holders, and emit a provisioning demand
+        signal for any desired op with zero live holders ("the cluster needs a
+        <op> agent")."""
+        ops_env = (os.environ.get("MAC_SERVICE_ROLE_OPS") or "").strip()
+        if ops_env:
+            wanted = [o.strip() for o in ops_env.split(",") if o.strip()]
+            existing = {r.op for r in self.service_roles.desired_services(tenant_id=None)}
+            if any(o not in existing for o in wanted):
+                self.seed_service_roles(wanted)
+        expired = self.service_roles.expire_service_claims()
+        requested: List[str] = []
+        for role in self.service_roles.desired_services(tenant_id=None):
+            live = [
+                c for c in self.service_roles.list_active_claims(role_id=role.id)
+                if self._service_holder_live(c.agent_id)
+            ]
+            for claim in self.service_roles.list_active_claims(role_id=role.id):
+                if not self._service_holder_live(claim.agent_id):
+                    self.service_roles.release_service_claim(claim.id, reason="holder_offline")
+            if not live:
+                try:
+                    self.provisioning.request_agent(
+                        reason="service_role:%s" % role.slug,
+                        capabilities=role.required_capabilities,
+                        hardware=role.hardware_requirements,
+                        detail={"op": role.op, "model_id": role.model_id},
+                        requested_by="service-role-reconciler",
+                    )
+                    requested.append(role.op)
+                except Exception:  # noqa: BLE001 - demand signal is best-effort
+                    pass
+        return {"expired": len(expired), "requested": requested}
+
+    def seed_service_roles(self, ops: Iterable[Any]) -> int:
+        """Idempotently seed/enable a desired service_role per op. Each op is a
+        dict {op, model_id, capabilities?} or a bare op string (model from the
+        catalog)."""
+        from mac.local_gen_catalog import LOCAL_GEN_MODELS
+
+        by_op_default = {}
+        for m in LOCAL_GEN_MODELS:
+            if m.routable:
+                by_op_default.setdefault(m.op, m.id)
+        count = 0
+        for spec in ops:
+            if isinstance(spec, dict):
+                op = str(spec.get("op") or "").strip()
+                model_id = spec.get("model_id") or by_op_default.get(op)
+                caps = spec.get("capabilities") or ["gpu"]
+            else:
+                op = str(spec).strip()
+                model_id = by_op_default.get(op)
+                caps = ["gpu"]
+            if not op:
+                continue
+            self.service_roles.upsert_role(op, model_id=model_id, required_capabilities=caps)
+            count += 1
+        return count
 
     def _task_tenant_id(self, task: Task) -> Optional[str]:
         origin = task.metadata.get("origin")

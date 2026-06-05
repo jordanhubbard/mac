@@ -2032,3 +2032,52 @@ def test_register_worker_advertises_multi_modality_routes(monkeypatch):
     assert ":8190/" in by_op["audio.tts"]["base_url"]
     assert ":8190/" in by_op["audio.music"]["base_url"]
     assert ":8191/" in by_op["video.generate"]["base_url"]
+
+
+def test_worker_advertises_only_held_service_ops(tmp_path: Path, monkeypatch):
+    """media-01 advertise-on-hold: the worker claims service-roles up to capacity
+    and re-stamps media_routes to ONLY the ops it currently holds."""
+    cp = ControlPlane.in_memory()
+    cp.seed_service_roles(["image.generate", "audio.tts", "video.generate"])
+    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    monkeypatch.setattr(
+        "mac.hardware.detect_hardware",
+        lambda: {"accelerator": "cuda", "gpu": {"vram_mb": 48000}, "memory_mb": 120000},
+    )
+    monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
+    monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
+    monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
+    registered = register_worker(
+        api, hostname="natasha", agent_name="natasha",
+        capabilities=["gpu", "cuda"], resources={"capacity": 1},
+    )
+    worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
+                       attestation_key=registered.get("attestation_key"))
+    worker._sync_service_claims()
+    held = set(cp.service_roles.held_ops_for_agent(registered["id"]))
+    routes_ops = {r["op"] for r in cp.get_agent(registered["id"]).resources.get("media_routes", [])}
+    assert len(held) == 1  # capacity 1 -> holds exactly one op
+    assert routes_ops == held  # advertises only the held op
+    assert routes_ops <= {"image.generate", "audio.tts"}
+
+
+def test_worker_advertises_all_willing_when_no_service_roles(tmp_path: Path, monkeypatch):
+    """Back-compat: a fleet that seeds NO service_roles keeps advertise-all (the
+    sync's 'managed' set is empty, so every willing op is advertised)."""
+    cp = ControlPlane.in_memory()  # no seed_service_roles
+    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    monkeypatch.setattr(
+        "mac.hardware.detect_hardware",
+        lambda: {"accelerator": "cuda", "gpu": {"vram_mb": 48000}, "memory_mb": 120000},
+    )
+    monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
+    monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
+    monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
+    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["gpu", "cuda"])
+    worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
+                       attestation_key=registered.get("attestation_key"))
+    worker._sync_service_claims()
+    routes_ops = {r["op"] for r in cp.get_agent(registered["id"]).resources.get("media_routes", [])}
+    assert routes_ops == {"image.generate", "audio.tts"}  # all willing (unmanaged)

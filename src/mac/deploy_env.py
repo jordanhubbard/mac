@@ -566,6 +566,8 @@ def build_mac_env(
         ("MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_MODELS"),
         ("MAC_DEPLOY_AGENT_GEN_VIDEO_PORT", "MAC_AGENT_GEN_VIDEO_PORT"),
         ("MAC_DEPLOY_AGENT_MEDIA_ROUTES", "MAC_AGENT_MEDIA_ROUTES"),
+        # media-01 service-role election: ops the fleet wants held (hub seeds these).
+        ("MAC_DEPLOY_SERVICE_ROLE_OPS", "MAC_SERVICE_ROLE_OPS"),
     ):
         _v = (env.get(_src) or "").strip()
         if _v:

@@ -146,6 +146,12 @@ class LeaseStatus(StrEnum):
     RENEWED = "renewed"
 
 
+class ServiceClaimStatus(StrEnum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    RELEASED = "released"
+
+
 class ReviewStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -492,6 +498,43 @@ class Lease:
     # evidence on the lease's task. The lease owner (``agent_id``) still
     # owns renewal and release.
     delegated_agent_id: Optional[str] = None
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class ServiceRole:
+    """A media service the cluster wants held by some capable host (media-01
+    role-claims). The op is served by a catalog model; required_capabilities +
+    hardware_requirements gate which agents are eligible to claim it."""
+    id: str
+    op: str
+    slug: str
+    model_id: Optional[str]
+    required_capabilities: List[str]
+    hardware_requirements: JsonDict
+    enabled: bool
+    tenant_id: Optional[str]
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class ServiceClaim:
+    """A capable host's leased hold on a service_role (mirrors Lease). Renewed by
+    the holder's worker loop; expires on silence/overload; reopened for reclaim."""
+    id: str
+    service_role_id: str
+    agent_id: str
+    status: str
+    expires_at: str
+    created_at: str
+    updated_at: str
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
