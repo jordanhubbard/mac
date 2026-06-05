@@ -9,6 +9,7 @@ import urllib.error
 from mac.media_routing import (
     DEFAULT_IMAGE_MODEL,
     MediaBinding,
+    audio_music_request,
     build_media_table,
     compose_media_table,
     dispatch_order,
@@ -19,8 +20,11 @@ from mac.media_routing import (
     hardware_gen_rank,
     is_gen_capable,
     media_bindings_from_agents,
+    media_binary_response,
     nvidia_genai_request,
     nvidia_genai_response,
+    op_is_binary,
+    openai_audio_speech_request,
     openai_images_request,
     openai_images_response,
 )
@@ -498,3 +502,91 @@ def test_mount_balances_across_two_gpu_agents(monkeypatch):
     # (the point is both are reachable + chosen, not strict alternation under serial calls)
     providers = {client.post("/v1/media/image.generate", json={"prompt": "x"}).json()["provider"] for _ in range(2)}
     assert providers <= {"a", "b"} and len(providers) >= 1
+
+
+# --- media-01 Part B1: audio adapters + binary transport --------------------
+
+def test_op_is_binary():
+    assert op_is_binary("audio.tts") and op_is_binary("audio.music") and op_is_binary("video.generate")
+    assert not op_is_binary("image.generate") and not op_is_binary("")
+
+
+def test_audio_speech_request_shaping():
+    path, body = openai_audio_speech_request("audio.tts", {"input": "hello", "voice": "v2"}, "bark")
+    assert path == "/audio/speech"
+    assert body["input"] == "hello" and body["voice"] == "v2" and body["model"] == "bark"
+    # prompt is an accepted alias for input
+    _, body2 = openai_audio_speech_request("audio.tts", {"prompt": "hi"}, "bark")
+    assert body2["input"] == "hi"
+
+
+def test_audio_music_request_shaping():
+    path, body = audio_music_request("audio.music", {"prompt": "lofi", "duration": 5}, "musicgen-small")
+    assert path == "/audio/music"
+    assert body["prompt"] == "lofi" and body["duration"] == 5.0 and body["model"] == "musicgen-small"
+
+
+def test_media_binary_response_unwraps_forwarder_bytes():
+    wrapped = {"__media_bytes__": "QUJD", "content_type": "audio/wav", "bytes": 3}
+    out = media_binary_response(200, wrapped)
+    assert out == {"artifacts": [{"base64": "QUJD", "content_type": "audio/wav"}]}
+    # non-2xx passes the error through
+    assert media_binary_response(500, {"error": {"message": "boom"}})["error"]["message"] == "boom"
+    # empty 2xx -> explicit empty_response error
+    assert media_binary_response(200, {})["error"]["type"] == "empty_response"
+
+
+def test_media_endpoint_audio_tts_routes_binary(monkeypatch):
+    """End-to-end: POST /v1/media/audio.tts -> openai_audio_speech adapter ->
+    binary-aware forwarder base64-wraps the audio/wav body -> canonical artifact."""
+    import base64 as _b64
+    import json as _json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from mac import router_app
+
+    wav = b"RIFF\x00\x00WAVfake-audio-bytes"
+    captured = {}
+
+    def fake_urlopen(req, timeout=60.0):
+        captured["url"] = req.full_url
+
+        class _Headers:
+            @staticmethod
+            def get(key, default=None):
+                return "audio/wav" if key.lower() == "content-type" else default
+
+        class _Resp:
+            status = 200
+            headers = _Headers()
+
+            def read(self):
+                return wav
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return _Resp()
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+    app = FastAPI()
+    media_json = _json.dumps({
+        "audio.tts": [{
+            "provider": "natasha", "base_url": "http://natasha:8190/v1",
+            "model": "bark", "adapter": "openai_audio_speech",
+        }]
+    })
+    env = {"MAC_ROUTER_BACKEND": "inproc", "MAC_ROUTER_MEDIA_JSON": media_json}
+    assert router_app.mount_router(app, env=env) is True
+    r = TestClient(app).post("/v1/media/audio.tts", json={"input": "hello world"})
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert payload["provider"] == "natasha" and payload["model"] == "bark"
+    assert payload["artifacts"][0]["base64"] == _b64.b64encode(wav).decode("ascii")
+    assert payload["artifacts"][0]["content_type"] == "audio/wav"
+    assert captured["url"].endswith("/audio/speech")

@@ -256,12 +256,69 @@ def fal_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
+# --- audio adapters (synchronous; binary upstream bodies) -------------------
+# Audio generation returns a binary body (wav/mp3), not JSON. The forwarder is
+# called with binary_ok=True for audio/video ops and wraps a non-JSON upstream
+# body as {"__media_bytes__": <base64>, "content_type": <ct>}; the response
+# adapter below unwraps that into a canonical base64 artifact. JSON-shaped
+# servers (e.g. {"data":[{"b64_json"}]}) are also accepted.
+
+
+def media_binary_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
+    """Binary media (audio/video) upstream response -> canonical artifacts."""
+    if status and 200 <= status < 300:
+        if isinstance(resp, dict) and resp.get("__media_bytes__"):
+            artifact: Dict[str, Any] = {"base64": resp["__media_bytes__"]}
+            if resp.get("content_type"):
+                artifact["content_type"] = resp["content_type"]
+            return {"artifacts": [artifact]}
+        b64 = extract_b64(resp)
+        if b64:
+            return {"artifacts": [{"base64": b64}]}
+        return {"error": {"message": "no media data in upstream response",
+                          "type": "empty_response"}}
+    return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
+
+
+def openai_audio_speech_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    """Canonical -> OpenAI-compatible /audio/speech (text-to-speech). Returns a
+    binary audio body. `input`/`prompt` is the text; `voice`/`format` optional."""
+    text = str(body.get("input") or body.get("prompt") or "").strip()
+    provider_body: Dict[str, Any] = {
+        "model": model or "tts-1",
+        "input": text,
+        "voice": str(body.get("voice") or "default"),
+        "response_format": str(body.get("format") or "wav"),
+    }
+    return "/audio/speech", provider_body
+
+
+def audio_music_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    """Canonical -> local /audio/music (text-to-music, e.g. MusicGen). Returns a
+    binary audio body."""
+    provider_body: Dict[str, Any] = {"prompt": str(body.get("prompt") or "").strip()}
+    if body.get("duration") is not None:
+        provider_body["duration"] = _float(body.get("duration"), 8.0)
+    if model:
+        provider_body["model"] = model
+    return "/audio/music", provider_body
+
+
 ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "nvidia_genai": (nvidia_genai_request, nvidia_genai_response),
     "openai_images": (openai_images_request, openai_images_response),
     "fal": (fal_request, fal_response),
+    "openai_audio_speech": (openai_audio_speech_request, media_binary_response),
+    "audio_music": (audio_music_request, media_binary_response),
     "passthrough": (passthrough_request, passthrough_response),
 }
+
+# Ops whose upstream returns a binary body (the forwarder is told binary_ok).
+BINARY_MEDIA_PREFIXES = ("audio", "video")
+
+
+def op_is_binary(op: str) -> bool:
+    return (op or "").split(".", 1)[0] in BINARY_MEDIA_PREFIXES
 
 
 def build_media_table(env: Optional[Mapping[str, str]] = None) -> Dict[str, List[MediaBinding]]:
