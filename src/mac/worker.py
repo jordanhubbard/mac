@@ -2073,6 +2073,182 @@ class MacWorker:
         except Exception:
             pass
 
+    # --- autonomous self-install (pip/npm into the agent's OWN environment) ----
+    # Fully unrestricted by decision: install only into the agent venv / local
+    # npm prefix (never the system), every install is audited via command_audit,
+    # and the resulting footprint is reported to the hub so redeploys re-hydrate
+    # it. This is what lets an agent provision its own tools for autonomous work.
+
+    def _mac_home(self) -> Path:
+        return Path(os.environ.get("MAC_HOME") or (Path.home() / ".mac"))
+
+    def _agent_venv_python(self) -> str:
+        py = self._mac_home() / "venv" / "bin" / "python"
+        return str(py) if py.exists() else sys.executable
+
+    def _footprint_path(self) -> Path:
+        return self._mac_home() / "agent-footprint.json"
+
+    def _load_footprint(self) -> JsonDict:
+        try:
+            return json.loads(self._footprint_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _write_footprint(self, footprint: JsonDict) -> None:
+        path = self._footprint_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(footprint, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+
+    def _report_footprint(self, footprint: JsonDict) -> None:
+        try:
+            self.client.post(
+                "/agents/%s/installed-packages" % quote(self.agent_id, safe=""),
+                {"installed_packages": footprint},
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _pip_base_name(spec: str) -> str:
+        return re.split(r"[\[<>=!~;\s]", spec.strip(), 1)[0].strip().lower().replace("_", "-")
+
+    @staticmethod
+    def _npm_base_name(spec: str) -> str:
+        spec = spec.strip()
+        if spec.startswith("@"):
+            parts = spec.split("@")  # ['', 'scope/name', 'ver'?]
+            return ("@" + parts[1]).lower() if len(parts) >= 2 else spec.lower()
+        return spec.split("@", 1)[0].lower()
+
+    def _pip_installed(self, py: str) -> set:
+        try:
+            out = subprocess.run(
+                [py, "-m", "pip", "list", "--format=json"],
+                capture_output=True, text=True, timeout=120, check=False,
+            ).stdout
+            return {str(p.get("name", "")).lower().replace("_", "-") for p in json.loads(out or "[]")}
+        except Exception:
+            return set()
+
+    def _npm_installed(self, prefix: str) -> set:
+        try:
+            out = subprocess.run(
+                ["npm", "ls", "--prefix", prefix, "--depth", "0", "--json"],
+                capture_output=True, text=True, timeout=120, check=False,
+            ).stdout
+            deps = (json.loads(out or "{}").get("dependencies") or {})
+            return {str(k).lower() for k in deps}
+        except Exception:
+            return set()
+
+    def _run_install(self, argv: List[str], *, manager: str, reason: str, specs: List[str]) -> JsonDict:
+        command_id = secrets.token_hex(8)
+        cwd = str(self._mac_home())
+        meta = {"self_install": True, "package_manager": manager, "reason": reason, "specs": specs}
+        started = datetime.now(timezone.utc).isoformat()
+        self._record_command_audit({
+            "command_id": command_id, "phase": "started", "argv": argv,
+            "cwd": cwd, "started_at": started, "metadata": meta,
+        })
+        t0 = time.monotonic()
+        try:
+            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=1800, check=False)
+            rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
+        except Exception as exc:  # noqa: BLE001 - install failures are reported, not raised.
+            self._record_command_audit({
+                "command_id": command_id, "phase": "failed", "argv": argv, "cwd": cwd,
+                "started_at": started, "completed_at": datetime.now(timezone.utc).isoformat(),
+                "returncode": -1, "metadata": {**meta, "error": str(exc)},
+            })
+            return {"ok": False, "error": str(exc), "specs": specs}
+        dur_ms = (time.monotonic() - t0) * 1000.0
+        self._record_command_audit({
+            "command_id": command_id, "phase": "completed" if rc == 0 else "failed",
+            "argv": argv, "cwd": cwd, "started_at": started,
+            "completed_at": datetime.now(timezone.utc).isoformat(), "duration_ms": dur_ms,
+            "returncode": rc,
+            "stdout_sha256": hashlib.sha256(out.encode("utf-8")).hexdigest(),
+            "stderr_sha256": hashlib.sha256(err.encode("utf-8")).hexdigest(),
+            "stdout_bytes": len(out.encode("utf-8")), "stderr_bytes": len(err.encode("utf-8")),
+            "metadata": meta,
+        })
+        return {"ok": rc == 0, "returncode": rc, "stdout": out[-4000:], "stderr": err[-4000:], "specs": specs}
+
+    def _update_footprint(self, manager: str, specs: List[str], *, index_url: Optional[str] = None) -> None:
+        fp = self._load_footprint()
+        entries = fp.get(manager) if isinstance(fp.get(manager), list) else []
+        by_name = {e.get("name"): dict(e) for e in entries if isinstance(e, dict) and e.get("name")}
+        now = datetime.now(timezone.utc).isoformat()
+        base = self._pip_base_name if manager == "pip" else self._npm_base_name
+        for spec in specs:
+            entry = {"name": base(spec), "spec": spec, "installed_at": now}
+            if index_url:
+                entry["index_url"] = index_url
+            by_name[entry["name"]] = entry
+        fp[manager] = [by_name[k] for k in sorted(by_name)]
+        fp["updated_at"] = now
+        self._write_footprint(fp)
+        self._report_footprint(fp)
+
+    def _install_lock(self):
+        lock_path = self._mac_home() / ".install.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "w")  # noqa: SIM115 - held until caller closes
+        try:
+            import fcntl
+
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except Exception:
+            pass
+        return fh
+
+    def ensure_pip(self, specs: List[str], *, reason: str = "agent self-install",
+                   index_url: Optional[str] = None) -> JsonDict:
+        # reject flag-smuggling specs (e.g. "-rfile", "--upgrade"); only real pkgs.
+        specs = [s.strip() for s in (specs or []) if s and not s.strip().startswith("-")]
+        if not specs:
+            return {"ok": True, "skipped": "no specs"}
+        py = self._agent_venv_python()
+        installed = self._pip_installed(py)
+        pending = [s for s in specs if self._pip_base_name(s) not in installed]
+        if not pending:
+            self._update_footprint("pip", specs, index_url=index_url)
+            return {"ok": True, "skipped": "already satisfied", "specs": specs}
+        argv = [py, "-m", "pip", "install", *pending]
+        if index_url:
+            argv += ["--index-url", index_url]
+        lock = self._install_lock()
+        try:
+            result = self._run_install(argv, manager="pip", reason=reason, specs=pending)
+            if result.get("ok"):
+                self._update_footprint("pip", pending, index_url=index_url)
+        finally:
+            lock.close()
+        return result
+
+    def ensure_npm(self, packages: List[str], *, reason: str = "agent self-install") -> JsonDict:
+        packages = [p.strip() for p in (packages or []) if p and not p.strip().startswith("-")]
+        if not packages:
+            return {"ok": True, "skipped": "no packages"}
+        prefix = str(self._mac_home())
+        installed = self._npm_installed(prefix)
+        pending = [p for p in packages if self._npm_base_name(p) not in installed]
+        if not pending:
+            self._update_footprint("npm", packages)
+            return {"ok": True, "skipped": "already satisfied", "packages": packages}
+        argv = ["npm", "install", "--prefix", prefix, *pending]
+        lock = self._install_lock()
+        try:
+            result = self._run_install(argv, manager="npm", reason=reason, specs=pending)
+            if result.get("ok"):
+                self._update_footprint("npm", pending)
+        finally:
+            lock.close()
+        return result
+
     def _heartbeat(self) -> None:
         payload: JsonDict = {"status": "idle"}
         # Declare the build the agent is running. Send the digest at most once
@@ -3115,6 +3291,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("MAC_WORKER_RESOURCES"),
         help="JSON resource/capacity object to advertise when --register is used",
     )
+    parser.add_argument(
+        "--install-pip",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help="pip spec to self-install into the agent venv (repeatable); audited + "
+        "reported to the hub footprint, then exits.",
+    )
+    parser.add_argument(
+        "--install-npm",
+        action="append",
+        default=[],
+        metavar="PKG",
+        help="npm package to self-install under the agent's local prefix (repeatable).",
+    )
+    parser.add_argument(
+        "--install-index-url",
+        default=None,
+        help="optional pip --index-url for --install-pip (e.g. a CUDA wheel index).",
+    )
+    parser.add_argument(
+        "--install-reason",
+        default="agent self-install",
+        help="reason recorded in the command audit for --install-pip/--install-npm.",
+    )
     parser.add_argument("--workspace", default=".mac-agent-workspaces")
     parser.add_argument("--lease-seconds", type=int, default=900)
     # mac-ehch: hard-cap executor runtime so a wedged subprocess can't
@@ -3241,6 +3442,25 @@ def main(argv: Optional[List[str]] = None) -> int:
                     _write_env_value(attestation_env_path, "MAC_ATTESTATION_KEY", attestation_key)
         if not agent_id:
             raise MacApiError("--agent-id or --register is required")
+        if args.install_pip or args.install_npm:
+            # Autonomous self-install: provision tools into the agent's own
+            # environment, audit + report the footprint, then exit.
+            installer = MacWorker(
+                client, agent_id, Path(args.workspace), SubprocessExecutor(["true"])
+            )
+            results: JsonDict = {}
+            if args.install_pip:
+                results["pip"] = installer.ensure_pip(
+                    args.install_pip,
+                    reason=args.install_reason,
+                    index_url=args.install_index_url,
+                )
+            if args.install_npm:
+                results["npm"] = installer.ensure_npm(
+                    args.install_npm, reason=args.install_reason
+                )
+            print(json.dumps({"status": "self-install", "results": results}, indent=2, sort_keys=True))
+            return 0 if all(r.get("ok", True) for r in results.values()) else 1
         if not attestation_key and args.rotate_missing_attestation_key:
             rotated = client.post(
                 "/agents/%s/attestation-key/rotate" % quote(agent_id, safe=""),

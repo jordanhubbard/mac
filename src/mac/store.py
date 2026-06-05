@@ -1253,6 +1253,9 @@ class SQLiteStore:
         self._ensure_column(
             "agents", "attestation_key_ciphertext", "attestation_key_ciphertext TEXT"
         )
+        self._ensure_column(
+            "agents", "installed_packages", "installed_packages TEXT NOT NULL DEFAULT '{}'"
+        )
         self._ensure_column("machines", "hardware", "hardware TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("tasks", "started_at", "started_at TEXT")
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")

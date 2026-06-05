@@ -6015,6 +6015,42 @@ class ControlPlane:
             )
         return self.get_agent(agent_id)
 
+    def update_agent_installed_packages(
+        self,
+        agent_id: str,
+        installed_packages: Dict[str, Any],
+        *,
+        actor: str = "agent",
+    ) -> Agent:
+        """Record the agent's self-installed pip/npm footprint (its persistent
+        "default footprint"). Kept separate from update_agent so a footprint
+        report can't clobber capabilities/status. Re-registration preserves it
+        (the register UPSERT does not touch this column)."""
+        agent_before = self.get_agent(agent_id)
+        payload = ensure_json_object(installed_packages)
+        now = utcnow()
+        pip = payload.get("pip")
+        npm = payload.get("npm")
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE agents SET installed_packages = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(payload), now, agent_id),
+            )
+            self._record_agent_lifecycle_event(
+                conn,
+                agent_id,
+                "agent.installed_packages_updated",
+                actor,
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_before.name,
+                    "pip_count": len(pip) if isinstance(pip, list) else 0,
+                    "npm_count": len(npm) if isinstance(npm, list) else 0,
+                },
+                now,
+            )
+        return self.get_agent(agent_id)
+
     def disable_agent(self, agent_id: str, *, actor: str = "human") -> Agent:
         return self.update_agent(
             agent_id,
@@ -11797,6 +11833,11 @@ class ControlPlane:
         hermes_instance_id = (
             row["hermes_instance_id"] if "hermes_instance_id" in keys else None
         )
+        installed_packages = (
+            json_loads(row["installed_packages"], {})
+            if "installed_packages" in keys
+            else {}
+        )
         return Agent(
             row["id"],
             row["machine_id"],
@@ -11812,6 +11853,7 @@ class ControlPlane:
             row["last_seen_at"],
             role_id,
             hermes_instance_id,
+            installed_packages,
         )
 
     def _project_item_from_row(self, row: Any) -> ProjectItem:

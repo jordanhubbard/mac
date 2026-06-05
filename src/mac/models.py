@@ -545,6 +545,9 @@ class Agent:
     last_seen_at: str
     role_id: Optional[str] = None
     hermes_instance_id: Optional[str] = None
+    # Packages the agent has self-installed into its own environment (pip/npm),
+    # reported to the hub as its "default footprint" so redeploys re-hydrate it.
+    installed_packages: JsonDict = field(default_factory=dict)
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
