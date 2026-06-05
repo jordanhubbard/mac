@@ -615,11 +615,14 @@ def urllib_forwarder(
     timeout: float = 60.0,
     secret_resolver: Optional[SecretResolver] = None,
     auth_scheme: str = "Bearer",
+    binary_ok: bool = False,
 ):
     """Real HTTP forward to ``provider.base_url + path`` with its bearer key.
     Returns ``(status_code|None, body)``; status None means unreachable/timeout.
     ``auth_scheme`` is the Authorization scheme word (default ``Bearer``; FAL's
-    media API needs ``Key``)."""
+    media API needs ``Key``). When ``binary_ok`` (audio/video ops), a non-JSON
+    upstream body is returned wrapped as ``{"__media_bytes__": <base64>,
+    "content_type": ...}`` instead of being utf-8/json decoded."""
     url = provider.base_url.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     key = resolve_provider_key(provider, secret_resolver)
@@ -629,6 +632,19 @@ def urllib_forwarder(
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (operator-configured upstream)
+            if binary_ok:
+                ctype = resp.headers.get("Content-Type") or ""
+                raw_bytes = resp.read()
+                if "json" not in ctype.lower():
+                    import base64
+
+                    return resp.status, {
+                        "__media_bytes__": base64.b64encode(raw_bytes).decode("ascii"),
+                        "content_type": ctype.split(";", 1)[0].strip() or "application/octet-stream",
+                        "bytes": len(raw_bytes),
+                    }
+                raw = raw_bytes.decode("utf-8", "replace")
+                return resp.status, (json.loads(raw) if raw.strip() else {})
             raw = resp.read().decode("utf-8", "replace")
             return resp.status, (json.loads(raw) if raw.strip() else {})
     except urllib.error.HTTPError as exc:
@@ -847,7 +863,7 @@ def mount_media_router(
     (:func:`mac.media_routing.build_media_table`) as cloud fallback. So a GPU
     agent that announces a capability is used with zero operator config, and a
     down one falls over automatically. No-op when neither side can bind anything."""
-    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table, dispatch_order
+    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table, dispatch_order, op_is_binary
 
     env = os.environ if env is None else env
     static_table = build_media_table(env)
@@ -899,6 +915,7 @@ def mount_media_router(
                 status, resp = urllib_forwarder(
                     provider, path, provider_body, timeout=binding.timeout,
                     secret_resolver=secret_resolver, auth_scheme=binding.auth_scheme,
+                    binary_ok=op_is_binary(op),
                 )
             finally:
                 with inflight_lock:

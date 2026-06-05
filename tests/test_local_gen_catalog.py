@@ -16,9 +16,16 @@ def test_catalog_entries_well_formed():
     for m in LOCAL_GEN_MODELS:
         assert m.id and m.repo and m.op and m.modality in ("image", "audio", "video")
         assert m.accelerators and all(a in ("cuda", "metal", "cpu") for a in m.accelerators)
-        # routable today == image.generate via the openai_images adapter
+        # routable ops + their adapters (image via openai_images; audio via the
+        # binary audio adapters — media-01 Part B1).
+        _ROUTABLE_ADAPTERS = {
+            "image.generate": {"openai_images"},
+            "audio.tts": {"openai_audio_speech"},
+            "audio.music": {"audio_music"},
+        }
         if m.routable:
-            assert m.op == "image.generate" and m.adapter == "openai_images"
+            assert m.op in _ROUTABLE_ADAPTERS, "unexpected routable op %s" % m.op
+            assert m.adapter in _ROUTABLE_ADAPTERS[m.op]
 
 
 def test_cuda_big_vram_runs_flux_and_sdxl():
