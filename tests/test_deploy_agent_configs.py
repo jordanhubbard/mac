@@ -1499,3 +1499,19 @@ def test_deploy_installs_gpu_gen_server_service():
     assert "deploy/local-gen/openai_image_server.py" in script
     assert "ExecStart=$MAC_HOME/bin/mac-gen-server" in script
     assert "TimeoutStartSec=900" in script
+
+
+def test_deploy_rehydrates_agent_footprint():
+    """Part C3: the deploy pulls the agent's installed_packages footprint from
+    the hub and re-installs it (pip into the venv, npm into the local prefix),
+    idempotent + non-fatal, and puts node_modules/.bin on the agent PATH."""
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert "install_agent_footprint() {" in script
+    assert "install_agent_footprint || true" in script
+    # reads the per-agent footprint endpoint + re-installs both managers
+    assert "/agents/%s" in script  # GET /agents/<stable_id>
+    assert "installed_packages" in script
+    assert 'npm", "install", "--prefix"' in script
+    # disable knob + npm bin on PATH for self-installed CLI tools
+    assert "MAC_AGENT_FOOTPRINT_REINSTALL" in script
+    assert "$HOME/.mac/node_modules/.bin" in script
