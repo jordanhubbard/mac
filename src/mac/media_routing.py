@@ -332,6 +332,37 @@ def audio_transcription_response(status: Optional[int], resp: Any) -> Dict[str, 
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
+# --- video adapter (asynchronous job: submit -> poll) -----------------------
+# Video renders are slow; the upstream /video/generate returns a job handle
+# ({"job_id","status"}) rather than blocking. The hub remaps that to its own job
+# id and serves status/result via GET /v1/media/jobs/{id} (see router_app).
+
+
+def video_generate_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+    """Canonical -> local /video/generate (text- or image-to-video). Async submit."""
+    provider_body: Dict[str, Any] = {"prompt": str(body.get("prompt") or "").strip()}
+    if body.get("image") is not None:  # image-to-video (e.g. SVD)
+        provider_body["image"] = body.get("image")
+    if body.get("duration") is not None:
+        provider_body["duration"] = _float(body.get("duration"), 4.0)
+    if model:
+        provider_body["model"] = model
+    return "/video/generate", provider_body
+
+
+def video_generate_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
+    """Async submit: upstream job handle -> canonical {"job_id","status"}. Falls
+    back to a synchronous artifact if a server returns one directly."""
+    if status and 200 <= status < 300:
+        if isinstance(resp, dict) and resp.get("job_id"):
+            return {"job_id": str(resp["job_id"]), "status": str(resp.get("status") or "running")}
+        b64 = extract_b64(resp)
+        if b64:
+            return {"artifacts": [{"base64": b64}]}
+        return {"error": {"message": "no job_id/artifact in video response", "type": "empty_response"}}
+    return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
+
+
 ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "nvidia_genai": (nvidia_genai_request, nvidia_genai_response),
     "openai_images": (openai_images_request, openai_images_response),
@@ -339,15 +370,22 @@ ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "openai_audio_speech": (openai_audio_speech_request, media_binary_response),
     "audio_music": (audio_music_request, media_binary_response),
     "openai_audio_transcription": (openai_audio_transcription_request, audio_transcription_response),
+    "video_generate": (video_generate_request, video_generate_response),
     "passthrough": (passthrough_request, passthrough_response),
 }
 
 # Ops whose upstream returns a binary body (the forwarder is told binary_ok).
 BINARY_MEDIA_PREFIXES = ("audio", "video")
+# Ops served via an async job (submit -> poll) rather than a blocking response.
+ASYNC_MEDIA_PREFIXES = ("video",)
 
 
 def op_is_binary(op: str) -> bool:
     return (op or "").split(".", 1)[0] in BINARY_MEDIA_PREFIXES
+
+
+def op_is_async(op: str) -> bool:
+    return (op or "").split(".", 1)[0] in ASYNC_MEDIA_PREFIXES
 
 
 def build_media_table(env: Optional[Mapping[str, str]] = None) -> Dict[str, List[MediaBinding]]:

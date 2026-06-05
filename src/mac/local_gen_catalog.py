@@ -70,11 +70,11 @@ LOCAL_GEN_MODELS: Tuple[LocalGenModel, ...] = (
                   "Stable Audio Open — text-to-audio"),
     # ---- video (enumerated; needs async video transport to route) ----
     LocalGenModel("svd", "video", "video.generate", "stabilityai/stable-video-diffusion-img2vid-xt",
-                  15000, ("cuda",), "diffusers", "passthrough", False,
-                  "Stable Video Diffusion (image-to-video)"),
+                  15000, ("cuda",), "diffusers", "video_generate", True,
+                  "Stable Video Diffusion (image-to-video; async job)"),
     LocalGenModel("animatediff", "video", "video.generate", "guoyww/animatediff-motion-adapter-v1-5-2",
-                  12000, ("cuda",), "diffusers", "passthrough", False,
-                  "AnimateDiff — text-to-video"),
+                  12000, ("cuda",), "diffusers", "video_generate", True,
+                  "AnimateDiff — text-to-video (async job)"),
 )
 
 _BY_ID = {m.id: m for m in LOCAL_GEN_MODELS}
