@@ -873,6 +873,37 @@ def mount_image_proxy(
     return mounted
 
 
+def urllib_get_json(
+    provider: Provider,
+    path: str,
+    *,
+    timeout: float = 60.0,
+    secret_resolver: Optional[SecretResolver] = None,
+    auth_scheme: str = "Bearer",
+):
+    """GET ``provider.base_url + path`` and parse JSON (for async job polling).
+    Returns ``(status|None, body)``; status None means unreachable/timeout."""
+    url = provider.base_url.rstrip("/") + path
+    headers = {"Accept": "application/json"}
+    key = resolve_provider_key(provider, secret_resolver)
+    if key:
+        headers["Authorization"] = "%s %s" % (auth_scheme or "Bearer", key)
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            raw = resp.read().decode("utf-8", "replace")
+            return resp.status, (json.loads(raw) if raw.strip() else {})
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        try:
+            body = json.loads(detail) if detail.strip() else {"error": {"message": exc.reason}}
+        except Exception:
+            body = {"error": {"message": detail[:500] or exc.reason}}
+        return exc.code, body
+    except Exception as exc:  # noqa: BLE001
+        return None, {"error": {"message": str(exc), "type": "upstream_unreachable"}}
+
+
 def mount_media_router(
     app: Any,
     *,
@@ -894,7 +925,9 @@ def mount_media_router(
     (:func:`mac.media_routing.build_media_table`) as cloud fallback. So a GPU
     agent that announces a capability is used with zero operator config, and a
     down one falls over automatically. No-op when neither side can bind anything."""
-    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table, dispatch_order, op_is_binary
+    from mac.media_routing import (
+        ADAPTERS, build_media_table, compose_media_table, dispatch_order, op_is_async, op_is_binary,
+    )
 
     env = os.environ if env is None else env
     static_table = build_media_table(env)
@@ -906,6 +939,10 @@ def mount_media_router(
     # across same-tier GPUs. Process-local (the single hub router process).
     inflight: Dict[str, int] = {}
     inflight_lock = threading.Lock()
+    # Async media jobs (e.g. video): hub job id -> upstream poll handle, so a slow
+    # render is submitted then polled via GET /v1/media/jobs/{id}.
+    media_jobs: Dict[str, Dict[str, Any]] = {}
+    media_jobs_lock = threading.Lock()
 
     @app.post("/v1/media/{op}")
     def _media(op: str, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
@@ -953,6 +990,23 @@ def mount_media_router(
                     inflight[binding.base_url] = max(0, inflight.get(binding.base_url, 0) - 1)
             canonical = from_provider(status, resp)
             if status and 200 <= status < 300:
+                if op_is_async(op) and isinstance(canonical, dict) and canonical.get("job_id"):
+                    # Async submit: remap the upstream job to a hub job id so the
+                    # poll endpoint knows which upstream/binding to query.
+                    import secrets as _secrets
+
+                    hub_job_id = "mjob_" + _secrets.token_hex(8)
+                    with media_jobs_lock:
+                        media_jobs[hub_job_id] = {
+                            "base_url": binding.base_url, "provider": binding.provider,
+                            "key_spec": binding.key_spec, "auth_scheme": binding.auth_scheme,
+                            "timeout": binding.timeout, "upstream_job_id": str(canonical["job_id"]),
+                        }
+                    return JSONResponse(
+                        {"job_id": hub_job_id, "status": canonical.get("status", "running"),
+                         "provider": binding.provider, "model": model},
+                        status_code=status,
+                    )
                 return JSONResponse(
                     {**canonical, "provider": binding.provider, "model": model},
                     status_code=status,
@@ -960,6 +1014,23 @@ def mount_media_router(
             last_status, last_body = (status or 502), (canonical if isinstance(canonical, dict) else {})
             # non-2xx / unreachable -> try the next binding (priority failover)
         return JSONResponse(last_body, status_code=last_status)
+
+    @app.get("/v1/media/jobs/{job_id}")
+    def _media_job(job_id: str) -> Any:  # noqa: ANN401
+        """Poll an async media job: forward to the upstream that owns it."""
+        with media_jobs_lock:
+            job = media_jobs.get(job_id)
+        if not job:
+            return JSONResponse({"error": {"message": "unknown media job %r" % job_id}}, status_code=404)
+        from urllib.parse import quote as _quote
+
+        provider = Provider(name=job["provider"], base_url=job["base_url"], api_key_env=job["key_spec"])
+        status, resp = urllib_get_json(
+            provider, "/video/jobs/" + _quote(job["upstream_job_id"], safe=""),
+            timeout=job.get("timeout", 60.0), secret_resolver=secret_resolver, auth_scheme=job["auth_scheme"],
+        )
+        out = resp if isinstance(resp, dict) else {}
+        return JSONResponse({**out, "job_id": job_id, "provider": job["provider"]}, status_code=status or 502)
 
     return True
 

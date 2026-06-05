@@ -23,6 +23,7 @@ def test_catalog_entries_well_formed():
             "audio.tts": {"openai_audio_speech"},
             "audio.music": {"audio_music"},
             "audio.asr": {"openai_audio_transcription"},
+            "video.generate": {"video_generate"},
         }
         if m.routable:
             assert m.op in _ROUTABLE_ADAPTERS, "unexpected routable op %s" % m.op

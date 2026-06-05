@@ -24,11 +24,14 @@ from mac.media_routing import (
     media_binary_response,
     nvidia_genai_request,
     nvidia_genai_response,
+    op_is_async,
     op_is_binary,
     openai_audio_speech_request,
     openai_audio_transcription_request,
     openai_images_request,
     openai_images_response,
+    video_generate_request,
+    video_generate_response,
 )
 
 
@@ -678,3 +681,86 @@ def test_media_endpoint_audio_asr_multipart(monkeypatch):
     assert captured["url"].endswith("/audio/transcriptions")
     assert "multipart/form-data" in (captured["ctype"] or "")
     assert b"RIFFfake-wav" in (captured["body"] or b"")
+
+
+# --- media-01 Part B3: video (async submit -> poll) -------------------------
+
+def test_op_is_async():
+    assert op_is_async("video.generate") and not op_is_async("audio.tts")
+    assert not op_is_async("image.generate") and not op_is_async("")
+
+
+def test_video_generate_request_shaping():
+    path, body = video_generate_request("video.generate", {"prompt": "a cat", "duration": 4}, "animatediff")
+    assert path == "/video/generate"
+    assert body["prompt"] == "a cat" and body["duration"] == 4.0 and body["model"] == "animatediff"
+
+
+def test_video_generate_response_async_and_sync():
+    assert video_generate_response(200, {"job_id": "vjob_1", "status": "running"}) == {"job_id": "vjob_1", "status": "running"}
+    # synchronous fallback (a server that returns an artifact directly)
+    assert video_generate_response(200, {"data": [{"b64_json": "B"}]}) == {"artifacts": [{"base64": "B"}]}
+    assert video_generate_response(500, {"error": {"message": "x"}})["error"]["message"] == "x"
+
+
+def test_media_endpoint_video_async_submit_then_poll(monkeypatch):
+    """End-to-end async video: POST /v1/media/video.generate -> hub job id; then
+    GET /v1/media/jobs/{id} -> hub polls the upstream -> completed + artifact."""
+    import json as _json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from mac import router_app
+
+    def fake_urlopen(req, timeout=60.0):
+        url, method = req.full_url, (req.get_method() if hasattr(req, "get_method") else "POST")
+
+        class _Headers:
+            @staticmethod
+            def get(k, d=None):
+                return "application/json" if k.lower() == "content-type" else d
+
+        class _Resp:
+            status = 200
+            headers = _Headers()
+
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self):
+                return _json.dumps(self._payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        if url.endswith("/video/generate"):
+            return _Resp({"job_id": "vjob_42", "status": "running"})
+        if "/video/jobs/vjob_42" in url:
+            return _Resp({"status": "completed", "artifacts": [{"base64": "GIFDATA", "content_type": "image/gif"}]})
+        raise AssertionError("unexpected url %s" % url)
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+    app = FastAPI()
+    media_json = _json.dumps({
+        "video.generate": [{
+            "provider": "natasha", "base_url": "http://natasha:8191/v1",
+            "model": "animatediff", "adapter": "video_generate",
+        }]
+    })
+    assert router_app.mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc", "MAC_ROUTER_MEDIA_JSON": media_json}) is True
+    client = TestClient(app)
+    submit = client.post("/v1/media/video.generate", json={"prompt": "a cat"})
+    assert submit.status_code == 200, submit.text
+    job_id = submit.json()["job_id"]
+    assert job_id.startswith("mjob_") and submit.json()["status"] == "running"
+    # poll -> hub forwards to the upstream job + returns the artifact
+    poll = client.get("/v1/media/jobs/%s" % job_id)
+    assert poll.status_code == 200, poll.text
+    assert poll.json()["status"] == "completed"
+    assert poll.json()["artifacts"][0]["base64"] == "GIFDATA"
+    # unknown job -> 404
+    assert client.get("/v1/media/jobs/mjob_nope").status_code == 404
