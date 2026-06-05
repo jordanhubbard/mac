@@ -14,6 +14,9 @@ from mac.media_routing import (
     extract_b64,
     fal_request,
     fal_response,
+    gen_capable_agents,
+    hardware_gen_rank,
+    is_gen_capable,
     media_bindings_from_agents,
     nvidia_genai_request,
     nvidia_genai_response,
@@ -372,3 +375,47 @@ def test_media_endpoint_prefers_live_agent_over_static(monkeypatch):
     assert r.status_code == 200
     assert r.json()["provider"] == "bw"  # routed to the live GPU agent, not cloud
     assert "bw:8189" in captured["urls"][0]
+
+
+# --- hardware-derived gen routing -------------------------------------------
+
+def _gpu_agent(name, accel, gpu_name, op_url="http://h:8189"):
+    return {"name": name, "status": "idle", "health_status": "healthy",
+            "resources": {"hardware": {"accelerator": accel, "gpu": {"name": gpu_name}},
+                          "media_routes": [{"op": "image.generate", "base_url": op_url, "adapter": "openai_images"}]}}
+
+
+def test_hardware_gen_rank_orders_accelerators():
+    assert hardware_gen_rank("cuda") < hardware_gen_rank("metal") < hardware_gen_rank("none")
+    assert hardware_gen_rank("rocm") == hardware_gen_rank("cuda")
+    assert hardware_gen_rank(None) == hardware_gen_rank("none")
+
+
+def test_is_gen_capable():
+    assert is_gen_capable({"accelerator": "cuda"}) is True
+    assert is_gen_capable({"accelerator": "metal"}) is True
+    assert is_gen_capable({"accelerator": "none"}) is False
+    assert is_gen_capable(None) is False
+
+
+def test_media_bindings_ranked_by_reported_hardware():
+    # three agents advertise the same op; the hub must prefer the best accelerator
+    agents = [
+        _gpu_agent("cpu-box", "none", None, "http://cpu:8189"),
+        _gpu_agent("mac", "metal", "Apple M4 Pro", "http://mac:8189"),
+        _gpu_agent("natasha", "cuda", "NVIDIA GB10", "http://natasha:8189"),
+    ]
+    urls = [b.base_url for b in media_bindings_from_agents(agents)["image.generate"]]
+    assert urls == ["http://natasha:8189", "http://mac:8189", "http://cpu:8189"]  # cuda > metal > cpu
+
+
+def test_gen_capable_agents_lists_accelerated_only_sorted():
+    agents = [
+        _gpu_agent("natasha", "cuda", "NVIDIA GB10"),
+        _gpu_agent("mac", "metal", "Apple M4 Pro"),
+        {"name": "rocky", "status": "idle", "resources": {"hardware": {"accelerator": "none"}}},
+        {"name": "stale", "status": "idle", "resources": {}},
+    ]
+    caps = gen_capable_agents(agents)
+    assert [c["agent"] for c in caps] == ["natasha", "mac"]  # cuda first; none/stale excluded
+    assert caps[0]["gpu"] == "NVIDIA GB10" and caps[0]["serving"] is True
