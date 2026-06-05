@@ -965,6 +965,9 @@ deploy_host() {
   # https://download.pytorch.org/whl/cu130 for the GB10/aarch64 box). Deploy-time
   # only; consumed by install_gpu_gen_server.
   add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL "${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
+  # Optional HF cache/home for the gen server — point at pre-staged weights to
+  # avoid a fresh multi-GB download (e.g. /home/jkh/gen/hf on the GB10 box).
+  add_remote_env MAC_DEPLOY_AGENT_GEN_HF_HOME "${MAC_DEPLOY_AGENT_GEN_HF_HOME:-}"
   add_remote_env MAC_DEPLOY_AGENT_MEDIA_ROUTES "${MAC_DEPLOY_AGENT_MEDIA_ROUTES:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
@@ -2946,6 +2949,8 @@ set -a
 . "\$HOME/.mac/mac.env"
 set +a
 export PATH="$gen_venv/bin:\$PATH"
+# Point HF at pre-staged weights if configured (avoids a fresh multi-GB download).
+[ -n "\${MAC_AGENT_GEN_HF_HOME:-}" ] && export HF_HOME="\$MAC_AGENT_GEN_HF_HOME"
 # Resolved HF repo baked in at deploy time (the gen venv can't resolve catalog ids).
 export LOCAL_GEN_MODEL="$gen_repo"
 export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_PORT:-8189}"
