@@ -1447,3 +1447,29 @@ def test_media_key_escrow_has_no_chat_key_fallback():
     # and the deploy reports which media ops are enabled vs disabled
     assert "media ops:" in script
     assert "DISABLED: set" in script
+
+
+def test_build_mac_env_passes_through_local_gen_advertisement(tmp_path):
+    """media-01 durable advertisement: deploy-supplied MAC_DEPLOY_AGENT_GEN_*
+    flow into mac.env as MAC_AGENT_GEN_* (the agent self-advertises, GPU-gated)."""
+    values = build_mac_env(
+        {},
+        deploy_env_config(tmp_path, fleet_name="test-fleet"),
+        environ={
+            "MAC_DEPLOY_AGENT_GEN_MODEL": "sdxl-turbo",
+            "MAC_DEPLOY_AGENT_GEN_PORT": "8189",
+            "MAC_DEPLOY_AGENT_GEN_BASE_URL": "http://100.87.229.125:8189/v1",
+        },
+    )
+    assert values["MAC_AGENT_GEN_MODEL"] == "sdxl-turbo"
+    assert values["MAC_AGENT_GEN_PORT"] == "8189"
+    assert values["MAC_AGENT_GEN_BASE_URL"] == "http://100.87.229.125:8189/v1"
+    # absent when not supplied
+    bare = build_mac_env({}, deploy_env_config(tmp_path, fleet_name="t2"), environ={})
+    assert "MAC_AGENT_GEN_MODEL" not in bare
+
+
+def test_deploy_passes_local_gen_env_to_agent():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_MODEL' in script
+    assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL' in script

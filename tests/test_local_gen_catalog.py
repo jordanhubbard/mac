@@ -5,6 +5,7 @@ import pytest
 
 from mac.local_gen_catalog import (
     LOCAL_GEN_MODELS,
+    advertised_media_routes,
     get_model,
     media_route_for,
     models_for_hardware,
@@ -67,3 +68,25 @@ def test_media_route_for_unknown_model_raises():
 def test_get_model():
     assert get_model("sdxl-turbo").repo == "stabilityai/sdxl-turbo"
     assert get_model("nope") is None
+
+
+# --- durable self-advertisement (catalog-driven, GPU-gated) -----------------
+
+def test_advertised_routes_gpu_agent():
+    routes = advertised_media_routes("sdxl-turbo", "http://natasha:8189/v1",
+                                     {"accelerator": "cuda", "gpu": {"vram_mb": 0}, "memory_mb": 122000})
+    assert routes == [{"op": "image.generate", "base_url": "http://natasha:8189/v1",
+                       "model": "sdxl-turbo", "adapter": "openai_images", "key": "", "auth_scheme": "Bearer"}]
+
+
+def test_advertised_routes_cpu_agent_is_empty():
+    # GPU-gating: a CPU agent with MAC_AGENT_GEN_MODEL set advertises nothing.
+    assert advertised_media_routes("sdxl-turbo", "http://x:8189/v1", {"accelerator": "none", "memory_mb": 8000}) == []
+
+
+def test_advertised_routes_requires_model_base_and_runnable():
+    hw = {"accelerator": "cuda", "gpu": {"vram_mb": 6000}}  # small VRAM
+    assert advertised_media_routes("", "http://x/v1", hw) == []         # no model
+    assert advertised_media_routes("sdxl-turbo", "", hw) == []          # no base_url
+    assert advertised_media_routes("nope", "http://x/v1", hw) == []     # unknown model
+    assert advertised_media_routes("flux.1-schnell", "http://x/v1", hw) == []  # 24GB model, 6GB GPU
