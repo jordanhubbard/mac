@@ -286,7 +286,7 @@ def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership(
 
     assert "fleet_config_query sanitized-registry" in script
     assert "MAC_DEPLOY_FLEET_REGISTRY_FILE" in script
-    assert 'install -m 0644 -D "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"' in script
+    assert 'cp -f "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"' in script
     assert "fleet_config_query configured-agent-ids" in script
     assert "MAC_DEPLOY_CONFIGURED_AGENT_IDS" in script
     assert "registered_configured_agent_ids" in script

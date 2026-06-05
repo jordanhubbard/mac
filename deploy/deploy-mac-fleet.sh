@@ -1159,7 +1159,9 @@ log() {
 }
 
 if [ -n "$FLEET_REGISTRY_FILE" ] && [ -f "$FLEET_REGISTRY_FILE" ]; then
-  install -m 0644 -D "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"
+  mkdir -p "$MAC_HOME"
+  cp -f "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"
+  chmod 0644 "$MAC_HOME/fleets.yaml"
   rm -f "$FLEET_REGISTRY_FILE"
   log "installed fleet registry at $MAC_HOME/fleets.yaml"
 fi
