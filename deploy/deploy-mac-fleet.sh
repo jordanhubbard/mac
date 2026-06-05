@@ -2993,6 +2993,82 @@ EOF
   sudo systemctl show "$MAC_GEN_SERVICE_NAME" -p ActiveState -p SubState -p MainPID 2>/dev/null || true
 }
 
+install_agent_footprint() {
+  # media-01 Part C3: re-hydrate the agent's self-installed footprint from the
+  # hub so a rebuilt agent keeps the pip/npm tools it self-provisioned. Pulls
+  # GET /agents/<stable_id>.installed_packages and re-installs into the agent
+  # venv (pip) + local npm prefix. Idempotent + non-fatal (a bad pin must never
+  # block the deploy). Disable with MAC_AGENT_FOOTPRINT_REINSTALL=0.
+  [ -x "$VENV/bin/python" ] || return 0
+  if [ "${MAC_AGENT_FOOTPRINT_REINSTALL:-1}" = "0" ]; then
+    log "agent footprint: re-hydrate disabled (MAC_AGENT_FOOTPRINT_REINSTALL=0)"
+    return 0
+  fi
+  "$VENV/bin/python" - "$ENV_FILE" "$VENV" "$MAC_HOME" "$LOG_DIR" <<'PY' 2>&1 \
+    | while IFS= read -r _ln; do log "agent footprint: $_ln"; done || true
+import json, os, re, shutil, subprocess, sys, urllib.request
+from collections import defaultdict
+
+env_file, venv, mac_home, log_dir = sys.argv[1:5]
+env = {}
+try:
+    for ln in open(env_file, encoding="utf-8"):
+        ln = ln.strip()
+        if ln and not ln.startswith("#") and "=" in ln:
+            k, v = ln.split("=", 1)
+            env[k] = v.strip().strip('"').strip("'")
+except Exception as exc:  # noqa: BLE001
+    print("env read failed: %s; skipping" % exc); sys.exit(0)
+hub = (env.get("MAC_HUB_URL") or "").rstrip("/")
+token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN") or ""
+name = env.get("MAC_WORKER_AGENT_NAME") or env.get("MAC_AGENT_NAME") or ""
+if not (hub and token and name):
+    print("hub/token/name unavailable; skipping"); sys.exit(0)
+agent_id = "agent_%s" % (re.sub(r"[^A-Za-z0-9_.-]+", "_", name.lower()).strip("_") or "default")
+req = urllib.request.Request(
+    "%s/agents/%s" % (hub, agent_id), headers={"Authorization": "Bearer %s" % token}
+)
+try:
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        fp = json.loads(resp.read().decode("utf-8")).get("installed_packages") or {}
+except Exception as exc:  # noqa: BLE001
+    print("no footprint to re-hydrate (%s)" % exc); sys.exit(0)
+report = {"pip": [], "npm": []}
+groups = defaultdict(list)
+for e in (fp.get("pip") or []):
+    spec = isinstance(e, dict) and (e.get("spec") or e.get("name"))
+    if spec:
+        groups[e.get("index_url") or ""].append(spec)
+for index_url, specs in groups.items():
+    cmd = [os.path.join(venv, "bin", "python"), "-m", "pip", "install", *specs]
+    if index_url:
+        cmd += ["--index-url", index_url]
+    rc = subprocess.run(cmd, capture_output=True, text=True).returncode
+    report["pip"].append({"specs": specs, "index_url": index_url, "returncode": rc})
+    print("pip install %s -> rc=%d" % (" ".join(specs), rc))
+npm_pkgs = [
+    e.get("spec") or e.get("name")
+    for e in (fp.get("npm") or [])
+    if isinstance(e, dict) and (e.get("spec") or e.get("name"))
+]
+if npm_pkgs:
+    if shutil.which("npm"):
+        rc = subprocess.run(
+            ["npm", "install", "--prefix", mac_home, *npm_pkgs], capture_output=True, text=True
+        ).returncode
+        report["npm"].append({"packages": npm_pkgs, "returncode": rc})
+        print("npm install %s -> rc=%d" % (" ".join(npm_pkgs), rc))
+    else:
+        print("npm not present; skipping %d npm package(s)" % len(npm_pkgs))
+try:
+    with open(os.path.join(log_dir, "agent-footprint-reinstall.json"), "w", encoding="utf-8") as fh:
+        json.dump(report, fh)
+except Exception:  # noqa: BLE001
+    pass
+print("re-hydrate done (pip groups=%d, npm=%d)" % (len(report["pip"]), len(report["npm"])))
+PY
+}
+
 initialize_hermes_home() {
   log "initializing Hermes home with upstream Hermes defaults"
   "$VENV/bin/python" - <<'PY'
@@ -3955,7 +4031,7 @@ ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a
-export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
+export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$PATH"
 
 : "${MAC_HUB_URL:?MAC_HUB_URL is required}"
 : "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
@@ -4949,6 +5025,9 @@ esac
 
 # media-01: durable local media-gen server on GPU agents (non-fatal, self-gated).
 install_gpu_gen_server || true
+
+# media-01 Part C3: re-hydrate the agent's self-installed pip/npm footprint.
+install_agent_footprint || true
 
 if [ "$SUPERVISOR_KIND" = "systemd" ]; then
   classify_gateway_logs "$LOG_DIR/hermes-gateway-journal.txt"
