@@ -961,6 +961,10 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_AGENT_GEN_PORT "${MAC_DEPLOY_AGENT_GEN_PORT:-}"
   add_remote_env MAC_DEPLOY_AGENT_GEN_HOST "${MAC_DEPLOY_AGENT_GEN_HOST:-}"
   add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL "${MAC_DEPLOY_AGENT_GEN_BASE_URL:-}"
+  # CUDA wheel index for the gen-server venv torch install (per-GPU, e.g.
+  # https://download.pytorch.org/whl/cu130 for the GB10/aarch64 box). Deploy-time
+  # only; consumed by install_gpu_gen_server.
+  add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL "${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
   add_remote_env MAC_DEPLOY_AGENT_MEDIA_ROUTES "${MAC_DEPLOY_AGENT_MEDIA_ROUTES:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
@@ -1077,6 +1081,7 @@ MANIFEST_POST="$LOG_DIR/deploy-manifest-${DEPLOY_TS}-post.json"
 MAC_SERVICE_NAME="${FLEET_NAME}.service"
 HERMES_SERVICE_NAME="${FLEET_NAME}-hermes-gateway.service"
 MAC_AGENT_SERVICE_NAME="${FLEET_NAME}-agent.service"
+MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"
 MAC_LAUNCHD_LABEL="com.${FLEET_NAME}.control-plane"
 HERMES_LAUNCHD_LABEL="com.${FLEET_NAME}.hermes-gateway"
 MAC_AGENT_LAUNCHD_LABEL="com.${FLEET_NAME}.agent"
@@ -2858,6 +2863,119 @@ install_omniverse_gpu_skills() {
   else
     log "WARNING: Omniverse 3D skills extraction failed on $AGENT"
   fi
+}
+
+install_gpu_gen_server() {
+  # media-01: durable local media-gen server for a GPU agent. Provisions a
+  # dedicated venv (torch/diffusers), installs the OpenAI-images-compatible
+  # server as a systemd unit on the port the agent advertises (#1), and starts
+  # it. GPU-gated (like Omniverse skills) + systemd-only + requires a configured
+  # gen model. Entirely non-fatal: a GPU-dep hiccup must never block the deploy.
+  if [ "$SUPERVISOR_KIND" != "systemd" ]; then
+    log "gen server: supervisor is $SUPERVISOR_KIND (systemd-only for now); skipping"
+    return 0
+  fi
+  if ! { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }; then
+    log "gen server: no NVIDIA GPU on $AGENT; skipping (GPU-only)"
+    return 0
+  fi
+  local gen_model
+  gen_model="$(grep -E '^MAC_AGENT_GEN_MODEL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
+  if [ -z "$gen_model" ]; then
+    log "gen server: MAC_AGENT_GEN_MODEL unset; skipping (set MAC_DEPLOY_AGENT_GEN_MODEL to enable)"
+    return 0
+  fi
+  local server_script="$SRC_DIR/deploy/local-gen/openai_image_server.py"
+  if [ ! -f "$server_script" ]; then
+    log "gen server: server script missing ($server_script); skipping"
+    return 0
+  fi
+
+  # Resolve the gen venv: reuse an existing ~/gen/venv that already has the stack
+  # (e.g. a hand-provisioned GPU box), else build a dedicated $MAC_HOME/gen-venv.
+  local gen_venv
+  if [ -x "$HOME/gen/venv/bin/python" ] && "$HOME/gen/venv/bin/python" -c "import torch, diffusers" >/dev/null 2>&1; then
+    gen_venv="$HOME/gen/venv"
+    log "gen server: reusing existing gen venv $gen_venv"
+  else
+    gen_venv="$MAC_HOME/gen-venv"
+    if [ ! -x "$gen_venv/bin/python" ]; then
+      log "gen server: creating gen venv $gen_venv"
+      "$PY" -m venv "$gen_venv" || { log "WARNING: gen venv creation failed; skipping gen server"; return 0; }
+    fi
+    "$gen_venv/bin/python" -m pip install --upgrade pip wheel >/dev/null 2>&1 || true
+    # torch first (CUDA-specific index if configured), then the diffusers stack.
+    local torch_index="${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
+    if ! "$gen_venv/bin/python" -c "import torch" >/dev/null 2>&1; then
+      log "gen server: installing torch${torch_index:+ (index $torch_index)}"
+      if [ -n "$torch_index" ]; then
+        "$gen_venv/bin/python" -m pip install torch --index-url "$torch_index" >/dev/null 2>&1 \
+          || log "WARNING: torch install failed (check MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU's CUDA)"
+      else
+        "$gen_venv/bin/python" -m pip install torch >/dev/null 2>&1 || log "WARNING: torch install failed"
+      fi
+    fi
+    if ! "$gen_venv/bin/python" -c "import diffusers" >/dev/null 2>&1; then
+      log "gen server: installing diffusers stack"
+      "$gen_venv/bin/python" -m pip install diffusers transformers accelerate safetensors pillow huggingface_hub >/dev/null 2>&1 \
+        || log "WARNING: diffusers stack install failed"
+    fi
+  fi
+  "$gen_venv/bin/python" -m pip list --format=json > "$LOG_DIR/gen-server-deps.json" 2>/dev/null || true
+  if ! "$gen_venv/bin/python" -c "import torch, diffusers" >/dev/null 2>&1; then
+    log "WARNING: gen venv lacks torch/diffusers; installing the unit anyway (it retries the warm-load on start). Set MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU."
+  fi
+
+  # Wrapper: source mac.env, map MAC_AGENT_GEN_* -> LOCAL_GEN_*, exec in the gen
+  # venv. $gen_venv/$server_script expand at write time; the \$ vars stay runtime.
+  local wrapper="$MAC_HOME/bin/mac-gen-server"
+  mkdir -p "$MAC_HOME/bin"
+  cat > "$wrapper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+set -a
+. "\$HOME/.mac/mac.env"
+set +a
+export PATH="$gen_venv/bin:\$PATH"
+export LOCAL_GEN_MODEL="\${MAC_AGENT_GEN_MODEL:-stabilityai/sdxl-turbo}"
+export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_PORT:-8189}"
+export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
+exec "$gen_venv/bin/python" "$server_script"
+EOF
+  chmod 700 "$wrapper"
+
+  local unit="/etc/systemd/system/${MAC_GEN_SERVICE_NAME}"
+  log "installing systemd service $unit (model=$gen_model, venv=$gen_venv)"
+  if sudo test -f "$unit"; then
+    sudo cp -f "$unit" "$MAC_HOME/backups/${MAC_GEN_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}" 2>/dev/null || true
+  fi
+  sudo tee "$unit" >/dev/null <<EOF
+[Unit]
+Description=mac local media-gen server (media-01 GPU agent)
+After=network-online.target ${MAC_AGENT_SERVICE_NAME}
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$MAC_HOME
+EnvironmentFile=$ENV_FILE
+ExecStart=$MAC_HOME/bin/mac-gen-server
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$MAC_GEN_SERVICE_NAME" >/dev/null 2>&1 || true
+  sudo systemctl restart "$MAC_GEN_SERVICE_NAME" \
+    || log "WARNING: gen server failed to start (journalctl -u $MAC_GEN_SERVICE_NAME)"
+  sleep 2
+  sudo systemctl show "$MAC_GEN_SERVICE_NAME" -p ActiveState -p SubState -p MainPID 2>/dev/null || true
 }
 
 initialize_hermes_home() {
@@ -4813,6 +4931,9 @@ case "$SUPERVISOR_KIND" in
   supervisord) install_supervisord_service ;;
   *) log "ERROR: unsupported supervisor $SUPERVISOR_KIND"; exit 1 ;;
 esac
+
+# media-01: durable local media-gen server on GPU agents (non-fatal, self-gated).
+install_gpu_gen_server || true
 
 if [ "$SUPERVISOR_KIND" = "systemd" ]; then
   classify_gateway_logs "$LOG_DIR/hermes-gateway-journal.txt"
