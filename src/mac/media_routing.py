@@ -353,14 +353,48 @@ def _agent_is_routable(agent: Mapping[str, Any]) -> bool:
     return True
 
 
+# Gen-routing preference derived from REPORTED hardware: lower rank = preferred.
+# The hub uses resources.hardware.accelerator to pick the best gen agent
+# automatically — CUDA/ROCm outrank Metal outrank CPU/unknown — so no operator
+# has to know which agent has the beefier silicon. (Hardware presence is not a
+# running gen server; this orders/qualifies advertised endpoints, it doesn't
+# invent one.)
+_ACCEL_RANK = {"cuda": 0, "rocm": 0, "metal": 1}
+_GEN_CAPABLE_ACCELERATORS = frozenset({"cuda", "rocm", "metal"})
+
+
+def hardware_gen_rank(accelerator: Optional[str]) -> int:
+    """Lower = preferred for gen routing. CUDA/ROCm best, Metal next, CPU/unknown last."""
+    return _ACCEL_RANK.get((accelerator or "").strip().lower(), 9)
+
+
+def is_gen_capable(hardware: Optional[Mapping[str, Any]]) -> bool:
+    """Whether an agent's reported hardware can plausibly host media generation
+    (a usable accelerator). Candidacy only — hardware presence is NOT a running
+    gen server, so this never by itself produces a routable binding."""
+    if not isinstance(hardware, Mapping):
+        return False
+    return str(hardware.get("accelerator") or "none").strip().lower() in _GEN_CAPABLE_ACCELERATORS
+
+
+def _agent_accelerator(agent: Mapping[str, Any]) -> str:
+    resources = agent.get("resources")
+    hardware = resources.get("hardware") if isinstance(resources, Mapping) else None
+    if isinstance(hardware, Mapping):
+        return str(hardware.get("accelerator") or "none").strip().lower()
+    return "unknown"
+
+
 def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str, List[MediaBinding]]:
     """Compose ``{op: [MediaBinding]}`` from live agent registrations.
 
-    Each routable agent's ``resources["media_routes"]`` contributes bindings,
-    sorted by the route's ``priority`` (asc). Offline/unhealthy agents are
-    skipped. Returns ``{}`` when no agent advertises anything.
+    Each routable agent's ``resources["media_routes"]`` contributes bindings.
+    They are ordered by **reported hardware first** (CUDA/ROCm → Metal → CPU/
+    unknown), then by the route's declared ``priority`` — so the hub prefers the
+    agent with the best accelerator without any operator config. Offline/
+    unhealthy agents are skipped. Returns ``{}`` when no agent advertises.
     """
-    staged: Dict[str, List[Tuple[int, MediaBinding]]] = {}
+    staged: Dict[str, List[Tuple[int, int, MediaBinding]]] = {}
     for agent in agents:
         if not isinstance(agent, Mapping) or not _agent_is_routable(agent):
             continue
@@ -368,6 +402,7 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
         routes = resources.get("media_routes") if isinstance(resources, Mapping) else None
         if not isinstance(routes, list):
             continue
+        accel_rank = hardware_gen_rank(_agent_accelerator(agent))
         for route in routes:
             if not isinstance(route, Mapping):
                 continue
@@ -384,8 +419,35 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
                 timeout=_float(route.get("timeout"), 180.0),
                 auth_scheme=str(route.get("auth_scheme") or "Bearer"),
             )
-            staged.setdefault(op, []).append((_int(route.get("priority"), 0), binding))
-    return {op: [b for _, b in sorted(items, key=lambda pb: pb[0])] for op, items in staged.items()}
+            staged.setdefault(op, []).append((accel_rank, _int(route.get("priority"), 0), binding))
+    return {
+        op: [b for _, _, b in sorted(items, key=lambda r: (r[0], r[1]))]
+        for op, items in staged.items()
+    }
+
+
+def gen_capable_agents(agents: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Derive, from reported hardware, which agents COULD host media generation
+    (a usable accelerator) — independent of whether they currently advertise a
+    gen endpoint. For visibility (`mac agent hardware`) and picking where to
+    stand a gen server up. Sorted best-accelerator-first."""
+    out: List[Dict[str, Any]] = []
+    for agent in agents:
+        if not isinstance(agent, Mapping):
+            continue
+        resources = agent.get("resources")
+        hardware = resources.get("hardware") if isinstance(resources, Mapping) else None
+        if not is_gen_capable(hardware):
+            continue
+        gpu = hardware.get("gpu") if isinstance(hardware.get("gpu"), Mapping) else {}
+        out.append({
+            "agent": agent.get("name") or agent.get("id"),
+            "accelerator": hardware.get("accelerator"),
+            "gpu": gpu.get("name"),
+            "rank": hardware_gen_rank(hardware.get("accelerator")),
+            "serving": bool(isinstance(resources, Mapping) and resources.get("media_routes")),
+        })
+    return sorted(out, key=lambda a: a["rank"])
 
 
 def compose_media_table(
