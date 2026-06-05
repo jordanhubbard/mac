@@ -143,6 +143,9 @@ print("PROJECT=%s" % shlex.quote(t.get("project") or ""))
 origin = (t.get("metadata") or {}).get("origin") or {}
 print("REPO_URL=%s" % shlex.quote(origin.get("repository_url") or ""))
 print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
+print("CHECKOUT_BRANCH=%s" % shlex.quote(origin.get("checkout_branch") or ""))
+meta = (t.get("metadata") or {})
+print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
 ' || true)"
     fi
     # If task didn't carry the repo URL, fall back to project metadata.
@@ -427,6 +430,8 @@ gate_run_tests() {
 
 WORKDIR=""
 TASK_BRANCH="mac/${MAC_AGENT_ID}/${MAC_TASK_ID}"
+CHECKOUT_BRANCH="${CHECKOUT_BRANCH:-}"
+SKIP_PR_OPEN="${SKIP_PR_OPEN:-}"
 BASE_SHA=""
 if [ -n "${REPO_URL}" ]; then
     WORKDIR="/tmp/work-${MAC_TASK_ID}"
@@ -440,8 +445,18 @@ if [ -n "${REPO_URL}" ]; then
     # ANY branch (agentic models often run their own git workflow via the
     # bash tool and commit to a branch of their choosing).
     BASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-    git checkout -b "${TASK_BRANCH}"
-    echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH} (base ${BASE_SHA})"
+    if [ -n "${CHECKOUT_BRANCH}" ]; then
+        # Existing-branch mode: check out the remote branch instead of creating
+        # a new one. Used for CI-fix tasks targeting an existing MR branch.
+        echo "[opencode-build] checkout_branch set — fetching and checking out existing branch ${CHECKOUT_BRANCH}"
+        git fetch origin "${CHECKOUT_BRANCH}"
+        git checkout "${CHECKOUT_BRANCH}"
+        TASK_BRANCH="${CHECKOUT_BRANCH}"
+        echo "[opencode-build] worktree ready at ${WORKDIR}, existing branch ${TASK_BRANCH} (base ${BASE_SHA})"
+    else
+        git checkout -b "${TASK_BRANCH}"
+        echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH} (base ${BASE_SHA})"
+    fi
 fi
 
 # Run opencode build agent. If we have a working tree, cd into it so opencode
@@ -576,6 +591,11 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         if [ "$push_rc" -eq 0 ]; then
             PUSHED="true"
             echo "[opencode-build] pushed ${WORK_REF} -> ${TASK_BRANCH}"
+            # Open a PR/MR unless skip_pr_open is set (e.g. CI-fix tasks that
+            # target an existing MR branch — push updates the existing PR).
+            if [ -n "${SKIP_PR_OPEN}" ]; then
+                echo "[opencode-build] skip_pr_open=true — push complete, skipping PR creation (existing PR will pick up the push)"
+            else
             # Open a PR/MR. Host (github/gitea) is detected from the URL.
             PR_TITLE="mac: $(echo "${PROMPT}" | head -1 | cut -c1-72)"
             PR_BODY="task=${MAC_TASK_ID}
@@ -611,6 +631,7 @@ except Exception:
                 echo "[opencode-build] PR open failed rc=${pr_rc}: ${pr_json}"
                 NO_EFFECTIVE_CHANGE="true"
             fi
+            fi  # end skip_pr_open else
         else
             echo "[opencode-build] push failed rc=$push_rc"
             NO_EFFECTIVE_CHANGE="true"
@@ -621,7 +642,7 @@ except Exception:
         NO_EFFECTIVE_CHANGE="true"
     fi
 fi
-export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER
+export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER CHECKOUT_BRANCH SKIP_PR_OPEN
 export PR_OPENED GIT_STATUS GIT_CWD ORIGINAL_OPENCODE_RC OPENCODE_MODEL GATE_BLOCKED
 # Pre-push gate results consumed by the manifest builder below.
 export GATE_LINT_COMMAND GATE_LINT_STATUS GATE_LINT_AUTOFIXED GATE_LINT_OUTPUT
