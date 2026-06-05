@@ -1015,6 +1015,11 @@ deploy_host() {
   # Optional HF cache/home for the gen server — point at pre-staged weights to
   # avoid a fresh multi-GB download (e.g. /home/jkh/gen/hf on the GB10 box).
   add_remote_env MAC_DEPLOY_AGENT_GEN_HF_HOME "${MAC_DEPLOY_AGENT_GEN_HF_HOME:-}"
+  # B1b: audio/video local servers (CSV catalog-id model lists + ports).
+  add_remote_env MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS "${MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS:-}"
+  add_remote_env MAC_DEPLOY_AGENT_GEN_AUDIO_PORT "${MAC_DEPLOY_AGENT_GEN_AUDIO_PORT:-}"
+  add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS "${MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS:-}"
+  add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_PORT "${MAC_DEPLOY_AGENT_GEN_VIDEO_PORT:-}"
   add_remote_env MAC_DEPLOY_AGENT_MEDIA_ROUTES "${MAC_DEPLOY_AGENT_MEDIA_ROUTES:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
@@ -1134,6 +1139,8 @@ MAC_SERVICE_NAME="${FLEET_NAME}.service"
 HERMES_SERVICE_NAME="${FLEET_NAME}-hermes-gateway.service"
 MAC_AGENT_SERVICE_NAME="${FLEET_NAME}-agent.service"
 MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"
+MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"
+MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"
 MAC_LAUNCHD_LABEL="com.${FLEET_NAME}.control-plane"
 HERMES_LAUNCHD_LABEL="com.${FLEET_NAME}.hermes-gateway"
 MAC_AGENT_LAUNCHD_LABEL="com.${FLEET_NAME}.agent"
@@ -2939,12 +2946,47 @@ install_omniverse_gpu_skills() {
   fi
 }
 
+_install_gen_unit() {
+  # $1=service name  $2=wrapper basename ($MAC_HOME/bin/<name>)  $3=description.
+  # Writes + enables + restarts a systemd unit for an already-written wrapper.
+  local svc="$1" wrapper_name="$2" desc="$3"
+  local unit="/etc/systemd/system/${svc}"
+  log "installing systemd service $unit ($desc)"
+  if sudo test -f "$unit"; then
+    sudo cp -f "$unit" "$MAC_HOME/backups/${svc}.${AGENT}.${DEPLOY_TS}" 2>/dev/null || true
+  fi
+  sudo tee "$unit" >/dev/null <<EOF
+[Unit]
+Description=mac local media-gen server ($desc)
+After=network-online.target ${MAC_AGENT_SERVICE_NAME}
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$MAC_HOME
+EnvironmentFile=$ENV_FILE
+ExecStart=$MAC_HOME/bin/${wrapper_name}
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$svc" >/dev/null 2>&1 || true
+  sudo systemctl restart "$svc" || log "WARNING: $svc failed to start (journalctl -u $svc)"
+}
+
 install_gpu_gen_server() {
-  # media-01: durable local media-gen server for a GPU agent. Provisions a
-  # dedicated venv (torch/diffusers), installs the OpenAI-images-compatible
-  # server as a systemd unit on the port the agent advertises (#1), and starts
-  # it. GPU-gated (like Omniverse skills) + systemd-only + requires a configured
-  # gen model. Entirely non-fatal: a GPU-dep hiccup must never block the deploy.
+  # media-01: durable local media-gen servers for a GPU agent — image (:8189),
+  # audio (:8190), video (:8191) — each as a GPU-gated systemd unit serving the
+  # routes the agent advertises (#1/B1b). Provisions one shared venv
+  # (torch/diffusers/transformers). GPU-gated (like Omniverse skills) +
+  # systemd-only. Entirely non-fatal: a GPU-dep hiccup must never block the deploy.
   if [ "$SUPERVISOR_KIND" != "systemd" ]; then
     log "gen server: supervisor is $SUPERVISOR_KIND (systemd-only for now); skipping"
     return 0
@@ -2953,18 +2995,16 @@ install_gpu_gen_server() {
     log "gen server: no NVIDIA GPU on $AGENT; skipping (GPU-only)"
     return 0
   fi
-  local gen_model
-  gen_model="$(grep -E '^MAC_AGENT_GEN_MODEL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
-  if [ -z "$gen_model" ]; then
-    log "gen server: MAC_AGENT_GEN_MODEL unset; skipping (set MAC_DEPLOY_AGENT_GEN_MODEL to enable)"
+  local gen_model audio_models video_models
+  _genenv() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" || true; }
+  gen_model="$(_genenv MAC_AGENT_GEN_MODEL)"
+  audio_models="$(_genenv MAC_AGENT_GEN_AUDIO_MODELS)"
+  video_models="$(_genenv MAC_AGENT_GEN_VIDEO_MODELS)"
+  if [ -z "$gen_model" ] && [ -z "$audio_models" ] && [ -z "$video_models" ]; then
+    log "gen server: no MAC_AGENT_GEN_MODEL/AUDIO_MODELS/VIDEO_MODELS set; skipping"
     return 0
   fi
-  local server_script="$SRC_DIR/deploy/local-gen/openai_image_server.py"
-  if [ ! -f "$server_script" ]; then
-    log "gen server: server script missing ($server_script); skipping"
-    return 0
-  fi
-  # Resolve a catalog id (e.g. sdxl-turbo) to its HF repo using the MAC venv. The
+  # Resolve the image catalog id (e.g. sdxl-turbo) to its HF repo using the MAC venv. The
   # gen venv has torch/diffusers but NOT the mac package, so the server can't
   # resolve the catalog id itself — bake the resolved repo into the wrapper, else
   # diffusers gets a bare "sdxl-turbo" and 500s (the hub then fails over to cloud).
@@ -2999,8 +3039,8 @@ m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>
       fi
     fi
     if ! "$gen_venv/bin/python" -c "import diffusers" >/dev/null 2>&1; then
-      log "gen server: installing diffusers stack"
-      "$gen_venv/bin/python" -m pip install diffusers transformers accelerate safetensors pillow huggingface_hub >/dev/null 2>&1 \
+      log "gen server: installing diffusers/transformers stack (+ audio codecs)"
+      "$gen_venv/bin/python" -m pip install diffusers transformers accelerate safetensors pillow huggingface_hub soundfile scipy >/dev/null 2>&1 \
         || log "WARNING: diffusers stack install failed"
     fi
   fi
@@ -3009,59 +3049,66 @@ m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>
     log "WARNING: gen venv lacks torch/diffusers; installing the unit anyway (it retries the warm-load on start). Set MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU."
   fi
 
-  # Wrapper: source mac.env, map MAC_AGENT_GEN_* -> LOCAL_GEN_*, exec in the gen
-  # venv. $gen_venv/$server_script expand at write time; the \$ vars stay runtime.
-  local wrapper="$MAC_HOME/bin/mac-gen-server"
+  # One wrapper + unit per configured modality, all sharing the gen venv. Each
+  # wrapper sources mac.env, points HF at pre-staged weights, sets the modality
+  # port, and execs the server. \$ vars stay runtime; $gen_venv/$SRC_DIR expand now.
   mkdir -p "$MAC_HOME/bin"
-  cat > "$wrapper" <<EOF
+
+  # Image (:8189) — bake the resolved HF repo (the gen venv can't resolve catalog ids).
+  if [ -n "$gen_model" ] && [ -f "$SRC_DIR/deploy/local-gen/openai_image_server.py" ]; then
+    cat > "$MAC_HOME/bin/mac-gen-server" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 set -a
 . "\$HOME/.mac/mac.env"
 set +a
 export PATH="$gen_venv/bin:\$PATH"
-# Point HF at pre-staged weights if configured (avoids a fresh multi-GB download).
 [ -n "\${MAC_AGENT_GEN_HF_HOME:-}" ] && export HF_HOME="\$MAC_AGENT_GEN_HF_HOME"
-# Resolved HF repo baked in at deploy time (the gen venv can't resolve catalog ids).
 export LOCAL_GEN_MODEL="$gen_repo"
 export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_PORT:-8189}"
 export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
-exec "$gen_venv/bin/python" "$server_script"
+exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/openai_image_server.py"
 EOF
-  chmod 700 "$wrapper"
-
-  local unit="/etc/systemd/system/${MAC_GEN_SERVICE_NAME}"
-  log "installing systemd service $unit (model=$gen_model, venv=$gen_venv)"
-  if sudo test -f "$unit"; then
-    sudo cp -f "$unit" "$MAC_HOME/backups/${MAC_GEN_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}" 2>/dev/null || true
+    chmod 700 "$MAC_HOME/bin/mac-gen-server"
+    _install_gen_unit "$MAC_GEN_SERVICE_NAME" "mac-gen-server" "image=$gen_model venv=$gen_venv"
   fi
-  sudo tee "$unit" >/dev/null <<EOF
-[Unit]
-Description=mac local media-gen server (media-01 GPU agent)
-After=network-online.target ${MAC_AGENT_SERVICE_NAME}
-Wants=network-online.target
 
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$MAC_HOME
-EnvironmentFile=$ENV_FILE
-ExecStart=$MAC_HOME/bin/mac-gen-server
-Restart=always
-RestartSec=10
-TimeoutStartSec=900
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
+  # Audio (:8190) — TTS/music/ASR; server defaults are valid HF repos (override
+  # via LOCAL_AUDIO_* in mac.env). MAC_AGENT_GEN_AUDIO_MODELS declares served ops.
+  if [ -n "$audio_models" ] && [ -f "$SRC_DIR/deploy/local-gen/audio_server.py" ]; then
+    cat > "$MAC_HOME/bin/mac-gen-audio-server" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+set -a
+. "\$HOME/.mac/mac.env"
+set +a
+export PATH="$gen_venv/bin:\$PATH"
+[ -n "\${MAC_AGENT_GEN_HF_HOME:-}" ] && export HF_HOME="\$MAC_AGENT_GEN_HF_HOME"
+export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_AUDIO_PORT:-8190}"
+export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
+exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/audio_server.py"
 EOF
-  sudo systemctl daemon-reload
-  sudo systemctl enable "$MAC_GEN_SERVICE_NAME" >/dev/null 2>&1 || true
-  sudo systemctl restart "$MAC_GEN_SERVICE_NAME" \
-    || log "WARNING: gen server failed to start (journalctl -u $MAC_GEN_SERVICE_NAME)"
-  sleep 2
-  sudo systemctl show "$MAC_GEN_SERVICE_NAME" -p ActiveState -p SubState -p MainPID 2>/dev/null || true
+    chmod 700 "$MAC_HOME/bin/mac-gen-audio-server"
+    _install_gen_unit "$MAC_GEN_AUDIO_SERVICE_NAME" "mac-gen-audio-server" "audio=$audio_models venv=$gen_venv"
+  fi
+
+  # Video (:8191) — async AnimateDiff/SVD; server defaults are valid HF repos.
+  if [ -n "$video_models" ] && [ -f "$SRC_DIR/deploy/local-gen/video_server.py" ]; then
+    cat > "$MAC_HOME/bin/mac-gen-video-server" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+set -a
+. "\$HOME/.mac/mac.env"
+set +a
+export PATH="$gen_venv/bin:\$PATH"
+[ -n "\${MAC_AGENT_GEN_HF_HOME:-}" ] && export HF_HOME="\$MAC_AGENT_GEN_HF_HOME"
+export LOCAL_GEN_PORT="\${MAC_AGENT_GEN_VIDEO_PORT:-8191}"
+export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
+exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/video_server.py"
+EOF
+    chmod 700 "$MAC_HOME/bin/mac-gen-video-server"
+    _install_gen_unit "$MAC_GEN_VIDEO_SERVICE_NAME" "mac-gen-video-server" "video=$video_models venv=$gen_venv"
+  fi
 }
 
 install_agent_footprint() {
