@@ -267,7 +267,7 @@ class RemoteDispatch:
     ) -> _Dictish:
         body = _drop_none(
             {
-                "to_state": to_state,
+                "target_state": to_state,
                 "actor": actor,
                 "detail": detail or {},
             }
