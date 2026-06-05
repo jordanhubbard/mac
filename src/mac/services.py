@@ -8057,18 +8057,16 @@ class ControlPlane:
                 retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
             except ValueError:
                 retraction_cap = 3
-            evidence_threshold = self.store.query_one(
-                """
-                SELECT created_at FROM evidence
-                WHERE task_id = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (task_id,),
-            )
-            threshold_at = (
-                evidence_threshold["created_at"] if evidence_threshold else ""
-            )
+            # mem-12 window fix: scope the retraction count to "retractions
+            # since the work under review was submitted" — i.e. the executor
+            # evidence we are actually reviewing (already resolved above as
+            # ``evidence``). The original query took the latest evidence of
+            # ANY kind, so the reviewer's own ``review``-kind attempt evidence
+            # advanced the window every cycle and the cap never tripped — the
+            # bug behind the 2026-06 review runaway. Genuine rework still
+            # resets the window because new executor evidence becomes the
+            # reviewed ``evidence`` on the next advance.
+            threshold_at = evidence.created_at or ""
             retracted_count_row = self.store.query_one(
                 """
                 SELECT COUNT(*) AS n FROM reviews
@@ -8177,6 +8175,75 @@ class ControlPlane:
                 not_before=review.created_at,
             )
             if verdict_evidence is None:
+                # Bound the verdict-wait loop. mem-12 only caps RETRACTION;
+                # a reviewer that keeps producing review-attempt evidence but
+                # never a valid signed verdict would otherwise spin here
+                # forever, re-nudging every tick (task_5de06b: 59 review-kind
+                # evidence rows, 0 verdict — the live half of the 2026-06
+                # runaway). Past a cap, fail the task instead of re-nudging.
+                try:
+                    verdict_wait_cap = int(
+                        os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6")
+                    )
+                except ValueError:
+                    verdict_wait_cap = 6
+                wait_count_row = self.store.query_one(
+                    """
+                    SELECT COUNT(*) AS n FROM evidence
+                    WHERE task_id = ? AND kind = 'review'
+                      AND created_at >= ?
+                    """,
+                    (task_id, review.created_at),
+                )
+                wait_count = int(wait_count_row["n"]) if wait_count_row else 0
+                if verdict_wait_cap > 0 and wait_count >= verdict_wait_cap:
+                    self._record_default_review_observation(
+                        task_id,
+                        "workflow.default_review.exhausted",
+                        "error",
+                        {
+                            "reason": "review_verdict_wait_cap_hit",
+                            "cap": verdict_wait_cap,
+                            "wait_count": wait_count,
+                            "review_id": review.id,
+                            "reviewer_agent_id": review.reviewer_agent_id,
+                        },
+                        actor,
+                    )
+                    self._record_history(
+                        task_id,
+                        "task.review_exhausted",
+                        actor,
+                        None,
+                        None,
+                        {
+                            "reason": "review_verdict_wait_cap_hit",
+                            "cap": verdict_wait_cap,
+                            "wait_count": wait_count,
+                            "review_id": review.id,
+                        },
+                    )
+                    try:
+                        self.transition_task(
+                            task_id,
+                            TaskState.FAILED.value,
+                            actor,
+                            {
+                                "reason": "review_verdict_wait_cap_hit",
+                                "cap": verdict_wait_cap,
+                                "wait_count": wait_count,
+                                "review_id": review.id,
+                            },
+                        )
+                    except TransitionError:
+                        pass
+                    return {
+                        "task_id": task_id,
+                        "status": "review_verdict_wait_exhausted",
+                        "cap": verdict_wait_cap,
+                        "wait_count": wait_count,
+                        "review_id": review.id,
+                    }
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.waiting_for_verdict",
