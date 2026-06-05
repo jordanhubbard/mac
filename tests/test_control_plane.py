@@ -1055,6 +1055,114 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
     assert cp.get_task(task.id).state != TaskState.FAILED.value
 
 
+def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
+    """A reviewer that keeps producing review-attempt evidence but never a
+    valid signed verdict must not spin forever: past the verdict-wait cap the
+    task FAILS instead of re-nudging (the live half of the 2026-06 runaway)."""
+    monkeypatch.setenv("MAC_REVIEW_VERDICT_WAIT_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    task = cp.create_task("Spinny", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    # First advance opens a pending review (assigns a reviewer).
+    cp.advance_default_review_workflow(task.id)
+    from mac.models import ReviewStatus
+
+    pending = [
+        r for r in cp.list_reviews(task.id)
+        if r.status == ReviewStatus.PENDING.value
+    ]
+    assert pending, "expected a pending review after first advance"
+    review = pending[0]
+
+    # Reviewer produces N review-attempt evidence rows but no valid verdict.
+    for i in range(2):
+        cp.add_evidence(
+            task.id,
+            "review",
+            "file://review-%d" % i,
+            "looked, still unsure",
+            review.reviewer_agent_id,
+        )
+
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "review_verdict_wait_exhausted", result
+    assert result["cap"] == 2
+    assert result["wait_count"] >= 2
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.exhausted" in names
+
+
+def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypatch):
+    """mem-12 window fix: the reviewer's OWN review-attempt evidence must not
+    reset the retraction window. Only genuine new executor work (the reviewed
+    evidence) does. With the pre-fix 'latest evidence of any kind' window this
+    looped forever."""
+    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    register_agent(cp, "reviewer-a", ["review"])
+    task = cp.create_task("Loopy2", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    from mac.models import ReviewStatus, new_id, utcnow
+
+    now = utcnow()
+    for label in ("a", "b"):
+        cp.store.execute(
+            """
+            INSERT INTO reviews (
+                id, task_id, reviewer_agent_id, status, reason, evidence_id,
+                created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                new_id("review"),
+                task.id,
+                "agent_" + label,
+                ReviewStatus.RETRACTED.value,
+                "stale",
+                now,
+                now,
+            ),
+        )
+    # Reviewer churn AFTER the retractions: a 'review'-kind evidence row.
+    # Pre-fix this advanced the window and reset the count to 0; post-fix the
+    # window is anchored to the reviewed executor evidence, so the cap fires.
+    cp.add_evidence(
+        task.id,
+        "review",
+        "file://review-churn",
+        "still unsure",
+        "agent_reviewer-a",
+    )
+
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "review_retraction_exhausted", result
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+
+
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
     from tests.conftest import submit_review_verdict
 
