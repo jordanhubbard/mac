@@ -1497,7 +1497,7 @@ def test_deploy_installs_gpu_gen_server_service():
     assert 'MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"' in script
     # GPU + systemd + gen-model gates (non-fatal skips)
     assert "no NVIDIA GPU on $AGENT; skipping (GPU-only)" in script
-    assert 'MAC_AGENT_GEN_MODEL unset; skipping' in script
+    assert 'no MAC_AGENT_GEN_MODEL/AUDIO_MODELS/VIDEO_MODELS set; skipping' in script
     assert 'SUPERVISOR_KIND" != "systemd"' in script
     # CUDA wheel-index knob carried to the remote + used for torch(+vision)
     assert "add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL" in script
@@ -1508,8 +1508,24 @@ def test_deploy_installs_gpu_gen_server_service():
     assert 'export LOCAL_GEN_MODEL="$gen_repo"' in script
     # the unit runs the shipped server in the gen venv on the advertised port
     assert "deploy/local-gen/openai_image_server.py" in script
-    assert "ExecStart=$MAC_HOME/bin/mac-gen-server" in script
+    assert "ExecStart=$MAC_HOME/bin/${wrapper_name}" in script
     assert "TimeoutStartSec=900" in script
+
+
+def test_deploy_installs_audio_and_video_gen_units():
+    """Part B1b: the deploy installs audio (:8190) + video (:8191) gen servers as
+    GPU-gated systemd units alongside image, and carries their model lists."""
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert 'MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"' in script
+    assert 'MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"' in script
+    assert "_install_gen_unit() {" in script
+    assert "deploy/local-gen/audio_server.py" in script
+    assert "deploy/local-gen/video_server.py" in script
+    assert 'MAC_AGENT_GEN_AUDIO_PORT:-8190' in script
+    assert 'MAC_AGENT_GEN_VIDEO_PORT:-8191' in script
+    # the audio/video model lists are carried to the remote agent
+    assert "add_remote_env MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS" in script
+    assert "add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS" in script
 
 
 def test_deploy_rehydrates_agent_footprint():

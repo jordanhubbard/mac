@@ -2007,3 +2007,28 @@ def test_mac_worker_self_install_pip_audits_and_reports_footprint(tmp_path: Path
     again = worker.ensure_pip(["diffusers==0.31"], reason="again")
     assert again.get("skipped") == "already satisfied"
     assert "argv" not in calls
+
+
+def test_register_worker_advertises_multi_modality_routes(monkeypatch):
+    """Part B1b: a GPU agent advertises image + audio + video media routes from
+    its configured model lists, each at its modality's port."""
+    cp = ControlPlane.in_memory()
+    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    monkeypatch.setattr(
+        "mac.hardware.detect_hardware",
+        lambda: {"accelerator": "cuda", "gpu": {"name": "GB10", "vram_mb": 48000},
+                 "memory_mb": 120000, "os": "linux", "arch": "x86_64", "cpu_count": 20},
+    )
+    monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
+    monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
+    monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark, musicgen-small")
+    monkeypatch.setenv("MAC_AGENT_GEN_VIDEO_MODELS", "animatediff")
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
+    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["python"])
+    routes = cp.get_agent(registered["id"]).resources["media_routes"]
+    by_op = {r["op"]: r for r in routes}
+    assert {"image.generate", "audio.tts", "audio.music", "video.generate"} <= set(by_op)
+    assert ":8189/" in by_op["image.generate"]["base_url"]
+    assert ":8190/" in by_op["audio.tts"]["base_url"]
+    assert ":8190/" in by_op["audio.music"]["base_url"]
+    assert ":8191/" in by_op["video.generate"]["base_url"]

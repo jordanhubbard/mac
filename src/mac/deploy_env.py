@@ -560,6 +560,11 @@ def build_mac_env(
         ("MAC_DEPLOY_AGENT_GEN_HOST", "MAC_AGENT_GEN_HOST"),
         ("MAC_DEPLOY_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_BASE_URL"),
         ("MAC_DEPLOY_AGENT_GEN_HF_HOME", "MAC_AGENT_GEN_HF_HOME"),
+        # B1b: audio/video local servers (CSV catalog-id model lists per modality).
+        ("MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS", "MAC_AGENT_GEN_AUDIO_MODELS"),
+        ("MAC_DEPLOY_AGENT_GEN_AUDIO_PORT", "MAC_AGENT_GEN_AUDIO_PORT"),
+        ("MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_MODELS"),
+        ("MAC_DEPLOY_AGENT_GEN_VIDEO_PORT", "MAC_AGENT_GEN_VIDEO_PORT"),
         ("MAC_DEPLOY_AGENT_MEDIA_ROUTES", "MAC_AGENT_MEDIA_ROUTES"),
     ):
         _v = (env.get(_src) or "").strip()

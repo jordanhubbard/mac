@@ -259,7 +259,6 @@ def register_worker(
     #      (or MAC_AGENT_GEN_HOST:MAC_AGENT_GEN_PORT). So a single global
     #      MAC_AGENT_GEN_MODEL can be set fleet-wide and only real GPU agents serve.
     _media_routes_env = (os.environ.get("MAC_AGENT_MEDIA_ROUTES") or "").strip()
-    _gen_model = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
     _routes = None
     if _media_routes_env:
         try:
@@ -268,17 +267,39 @@ def register_worker(
                 _routes = parsed
         except ValueError:
             _routes = None
-    elif _gen_model:
+    else:
+        # Catalog-derived, GPU-gated routes for each configured local gen server:
+        # image (MAC_AGENT_GEN_MODEL @ :8189), and CSV model lists for audio
+        # (MAC_AGENT_GEN_AUDIO_MODELS @ :8190) + video (MAC_AGENT_GEN_VIDEO_MODELS
+        # @ :8191), all on one server per modality. advertised_media_routes
+        # self-gates on hardware, so a CPU agent advertises nothing.
         try:
             from mac.local_gen_catalog import advertised_media_routes
 
-            base = (os.environ.get("MAC_AGENT_GEN_BASE_URL") or "").strip()
-            if not base:
-                gen_host = (os.environ.get("MAC_AGENT_GEN_HOST") or host).strip()
-                gen_port = (os.environ.get("MAC_AGENT_GEN_PORT") or "8189").strip()
-                base = "http://%s:%s/v1" % (gen_host, gen_port)
             hw = resources.get("hardware") if isinstance(resources, dict) else None
-            derived = advertised_media_routes(_gen_model, base, hw)
+            gen_host = (os.environ.get("MAC_AGENT_GEN_HOST") or host).strip()
+
+            def _base(base_env: str, port_env: str, default_port: str) -> str:
+                explicit = (os.environ.get(base_env) or "").strip()
+                if explicit:
+                    return explicit
+                port = (os.environ.get(port_env) or default_port).strip()
+                return "http://%s:%s/v1" % (gen_host, port)
+
+            derived: List[JsonDict] = []
+            _img = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
+            if _img:
+                derived.extend(advertised_media_routes(
+                    _img, _base("MAC_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_PORT", "8189"), hw))
+            for models_env, base_env, port_env, default_port in (
+                ("MAC_AGENT_GEN_AUDIO_MODELS", "MAC_AGENT_GEN_AUDIO_BASE_URL", "MAC_AGENT_GEN_AUDIO_PORT", "8190"),
+                ("MAC_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_BASE_URL", "MAC_AGENT_GEN_VIDEO_PORT", "8191"),
+            ):
+                base = _base(base_env, port_env, default_port)
+                for model_id in (os.environ.get(models_env) or "").split(","):
+                    model_id = model_id.strip()
+                    if model_id:
+                        derived.extend(advertised_media_routes(model_id, base, hw))
             if derived:
                 _routes = derived
         except Exception:  # noqa: BLE001 - advertisement is best-effort
