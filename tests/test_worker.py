@@ -1762,6 +1762,7 @@ def test_register_worker_auto_registers_deployment_fleet(monkeypatch, tmp_path: 
     monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
     monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_rocky")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "missing-fleets.yaml"))
 
     registered = register_worker(
         api,
@@ -1778,7 +1779,9 @@ def test_register_worker_auto_registers_deployment_fleet(monkeypatch, tmp_path: 
     assert fleet.name == "rocky"
     assert fleet.tenant_id == "tenant_rocky"
     assert fleet.status == "active"
-    assert fleet.agent_ids == [registered["id"]]
+    assert fleet.agent_ids == []
+    assert fleet.observed_agent_ids == [registered["id"]]
+    assert fleet.unmanaged_agent_ids == [registered["id"]]
     assert fleet.metadata["source"] == "mac-agent"
     assert fleet.metadata["hub_agent"] == "rocky"
 
@@ -1791,6 +1794,7 @@ def test_register_worker_adds_additional_agents_to_deployment_fleet(monkeypatch,
     monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
     monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "missing-fleets.yaml"))
 
     rocky = register_worker(
         api,
@@ -1808,8 +1812,51 @@ def test_register_worker_adds_additional_agents_to_deployment_fleet(monkeypatch,
     )
 
     fleet = cp.get_fleet("rocky")
-    assert fleet.agent_ids == sorted([rocky["id"], natasha["id"]])
+    assert fleet.agent_ids == []
+    assert fleet.observed_agent_ids == sorted([rocky["id"], natasha["id"]])
+    assert fleet.unmanaged_agent_ids == sorted([rocky["id"], natasha["id"]])
     assert fleet.metadata["hub_agent"] == "rocky"
+
+
+def test_register_worker_configures_membership_when_deployed_registry_lists_agent(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    registry = tmp_path / "fleets.yaml"
+    registry.write_text(
+        """
+version: 1
+fleets:
+  rocky:
+    fleet_name: rocky
+    hub_agent: rocky
+    agents:
+      - name: rocky
+        enabled: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(registry))
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+
+    registered = register_worker(
+        api,
+        hostname="rocky.local",
+        agent_name="rocky",
+        capabilities=["python"],
+        hermes_instance_id="hermes_rocky",
+    )
+
+    fleet = cp.get_fleet("rocky")
+    assert fleet.agent_ids == [registered["id"]]
+    assert fleet.observed_agent_ids == [registered["id"]]
+    assert fleet.unmanaged_agent_ids == []
+    assert fleet.metadata["topology_source"] == str(registry)
 
 
 def test_worker_detects_stale_local_attestation_key():

@@ -56,6 +56,8 @@ interface FleetRecord extends ApiRecord {
   metadata?: JsonObject;
   tenant_id?: string | null;
   agent_ids?: string[];
+  observed_agent_ids?: string[];
+  unmanaged_agent_ids?: string[];
 }
 
 interface TaskRecord extends ApiRecord {
@@ -3074,6 +3076,8 @@ function fleetMembershipSummary(data: DashboardData): string {
 function fleetRecord(fleet: FleetRecord, data: DashboardData): string {
   const agentsById = new Map(data.agents.map((item) => [item.agent.id, item.agent.name]));
   const memberNames = (fleet.agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
+  const observedNames = (fleet.observed_agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
+  const unmanagedNames = (fleet.unmanaged_agent_ids || []).map((agentId) => agentsById.get(agentId) || agentId);
   return `
     <article class="record ${selectedClass(fleet.id)}">
       <div class="record-header">
@@ -3082,12 +3086,16 @@ function fleetRecord(fleet: FleetRecord, data: DashboardData): string {
       </div>
       <div class="chip-row">
         ${chip(fleet.status, fleet.status === "active" ? "good" : "warn")}
-        ${chip(`${(fleet.agent_ids || []).length} agents`, "info")}
+        ${chip(`${(fleet.agent_ids || []).length} configured`, "info")}
+        ${chip(`${(fleet.observed_agent_ids || []).length} observed`, "good")}
+        ${(fleet.unmanaged_agent_ids || []).length ? chip(`${(fleet.unmanaged_agent_ids || []).length} unmanaged`, "warn") : ""}
         ${fleet.tenant_id ? chip(fleet.tenant_id, "info") : chip("global", "info")}
       </div>
       <p class="muted small">${escapeHtml(fleet.description || "")}</p>
       <div class="row-grid">
-        ${field("Members", memberNames.join(", ") || "none")}
+        ${field("Configured", memberNames.join(", ") || "none")}
+        ${field("Observed", observedNames.join(", ") || "none")}
+        ${field("Unmanaged", unmanagedNames.join(", ") || "none")}
         ${field("Metadata", jsonSummary(fleet.metadata))}
       </div>
     </article>

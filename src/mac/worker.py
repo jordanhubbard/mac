@@ -3086,6 +3086,60 @@ def _fleet_auto_registration_enabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _local_fleet_registry_path() -> Path:
+    return Path(
+        os.environ.get("MAC_FLEETS_CONFIG")
+        or os.environ.get("MAC_DEPLOY_FLEETS_CONFIG")
+        or Path.home() / ".mac" / "fleets.yaml"
+    ).expanduser()
+
+
+def _agent_configured_in_local_registry(
+    *,
+    fleet_name: str,
+    agent_name: str,
+    registry_path: Optional[Path] = None,
+) -> bool:
+    path = (registry_path or _local_fleet_registry_path()).expanduser()
+    if not path.exists():
+        return False
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    fleets = data.get("fleets") if isinstance(data, dict) else None
+    if isinstance(fleets, dict):
+        fleet_items = fleets.items()
+    elif isinstance(fleets, list):
+        fleet_items = (
+            (str(item.get("hub_agent") or item.get("fleet_name") or ""), item)
+            for item in fleets
+            if isinstance(item, dict)
+        )
+    else:
+        return False
+    for key, fleet in fleet_items:
+        if not isinstance(fleet, dict):
+            continue
+        names = {
+            str(key or "").strip(),
+            str(fleet.get("fleet_name") or "").strip(),
+            str(fleet.get("name") or "").strip(),
+            str(fleet.get("hub_agent") or "").strip(),
+        }
+        if fleet_name not in names:
+            continue
+        for agent in fleet.get("agents") or []:
+            if not isinstance(agent, dict):
+                continue
+            if str(agent.get("name") or "").strip() != agent_name:
+                continue
+            return bool(agent.get("enabled", True))
+    return False
+
+
 def _get_fleet_or_none(client: MacApiClient, fleet_name: str) -> Optional[JsonDict]:
     try:
         result = client.get("/fleets/%s" % quote(fleet_name, safe=""))
@@ -3102,7 +3156,7 @@ def _ensure_worker_fleet_membership(
     agent_name: str,
     agent_id: str,
 ) -> None:
-    """Ensure deployed agents are visible through the first-class fleet API."""
+    """Record runtime fleet presence without mutating configured topology."""
     if not _fleet_auto_registration_enabled():
         return
     tenant_id = (os.environ.get("MAC_FLEET_TENANT_ID") or "").strip()
@@ -3119,6 +3173,12 @@ def _ensure_worker_fleet_membership(
         "fleet": fleet_name,
         "hub_agent": shared_services_manager or agent_name,
     }
+    configured_by_registry = _agent_configured_in_local_registry(
+        fleet_name=fleet_name,
+        agent_name=agent_name,
+    )
+    if configured_by_registry:
+        metadata["topology_source"] = str(_local_fleet_registry_path())
     client.post(
         "/tenants",
         {
@@ -3138,30 +3198,48 @@ def _ensure_worker_fleet_membership(
                     "status": "active",
                     "metadata": metadata,
                     "tenant_id": tenant_id,
-                    "agent_ids": [agent_id],
+                    "agent_ids": [agent_id] if configured_by_registry else [],
                     "fleet_id": _stable_id("fleet", fleet_name),
                     "actor": "mac-agent",
                 },
             )
-            return
         except MacApiError as exc:
             if "already exists" not in str(exc).lower() and "unique" not in str(exc).lower():
                 raise
             existing = _get_fleet_or_none(client, fleet_name)
     if not existing:
-        return
-    current_members = [str(item) for item in existing.get("agent_ids") or [] if str(item).strip()]
-    next_members = sorted(set(current_members + [agent_id]))
-    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
-    next_metadata = {**existing_metadata, **metadata}
-    client.request(
-        "PUT",
-        "/fleets/%s" % quote(str(existing.get("id") or fleet_name), safe=""),
+        existing = _get_fleet_or_none(client, fleet_name)
+    fleet_key = str((existing or {}).get("id") or fleet_name)
+    if existing and configured_by_registry:
+        current_members = [
+            str(item) for item in existing.get("agent_ids") or [] if str(item).strip()
+        ]
+        next_members = sorted(set(current_members + [agent_id]))
+        if next_members != current_members:
+            client.request(
+                "PUT",
+                "/fleets/%s" % quote(fleet_key, safe=""),
+                {
+                    "status": "active",
+                    "metadata": {
+                        **(
+                            existing.get("metadata")
+                            if isinstance(existing.get("metadata"), dict)
+                            else {}
+                        ),
+                        **metadata,
+                    },
+                    "tenant_id": tenant_id,
+                    "agent_ids": next_members,
+                    "actor": "mac-agent",
+                },
+            )
+    client.post(
+        "/fleets/%s/observed-agents" % quote(fleet_key, safe=""),
         {
-            "status": "active",
-            "metadata": next_metadata,
-            "tenant_id": tenant_id,
-            "agent_ids": next_members,
+            "agent_id": agent_id,
+            "source": "mac-agent",
+            "metadata": metadata,
             "actor": "mac-agent",
         },
     )

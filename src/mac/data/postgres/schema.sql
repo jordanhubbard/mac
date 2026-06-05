@@ -310,6 +310,18 @@ CREATE TABLE IF NOT EXISTS fleet_agents (
 );
 CREATE INDEX IF NOT EXISTS idx_fleet_agents_agent ON fleet_agents (agent_id);
 
+CREATE TABLE IF NOT EXISTS fleet_agent_observations (
+    fleet_id TEXT NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (fleet_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_agent_observations_agent ON fleet_agent_observations (agent_id);
+CREATE INDEX IF NOT EXISTS idx_fleet_agent_observations_last_seen ON fleet_agent_observations (last_seen_at);
+
 CREATE TABLE IF NOT EXISTS fleet_events (
     id TEXT PRIMARY KEY,
     fleet_id TEXT NOT NULL,

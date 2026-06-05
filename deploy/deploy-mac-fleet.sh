@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.$$"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
+SANITIZED_FLEET_REGISTRY="${TMPDIR_LOCAL}/fleets.yaml"
+CONFIGURED_AGENT_IDS=""
 GIT_REV="$(git -C "$ROOT" rev-parse HEAD)"
 GIT_URL="$(git -C "$ROOT" config --get remote.origin.url || true)"
 case "$GIT_URL" in
@@ -343,6 +345,7 @@ fleet_config_query() {
 from __future__ import annotations
 
 import os
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -410,6 +413,30 @@ def text_field(value: Any) -> str:
 def model_field(value: Any) -> str:
     value = text_field(value)
     return "" if value == "*" else value
+
+
+def stable_id(prefix: str, value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).lower()).strip("_")
+    return "%s_%s" % (prefix, safe or "default")
+
+
+def scrub_registry(value: Any) -> Any:
+    if isinstance(value, list):
+        return [scrub_registry(item) for item in value]
+    if not isinstance(value, dict):
+        return deepcopy(value)
+    result: Dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = str(key)
+        key_lc = key_text.lower()
+        if key_lc.endswith("_env") or key_lc.endswith("_env_var"):
+            result[key] = scrub_registry(item)
+            continue
+        if any(fragment in key_lc for fragment in ("password", "secret", "token", "credential", "api_key")):
+            result[key] = "<redacted>"
+            continue
+        result[key] = scrub_registry(item)
+    return result
 
 
 def require_no_pipe(fields: Iterable[str]) -> None:
@@ -538,6 +565,19 @@ shared_services_manager = (
     or hub_agent
 )
 defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
+
+if mode == "sanitized-registry":
+    if registry_present:
+        out = scrub_registry(registry)
+    else:
+        out = scrub_registry({"version": 1, "fleets": {hub_agent: cfg}})
+    print(yaml.safe_dump(out, sort_keys=False), end="")
+    raise SystemExit(0)
+
+if mode == "configured-agent-ids":
+    for agent in agents:
+        print(stable_id("agent", text_field(agent.get("name"))))
+    raise SystemExit(0)
 
 if mode == "hub-agent":
     print(hub_agent)
@@ -788,6 +828,8 @@ fleet_scoped_env() {
 make_archive() {
   mkdir -p "$TMPDIR_LOCAL"
   git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" HEAD
+  fleet_config_query sanitized-registry > "$SANITIZED_FLEET_REGISTRY"
+  chmod 0644 "$SANITIZED_FLEET_REGISTRY"
 }
 
 reconcile_remote_deploy() {
@@ -839,7 +881,7 @@ REMOTE
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix remote_archive ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
@@ -871,6 +913,7 @@ deploy_host() {
     router_providers="" ; router_default_model="" ; router_wildcard_models=""
   fi
   remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
+  remote_registry="/tmp/mac-fleets-${agent}-${TS}.yaml"
   local ssh_parts=() scp_parts=() last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
   while IFS= read -r -d '' item; do scp_parts+=("$item"); done < <(scp_target_args "$target")
@@ -883,6 +926,8 @@ deploy_host() {
 
   echo "==> ${agent}: copying mac release archive"
   scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$ARCHIVE" "${scp_target}:${remote_archive}"
+  echo "==> ${agent}: copying fleet registry"
+  scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
   local remote_env=() remote_cmd
@@ -890,6 +935,8 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_AGENT "$agent"
   add_remote_env MAC_DEPLOY_OS "$os"
   add_remote_env MAC_DEPLOY_ARCHIVE "$remote_archive"
+  add_remote_env MAC_DEPLOY_FLEET_REGISTRY_FILE "$remote_registry"
+  add_remote_env MAC_DEPLOY_CONFIGURED_AGENT_IDS "$CONFIGURED_AGENT_IDS"
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
@@ -996,6 +1043,8 @@ AGENT="${MAC_DEPLOY_AGENT:?}"
 FLEET_NAME="${MAC_DEPLOY_FLEET_NAME:-mac}"
 OS_KIND="${MAC_DEPLOY_OS:?}"
 ARCHIVE="${MAC_DEPLOY_ARCHIVE:?}"
+FLEET_REGISTRY_FILE="${MAC_DEPLOY_FLEET_REGISTRY_FILE:-}"
+CONFIGURED_AGENT_IDS="${MAC_DEPLOY_CONFIGURED_AGENT_IDS:-}"
 DEPLOY_TS="${MAC_DEPLOY_TS:?}"
 DEPLOY_REV="${MAC_DEPLOY_GIT_REV:?}"
 DEPLOY_GIT_URL="${MAC_DEPLOY_GIT_URL:-}"
@@ -1109,6 +1158,12 @@ log() {
   printf '[%s] [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$AGENT" "$*"
 }
 
+if [ -n "$FLEET_REGISTRY_FILE" ] && [ -f "$FLEET_REGISTRY_FILE" ]; then
+  install -m 0644 -D "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"
+  rm -f "$FLEET_REGISTRY_FILE"
+  log "installed fleet registry at $MAC_HOME/fleets.yaml"
+fi
+
 python_bin() {
   local candidate
   for candidate in "${MAC_PYTHON:-}" /opt/homebrew/bin/python3 /usr/local/bin/python3 python3.13 python3.12 python3.11 python3.10 python3 python; do
@@ -1161,7 +1216,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1852,6 +1907,11 @@ agent_id = os.environ.get("MAC_AGENT_ID") or stable_id("agent", agent)
 persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or stable_id("persona", agent)
 instance_id = os.environ.get("MAC_HERMES_INSTANCE_ID") or stable_id("hermes", agent)
 shared_services_manager = os.environ.get("SHARED_SERVICES_MANAGER_AGENT") or agent
+configured_agent_ids = [
+    item.strip()
+    for item in os.environ.get("CONFIGURED_AGENT_IDS", "").split(",")
+    if item.strip()
+]
 cp = ControlPlane()
 cp.register_tenant(
     fleet,
@@ -1876,6 +1936,13 @@ cp.register_hermes_instance(
 )
 if agent == shared_services_manager:
     fleet_metadata = {"source": "mac-deploy", "fleet": fleet, "hub_agent": agent}
+    registered_configured_agent_ids = []
+    for configured_agent_id in configured_agent_ids:
+        try:
+            cp.get_agent(configured_agent_id)
+        except NotFoundError:
+            continue
+        registered_configured_agent_ids.append(configured_agent_id)
     # Idempotent get-or-create. create_fleet derives the id via
     # stable_id("fleet", fleet), which lowercases the name — so a prior deploy of
     # the same fleet under different case (e.g. "jordanh-GKE" vs "jordanh-gke")
@@ -1896,6 +1963,7 @@ if agent == shared_services_manager:
             description="Auto-registered deployment fleet",
             metadata=fleet_metadata,
             tenant_id=tenant_id,
+            agent_ids=registered_configured_agent_ids,
             fleet_id=fleet_fid,
             actor="mac-deploy",
         )
@@ -1905,6 +1973,7 @@ if agent == shared_services_manager:
             status="active",
             tenant_id=tenant_id,
             metadata={**existing_fleet.metadata, **fleet_metadata},
+            agent_ids=registered_configured_agent_ids,
             actor="mac-deploy",
         )
 print("Hermes runtime identity: tenant=%s persona=%s instance=%s agent=%s" % (tenant_id, persona_id, instance_id, agent_id))
@@ -5288,6 +5357,7 @@ main() {
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_token_key="$(fleet_scoped_name MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_tunnel_pubkey="$(fleet_scoped_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_agent")"
+  CONFIGURED_AGENT_IDS="$(fleet_config_query configured-agent-ids | paste -sd, -)"
   deployed_count=0
   echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
   github_review_key_b64="$(ensure_local_github_review_key)"

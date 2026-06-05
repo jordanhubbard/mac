@@ -5700,6 +5700,66 @@ class ControlPlane:
             )
             conn.execute("DELETE FROM fleets WHERE id = ?", (fleet.id,))
 
+    def observe_fleet_agent(
+        self,
+        fleet_id_or_name: str,
+        agent_id: str,
+        *,
+        source: str = "mac-agent",
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: str = "mac-agent",
+    ) -> Fleet:
+        """Record live fleet presence without changing configured membership.
+
+        ``fleet_agents`` is the desired/configured membership reconciled from
+        deployment topology. Agent startup and heartbeat code should use this
+        observation path so unmanaged runtime drift is visible but does not
+        silently become canonical fleet topology.
+        """
+        fleet = self.get_fleet(fleet_id_or_name)
+        self.get_agent(agent_id)
+        now = utcnow()
+        metadata_value = ensure_json_object(metadata)
+        source_value = str(source or "runtime").strip() or "runtime"
+        was_configured = agent_id in set(fleet.agent_ids)
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO fleet_agent_observations (
+                    fleet_id, agent_id, source, metadata, first_seen_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(fleet_id, agent_id) DO UPDATE SET
+                    source = excluded.source,
+                    metadata = excluded.metadata,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    fleet.id,
+                    agent_id,
+                    source_value,
+                    json_dumps(metadata_value),
+                    now,
+                    now,
+                ),
+            )
+            self._record_fleet_event(
+                conn,
+                fleet.id,
+                "fleet.agent_observed",
+                actor,
+                {
+                    "fleet_id": fleet.id,
+                    "fleet_name": fleet.name,
+                    "agent_id": agent_id,
+                    "source": source_value,
+                    "configured": was_configured,
+                    "unmanaged": not was_configured,
+                    "metadata_keys": sorted(metadata_value.keys()),
+                },
+                now,
+            )
+        return self.get_fleet(fleet.id)
+
     def _validated_fleet_agent_ids(self, agent_ids: Iterable[str]) -> List[str]:
         normalized = coerce_list(str(agent_id).strip() for agent_id in (agent_ids or []))
         for agent_id in normalized:
@@ -11814,6 +11874,17 @@ class ControlPlane:
             "SELECT agent_id FROM fleet_agents WHERE fleet_id = ? ORDER BY agent_id",
             (row["id"],),
         )
+        observed_rows = self.store.query_all(
+            """
+            SELECT agent_id
+            FROM fleet_agent_observations
+            WHERE fleet_id = ?
+            ORDER BY agent_id
+            """,
+            (row["id"],),
+        )
+        agent_ids = [member["agent_id"] for member in member_rows]
+        observed_agent_ids = [member["agent_id"] for member in observed_rows]
         return Fleet(
             row["id"],
             row["name"],
@@ -11821,9 +11892,11 @@ class ControlPlane:
             row["status"],
             json_loads(row["metadata"], {}),
             row["tenant_id"],
-            [member["agent_id"] for member in member_rows],
+            agent_ids,
             row["created_at"],
             row["updated_at"],
+            observed_agent_ids,
+            sorted(set(observed_agent_ids) - set(agent_ids)),
         )
 
     def _agent_from_row(self, row: Any) -> Agent:

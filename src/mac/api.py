@@ -290,6 +290,13 @@ class FleetDelete(BaseModel):
     actor: str = "human"
 
 
+class FleetAgentObserve(BaseModel):
+    agent_id: str
+    source: str = "mac-agent"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "mac-agent"
+
+
 class TenantRegister(BaseModel):
     name: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -2363,6 +2370,16 @@ def create_app(
             _ensure_payload_bounded(data["metadata"], "fleet.metadata")
         return cp.update_fleet(fleet_id_or_name, **data).to_dict()
 
+    @app.post("/fleets/{fleet_id_or_name}/observed-agents")
+    def observe_fleet_agent(
+        fleet_id_or_name: str,
+        body: FleetAgentObserve,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.metadata, "fleet_observation.metadata")
+        return cp.observe_fleet_agent(fleet_id_or_name, **_data(body)).to_dict()
+
     @app.delete("/fleets/{fleet_id_or_name}")
     def delete_fleet(
         fleet_id_or_name: str,
@@ -2542,10 +2559,11 @@ def create_app(
         actor = str(data.get("actor") or "human")
         agent = cp.register_agent(**data)
         if fleet_id:
-            fleet = cp.get_fleet(str(fleet_id))
-            cp.update_fleet(
-                fleet.id,
-                agent_ids=sorted(set(fleet.agent_ids + [agent.id])),
+            cp.observe_fleet_agent(
+                str(fleet_id),
+                agent.id,
+                source="agent-registration",
+                metadata={"registration_path": "/agents"},
                 actor=actor,
             )
         payload = agent.to_dict()

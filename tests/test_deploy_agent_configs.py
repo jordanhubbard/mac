@@ -281,6 +281,17 @@ def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
     assert 'description="Auto-registered deployment fleet"' in script
 
 
+def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    assert "fleet_config_query sanitized-registry" in script
+    assert "MAC_DEPLOY_FLEET_REGISTRY_FILE" in script
+    assert 'install -m 0644 -D "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"' in script
+    assert "fleet_config_query configured-agent-ids" in script
+    assert "MAC_DEPLOY_CONFIGURED_AGENT_IDS" in script
+    assert "registered_configured_agent_ids" in script
+
+
 def test_fleet_deploy_drain_agent_lookup_does_not_pipe_json_into_python_stdin():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     agent_id_for_drain = script.split("agent_id_for_drain() {", 1)[1].split(

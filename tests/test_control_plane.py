@@ -7180,6 +7180,30 @@ def test_replace_fleet_members_empty_is_delete_only(cp):
     assert conn.calls[0][0].startswith("DELETE FROM fleet_agents")
 
 
+def test_observed_fleet_agents_do_not_mutate_configured_membership(cp):
+    configured = register_agent(cp, "configured", ["python"])
+    unmanaged = register_agent(cp, "unmanaged", ["review"])
+    fleet = cp.create_fleet("runtime", agent_ids=[configured.id], actor="deploy")
+
+    observed = cp.observe_fleet_agent(
+        fleet.id,
+        unmanaged.id,
+        source="mac-agent",
+        metadata={"fleet": "runtime"},
+        actor="mac-agent",
+    )
+
+    assert observed.agent_ids == [configured.id]
+    assert observed.observed_agent_ids == [unmanaged.id]
+    assert observed.unmanaged_agent_ids == [unmanaged.id]
+    events = cp.list_events(subject_type="fleet", subject_id=fleet.id)
+    observed_event = next(
+        event for event in events if event["event_type"] == "fleet.agent_observed"
+    )
+    assert observed_event["detail"]["configured"] is False
+    assert observed_event["detail"]["unmanaged"] is True
+
+
 def test_events_filter_by_subject_returns_only_matching_stream(cp):
     rollout = create_verified_rollout(cp, "8.1")
     cp.advance_rollout(rollout.id, "start_canary", "human")

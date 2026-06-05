@@ -524,6 +524,8 @@ class Fleet:
     agent_ids: List[str]
     created_at: str
     updated_at: str
+    observed_agent_ids: List[str] = field(default_factory=list)
+    unmanaged_agent_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

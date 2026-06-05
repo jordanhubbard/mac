@@ -1002,7 +1002,7 @@ def test_registration_payloads_are_size_capped():
     assert task_response.status_code == 400
 
 
-def test_agent_registration_can_attach_created_agent_to_existing_fleet():
+def test_agent_registration_observes_created_agent_in_existing_fleet():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 
     machine = client.post("/machines", json={"hostname": "host-1"}).json()
@@ -1022,7 +1022,39 @@ def test_agent_registration_can_attach_created_agent_to_existing_fleet():
 
     assert agent["id"] == "agent_rocky"
     refreshed = client.get("/fleets/%s" % fleet["id"]).json()
-    assert refreshed["agent_ids"] == ["agent_rocky"]
+    assert refreshed["agent_ids"] == []
+    assert refreshed["observed_agent_ids"] == ["agent_rocky"]
+    assert refreshed["unmanaged_agent_ids"] == ["agent_rocky"]
+
+
+def test_fleet_observed_agents_endpoint_does_not_change_configured_members():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    machine = client.post("/machines", json={"hostname": "host-1"}).json()
+    configured = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "configured", "agent_id": "agent_configured"},
+    ).json()
+    unmanaged = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "unmanaged", "agent_id": "agent_unmanaged"},
+    ).json()
+    fleet = client.post(
+        "/fleets",
+        json={"name": "mac", "agent_ids": [configured["id"]]},
+    ).json()
+
+    observed = client.post(
+        "/fleets/mac/observed-agents",
+        json={"agent_id": unmanaged["id"], "source": "test"},
+    )
+
+    assert observed.status_code == 200, observed.text
+    body = observed.json()
+    assert body["agent_ids"] == [configured["id"]]
+    assert body["observed_agent_ids"] == [unmanaged["id"]]
+    assert body["unmanaged_agent_ids"] == [unmanaged["id"]]
+    assert client.get("/fleets/%s" % fleet["id"]).json()["agent_ids"] == [configured["id"]]
 
 
 def test_fastapi_serves_dashboard_shell_without_api_token():
