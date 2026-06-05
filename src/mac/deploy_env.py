@@ -568,6 +568,10 @@ def build_mac_env(
         ("MAC_DEPLOY_AGENT_MEDIA_ROUTES", "MAC_AGENT_MEDIA_ROUTES"),
         # media-01 service-role election: ops the fleet wants held (hub seeds these).
         ("MAC_DEPLOY_SERVICE_ROLE_OPS", "MAC_SERVICE_ROLE_OPS"),
+        # Git credential for agents to clone/push private repos (gitops reads
+        # GH_TOKEN; mac.env is sourced after the pod env so this overrides a stale
+        # platform-injected token). 600-perm file, same as MAC_API_TOKEN.
+        ("MAC_DEPLOY_GH_TOKEN", "GH_TOKEN"),
     ):
         _v = (env.get(_src) or "").strip()
         if _v:

@@ -1542,3 +1542,18 @@ def test_deploy_rehydrates_agent_footprint():
     # disable knob + npm bin on PATH for self-installed CLI tools
     assert "MAC_AGENT_FOOTPRINT_REINSTALL" in script
     assert "$HOME/.mac/node_modules/.bin" in script
+
+
+def test_build_mac_env_passes_through_gh_token(tmp_path):
+    """Agents get a git credential: MAC_DEPLOY_GH_TOKEN -> GH_TOKEN in mac.env
+    (overrides any stale platform-injected token, since the wrapper sources
+    mac.env after the pod env)."""
+    values = build_mac_env(
+        {}, deploy_env_config(tmp_path, fleet_name="gke"),
+        environ={"MAC_DEPLOY_GH_TOKEN": "ghp_test123"},
+    )
+    assert values["GH_TOKEN"] == "ghp_test123"
+    bare = build_mac_env({}, deploy_env_config(tmp_path, fleet_name="gke2"), environ={})
+    assert "GH_TOKEN" not in bare
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert "add_remote_env MAC_DEPLOY_GH_TOKEN" in script
