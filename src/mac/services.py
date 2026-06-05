@@ -13586,7 +13586,12 @@ class ControlPlane:
         """A capable host declares the ops it's willing+able to run; the hub
         renews its still-willing held ops, releases ones it no longer wants, and
         claims new eligible ops up to the agent's capacity (so ops spread to
-        hosts with headroom). Returns the authoritative held-op set."""
+        hosts with headroom). Returns the authoritative held-op set.
+
+        Self-driving: worker syncs (every ~30s) seed desired roles + reap stale
+        claims, so the subsystem doesn't depend on a periodic /dispatch/tick."""
+        self._ensure_service_roles_seeded()
+        self.service_roles.expire_service_claims()
         agent = self.get_agent(agent_id)
         willing = {str(op).strip() for op in (willing_ops or []) if str(op).strip()}
         capacity = self._agent_capacity(agent)
@@ -13639,18 +13644,24 @@ class ControlPlane:
             "capacity": capacity,
         }
 
+    def _ensure_service_roles_seeded(self) -> None:
+        """Idempotently seed the desired ops from MAC_SERVICE_ROLE_OPS (opt-in;
+        unset = no election). Driven by both worker syncs and the tick."""
+        ops_env = (os.environ.get("MAC_SERVICE_ROLE_OPS") or "").strip()
+        if not ops_env:
+            return
+        wanted = [o.strip() for o in ops_env.split(",") if o.strip()]
+        existing = {r.op for r in self.service_roles.desired_services(tenant_id=None)}
+        if any(o not in existing for o in wanted):
+            self.seed_service_roles(wanted)
+
     def reconcile_service_roles(self) -> JsonDict:
         """Periodic (called from tick): seed desired ops from MAC_SERVICE_ROLE_OPS
         (opt-in; unset = no election, agents advertise as before), expire silent/
         overloaded holders, drop offline holders, and emit a provisioning demand
         signal for any desired op with zero live holders ("the cluster needs a
         <op> agent")."""
-        ops_env = (os.environ.get("MAC_SERVICE_ROLE_OPS") or "").strip()
-        if ops_env:
-            wanted = [o.strip() for o in ops_env.split(",") if o.strip()]
-            existing = {r.op for r in self.service_roles.desired_services(tenant_id=None)}
-            if any(o not in existing for o in wanted):
-                self.seed_service_roles(wanted)
+        self._ensure_service_roles_seeded()
         expired = self.service_roles.expire_service_claims()
         requested: List[str] = []
         for role in self.service_roles.desired_services(tenant_id=None):

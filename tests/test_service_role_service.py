@@ -119,3 +119,14 @@ def test_offline_holder_is_reaped_by_reconcile():
     assert cp.service_roles.held_ops_for_agent(a.id) == ["image.generate"]
     cp.heartbeat_agent(a.id, status="offline")  # agent goes offline -> claims expired
     assert cp.service_roles.held_ops_for_agent(a.id) == []
+
+
+def test_sync_auto_seeds_roles_from_env(monkeypatch):
+    """Self-driving: a worker sync seeds desired roles from MAC_SERVICE_ROLE_OPS
+    (no /dispatch/tick needed) and then claims them."""
+    cp = ControlPlane.in_memory()  # no explicit _seed
+    monkeypatch.setenv("MAC_SERVICE_ROLE_OPS", "image.generate, audio.tts")
+    a = _gpu_agent(cp, "natasha", capacity=5)
+    res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
+    assert set(res["held"]) == {"image.generate", "audio.tts"}
+    assert {r.op for r in cp.service_roles.desired_services()} >= {"image.generate", "audio.tts"}
