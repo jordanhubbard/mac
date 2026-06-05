@@ -471,6 +471,7 @@ def cmd_agent_hardware(args: argparse.Namespace) -> None:
     hub-derived gen capability (can this agent host media generation, and is it
     currently advertising a gen endpoint)."""
     from mac.hardware import summarize
+    from mac.local_gen_catalog import models_for_hardware
     from mac.media_routing import is_gen_capable
 
     rows = []
@@ -480,10 +481,13 @@ def cmd_agent_hardware(args: argparse.Namespace) -> None:
         hardware = resources.get("hardware") if isinstance(resources, dict) else None
         serving = bool(isinstance(resources, dict) and resources.get("media_routes"))
         capable = is_gen_capable(hardware) if isinstance(hardware, dict) else False
+        # Routable-today (image) catalog models this agent's hardware can run.
+        runnable = [m.id for m in models_for_hardware(hardware) if m.routable] if isinstance(hardware, dict) else []
         rows.append({
             "agent": data.get("name") or data.get("id"),
             "accelerator": (hardware or {}).get("accelerator", "unknown") if isinstance(hardware, dict) else "unreported",
             "gen": ("serving" if serving else "capable") if capable else ("serving(cpu)" if serving else "no"),
+            "runnable_models": runnable,
             "hardware": summarize(hardware) if isinstance(hardware, dict) else "(no hardware reported — agent predates self-reporting; redeploy to populate)",
         })
     _print(rows)
