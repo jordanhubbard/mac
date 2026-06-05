@@ -594,6 +594,10 @@ class CommandAuditCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentInstalledPackagesUpdate(BaseModel):
+    installed_packages: Dict[str, Any] = Field(default_factory=dict)
+
+
 class MessageCreate(BaseModel):
     sender_agent_id: str
     recipient_agent_id: Optional[str] = None
@@ -3107,6 +3111,17 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.assert_actor(agent_id)  # mac-wcfy
         return cp.record_command_audit(agent_id=agent_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/installed-packages")
+    def update_agent_installed_packages(
+        agent_id: str,
+        body: AgentInstalledPackagesUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # an agent reports only its OWN footprint
+        return cp.update_agent_installed_packages(
+            agent_id, body.installed_packages, actor=agent_id
+        ).to_dict()
 
     @app.get("/command-audit")
     def list_command_audit(

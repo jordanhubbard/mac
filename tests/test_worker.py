@@ -1905,3 +1905,58 @@ def test_mac_worker_completes_task_even_if_observability_writes_fail(tmp_path: P
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
     assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+
+
+def test_self_install_name_parsers():
+    assert MacWorker._pip_base_name("diffusers==0.31") == "diffusers"
+    assert MacWorker._pip_base_name("torch>=2 ; python_version>'3'") == "torch"
+    assert MacWorker._pip_base_name("Pillow_SIMD") == "pillow-simd"
+    assert MacWorker._npm_base_name("@scope/pkg@1.2.3") == "@scope/pkg"
+    assert MacWorker._npm_base_name("left-pad@1.0") == "left-pad"
+
+
+def test_mac_worker_self_install_pip_audits_and_reports_footprint(tmp_path: Path, monkeypatch):
+    """Part C1+C2 round-trip: ensure_pip rejects flag-smuggling, runs pip in the
+    agent venv, audits the command, reports the footprint to the hub, and is
+    idempotent (skips an already-satisfied spec)."""
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        lambda *a: None,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    monkeypatch.setenv("MAC_HOME", str(tmp_path / "machome"))
+    monkeypatch.setattr(worker, "_pip_installed", lambda py: set())
+
+    calls: Dict[str, Any] = {}
+
+    class _Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        return _Result()
+
+    monkeypatch.setattr("mac.worker.subprocess.run", fake_run)
+
+    result = worker.ensure_pip(["diffusers==0.31", "-rmalicious.txt"], reason="need diffusers")
+    assert result["ok"] is True
+    assert "diffusers==0.31" in calls["argv"]
+    assert "-rmalicious.txt" not in calls["argv"]  # flag-smuggling rejected
+
+    # footprint persisted on the hub (exercises the C2 endpoint + column)
+    footprint = cp.get_agent(agent.id).installed_packages
+    assert any(e["name"] == "diffusers" for e in footprint["pip"])
+
+    # idempotency: report it as already installed -> no subprocess invocation
+    monkeypatch.setattr(worker, "_pip_installed", lambda py: {"diffusers"})
+    calls.clear()
+    again = worker.ensure_pip(["diffusers==0.31"], reason="again")
+    assert again.get("skipped") == "already satisfied"
+    assert "argv" not in calls

@@ -8180,3 +8180,24 @@ def test_no_publication_target_is_silenced():
     from mac.observability_service import _VERBOSE_POLL_LOG_NAMES
 
     assert "workflow.default_review.no_publication_target" in _VERBOSE_POLL_LOG_NAMES
+
+
+def test_agent_installed_packages_footprint_persists_and_survives_register(cp):
+    """Part C: a self-installed footprint is recorded per-agent, returned by
+    get_agent, and survives re-registration (the register UPSERT must not clobber
+    it). This is the persistent 'default footprint' deploys re-hydrate."""
+    machine = cp.register_machine("gpu-host", resources={"cpu": 4})
+    agent = cp.register_agent(machine.id, "gpu-worker", capabilities=["python"], agent_id="agent_gpu1")
+    fp = {
+        "pip": [{"name": "diffusers", "spec": "diffusers==0.31", "installed_at": "t"}],
+        "npm": [{"name": "left-pad", "spec": "left-pad@1.0", "installed_at": "t"}],
+        "updated_at": "t",
+    }
+    updated = cp.update_agent_installed_packages(agent.id, fp, actor="agent_gpu1")
+    assert updated.installed_packages == fp
+    assert cp.get_agent(agent.id).installed_packages["pip"][0]["name"] == "diffusers"
+    # re-register the SAME agent with new capabilities -> footprint preserved.
+    again = cp.register_agent(machine.id, "gpu-worker", capabilities=["python", "gpu"], agent_id="agent_gpu1")
+    assert again.id == agent.id
+    assert cp.get_agent(agent.id).installed_packages == fp
+    assert "gpu" in cp.get_agent(agent.id).capabilities
