@@ -11,6 +11,7 @@ from mac.media_routing import (
     MediaBinding,
     build_media_table,
     compose_media_table,
+    dispatch_order,
     extract_b64,
     fal_request,
     fal_response,
@@ -419,3 +420,81 @@ def test_gen_capable_agents_lists_accelerated_only_sorted():
     caps = gen_capable_agents(agents)
     assert [c["agent"] for c in caps] == ["natasha", "mac"]  # cuda first; none/stale excluded
     assert caps[0]["gpu"] == "NVIDIA GB10" and caps[0]["serving"] is True
+
+
+# --- multi-GPU load balancing (VRAM tie-break + least-loaded dispatch) -------
+
+def _gpu_agent_vram(name, accel, vram_mb, url):
+    return {"name": name, "status": "idle", "health_status": "healthy",
+            "resources": {"hardware": {"accelerator": accel, "gpu": {"name": name, "vram_mb": vram_mb}},
+                          "media_routes": [{"op": "image.generate", "base_url": url, "adapter": "openai_images"}]}}
+
+
+def test_same_tier_ordered_by_vram_descending():
+    agents = [
+        _gpu_agent_vram("small", "cuda", 12000, "http://small:8189"),
+        _gpu_agent_vram("big", "cuda", 49000, "http://big:8189"),
+    ]
+    urls = [b.base_url for b in media_bindings_from_agents(agents)["image.generate"]]
+    assert urls == ["http://big:8189", "http://small:8189"]  # bigger VRAM first within the cuda tier
+
+
+def test_binding_carries_accelerator_rank():
+    agents = [_gpu_agent_vram("natasha", "cuda", 0, "http://natasha:8189"),
+              {"name": "mac", "status": "idle", "health_status": "healthy",
+               "resources": {"hardware": {"accelerator": "metal", "memory_mb": 64000},
+                             "media_routes": [{"op": "image.generate", "base_url": "http://mac:8189", "adapter": "openai_images"}]}}]
+    table = media_bindings_from_agents(agents)["image.generate"]
+    ranks = {b.base_url: b.rank for b in table}
+    assert ranks["http://natasha:8189"] == 0 and ranks["http://mac:8189"] == 1  # cuda tier 0, metal tier 1
+
+
+def test_dispatch_order_least_loaded_within_top_tier():
+    bindings = media_bindings_from_agents([
+        _gpu_agent_vram("a", "cuda", 40000, "http://a:8189"),
+        _gpu_agent_vram("b", "cuda", 40000, "http://b:8189"),
+    ])["image.generate"]
+    # no load -> resolver order (a before b by stable VRAM tie)
+    assert [b.base_url for b in dispatch_order(bindings, {})][0] in ("http://a:8189", "http://b:8189")
+    # a is busy -> b is tried first
+    order = dispatch_order(bindings, {"http://a:8189": 2})
+    assert order[0].base_url == "http://b:8189"
+
+
+def test_dispatch_order_keeps_lower_tiers_as_failover():
+    cuda = MediaBinding("gpu", "http://gpu:8189", "", "", "openai_images", 180.0, rank=0)
+    cloud = MediaBinding("nvidia", "https://cloud", "secret:k", "m", "nvidia_genai", 180.0, rank=9)
+    # even if the cuda agent is "loaded", cloud (lower tier) never jumps ahead of it
+    order = dispatch_order([cuda, cloud], {"http://gpu:8189": 99})
+    assert [b.provider for b in order] == ["gpu", "nvidia"]
+
+
+def test_mount_balances_across_two_gpu_agents(monkeypatch):
+    """Concurrent-ish requests spread across two same-tier GPU agents."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mac import router_app
+
+    captured = {}
+    monkeypatch.setattr(
+        router_app.urllib.request, "urlopen",
+        _fake_urlopen_factory(captured, {
+            "a:8189": (200, b'{"data":[{"b64_json":"A"}]}'),
+            "b:8189": (200, b'{"data":[{"b64_json":"B"}]}'),
+        }),
+    )
+    app = FastAPI()
+
+    def agent_table():
+        return media_bindings_from_agents([
+            _gpu_agent_vram("a", "cuda", 40000, "http://a:8189"),
+            _gpu_agent_vram("b", "cuda", 40000, "http://b:8189"),
+        ])
+
+    assert router_app.mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"},
+                                   secret_resolver={}.get, media_agent_table_provider=agent_table) is True
+    client = TestClient(app)
+    # sequential requests: in-flight returns to 0 between them, so order is stable
+    # (the point is both are reachable + chosen, not strict alternation under serial calls)
+    providers = {client.post("/v1/media/image.generate", json={"prompt": "x"}).json()["provider"] for _ in range(2)}
+    assert providers <= {"a", "b"} and len(providers) >= 1

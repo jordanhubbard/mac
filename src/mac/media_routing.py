@@ -52,6 +52,7 @@ class MediaBinding(NamedTuple):
     adapter: str  # adapter id (see ADAPTERS)
     timeout: float
     auth_scheme: str = "Bearer"  # Authorization scheme; FAL uses "Key", OpenAI/NVIDIA "Bearer"
+    rank: int = 9  # accelerator tier for load-balancing (0=cuda/rocm, 1=metal, 9=cpu/cloud)
 
 
 # An adapter is a (to_provider, from_provider) pair:
@@ -385,16 +386,27 @@ def _agent_accelerator(agent: Mapping[str, Any]) -> str:
     return "unknown"
 
 
+def _agent_vram_budget(agent: Mapping[str, Any]) -> int:
+    """VRAM budget for tie-breaking same-tier GPUs: discrete VRAM if reported,
+    else system RAM (unified-memory devices report no discrete VRAM)."""
+    resources = agent.get("resources")
+    hardware = resources.get("hardware") if isinstance(resources, Mapping) else {}
+    if not isinstance(hardware, Mapping):
+        return 0
+    gpu = hardware.get("gpu") if isinstance(hardware.get("gpu"), Mapping) else {}
+    return int(gpu.get("vram_mb") or 0) or int(hardware.get("memory_mb") or 0)
+
+
 def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str, List[MediaBinding]]:
     """Compose ``{op: [MediaBinding]}`` from live agent registrations.
 
-    Each routable agent's ``resources["media_routes"]`` contributes bindings.
-    They are ordered by **reported hardware first** (CUDA/ROCm → Metal → CPU/
-    unknown), then by the route's declared ``priority`` — so the hub prefers the
-    agent with the best accelerator without any operator config. Offline/
-    unhealthy agents are skipped. Returns ``{}`` when no agent advertises.
+    Each routable agent's ``resources["media_routes"]`` contributes bindings,
+    ordered by **reported hardware**: accelerator tier first (CUDA/ROCm → Metal →
+    CPU/unknown), then **VRAM** (bigger GPU first), then the route's declared
+    ``priority``. Each binding carries its accelerator ``rank`` so the dispatcher
+    can load-balance within a tier. Offline/unhealthy agents are skipped.
     """
-    staged: Dict[str, List[Tuple[int, int, MediaBinding]]] = {}
+    staged: Dict[str, List[Tuple[int, int, int, MediaBinding]]] = {}
     for agent in agents:
         if not isinstance(agent, Mapping) or not _agent_is_routable(agent):
             continue
@@ -403,6 +415,7 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
         if not isinstance(routes, list):
             continue
         accel_rank = hardware_gen_rank(_agent_accelerator(agent))
+        vram = _agent_vram_budget(agent)
         for route in routes:
             if not isinstance(route, Mapping):
                 continue
@@ -418,12 +431,36 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
                 adapter=str(route.get("adapter") or "passthrough"),
                 timeout=_float(route.get("timeout"), 180.0),
                 auth_scheme=str(route.get("auth_scheme") or "Bearer"),
+                rank=accel_rank,
             )
-            staged.setdefault(op, []).append((accel_rank, _int(route.get("priority"), 0), binding))
+            staged.setdefault(op, []).append((accel_rank, -vram, _int(route.get("priority"), 0), binding))
+    # rank asc, VRAM desc (note -vram), priority asc
     return {
-        op: [b for _, _, b in sorted(items, key=lambda r: (r[0], r[1]))]
+        op: [b for _, _, _, b in sorted(items, key=lambda r: (r[0], r[1], r[2]))]
         for op, items in staged.items()
     }
+
+
+def dispatch_order(bindings: List[MediaBinding], inflight: Optional[Mapping[str, int]] = None) -> List[MediaBinding]:
+    """Order bindings for a single request with **least-loaded load balancing**
+    within the top accelerator tier.
+
+    The leading bindings sharing the best (lowest) ``rank`` are a pool of
+    equivalent GPUs; among them the one with the fewest in-flight requests is
+    tried first (ties keep the VRAM/priority order from the resolver), so
+    concurrent requests spread across same-tier GPUs instead of hammering one.
+    Lower tiers (and the static cloud fallback) keep their order and follow as
+    failover. ``inflight`` maps ``base_url`` → current in-flight count.
+    """
+    if not bindings:
+        return []
+    inflight = inflight or {}
+    top_rank = min(b.rank for b in bindings)
+    top = [b for b in bindings if b.rank == top_rank]
+    rest = [b for b in bindings if b.rank != top_rank]
+    # stable sort by in-flight → preserves resolver order (vram/priority) on ties
+    top_balanced = sorted(top, key=lambda b: inflight.get(b.base_url, 0))
+    return top_balanced + rest
 
 
 def gen_capable_agents(agents: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:

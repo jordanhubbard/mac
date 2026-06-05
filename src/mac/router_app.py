@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -846,13 +847,18 @@ def mount_media_router(
     (:func:`mac.media_routing.build_media_table`) as cloud fallback. So a GPU
     agent that announces a capability is used with zero operator config, and a
     down one falls over automatically. No-op when neither side can bind anything."""
-    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table
+    from mac.media_routing import ADAPTERS, build_media_table, compose_media_table, dispatch_order
 
     env = os.environ if env is None else env
     static_table = build_media_table(env)
     if not static_table and agent_table_provider is None:
         return False
     from fastapi.responses import JSONResponse
+
+    # In-flight request counts per upstream (base_url), for least-loaded balancing
+    # across same-tier GPUs. Process-local (the single hub router process).
+    inflight: Dict[str, int] = {}
+    inflight_lock = threading.Lock()
 
     @app.post("/v1/media/{op}")
     def _media(op: str, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
@@ -869,6 +875,10 @@ def mount_media_router(
                            "type": "not_configured"}},
                 status_code=404,
             )
+        # Least-loaded across the top accelerator tier (snapshot in-flight under
+        # the lock), then VRAM/priority order, then lower tiers + cloud failover.
+        with inflight_lock:
+            ordered = dispatch_order(bindings, dict(inflight))
         # A caller may request a specific model; it overrides the binding's
         # default but stays confined to the binding's fixed upstream host — it's
         # a model id, never a path (`..`/leading-slash rejected so it can't
@@ -878,15 +888,21 @@ def mount_media_router(
             requested_model = ""
         last_status: int = 502
         last_body: Dict[str, Any] = {"error": {"message": "no binding produced a response"}}
-        for binding in bindings:
+        for binding in ordered:
             to_provider, from_provider = ADAPTERS.get(binding.adapter, ADAPTERS["passthrough"])
             model = requested_model or binding.model
             path, provider_body = to_provider(op, body, model)
             provider = Provider(name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec)
-            status, resp = urllib_forwarder(
-                provider, path, provider_body, timeout=binding.timeout,
-                secret_resolver=secret_resolver, auth_scheme=binding.auth_scheme,
-            )
+            with inflight_lock:
+                inflight[binding.base_url] = inflight.get(binding.base_url, 0) + 1
+            try:
+                status, resp = urllib_forwarder(
+                    provider, path, provider_body, timeout=binding.timeout,
+                    secret_resolver=secret_resolver, auth_scheme=binding.auth_scheme,
+                )
+            finally:
+                with inflight_lock:
+                    inflight[binding.base_url] = max(0, inflight.get(binding.base_url, 0) - 1)
             canonical = from_provider(status, resp)
             if status and 200 <= status < 300:
                 return JSONResponse(
