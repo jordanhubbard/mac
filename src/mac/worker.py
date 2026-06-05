@@ -219,6 +219,41 @@ class SubprocessExecutor:
             pass
 
 
+def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List[JsonDict]:
+    """All media routes this host is configured (willing) to serve: catalog-
+    derived + GPU-gated (advertised_media_routes returns [] off-GPU). One server
+    per modality — image :8189, audio :8190, video :8191. Shared by registration
+    and the service-claim sync (advertise-on-hold)."""
+    try:
+        from mac.local_gen_catalog import advertised_media_routes
+    except Exception:  # noqa: BLE001
+        return []
+    gen_host = (os.environ.get("MAC_AGENT_GEN_HOST") or host).strip()
+
+    def _base(base_env: str, port_env: str, default_port: str) -> str:
+        explicit = (os.environ.get(base_env) or "").strip()
+        if explicit:
+            return explicit
+        port = (os.environ.get(port_env) or default_port).strip()
+        return "http://%s:%s/v1" % (gen_host, port)
+
+    routes: List[JsonDict] = []
+    img = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
+    if img:
+        routes.extend(advertised_media_routes(
+            img, _base("MAC_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_PORT", "8189"), hardware))
+    for models_env, base_env, port_env, default_port in (
+        ("MAC_AGENT_GEN_AUDIO_MODELS", "MAC_AGENT_GEN_AUDIO_BASE_URL", "MAC_AGENT_GEN_AUDIO_PORT", "8190"),
+        ("MAC_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_BASE_URL", "MAC_AGENT_GEN_VIDEO_PORT", "8191"),
+    ):
+        base = _base(base_env, port_env, default_port)
+        for model_id in (os.environ.get(models_env) or "").split(","):
+            model_id = model_id.strip()
+            if model_id:
+                routes.extend(advertised_media_routes(model_id, base, hardware))
+    return routes
+
+
 def register_worker(
     client: MacApiClient,
     hostname: Optional[str] = None,
@@ -268,42 +303,13 @@ def register_worker(
         except ValueError:
             _routes = None
     else:
-        # Catalog-derived, GPU-gated routes for each configured local gen server:
-        # image (MAC_AGENT_GEN_MODEL @ :8189), and CSV model lists for audio
-        # (MAC_AGENT_GEN_AUDIO_MODELS @ :8190) + video (MAC_AGENT_GEN_VIDEO_MODELS
-        # @ :8191), all on one server per modality. advertised_media_routes
-        # self-gates on hardware, so a CPU agent advertises nothing.
-        try:
-            from mac.local_gen_catalog import advertised_media_routes
-
-            hw = resources.get("hardware") if isinstance(resources, dict) else None
-            gen_host = (os.environ.get("MAC_AGENT_GEN_HOST") or host).strip()
-
-            def _base(base_env: str, port_env: str, default_port: str) -> str:
-                explicit = (os.environ.get(base_env) or "").strip()
-                if explicit:
-                    return explicit
-                port = (os.environ.get(port_env) or default_port).strip()
-                return "http://%s:%s/v1" % (gen_host, port)
-
-            derived: List[JsonDict] = []
-            _img = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
-            if _img:
-                derived.extend(advertised_media_routes(
-                    _img, _base("MAC_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_PORT", "8189"), hw))
-            for models_env, base_env, port_env, default_port in (
-                ("MAC_AGENT_GEN_AUDIO_MODELS", "MAC_AGENT_GEN_AUDIO_BASE_URL", "MAC_AGENT_GEN_AUDIO_PORT", "8190"),
-                ("MAC_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_BASE_URL", "MAC_AGENT_GEN_VIDEO_PORT", "8191"),
-            ):
-                base = _base(base_env, port_env, default_port)
-                for model_id in (os.environ.get(models_env) or "").split(","):
-                    model_id = model_id.strip()
-                    if model_id:
-                        derived.extend(advertised_media_routes(model_id, base, hw))
-            if derived:
-                _routes = derived
-        except Exception:  # noqa: BLE001 - advertisement is best-effort
-            _routes = None
+        # Catalog-derived, GPU-gated routes for each configured local gen server.
+        # The worker's service-claim sync (advertise-on-hold) narrows this to the
+        # ops the agent actually HOLDS; here we stamp the willing set initially.
+        hw = resources.get("hardware") if isinstance(resources, dict) else None
+        derived = _build_willing_media_routes(host, hw)
+        if derived:
+            _routes = derived
     if _routes:
         resources = {**(resources or {}), "media_routes": _routes}
     machine = client.post(
@@ -475,6 +481,7 @@ class MacWorker:
 
     def run_once(self) -> WorkerRunResult:
         self._heartbeat()
+        self._maybe_sync_service_claims()
         control_result = self._process_agentbus_control()
         if control_result and control_result.get("restart_requested"):
             self.stop()
@@ -2269,6 +2276,56 @@ class MacWorker:
         finally:
             lock.close()
         return result
+
+    def _maybe_sync_service_claims(self) -> None:
+        # media-01: claim/renew the media service-roles this host is willing to
+        # run, and advertise only the ops it currently HOLDS. Throttled + fully
+        # best-effort (never breaks the run loop).
+        import time as _t
+
+        now = _t.monotonic()
+        last = getattr(self, "_last_service_sync", None)
+        if last is not None and (now - last) < 30.0:
+            return
+        self._last_service_sync = now
+        try:
+            self._sync_service_claims()
+        except Exception:  # noqa: BLE001 - service sync must never break the loop
+            pass
+
+    def _sync_service_claims(self) -> None:
+        host = (os.environ.get("MAC_AGENT_GEN_HOST") or socket.gethostname()).strip()
+        try:
+            agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
+        except Exception:  # noqa: BLE001
+            return
+        base = dict((agent or {}).get("resources") or {})
+        all_routes = _build_willing_media_routes(host, base.get("hardware"))
+        willing_ops = sorted({str(r.get("op")) for r in all_routes if r.get("op")})
+        if not willing_ops:
+            return
+        try:
+            res = self.client.post(
+                "/agents/%s/service-claims/sync" % quote(self.agent_id, safe=""),
+                {"willing_ops": willing_ops},
+            )
+        except Exception:  # noqa: BLE001
+            return
+        held = set((res or {}).get("held") or [])
+        managed = set((res or {}).get("managed") or [])
+        # advertise-on-hold: advertise an op if we HOLD its claim, OR if it isn't
+        # managed by a service_role at all (back-compat: no roles seeded -> advertise
+        # everything we're willing+able to serve, as before).
+        base["media_routes"] = [
+            r for r in all_routes if r.get("op") in held or r.get("op") not in managed
+        ]
+        try:
+            self.client.post(
+                "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
+                {"status": "idle", "resources": base},
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _heartbeat(self) -> None:
         payload: JsonDict = {"status": "idle"}
