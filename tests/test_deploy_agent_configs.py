@@ -1488,9 +1488,13 @@ def test_deploy_installs_gpu_gen_server_service():
     assert "no NVIDIA GPU on $AGENT; skipping (GPU-only)" in script
     assert 'MAC_AGENT_GEN_MODEL unset; skipping' in script
     assert 'SUPERVISOR_KIND" != "systemd"' in script
-    # CUDA wheel-index knob carried to the remote + used for torch
+    # CUDA wheel-index knob carried to the remote + used for torch(+vision)
     assert "add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL" in script
-    assert "pip install torch --index-url" in script
+    assert "pip install torch torchvision --index-url" in script
+    # catalog id (sdxl-turbo) is resolved to its HF repo and baked into the
+    # wrapper — the gen venv lacks the mac package so it can't resolve it itself
+    assert "from mac.local_gen_catalog import get_model" in script
+    assert 'export LOCAL_GEN_MODEL="$gen_repo"' in script
     # the unit runs the shipped server in the gen venv on the advertised port
     assert "deploy/local-gen/openai_image_server.py" in script
     assert "ExecStart=$MAC_HOME/bin/mac-gen-server" in script
