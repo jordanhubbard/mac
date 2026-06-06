@@ -1027,7 +1027,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"
   # mac-selfdrive: hub self-drives its tick loop (review->merge->dispatch) on
   # this cadence so the autonomous loop needs no external clock. 30s; 0 disables.
-  add_remote_env MAC_HUB_TICK_INTERVAL_SECONDS "${MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS:-30}"
+  add_remote_env MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS "${MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS:-30}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
