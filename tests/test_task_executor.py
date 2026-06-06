@@ -49,6 +49,44 @@ def test_build_task_prompt_injects_recalled_lessons():
     assert with_lessons.strip().endswith("/tmp/task.json")
 
 
+def test_build_task_prompt_demands_autonomy():
+    # The "should I proceed?" turn-ending failure mode is explicitly forbidden.
+    prompt = te.build_task_prompt({"id": "t1", "title": "x", "project": "p"}, Path("/tmp/task.json"))
+    assert "AUTONOMOUS" in prompt
+    assert "never ask the operator for confirmation" in prompt
+
+
+def test_repository_contract_section_no_repository_is_a_failure():
+    # No contract AND no checkout -> a missing contract is a genuine failure.
+    section = te.repository_contract_section({"metadata": {"origin": {}}})
+    assert "report this as a task contract failure" in section
+
+
+def test_repository_contract_section_onboarding_when_checkout_present():
+    # No contract but a repository_url is set -> this is an ONBOARDING task whose
+    # job is to author the contract; it must NOT be told to fail.
+    task = {"metadata": {"origin": {"type": "direct_task", "repository_url": "https://github.com/acme/widget.git"}}}
+    section = te.repository_contract_section(task)
+    assert "ONBOARDING" in section
+    assert "task contract failure" not in section
+    assert ".mac/project.yaml" in section
+    assert "$MAC_TASK_REPO_WORKTREE" in section
+    assert "do not push" in section.lower()
+
+
+def test_repository_contract_section_shows_existing_contract():
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "widget",
+        "bootstrap": {"command": "make bootstrap"},
+        "test": {"command": "make test"},
+    }
+    task = {"metadata": {"origin": {"repository_contract": contract}}}
+    section = te.repository_contract_section(task)
+    assert "make test" in section
+    assert "task contract failure" not in section
+
+
 def test_build_telemetry_record_shape():
     rec = te.build_telemetry_record("started", task_id="t1", level="info", detail={"kind": "task"})
     assert rec["name"] == "executor.started"

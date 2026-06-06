@@ -441,11 +441,33 @@ def _error_signature(manifest: Dict[str, Any]) -> str:
 def repository_contract_section(task: Dict[str, Any]) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     origin = metadata.get("origin") if isinstance(metadata, dict) else {}
-    contract = origin.get("repository_contract") if isinstance(origin, dict) else None
+    origin = origin if isinstance(origin, dict) else {}
+    contract = origin.get("repository_contract")
     if not isinstance(contract, dict):
+        # No build/test contract attached. Distinguish two cases:
+        #  (a) a checkout still exists (repository_url/path set) — this is a
+        #      repository *onboarding* task whose JOB is to author the contract,
+        #      so "report a contract failure" would be exactly wrong; and
+        #  (b) no repository at all — then a missing contract is a real failure.
+        has_checkout = bool(
+            str(origin.get("repository_url") or "").strip()
+            or str(origin.get("repository_path") or "").strip()
+        )
+        if has_checkout:
+            return "\n".join(
+                [
+                    "No repository runtime contract exists yet — this is a repository ONBOARDING task and authoring that contract is part of the deliverable.",
+                    "MAC has prepared a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE (a task branch off the default branch).",
+                    "Work entirely inside that checkout. The goal is to UNDERSTAND the repository, not to change its runtime behavior:",
+                    "  1. Explore the tree: README/docs, build files and package manifests, CI config, entry points, and the test layout.",
+                    "  2. Infer the supported platforms, the required toolchain commands, the bootstrap/setup command, and the canonical test command — only from what the repo actually declares; do not invent commands.",
+                    "  3. Author a repository contract at .mac/project.yaml in the checkout using schema mac.repository_contract.v1 with keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required.",
+                    "Do NOT push or open a PR — the authored .mac/project.yaml is a local analysis artifact. Include its full content and your architecture summary + prioritized backlog in the evidence (evidence_type=investigation).",
+                ]
+            )
         return (
-            "No repository runtime contract is attached. Do not guess bootstrap or "
-            "test commands; report this as a task contract failure."
+            "No repository runtime contract is attached and no checkout was provided. "
+            "Do not guess bootstrap or test commands; report this as a task contract failure."
         )
     summary = {
         "schema": contract.get("schema"),
@@ -502,6 +524,7 @@ def _lessons_section(lessons: List[str]) -> str:
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
+        "You are AUTONOMOUS: never ask the operator for confirmation or permission, and never end your turn with a question. If the task is underspecified, make the most reasonable assumption, proceed, and record the assumption in your evidence. Ending with 'should I proceed?' instead of doing the work is a failed run.",
         "Use the task JSON as the source of truth. Preserve secrets and do not print bearer tokens.",
         "When you finish, report the exact outcome, files changed, tests run, and any blockers.",
         "Also write a verifiable evidence manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",

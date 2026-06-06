@@ -8,6 +8,24 @@ from mac.api import create_app
 from mac.services import ControlPlane, sign_verification_manifest
 
 
+def test_repositories_onboard_creates_contract_backed_task():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    resp = client.post(
+        "/repositories/onboard",
+        json={"repository_url": "https://github.com/NVIDIA-dev/taskbrain.git"},
+    )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["project"] == "taskbrain"
+    origin = task["metadata"]["origin"]
+    assert origin["type"] == "direct_task"
+    assert origin["repository_url"] == "https://github.com/NVIDIA-dev/taskbrain.git"
+    assert origin["onboarding"] is True
+    # A malformed URL is a client error (400), never a 500.
+    bad = client.post("/repositories/onboard", json={"repository_url": "not-a-url"})
+    assert bad.status_code == 400
+
+
 def test_fastapi_exposes_core_workflow_and_redacts_secrets():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 

@@ -212,6 +212,16 @@ class TaskCreate(BaseModel):
     actor: str = "human"
 
 
+class RepositoryOnboard(BaseModel):
+    repository_url: str
+    project: Optional[str] = None
+    default_branch: Optional[str] = None
+    title: Optional[str] = None
+    priority: int = 0
+    required_capabilities: List[str] = Field(default_factory=list)
+    actor: str = "human"
+
+
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -2298,6 +2308,18 @@ def create_app(
             metadata["origin"] = origin
             data["metadata"] = metadata
         return cp.create_task(actor=actor, **data).to_dict()
+
+    @app.post("/repositories/onboard")
+    def onboard_repository(
+        body: RepositoryOnboard,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Onboard a git repository: create the contract-backed onboarding task
+        (clone a worktree -> analyze -> author .mac/project.yaml). Returns the
+        created task."""
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        return cp.onboard_repository(actor=actor, **data).to_dict()
 
     @app.get("/tasks")
     def list_tasks(

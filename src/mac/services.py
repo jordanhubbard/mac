@@ -406,6 +406,56 @@ def _repository_contract_root(repo_path: Path) -> Path:
     return expanded if expanded.is_dir() else expanded.parent
 
 
+_ONBOARDING_REMOTE_URL_RE = re.compile(r"^(https://|git@|ssh://|git://)\S+$")
+
+
+def _normalize_onboarding_remote_url(value: str) -> str:
+    """Light validation of a git remote URL for onboarding (the worker
+    re-validates strictly with its own regex before cloning)."""
+    url = (value or "").strip()
+    if not url or url.startswith("-"):
+        raise ValidationError("repository_url is empty or looks like a flag: %r" % value)
+    if len(url) > 2048:
+        raise ValidationError("repository_url exceeds 2048 byte limit")
+    if not _ONBOARDING_REMOTE_URL_RE.match(url):
+        raise ValidationError(
+            "repository_url must be an https://, git@, ssh:// or git:// git remote: %r" % value
+        )
+    return url
+
+
+def _repository_name_from_url(url: str) -> str:
+    """Derive a short project/repo name from a git remote URL.
+
+    ``https://github.com/NVIDIA-dev/taskbrain.git`` -> ``taskbrain``;
+    ``git@github.com:NVIDIA-dev/taskbrain.git``     -> ``taskbrain``.
+    """
+    tail = url.rstrip("/").split("/")[-1]
+    if "/" not in tail and ":" in tail:  # scp-style git@host:org/repo with no extra slash
+        tail = tail.split(":")[-1]
+    if tail.endswith(".git"):
+        tail = tail[:-4]
+    name = "".join(ch if (ch.isalnum() or ch in "-_.") else "-" for ch in tail).strip("-._")
+    return name or "project"
+
+
+def _build_onboarding_description(url: str, repo_name: str) -> str:
+    return "\n".join(
+        [
+            "Repository onboarding for %s (%s)." % (repo_name, url),
+            "",
+            "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE (a task branch). Work entirely there.",
+            "This is READ-ONLY with respect to the remote: do NOT push or open a pull request. You MAY write local analysis files in the checkout (notably .mac/project.yaml).",
+            "",
+            "Deliverables — report all of these in your evidence (evidence_type=investigation):",
+            "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points).",
+            "  2. How to build it and run its tests, inferred from the repo's own manifests/CI — not guessed.",
+            "  3. An authored repository contract written to .mac/project.yaml using schema mac.repository_contract.v1 (keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required). Include its full content in the evidence.",
+            "  4. A prioritized backlog of 5-10 concrete next steps, improvements, or risks you observe.",
+        ]
+    )
+
+
 def _load_repository_contract(repo_path: Path) -> JsonDict:
     root = _repository_contract_root(repo_path)
     checked = []
@@ -2837,6 +2887,60 @@ class ControlPlane:
                 },
             )
         return self.get_task(task_id)
+
+    def onboard_repository(
+        self,
+        repository_url: str,
+        *,
+        project: Optional[str] = None,
+        default_branch: Optional[str] = None,
+        title: Optional[str] = None,
+        priority: int = 0,
+        required_capabilities: Optional[Iterable[str]] = None,
+        actor: str = "human",
+    ) -> Task:
+        """Onboard a git repository as a contract-backed project.
+
+        Creates one read-only *onboarding* task whose ``metadata.origin`` carries
+        the remote URL + ``type=direct_task`` — enough for a worker to clone a
+        task-owned worktree (see ``worker._repository_task_origin``) *without* a
+        pre-existing ``repository_contract``. The agent then analyses the
+        checkout and authors ``.mac/project.yaml`` (the contract), after which
+        every later task on the project is fully contract-backed
+        (``_normalize_task_execution_contract`` attaches it automatically).
+
+        This is the missing "take a git URL and onboard it" entry point: the
+        contract is the onboarding task's *output*, not a precondition.
+        """
+        url = _normalize_onboarding_remote_url(repository_url)
+        repo_name = _repository_name_from_url(url)
+        project = (project or repo_name).strip() or repo_name
+        origin: JsonDict = {
+            "type": "direct_task",
+            "repository_url": url,
+            "repository_name": repo_name,
+            "onboarding": True,
+        }
+        if default_branch:
+            origin["default_branch"] = str(default_branch).strip()
+        metadata: JsonDict = {
+            "origin": origin,
+            # Drives the weak execution-contract's evidence_type so the
+            # verification gate expects an investigation write-up, not a push.
+            "evidence_type": "investigation",
+        }
+        resolved_title = (
+            title or "Onboard %s: analyze, summarize, and author the repository contract" % repo_name
+        ).strip()
+        return self.create_task(
+            resolved_title,
+            description=_build_onboarding_description(url, repo_name),
+            project=project,
+            priority=priority,
+            required_capabilities=required_capabilities,
+            metadata=metadata,
+            actor=actor,
+        )
 
     def _normalize_task_execution_contract(
         self,
