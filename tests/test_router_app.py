@@ -3,7 +3,31 @@
 from __future__ import annotations
 
 from mac.provider_router import Provider, ProviderRouter
-from mac.router_app import ProviderProxy, build_proxy_from_env, mount_router, resolve_provider_key
+from mac.router_app import (
+    ProviderProxy,
+    _ensure_max_tokens_floor,
+    build_proxy_from_env,
+    mount_router,
+    resolve_provider_key,
+)
+
+
+def test_max_tokens_floor_rescues_large_chat_generations(monkeypatch):
+    # mac: agents (e.g. the taskbrain CLI task) truncated at a low default
+    # max_tokens; the router raises chat completions to a floor so large
+    # single-turn file generations don't get capped (finish_reason=length).
+    monkeypatch.delenv("MAC_ROUTER_MAX_TOKENS_FLOOR", raising=False)
+    assert _ensure_max_tokens_floor({"model": "x"}, "/chat/completions")["max_tokens"] == 32000
+    assert _ensure_max_tokens_floor({"max_tokens": 4096}, "/chat/completions")["max_tokens"] == 32000
+    # an already-generous request is left alone
+    assert _ensure_max_tokens_floor({"max_tokens": 50000}, "/chat/completions")["max_tokens"] == 50000
+    # embeddings are never touched
+    assert "max_tokens" not in _ensure_max_tokens_floor({"model": "e"}, "/embeddings")
+    # configurable + disable
+    monkeypatch.setenv("MAC_ROUTER_MAX_TOKENS_FLOOR", "8000")
+    assert _ensure_max_tokens_floor({"max_tokens": 100}, "/chat/completions")["max_tokens"] == 8000
+    monkeypatch.setenv("MAC_ROUTER_MAX_TOKENS_FLOOR", "0")
+    assert "max_tokens" not in _ensure_max_tokens_floor({"model": "x"}, "/chat/completions")
 
 
 def _router():

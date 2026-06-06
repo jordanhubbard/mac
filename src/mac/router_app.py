@@ -145,6 +145,34 @@ def _normalize_payload(payload: Dict[str, Any], drop_params: Tuple[str, ...]) ->
     return {k: v for k, v in payload.items() if k not in drop}
 
 
+def _ensure_max_tokens_floor(payload: Dict[str, Any], path: str) -> Dict[str, Any]:
+    """Raise an agent's chat ``max_tokens`` to a floor so large single-turn
+    generations don't get capped (mac: the taskbrain build's CLI task hit
+    ``finish_reason=length`` at a low default, which truncated the response
+    mid tool-call and wrote no files). ``max_tokens`` is a CAP, not a target —
+    raising it never forces longer output; short completions still stop at
+    ``finish_reason=stop`` — so this only rescues large generations. Chat
+    completions only; never touches embeddings. Floor is configurable via
+    ``MAC_ROUTER_MAX_TOKENS_FLOOR`` (0 disables); default 32000."""
+    if "chat/completions" not in path:
+        return payload
+    try:
+        floor = int(os.environ.get("MAC_ROUTER_MAX_TOKENS_FLOOR", "32000") or "32000")
+    except ValueError:
+        floor = 32000
+    if floor <= 0:
+        return payload
+    try:
+        current = int(payload.get("max_tokens") or 0)
+    except (TypeError, ValueError):
+        current = 0
+    if current >= floor:
+        return payload
+    out = dict(payload)
+    out["max_tokens"] = floor
+    return out
+
+
 _CONTEXT_HEADER_NAMES = {
     "agent_id": "x-mac-agent-id",
     "task_id": "x-mac-task-id",
@@ -356,7 +384,9 @@ class ProviderProxy:
         route_attempts = []
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
-            outgoing = {**_normalize_payload(payload, self._drop_params), "model": model}
+            outgoing = _ensure_max_tokens_floor(
+                {**_normalize_payload(payload, self._drop_params), "model": model}, path
+            )
             attempts = []
             provider_answered = False
             # Bounded: one try per provider (+1 so a half-open probe can be
