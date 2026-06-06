@@ -211,6 +211,143 @@ def test_mount_adds_routes_when_inproc_with_providers():
     assert "/v1/chat/completions" in paths and "/v1/embeddings" in paths
 
 
+def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypatch):
+    import json as _json
+
+    from fastapi import FastAPI
+    from fastapi.routing import APIRoute
+    from fastapi.testclient import TestClient
+
+    from mac import router_app
+
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append((provider.name, path, payload))
+        if path == "/embeddings":
+            return 200, {"object": "list", "data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        return 200, {
+            "id": "chatcmpl_router_surface",
+            "choices": [{"message": {"role": "assistant", "content": "ready"}}],
+            "model": payload["model"],
+        }
+
+    class _Headers:
+        @staticmethod
+        def get(key, default=None):
+            return "application/json" if key.lower() == "content-type" else default
+
+    class _Resp:
+        status = 200
+        headers = _Headers()
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return _json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=60.0):
+        url = req.full_url
+        if url.endswith("/video/generate"):
+            return _Resp({"job_id": "upstream_job_1", "status": "running"})
+        if url.endswith("/video/jobs/upstream_job_1"):
+            return _Resp({"status": "completed", "artifacts": [{"base64": "VIDEO"}]})
+        if "/v1/genai/" in url:
+            return _Resp({"artifacts": [{"base64": "IMAGE"}]})
+        if "/v1/audio/" in url:
+            return _Resp({"transcript": "audio ok"})
+        if "/v1/video/" in url:
+            return _Resp({"status": "accepted"})
+        raise AssertionError("unexpected router upstream URL %s" % url)
+
+    monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
+
+    app = FastAPI()
+    env = {
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_IMAGE_UPSTREAM": "https://media.example/v1/genai",
+        "MAC_ROUTER_IMAGE_KEY": "secret:image",
+        "MAC_ROUTER_AUDIO_UPSTREAM": "https://media.example/v1/audio",
+        "MAC_ROUTER_AUDIO_KEY": "secret:audio",
+        "MAC_ROUTER_VIDEO_UPSTREAM": "https://media.example/v1/video",
+        "MAC_ROUTER_VIDEO_KEY": "secret:video",
+        "MAC_ROUTER_MEDIA_JSON": _json.dumps(
+            {
+                "video.generate": [
+                    {
+                        "provider": "nvidia-video",
+                        "base_url": "https://media.example/v1",
+                        "model": "animatediff",
+                        "key": "secret:video",
+                        "adapter": "video_generate",
+                    }
+                ]
+            }
+        ),
+    }
+    proxy = ProviderProxy(_router(), fwd, default_model="meta/llama-route-test")
+    resolver = {"image": "IMAGE_KEY", "audio": "AUDIO_KEY", "video": "VIDEO_KEY"}.get
+    assert mount_router(app, env=env, proxy=proxy, secret_resolver=resolver) is True
+
+    route_keys = {
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods
+        if method not in {"HEAD", "OPTIONS"}
+    }
+    assert route_keys == {
+        ("POST", "/v1/chat/completions"),
+        ("POST", "/v1/embeddings"),
+        ("POST", "/v1/genai/{path:path}"),
+        ("POST", "/v1/audio/{path:path}"),
+        ("POST", "/v1/video/{path:path}"),
+        ("POST", "/v1/media/{op}"),
+        ("GET", "/v1/media/jobs/{job_id}"),
+    }
+
+    client = TestClient(app)
+    chat = client.post("/v1/chat/completions", json={"model": "*", "messages": [{"role": "user", "content": "hi"}]})
+    assert chat.status_code == 200
+    assert chat.json()["choices"][0]["message"]["content"] == "ready"
+    assert calls[-1][1] == "/chat/completions"
+    assert calls[-1][2]["model"] == "meta/llama-route-test"
+
+    embeddings = client.post("/v1/embeddings", json={"model": "*", "input": "hello"})
+    assert embeddings.status_code == 200
+    assert embeddings.json()["data"][0]["embedding"] == [0.1, 0.2]
+    assert calls[-1][1] == "/embeddings"
+
+    image = client.post("/v1/genai/black-forest-labs/flux.1-dev", json={"prompt": "image"})
+    assert image.status_code == 200
+    assert image.json()["artifacts"][0]["base64"] == "IMAGE"
+
+    audio = client.post("/v1/audio/transcriptions", json={"audio": "QUJD"})
+    assert audio.status_code == 200
+    assert audio.json()["transcript"] == "audio ok"
+
+    video = client.post("/v1/video/nvidia/cosmos-predict", json={"prompt": "clip"})
+    assert video.status_code == 200
+    assert video.json()["status"] == "accepted"
+
+    submit = client.post("/v1/media/video.generate", json={"prompt": "movie"})
+    assert submit.status_code == 200
+    assert submit.json()["job_id"].startswith("mjob_")
+    assert submit.json()["provider"] == "nvidia-video"
+
+    poll = client.get("/v1/media/jobs/%s" % submit.json()["job_id"])
+    assert poll.status_code == 200
+    assert poll.json()["status"] == "completed"
+    assert poll.json()["artifacts"][0]["base64"] == "VIDEO"
+
+
 def test_mount_records_route_context_from_headers_and_strips_internal_body_context():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
