@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import sys
 
 import pytest
@@ -118,6 +119,34 @@ def test_mac_cli_task_show(tmp_path):
     # task show returns {task: {...}, evidence: [], history: [], ...}
     assert detail["task"]["id"] == task["id"]
     assert detail["task"]["title"] == "Show me"
+
+
+def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
+    rc, parent = _run(tmp_path, "task", "create", "Parent")
+    assert rc == 0
+    rc, child = _run(tmp_path, "task", "create", "Child")
+    assert rc == 0
+    rc, cancelled_parent = _run(tmp_path, "task", "close", parent["id"], "--cancelled")
+    assert rc == 0
+    assert cancelled_parent["state"] == "cancelled"
+
+    db_path = tmp_path / "mac.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE tasks SET dependencies = ? WHERE id = ?",
+            (json.dumps([parent["id"]]), child["id"]),
+        )
+
+    rc, ready = _run(tmp_path, "task", "ready")
+    assert rc == 0
+    assert child["id"] not in {task["id"] for task in ready}
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("completed", parent["id"]))
+
+    rc, ready = _run(tmp_path, "task", "ready")
+    assert rc == 0
+    assert child["id"] in {task["id"] for task in ready}
 
 
 def test_mac_cli_task_create_description_file(tmp_path):

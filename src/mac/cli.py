@@ -321,10 +321,10 @@ def cmd_task_show(args: argparse.Namespace) -> None:
 
 
 def cmd_task_ready(args: argparse.Namespace) -> None:
-    """List tasks ready to work — state=open, no unfinished dependencies,
-    unclaimed. Matches the ergonomics of `bd ready`."""
+    """List tasks ready to work — state=open, all dependencies completed,
+    unclaimed. Matches dispatcher dependency semantics."""
     cp = _plane(args)
-    from mac.models import TERMINAL_TASK_STATES, TaskState
+    from mac.models import TaskState
 
     rows = cp.store.query_all(
         """
@@ -339,17 +339,11 @@ def cmd_task_ready(args: argparse.Namespace) -> None:
     out = []
     for row in rows:
         task = cp._task_from_row(row)
-        deps = task.dependencies or []
-        unfinished = []
-        for dep_id in deps:
-            try:
-                dep = cp.get_task(dep_id)
-            except Exception:  # noqa: BLE001 - missing dep blocks readiness
-                unfinished.append(dep_id)
-                continue
-            if dep.state not in TERMINAL_TASK_STATES:
-                unfinished.append(dep_id)
-        if not unfinished:
+        try:
+            dependencies_satisfied = cp._dependencies_satisfied(task)
+        except Exception:  # noqa: BLE001 - missing dep blocks readiness
+            dependencies_satisfied = False
+        if dependencies_satisfied:
             out.append(task.to_dict())
         if args.limit and len(out) >= args.limit:
             break
@@ -1859,7 +1853,7 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("task_id")
     _set(cmd_task_show, show)
 
-    ready = task.add_parser("ready", help="list open tasks ready to work (no unfinished deps, unclaimed)")
+    ready = task.add_parser("ready", help="list open tasks ready to work (all deps completed, unclaimed)")
     ready.add_argument("--limit", type=int, default=0)
     _set(cmd_task_ready, ready)
 
