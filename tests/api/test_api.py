@@ -8,6 +8,21 @@ from mac.api import create_app
 from mac.services import ControlPlane, sign_verification_manifest
 
 
+def test_hub_tick_loop_gated_by_env(monkeypatch):
+    # mac-selfdrive: the hub self-drives tick() only when the interval env is
+    # set (>0), so the CLI/tests/replicas don't each spawn a competing ticker.
+    monkeypatch.delenv("MAC_HUB_TICK_INTERVAL_SECONDS", raising=False)
+    app = create_app(control_plane=ControlPlane.in_memory())
+    assert getattr(app.state, "hub_tick_thread", None) is None
+
+    # A large interval means the daemon sleeps well past the test's lifetime, so
+    # it spawns but never fires tick() here — validates wiring without flakiness.
+    monkeypatch.setenv("MAC_HUB_TICK_INTERVAL_SECONDS", "999")
+    app2 = create_app(control_plane=ControlPlane.in_memory())
+    thread = getattr(app2.state, "hub_tick_thread", None)
+    assert thread is not None and thread.daemon is True and thread.is_alive()
+
+
 def test_repositories_onboard_creates_contract_backed_task():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     resp = client.post(

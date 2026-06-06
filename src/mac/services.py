@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import urllib.parse
 from datetime import timedelta
@@ -7863,11 +7864,35 @@ class ControlPlane:
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
         repo_path_raw = str(origin.get("repository_path") or "").strip()
-        if not repo_path_raw:
-            raise ValidationError("git publication requires task origin.repository_path")
-        repo_path = Path(repo_path_raw).expanduser()
-        if not repo_path.exists():
-            raise ValidationError("git publication repository path does not exist: %s" % repo_path)
+        repository_url = str(origin.get("repository_url") or "").strip()
+        # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
+        # local repository_path on the hub. Rather than refuse to publish, merge
+        # via a transient authed clone of the remote so K8s-mode work can reach
+        # main. The clone is cleaned up before returning (best-effort on errors).
+        tmp_clone: Optional[Path] = None
+        if not repo_path_raw and repository_url:
+            from . import gitops as _gitops
+
+            auth_url = _gitops.inject_git_remote_auth(repository_url)
+            tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
+            clone = self._git_output(
+                tmp_clone, ["clone", "--branch", "main", "--", auth_url, "."], timeout=240
+            )
+            if clone["returncode"] != 0:
+                shutil.rmtree(tmp_clone, ignore_errors=True)
+                raise ValidationError(
+                    "git publication could not clone remote for merge: %s"
+                    % (clone.get("stderr") or clone.get("stdout") or repository_url)
+                )
+            repo_path = tmp_clone
+        elif repo_path_raw:
+            repo_path = Path(repo_path_raw).expanduser()
+            if not repo_path.exists():
+                raise ValidationError("git publication repository path does not exist: %s" % repo_path)
+        else:
+            raise ValidationError(
+                "git publication requires task origin.repository_path or origin.repository_url"
+            )
 
         evidence = self.get_evidence(evidence_id)
         manifest = ensure_json_object(evidence.metadata.get("verification"))
@@ -7994,6 +8019,8 @@ class ControlPlane:
                 "git publication final main %s does not contain reviewed commit %s"
                 % (final_sha, head_sha)
             )
+        if tmp_clone is not None:
+            shutil.rmtree(tmp_clone, ignore_errors=True)
         return {
             "status": "published",
             "target": target,

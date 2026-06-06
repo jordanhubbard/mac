@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import urllib.parse
 from collections import Counter
@@ -1975,6 +1976,47 @@ def _latest_submitted_runtime_proof(instance: Dict[str, Any]) -> Optional[Dict[s
     return json.loads(json.dumps(proof))
 
 
+def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
+    """Drive the control-plane tick on the hub's own clock (mac-selfdrive).
+
+    ``ControlPlane.tick()`` is the self-driving heartbeat: it expires stale
+    leases, reconciles service-role claims, unblocks dependency-ready tasks,
+    **advances the default review workflow (publishing/merging approved work to
+    main)**, and dispatches ready tasks. Nothing drove it periodically, so
+    approved tasks parked forever waiting for an external ``POST /dispatch/tick``
+    — the whole autonomous loop (commit -> review -> merge) stalled at the last
+    step. The hub now runs it on a daemon thread so no external clock is needed.
+
+    Gated by ``MAC_HUB_TICK_INTERVAL_SECONDS`` (seconds; >0 enables). Unset/0
+    means no thread, so the CLI, the test suite, and stateless mac-api replicas
+    don't each spawn a competing ticker; the deploy sets it on hub nodes.
+    """
+    try:
+        interval = float((os.environ.get("MAC_HUB_TICK_INTERVAL_SECONDS") or "0").strip())
+    except ValueError:
+        interval = 0.0
+    if interval <= 0:
+        return
+    try:
+        stale_after = int(float((os.environ.get("MAC_HUB_TICK_STALE_AFTER_SECONDS") or "300").strip()))
+    except ValueError:
+        stale_after = 300
+
+    def _loop() -> None:
+        # Sleep-first so app construction returns immediately and a process that
+        # never lives a full interval (e.g. a unit test) does no tick work.
+        while True:
+            time.sleep(interval)
+            try:
+                cp.tick(stale_after_seconds=stale_after)
+            except Exception:  # noqa: BLE001 - the self-driver must never crash the hub
+                logging.getLogger("mac.hub_tick").warning("hub tick failed", exc_info=True)
+
+    thread = threading.Thread(target=_loop, name="mac-hub-tick", daemon=True)
+    thread.start()
+    app.state.hub_tick_thread = thread
+
+
 def create_app(
     db_path: Optional[str] = None,
     control_plane: Optional[ControlPlane] = None,
@@ -2014,6 +2056,9 @@ def create_app(
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp
     app.state.auth_tokens = tokens
+    # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
+    # reconcile -> lease expiry) so the autonomous loop needs no external clock.
+    _start_hub_tick_loop(app, cp)
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.

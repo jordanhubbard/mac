@@ -572,6 +572,9 @@ def build_mac_env(
         # GH_TOKEN; mac.env is sourced after the pod env so this overrides a stale
         # platform-injected token). 600-perm file, same as MAC_API_TOKEN.
         ("MAC_DEPLOY_GH_TOKEN", "GH_TOKEN"),
+        # mac-selfdrive: hub drives its own tick (dispatch->review->merge->reconcile)
+        # on this interval (seconds) so the autonomous loop needs no external clock.
+        ("MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS", "MAC_HUB_TICK_INTERVAL_SECONDS"),
     ):
         _v = (env.get(_src) or "").strip()
         if _v:

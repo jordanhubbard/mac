@@ -5083,6 +5083,67 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     assert published[0].detail["final_sha"] == final_head
 
 
+def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
+    """mac-k8s: K8s remote-clone tasks carry origin.repository_url but no local
+    repository_path. Publication must merge via a transient authed clone of the
+    remote instead of refusing — this is the autonomous-loop path the jordanh-gke
+    fleet depends on (previously it raised 'requires repository_path')."""
+    from tests.conftest import submit_review_verdict
+
+    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="k8s")
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "publish via remote clone (no local path)",
+        required_capabilities=["python"],
+        metadata={
+            "origin": {
+                "type": "direct_task",
+                "repository_url": str(remote),  # K8s mode: URL only, no repository_path
+            },
+            "publication_target": "git://main",
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "repo": {
+                "head_sha": task_head,
+                "pushed": True,
+                "remote_ref": "refs/heads/task/feature",
+                "dirty": False,
+                "files_changed": ["feature.txt"],
+            },
+            "tests": [{"command": "pytest -q", "returncode": 0}],
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://feature",
+        "feature tested",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
+
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+    assert publication.status == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    # main had not moved, so the feature fast-forwards: the remote's main now
+    # points at the reviewed task commit even though no local checkout existed.
+    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == task_head
+
+
 def _setup_publishable_repo(tmp_path, name="remote"):
     def git(repo, *args):
         return subprocess.run(
