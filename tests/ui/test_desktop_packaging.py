@@ -68,6 +68,10 @@ def test_desktop_main_owns_ssh_proxy_and_service_tunnels():
     assert "connected" in main
     assert "process.argv.slice(1)" in main
     assert "serveLocalUi" in main
+    assert "writeProxyError" in main
+    assert "closeProxyResponse" in main
+    assert "res.headersSent" in main
+    assert "upstreamResponded" in main
     assert "process.resourcesPath" in main
     assert "/ui/assets/" in main
     assert "contextBridge.exposeInMainWorld" in preload

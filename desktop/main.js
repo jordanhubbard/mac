@@ -648,15 +648,49 @@ function proxyRequest(targetBaseUrl, req, res) {
   const token = profileToken();
   if (token && !headers.authorization) headers.authorization = `Bearer ${token}`;
 
+  let upstreamResponded = false;
   const upstream = client.request(target, { method: req.method, headers }, (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode || 502, stripHopByHopHeaders(upstreamRes.headers));
+    upstreamResponded = true;
+    if (res.destroyed || res.writableEnded) {
+      upstreamRes.resume();
+      return;
+    }
+    if (!res.headersSent) {
+      res.writeHead(upstreamRes.statusCode || 502, stripHopByHopHeaders(upstreamRes.headers));
+    }
+    upstreamRes.on("error", (error) => closeProxyResponse(res, error));
     upstreamRes.pipe(res);
   });
   upstream.on("error", (error) => {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ detail: `desktop proxy failed: ${error.message}` }));
+    if (upstreamResponded || res.headersSent) {
+      closeProxyResponse(res, error);
+      return;
+    }
+    writeProxyError(res, 502, `desktop proxy failed: ${error.message}`);
+  });
+  req.on("error", (error) => {
+    upstream.destroy(error);
   });
   req.pipe(upstream);
+}
+
+function writeProxyError(res, statusCode, detail) {
+  if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) {
+    closeProxyResponse(res);
+    return;
+  }
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ detail }));
+}
+
+function closeProxyResponse(res, error) {
+  if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.end();
 }
 
 async function startProxyServer(preferredPort) {

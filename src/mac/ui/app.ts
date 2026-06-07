@@ -5379,7 +5379,7 @@ async function handleActionSubmit(event: SubmitEvent): Promise<void> {
   setFormBusy(form, true);
   try {
     const result = await runAction(action, form, values);
-    state.actionMessage = `${labelize(action)} ok: ${redactedJson(result)}`;
+    state.actionMessage = actionSuccessMessage(action, result);
     await loadDashboard();
   } catch (error) {
     state.actionMessage = `${labelize(action)} failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -6238,6 +6238,30 @@ function csvList(value: unknown): string[] {
 function emptyToNull(value: unknown): string | null {
   const text = String(value || "").trim();
   return text || null;
+}
+
+function actionSuccessMessage(action: string, result: unknown): string {
+  const record = result && typeof result === "object" ? result as JsonObject : {};
+  if (action === "taskCreate" || action === "workflowPlanningTaskCreate") {
+    return `Task created: ${compactObjectTitle(record)}`;
+  }
+  if (action === "workflowChainTaskAdd") {
+    const children = Array.isArray(record.children) ? record.children : [];
+    const firstChild = children.find((item) => item && typeof item === "object") as JsonObject | undefined;
+    return firstChild
+      ? `Task chain updated: added ${compactObjectTitle(firstChild)}`
+      : "Task chain updated";
+  }
+  if (action === "projectCreate") return `Project created: ${compactObjectTitle(record)}`;
+  if (action === "projectUpdate") return `Project saved: ${compactObjectTitle(record)}`;
+  const summary = jsonSummary(record);
+  return summary === "none" ? `${labelize(action)} ok` : `${labelize(action)} ok: ${summary}`;
+}
+
+function compactObjectTitle(record: JsonObject): string {
+  const name = String(record.title || record.name || record.project || record.id || "record");
+  const id = String(record.id || "");
+  return id && id !== name ? `${name} (${id})` : name;
 }
 
 function redactedJson(value: unknown): string {
