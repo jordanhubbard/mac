@@ -560,7 +560,24 @@ def check_dispatcher_capabilities(
         str(c) for c in (dispatcher.get("capabilities") or [])
     }
 
-    union_role_caps: set = set()
+    # Collect capabilities that belong exclusively to reviewer agents.
+    # The dispatcher intentionally does NOT carry `review` (and any other
+    # reviewer-only capabilities) — it is an orchestrator, not a reviewer.
+    # Reviewer roles are handled by dedicated agents registered via
+    # reviewer_agent_ids; warning about them as "missing" is a false positive.
+    reviewer_only_caps: set = set()
+    for role, reviewer_agent_id in (cfg.reviewer_agent_ids or {}).items():
+        try:
+            reviewer_agent = mac.get("/agents/%s" % reviewer_agent_id)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(reviewer_agent, dict):
+            continue
+        for cap in reviewer_agent.get("capabilities") or []:
+            reviewer_only_caps.add(str(cap))
+    # Only treat a capability as reviewer-only if NO non-reviewer role agent
+    # carries it either.
+    worker_caps: set = set()
     for role, role_agent_id in cfg.role_agent_ids.items():
         try:
             role_agent = mac.get("/agents/%s" % role_agent_id)
@@ -582,9 +599,11 @@ def check_dispatcher_capabilities(
             )
             continue
         for cap in role_agent.get("capabilities") or []:
-            union_role_caps.add(str(cap))
+            worker_caps.add(str(cap))
+    reviewer_only_caps -= worker_caps  # caps shared with workers are still checked
 
-    missing = sorted(union_role_caps - dispatcher_caps)
+    union_role_caps = worker_caps
+    missing = sorted((union_role_caps - reviewer_only_caps) - dispatcher_caps)
     return missing
 
 def claim_and_launch_one(
