@@ -1037,6 +1037,7 @@ function renderProjects() {
     const totalVisibleProjects = visibleProjectSummaries(data, false);
     const projects = projectScopeSummaries(data);
     const derivedCount = data.project_summaries.filter(isDerivedProject).length;
+    const activeAgents = new Set(projects.flatMap((project) => project.active_agent_ids)).size;
     return `
     <section class="toolbar">
       <select id="projectFilter">
@@ -1048,20 +1049,8 @@ function renderProjects() {
       ${sessionAccessBadge(data)}
     </section>
     ${writable ? "" : `<section class="action-status">Read-only token: project fields can be inspected but not edited.</section>`}
-    <section class="split">
-      <details class="surface action-drawer">
-        <summary>
-          <span>Create Project</span>
-          <span class="muted small">Add a durable project record</span>
-        </summary>
-        <form class="action-form aligned-form project-create-form" data-action="projectCreate">
-          <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
-          <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
-          <label class="field-full">Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
-          <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
-          <div class="field-full form-actions"><button type="submit" ${disabledAttr(!writable)}>Create</button></div>
-        </form>
-      </details>
+    <section class="project-focus-layout">
+      ${projectInspector(projects, data)}
       <div class="surface">
         <h2>Project Metrics</h2>
         <section class="metric-grid compact-metrics">
@@ -1069,8 +1058,21 @@ function renderProjects() {
           ${metric("Hidden Derived", state.showDerivedProjects ? 0 : derivedCount, state.showDerivedProjects ? "derived buckets visible" : "derived buckets hidden")}
           ${metric("Visible Projects", projects.length, state.projectFilter === "all" ? "unfiltered" : `scope: ${state.projectFilter}`)}
           ${metric("Ready Stories", projects.reduce((sum, project) => sum + project.ready_count, 0), "available for dispatch")}
-          ${metric("Active Agents", new Set(projects.flatMap((project) => project.active_agent_ids)).size, "working in scope")}
+          ${metric("Active Agents", activeAgents, "working in scope")}
         </section>
+        <details class="action-drawer inline-drawer">
+          <summary>
+            <span>Create Project</span>
+            <span class="muted small">Add a durable project record</span>
+          </summary>
+          <form class="action-form aligned-form project-create-form" data-action="projectCreate">
+            <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
+            <label>Status ${select("status", ["active", "inactive", "archived"], "active", !writable)}</label>
+            <label class="field-full">Description <textarea name="description" ${disabledAttr(!writable)}></textarea></label>
+            <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" placeholder="{}" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabledAttr(!writable)}></textarea></label>
+            <div class="field-full form-actions"><button type="submit" ${disabledAttr(!writable)}>Create</button></div>
+          </form>
+        </details>
       </div>
     </section>
     <section class="surface">
@@ -1082,7 +1084,6 @@ function renderProjects() {
         </div>
       </div>
       ${projectTable(projects, data)}
-      ${projectInspector(projects, data)}
     </section>
   `;
 }
@@ -1290,11 +1291,28 @@ function renderWorkflows() {
     const data = mustData();
     const running = Number(data.workflow_runs.counts?.running || 0);
     const pendingDrafts = data.workflow_drafts.filter((draft) => draft.status !== "compiled" && draft.status !== "cancelled");
+    const chainTask = selectedWorkflowChainTask(data);
     // wf-05: pick which workflow's graph + inspector to render. Default to
     // the first definition (legacy behavior) but let the operator switch.
     const selectedId = state.selectedWorkflowId || data.workflows[0]?.id || "";
     const selectedWorkflow = data.workflows.find((wf) => String(wf.id) === String(selectedId)) || data.workflows[0];
     return `
+    <section class="workflow-task-console">
+      <div class="surface">
+        <div class="surface-heading">
+          <h2>Start Workflow From Task</h2>
+          ${chip("planning task", "info")}
+        </div>
+        ${workflowPlanningTaskForm(data)}
+      </div>
+      <div class="surface">
+        <div class="surface-heading">
+          <h2>Task Chain</h2>
+          ${chainTask ? chip(chainTask.task.state, statusTone(chainTask.task.state)) : chip("no task selected", "warn")}
+        </div>
+        ${workflowTaskChainPanel(data, chainTask)}
+      </div>
+    </section>
     <section class="metric-grid">
       ${metric("Definitions", data.workflows.length, `${data.workflow_runs.total || 0} total runs`)}
       ${metric("Running", running, "active workflow runs")}
@@ -1312,7 +1330,7 @@ function renderWorkflows() {
         ${workflowInspector(selectedWorkflow)}
       </div>
       <div class="surface">
-        <h2>Create Draft</h2>
+        <h2>Definition Draft Builder</h2>
         ${draftCreationForm()}
       </div>
     </section>
@@ -1347,6 +1365,106 @@ function renderWorkflows() {
         ${data.notifier_channels.length ? data.notifier_channels.map(notifierChannelRecord).join("") : `<div class="empty-state">No notifier channels</div>`}
       </div>
     </section>
+  `;
+}
+function workflowPlanningTaskForm(data) {
+    const writable = canWrite(data);
+    const disabled = disabledAttr(!writable);
+    const defaultProject = state.projectFilter === "all" ? "" : state.projectFilter;
+    const metadata = JSON.stringify({
+        origin: { type: "dashboard_workflow_planning" },
+        workflow: {
+            type: "task_chain",
+            role: "planning",
+            status: "planning",
+        },
+    }, null, 2);
+    return `
+    <form class="action-form workflow-planning-form" data-action="workflowPlanningTaskCreate">
+      <label class="field-full">Goal <textarea name="goal" rows="4" required ${disabled}></textarea></label>
+      <label>Project <input name="project" value="${escapeHtml(defaultProject)}" ${disabled}></label>
+      <label>Priority <input name="priority" type="number" value="0" ${disabled}></label>
+      <label>Capabilities <input name="required_capabilities" placeholder="leave blank for any agent" ${disabled}></label>
+      <label>Title <input name="title" placeholder="Plan workflow: ..." ${disabled}></label>
+      <label class="field-full">Planning Instructions <textarea name="description" rows="4" placeholder="What should the planning task decompose into child tasks?" ${disabled}></textarea></label>
+      <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(metadata)}</textarea></label>
+      <div class="field-full form-actions"><button type="submit" ${disabled}>Create Planning Task</button></div>
+    </form>
+  `;
+}
+function selectedWorkflowChainTask(data) {
+    const selected = selectedTaskDetail(data);
+    if (selected)
+        return selected;
+    return data.tasks.find((detail) => {
+        const workflow = detail.task.metadata?.workflow;
+        return workflow && String(workflow.type || "") === "task_chain";
+    }) || data.tasks.find((detail) => !TERMINAL_TASK_STATES.has(detail.task.state)) || data.tasks[0] || null;
+}
+function workflowTaskChainPanel(data, detail) {
+    if (!detail) {
+        return `<div class="empty-state">Create a planning task to start a task-chain workflow.</div>`;
+    }
+    const task = detail.task;
+    const writable = canWrite(data);
+    const disabled = disabledAttr(!writable || TERMINAL_TASK_STATES.has(task.state));
+    const relationships = task.metadata?.relationships || {};
+    const childIds = Array.isArray(relationships.child_task_ids)
+        ? relationships.child_task_ids.map(String)
+        : [];
+    const parentId = relationships.parent_task_id ? String(relationships.parent_task_id) : "";
+    const children = childIds
+        .map((id) => taskDetailById(data, id)?.task)
+        .filter((child) => !!child);
+    const taskOptions = data.tasks
+        .slice(0, 120)
+        .map((candidate) => {
+        const label = `${candidate.task.title} (${candidate.task.state})`;
+        return option(candidate.task.id, label, task.id);
+    })
+        .join("");
+    const metadata = JSON.stringify({
+        origin: { type: "dashboard_workflow_chain", parent_task_id: task.id },
+        workflow: {
+            type: "task_chain",
+            role: "step",
+            parent_task_id: task.id,
+        },
+    }, null, 2);
+    return `
+    <div class="workflow-chain-panel">
+      <label class="workflow-task-selector">
+        <span class="muted small">Selected task</span>
+        <select data-action="workflowTaskSelect">${taskOptions}</select>
+      </label>
+      <div class="row-grid compact-grid">
+        ${field("Task", task.title)}
+        ${field("Project", taskProject(task))}
+        ${field("Parent", parentId || "none")}
+        ${field("Children", childIds.length)}
+      </div>
+      <div class="workflow-chain-list">
+        <div class="workflow-chain-node is-current">
+          <strong>${escapeHtml(task.title)}</strong>
+          <span class="muted small mono">${escapeHtml(task.id)}</span>
+        </div>
+        ${children.map((child) => `
+          <button class="workflow-chain-node" type="button" data-task-open="${escapeHtml(child.id)}">
+            <strong>${escapeHtml(child.title)}</strong>
+            <span class="muted small">${escapeHtml(child.state)}</span>
+          </button>
+        `).join("")}
+      </div>
+      <form class="action-form workflow-chain-form" data-action="workflowChainTaskAdd" data-task-id="${escapeHtml(task.id)}">
+        <label>Next task title <input name="title" required ${disabled}></label>
+        <label>Project <input name="project" value="${escapeHtml(taskProject(task))}" ${disabled}></label>
+        <label>Priority <input name="priority" type="number" value="${escapeHtml(task.priority || 0)}" ${disabled}></label>
+        <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}" ${disabled}></label>
+        <label class="field-full">Description <textarea name="description" rows="4" ${disabled}></textarea></label>
+        <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(metadata)}</textarea></label>
+        <div class="field-full form-actions"><button type="submit" ${disabled}>Add Task To Chain</button></div>
+      </form>
+    </div>
   `;
 }
 function workflowRecord(workflow) {
@@ -2798,7 +2916,7 @@ function projectFrontierRecord(project) {
       <div>
         <div class="record-header">
           <div><h3>${escapeHtml(project.project)}</h3><p class="muted small">${project.task_count} stories, ${project.active_agent_ids.length} active agents</p></div>
-          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Scope</button>
         </div>
         <div class="chip-row">
           ${chip(`${project.ready_count} ready`, project.ready_count ? "good" : "info")}
@@ -2859,7 +2977,7 @@ function projectTableRow(project, data) {
       <td>
         <div class="table-actions">
           <button class="link-button" type="button" data-select-id="${escapeHtml(project.project)}">Inspect</button>
-          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+          <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Scope</button>
         </div>
       </td>
     </tr>
@@ -2886,7 +3004,7 @@ function projectMobileCard(project, data) {
       <p class="muted small">${escapeHtml(project.description || "No description")}</p>
       <div class="mobile-card-actions">
         <button class="link-button" type="button" data-select-id="${escapeHtml(project.project)}">Inspect</button>
-        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Focus</button>
+        <button class="link-button" type="button" data-project-focus="${escapeHtml(project.project)}">Scope</button>
       </div>
     </article>
   `;
@@ -2929,6 +3047,8 @@ function projectInspector(projects, data) {
         ${field("Cross-project", selected.cross_project_dependency_count)}
         ${field("Repositories", selected.repository_count)}
       </div>
+      ${projectTaskComposer(selected, data)}
+      ${projectTaskList(selected, data)}
       <form class="action-form inspector-form" data-action="projectUpdate" data-project="${escapeHtml(selected.project)}">
         <label>Name <input name="name" value="${escapeHtml(selected.project)}" ${disabled}></label>
         <label>Status ${select("status", ["active", "inactive", "archived"], statusValue, !editable)}</label>
@@ -2946,6 +3066,73 @@ function projectInspector(projects, data) {
         </div>
       </div>
     </section>
+  `;
+}
+function projectTaskComposer(project, data) {
+    const writable = canWrite(data);
+    const disabled = disabledAttr(!writable);
+    const metadata = JSON.stringify({
+        origin: {
+            type: "dashboard_project",
+            project: project.project,
+        },
+    }, null, 2);
+    return `
+    <section class="record-section project-task-composer">
+      <div class="record-header">
+        <div>
+          <h3>New Task in Project</h3>
+          <p class="muted small">Creates a ledger task with project pre-filled.</p>
+        </div>
+        ${chip(project.project, "info")}
+      </div>
+      <form class="action-form aligned-form project-task-form" data-action="taskCreate">
+        <input type="hidden" name="project" value="${escapeHtml(project.project)}">
+        <label>Title <input name="title" required ${disabled}></label>
+        <label>Priority <input name="priority" type="number" value="0" ${disabled}></label>
+        <label>Capabilities <input name="required_capabilities" value="${escapeHtml(project.required_capabilities.join(","))}" placeholder="python,deploy" ${disabled}></label>
+        <label>Dependencies <input name="dependencies" placeholder="task_a,task_b" ${disabled}></label>
+        <label class="field-full">Description <textarea name="description" rows="4" ${disabled}></textarea></label>
+        <label class="field-full">Metadata JSON <textarea class="json-editor" name="metadata" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(metadata)}</textarea></label>
+        <div class="field-full form-actions"><button type="submit" ${disabled}>Create Task</button></div>
+      </form>
+    </section>
+  `;
+}
+function projectTaskList(project, data) {
+    const tasks = data.tasks
+        .filter((detail) => taskProject(detail.task) === project.project)
+        .sort((a, b) => {
+        const activeDelta = Number(TERMINAL_TASK_STATES.has(a.task.state)) - Number(TERMINAL_TASK_STATES.has(b.task.state));
+        if (activeDelta)
+            return activeDelta;
+        return String(b.task.last_updated_at || b.task.updated_at || "").localeCompare(String(a.task.last_updated_at || a.task.updated_at || ""));
+    })
+        .slice(0, 8);
+    return `
+    <section class="record-section">
+      <div class="record-header">
+        <div>
+          <h3>Project Tasks</h3>
+          <p class="muted small">${project.task_count} total in the ledger</p>
+        </div>
+        ${chip(`${tasks.length} shown`, "info")}
+      </div>
+      <div class="project-task-list">
+        ${tasks.length ? tasks.map((detail) => projectTaskButton(detail.task)).join("") : `<div class="empty-state compact">No tasks in this project</div>`}
+      </div>
+    </section>
+  `;
+}
+function projectTaskButton(task) {
+    return `
+    <button class="project-task-button" type="button" data-task-open="${escapeHtml(task.id)}">
+      <span>
+        <strong>${escapeHtml(task.title)}</strong>
+        <span class="muted small mono">${escapeHtml(task.id)}</span>
+      </span>
+      <span class="chip ${statusTone(task.state)}">${escapeHtml(task.state)}</span>
+    </button>
   `;
 }
 function fleetMembershipSummary(data) {
@@ -4262,6 +4449,13 @@ function handleContentChange(event) {
         render();
         return;
     }
+    const workflowTaskSelector = target.closest("select[data-action='workflowTaskSelect']");
+    if (workflowTaskSelector) {
+        state.selectedId = workflowTaskSelector.value;
+        updateUrlState();
+        render();
+        return;
+    }
     // wf-05 part 3: refresh the draft builder's derived UI (step-key
     // datalist, required-answer inputs) on any input/select change
     // inside a draft form.
@@ -4347,7 +4541,19 @@ async function handleContentClick(event) {
     const projectTarget = event.target?.closest("[data-project-focus]");
     if (projectTarget) {
         state.projectFilter = projectTarget.dataset.projectFocus || "all";
+        state.selectedId = "";
         state.agentPage = 1;
+        updateUrlState();
+        render();
+        return;
+    }
+    const taskOpen = event.target?.closest("[data-task-open]");
+    if (taskOpen) {
+        const taskId = taskOpen.dataset.taskOpen || "";
+        if (!taskId)
+            return;
+        state.selectedId = taskId;
+        state.activeView = "tasks";
         updateUrlState();
         render();
         return;
@@ -4700,6 +4906,61 @@ async function runAction(action, form, values) {
             dependencies: csvList(values.dependencies),
             metadata: parseJsonObject(values.metadata),
             actor: "human",
+        });
+    }
+    if (action === "workflowPlanningTaskCreate") {
+        const goal = requiredString(values.goal);
+        const notes = String(values.description || "").trim();
+        const metadata = parseJsonObject(values.metadata);
+        if (!metadata.origin)
+            metadata.origin = { type: "dashboard_workflow_planning" };
+        if (!metadata.workflow) {
+            metadata.workflow = {
+                type: "task_chain",
+                role: "planning",
+                status: "planning",
+            };
+        }
+        const title = String(values.title || "").trim() || `Plan workflow: ${truncate(goal, 72)}`;
+        const description = [
+            `Workflow goal:\n${goal}`,
+            notes ? `Planning instructions:\n${notes}` : "",
+            "Create child tasks for each executable step and leave this task blocked on the resulting chain.",
+        ].filter(Boolean).join("\n\n");
+        return postJSON("/tasks", {
+            title,
+            description,
+            project: emptyToNull(values.project),
+            priority: numberValue(values.priority, 0),
+            required_capabilities: csvList(values.required_capabilities),
+            dependencies: [],
+            metadata,
+            actor: "human",
+        });
+    }
+    if (action === "workflowChainTaskAdd") {
+        const parentTaskId = requiredDataset(form, "taskId");
+        const metadata = parseJsonObject(values.metadata);
+        if (!metadata.origin)
+            metadata.origin = { type: "dashboard_workflow_chain", parent_task_id: parentTaskId };
+        if (!metadata.workflow) {
+            metadata.workflow = {
+                type: "task_chain",
+                role: "step",
+                parent_task_id: parentTaskId,
+            };
+        }
+        return postJSON(`/tasks/${encodeURIComponent(parentTaskId)}/children`, {
+            actor: "human",
+            children: [{
+                    title: requiredString(values.title),
+                    description: String(values.description || ""),
+                    project: emptyToNull(values.project),
+                    priority: numberValue(values.priority, 0),
+                    required_capabilities: csvList(values.required_capabilities),
+                    dependencies: [],
+                    metadata,
+                }],
         });
     }
     if (action === "taskUpdate") {

@@ -257,6 +257,9 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
     for marker in (
         "Project Inspector",
+        "New Task in Project",
+        "Project Tasks",
+        "data-task-open",
         "Agent Inspector",
         "Task Inspector",
         "Rollout Inspector",

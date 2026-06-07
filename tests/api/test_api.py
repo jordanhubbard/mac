@@ -2013,6 +2013,13 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "Hermes Instance ID" in app_js
     assert "Read-only token" in app_js
     assert "renderWorkflows" in app_js
+    assert "Start Workflow From Task" in app_js
+    assert "Create Planning Task" in app_js
+    assert "workflowPlanningTaskCreate" in app_js
+    assert "Task Chain" in app_js
+    assert "workflowChainTaskAdd" in app_js
+    assert "workflowTaskSelect" in app_js
+    assert "Definition Draft Builder" in app_js
     assert "workflowGraph" in app_js
     assert "hermes_runtime_proofs" in app_js
     assert "Runtime Proof" in app_js
