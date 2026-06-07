@@ -152,8 +152,8 @@ def test_router_env_emits_wildcard_models_from_spec(tmp_path):
         "router": {
             "backend": "inproc",
             "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],
-            "wildcard_models": "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini",
-            "default_model": "us/azure/openai/gpt-4.1-mini",
+            "wildcard_models": "azure/anthropic/claude-sonnet-4-6|azure/anthropic/claude-opus-4-6",
+            "default_model": "azure/anthropic/claude-sonnet-4-6",
         },
         "network": {"provider": "none"},
     }
@@ -166,8 +166,8 @@ def test_router_env_emits_wildcard_models_from_spec(tmp_path):
     )
     assert plan["status"] == "pass"
     ev = plan["env_values"]
-    assert ev["MAC_ROUTER_WILDCARD_MODELS"] == "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini"
-    assert ev["MAC_ROUTER_DEFAULT_MODEL"] == "us/azure/openai/gpt-4.1-mini"
+    assert ev["MAC_ROUTER_WILDCARD_MODELS"] == "azure/anthropic/claude-sonnet-4-6|azure/anthropic/claude-opus-4-6"
+    assert ev["MAC_ROUTER_DEFAULT_MODEL"] == "azure/anthropic/claude-sonnet-4-6"
 
 
 def test_router_env_emits_modality_upstreams_and_keys_from_spec(tmp_path):

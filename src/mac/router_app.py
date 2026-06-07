@@ -132,6 +132,40 @@ _MODEL_RETRY_CODES = frozenset({404, 422})
 # request body, so no per-agent config has to know each upstream's quirks.
 # Overridable via MAC_ROUTER_DROP_PARAMS (comma-separated) at build time.
 _DEFAULT_DROP_PARAMS = ("reasoningSummary", "reasoning_summary")
+_DEFAULT_STRONG_WILDCARD_MODEL = "azure/anthropic/claude-sonnet-4-6"
+_FORBIDDEN_WILDCARD_MODELS = ("gpt-4.1-mini",)
+
+
+def _forbidden_wildcard_model(model: str) -> bool:
+    normalized = str(model or "").strip().lower().replace("_", "-")
+    return any(forbidden in normalized for forbidden in _FORBIDDEN_WILDCARD_MODELS)
+
+
+def _strong_wildcard_default(env: Dict[str, str]) -> str:
+    for key in ("MAC_HERMES_GATEWAY_MODEL", "HERMES_INFERENCE_MODEL", "ACC_LLM_MODEL"):
+        value = (env.get(key) or "").strip()
+        if value and value != "*" and not _forbidden_wildcard_model(value):
+            return value
+    return _DEFAULT_STRONG_WILDCARD_MODEL
+
+
+def _wildcard_models_from_env(env: Dict[str, str]) -> Tuple[str, ...]:
+    raw_models = [
+        m.strip()
+        for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|")
+        if m.strip()
+    ]
+    models = [model for model in raw_models if not _forbidden_wildcard_model(model)]
+    if raw_models and not models:
+        models = [_strong_wildcard_default(env)]
+    return tuple(models)
+
+
+def _default_model_from_env(env: Dict[str, str]) -> str:
+    value = (env.get("MAC_ROUTER_DEFAULT_MODEL") or "").strip()
+    if value and value != "*" and not _forbidden_wildcard_model(value):
+        return value
+    return _strong_wildcard_default(env)
 
 
 def _normalize_payload(payload: Dict[str, Any], drop_params: Tuple[str, ...]) -> Dict[str, Any]:
@@ -802,9 +836,7 @@ def build_proxy_from_env(
         failure_threshold=int(_f("MAC_ROUTER_FAILURE_THRESHOLD", 3)),
         cooldown_seconds=_f("MAC_ROUTER_COOLDOWN_SECONDS", 30.0),
     )
-    wildcard_models = tuple(
-        m.strip() for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|") if m.strip()
-    )
+    wildcard_models = _wildcard_models_from_env(env)
     drop_raw = env.get("MAC_ROUTER_DROP_PARAMS")
     drop_params = (
         tuple(p.strip() for p in drop_raw.split(",") if p.strip())
@@ -815,7 +847,7 @@ def build_proxy_from_env(
         router,
         _fwd,
         stream_forward_fn=_sfwd,
-        default_model=(env.get("MAC_ROUTER_DEFAULT_MODEL") or "").strip(),
+        default_model=_default_model_from_env(env),
         wildcard_models=wildcard_models,
         timeout=_f("MAC_ROUTER_TIMEOUT", 60.0),
         stream_timeout=_f("MAC_ROUTER_STREAM_TIMEOUT", 300.0),

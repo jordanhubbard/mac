@@ -800,6 +800,20 @@ def test_build_proxy_reads_wildcard_models():
     assert proxy._wildcard_models == ("meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct")
 
 
+def test_build_proxy_never_uses_gpt_41_mini_for_wildcard_default():
+    env = {
+        "MAC_ROUTER_PROVIDERS": "p=http://p/v1,0",
+        "MAC_ROUTER_BACKEND": "inproc",
+        "MAC_ROUTER_WILDCARD_MODELS": "us/azure/openai/gpt-4.1-mini|azure/openai/gpt-4.1-mini",
+        "MAC_ROUTER_DEFAULT_MODEL": "us/azure/openai/gpt-4.1-mini",
+        "MAC_HERMES_GATEWAY_MODEL": "azure/anthropic/claude-sonnet-4-6",
+    }
+    proxy = build_proxy_from_env(env)
+    assert proxy is not None
+    assert proxy._wildcard_models == ("azure/anthropic/claude-sonnet-4-6",)
+    assert proxy._default_model == "azure/anthropic/claude-sonnet-4-6"
+
+
 # ---------------------------------------------------------------------------
 # mac_route_context_headers
 # ---------------------------------------------------------------------------

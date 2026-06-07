@@ -117,7 +117,7 @@ Two clarifications from building this out:
 A **wrap-TokenHub canary** on `natasha` is live: its gateway is cut over to its
 local in-mac router (recovering breaker + fail-fast + streaming passthrough),
 which forwards through TokenHub using natasha's own key. Streaming chat verified
-end-to-end (real SSE deltas, `"*"`→`azure/openai/gpt-4.1-mini`); rest of the
+end-to-end (real SSE deltas, `"*"`→`azure/anthropic/claude-sonnet-4-6`); rest of the
 fleet untouched. This proved the router code carries live agent traffic before
 any upstream credential is moved into the vault.
 
