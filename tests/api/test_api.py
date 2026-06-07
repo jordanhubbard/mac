@@ -1278,6 +1278,93 @@ def test_dashboard_state_caps_high_volume_task_and_message_data():
     assert len(client.get("/messages?limit=10").json()) == 10
 
 
+def test_dashboard_workflow_planner_previews_and_accepts_task_chain():
+    cp = ControlPlane.in_memory()
+    app = create_app(control_plane=cp)
+
+    def planner(request):
+        assert request["goal"] == "ship c26 desktop"
+        return {
+            "plan_id": "plan_c26_desktop",
+            "nodes": [
+                {
+                    "node_id": "plan",
+                    "title": "Plan c26 desktop",
+                    "description": "Define the implementation slices and review gates.",
+                    "required_capabilities": ["planning"],
+                },
+                {
+                    "node_id": "implement",
+                    "title": "Implement c26 desktop",
+                    "description": "Build the first interactive desktop UI.",
+                    "required_capabilities": ["python", "review"],
+                    "depends_on": ["plan"],
+                    "priority": 3,
+                },
+            ],
+        }
+
+    app.state.workflow_plan_model = planner
+    client = TestClient(app)
+    project = client.post(
+        "/projects",
+        json={"name": "c26", "description": "C26 emulator"},
+    )
+    assert project.status_code == 200
+
+    preview = client.post(
+        "/dashboard/workflow-plan/preview",
+        json={
+            "goal": "ship c26 desktop",
+            "project": "c26",
+            "required_capabilities": ["python"],
+            "max_tasks": 4,
+            "context": {"surface": "dashboard"},
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    draft = preview.json()
+    assert draft["schema"] == "mac.dashboard.workflow_plan.v1"
+    assert draft["source"] == "injected"
+    assert draft["plan_id"] == "plan_c26_desktop"
+    assert [node["node_id"] for node in draft["nodes"]] == ["plan", "implement"]
+
+    draft["nodes"][1]["title"] = "Implement edited c26 desktop"
+    accept = client.post(
+        "/dashboard/workflow-plan/accept",
+        json={
+            "goal": draft["goal"],
+            "project": draft["project"],
+            "plan_id": draft["plan_id"],
+            "nodes": draft["nodes"],
+            "actor": "human",
+            "metadata": {"accepted_from": "ui"},
+        },
+    )
+    assert accept.status_code == 200, accept.text
+    result = accept.json()
+    assert result["schema"] == "mac.dashboard.workflow_plan_accept.v1"
+    assert result["project"] == "c26"
+    assert len(result["created"]) == 2
+
+    first_id = result["node_task_ids"]["plan"]
+    second_id = result["node_task_ids"]["implement"]
+    first = cp.get_task(first_id).to_dict()
+    second = cp.get_task(second_id).to_dict()
+    assert first["state"] == "open"
+    assert second["title"] == "Implement edited c26 desktop"
+    assert second["state"] == "blocked"
+    assert second["dependencies"] == [first_id]
+    assert second["metadata"]["origin"] == {
+        "type": "dashboard_workflow_plan",
+        "plan_id": "plan_c26_desktop",
+        "node_id": "implement",
+    }
+    assert second["metadata"]["workflow"]["type"] == "planned_task_chain"
+    assert second["metadata"]["workflow"]["depends_on_nodes"] == ["plan"]
+    assert second["metadata"]["workflow_plan"] == {"accepted_from": "ui"}
+
+
 def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
@@ -2013,12 +2100,19 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "Hermes Instance ID" in app_js
     assert "Read-only token" in app_js
     assert "renderWorkflows" in app_js
-    assert "Start Workflow From Task" in app_js
-    assert "Create Planning Task" in app_js
-    assert "workflowPlanningTaskCreate" in app_js
-    assert "Task Chain" in app_js
-    assert "workflowChainTaskAdd" in app_js
-    assert "workflowTaskSelect" in app_js
+    assert "Plan Workflow" in app_js
+    assert "Generate Plan" in app_js
+    assert "Proposed Task Graph" in app_js
+    assert "workflowPlanPreview" in app_js
+    assert "/dashboard/workflow-plan/preview" in app_js
+    assert "workflowPlanAccept" in app_js
+    assert "/dashboard/workflow-plan/accept" in app_js
+    assert "workflowPlanNodeAdd" in app_js
+    assert "workflowPlanNodeMove" in app_js
+    assert "workflowPlanNodeDelete" in app_js
+    assert "workflowPlanCancel" in app_js
+    assert "data-plan-field" in app_js
+    assert "Workflow accepted:" in app_js
     assert "Definition Draft Builder" in app_js
     assert "workflowGraph" in app_js
     assert "hermes_runtime_proofs" in app_js

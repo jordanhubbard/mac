@@ -1027,6 +1027,33 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "slug": "route-draft-approved",
             "name": "Route Draft Approved",
         },
+        ("POST", "/dashboard/workflow-plan/preview"): {
+            "goal": "route coverage workflow plan",
+            "project": ctx["project_name"],
+            "required_capabilities": ["python"],
+            "max_tasks": 2,
+            "context": {"route": True},
+        },
+        ("POST", "/dashboard/workflow-plan/accept"): {
+            "goal": "route coverage accepted workflow",
+            "project": ctx["project_name"],
+            "plan_id": "plan_route_accept",
+            "nodes": [
+                {
+                    "node_id": "plan",
+                    "title": "Route plan task",
+                    "description": "Plan the route coverage task chain.",
+                    "required_capabilities": ["python"],
+                },
+                {
+                    "node_id": "verify",
+                    "title": "Route verify task",
+                    "description": "Verify the route coverage task chain.",
+                    "required_capabilities": ["python"],
+                    "depends_on": ["plan"],
+                },
+            ],
+        },
         ("POST", "/workflows/{workflow_id_or_slug}/preview"): {"input": {"ticket": "route"}},
         ("POST", "/workflows/import-yaml"): {
             "yaml": """
@@ -1348,6 +1375,26 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch):
 
     cp = ControlPlane.in_memory()
     app = create_app(control_plane=cp)
+    app.state.workflow_plan_model = lambda request: {
+        "plan_id": "plan_route_preview",
+        "goal": request.get("goal"),
+        "project": request.get("project"),
+        "nodes": [
+            {
+                "node_id": "plan",
+                "title": "Plan route coverage workflow",
+                "description": "Draft the route coverage task chain.",
+                "required_capabilities": ["python"],
+            },
+            {
+                "node_id": "verify",
+                "title": "Verify route coverage workflow",
+                "description": "Verify the route coverage task chain.",
+                "required_capabilities": ["python"],
+                "depends_on": ["plan"],
+            },
+        ],
+    }
     client = TestClient(app)
     ctx = _seed_route_state(client, cp)
 

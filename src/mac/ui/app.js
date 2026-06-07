@@ -201,6 +201,7 @@ const state = {
     observabilityStreamStatus: "idle",
     selectedWorkflowId: "",
     selectedNodeKey: "",
+    workflowPlanDraft: null,
 };
 const nodes = {
     nav: requiredElement("#viewNav"),
@@ -1291,26 +1292,25 @@ function renderWorkflows() {
     const data = mustData();
     const running = Number(data.workflow_runs.counts?.running || 0);
     const pendingDrafts = data.workflow_drafts.filter((draft) => draft.status !== "compiled" && draft.status !== "cancelled");
-    const chainTask = selectedWorkflowChainTask(data);
     // wf-05: pick which workflow's graph + inspector to render. Default to
     // the first definition (legacy behavior) but let the operator switch.
     const selectedId = state.selectedWorkflowId || data.workflows[0]?.id || "";
     const selectedWorkflow = data.workflows.find((wf) => String(wf.id) === String(selectedId)) || data.workflows[0];
     return `
-    <section class="workflow-task-console">
+    <section class="workflow-planner-console">
       <div class="surface">
         <div class="surface-heading">
-          <h2>Start Workflow From Task</h2>
-          ${chip("planning task", "info")}
+          <h2>Plan Workflow</h2>
+          ${chip("model draft", "info")}
         </div>
-        ${workflowPlanningTaskForm(data)}
+        ${workflowPlanPromptForm(data)}
       </div>
       <div class="surface">
         <div class="surface-heading">
-          <h2>Task Chain</h2>
-          ${chainTask ? chip(chainTask.task.state, statusTone(chainTask.task.state)) : chip("no task selected", "warn")}
+          <h2>Proposed Task Graph</h2>
+          ${state.workflowPlanDraft ? chip(`${state.workflowPlanDraft.nodes.length} proposed`, "info") : chip("no draft", "warn")}
         </div>
-        ${workflowTaskChainPanel(data, chainTask)}
+        ${workflowPlanDraftPanel()}
       </div>
     </section>
     <section class="metric-grid">
@@ -1366,6 +1366,318 @@ function renderWorkflows() {
       </div>
     </section>
   `;
+}
+function workflowPlanPromptForm(data) {
+    const writable = canWrite(data);
+    const disabled = disabledAttr(!writable);
+    const projects = projectFilterOptions(data);
+    const defaultProject = state.projectFilter === "all" ? (projects[0]?.project || "") : state.projectFilter;
+    const projectOptions = projects.map((project) => option(project.project, project.project, defaultProject)).join("");
+    return `
+    <form class="action-form workflow-plan-form" data-action="workflowPlanPreview">
+      <label class="field-full">Task Request <textarea name="goal" rows="5" required ${disabled}></textarea></label>
+      <label>Project
+        <select name="project" ${disabled}>
+          ${option("", "No project", defaultProject)}
+          ${projectOptions}
+        </select>
+      </label>
+      <label>Capabilities <input name="required_capabilities" placeholder="ops,python,review" ${disabled}></label>
+      <label>Max Tasks <input name="max_tasks" type="number" min="1" max="20" value="6" ${disabled}></label>
+      <label>Model <input name="model" value="*" ${disabled}></label>
+      <label class="field-full">Planning Prompt <textarea name="prompt" rows="4" placeholder="Constraints, acceptance criteria, sequencing, or preferred roles" ${disabled}></textarea></label>
+      <div class="field-full form-actions"><button type="submit" ${disabled}>Generate Plan</button></div>
+    </form>
+  `;
+}
+function workflowPlanDraftPanel() {
+    const draft = state.workflowPlanDraft;
+    if (!draft)
+        return `<div class="empty-state">No proposed task graph</div>`;
+    return `
+    <div class="workflow-plan-draft" data-workflow-plan-draft>
+      <div class="row-grid compact-grid">
+        ${field("Plan", draft.plan_id)}
+        ${field("Project", draft.project || "none")}
+        ${field("Source", draft.source || "model")}
+        ${field("Goal", truncate(draft.goal, 120))}
+      </div>
+      ${workflowPlanDraftGraph(draft)}
+      <div class="workflow-plan-editor">
+        ${draft.nodes.map((node, index) => workflowPlanNodeEditor(node, index, draft.nodes.length)).join("")}
+      </div>
+      <div class="workflow-plan-actions">
+        <button type="button" data-action="workflowPlanNodeAdd">Add Task</button>
+        <button type="button" class="primary-button" data-action="workflowPlanAccept">Accept</button>
+        <button type="button" class="secondary-button" data-action="workflowPlanCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+function workflowPlanDraftGraph(draft) {
+    const graphNodes = draft.nodes.map((node) => ({
+        node_key: node.node_id,
+        node_type: "task",
+        role_required: node.required_capabilities.join(","),
+    }));
+    const edges = draft.nodes.flatMap((node) => node.depends_on
+        .filter((dep) => draft.nodes.some((candidate) => candidate.node_id === dep))
+        .map((dep) => ({
+        from_node_key: dep,
+        to_node_key: node.node_id,
+        condition: "success",
+    })));
+    if (!graphNodes.length)
+        return `<div class="empty-state">No proposed nodes</div>`;
+    const positions = layoutWorkflowNodes(graphNodes, edges);
+    let maxX = 0;
+    let maxY = 0;
+    positions.forEach((pos) => {
+        if (pos.x > maxX)
+            maxX = pos.x;
+        if (pos.y > maxY)
+            maxY = pos.y;
+    });
+    const width = Math.max(560, maxX + 140);
+    const height = Math.max(180, maxY + 80);
+    const edgeSvg = edges.map((edge) => {
+        const from = positions.get(String(edge.from_node_key || ""));
+        const to = positions.get(String(edge.to_node_key || ""));
+        if (!from || !to)
+            return "";
+        return `<path class="graph-edge graph-edge-success" d="M${from.x + 82},${from.y} C${from.x + 150},${from.y} ${to.x - 150},${to.y} ${to.x - 82},${to.y}"></path>`;
+    }).join("");
+    const nodeSvg = graphNodes.map((node) => {
+        const key = String(node.node_key);
+        const pos = positions.get(key) || { x: 120, y: 60 };
+        return `
+      <g class="graph-node graph-node-task" transform="translate(${pos.x},${pos.y})">
+        <rect x="-86" y="-24" width="172" height="48" rx="8"></rect>
+        ${workflowNodeIcon("task")}
+        <text text-anchor="middle" y="-3" x="14">${escapeHtml(truncate(key, 18))}</text>
+        <text class="graph-column-label" text-anchor="middle" y="15" x="14">${escapeHtml(truncate(String(node.role_required || ""), 18))}</text>
+      </g>
+    `;
+    }).join("");
+    return `
+    <div class="graph-wrap workflow-plan-graph-wrap">
+      <svg class="relationship-graph workflow-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Proposed task graph">
+        ${edgeSvg}
+        ${nodeSvg}
+      </svg>
+    </div>
+  `;
+}
+function workflowPlanNodeEditor(node, index, total) {
+    return `
+    <article class="workflow-plan-node" data-plan-node-id="${escapeHtml(node.node_id)}">
+      <div class="record-header">
+        <div>
+          <h3>${escapeHtml(node.title || node.node_id)}</h3>
+          <p class="muted small mono">${escapeHtml(node.node_id)}</p>
+        </div>
+        <div class="table-actions">
+          <button type="button" data-action="workflowPlanNodeMove" data-direction="up" ${index <= 0 ? "disabled" : ""}>Up</button>
+          <button type="button" data-action="workflowPlanNodeMove" data-direction="down" ${index >= total - 1 ? "disabled" : ""}>Down</button>
+          <button type="button" class="danger-button" data-action="workflowPlanNodeDelete">Delete</button>
+        </div>
+      </div>
+      <div class="action-form workflow-plan-node-form">
+        <label>Node ID <input data-plan-field="node_id" value="${escapeHtml(node.node_id)}"></label>
+        <label>Priority <input data-plan-field="priority" type="number" value="${escapeHtml(node.priority || 0)}"></label>
+        <label>Capabilities <input data-plan-field="required_capabilities" value="${escapeHtml(node.required_capabilities.join(","))}"></label>
+        <label>Depends On <input data-plan-field="depends_on" value="${escapeHtml(node.depends_on.join(","))}"></label>
+        <label class="field-full">Title <input data-plan-field="title" value="${escapeHtml(node.title)}"></label>
+        <label class="field-full">Description <textarea data-plan-field="description" rows="4">${escapeHtml(node.description)}</textarea></label>
+      </div>
+    </article>
+  `;
+}
+function normalizeWorkflowPlanDraft(value) {
+    const record = value && typeof value === "object" ? value : {};
+    const rawNodes = Array.isArray(record.nodes) ? record.nodes : [];
+    const nodes = rawNodes
+        .filter((item) => !!item && typeof item === "object" && !Array.isArray(item))
+        .map((item, index) => normalizeWorkflowPlanNode(item, index + 1));
+    if (!nodes.length)
+        throw new Error("workflow planner returned no proposed tasks");
+    return {
+        schema: String(record.schema || "mac.dashboard.workflow_plan.v1"),
+        plan_id: String(record.plan_id || workflowPlanLocalId(String(record.goal || ""), nodes)),
+        goal: String(record.goal || ""),
+        project: emptyToNull(record.project),
+        source: String(record.source || "model"),
+        created_at: String(record.created_at || ""),
+        nodes,
+    };
+}
+function normalizeWorkflowPlanNode(value, index) {
+    const nodeId = String(value.node_id || value.id || value.key || `task_${index}`).trim() || `task_${index}`;
+    const title = String(value.title || value.name || `Task ${index}`).trim() || `Task ${index}`;
+    const metadata = value.metadata && typeof value.metadata === "object" && !Array.isArray(value.metadata)
+        ? value.metadata
+        : {};
+    return {
+        node_id: nodeId,
+        title,
+        description: String(value.description || value.summary || ""),
+        required_capabilities: listValue(value.required_capabilities || value.capabilities),
+        depends_on: listValue(value.depends_on || value.dependencies || value.parents),
+        priority: numberValue(value.priority, 0),
+        metadata,
+    };
+}
+function listValue(value) {
+    if (Array.isArray(value))
+        return value.map((item) => String(item).trim()).filter(Boolean);
+    return csvList(value);
+}
+function workflowPlanLocalId(goal, nodes) {
+    const seed = `${goal}:${nodes.map((node) => node.node_id).join(",")}`;
+    let hash = 0;
+    for (let i = 0; i < seed.length; i += 1) {
+        hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+    }
+    return `plan_${Math.abs(hash).toString(16)}`;
+}
+function syncWorkflowPlanDraftFromDom() {
+    const draft = state.workflowPlanDraft;
+    const root = nodes.content.querySelector("[data-workflow-plan-draft]");
+    if (!draft || !root)
+        return draft;
+    const editedNodes = Array.from(root.querySelectorAll("[data-plan-node-id]")).map((row, index) => {
+        const current = draft.nodes[index] || {
+            node_id: `task_${index + 1}`,
+            title: `Task ${index + 1}`,
+            description: "",
+            required_capabilities: [],
+            depends_on: [],
+            priority: 0,
+            metadata: {},
+        };
+        const field = (name) => {
+            const control = row.querySelector(`[data-plan-field='${name}']`);
+            return control ? control.value : "";
+        };
+        return {
+            ...current,
+            node_id: field("node_id").trim() || current.node_id,
+            title: field("title").trim() || current.title,
+            description: field("description"),
+            required_capabilities: csvList(field("required_capabilities")),
+            depends_on: csvList(field("depends_on")),
+            priority: numberValue(field("priority"), current.priority || 0),
+        };
+    });
+    state.workflowPlanDraft = { ...draft, nodes: normalizeWorkflowPlanDependencies(editedNodes) };
+    return state.workflowPlanDraft;
+}
+function normalizeWorkflowPlanDependencies(planNodes) {
+    const ids = new Set(planNodes.map((node) => node.node_id));
+    return planNodes.map((node) => ({
+        ...node,
+        depends_on: node.depends_on.filter((dep) => ids.has(dep)),
+    }));
+}
+function workflowPlanNodeIndex(button) {
+    const row = button.closest("[data-plan-node-id]");
+    if (!row)
+        return -1;
+    const rows = Array.from(nodes.content.querySelectorAll("[data-plan-node-id]"));
+    return rows.indexOf(row);
+}
+function addWorkflowPlanNode() {
+    const draft = syncWorkflowPlanDraftFromDom();
+    if (!draft)
+        return;
+    const used = new Set(draft.nodes.map((node) => node.node_id));
+    let index = draft.nodes.length + 1;
+    let nodeId = `task_${index}`;
+    while (used.has(nodeId)) {
+        index += 1;
+        nodeId = `task_${index}`;
+    }
+    state.workflowPlanDraft = {
+        ...draft,
+        nodes: [
+            ...draft.nodes,
+            {
+                node_id: nodeId,
+                title: `Task ${index}`,
+                description: "",
+                required_capabilities: [],
+                depends_on: [],
+                priority: 0,
+                metadata: {},
+            },
+        ],
+    };
+    render();
+}
+function deleteWorkflowPlanNode(button) {
+    const draft = syncWorkflowPlanDraftFromDom();
+    const index = workflowPlanNodeIndex(button);
+    if (!draft || index < 0)
+        return;
+    const removed = draft.nodes[index]?.node_id;
+    state.workflowPlanDraft = {
+        ...draft,
+        nodes: draft.nodes
+            .filter((_, candidateIndex) => candidateIndex !== index)
+            .map((node) => ({ ...node, depends_on: node.depends_on.filter((dep) => dep !== removed) })),
+    };
+    render();
+}
+function moveWorkflowPlanNode(button) {
+    const draft = syncWorkflowPlanDraftFromDom();
+    const index = workflowPlanNodeIndex(button);
+    if (!draft || index < 0)
+        return;
+    const direction = button.dataset.direction === "down" ? 1 : -1;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= draft.nodes.length)
+        return;
+    const nextNodes = [...draft.nodes];
+    const [node] = nextNodes.splice(index, 1);
+    nextNodes.splice(nextIndex, 0, node);
+    state.workflowPlanDraft = { ...draft, nodes: nextNodes };
+    render();
+}
+function cancelWorkflowPlan() {
+    state.workflowPlanDraft = null;
+    state.actionMessage = "Workflow plan cancelled";
+    render();
+}
+async function acceptWorkflowPlan(button) {
+    const draft = syncWorkflowPlanDraftFromDom();
+    if (!draft)
+        return;
+    if (!draft.nodes.length) {
+        state.actionMessage = "Workflow plan accept failed: no proposed tasks";
+        render();
+        return;
+    }
+    button.disabled = true;
+    try {
+        const result = await postJSON("/dashboard/workflow-plan/accept", {
+            goal: draft.goal,
+            project: draft.project || null,
+            plan_id: draft.plan_id,
+            nodes: draft.nodes,
+            actor: "human",
+            metadata: { source: "dashboard_workflow_planner" },
+        });
+        state.workflowPlanDraft = null;
+        state.actionMessage = actionSuccessMessage("workflowPlanAccept", result);
+        await loadDashboard();
+    }
+    catch (error) {
+        state.actionMessage = `Workflow plan accept failed: ${error instanceof Error ? error.message : String(error)}`;
+        render();
+    }
+    finally {
+        button.disabled = false;
+    }
 }
 function workflowPlanningTaskForm(data) {
     const writable = canWrite(data);
@@ -4442,6 +4754,12 @@ function handleContentChange(event) {
     const target = event.target;
     if (!target)
         return;
+    const planField = target.closest("[data-plan-field]");
+    if (planField) {
+        syncWorkflowPlanDraftFromDom();
+        renderPreservingFocusedControl();
+        return;
+    }
     const selector = target.closest("select[data-action='workflowGraphSelect']");
     if (selector) {
         state.selectedWorkflowId = selector.value;
@@ -4486,6 +4804,36 @@ async function handleContentClick(event) {
     if (launchpad) {
         event.preventDefault();
         navigateDashboardView(launchpad.dataset.dashboardGo);
+        return;
+    }
+    const workflowPlanAdd = event.target?.closest("[data-action='workflowPlanNodeAdd']");
+    if (workflowPlanAdd) {
+        event.preventDefault();
+        addWorkflowPlanNode();
+        return;
+    }
+    const workflowPlanDelete = event.target?.closest("[data-action='workflowPlanNodeDelete']");
+    if (workflowPlanDelete) {
+        event.preventDefault();
+        deleteWorkflowPlanNode(workflowPlanDelete);
+        return;
+    }
+    const workflowPlanMove = event.target?.closest("[data-action='workflowPlanNodeMove']");
+    if (workflowPlanMove) {
+        event.preventDefault();
+        moveWorkflowPlanNode(workflowPlanMove);
+        return;
+    }
+    const workflowPlanCancel = event.target?.closest("[data-action='workflowPlanCancel']");
+    if (workflowPlanCancel) {
+        event.preventDefault();
+        cancelWorkflowPlan();
+        return;
+    }
+    const workflowPlanAccept = event.target?.closest("[data-action='workflowPlanAccept']");
+    if (workflowPlanAccept) {
+        event.preventDefault();
+        await acceptWorkflowPlan(workflowPlanAccept);
         return;
     }
     const projectDelete = event.target?.closest("[data-project-delete]");
@@ -4821,6 +5169,12 @@ async function handleActionSubmit(event) {
     setFormBusy(form, true);
     try {
         const result = await runAction(action, form, values);
+        if (action === "workflowPlanPreview") {
+            state.workflowPlanDraft = normalizeWorkflowPlanDraft(result);
+            state.actionMessage = `Plan generated: ${state.workflowPlanDraft.nodes.length} proposed tasks`;
+            render();
+            return;
+        }
         state.actionMessage = actionSuccessMessage(action, result);
         await loadDashboard();
     }
@@ -4906,6 +5260,20 @@ async function runAction(action, form, values) {
             dependencies: csvList(values.dependencies),
             metadata: parseJsonObject(values.metadata),
             actor: "human",
+        });
+    }
+    if (action === "workflowPlanPreview") {
+        return postJSON("/dashboard/workflow-plan/preview", {
+            goal: requiredString(values.goal),
+            project: emptyToNull(values.project),
+            prompt: String(values.prompt || ""),
+            required_capabilities: csvList(values.required_capabilities),
+            max_tasks: numberValue(values.max_tasks, 6),
+            model: String(values.model || "*"),
+            context: {
+                active_view: state.activeView,
+                project_filter: state.projectFilter,
+            },
         });
     }
     if (action === "workflowPlanningTaskCreate") {
@@ -5665,6 +6033,10 @@ function actionSuccessMessage(action, result) {
         return firstChild
             ? `Task chain updated: added ${compactObjectTitle(firstChild)}`
             : "Task chain updated";
+    }
+    if (action === "workflowPlanAccept") {
+        const created = Array.isArray(record.created) ? record.created : [];
+        return `Workflow accepted: ${created.length} tasks created`;
     }
     if (action === "projectCreate")
         return `Project created: ${compactObjectTitle(record)}`;

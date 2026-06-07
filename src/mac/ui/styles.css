@@ -357,6 +357,7 @@ a:focus-visible,
 
 .token-actions button,
 .primary-button,
+.secondary-button,
 .toolbar button,
 .link-button {
   height: 44px;
@@ -385,6 +386,12 @@ a:focus-visible,
   border-color: var(--warning-line);
   background: var(--warning-soft);
   color: var(--warning);
+}
+
+.secondary-button {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--muted);
 }
 
 .main {
@@ -691,7 +698,8 @@ h3 {
 }
 
 .project-focus-layout,
-.workflow-task-console {
+.workflow-task-console,
+.workflow-planner-console {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
   gap: 18px;
@@ -780,7 +788,9 @@ h3 {
 
 .action-form.project-task-form,
 .action-form.workflow-planning-form,
-.action-form.workflow-chain-form {
+.action-form.workflow-chain-form,
+.action-form.workflow-plan-form,
+.action-form.workflow-plan-node-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 12px;
@@ -1334,9 +1344,29 @@ button.mobile-object-card {
 }
 
 .project-task-composer,
-.workflow-chain-panel {
+.workflow-chain-panel,
+.workflow-plan-draft,
+.workflow-plan-editor {
   display: grid;
   gap: 12px;
+}
+
+.workflow-plan-node {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.workflow-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.workflow-plan-graph-wrap {
+  min-height: 180px;
 }
 
 .project-task-list,

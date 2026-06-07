@@ -573,6 +573,35 @@ class WorkflowCancel(BaseModel):
     actor: str = "human"
 
 
+class DashboardWorkflowPlanRequest(BaseModel):
+    goal: str
+    project: Optional[str] = None
+    prompt: str = ""
+    required_capabilities: List[str] = Field(default_factory=list)
+    max_tasks: int = 8
+    model: str = "*"
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardWorkflowPlanNode(BaseModel):
+    node_id: str
+    title: str
+    description: str = ""
+    required_capabilities: List[str] = Field(default_factory=list)
+    depends_on: List[str] = Field(default_factory=list)
+    priority: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardWorkflowPlanAccept(BaseModel):
+    goal: str
+    project: Optional[str] = None
+    plan_id: Optional[str] = None
+    nodes: List[DashboardWorkflowPlanNode]
+    actor: str = "human"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class HeartbeatRequest(BaseModel):
     status: Optional[str] = None
     health_status: Optional[str] = None
@@ -1990,6 +2019,352 @@ def _dashboard_response(
     return model
 
 
+def _workflow_plan_id(goal: str, project: Optional[str], nodes: List[Dict[str, Any]]) -> str:
+    digest = hashlib.sha256(
+        json.dumps(
+            {"goal": goal, "project": project, "nodes": nodes, "time": utcnow()},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return "plan_%s" % digest
+
+
+def _workflow_plan_string_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.replace("\n", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw = list(value)
+    else:
+        raw = [value]
+    out: List[str] = []
+    seen = set()
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _workflow_plan_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _workflow_plan_node_id(value: Any, index: int, used: set) -> str:
+    text = str(value or "").strip().lower()
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in text)
+    safe = safe.strip("_-") or "task_%d" % index
+    base = safe[:48]
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = ("%s_%d" % (base[:42], suffix)).strip("_")
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _normalize_dashboard_workflow_plan(
+    raw: Any,
+    request: Dict[str, Any],
+    *,
+    source: str = "model",
+) -> Dict[str, Any]:
+    if isinstance(raw, str):
+        raw = _extract_json_object(raw)
+    if not isinstance(raw, dict):
+        raise ValidationError("workflow planner returned a non-object response")
+    raw_nodes = raw.get("nodes") or raw.get("tasks") or raw.get("steps")
+    if not isinstance(raw_nodes, list):
+        raise ValidationError("workflow planner response must include nodes/tasks")
+    try:
+        max_tasks = int(request.get("max_tasks") or 8)
+    except (TypeError, ValueError):
+        max_tasks = 8
+    max_tasks = max(1, min(20, max_tasks))
+    used: set = set()
+    nodes: List[Dict[str, Any]] = []
+    for index, raw_node in enumerate(raw_nodes[:max_tasks], start=1):
+        if not isinstance(raw_node, dict):
+            continue
+        node_id = _workflow_plan_node_id(
+            raw_node.get("node_id") or raw_node.get("id") or raw_node.get("key"),
+            index,
+            used,
+        )
+        title = str(raw_node.get("title") or raw_node.get("name") or "").strip()
+        if not title:
+            title = "Task %d" % index
+        metadata = raw_node.get("metadata") if isinstance(raw_node.get("metadata"), dict) else {}
+        nodes.append(
+            {
+                "node_id": node_id,
+                "title": title[:240],
+                "description": str(raw_node.get("description") or raw_node.get("summary") or "").strip(),
+                "required_capabilities": _workflow_plan_string_list(
+                    raw_node.get("required_capabilities") or raw_node.get("capabilities")
+                ),
+                "depends_on": _workflow_plan_string_list(
+                    raw_node.get("depends_on") or raw_node.get("dependencies") or raw_node.get("parents")
+                ),
+                "priority": _workflow_plan_int(raw_node.get("priority"), _workflow_plan_int(request.get("priority"), 0)),
+                "metadata": metadata,
+            }
+        )
+    if not nodes:
+        raise ValidationError("workflow planner produced no task nodes")
+    _workflow_plan_topological_order(nodes, allow_external=False)
+    goal = str(raw.get("goal") or request.get("goal") or "").strip()
+    project = raw.get("project") if raw.get("project") is not None else request.get("project")
+    project = str(project).strip() if project is not None else None
+    if project == "":
+        project = None
+    plan_id = str(raw.get("plan_id") or _workflow_plan_id(goal, project, nodes))
+    return {
+        "schema": "mac.dashboard.workflow_plan.v1",
+        "plan_id": plan_id,
+        "goal": goal,
+        "project": project,
+        "source": source,
+        "nodes": nodes,
+        "created_at": utcnow(),
+    }
+
+
+def _workflow_plan_topological_order(
+    nodes: List[Dict[str, Any]],
+    *,
+    allow_external: bool,
+    cp: Optional[ControlPlane] = None,
+) -> List[Dict[str, Any]]:
+    by_id = {str(node.get("node_id")): node for node in nodes}
+    if len(by_id) != len(nodes):
+        raise ValidationError("workflow plan node ids must be unique")
+    for node in nodes:
+        title = str(node.get("title") or "").strip()
+        if not title:
+            raise ValidationError("workflow plan node title is required")
+        normalized_deps = []
+        for dep in _workflow_plan_string_list(node.get("depends_on")):
+            if dep not in by_id:
+                if not allow_external:
+                    raise ValidationError("workflow plan dependency %r does not reference a planned node" % dep)
+                if cp is not None:
+                    cp.get_task(dep)
+            normalized_deps.append(dep)
+        node["depends_on"] = normalized_deps
+
+    visiting: set = set()
+    visited: set = set()
+    ordered: List[Dict[str, Any]] = []
+
+    def visit(node_id: str) -> None:
+        if node_id in visited:
+            return
+        if node_id in visiting:
+            raise ValidationError("workflow plan contains a dependency cycle")
+        visiting.add(node_id)
+        node = by_id[node_id]
+        for dep in node.get("depends_on") or []:
+            if dep in by_id:
+                visit(dep)
+        visiting.remove(node_id)
+        visited.add(node_id)
+        ordered.append(node)
+
+    for node in nodes:
+        visit(str(node.get("node_id")))
+    return ordered
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end <= start:
+        raise ValidationError("workflow planner response did not contain JSON")
+    try:
+        parsed = json.loads(stripped[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValidationError("workflow planner response JSON is invalid: %s" % exc) from exc
+    if not isinstance(parsed, dict):
+        raise ValidationError("workflow planner JSON must be an object")
+    return parsed
+
+
+def _chat_completion_content(body: Any) -> str:
+    if not isinstance(body, dict):
+        raise ValidationError("workflow planner returned an invalid chat response")
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValidationError("workflow planner chat response had no choices")
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content") or first.get("text")
+    if isinstance(content, list):
+        content = "\n".join(
+            str(item.get("text") or item.get("content") or "")
+            for item in content
+            if isinstance(item, dict)
+        )
+    text = str(content or "").strip()
+    if not text:
+        raise ValidationError("workflow planner chat response was empty")
+    return text
+
+
+def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -> str:
+    project = str(request.get("project") or "").strip()
+    summaries = cp.list_projects()
+    project_summary = next((item for item in summaries if item.get("project") == project), None) if project else None
+    context = {
+        "goal": request.get("goal"),
+        "project": project or None,
+        "prompt": request.get("prompt") or "",
+        "required_capabilities": request.get("required_capabilities") or [],
+        "max_tasks": request.get("max_tasks") or 8,
+        "project_summary": project_summary,
+        "extra_context": request.get("context") or {},
+    }
+    return (
+        "Create a concrete MAC task plan for the requested work. "
+        "Return ONLY JSON with this shape: "
+        "{\"nodes\":[{\"node_id\":\"short_key\",\"title\":\"task title\","
+        "\"description\":\"implementation-grade instructions\","
+        "\"required_capabilities\":[\"python\"],\"depends_on\":[\"other_node_id\"],"
+        "\"priority\":0,\"metadata\":{}}]}. "
+        "Use depends_on only for earlier node_id values. Keep the plan small, executable, "
+        "and review-gate friendly.\n\nContext:\n%s" % json.dumps(context, sort_keys=True)
+    )
+
+
+def _dashboard_workflow_plan_from_router(
+    cp: ControlPlane,
+    request: Dict[str, Any],
+    *,
+    secret_resolver: Any,
+    route_observer: Any,
+) -> Dict[str, Any]:
+    from mac.router_app import build_proxy_from_env
+
+    proxy = build_proxy_from_env(secret_resolver=secret_resolver, route_observer=route_observer)
+    if proxy is None:
+        raise ValidationError("workflow planner requires configured MAC_ROUTER_PROVIDERS")
+    model = str(request.get("model") or "*").strip() or "*"
+    status, body = proxy.complete(
+        "/chat/completions",
+        {
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are MAC's workflow planner. Produce only strict JSON. "
+                        "Do not create tasks; only draft an editable plan."
+                    ),
+                },
+                {"role": "user", "content": _dashboard_workflow_plan_prompt(cp, request)},
+            ],
+            "_mac_context": {
+                "agent_id": "dashboard-workflow-planner",
+                "task_id": "",
+                "request_id": _workflow_plan_id(str(request.get("goal") or ""), request.get("project"), []),
+            },
+        },
+        route_context={"agent_id": "dashboard-workflow-planner"},
+    )
+    if int(status) >= 400:
+        raise ValidationError("workflow planner model request failed with HTTP %s" % status)
+    return _extract_json_object(_chat_completion_content(body))
+
+
+def _accept_dashboard_workflow_plan(cp: ControlPlane, request: Dict[str, Any]) -> Dict[str, Any]:
+    raw_nodes = request.get("nodes") or []
+    if not isinstance(raw_nodes, list) or not raw_nodes:
+        raise ValidationError("workflow plan accept requires at least one node")
+    nodes = [
+        {
+            "node_id": str(node.get("node_id") or "").strip(),
+            "title": str(node.get("title") or "").strip(),
+            "description": str(node.get("description") or ""),
+            "required_capabilities": _workflow_plan_string_list(node.get("required_capabilities")),
+            "depends_on": _workflow_plan_string_list(node.get("depends_on")),
+            "priority": _workflow_plan_int(node.get("priority"), 0),
+            "metadata": node.get("metadata") if isinstance(node.get("metadata"), dict) else {},
+        }
+        for node in raw_nodes
+        if isinstance(node, dict)
+    ]
+    ordered = _workflow_plan_topological_order(nodes, allow_external=True, cp=cp)
+    project = str(request.get("project") or "").strip() or None
+    plan_id = str(request.get("plan_id") or _workflow_plan_id(str(request.get("goal") or ""), project, nodes))
+    actor = str(request.get("actor") or "human")
+    root_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+    created_by_node: Dict[str, str] = {}
+    created_tasks = []
+    for index, node in enumerate(ordered, start=1):
+        dependency_ids = [
+            created_by_node.get(dep, dep)
+            for dep in _workflow_plan_string_list(node.get("depends_on"))
+        ]
+        metadata = dict(node.get("metadata") or {})
+        origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        origin.update(
+            {
+                "type": "dashboard_workflow_plan",
+                "plan_id": plan_id,
+                "node_id": node["node_id"],
+            }
+        )
+        metadata["origin"] = origin
+        workflow = dict(metadata.get("workflow") or {}) if isinstance(metadata.get("workflow"), dict) else {}
+        workflow.update(
+            {
+                "type": "planned_task_chain",
+                "plan_id": plan_id,
+                "node_id": node["node_id"],
+                "node_index": index,
+                "depends_on_nodes": _workflow_plan_string_list(node.get("depends_on")),
+                "goal": request.get("goal") or "",
+            }
+        )
+        metadata["workflow"] = workflow
+        if root_metadata:
+            metadata.setdefault("workflow_plan", root_metadata)
+        task = cp.create_task(
+            node["title"],
+            description=str(node.get("description") or ""),
+            project=project,
+            priority=_workflow_plan_int(node.get("priority"), 0),
+            required_capabilities=_workflow_plan_string_list(node.get("required_capabilities")),
+            dependencies=dependency_ids,
+            metadata=metadata,
+            actor=actor,
+        )
+        created_by_node[node["node_id"]] = task.id
+        created_tasks.append(task.to_dict())
+    return {
+        "schema": "mac.dashboard.workflow_plan_accept.v1",
+        "plan_id": plan_id,
+        "project": project,
+        "goal": request.get("goal") or "",
+        "node_task_ids": created_by_node,
+        "created": created_tasks,
+    }
+
+
 def _latest_submitted_runtime_proof(instance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     metadata = instance.get("metadata") if isinstance(instance.get("metadata"), dict) else {}
     record = (
@@ -2167,6 +2542,44 @@ def create_app(
         finally:
             _emit_http_observation(request, status_code, started, error_name)
 
+    # th-merge-04: let model-provider keys be `secret:<name>`, resolved
+    # decrypt-at-use from the in-mac encrypted key store. Shared by the /v1
+    # router and the dashboard workflow planner so human UI planning does not
+    # need an agent-scope token or local upstream keys.
+    def _router_secret_resolver(name: str) -> Optional[str]:
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            return None
+        try:
+            return secrets.resolve_secret_value(name, purpose="router-upstream")
+        except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
+            return None
+
+    def _router_route_observer(detail: Dict[str, Any]) -> None:
+        agent_id = str(detail.get("agent_id") or "").strip()
+        task_id = str(detail.get("task_id") or "").strip()
+        subject_type = "agent" if agent_id else "task" if task_id else None
+        subject_id = agent_id or task_id or None
+        source = _safe_observation_source(agent_id or "router")
+        try:
+            cp.record_log(
+                "llm.route",
+                level=(
+                    "error"
+                    if int(detail.get("status_code") or 0) >= 500
+                    else "warning"
+                    if int(detail.get("status_code") or 0) >= 400
+                    else "info"
+                ),
+                layer="router",
+                source=source,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
+            _log.warning("failed to record llm.route observation", exc_info=True)
+
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
@@ -2230,6 +2643,40 @@ def create_app(
                 await asyncio.sleep(poll_interval)
 
         return StreamingResponse(iter_dashboard_states(), media_type="application/x-ndjson")
+
+    @app.post("/dashboard/workflow-plan/preview")
+    def dashboard_workflow_plan_preview(
+        body: DashboardWorkflowPlanRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.context, "dashboard.workflow_plan.context")
+        data = _data(body)
+        planner = getattr(app.state, "workflow_plan_model", None)
+        if callable(planner):
+            raw = planner(data)
+            return _normalize_dashboard_workflow_plan(raw, data, source="injected")
+        raw = _dashboard_workflow_plan_from_router(
+            cp,
+            data,
+            secret_resolver=_router_secret_resolver,
+            route_observer=_router_route_observer,
+        )
+        return _normalize_dashboard_workflow_plan(raw, data, source="model")
+
+    @app.post("/dashboard/workflow-plan/accept")
+    def dashboard_workflow_plan_accept(
+        body: DashboardWorkflowPlanAccept,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.metadata, "dashboard.workflow_plan.metadata")
+        data = _data(body)
+        for index, node in enumerate(data.get("nodes") or [], start=1):
+            if isinstance(node, dict):
+                _ensure_payload_bounded(
+                    node.get("metadata") or {},
+                    "dashboard.workflow_plan.nodes.%d.metadata" % index,
+                )
+        return _accept_dashboard_workflow_plan(cp, data)
 
     @app.get("/dashboard/service-links/tokenhub/sso", include_in_schema=False)
     def tokenhub_sso(
@@ -4350,43 +4797,6 @@ def create_app(
     # path is unchanged by default.
     try:
         from mac.router_app import mount_router
-
-        # th-merge-04: let a provider key be `secret:<name>`, resolved (audited,
-        # decrypt-at-use) from the in-mac encrypted key store so upstream
-        # credentials are never stored in plaintext env on the hub.
-        def _router_secret_resolver(name: str) -> Optional[str]:
-            secrets = getattr(cp, "secrets", None)
-            if secrets is None:
-                return None
-            try:
-                return secrets.resolve_secret_value(name, purpose="router-upstream")
-            except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
-                return None
-
-        def _router_route_observer(detail: Dict[str, Any]) -> None:
-            agent_id = str(detail.get("agent_id") or "").strip()
-            task_id = str(detail.get("task_id") or "").strip()
-            subject_type = "agent" if agent_id else "task" if task_id else None
-            subject_id = agent_id or task_id or None
-            source = _safe_observation_source(agent_id or "router")
-            try:
-                cp.record_log(
-                    "llm.route",
-                    level=(
-                        "error"
-                        if int(detail.get("status_code") or 0) >= 500
-                        else "warning"
-                        if int(detail.get("status_code") or 0) >= 400
-                        else "info"
-                    ),
-                    layer="router",
-                    source=source,
-                    subject_type=subject_type,
-                    subject_id=subject_id,
-                    detail=detail,
-                )
-            except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
-                _log.warning("failed to record llm.route observation", exc_info=True)
 
         # media-01 capability auto-routing: compose media bindings from LIVE
         # agents that self-advertised resources["media_routes"] (e.g. a GPU agent
