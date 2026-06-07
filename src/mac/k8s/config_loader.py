@@ -34,6 +34,16 @@ class ProjectConfig:
 
 
 @dataclass
+class NotifierChannelConfig:
+    name: str
+    channel_type: str
+    event_types: List[str] = field(default_factory=list)
+    target: JsonDict = field(default_factory=dict)
+    metadata: JsonDict = field(default_factory=dict)
+    enabled: bool = True
+
+
+@dataclass
 class MacConfigFile:
     mac_url: str
     dispatcher: JsonDict
@@ -43,6 +53,7 @@ class MacConfigFile:
     attestation_keys: Optional[JsonDict] = None
     projects: List[ProjectConfig] = field(default_factory=list)
     fleet: Optional[JsonDict] = None
+    notifier_channels: List[NotifierChannelConfig] = field(default_factory=list)
 
     def role_definitions(self) -> List[JsonDict]:
         """Returns one ``RoleCreate``-shaped dict per role for /roles POST.
@@ -186,6 +197,45 @@ def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
         required_capabilities=[str(c) for c in required_caps_raw],
     )
 
+def _parse_notifier_channel(i: int, raw: JsonDict) -> NotifierChannelConfig:
+    """Validate + coerce one ``notifier_channels[i]`` block."""
+    if not isinstance(raw, dict):
+        raise SystemExit(
+            "notifier_channels[%d] must be a mapping (got %s)" % (i, type(raw).__name__)
+        )
+    path = "notifier_channels[%d]" % i
+    name = _require_str(raw, "name", path=path)
+    channel_type = _require_str(raw, "channel_type", path=path)
+    supported = {"hermes", "slack", "telegram"}
+    if channel_type not in supported:
+        raise SystemExit(
+            "%s.channel_type must be one of %s (got %r)" % (path, sorted(supported), channel_type)
+        )
+    event_types_raw = raw.get("event_types") or []
+    if not isinstance(event_types_raw, list):
+        raise SystemExit(
+            "%s.event_types must be a list (got %s)" % (path, type(event_types_raw).__name__)
+        )
+    target_raw = raw.get("target") or {}
+    if not isinstance(target_raw, dict):
+        raise SystemExit(
+            "%s.target must be a mapping (got %s)" % (path, type(target_raw).__name__)
+        )
+    metadata_raw = raw.get("metadata") or {}
+    if not isinstance(metadata_raw, dict):
+        raise SystemExit(
+            "%s.metadata must be a mapping (got %s)" % (path, type(metadata_raw).__name__)
+        )
+    return NotifierChannelConfig(
+        name=name,
+        channel_type=channel_type,
+        event_types=[str(e) for e in event_types_raw],
+        target=dict(target_raw),
+        metadata=dict(metadata_raw),
+        enabled=bool(raw.get("enabled", True)),
+    )
+
+
 def load_config_file(path: Optional[str] = None) -> MacConfigFile:
     resolved = path or os.environ.get("MAC_CONFIG_FILE") or DEFAULT_CONFIG_PATH
     try:
@@ -314,6 +364,15 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
             "status": str(fleet_raw.get("status") or "active"),
         }
 
+    notifier_channels_raw = data.get("notifier_channels") or []
+    if not isinstance(notifier_channels_raw, list):
+        raise SystemExit(
+            "notifier_channels must be a list (got %s)" % type(notifier_channels_raw).__name__
+        )
+    notifier_channels: List[NotifierChannelConfig] = []
+    for i, nc in enumerate(notifier_channels_raw):
+        notifier_channels.append(_parse_notifier_channel(i, nc))
+
     return MacConfigFile(
         mac_url=mac_url,
         dispatcher={"machine": dict(machine), "agent": dict(agent)},
@@ -323,4 +382,5 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         attestation_keys=attestation,
         projects=projects,
         fleet=fleet,
+        notifier_channels=notifier_channels,
     )

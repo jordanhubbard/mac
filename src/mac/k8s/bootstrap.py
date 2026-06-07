@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
-from mac.k8s.config_loader import MacConfigFile, load_config_file
+from mac.k8s.config_loader import MacConfigFile, NotifierChannelConfig, load_config_file
 
 JsonDict = Dict[str, Any]
 log = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class BootstrapConfig:
     attestation_keys: Optional[JsonDict] = None
     projects: List[JsonDict] = field(default_factory=list)
     fleet: Optional[JsonDict] = None
+    notifier_channels: List[NotifierChannelConfig] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "BootstrapConfig":
@@ -51,6 +52,7 @@ class BootstrapConfig:
                 for p in cfg_file.projects
             ],
             fleet=cfg_file.fleet_block(),
+            notifier_channels=list(cfg_file.notifier_channels),
         )
 
 class MacApiProtocol(Protocol):
@@ -377,6 +379,46 @@ def register_fleet(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     log.info("fleet: reconciled name=%s members=%d", name, len(member_ids))
 
 
+def register_notifier_channels(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
+    """Upsert notifier channels declared under ``notifier_channels:`` in config.yaml.
+
+    Each channel is registered via POST /notifier/channels which uses
+    INSERT ... ON CONFLICT(name) DO UPDATE, so running bootstrap repeatedly
+    is idempotent — existing channels are updated in-place, not duplicated.
+
+    This ensures the delivery pipeline (e.g. hermes-ai channel routing
+    task.* and fleet.* events to the Hermes instance) is wired up on every
+    fresh deploy without requiring manual API calls.
+    """
+    channels = cfg.notifier_channels
+    if not channels:
+        log.info("notifier_channels: none configured; skipping")
+        return
+    for ch in channels:
+        payload = {
+            "name": ch.name,
+            "channel_type": ch.channel_type,
+            "event_types": ch.event_types,
+            "target": ch.target,
+            "metadata": ch.metadata,
+            "enabled": ch.enabled,
+        }
+        try:
+            resp = mac.post("/notifier/channels", payload)
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(
+                "notifier_channels: failed to register channel %r: %s" % (ch.name, exc)
+            ) from exc
+        if not isinstance(resp, dict):
+            raise SystemExit(
+                "notifier_channels: POST /notifier/channels returned non-object: %r" % (resp,)
+            )
+        log.info(
+            "notifier_channels: upserted channel name=%s type=%s enabled=%s events=%s",
+            ch.name, ch.channel_type, ch.enabled, ch.event_types,
+        )
+
+
 def _existing_secret_data(
     core: CoreV1Protocol, namespace: str, name: str
 ) -> tuple[Optional[Dict[str, str]], Any]:
@@ -567,6 +609,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     seed_role_machines_and_agents(mac, cfg)
     register_projects(mac, cfg)
     register_fleet(mac, cfg)
+    register_notifier_channels(mac, cfg)
 
     if cfg.attestation_keys is not None:
         load_in_cluster_config()
