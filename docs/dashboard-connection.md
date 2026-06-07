@@ -61,3 +61,14 @@ attach SSO/session credentials.
 Service navigation also goes through the bridge. That lets Electron open or
 reuse tunnels for Qdrant, Firecrawl, TokenHub, or future services without
 showing users port-forwarding details.
+
+The optional Electron package lives in `desktop/`:
+
+```bash
+make desktop-install
+make desktop-package
+```
+
+`desktop/main.js` starts a local proxy, opens SSH tunnels when configured, and
+loads the existing `/ui` dashboard through that proxy. See
+`desktop/README.md` for profile examples and platform packaging commands.

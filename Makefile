@@ -6,7 +6,7 @@ LOCAL_BIN ?= $(HOME)/.local/bin
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hermes-gateway
 
-.PHONY: require-python install-hooks setup deploy test test-api test-cli test-ui build publish link-cli
+.PHONY: require-python install-hooks setup deploy test test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 
 require-python:
 	@if [ -z "$(PYTHON)" ]; then \
@@ -41,6 +41,18 @@ test-cli:
 
 test-ui:
 	uv run --extra dev pytest -q -m ui tests/
+
+desktop-install:
+	cd desktop && npm ci
+
+desktop-check:
+	cd desktop && npm run check
+
+desktop-package:
+	cd desktop && npm run package
+
+desktop-dist:
+	cd desktop && npm run dist
 
 # Build the distributable wheel into dist/ (numpy + all runtime deps pinned in
 # pyproject.toml come along for any node that pip-installs it).
