@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from mac.agentbus_control import (
     REPO_UPDATE_CONTENT_TYPE,
@@ -211,6 +211,20 @@ class TaskCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     max_attempts: int = 3
     actor: str = "human"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_summary_to_description(cls, values: Any) -> Any:
+        # The Hermes plugin advertises `summary` as the task body field.
+        # Direct urllib callers (and LLMs blending schemas) may send `summary`
+        # instead of `description`. Map it defensively so the executor PROMPT
+        # is never silently empty.
+        if isinstance(values, dict):
+            summary = values.get("summary")
+            if summary and not values.get("description"):
+                values = dict(values)
+                values["description"] = summary
+        return values
 
 
 class RepositoryOnboard(BaseModel):
