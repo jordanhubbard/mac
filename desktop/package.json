@@ -13,6 +13,9 @@
     "dist:linux": "electron-builder --linux",
     "dist:win": "electron-builder --win"
   },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
   "devDependencies": {
     "electron": "^42.3.3",
     "electron-builder": "^26.0.12"
@@ -27,7 +30,20 @@
       "main.js",
       "preload.js",
       "README.md",
-      "profiles.example.json"
+      "profiles.example.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../src/mac/ui",
+        "to": "ui",
+        "filter": [
+          "index.html",
+          "app.js",
+          "dashboard_api.js",
+          "styles.css"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

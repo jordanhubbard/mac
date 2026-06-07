@@ -94,6 +94,23 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
             if (fallbackUrl)
                 window.open(fallbackUrl, "_blank", "noreferrer");
         },
+        async targets() {
+            const bridge = bridgeProvider();
+            if (!bridge?.targets)
+                return [];
+            return bridge.targets();
+        },
+        async selectTarget(targetId, options = {}) {
+            const bridge = bridgeProvider();
+            if (!bridge?.selectTarget)
+                return connection();
+            const selected = await bridge.selectTarget(targetId, options);
+            return {
+                ...connection(),
+                ...(selected || {}),
+                mode: "electron-managed",
+            };
+        },
         connection,
     };
 }

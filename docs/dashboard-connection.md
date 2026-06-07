@@ -41,8 +41,18 @@ contextBridge.exposeInMainWorld("macDashboard", {
     return {
       mode: "electron-managed",
       apiBaseUrl: "http://127.0.0.1:18789",
-      displayName: "Rocky / horde"
+      displayName: "Rocky / horde",
+      targetId: "fleet:rocky"
     };
+  },
+  async targets() {
+    return [
+      { id: "fleet:rocky", label: "mac / rocky", mode: "fleet-direct" },
+      { id: "testing-url", label: "Testing URL", mode: "testing-url" }
+    ];
+  },
+  async selectTarget(targetId, options) {
+    return ipcRenderer.invoke("mac-dashboard:select-target", { targetId, ...options });
   },
   async request(path, init) {
     return ipcRenderer.invoke("mac-dashboard:request", { path, init });
@@ -62,6 +72,11 @@ Service navigation also goes through the bridge. That lets Electron open or
 reuse tunnels for Qdrant, Firecrawl, TokenHub, or future services without
 showing users port-forwarding details.
 
+The packaged Electron app reads `~/.mac/fleets.yaml` and uses those fleet names
+as the primary target dropdown. The dashboard's URL field is reserved for the
+`Testing URL` target so local or throwaway API endpoints can still be checked
+without making URL entry part of normal fleet usage.
+
 The optional Electron package lives in `desktop/`:
 
 ```bash
@@ -69,6 +84,7 @@ make desktop-install
 make desktop-package
 ```
 
-`desktop/main.js` starts a local proxy, opens SSH tunnels when configured, and
-loads the existing `/ui` dashboard through that proxy. See
+`desktop/main.js` starts a local proxy, serves the packaged `/ui` dashboard
+shell from Electron resources, opens SSH tunnels when configured, and proxies
+API requests through the selected target. See
 `desktop/README.md` for profile examples and platform packaging commands.

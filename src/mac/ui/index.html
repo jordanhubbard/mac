@@ -37,8 +37,10 @@
           <p class="muted">Connect to a MAC control plane.</p>
         </div>
         <form id="loginForm" class="login-form">
-          <label for="loginApiUrlInput">MAC API URL</label>
-          <input id="loginApiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="This server">
+          <label for="loginTargetSelect">Target</label>
+          <select id="loginTargetSelect" name="target"></select>
+          <label for="loginApiUrlInput">Testing URL</label>
+          <input id="loginApiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="http://127.0.0.1:8789">
           <label for="loginTokenInput">API Token</label>
           <input id="loginTokenInput" name="token" type="password" autocomplete="off" placeholder="Optional bearer token">
           <button type="submit" class="primary-button">Sign in</button>
@@ -84,8 +86,10 @@
         </nav>
         <div id="serviceLinks" class="service-links" hidden></div>
         <form class="token-form" id="tokenForm">
-          <label for="apiUrlInput">MAC API URL</label>
-          <input id="apiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="This server">
+          <label for="targetSelect">Target</label>
+          <select id="targetSelect" name="target"></select>
+          <label for="apiUrlInput">Testing URL</label>
+          <input id="apiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="http://127.0.0.1:8789">
           <label for="tokenInput">API Token</label>
           <input id="tokenInput" name="token" type="password" autocomplete="off" placeholder="Bearer token">
           <div class="token-actions">

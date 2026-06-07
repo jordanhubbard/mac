@@ -5,21 +5,38 @@ const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");
 const path = require("node:path");
+const yaml = require("js-yaml");
 
 const DEFAULT_API_URL = "http://127.0.0.1:8789";
 const DEFAULT_API_TUNNEL_PORT = 18789;
 const DEFAULT_PROXY_HOST = "127.0.0.1";
 const DEFAULT_REMOTE_HOST = "127.0.0.1";
 const DEFAULT_REMOTE_PORT = 8789;
+const DEFAULT_FLEETS_CONFIG = "~/.mac/fleets.yaml";
+const DEFAULT_ENV_FILE = "~/.mac/.env";
+const TESTING_TARGET_ID = "testing-url";
+const UI_ASSET_PREFIX = "/ui/assets/";
+const UI_CONTENT_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+};
 
 const runtime = {
   profile: null,
+  targets: [],
+  activeTargetId: "",
   apiTargetUrl: "",
   proxyUrl: "",
   proxyServer: null,
+  uiRoot: "",
   windows: new Set(),
   children: new Set(),
   tunnels: new Map(),
+  ipcRegistered: false,
 };
 
 function parseArgs(argv) {
@@ -44,7 +61,7 @@ function expandHome(value) {
 
 function readJsonFile(filePath, profileName) {
   if (!filePath) return {};
-  const abs = path.resolve(filePath);
+  const abs = path.resolve(expandHome(filePath));
   const raw = JSON.parse(fs.readFileSync(abs, "utf8"));
   if (profileName) {
     if (raw && raw[profileName]) return raw[profileName];
@@ -63,8 +80,74 @@ function numberValue(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function loadProfile() {
-  const args = parseArgs(process.argv.slice(2));
+function optionalNumberValue(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeEnvSuffix(value) {
+  return stringValue(value).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
+function unquoteEnvValue(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if ((first === "\"" && last === "\"") || (first === "'" && last === "'")) {
+    return trimmed.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
+  }
+  return trimmed;
+}
+
+function readEnvFile(filePath) {
+  const abs = expandHome(filePath || DEFAULT_ENV_FILE);
+  if (!abs || !fs.existsSync(abs)) return {};
+  const env = {};
+  const lines = fs.readFileSync(abs, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
+    if (!match) continue;
+    env[match[1]] = unquoteEnvValue(match[2]);
+  }
+  return env;
+}
+
+function readYamlFile(filePath) {
+  const abs = expandHome(filePath);
+  if (!abs || !fs.existsSync(abs)) return null;
+  return yaml.load(fs.readFileSync(abs, "utf8")) || null;
+}
+
+function loadMacEnv(args) {
+  const envFile = args["env-file"] || process.env.MAC_DESKTOP_ENV_FILE || DEFAULT_ENV_FILE;
+  return { ...readEnvFile(envFile), ...process.env };
+}
+
+function hasManualConnectionConfig(args) {
+  return !!(
+    args.profile
+    || process.env.MAC_DESKTOP_PROFILE
+    || args["api-url"]
+    || process.env.MAC_DESKTOP_API_URL
+    || args.ssh
+    || args["ssh-target"]
+    || process.env.MAC_DESKTOP_SSH_TARGET
+  );
+}
+
+function cloneProfile(profile) {
+  return JSON.parse(JSON.stringify(profile || {}));
+}
+
+function loadProfile(options = {}) {
+  const args = parseArgs(process.argv.slice(1));
   const profileName = args["profile-name"] || process.env.MAC_DESKTOP_PROFILE_NAME || "";
   const fileProfile = readJsonFile(args.profile || process.env.MAC_DESKTOP_PROFILE, profileName);
   const profile = { ...fileProfile };
@@ -93,13 +176,279 @@ function loadProfile() {
     };
   }
 
-  if (!profile.apiUrl && !profile.ssh) profile.apiUrl = DEFAULT_API_URL;
+  if (options.apiUrl) {
+    profile.apiUrl = options.apiUrl;
+    delete profile.ssh;
+    delete profile.localServer;
+  }
+  if (options.allowDefault !== false && !profile.apiUrl && !profile.ssh) profile.apiUrl = DEFAULT_API_URL;
+  return profile;
+}
+
+function tokenForTarget(targetKey, fleet, env) {
+  const suffixes = [
+    targetKey,
+    fleet?.fleet_name,
+    fleet?.hub_agent,
+  ].map(normalizeEnvSuffix).filter(Boolean);
+  const candidates = [];
+  for (const suffix of [...new Set(suffixes)]) {
+    candidates.push(`MAC_API_TOKEN__${suffix}`, `MAC_DEPLOY_HUB_TOKEN__${suffix}`);
+  }
+  candidates.push("MAC_DESKTOP_API_TOKEN", "MAC_API_TOKEN", "MAC_DEPLOY_HUB_TOKEN");
+  for (const key of candidates) {
+    if (env[key]) return env[key];
+  }
+  return "";
+}
+
+function fleetHubAgent(fleet) {
+  const agents = Array.isArray(fleet?.agents) ? fleet.agents : [];
+  const hubAgent = stringValue(fleet?.hub_agent);
+  return agents.find((agent) => stringValue(agent?.name) === hubAgent)
+    || agents.find((agent) => agent?.enabled !== false)
+    || null;
+}
+
+function hostFromUrl(rawUrl) {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function fleetNeedsSsh(fleet) {
+  const defaults = fleet?.defaults || {};
+  const host = hostFromUrl(fleet?.hub_url || "");
+  return !!(
+    defaults.ssh_jump
+    || defaults.network?.provider === "none"
+    || host.endsWith(".svc")
+    || host.endsWith(".svc.cluster.local")
+  );
+}
+
+function sshBaseForFleet(fleet, hubAgent) {
+  const defaults = fleet?.defaults || {};
+  const controlPort = numberValue(fleet?.control_port, DEFAULT_REMOTE_PORT);
+  return {
+    target: stringValue(hubAgent?.target),
+    localPort: 0,
+    remoteHost: DEFAULT_REMOTE_HOST,
+    remotePort: controlPort,
+    identityFile: expandHome(defaults.ssh_key || defaults.identity_file || ""),
+    jumpHost: stringValue(defaults.ssh_jump),
+    strictHostKeyChecking: defaults.ssh_strict_host_key_checking !== false,
+  };
+}
+
+function serviceTunnel(service, base, fallbackPort, servicePath) {
+  const port = numberValue(service?.port, fallbackPort);
+  if (!base.target || !port) return null;
+  return {
+    ...base,
+    localPort: 0,
+    remotePort: port,
+    path: servicePath,
+  };
+}
+
+function serviceTunnelsForFleet(fleet, base) {
+  const defaults = fleet?.defaults || {};
+  const tunnels = {};
+  const qdrant = serviceTunnel(defaults.qdrant, base, 6333, "/dashboard");
+  const firecrawl = serviceTunnel(defaults.firecrawl, base, 3002, "/");
+  if (qdrant) tunnels.qdrant = qdrant;
+  if (firecrawl) tunnels.firecrawl = firecrawl;
+  return tunnels;
+}
+
+function targetFromFleet(key, fleet, configPath, env) {
+  const hubAgent = fleetHubAgent(fleet);
+  const hubUrl = stringValue(fleet?.hub_url);
+  const fleetName = stringValue(fleet?.fleet_name) || key;
+  const hubAgentName = stringValue(fleet?.hub_agent) || stringValue(hubAgent?.name);
+  const displayName = hubAgentName && hubAgentName !== fleetName ? `${fleetName} / ${hubAgentName}` : fleetName;
+  const profile = {
+    displayName,
+    apiUrl: "",
+    token: tokenForTarget(key, fleet, env),
+    tokenEnv: "MAC_DESKTOP_API_TOKEN",
+    proxyPort: 0,
+    serviceTunnels: {},
+  };
+  const sshBase = sshBaseForFleet(fleet, hubAgent);
+  const useSsh = fleetNeedsSsh(fleet) || !hubUrl;
+  if (useSsh && sshBase.target) {
+    profile.ssh = sshBase;
+    profile.serviceTunnels = serviceTunnelsForFleet(fleet, sshBase);
+  } else if (hubUrl) {
+    profile.apiUrl = hubUrl;
+  } else if (sshBase.target) {
+    profile.ssh = sshBase;
+    profile.serviceTunnels = serviceTunnelsForFleet(fleet, sshBase);
+  } else {
+    return null;
+  }
+
+  return {
+    id: `fleet:${key}`,
+    label: displayName,
+    mode: profile.ssh ? "fleet-ssh" : "fleet-direct",
+    apiUrl: profile.ssh ? "" : profile.apiUrl,
+    fleetName,
+    hubAgent: hubAgentName,
+    source: expandHome(configPath),
+    profile,
+  };
+}
+
+function loadFleetTargets(args, env) {
+  const configuredPath = args["fleets-config"]
+    || process.env.MAC_DESKTOP_FLEETS_CONFIG
+    || (process.env.MAC_DEPLOY_FLEETS_CONFIG && fs.existsSync(expandHome(process.env.MAC_DEPLOY_FLEETS_CONFIG))
+      ? process.env.MAC_DEPLOY_FLEETS_CONFIG
+      : "")
+    || DEFAULT_FLEETS_CONFIG;
+  const config = readYamlFile(configuredPath);
+  const fleets = config?.fleets && typeof config.fleets === "object" ? config.fleets : {};
+  const targets = [];
+  for (const [key, fleet] of Object.entries(fleets)) {
+    if (fleet?.sample === true) continue;
+    const target = targetFromFleet(key, fleet, configuredPath, env);
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+
+function testingTarget(env = {}) {
+  const profile = loadProfile({ allowDefault: true });
+  if (!profile.token) {
+    profile.token = env.MAC_DESKTOP_API_TOKEN || env.MAC_API_TOKEN || env.MAC_DEPLOY_HUB_TOKEN || "";
+  }
+  const mode = profile.localServer ? "testing-local" : profile.ssh ? "testing-ssh" : "testing-url";
+  return {
+    id: TESTING_TARGET_ID,
+    label: "Testing URL",
+    mode,
+    apiUrl: profile.apiUrl || DEFAULT_API_URL,
+    fleetName: "",
+    hubAgent: "",
+    source: "",
+    profile,
+  };
+}
+
+function loadTargets() {
+  const args = parseArgs(process.argv.slice(1));
+  const env = loadMacEnv(args);
+  const targets = loadFleetTargets(args, env);
+  targets.push(testingTarget(env));
+  return targets;
+}
+
+function targetPublicInfo(target) {
+  return {
+    id: target.id,
+    label: target.label,
+    mode: target.mode,
+    apiUrl: target.mode === "fleet-direct" || target.id === TESTING_TARGET_ID ? target.apiUrl || "" : "",
+    fleetName: target.fleetName || "",
+    hubAgent: target.hubAgent || "",
+    source: target.source || "",
+  };
+}
+
+function resolveTargetId(requestedId = "") {
+  if (!runtime.targets.length) runtime.targets = loadTargets();
+  if (requestedId && runtime.targets.some((target) => target.id === requestedId)) return requestedId;
+  if (requestedId) {
+    const fleetId = requestedId.startsWith("fleet:") ? requestedId : `fleet:${requestedId}`;
+    if (runtime.targets.some((target) => target.id === fleetId)) return fleetId;
+  }
+  const args = parseArgs(process.argv.slice(1));
+  const explicit = args.target || args.fleet || process.env.MAC_DESKTOP_TARGET || process.env.MAC_DESKTOP_FLEET || "";
+  if (explicit) {
+    const explicitId = explicit.startsWith("fleet:") || explicit === TESTING_TARGET_ID ? explicit : `fleet:${explicit}`;
+    if (runtime.targets.some((target) => target.id === explicitId)) return explicitId;
+  }
+  if (hasManualConnectionConfig(args)) return TESTING_TARGET_ID;
+  return runtime.targets.find((target) => target.id !== TESTING_TARGET_ID)?.id || TESTING_TARGET_ID;
+}
+
+function profileForTarget(target, options = {}) {
+  const profile = cloneProfile(target?.profile || {});
+  if (target?.id === TESTING_TARGET_ID && options.apiUrl) {
+    profile.displayName = "Testing URL";
+    profile.apiUrl = options.apiUrl;
+    delete profile.ssh;
+    delete profile.localServer;
+  }
+  if (!profile.displayName) profile.displayName = target?.label || "MAC Control Plane";
+  if (!profile.serviceTunnels) profile.serviceTunnels = {};
   return profile;
 }
 
 function profileToken() {
   const profile = runtime.profile || {};
   return profile.token || process.env[profile.tokenEnv || "MAC_DESKTOP_API_TOKEN"] || "";
+}
+
+function uiRootCandidates() {
+  return [
+    process.env.MAC_DESKTOP_UI_ROOT || "",
+    process.resourcesPath ? path.join(process.resourcesPath, "ui") : "",
+    path.resolve(__dirname, "..", "src", "mac", "ui"),
+    path.resolve(process.cwd(), "..", "src", "mac", "ui"),
+  ].filter(Boolean);
+}
+
+function localUiRoot() {
+  if (runtime.uiRoot && fs.existsSync(path.join(runtime.uiRoot, "index.html"))) return runtime.uiRoot;
+  for (const candidate of uiRootCandidates()) {
+    const abs = path.resolve(expandHome(candidate));
+    if (fs.existsSync(path.join(abs, "index.html"))) {
+      runtime.uiRoot = abs;
+      return abs;
+    }
+  }
+  return "";
+}
+
+function uiFileForRequest(reqUrl) {
+  const root = localUiRoot();
+  if (!root) return "";
+  const parsed = new URL(reqUrl || "/", "http://desktop.local");
+  let name = "";
+  if (parsed.pathname === "/ui" || parsed.pathname === "/ui/" || parsed.pathname === "/ui/index.html") {
+    name = "index.html";
+  } else if (parsed.pathname.startsWith(UI_ASSET_PREFIX)) {
+    const decoded = decodeURIComponent(parsed.pathname.slice(UI_ASSET_PREFIX.length));
+    if (!decoded || decoded !== path.basename(decoded)) return "";
+    name = decoded;
+  } else {
+    return "";
+  }
+  const filePath = path.resolve(root, name);
+  if (filePath !== path.join(root, name)) return "";
+  return filePath;
+}
+
+function serveLocalUi(req, res) {
+  const filePath = uiFileForRequest(req.url || "/");
+  if (!filePath) return false;
+  fs.readFile(filePath, (error, body) => {
+    if (error) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const contentType = UI_CONTENT_TYPES[path.extname(filePath)] || "application/octet-stream";
+    res.writeHead(200, { "Content-Type": contentType });
+    res.end(body);
+  });
+  return true;
 }
 
 function stripHopByHopHeaders(headers) {
@@ -155,6 +504,13 @@ function listenServer(server, preferredPort = 0) {
   });
 }
 
+function allocateTcpPort() {
+  const server = net.createServer();
+  return listenServer(server, 0).then((port) => new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve(port)));
+  }));
+}
+
 async function startProcess(command, args, options = {}) {
   const child = spawn(command, args, { ...options, stdio: ["ignore", "ignore", "pipe"] });
   runtime.children.add(child);
@@ -176,10 +532,10 @@ async function startLocalServerIfConfigured(profile) {
   return url;
 }
 
-function sshArgsFor(spec) {
+async function sshArgsFor(spec) {
   const remoteHost = spec.remoteHost || DEFAULT_REMOTE_HOST;
   const remotePort = numberValue(spec.remotePort, DEFAULT_REMOTE_PORT);
-  const localPort = numberValue(spec.localPort, DEFAULT_API_TUNNEL_PORT);
+  const localPort = optionalNumberValue(spec.localPort, 0) || await allocateTcpPort();
   const args = [
     "-N",
     "-o", "BatchMode=yes",
@@ -201,7 +557,7 @@ function sshArgsFor(spec) {
 async function startSshTunnel(name, spec) {
   if (!spec || !spec.target) throw new Error(`missing SSH target for ${name}`);
   if (runtime.tunnels.has(name)) return runtime.tunnels.get(name);
-  const { args, localPort } = sshArgsFor(spec);
+  const { args, localPort } = await sshArgsFor(spec);
   const child = await startProcess("ssh", args);
   let stderr = "";
   child.stderr.on("data", (chunk) => {
@@ -245,17 +601,35 @@ function proxyRequest(targetBaseUrl, req, res) {
   req.pipe(upstream);
 }
 
-async function startProxyServer(targetBaseUrl, preferredPort) {
-  const server = http.createServer((req, res) => proxyRequest(targetBaseUrl, req, res));
+async function startProxyServer(preferredPort) {
+  if (runtime.proxyServer) return runtime.proxyUrl;
+  const server = http.createServer((req, res) => {
+    if (serveLocalUi(req, res)) return;
+    proxyRequest(runtime.apiTargetUrl || DEFAULT_API_URL, req, res);
+  });
   const port = await listenServer(server, preferredPort);
   runtime.proxyServer = server;
   runtime.proxyUrl = `http://${DEFAULT_PROXY_HOST}:${port}`;
   return runtime.proxyUrl;
 }
 
-async function prepareConnection() {
-  const profile = loadProfile();
+function stopConnectionChildren() {
+  for (const child of Array.from(runtime.children)) {
+    if (!child.killed) child.kill();
+  }
+  runtime.children.clear();
+  runtime.tunnels.clear();
+}
+
+async function prepareConnection(targetId = "", options = {}) {
+  if (!runtime.targets.length) runtime.targets = loadTargets();
+  const resolvedTargetId = resolveTargetId(targetId);
+  const target = runtime.targets.find((item) => item.id === resolvedTargetId) || runtime.targets[0] || testingTarget();
+  if (runtime.proxyUrl && runtime.activeTargetId === target.id && !options.apiUrl) return;
+  const profile = profileForTarget(target, options);
+  stopConnectionChildren();
   runtime.profile = profile;
+  runtime.activeTargetId = target.id;
 
   const localUrl = await startLocalServerIfConfigured(profile);
   if (localUrl) profile.apiUrl = localUrl;
@@ -266,7 +640,7 @@ async function prepareConnection() {
   } else {
     runtime.apiTargetUrl = profile.apiUrl || DEFAULT_API_URL;
   }
-  await startProxyServer(runtime.apiTargetUrl, profile.proxyPort);
+  await startProxyServer(profile.proxyPort);
 }
 
 function connectionInfo() {
@@ -274,6 +648,7 @@ function connectionInfo() {
     mode: "electron-managed",
     apiBaseUrl: runtime.proxyUrl,
     displayName: runtime.profile?.displayName || "MAC Control Plane",
+    targetId: runtime.activeTargetId || "",
   };
 }
 
@@ -342,11 +717,41 @@ async function ipcOpenService(_event, payload) {
   throw new Error(`no service route configured for ${serviceId}`);
 }
 
-async function createWindow() {
-  await prepareConnection();
+function ipcTargets() {
+  if (!runtime.targets.length) runtime.targets = loadTargets();
+  return runtime.targets.map(targetPublicInfo);
+}
+
+async function ipcSelectTarget(_event, payload) {
+  const targetId = stringValue(payload?.targetId);
+  const apiUrl = normalizeApiUrlOption(payload?.apiUrl);
+  await prepareConnection(targetId, apiUrl ? { apiUrl } : {});
+  return connectionInfo();
+}
+
+function normalizeApiUrlOption(raw) {
+  const value = stringValue(raw);
+  if (!value) return "";
+  try {
+    return new URL(value).toString().replace(/\/+$/, "");
+  } catch {
+    return value.replace(/\/+$/, "");
+  }
+}
+
+function registerIpcHandlers() {
+  if (runtime.ipcRegistered) return;
   ipcMain.handle("mac-dashboard:connection", () => connectionInfo());
   ipcMain.handle("mac-dashboard:request", ipcRequest);
   ipcMain.handle("mac-dashboard:open-service", ipcOpenService);
+  ipcMain.handle("mac-dashboard:targets", ipcTargets);
+  ipcMain.handle("mac-dashboard:select-target", ipcSelectTarget);
+  runtime.ipcRegistered = true;
+}
+
+async function createWindow() {
+  await prepareConnection();
+  registerIpcHandlers();
 
   const win = new BrowserWindow({
     width: 1440,

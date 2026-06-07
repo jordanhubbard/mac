@@ -30,6 +30,18 @@ make desktop-package
 
 ## Run
 
+Fleet targets:
+
+```bash
+cd desktop
+npm start
+```
+
+By default, the app reads `~/.mac/fleets.yaml` and `~/.mac/.env`, presents the
+configured fleets in the target dropdown, and keeps API tokens and SSH routing
+inside Electron main. Use `MAC_DESKTOP_FLEETS_CONFIG=/path/to/fleets.yaml` to
+override the fleet file.
+
 Direct API:
 
 ```bash
@@ -59,8 +71,12 @@ npm start
 ```
 
 The main process opens a local HTTP proxy and loads the existing `/ui`
-dashboard through it. API credentials and SSH commands remain in Electron main;
-the renderer only sees the `window.macDashboard` bridge.
+dashboard shell from the packaged app resources. API requests from that shell
+are proxied to the selected fleet. API credentials and SSH commands remain in
+Electron main; the renderer only sees the `window.macDashboard` bridge.
+
+The dashboard's URL field is a testing fallback. Normal fleet connections
+should be selected from the target dropdown.
 
 ## Profile Shape
 

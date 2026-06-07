@@ -20,6 +20,7 @@ def test_desktop_package_declares_electron_packaging_targets():
     assert package["scripts"]["check"] == "node --check main.js && node --check preload.js"
     assert package["scripts"]["package"] == "electron-builder --dir"
     assert package["scripts"]["dist"] == "electron-builder"
+    assert "js-yaml" in package["dependencies"]
     assert "electron" in package["devDependencies"]
     assert "electron-builder" in package["devDependencies"]
     assert package["build"]["files"] == [
@@ -27,6 +28,14 @@ def test_desktop_package_declares_electron_packaging_targets():
         "preload.js",
         "README.md",
         "profiles.example.json",
+        "node_modules/**/*",
+    ]
+    assert package["build"]["extraResources"] == [
+        {
+            "from": "../src/mac/ui",
+            "to": "ui",
+            "filter": ["index.html", "app.js", "dashboard_api.js", "styles.css"],
+        }
     ]
     assert package["build"]["mac"]["target"] == ["dmg", "zip"]
 
@@ -48,8 +57,18 @@ def test_desktop_main_owns_ssh_proxy_and_service_tunnels():
     assert "ExitOnForwardFailure=yes" in main
     assert "serviceTunnels" in main
     assert "profileToken" in main
+    assert "~/.mac/fleets.yaml" in main
+    assert "MAC_API_TOKEN__" in main
+    assert "mac-dashboard:targets" in main
+    assert "mac-dashboard:select-target" in main
+    assert "process.argv.slice(1)" in main
+    assert "serveLocalUi" in main
+    assert "process.resourcesPath" in main
+    assert "/ui/assets/" in main
     assert "contextBridge.exposeInMainWorld" in preload
     assert "macDashboard" in preload
+    assert "targets()" in preload
+    assert "selectTarget" in preload
 
 
 def test_desktop_profiles_show_direct_ssh_and_local_modes():

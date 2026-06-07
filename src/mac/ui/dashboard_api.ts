@@ -2,6 +2,8 @@ export interface DashboardApi {
   request(path: string, init?: RequestInit): Promise<unknown>;
   stream(path: string, init?: RequestInit): Promise<Response>;
   openService(serviceId: string, fallbackUrl?: string): Promise<void>;
+  targets(): Promise<DashboardTarget[]>;
+  selectTarget(targetId: string, options?: DashboardTargetSelection): Promise<DashboardConnection>;
   connection(): DashboardConnection;
 }
 
@@ -9,6 +11,21 @@ export interface DashboardConnection {
   mode: "browser-same-origin" | "remote-api" | "electron-managed";
   apiBaseUrl: string;
   displayName: string;
+  targetId?: string;
+}
+
+export interface DashboardTarget {
+  id: string;
+  label: string;
+  mode: "fleet-direct" | "fleet-ssh" | "testing-url" | "testing-ssh" | "testing-local";
+  apiUrl?: string;
+  fleetName?: string;
+  hubAgent?: string;
+  source?: string;
+}
+
+export interface DashboardTargetSelection {
+  apiUrl?: string;
 }
 
 interface DashboardBridgeRequest {
@@ -21,6 +38,8 @@ export interface DashboardElectronBridge {
   request?(path: string, init?: DashboardBridgeRequest): Promise<unknown>;
   openService?(serviceId: string, fallbackUrl?: string): Promise<void>;
   connection?(): Promise<Partial<DashboardConnection> | null>;
+  targets?(): Promise<DashboardTarget[]>;
+  selectTarget?(targetId: string, options?: DashboardTargetSelection): Promise<Partial<DashboardConnection> | null>;
 }
 
 declare global {
@@ -121,6 +140,21 @@ export function createDashboardApi(
         return;
       }
       if (fallbackUrl) window.open(fallbackUrl, "_blank", "noreferrer");
+    },
+    async targets(): Promise<DashboardTarget[]> {
+      const bridge = bridgeProvider();
+      if (!bridge?.targets) return [];
+      return bridge.targets();
+    },
+    async selectTarget(targetId: string, options: DashboardTargetSelection = {}): Promise<DashboardConnection> {
+      const bridge = bridgeProvider();
+      if (!bridge?.selectTarget) return connection();
+      const selected = await bridge.selectTarget(targetId, options);
+      return {
+        ...connection(),
+        ...(selected || {}),
+        mode: "electron-managed",
+      };
     },
     connection,
   };

@@ -182,7 +182,8 @@ a:focus-visible,
   text-transform: uppercase;
 }
 
-.login-form input {
+.login-form input,
+.login-form select {
   width: 100%;
   height: 44px;
   border: 1px solid var(--line);
@@ -336,6 +337,7 @@ a:focus-visible,
 }
 
 .token-form input,
+.token-form select,
 .toolbar input,
 .toolbar select {
   width: 100%;
