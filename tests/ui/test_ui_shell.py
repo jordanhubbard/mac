@@ -193,6 +193,19 @@ def test_app_js_has_connection_surface_for_remote_and_electron_modes():
     assert "connectionBadge" in html
 
 
+def test_app_js_hides_derived_projects_by_default():
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (_UI_ROOT / "styles.css").read_text(encoding="utf-8")
+    assert "showDerivedProjects" in js
+    assert "show_derived" in js
+    assert "visibleProjectSummaries" in js
+    assert "projectFilterOptions" in js
+    assert "project_id" in js
+    assert "Show derived" in js
+    assert "Hidden Derived" in js
+    assert "toolbar-checkbox" in css
+
+
 def test_app_js_has_service_link_click_handler():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
     api_js = (_UI_ROOT / "dashboard_api.js").read_text(encoding="utf-8")

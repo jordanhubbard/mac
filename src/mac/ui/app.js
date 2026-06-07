@@ -176,6 +176,7 @@ const state = {
     agentSort: DEFAULT_URL_STATE.agentSort,
     agentPage: DEFAULT_URL_STATE.agentPage,
     projectFilter: DEFAULT_URL_STATE.projectFilter,
+    showDerivedProjects: DEFAULT_URL_STATE.showDerivedProjects,
     taskFilter: DEFAULT_URL_STATE.taskFilter,
     selectedId: DEFAULT_URL_STATE.selectedId,
     targets: [],
@@ -706,6 +707,7 @@ function readUrlState() {
         agentSort: params.get("agent_sort") || "name",
         agentPage: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
         projectFilter: params.get("project") || "all",
+        showDerivedProjects: params.get("show_derived") === "1",
         taskFilter: params.get("task_state") || "all",
         selectedId: params.get("selected") || "",
         auditSubjectType: AUDIT_SUBJECT_TYPES.includes(subjectType) ? subjectType : "",
@@ -730,6 +732,7 @@ function applyUrlState() {
     state.agentSort = next.agentSort;
     state.agentPage = next.agentPage;
     state.projectFilter = next.projectFilter;
+    state.showDerivedProjects = next.showDerivedProjects;
     state.taskFilter = next.taskFilter;
     state.selectedId = next.selectedId;
     state.auditSubjectType = next.auditSubjectType;
@@ -759,6 +762,8 @@ function updateUrlState(replace = false) {
         params.set("agent_page", String(state.agentPage));
     if (state.projectFilter !== "all")
         params.set("project", state.projectFilter);
+    if (state.showDerivedProjects)
+        params.set("show_derived", "1");
     if (state.taskFilter !== "all")
         params.set("task_state", state.taskFilter);
     if (state.selectedId)
@@ -797,12 +802,59 @@ window.addEventListener("popstate", () => {
     state.actionMessage = null;
     render();
 });
+function isDerivedProject(project) {
+    return !project.project_id;
+}
+function visibleProjectSummaries(data, includeSelected = true) {
+    if (state.showDerivedProjects)
+        return data.project_summaries;
+    const visible = data.project_summaries.filter((project) => !isDerivedProject(project));
+    if (!includeSelected)
+        return visible;
+    const selectedNames = new Set();
+    if (state.projectFilter !== "all")
+        selectedNames.add(state.projectFilter);
+    if (state.selectedId) {
+        const selectedTask = taskDetailById(data, state.selectedId);
+        if (selectedTask)
+            selectedNames.add(taskProject(selectedTask.task));
+        selectedNames.add(state.selectedId);
+    }
+    for (const name of selectedNames) {
+        if (!name || visible.some((project) => project.project === name))
+            continue;
+        const selected = data.project_summaries.find((project) => project.project === name);
+        if (selected)
+            visible.push(selected);
+    }
+    return visible;
+}
+function projectFilterOptions(data) {
+    return visibleProjectSummaries(data, true);
+}
+function projectScopeSummaries(data) {
+    const projects = visibleProjectSummaries(data, true);
+    return state.projectFilter === "all"
+        ? projects
+        : projects.filter((project) => project.project === state.projectFilter);
+}
+function projectVisibilityToggle(data) {
+    const derivedCount = data.project_summaries.filter(isDerivedProject).length;
+    if (!derivedCount)
+        return "";
+    return `
+    <label class="inline-checkbox toolbar-checkbox">
+      <input type="checkbox" id="showDerivedProjects" ${state.showDerivedProjects ? "checked" : ""}>
+      Show derived
+    </label>
+  `;
+}
 function renderOverview() {
     const data = mustData();
     const counts = data.overview.counts;
     const startup = data.hermes_startup;
     const startupStatus = startup?.operator_health?.status || (startup?.ready ? "healthy" : "degraded");
-    const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
+    const readyStories = visibleProjectSummaries(data, false).reduce((sum, project) => sum + project.ready_count, 0);
     const attentionCount = data.agents.filter((item) => !item.availability.eligible).length +
         data.dead_letters.length +
         data.rollouts.filter((item) => ["rescuing", "failed"].includes(String(item.rollout.status))).length +
@@ -843,7 +895,7 @@ function renderOverview() {
   `;
 }
 function overviewLaunchpad(data, attentionCount, pendingNotifications, openFindings) {
-    const readyStories = data.project_summaries.reduce((sum, project) => sum + project.ready_count, 0);
+    const readyStories = visibleProjectSummaries(data, false).reduce((sum, project) => sum + project.ready_count, 0);
     const blockedAgents = data.agents.filter((item) => !item.availability.eligible).length;
     return `
     <section class="launchpad" aria-label="Top-line dashboard actions">
@@ -869,9 +921,10 @@ function launchpadAction(title, detail, view, badge) {
 }
 function renderWork() {
     const data = mustData();
-    const projects = data.project_summaries;
+    const projects = visibleProjectSummaries(data);
+    const projectOptions = projectFilterOptions(data);
     const selectedProject = selectedProjectSummary(data);
-    const scopedProjects = state.projectFilter === "all" ? projects : projects.filter((project) => project.project === state.projectFilter);
+    const scopedProjects = projectScopeSummaries(data);
     const selectedTask = selectedTaskDetail(data) || selectedProject?.frontier_tasks
         .map((task) => taskDetailById(data, task.id))
         .find(Boolean) || null;
@@ -882,8 +935,9 @@ function renderWork() {
     <section class="toolbar">
       <select id="projectFilter">
         ${option("all", "All projects", state.projectFilter)}
-        ${projects.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
+        ${projectOptions.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
       </select>
+      ${projectVisibilityToggle(data)}
       <button type="button" id="clearWorkScope">Clear Scope</button>
     </section>
     <section class="metric-grid">
@@ -927,15 +981,17 @@ function renderWork() {
 function renderProjects() {
     const data = mustData();
     const writable = canWrite(data);
-    const projects = state.projectFilter === "all"
-        ? data.project_summaries
-        : data.project_summaries.filter((project) => project.project === state.projectFilter);
+    const projectOptions = projectFilterOptions(data);
+    const totalVisibleProjects = visibleProjectSummaries(data, false);
+    const projects = projectScopeSummaries(data);
+    const derivedCount = data.project_summaries.filter(isDerivedProject).length;
     return `
     <section class="toolbar">
       <select id="projectFilter">
         ${option("all", "All projects", state.projectFilter)}
-        ${data.project_summaries.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
+        ${projectOptions.map((project) => option(project.project, project.project, state.projectFilter)).join("")}
       </select>
+      ${projectVisibilityToggle(data)}
       <button type="button" id="clearWorkScope">Clear Scope</button>
       ${sessionAccessBadge(data)}
     </section>
@@ -957,7 +1013,8 @@ function renderProjects() {
       <div class="surface">
         <h2>Project Metrics</h2>
         <section class="metric-grid compact-metrics">
-          ${metric("Total Projects", data.project_summaries.length, "all known project keys")}
+          ${metric("Total Projects", totalVisibleProjects.length, state.showDerivedProjects ? "including derived buckets" : "record-backed projects")}
+          ${metric("Hidden Derived", state.showDerivedProjects ? 0 : derivedCount, state.showDerivedProjects ? "derived buckets visible" : "derived buckets hidden")}
           ${metric("Visible Projects", projects.length, state.projectFilter === "all" ? "unfiltered" : `scope: ${state.projectFilter}`)}
           ${metric("Ready Stories", projects.reduce((sum, project) => sum + project.ready_count, 0), "available for dispatch")}
           ${metric("Active Agents", new Set(projects.flatMap((project) => project.active_agent_ids)).size, "working in scope")}
@@ -2229,7 +2286,7 @@ function renderObservability() {
   `;
 }
 function auditFilterToolbar(data) {
-    const projectValues = ["", ...data.project_summaries.map((item) => item.project).filter((item) => item && item !== "unassigned")];
+    const projectValues = ["", ...projectFilterOptions(data).map((item) => item.project).filter((item) => item && item !== "unassigned")];
     const fleetValues = ["", ...data.fleets.map((item) => item.name || item.id)];
     const agentOptions = `<option value="">Any agent</option>${data.agents.map((item) => option(item.agent.id, item.agent.name, state.auditAgentId)).join("")}`;
     const taskOptions = `<option value="">Any task</option>${data.tasks.map((item) => option(item.task.id, item.task.title, state.auditTaskId)).join("")}`;
@@ -2642,17 +2699,18 @@ function memoryRecord(memory) {
   `;
 }
 function selectedProjectSummary(data) {
+    const projects = visibleProjectSummaries(data);
     if (state.projectFilter !== "all") {
-        return data.project_summaries.find((project) => project.project === state.projectFilter) || null;
+        return projects.find((project) => project.project === state.projectFilter) || null;
     }
     if (state.selectedId) {
         const selectedTask = taskDetailById(data, state.selectedId);
         if (selectedTask) {
             const project = taskProject(selectedTask.task);
-            return data.project_summaries.find((item) => item.project === project) || null;
+            return projects.find((item) => item.project === project) || null;
         }
     }
-    return data.project_summaries[0] || null;
+    return projects[0] || null;
 }
 function selectedTaskDetail(data) {
     if (!state.selectedId)
@@ -3017,7 +3075,7 @@ function projectAgentsPanel(data, project) {
     return agentTable(agents.slice(0, 40), data, true);
 }
 function dependencyOrderPanel(data, project) {
-    const projects = project ? [project] : data.project_summaries;
+    const projects = project ? [project] : visibleProjectSummaries(data, false);
     const waiting = projects.flatMap((item) => item.waiting_tasks.map((task) => ({ project: item.project, task }))).slice(0, 12);
     const edges = projects.flatMap((item) => item.cross_project_edges.map((edge) => ({ project: item.project, edge }))).slice(0, 12);
     return `
@@ -4021,6 +4079,13 @@ function bindViewControls() {
         projectFilter.addEventListener("change", (event) => {
             state.projectFilter = event.target.value;
             state.agentPage = 1;
+            updateUrlState();
+            render();
+        });
+    const showDerivedProjects = document.querySelector("#showDerivedProjects");
+    if (showDerivedProjects)
+        showDerivedProjects.addEventListener("change", (event) => {
+            state.showDerivedProjects = event.target.checked;
             updateUrlState();
             render();
         });
