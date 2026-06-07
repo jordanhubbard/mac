@@ -78,6 +78,11 @@ Electron main; the renderer only sees the `window.macDashboard` bridge.
 The dashboard's URL field is a testing fallback. Normal fleet connections
 should be selected from the target dropdown.
 
+The packaged UI also exposes `Fleet hub` and `Bearer token` controls in the
+top bar. Token values from `~/.mac/.env` stay in Electron main; the renderer
+only receives token-source labels such as `Hub token (ROCKY)` or `Manual
+bearer token`.
+
 ## Profile Shape
 
 Profiles are plain JSON:

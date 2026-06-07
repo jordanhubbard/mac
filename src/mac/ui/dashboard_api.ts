@@ -12,6 +12,7 @@ export interface DashboardConnection {
   apiBaseUrl: string;
   displayName: string;
   targetId?: string;
+  tokenSourceId?: string;
 }
 
 export interface DashboardTarget {
@@ -22,10 +23,20 @@ export interface DashboardTarget {
   fleetName?: string;
   hubAgent?: string;
   source?: string;
+  tokenSources?: DashboardTokenSource[];
+  selectedTokenSourceId?: string;
+}
+
+export interface DashboardTokenSource {
+  id: string;
+  label: string;
+  envKey?: string;
 }
 
 export interface DashboardTargetSelection {
   apiUrl?: string;
+  tokenSourceId?: string;
+  token?: string;
 }
 
 interface DashboardBridgeRequest {
@@ -66,7 +77,7 @@ export function createDashboardApi(
   apiBaseUrlProvider: () => string = () => "",
   bridgeProvider: () => DashboardElectronBridge | undefined = () => window.macDashboard,
 ): DashboardApi {
-  function headersFor(init: RequestInit = {}): Record<string, string> {
+  function headersFor(init: RequestInit = {}, includeToken = true): Record<string, string> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (init.headers instanceof Headers) {
       init.headers.forEach((value, key) => {
@@ -78,7 +89,7 @@ export function createDashboardApi(
       Object.assign(headers, init.headers as Record<string, string>);
     }
     if (init.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-    const token = tokenProvider();
+    const token = includeToken ? tokenProvider() : "";
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
@@ -108,8 +119,8 @@ export function createDashboardApi(
 
   return {
     async request(path: string, init: RequestInit = {}): Promise<unknown> {
-      const headers = headersFor(init);
       const bridge = bridgeProvider();
+      const headers = headersFor(init, !bridge?.request);
       if (bridge?.request) {
         return bridge.request(path, {
           method: init.method || "GET",
@@ -131,7 +142,8 @@ export function createDashboardApi(
       return response.json();
     },
     async stream(path: string, init: RequestInit = {}): Promise<Response> {
-      return fetch(resolvePath(path), { ...init, headers: headersFor(init) });
+      const bridge = bridgeProvider();
+      return fetch(resolvePath(path), { ...init, headers: headersFor(init, !bridge) });
     },
     async openService(serviceId: string, fallbackUrl = ""): Promise<void> {
       const bridge = bridgeProvider();

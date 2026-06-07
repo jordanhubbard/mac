@@ -8,6 +8,7 @@ import { createDashboardApi, normalizeApiBaseUrl } from "./dashboard_api.js";
 const TOKEN_KEY = "mac.dashboard.token";
 const API_BASE_URL_KEY = "mac.dashboard.apiBaseUrl";
 const TARGET_KEY = "mac.dashboard.targetId";
+const TOKEN_SOURCE_KEY = "mac.dashboard.tokenSourceId";
 const THEME_KEY = "mac.dashboard.theme";
 function readStoredTheme() {
     let stored = null;
@@ -120,6 +121,14 @@ function readStoredTargetId() {
         return "";
     }
 }
+function readStoredTokenSourceId() {
+    try {
+        return sessionStorage.getItem(TOKEN_SOURCE_KEY) || "";
+    }
+    catch {
+        return "";
+    }
+}
 // Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
 // Stored into sessionStorage and then stripped from the URL so it doesn't
 // linger in browser history.
@@ -171,6 +180,7 @@ const state = {
     selectedId: DEFAULT_URL_STATE.selectedId,
     targets: [],
     selectedTargetId: readStoredTargetId(),
+    selectedTokenSourceId: readStoredTokenSourceId(),
     auditSubjectType: DEFAULT_URL_STATE.auditSubjectType,
     auditSubjectId: DEFAULT_URL_STATE.auditSubjectId,
     auditEventPrefix: DEFAULT_URL_STATE.auditEventPrefix,
@@ -197,6 +207,13 @@ const nodes = {
     content: requiredElement("#content"),
     refresh: requiredElement("#refreshButton"),
     syncState: requiredElement("#syncState"),
+    connectionForm: requiredElement("#connectionForm"),
+    topbarTargetSelect: requiredElement("#topbarTargetSelect"),
+    tokenSourceSelect: requiredElement("#tokenSourceSelect"),
+    topbarTokenInput: requiredElement("#topbarTokenInput"),
+    topbarTokenField: requiredElement("#topbarTokenField"),
+    topbarTestingUrlInput: requiredElement("#topbarTestingUrlInput"),
+    topbarTestingUrlField: requiredElement("#topbarTestingUrlField"),
     tokenForm: requiredElement("#tokenForm"),
     targetSelect: requiredElement("#targetSelect"),
     tokenInput: requiredElement("#tokenInput"),
@@ -215,9 +232,12 @@ const api = createDashboardApi(() => state.token, () => state.apiBaseUrl);
 applyTheme(readStoredTheme());
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
+nodes.topbarTokenInput.value = state.token;
 nodes.apiUrlInput.value = state.apiBaseUrl;
 nodes.loginApiUrlInput.value = state.apiBaseUrl;
+nodes.topbarTestingUrlInput.value = state.apiBaseUrl;
 renderTargetSelects();
+renderTokenSourceSelect();
 bindEvents();
 const connectionReady = syncElectronConnection();
 if (state.token || window.macDashboard) {
@@ -248,6 +268,12 @@ function bindEvents() {
     nodes.content.addEventListener("change", handleContentChange);
     nodes.loginTargetSelect.addEventListener("change", () => mirrorTargetSelect(nodes.loginTargetSelect.value));
     nodes.targetSelect.addEventListener("change", () => mirrorTargetSelect(nodes.targetSelect.value));
+    nodes.topbarTargetSelect.addEventListener("change", () => mirrorTargetSelect(nodes.topbarTargetSelect.value));
+    nodes.tokenSourceSelect.addEventListener("change", () => mirrorTokenSourceSelect(nodes.tokenSourceSelect.value));
+    nodes.connectionForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await connectFromControls(nodes.topbarTargetSelect.value, nodes.topbarTestingUrlInput.value, nodes.topbarTokenInput.value);
+    });
     nodes.loginForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const token = nodes.loginTokenInput.value.trim();
@@ -257,10 +283,10 @@ function bindEvents() {
         else
             sessionStorage.removeItem(TOKEN_KEY);
         nodes.tokenInput.value = token;
+        nodes.topbarTokenInput.value = token;
         try {
-            await applySelectedTarget(nodes.loginTargetSelect.value, nodes.loginApiUrlInput.value);
+            await connectFromControls(nodes.loginTargetSelect.value, nodes.loginApiUrlInput.value, token);
             hideLoginScreen();
-            loadDashboard();
         }
         catch (error) {
             state.error = error instanceof Error ? error.message : String(error);
@@ -275,10 +301,10 @@ function bindEvents() {
             sessionStorage.setItem(TOKEN_KEY, state.token);
         else
             sessionStorage.removeItem(TOKEN_KEY);
+        nodes.topbarTokenInput.value = state.token;
         try {
-            await applySelectedTarget(nodes.targetSelect.value, nodes.apiUrlInput.value);
+            await connectFromControls(nodes.targetSelect.value, nodes.apiUrlInput.value, state.token);
             hideLoginScreen();
-            loadDashboard();
         }
         catch (error) {
             state.error = error instanceof Error ? error.message : String(error);
@@ -289,6 +315,7 @@ function bindEvents() {
         state.token = "";
         nodes.tokenInput.value = "";
         nodes.loginTokenInput.value = "";
+        nodes.topbarTokenInput.value = "";
         sessionStorage.removeItem(TOKEN_KEY);
         showLoginScreen();
     });
@@ -327,7 +354,7 @@ async function loadDashboard() {
     }
     catch (error) {
         state.error = error instanceof Error ? error.message : String(error);
-        if (isAuthError(state.error)) {
+        if (isAuthError(state.error) && !window.macDashboard) {
             sessionStorage.removeItem(TOKEN_KEY);
             showLoginScreen();
         }
@@ -358,18 +385,21 @@ function renderTargetSelects() {
         ? state.selectedTargetId
         : targets[0]?.id || "";
     const options = targets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(targetLabel(target))}</option>`).join("");
-    for (const select of [nodes.loginTargetSelect, nodes.targetSelect]) {
+    for (const select of [nodes.loginTargetSelect, nodes.targetSelect, nodes.topbarTargetSelect]) {
         select.innerHTML = options;
         select.value = selected;
         select.disabled = targets.length <= 1 && !window.macDashboard;
     }
     state.selectedTargetId = selected;
+    renderTokenSourceSelect();
     syncTestingUrlControls();
 }
 function mirrorTargetSelect(targetId) {
     state.selectedTargetId = targetId;
     nodes.loginTargetSelect.value = targetId;
     nodes.targetSelect.value = targetId;
+    nodes.topbarTargetSelect.value = targetId;
+    renderTokenSourceSelect();
     syncTestingUrlControls();
     try {
         if (targetId)
@@ -384,32 +414,96 @@ function mirrorTargetSelect(targetId) {
 function selectedTarget() {
     return state.targets.find((item) => item.id === state.selectedTargetId);
 }
+function tokenSourcesForSelectedTarget() {
+    const target = selectedTarget();
+    if (window.macDashboard && target?.tokenSources?.length)
+        return target.tokenSources;
+    return [{ id: "manual", label: "Manual bearer token" }];
+}
+function renderTokenSourceSelect() {
+    const sources = tokenSourcesForSelectedTarget();
+    const target = selectedTarget();
+    const defaultSourceId = target?.selectedTokenSourceId || sources[0]?.id || "manual";
+    const selected = state.selectedTokenSourceId && sources.some((source) => source.id === state.selectedTokenSourceId)
+        ? state.selectedTokenSourceId
+        : defaultSourceId;
+    nodes.tokenSourceSelect.innerHTML = sources
+        .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.label)}</option>`)
+        .join("");
+    nodes.tokenSourceSelect.value = selected;
+    state.selectedTokenSourceId = selected;
+    syncTokenSourceControls();
+}
+function mirrorTokenSourceSelect(sourceId) {
+    state.selectedTokenSourceId = sourceId;
+    nodes.tokenSourceSelect.value = sourceId;
+    syncTokenSourceControls();
+    try {
+        if (sourceId)
+            sessionStorage.setItem(TOKEN_SOURCE_KEY, sourceId);
+        else
+            sessionStorage.removeItem(TOKEN_SOURCE_KEY);
+    }
+    catch {
+        /* storage unavailable — token source still applies for this session */
+    }
+}
+function syncTokenSourceControls() {
+    const isManual = !window.macDashboard || state.selectedTokenSourceId === "manual";
+    nodes.topbarTokenField.hidden = !isManual;
+    nodes.topbarTokenInput.disabled = !isManual;
+    if (!isManual)
+        nodes.topbarTokenInput.value = "";
+}
 function syncTestingUrlControls() {
     const target = selectedTarget();
     const isTesting = !window.macDashboard || !target || target.mode.startsWith("testing");
     const value = isTesting ? (target?.apiUrl || state.apiBaseUrl) : "";
     nodes.apiUrlInput.disabled = !isTesting;
     nodes.loginApiUrlInput.disabled = !isTesting;
+    nodes.topbarTestingUrlInput.disabled = !isTesting;
+    nodes.topbarTestingUrlField.hidden = !isTesting;
     nodes.apiUrlInput.value = value;
     nodes.loginApiUrlInput.value = value;
+    nodes.topbarTestingUrlInput.value = value;
 }
-async function applySelectedTarget(targetId, testingUrl) {
+async function connectFromControls(targetId, testingUrl, manualToken) {
+    state.error = null;
+    await applySelectedTarget(targetId, testingUrl, state.selectedTokenSourceId, manualToken);
+    hideLoginScreen();
+    loadDashboard();
+}
+async function applySelectedTarget(targetId, testingUrl, tokenSourceId = "", manualToken = "") {
     mirrorTargetSelect(targetId);
+    if (tokenSourceId)
+        mirrorTokenSourceSelect(tokenSourceId);
     const target = state.targets.find((item) => item.id === targetId);
     if (window.macDashboard && target?.id) {
-        const options = target.mode.startsWith("testing") ? { apiUrl: normalizeApiBaseUrl(testingUrl) } : {};
+        const options = {
+            ...(target.mode.startsWith("testing") ? { apiUrl: normalizeApiBaseUrl(testingUrl) } : {}),
+            ...(state.selectedTokenSourceId ? { tokenSourceId: state.selectedTokenSourceId } : {}),
+            ...(state.selectedTokenSourceId === "manual" ? { token: manualToken.trim() } : {}),
+        };
         const connection = await api.selectTarget(target.id, options);
         state.connection = {
             mode: "electron-managed",
             apiBaseUrl: normalizeApiBaseUrl(connection.apiBaseUrl || state.apiBaseUrl),
             displayName: connection.displayName || target.label || "Electron managed",
             targetId: connection.targetId || target.id,
+            tokenSourceId: connection.tokenSourceId || state.selectedTokenSourceId,
         };
         state.apiBaseUrl = state.connection.apiBaseUrl;
+        if (connection.tokenSourceId)
+            mirrorTokenSourceSelect(connection.tokenSourceId);
         syncTestingUrlControls();
         renderSyncState();
         return;
     }
+    state.token = manualToken.trim();
+    if (state.token)
+        sessionStorage.setItem(TOKEN_KEY, state.token);
+    else
+        sessionStorage.removeItem(TOKEN_KEY);
     setApiBaseUrl(testingUrl);
 }
 function setApiBaseUrl(raw) {
@@ -447,11 +541,14 @@ async function syncElectronConnection() {
         }
         if (connection.targetId)
             mirrorTargetSelect(connection.targetId);
+        if (connection.tokenSourceId)
+            mirrorTokenSourceSelect(connection.tokenSourceId);
         state.connection = {
             mode: "electron-managed",
             apiBaseUrl: state.apiBaseUrl,
             displayName: connection.displayName || state.connection.displayName || "Electron managed",
             targetId: connection.targetId || state.selectedTargetId,
+            tokenSourceId: connection.tokenSourceId || state.selectedTokenSourceId,
         };
         syncTestingUrlControls();
         renderSyncState();

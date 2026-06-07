@@ -77,6 +77,10 @@ as the primary target dropdown. The dashboard's URL field is reserved for the
 `Testing URL` target so local or throwaway API endpoints can still be checked
 without making URL entry part of normal fleet usage.
 
+Electron mode exposes visible `Fleet hub` and `Bearer token` controls in the
+top bar. The renderer sees token-source labels only; token values loaded from
+`~/.mac/.env` remain in Electron main and are injected by the local proxy.
+
 The optional Electron package lives in `desktop/`:
 
 ```bash

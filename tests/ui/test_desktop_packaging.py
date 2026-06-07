@@ -59,6 +59,9 @@ def test_desktop_main_owns_ssh_proxy_and_service_tunnels():
     assert "profileToken" in main
     assert "~/.mac/fleets.yaml" in main
     assert "MAC_API_TOKEN__" in main
+    assert "MAC_DEPLOY_HUB_TOKEN__" in main
+    assert "tokenSourcesForTarget" in main
+    assert "tokenSourceId" in main
     assert "mac-dashboard:targets" in main
     assert "mac-dashboard:select-target" in main
     assert "process.argv.slice(1)" in main

@@ -185,7 +185,17 @@ function loadProfile(options = {}) {
   return profile;
 }
 
-function tokenForTarget(targetKey, fleet, env) {
+function tokenLabel(key) {
+  const suffix = key.includes("__") ? key.split("__").slice(1).join("__") : "";
+  if (key.startsWith("MAC_DEPLOY_HUB_TOKEN__")) return `Hub token (${suffix})`;
+  if (key.startsWith("MAC_API_TOKEN__")) return `API token (${suffix})`;
+  if (key === "MAC_DEPLOY_HUB_TOKEN") return "Hub token";
+  if (key === "MAC_API_TOKEN") return "API token";
+  if (key === "MAC_DESKTOP_API_TOKEN") return "Desktop token";
+  return key;
+}
+
+function tokenSourcesForTarget(targetKey, fleet, env) {
   const suffixes = [
     targetKey,
     fleet?.fleet_name,
@@ -193,13 +203,26 @@ function tokenForTarget(targetKey, fleet, env) {
   ].map(normalizeEnvSuffix).filter(Boolean);
   const candidates = [];
   for (const suffix of [...new Set(suffixes)]) {
-    candidates.push(`MAC_API_TOKEN__${suffix}`, `MAC_DEPLOY_HUB_TOKEN__${suffix}`);
+    candidates.push(`MAC_DEPLOY_HUB_TOKEN__${suffix}`, `MAC_API_TOKEN__${suffix}`);
   }
-  candidates.push("MAC_DESKTOP_API_TOKEN", "MAC_API_TOKEN", "MAC_DEPLOY_HUB_TOKEN");
+  candidates.push("MAC_DEPLOY_HUB_TOKEN", "MAC_API_TOKEN", "MAC_DESKTOP_API_TOKEN");
+  const sources = [];
   for (const key of candidates) {
-    if (env[key]) return env[key];
+    if (!env[key] || sources.some((source) => source.envKey === key)) continue;
+    sources.push({
+      id: `env:${key}`,
+      label: tokenLabel(key),
+      envKey: key,
+      value: env[key],
+    });
   }
-  return "";
+  sources.push({ id: "manual", label: "Manual bearer token", envKey: "", value: "" });
+  sources.push({ id: "none", label: "No token", envKey: "", value: "" });
+  return sources;
+}
+
+function defaultTokenSource(tokenSources) {
+  return tokenSources.find((source) => source.id.startsWith("env:")) || tokenSources[0] || null;
 }
 
 function fleetHubAgent(fleet) {
@@ -270,10 +293,14 @@ function targetFromFleet(key, fleet, configPath, env) {
   const fleetName = stringValue(fleet?.fleet_name) || key;
   const hubAgentName = stringValue(fleet?.hub_agent) || stringValue(hubAgent?.name);
   const displayName = hubAgentName && hubAgentName !== fleetName ? `${fleetName} / ${hubAgentName}` : fleetName;
+  const tokenChoices = tokenSourcesForTarget(key, fleet, env);
+  const defaultSource = defaultTokenSource(tokenChoices);
   const profile = {
     displayName,
     apiUrl: "",
-    token: tokenForTarget(key, fleet, env),
+    token: defaultSource?.value || "",
+    tokenSourceId: defaultSource?.id || "none",
+    tokenChoices,
     tokenEnv: "MAC_DESKTOP_API_TOKEN",
     proxyPort: 0,
     serviceTunnels: {},
@@ -324,9 +351,11 @@ function loadFleetTargets(args, env) {
 
 function testingTarget(env = {}) {
   const profile = loadProfile({ allowDefault: true });
-  if (!profile.token) {
-    profile.token = env.MAC_DESKTOP_API_TOKEN || env.MAC_API_TOKEN || env.MAC_DEPLOY_HUB_TOKEN || "";
-  }
+  const tokenChoices = tokenSourcesForTarget("testing", {}, env);
+  const defaultSource = defaultTokenSource(tokenChoices);
+  if (!profile.token) profile.token = defaultSource?.value || "";
+  profile.tokenChoices = tokenChoices;
+  profile.tokenSourceId = defaultSource?.id || "none";
   const mode = profile.localServer ? "testing-local" : profile.ssh ? "testing-ssh" : "testing-url";
   return {
     id: TESTING_TARGET_ID,
@@ -357,6 +386,12 @@ function targetPublicInfo(target) {
     fleetName: target.fleetName || "",
     hubAgent: target.hubAgent || "",
     source: target.source || "",
+    tokenSources: (target.profile?.tokenChoices || []).map((source) => ({
+      id: source.id,
+      label: source.label,
+      envKey: source.envKey || "",
+    })),
+    selectedTokenSourceId: target.profile?.tokenSourceId || "",
   };
 }
 
@@ -387,6 +422,23 @@ function profileForTarget(target, options = {}) {
   }
   if (!profile.displayName) profile.displayName = target?.label || "MAC Control Plane";
   if (!profile.serviceTunnels) profile.serviceTunnels = {};
+  const tokenChoices = target?.profile?.tokenChoices || profile.tokenChoices || [];
+  const requestedSourceId = stringValue(options.tokenSourceId);
+  let selectedSource = requestedSourceId
+    ? tokenChoices.find((source) => source.id === requestedSourceId) || null
+    : tokenChoices.find((source) => source.id === profile.tokenSourceId) || defaultTokenSource(tokenChoices);
+  if (requestedSourceId === "manual") selectedSource = tokenChoices.find((source) => source.id === "manual") || null;
+  if (requestedSourceId === "none") selectedSource = tokenChoices.find((source) => source.id === "none") || null;
+  if (selectedSource?.id === "manual") {
+    profile.token = stringValue(options.token);
+    profile.tokenSourceId = "manual";
+  } else if (selectedSource?.id === "none") {
+    profile.token = "";
+    profile.tokenSourceId = "none";
+  } else if (selectedSource) {
+    profile.token = selectedSource.value || "";
+    profile.tokenSourceId = selectedSource.id;
+  }
   return profile;
 }
 
@@ -649,6 +701,7 @@ function connectionInfo() {
     apiBaseUrl: runtime.proxyUrl,
     displayName: runtime.profile?.displayName || "MAC Control Plane",
     targetId: runtime.activeTargetId || "",
+    tokenSourceId: runtime.profile?.tokenSourceId || "",
   };
 }
 
@@ -725,7 +778,12 @@ function ipcTargets() {
 async function ipcSelectTarget(_event, payload) {
   const targetId = stringValue(payload?.targetId);
   const apiUrl = normalizeApiUrlOption(payload?.apiUrl);
-  await prepareConnection(targetId, apiUrl ? { apiUrl } : {});
+  const tokenSourceId = stringValue(payload?.tokenSourceId);
+  const token = stringValue(payload?.token);
+  await prepareConnection(targetId, {
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(tokenSourceId ? { tokenSourceId, token } : {}),
+  });
   return connectionInfo();
 }
 

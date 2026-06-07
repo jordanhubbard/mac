@@ -13,7 +13,7 @@ export function normalizeApiBaseUrl(raw) {
     }
 }
 export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "", bridgeProvider = () => window.macDashboard) {
-    function headersFor(init = {}) {
+    function headersFor(init = {}, includeToken = true) {
         const headers = { Accept: "application/json" };
         if (init.headers instanceof Headers) {
             init.headers.forEach((value, key) => {
@@ -29,7 +29,7 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
         }
         if (init.body && !headers["Content-Type"])
             headers["Content-Type"] = "application/json";
-        const token = tokenProvider();
+        const token = includeToken ? tokenProvider() : "";
         if (token)
             headers.Authorization = `Bearer ${token}`;
         return headers;
@@ -59,8 +59,8 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
     }
     return {
         async request(path, init = {}) {
-            const headers = headersFor(init);
             const bridge = bridgeProvider();
+            const headers = headersFor(init, !bridge?.request);
             if (bridge?.request) {
                 return bridge.request(path, {
                     method: init.method || "GET",
@@ -83,7 +83,8 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
             return response.json();
         },
         async stream(path, init = {}) {
-            return fetch(resolvePath(path), { ...init, headers: headersFor(init) });
+            const bridge = bridgeProvider();
+            return fetch(resolvePath(path), { ...init, headers: headersFor(init, !bridge) });
         },
         async openService(serviceId, fallbackUrl = "") {
             const bridge = bridgeProvider();

@@ -453,6 +453,45 @@ h3 {
   gap: 12px;
 }
 
+.connection-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connection-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+}
+
+.connection-form label span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.connection-form input,
+.connection-form select {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.connection-form button {
+  height: 40px;
+}
+
+.connection-form [hidden] {
+  display: none;
+}
+
 .sync-state {
   min-width: 120px;
   color: var(--muted);
@@ -2137,6 +2176,15 @@ button.mobile-object-card {
   .topbar-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .connection-form {
+    width: 100%;
+  }
+
+  .connection-form label {
+    min-width: min(100%, 220px);
+    flex: 1 1 220px;
   }
 
   .sync-state {

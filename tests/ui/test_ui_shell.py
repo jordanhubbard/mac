@@ -154,10 +154,19 @@ def test_app_js_has_login_screen_show_hide():
     assert "loginApiUrlInput" in js
     assert "loginTargetSelect" in js
     assert "targetSelect" in js
+    assert "topbarTargetSelect" in js
+    assert "tokenSourceSelect" in js
+    assert "connectionForm" in js
     assert "loginApiUrlInput" in html
     assert "apiUrlInput" in html
     assert "loginTargetSelect" in html
     assert "targetSelect" in html
+    assert "topbarTargetSelect" in html
+    assert "tokenSourceSelect" in html
+    assert "topbarTokenInput" in html
+    assert "topbarTestingUrlInput" in html
+    assert "Fleet hub" in html
+    assert "Bearer token" in html
     assert "Testing URL" in html
     assert "Optional bearer token" in html
     assert 'loginTokenInput" name="token" type="password"' in html
@@ -166,14 +175,18 @@ def test_app_js_has_login_screen_show_hide():
 def test_app_js_has_connection_surface_for_remote_and_electron_modes():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
     api_js = (_UI_ROOT / "dashboard_api.js").read_text(encoding="utf-8")
+    api_ts = (_UI_ROOT / "dashboard_api.ts").read_text(encoding="utf-8")
     html = (_UI_ROOT / "index.html").read_text(encoding="utf-8")
     assert "connectionBadge" in js
     assert "mac.dashboard.apiBaseUrl" in js
     assert "window.macDashboard" in js
     assert "window.macDashboard" in api_js
     assert "selectTarget" in js
+    assert "selectedTokenSourceId" in js
+    assert "tokenSources" in js
     assert "targets" in api_js
     assert "selectTarget" in api_js
+    assert "tokenSourceId" in api_ts
     assert "normalizeApiBaseUrl" in api_js
     assert "electron-managed" in api_js
     assert "remote-api" in api_js

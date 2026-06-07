@@ -131,6 +131,25 @@
             </select>
           </div>
           <div class="topbar-actions">
+            <form class="connection-form" id="connectionForm">
+              <label>
+                <span>Fleet hub</span>
+                <select id="topbarTargetSelect" name="target"></select>
+              </label>
+              <label>
+                <span>Bearer token</span>
+                <select id="tokenSourceSelect" name="token_source"></select>
+              </label>
+              <label id="topbarTokenField">
+                <span>Manual token</span>
+                <input id="topbarTokenInput" name="token" type="password" autocomplete="off" placeholder="Paste bearer token">
+              </label>
+              <label id="topbarTestingUrlField">
+                <span>Testing URL</span>
+                <input id="topbarTestingUrlInput" name="api_url" type="url" autocomplete="off" placeholder="http://127.0.0.1:8789">
+              </label>
+              <button type="submit" class="primary-button">Connect</button>
+            </form>
             <span class="connection-badge" id="connectionBadge">Same origin</span>
             <span class="sync-state" id="syncState">Not loaded</span>
             <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">
