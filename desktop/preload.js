@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld("macDashboard", {
   async selectTarget(targetId, options) {
     return ipcRenderer.invoke("mac-dashboard:select-target", { targetId, ...(options || {}) });
   },
+  async disconnect() {
+    return ipcRenderer.invoke("mac-dashboard:disconnect");
+  },
   async request(path, init) {
     return ipcRenderer.invoke("mac-dashboard:request", { path, init });
   },

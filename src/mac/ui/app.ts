@@ -366,6 +366,8 @@ interface DashboardSession {
 }
 
 interface DashboardData {
+  server_time?: string;
+  updated_at?: string;
   overview: {
     counts: Record<string, number>;
     task_states: Record<string, number>;
@@ -453,6 +455,8 @@ interface DashboardState {
   auditSince: string;
   auditUntil: string;
   observabilityLive: ObservabilityEvent[];
+  dashboardStream: AbortController | null;
+  dashboardStreamStatus: string;
   observabilityStream: AbortController | null;
   observabilityStreamStatus: string;
   // wf-05: which workflow's graph + drafts are shown on the Workflows tab,
@@ -476,6 +480,7 @@ interface DashboardNodes {
   topbarTokenField: HTMLElement;
   topbarTestingUrlInput: HTMLInputElement;
   topbarTestingUrlField: HTMLElement;
+  connectionButton: HTMLButtonElement;
   tokenForm: HTMLFormElement;
   targetSelect: HTMLSelectElement;
   tokenInput: HTMLInputElement;
@@ -687,6 +692,8 @@ const state: DashboardState = {
   auditSince: DEFAULT_URL_STATE.auditSince,
   auditUntil: DEFAULT_URL_STATE.auditUntil,
   observabilityLive: [],
+  dashboardStream: null,
+  dashboardStreamStatus: "idle",
   observabilityStream: null,
   observabilityStreamStatus: "idle",
   selectedWorkflowId: "",
@@ -708,6 +715,7 @@ const nodes: DashboardNodes = {
   topbarTokenField: requiredElement("#topbarTokenField"),
   topbarTestingUrlInput: requiredElement<HTMLInputElement>("#topbarTestingUrlInput"),
   topbarTestingUrlField: requiredElement("#topbarTestingUrlField"),
+  connectionButton: requiredElement<HTMLButtonElement>("#connectionButton"),
   tokenForm: requiredElement("#tokenForm"),
   targetSelect: requiredElement<HTMLSelectElement>("#targetSelect"),
   tokenInput: requiredElement("#tokenInput"),
@@ -766,7 +774,8 @@ function bindEvents(): void {
   nodes.tokenSourceSelect.addEventListener("change", () => mirrorTokenSourceSelect(nodes.tokenSourceSelect.value));
   nodes.connectionForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await connectFromControls(nodes.topbarTargetSelect.value, nodes.topbarTestingUrlInput.value, nodes.topbarTokenInput.value);
+    if (isConnectionLive()) await disconnectFromControls();
+    else await connectFromControls(nodes.topbarTargetSelect.value, nodes.topbarTestingUrlInput.value, nodes.topbarTokenInput.value);
   });
   nodes.loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -833,10 +842,13 @@ async function loadDashboard(): Promise<void> {
   state.error = null;
   renderSyncState();
   try {
-    state.data = (await requestJSON("/dashboard/state")) as DashboardData;
-    state.loadedAt = new Date();
+    applyDashboardData((await requestJSON("/dashboard/state")) as DashboardData);
+    state.connection = { ...state.connection, connected: true };
+    syncDashboardSubscription();
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
+    state.connection = { ...state.connection, connected: false };
+    stopDashboardStream();
     if (isAuthError(state.error) && !window.macDashboard) {
       sessionStorage.removeItem(TOKEN_KEY);
       showLoginScreen();
@@ -845,6 +857,13 @@ async function loadDashboard(): Promise<void> {
     state.loading = false;
     render();
   }
+}
+
+function applyDashboardData(data: DashboardData): void {
+  state.data = data;
+  const serverTime = data.server_time || data.updated_at || "";
+  const parsed = serverTime ? new Date(serverTime) : new Date();
+  state.loadedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
 async function requestJSON(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -955,7 +974,29 @@ async function connectFromControls(targetId: string, testingUrl: string, manualT
   state.error = null;
   await applySelectedTarget(targetId, testingUrl, state.selectedTokenSourceId, manualToken);
   hideLoginScreen();
-  loadDashboard();
+  await loadDashboard();
+}
+
+async function disconnectFromControls(): Promise<void> {
+  stopDashboardStream();
+  stopObservabilityStream();
+  state.loading = false;
+  state.error = null;
+  state.actionMessage = null;
+  state.data = null;
+  state.loadedAt = null;
+  if (window.macDashboard) {
+    const connection = await api.disconnect();
+    state.connection = {
+      ...state.connection,
+      ...connection,
+      mode: "electron-managed",
+      connected: false,
+    };
+  } else {
+    state.connection = { ...api.connection(), connected: false };
+  }
+  render();
 }
 
 async function applySelectedTarget(
@@ -980,6 +1021,7 @@ async function applySelectedTarget(
       displayName: connection.displayName || target.label || "Electron managed",
       targetId: connection.targetId || target.id,
       tokenSourceId: connection.tokenSourceId || state.selectedTokenSourceId,
+      connected: connection.connected !== false,
     };
     state.apiBaseUrl = state.connection.apiBaseUrl;
     if (connection.tokenSourceId) mirrorTokenSourceSelect(connection.tokenSourceId);
@@ -996,6 +1038,7 @@ async function applySelectedTarget(
 function setApiBaseUrl(raw: string): void {
   state.apiBaseUrl = normalizeApiBaseUrl(raw);
   state.connection = api.connection();
+  state.connection.connected = false;
   nodes.apiUrlInput.value = state.apiBaseUrl;
   nodes.loginApiUrlInput.value = state.apiBaseUrl;
   syncTestingUrlControls();
@@ -1031,6 +1074,7 @@ async function syncElectronConnection(): Promise<void> {
       displayName: connection.displayName || state.connection.displayName || "Electron managed",
       targetId: connection.targetId || state.selectedTargetId,
       tokenSourceId: connection.tokenSourceId || state.selectedTokenSourceId,
+      connected: !!connection.connected,
     };
     syncTestingUrlControls();
     renderSyncState();
@@ -1113,6 +1157,7 @@ function render(): void {
                       : renderOverview();
   nodes.content.innerHTML = `${action}${body}`;
   bindViewControls();
+  syncDashboardSubscription();
   syncObservabilitySubscription();
 }
 
@@ -1136,6 +1181,10 @@ function renderPreservingFocusedControl(): void {
   }
 }
 
+function isConnectionLive(): boolean {
+  return !!state.connection?.connected;
+}
+
 function renderSyncState(): void {
   const connection = state.connection || api.connection();
   const modeLabel =
@@ -1147,11 +1196,17 @@ function renderSyncState(): void {
   const displayName = connection.displayName || connection.apiBaseUrl || "This MAC server";
   nodes.connectionBadge.textContent = `${modeLabel}: ${displayName}`;
   nodes.connectionBadge.title = connection.apiBaseUrl || displayName;
+  const connected = isConnectionLive();
+  nodes.connectionButton.textContent = connected ? "Disconnect" : "Connect";
+  nodes.connectionButton.setAttribute("aria-pressed", String(connected));
+  nodes.connectionButton.classList.toggle("is-connected", connected);
   nodes.syncState.textContent = state.loading
     ? "Loading"
     : state.loadedAt
-      ? `Loaded ${formatTime(state.loadedAt)}`
-      : "Not loaded";
+      ? `Updated ${formatTime(state.loadedAt)}`
+      : connected
+        ? "Not updated"
+        : "Not connected";
 }
 
 function renderBanner(): void {
@@ -4925,6 +4980,71 @@ async function runDirectDelete(
 function confirmDestructive(label: string): boolean {
   const title = DESTRUCTIVE_ACTION_LABELS[label] || `${label} delete?`;
   return window.confirm(`${title}\n\nThis cannot be undone.`);
+}
+
+function syncDashboardSubscription(): void {
+  if (state.data && isConnectionLive()) {
+    startDashboardStream();
+  } else {
+    stopDashboardStream();
+  }
+}
+
+function startDashboardStream(): void {
+  if (state.dashboardStream) return;
+  const controller = new AbortController();
+  state.dashboardStream = controller;
+  state.dashboardStreamStatus = "connecting";
+  api.stream("/dashboard/stream?timeout_seconds=60&poll_interval_seconds=1", {
+    headers: { Accept: "application/x-ndjson" },
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      state.dashboardStreamStatus = "connected";
+      renderSyncState();
+      const reader = response.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        let changed = false;
+        for (const line of lines) {
+          const text = line.trim();
+          if (!text) continue;
+          applyDashboardData(JSON.parse(text) as DashboardData);
+          state.connection = { ...state.connection, connected: true };
+          changed = true;
+        }
+        if (changed) renderPreservingFocusedControl();
+      }
+    })
+    .catch((error) => {
+      if (!controller.signal.aborted) {
+        state.dashboardStreamStatus = "error";
+        state.actionMessage = `Dashboard stream failed: ${error instanceof Error ? error.message : String(error)}`;
+        render();
+      }
+    })
+    .finally(() => {
+      if (state.dashboardStream === controller) state.dashboardStream = null;
+      if (!controller.signal.aborted && isConnectionLive()) {
+        state.dashboardStreamStatus = "reconnecting";
+        window.setTimeout(startDashboardStream, 1000);
+      }
+    });
+}
+
+function stopDashboardStream(): void {
+  if (!state.dashboardStream) return;
+  state.dashboardStream.abort();
+  state.dashboardStream = null;
+  state.dashboardStreamStatus = "idle";
 }
 
 function syncObservabilitySubscription(): void {

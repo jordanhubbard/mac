@@ -55,6 +55,7 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
             mode,
             apiBaseUrl,
             displayName: config.displayName || (apiBaseUrl || "This MAC server"),
+            connected: false,
         };
     }
     return {
@@ -111,6 +112,18 @@ export function createDashboardApi(tokenProvider, apiBaseUrlProvider = () => "",
                 ...(selected || {}),
                 mode: "electron-managed",
             };
+        },
+        async disconnect() {
+            const bridge = bridgeProvider();
+            if (bridge?.disconnect) {
+                const disconnected = await bridge.disconnect();
+                return {
+                    ...connection(),
+                    ...(disconnected || {}),
+                    connected: false,
+                };
+            }
+            return { ...connection(), connected: false };
         },
         connection,
     };

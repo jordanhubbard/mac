@@ -858,6 +858,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             }
         elif path_template == "/observability/stream":
             kwargs["params"] = {"after_sequence": 0, "timeout_seconds": 0, "poll_interval_seconds": 0.25}
+        elif path_template == "/dashboard/stream":
+            kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/v1/memory/recall":
             kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/memory/dreams/recall":

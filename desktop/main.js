@@ -30,6 +30,7 @@ const runtime = {
   targets: [],
   activeTargetId: "",
   apiTargetUrl: "",
+  connected: false,
   proxyUrl: "",
   proxyServer: null,
   uiRoot: "",
@@ -636,6 +637,11 @@ async function startSshTunnel(name, spec) {
 }
 
 function proxyRequest(targetBaseUrl, req, res) {
+  if (!runtime.connected || !targetBaseUrl) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "desktop target is disconnected" }));
+    return;
+  }
   const target = new URL(req.url || "/", targetBaseUrl);
   const client = target.protocol === "https:" ? https : http;
   const headers = stripHopByHopHeaders(req.headers);
@@ -682,6 +688,7 @@ async function prepareConnection(targetId = "", options = {}) {
   stopConnectionChildren();
   runtime.profile = profile;
   runtime.activeTargetId = target.id;
+  runtime.connected = false;
 
   const localUrl = await startLocalServerIfConfigured(profile);
   if (localUrl) profile.apiUrl = localUrl;
@@ -693,15 +700,25 @@ async function prepareConnection(targetId = "", options = {}) {
     runtime.apiTargetUrl = profile.apiUrl || DEFAULT_API_URL;
   }
   await startProxyServer(profile.proxyPort);
+  runtime.connected = true;
+}
+
+function disconnectRuntime() {
+  stopConnectionChildren();
+  runtime.profile = null;
+  runtime.activeTargetId = "";
+  runtime.apiTargetUrl = "";
+  runtime.connected = false;
 }
 
 function connectionInfo() {
   return {
     mode: "electron-managed",
     apiBaseUrl: runtime.proxyUrl,
-    displayName: runtime.profile?.displayName || "MAC Control Plane",
+    displayName: runtime.profile?.displayName || "Not connected",
     targetId: runtime.activeTargetId || "",
     tokenSourceId: runtime.profile?.tokenSourceId || "",
+    connected: runtime.connected,
   };
 }
 
@@ -787,6 +804,11 @@ async function ipcSelectTarget(_event, payload) {
   return connectionInfo();
 }
 
+async function ipcDisconnect() {
+  disconnectRuntime();
+  return connectionInfo();
+}
+
 function normalizeApiUrlOption(raw) {
   const value = stringValue(raw);
   if (!value) return "";
@@ -804,6 +826,7 @@ function registerIpcHandlers() {
   ipcMain.handle("mac-dashboard:open-service", ipcOpenService);
   ipcMain.handle("mac-dashboard:targets", ipcTargets);
   ipcMain.handle("mac-dashboard:select-target", ipcSelectTarget);
+  ipcMain.handle("mac-dashboard:disconnect", ipcDisconnect);
   runtime.ipcRegistered = true;
 }
 

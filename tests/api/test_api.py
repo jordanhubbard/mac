@@ -1176,6 +1176,8 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     ).json()
 
     state = client.get("/dashboard/state").json()
+    assert state["server_time"].endswith("+00:00")
+    assert state["updated_at"] == state["server_time"]
     assert state["overview"]["counts"]["agents"] == 1
     assert state["dispatch"]["open_task_count"] == 1
     assert state["session"]["mode"] == "admin"
@@ -1215,6 +1217,14 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert "memory_records" in state
     assert "nap_schedules" in state
     assert "nap_runs" in state
+
+    streamed = client.get("/dashboard/stream", params={"timeout_seconds": 0})
+    assert streamed.status_code == 200
+    assert streamed.headers["content-type"].startswith("application/x-ndjson")
+    dashboard_lines = [json.loads(line) for line in streamed.text.splitlines() if line]
+    assert dashboard_lines
+    assert dashboard_lines[0]["server_time"].endswith("+00:00")
+    assert dashboard_lines[0]["updated_at"] == dashboard_lines[0]["server_time"]
 
     timeline = client.get("/dashboard/tasks/%s/timeline" % task["id"]).json()
     assert timeline["task"]["title"] == "Dashboard task"

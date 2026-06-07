@@ -26,7 +26,7 @@ from mac.agentbus_control import (
     repo_update_payload,
 )
 from mac.hermes_startup import build_hermes_startup_report
-from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError
+from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
 
@@ -1977,6 +1977,19 @@ def _dashboard_state(
     }
 
 
+def _dashboard_response(
+    cp: ControlPlane,
+    principal: TokenPrincipal,
+    hermes_startup: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    model = _dashboard_state(cp, hermes_startup)
+    now = utcnow()
+    model["server_time"] = now
+    model["updated_at"] = now
+    model["session"] = _dashboard_session(principal)
+    return model
+
+
 def _latest_submitted_runtime_proof(instance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     metadata = instance.get("metadata") if isinstance(instance.get("metadata"), dict) else {}
     record = (
@@ -2173,9 +2186,50 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         app.state.hermes_startup = build_hermes_startup_report()
-        model = _dashboard_state(cp, app.state.hermes_startup)
-        model["session"] = _dashboard_session(principal)
-        return model
+        return _dashboard_response(cp, principal, app.state.hermes_startup)
+
+    @app.get("/dashboard/stream")
+    async def dashboard_stream(
+        request: Request,
+        timeout_seconds: float = Query(default=60.0),
+        poll_interval_seconds: float = Query(default=1.0),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> StreamingResponse:
+        app.state.hermes_startup = build_hermes_startup_report()
+
+        async def iter_dashboard_states() -> Any:
+            latest = cp.list_observability(limit=1)
+            cursor = latest[0].sequence if latest else 0
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            yield json.dumps(
+                _dashboard_response(cp, principal, app.state.hermes_startup),
+                sort_keys=True,
+            ) + "\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                observations = cp.list_observability(after_sequence=cursor, limit=100)
+                if observations:
+                    cursor = observations[-1].sequence
+                    app.state.hermes_startup = build_hermes_startup_report()
+                    yield json.dumps(
+                        _dashboard_response(cp, principal, app.state.hermes_startup),
+                        sort_keys=True,
+                    ) + "\n"
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if time.monotonic() >= deadline:
+                    yield json.dumps(
+                        _dashboard_response(cp, principal, app.state.hermes_startup),
+                        sort_keys=True,
+                    ) + "\n"
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_dashboard_states(), media_type="application/x-ndjson")
 
     @app.get("/dashboard/service-links/tokenhub/sso", include_in_schema=False)
     def tokenhub_sso(

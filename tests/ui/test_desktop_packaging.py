@@ -64,6 +64,8 @@ def test_desktop_main_owns_ssh_proxy_and_service_tunnels():
     assert "tokenSourceId" in main
     assert "mac-dashboard:targets" in main
     assert "mac-dashboard:select-target" in main
+    assert "mac-dashboard:disconnect" in main
+    assert "connected" in main
     assert "process.argv.slice(1)" in main
     assert "serveLocalUi" in main
     assert "process.resourcesPath" in main
@@ -72,6 +74,7 @@ def test_desktop_main_owns_ssh_proxy_and_service_tunnels():
     assert "macDashboard" in preload
     assert "targets()" in preload
     assert "selectTarget" in preload
+    assert "disconnect" in preload
 
 
 def test_desktop_profiles_show_direct_ssh_and_local_modes():

@@ -4,6 +4,7 @@ export interface DashboardApi {
   openService(serviceId: string, fallbackUrl?: string): Promise<void>;
   targets(): Promise<DashboardTarget[]>;
   selectTarget(targetId: string, options?: DashboardTargetSelection): Promise<DashboardConnection>;
+  disconnect(): Promise<DashboardConnection>;
   connection(): DashboardConnection;
 }
 
@@ -13,6 +14,7 @@ export interface DashboardConnection {
   displayName: string;
   targetId?: string;
   tokenSourceId?: string;
+  connected?: boolean;
 }
 
 export interface DashboardTarget {
@@ -51,6 +53,7 @@ export interface DashboardElectronBridge {
   connection?(): Promise<Partial<DashboardConnection> | null>;
   targets?(): Promise<DashboardTarget[]>;
   selectTarget?(targetId: string, options?: DashboardTargetSelection): Promise<Partial<DashboardConnection> | null>;
+  disconnect?(): Promise<Partial<DashboardConnection> | null>;
 }
 
 declare global {
@@ -110,12 +113,13 @@ export function createDashboardApi(
       : apiBaseUrl
         ? "remote-api"
         : "browser-same-origin";
-    return {
-      mode,
-      apiBaseUrl,
-      displayName: config.displayName || (apiBaseUrl || "This MAC server"),
-    };
-  }
+      return {
+        mode,
+        apiBaseUrl,
+        displayName: config.displayName || (apiBaseUrl || "This MAC server"),
+        connected: false,
+      };
+    }
 
   return {
     async request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -167,6 +171,18 @@ export function createDashboardApi(
         ...(selected || {}),
         mode: "electron-managed",
       };
+    },
+    async disconnect(): Promise<DashboardConnection> {
+      const bridge = bridgeProvider();
+      if (bridge?.disconnect) {
+        const disconnected = await bridge.disconnect();
+        return {
+          ...connection(),
+          ...(disconnected || {}),
+          connected: false,
+        };
+      }
+      return { ...connection(), connected: false };
     },
     connection,
   };
