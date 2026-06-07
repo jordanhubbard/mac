@@ -147,16 +147,39 @@ def test_app_js_bootstraps_token_from_url_param():
 
 def test_app_js_has_login_screen_show_hide():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    html = (_UI_ROOT / "index.html").read_text(encoding="utf-8")
     assert "loginScreen" in js
     assert "loginForm" in js
     assert "loginTokenInput" in js
+    assert "loginApiUrlInput" in js
+    assert "loginApiUrlInput" in html
+    assert "apiUrlInput" in html
+    assert "Optional bearer token" in html
+    assert 'loginTokenInput" name="token" type="password"' in html
+
+
+def test_app_js_has_connection_surface_for_remote_and_electron_modes():
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    api_js = (_UI_ROOT / "dashboard_api.js").read_text(encoding="utf-8")
+    html = (_UI_ROOT / "index.html").read_text(encoding="utf-8")
+    assert "connectionBadge" in js
+    assert "mac.dashboard.apiBaseUrl" in js
+    assert "window.macDashboard" in js
+    assert "window.macDashboard" in api_js
+    assert "normalizeApiBaseUrl" in api_js
+    assert "electron-managed" in api_js
+    assert "remote-api" in api_js
+    assert "connectionBadge" in html
 
 
 def test_app_js_has_service_link_click_handler():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    api_js = (_UI_ROOT / "dashboard_api.js").read_text(encoding="utf-8")
     assert "serviceLinks" in js
     assert "data-service-id" in js
     assert "navigate" in js
+    assert "openService" in js
+    assert "openService" in api_js
 
 
 def test_app_js_pass_through_fetch_uses_auth_header():
@@ -166,10 +189,16 @@ def test_app_js_pass_through_fetch_uses_auth_header():
 
 
 def test_app_js_opens_service_url_in_new_tab():
+    api_js = (_UI_ROOT / "dashboard_api.js").read_text(encoding="utf-8")
+    assert "window.open" in api_js
+    assert "_blank" in api_js
+    assert "noreferrer" in api_js
+
+
+def test_app_js_streams_observability_through_dashboard_api():
     js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
-    assert "window.open" in js
-    assert "_blank" in js
-    assert "noreferrer" in js
+    assert "api.stream" in js
+    assert "observability/stream" in js
 
 
 def test_app_js_has_launchpad_keyboard_and_destructive_guards():

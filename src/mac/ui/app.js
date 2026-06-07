@@ -4,8 +4,9 @@
 //   cd src/mac/ui && npx -y -p typescript@5 tsc --target es2021 --module es2020 \
 //     --lib dom,es2021 --strict false --skipLibCheck --outDir /tmp/uib app.ts
 //   cp /tmp/uib/app.js app.js
-import { createDashboardApi } from "./dashboard_api.js";
+import { createDashboardApi, normalizeApiBaseUrl } from "./dashboard_api.js";
 const TOKEN_KEY = "mac.dashboard.token";
+const API_BASE_URL_KEY = "mac.dashboard.apiBaseUrl";
 const THEME_KEY = "mac.dashboard.theme";
 function readStoredTheme() {
     let stored = null;
@@ -99,23 +100,54 @@ const DESTRUCTIVE_ACTION_LABELS = {
     Secret: "Delete this secret?",
 };
 const DEFAULT_URL_STATE = readUrlState();
+function readStoredApiBaseUrl() {
+    const configUrl = normalizeApiBaseUrl(window.MAC_DASHBOARD_CONFIG?.apiBaseUrl || "");
+    if (configUrl)
+        return configUrl;
+    try {
+        return normalizeApiBaseUrl(sessionStorage.getItem(API_BASE_URL_KEY) || "");
+    }
+    catch {
+        return "";
+    }
+}
 // Bootstrap token from ?t=<token> URL param (e.g. from a fresh deploy link).
 // Stored into sessionStorage and then stripped from the URL so it doesn't
 // linger in browser history.
-(function bootstrapTokenFromUrl() {
+(function bootstrapConnectionFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const t = params.get("t");
     if (t) {
         sessionStorage.setItem(TOKEN_KEY, t);
         params.delete("t");
+    }
+    const apiBaseUrl = normalizeApiBaseUrl(params.get("api") || params.get("u") || "");
+    if (apiBaseUrl) {
+        sessionStorage.setItem(API_BASE_URL_KEY, apiBaseUrl);
+        params.delete("api");
+        params.delete("u");
+    }
+    if (t || apiBaseUrl) {
         const newSearch = params.toString();
         const newUrl = window.location.pathname + (newSearch ? "?" + newSearch : "") + window.location.hash;
         history.replaceState(null, "", newUrl);
     }
 })();
+function connectionSnapshot(apiBaseUrl) {
+    const normalized = normalizeApiBaseUrl(apiBaseUrl);
+    const config = window.MAC_DASHBOARD_CONFIG || {};
+    return {
+        mode: window.macDashboard ? "electron-managed" : normalized ? "remote-api" : "browser-same-origin",
+        apiBaseUrl: normalized,
+        displayName: config.displayName || (normalized || "This MAC server"),
+    };
+}
+const INITIAL_API_BASE_URL = readStoredApiBaseUrl();
 const state = {
     activeView: DEFAULT_URL_STATE.activeView,
     token: sessionStorage.getItem(TOKEN_KEY) || "",
+    apiBaseUrl: INITIAL_API_BASE_URL,
+    connection: connectionSnapshot(INITIAL_API_BASE_URL),
     loading: false,
     loadedAt: null,
     data: null,
@@ -156,21 +188,27 @@ const nodes = {
     syncState: requiredElement("#syncState"),
     tokenForm: requiredElement("#tokenForm"),
     tokenInput: requiredElement("#tokenInput"),
+    apiUrlInput: requiredElement("#apiUrlInput"),
     clearToken: requiredElement("#clearTokenButton"),
     loginScreen: requiredElement("#loginScreen"),
     loginForm: requiredElement("#loginForm"),
     loginTokenInput: requiredElement("#loginTokenInput"),
+    loginApiUrlInput: requiredElement("#loginApiUrlInput"),
     serviceLinks: requiredElement("#serviceLinks"),
+    connectionBadge: requiredElement("#connectionBadge"),
     themeToggle: requiredElement("#themeToggle"),
 };
-const api = createDashboardApi(() => state.token);
+const api = createDashboardApi(() => state.token, () => state.apiBaseUrl);
 applyTheme(readStoredTheme());
 nodes.tokenInput.value = state.token;
 nodes.loginTokenInput.value = state.token;
+nodes.apiUrlInput.value = state.apiBaseUrl;
+nodes.loginApiUrlInput.value = state.apiBaseUrl;
 bindEvents();
+const connectionReady = syncElectronConnection();
 if (state.token) {
     hideLoginScreen();
-    loadDashboard();
+    connectionReady.finally(() => loadDashboard());
 }
 else {
     showLoginScreen(false);
@@ -197,27 +235,26 @@ function bindEvents() {
     nodes.loginForm.addEventListener("submit", (event) => {
         event.preventDefault();
         const token = nodes.loginTokenInput.value.trim();
-        if (!token)
-            return;
+        setApiBaseUrl(nodes.loginApiUrlInput.value);
         state.token = token;
-        sessionStorage.setItem(TOKEN_KEY, token);
+        if (token)
+            sessionStorage.setItem(TOKEN_KEY, token);
+        else
+            sessionStorage.removeItem(TOKEN_KEY);
         nodes.tokenInput.value = token;
         hideLoginScreen();
         loadDashboard();
     });
     nodes.tokenForm.addEventListener("submit", (event) => {
         event.preventDefault();
+        setApiBaseUrl(nodes.apiUrlInput.value);
         state.token = nodes.tokenInput.value.trim();
         if (state.token)
             sessionStorage.setItem(TOKEN_KEY, state.token);
         else
             sessionStorage.removeItem(TOKEN_KEY);
-        if (state.token)
-            hideLoginScreen();
-        else
-            showLoginScreen();
-        if (state.token)
-            loadDashboard();
+        hideLoginScreen();
+        loadDashboard();
     });
     nodes.clearToken.addEventListener("click", () => {
         state.token = "";
@@ -236,28 +273,22 @@ function bindEvents() {
             btn.setAttribute("disabled", "");
             try {
                 const result = (await requestJSON(`/dashboard/service-links/${serviceId}/navigate`));
-                window.open(result.url, "_blank", "noreferrer");
+                await openService(serviceId, result.url);
             }
             catch {
                 if (directUrl)
-                    window.open(directUrl, "_blank", "noreferrer");
+                    await openService(serviceId, directUrl);
             }
             finally {
                 btn.removeAttribute("disabled");
             }
         }
         else if (directUrl) {
-            window.open(directUrl, "_blank", "noreferrer");
+            await openService(serviceId, directUrl);
         }
     });
 }
 async function loadDashboard() {
-    if (!state.token) {
-        state.error = "403 missing bearer token";
-        showLoginScreen();
-        render();
-        return;
-    }
     state.loading = true;
     state.error = null;
     renderSyncState();
@@ -279,6 +310,53 @@ async function loadDashboard() {
 }
 async function requestJSON(path, init = {}) {
     return api.request(path, init);
+}
+async function openService(serviceId, fallbackUrl) {
+    return api.openService(serviceId, fallbackUrl);
+}
+function setApiBaseUrl(raw) {
+    state.apiBaseUrl = normalizeApiBaseUrl(raw);
+    state.connection = api.connection();
+    nodes.apiUrlInput.value = state.apiBaseUrl;
+    nodes.loginApiUrlInput.value = state.apiBaseUrl;
+    try {
+        if (state.apiBaseUrl)
+            sessionStorage.setItem(API_BASE_URL_KEY, state.apiBaseUrl);
+        else
+            sessionStorage.removeItem(API_BASE_URL_KEY);
+    }
+    catch {
+        /* storage unavailable — connection still applies for this session */
+    }
+    renderSyncState();
+}
+async function syncElectronConnection() {
+    const bridge = window.macDashboard;
+    if (!bridge?.connection) {
+        state.connection = api.connection();
+        renderSyncState();
+        return;
+    }
+    try {
+        const connection = await bridge.connection();
+        if (!connection)
+            return;
+        if (connection.apiBaseUrl !== undefined) {
+            state.apiBaseUrl = normalizeApiBaseUrl(connection.apiBaseUrl);
+            nodes.apiUrlInput.value = state.apiBaseUrl;
+            nodes.loginApiUrlInput.value = state.apiBaseUrl;
+        }
+        state.connection = {
+            mode: "electron-managed",
+            apiBaseUrl: state.apiBaseUrl,
+            displayName: connection.displayName || state.connection.displayName || "Electron managed",
+        };
+        renderSyncState();
+    }
+    catch {
+        state.connection = { ...api.connection(), mode: "electron-managed" };
+        renderSyncState();
+    }
 }
 function renderServiceLinksSidebar(services) {
     const visible = services.filter((s) => s.url || s.ui_url);
@@ -376,6 +454,15 @@ function renderPreservingFocusedControl() {
     }
 }
 function renderSyncState() {
+    const connection = state.connection || api.connection();
+    const modeLabel = connection.mode === "electron-managed"
+        ? "Electron"
+        : connection.mode === "remote-api"
+            ? "Remote"
+            : "Same origin";
+    const displayName = connection.displayName || connection.apiBaseUrl || "This MAC server";
+    nodes.connectionBadge.textContent = `${modeLabel}: ${displayName}`;
+    nodes.connectionBadge.title = connection.apiBaseUrl || displayName;
     nodes.syncState.textContent = state.loading
         ? "Loading"
         : state.loadedAt
@@ -390,7 +477,7 @@ function renderBanner() {
     }
     nodes.banner.hidden = false;
     nodes.banner.textContent = isAuthError(state.error)
-        ? "Dashboard data needs a token with read scope."
+        ? "Dashboard data needs a signed-in session or a token with read scope."
         : state.error;
 }
 function isAuthError(message) {
@@ -398,6 +485,7 @@ function isAuthError(message) {
 }
 function showLoginScreen(focus = true) {
     nodes.loginTokenInput.value = state.token || nodes.tokenInput.value.trim();
+    nodes.loginApiUrlInput.value = state.apiBaseUrl || nodes.apiUrlInput.value.trim();
     nodes.loginScreen.hidden = false;
     if (focus)
         window.setTimeout(() => nodes.loginTokenInput.focus(), 0);
@@ -4049,9 +4137,7 @@ function startObservabilityStream() {
     ]);
     const after = latest.length ? latest[0].sequence : 0;
     const headers = { Accept: "application/x-ndjson" };
-    if (state.token)
-        headers.Authorization = `Bearer ${state.token}`;
-    fetch(`/observability/stream?after_sequence=${encodeURIComponent(after)}&timeout_seconds=60&poll_interval_seconds=0.5`, {
+    api.stream(`/observability/stream?after_sequence=${encodeURIComponent(after)}&timeout_seconds=60&poll_interval_seconds=0.5`, {
         headers,
         signal: controller.signal,
     })

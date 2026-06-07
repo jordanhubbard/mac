@@ -447,6 +447,7 @@ h3 {
 .topbar-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -455,6 +456,21 @@ h3 {
   color: var(--muted);
   font-size: 0.9rem;
   text-align: right;
+}
+
+.connection-badge {
+  max-width: 260px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 38px;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .theme-toggle {
@@ -2124,6 +2140,11 @@ button.mobile-object-card {
   .sync-state {
     min-width: 0;
     text-align: left;
+  }
+
+  .connection-badge {
+    max-width: 100%;
+    flex: 1 1 100%;
   }
 
   .banner {

@@ -34,11 +34,13 @@
         </div>
         <div>
           <h2>Sign in</h2>
-          <p class="muted">Enter your API token to access the dashboard.</p>
+          <p class="muted">Connect to a MAC control plane.</p>
         </div>
         <form id="loginForm" class="login-form">
+          <label for="loginApiUrlInput">MAC API URL</label>
+          <input id="loginApiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="This server">
           <label for="loginTokenInput">API Token</label>
-          <input id="loginTokenInput" name="token" type="password" autocomplete="off" placeholder="Paste your bearer token" required>
+          <input id="loginTokenInput" name="token" type="password" autocomplete="off" placeholder="Optional bearer token">
           <button type="submit" class="primary-button">Sign in</button>
         </form>
       </div>
@@ -82,6 +84,8 @@
         </nav>
         <div id="serviceLinks" class="service-links" hidden></div>
         <form class="token-form" id="tokenForm">
+          <label for="apiUrlInput">MAC API URL</label>
+          <input id="apiUrlInput" name="api_url" type="url" autocomplete="off" placeholder="This server">
           <label for="tokenInput">API Token</label>
           <input id="tokenInput" name="token" type="password" autocomplete="off" placeholder="Bearer token">
           <div class="token-actions">
@@ -123,6 +127,7 @@
             </select>
           </div>
           <div class="topbar-actions">
+            <span class="connection-badge" id="connectionBadge">Same origin</span>
             <span class="sync-state" id="syncState">Not loaded</span>
             <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">
               <span class="theme-toggle-icon" aria-hidden="true"></span>
@@ -136,6 +141,6 @@
       </main>
     </div>
     <!-- app.ts is the maintained source; app.js is checked-in browser output. -->
-    <script type="module" src="/ui/assets/app.js?v=20260604-llm-ops"></script>
+    <script type="module" src="/ui/assets/app.js?v=20260606-connection"></script>
   </body>
 </html>

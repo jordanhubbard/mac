@@ -1959,7 +1959,10 @@ def test_dashboard_has_typescript_source_without_node_toolchain_files():
     assert "URLSearchParams" in app_js
     assert "createDashboardApi" in app_js
     assert "showLoginScreen" in app_js
-    assert "403 missing bearer token" in app_js
+    assert "mac.dashboard.apiBaseUrl" in app_js
+    assert "loginApiUrlInput" in app_js
+    assert "window.macDashboard" in app_js
+    assert "Dashboard data needs a signed-in session or a token with read scope." in app_js
     assert "sessionStorage.removeItem(TOKEN_KEY)" in app_js
     assert "renderWork" in app_js
     assert "renderProjects" in app_js
