@@ -2195,37 +2195,37 @@ def create_app(
         poll_interval_seconds: float = Query(default=1.0),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> StreamingResponse:
-        app.state.hermes_startup = build_hermes_startup_report()
+        def stream_event(event: str, cursor: int) -> str:
+            now = utcnow()
+            return json.dumps(
+                {
+                    "event": event,
+                    "server_time": now,
+                    "updated_at": now,
+                    "observability_sequence": cursor,
+                },
+                sort_keys=True,
+            ) + "\n"
 
         async def iter_dashboard_states() -> Any:
             latest = cp.list_observability(limit=1)
             cursor = latest[0].sequence if latest else 0
             deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
             poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
-            yield json.dumps(
-                _dashboard_response(cp, principal, app.state.hermes_startup),
-                sort_keys=True,
-            ) + "\n"
+            yield stream_event("connected", cursor)
             while True:
                 if await request.is_disconnected():
                     break
                 observations = cp.list_observability(after_sequence=cursor, limit=100)
                 if observations:
                     cursor = observations[-1].sequence
-                    app.state.hermes_startup = build_hermes_startup_report()
-                    yield json.dumps(
-                        _dashboard_response(cp, principal, app.state.hermes_startup),
-                        sort_keys=True,
-                    ) + "\n"
+                    yield stream_event("updated", cursor)
                     if time.monotonic() >= deadline:
                         break
                     await asyncio.sleep(0)
                     continue
                 if time.monotonic() >= deadline:
-                    yield json.dumps(
-                        _dashboard_response(cp, principal, app.state.hermes_startup),
-                        sort_keys=True,
-                    ) + "\n"
+                    yield stream_event("heartbeat", cursor)
                     break
                 await asyncio.sleep(poll_interval)
 

@@ -376,7 +376,9 @@ async function loadDashboard() {
 }
 function applyDashboardData(data) {
     state.data = data;
-    const serverTime = data.server_time || data.updated_at || "";
+    applyServerTime(data.server_time || data.updated_at || "");
+}
+function applyServerTime(serverTime) {
     const parsed = serverTime ? new Date(serverTime) : new Date();
     state.loadedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
@@ -4473,12 +4475,18 @@ function startDashboardStream() {
                 const text = line.trim();
                 if (!text)
                     continue;
-                applyDashboardData(JSON.parse(text));
+                const event = JSON.parse(text);
+                applyServerTime(event.server_time || event.updated_at || "");
                 state.connection = { ...state.connection, connected: true };
-                changed = true;
+                if (event.event === "updated") {
+                    await refreshDashboardFromStream();
+                }
+                else {
+                    changed = true;
+                }
             }
             if (changed)
-                renderPreservingFocusedControl();
+                renderSyncState();
         }
     })
         .catch((error) => {
@@ -4496,6 +4504,21 @@ function startDashboardStream() {
             window.setTimeout(startDashboardStream, 1000);
         }
     });
+}
+async function refreshDashboardFromStream() {
+    if (state.loading)
+        return;
+    try {
+        applyDashboardData((await requestJSON("/dashboard/state")));
+        state.connection = { ...state.connection, connected: true };
+        state.error = null;
+        renderPreservingFocusedControl();
+    }
+    catch (error) {
+        state.dashboardStreamStatus = "error";
+        state.actionMessage = `Dashboard refresh failed: ${error instanceof Error ? error.message : String(error)}`;
+        render();
+    }
 }
 function stopDashboardStream() {
     if (!state.dashboardStream)

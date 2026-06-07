@@ -421,6 +421,13 @@ interface DashboardData {
   session?: DashboardSession;
 }
 
+interface DashboardStreamEvent {
+  event?: string;
+  server_time?: string;
+  updated_at?: string;
+  observability_sequence?: number;
+}
+
 interface DashboardState {
   activeView: ViewKey;
   token: string;
@@ -861,7 +868,10 @@ async function loadDashboard(): Promise<void> {
 
 function applyDashboardData(data: DashboardData): void {
   state.data = data;
-  const serverTime = data.server_time || data.updated_at || "";
+  applyServerTime(data.server_time || data.updated_at || "");
+}
+
+function applyServerTime(serverTime: string): void {
   const parsed = serverTime ? new Date(serverTime) : new Date();
   state.loadedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
@@ -5017,11 +5027,16 @@ function startDashboardStream(): void {
         for (const line of lines) {
           const text = line.trim();
           if (!text) continue;
-          applyDashboardData(JSON.parse(text) as DashboardData);
+          const event = JSON.parse(text) as DashboardStreamEvent;
+          applyServerTime(event.server_time || event.updated_at || "");
           state.connection = { ...state.connection, connected: true };
-          changed = true;
+          if (event.event === "updated") {
+            await refreshDashboardFromStream();
+          } else {
+            changed = true;
+          }
         }
-        if (changed) renderPreservingFocusedControl();
+        if (changed) renderSyncState();
       }
     })
     .catch((error) => {
@@ -5038,6 +5053,20 @@ function startDashboardStream(): void {
         window.setTimeout(startDashboardStream, 1000);
       }
     });
+}
+
+async function refreshDashboardFromStream(): Promise<void> {
+  if (state.loading) return;
+  try {
+    applyDashboardData((await requestJSON("/dashboard/state")) as DashboardData);
+    state.connection = { ...state.connection, connected: true };
+    state.error = null;
+    renderPreservingFocusedControl();
+  } catch (error) {
+    state.dashboardStreamStatus = "error";
+    state.actionMessage = `Dashboard refresh failed: ${error instanceof Error ? error.message : String(error)}`;
+    render();
+  }
 }
 
 function stopDashboardStream(): void {
