@@ -201,6 +201,30 @@ def test_strips_unsupported_reasoning_summary_param_before_forwarding():
     assert seen["messages"] == [{"role": "user", "content": "hi"}]
 
 
+def test_strips_internal_mac_context_before_forwarding():
+    r = _router()
+    seen = {}
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        seen.update(payload)
+        return 200, {"ok": True}
+
+    proxy = ProviderProxy(r, fwd)
+    status, _ = proxy.complete(
+        "/chat/completions",
+        {
+            "model": "*",
+            "messages": [{"role": "user", "content": "hi"}],
+            "_mac_context": {"agent_id": "agent_a", "request_id": "req_a"},
+            "mac_context": {"agent_id": "agent_b"},
+        },
+    )
+    assert status == 200
+    assert "_mac_context" not in seen
+    assert "mac_context" not in seen
+    assert seen["messages"] == [{"role": "user", "content": "hi"}]
+
+
 def test_build_proxy_drop_params_overridable_via_env():
     """Operators can extend the stripped-param set declaratively via
     MAC_ROUTER_DROP_PARAMS (comma-separated) without a code change."""

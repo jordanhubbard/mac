@@ -132,6 +132,7 @@ _MODEL_RETRY_CODES = frozenset({404, 422})
 # request body, so no per-agent config has to know each upstream's quirks.
 # Overridable via MAC_ROUTER_DROP_PARAMS (comma-separated) at build time.
 _DEFAULT_DROP_PARAMS = ("reasoningSummary", "reasoning_summary")
+_INTERNAL_BODY_PARAMS = ("_mac_context", "mac_context")
 _DEFAULT_STRONG_WILDCARD_MODEL = "azure/anthropic/claude-sonnet-4-6"
 _FORBIDDEN_WILDCARD_MODELS = ("gpt-4.1-mini",)
 
@@ -173,7 +174,7 @@ def _normalize_payload(payload: Dict[str, Any], drop_params: Tuple[str, ...]) ->
     Leaves everything else untouched. Returns a new dict (does not mutate)."""
     if not drop_params:
         return payload
-    drop = set(drop_params)
+    drop = set(drop_params) | set(_INTERNAL_BODY_PARAMS)
     if not any(k in payload for k in drop):
         return payload
     return {k: v for k, v in payload.items() if k not in drop}
