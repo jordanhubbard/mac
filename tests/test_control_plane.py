@@ -7471,17 +7471,19 @@ def test_artifact_registry_register_get_and_idempotent_augment(cp):
     assert art.digest == "sha256:deadbeef"
     assert art.signers == ["ci"]
 
-    # Re-register with additional signer and updated metadata: digest is the key,
-    # signers merge, metadata merges, sbom_uri preserves if new is None.
+    # Re-register with a new URI, additional signer, and updated metadata:
+    # digest is the key, signers merge, metadata merges, sbom_uri preserves if
+    # new is None.
     art2 = cp.register_artifact(
         "image",
         "sha256:deadbeef",
-        "ignored-on-update",
+        "artifact://registry/mac:1.0-public",
         "human",
         signers=["release-manager"],
         metadata={"approved_by": "alice"},
     )
     assert art2.id == art.id
+    assert art2.uri == "artifact://registry/mac:1.0-public"
     assert set(art2.signers) == {"ci", "release-manager"}
     assert art2.metadata["build_id"] == "b-1"
     assert art2.metadata["approved_by"] == "alice"
@@ -7716,6 +7718,17 @@ def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):
     assert chunks[0].payload["schema"] == "mac.agentbus.artifact_publish.v1"
     assert chunks[0].payload["operation"] == "upsert"
     assert chunks[0].payload["artifact"]["digest"] == "sha256:publish1"
+
+    updated = cp.publish_agentbus_artifact(
+        sender.id,
+        operation="upsert",
+        digest="sha256:publish1",
+        path="reports/two.txt",
+    )
+    assert updated["artifact"]["id"] == created["artifact"]["id"]
+    assert updated["artifact"]["uri"] == "http://hub.example:8790/artifacts/reports/two.txt"
+    assert updated["artifact"]["metadata"]["publish_path"] == "reports/two.txt"
+    assert updated["artifact"]["metadata"]["public_url"] == "http://hub.example:8790/artifacts/reports/two.txt"
 
     listed = cp.publish_agentbus_artifact(sender.id, operation="list")
     assert [item["digest"] for item in listed["artifacts"]] == ["sha256:publish1"]

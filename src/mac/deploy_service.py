@@ -179,10 +179,11 @@ class DeployService:
                 conn.execute(
                     """
                     UPDATE artifacts
-                    SET sbom_uri = ?, signers = ?, metadata = ?, updated_at = ?
+                    SET uri = ?, sbom_uri = ?, signers = ?, metadata = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
+                        uri,
                         new_sbom,
                         json_dumps(merged_signers),
                         json_dumps(merged_meta),
