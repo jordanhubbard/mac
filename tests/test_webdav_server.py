@@ -27,6 +27,10 @@ def test_webdav_server_serves_public_reads_without_http_writes(tmp_path):
         with urllib.request.urlopen(base + "/health", timeout=5) as resp:  # noqa: S310
             assert resp.status == 200
             assert b"mac.webdav.health.v1" in resp.read()
+        req = urllib.request.Request(base + "/health", method="HEAD")
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            assert resp.status == 200
+            assert resp.read() == b""
         with urllib.request.urlopen(base + "/artifacts/hello.txt", timeout=5) as resp:  # noqa: S310
             assert resp.status == 200
             assert resp.read() == b"hello mac\n"

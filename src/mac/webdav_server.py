@@ -99,6 +99,16 @@ class WebDAVHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
+        if urllib.parse.urlsplit(self.path).path == "/health":
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "schema": "mac.webdav.health.v1",
+                    "public_prefix": self.server.public_prefix,
+                },
+            )
+            return
         self._send_file(head_only=True)
 
     def do_GET(self) -> None:  # noqa: N802
