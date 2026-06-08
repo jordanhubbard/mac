@@ -73,6 +73,38 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
     assert redacted["env_values"]["MAC_API_TOKEN"] == "<set>"
 
 
+def test_declarative_webdav_requires_dns_name_and_derives_https_url(tmp_path):
+    spec = _spec()
+    spec["webdav"] = {"enabled": True, "dns_name": "jordanhubbard.net", "public_host": "146.190.134.110"}
+    plan = build_setup_plan(
+        spec,
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+
+    webdav = plan["fleet_config"]["defaults"]["webdav"]
+    assert webdav["port"] == 80
+    assert webdav["dns_name"] == "jordanhubbard.net"
+    assert webdav["url"] == "https://jordanhubbard.net/artifacts/"
+
+
+def test_declarative_webdav_enabled_without_dns_name_fails(tmp_path):
+    spec = _spec()
+    spec["webdav"] = {"enabled": True, "public_host": "146.190.134.110"}
+    plan = build_setup_plan(
+        spec,
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=tmp_path / ".env",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+
+    assert plan["status"] == "fail"
+    assert "webdav.enabled requires webdav.dns_name" in "; ".join(plan["errors"])
+
+
 def test_declarative_setup_plan_reports_missing_provider_env(tmp_path):
     plan = build_setup_plan(
         _spec(),

@@ -113,7 +113,7 @@ class SharedServicesConfig:
     firecrawl_port: str
     webdav_enabled: str = ""
     webdav_url: str = ""
-    webdav_port: str = "8790"
+    webdav_port: str = "80"
     webdav_root: str = ""
     webdav_public_path: str = "/artifacts/"
 
@@ -763,7 +763,7 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
             firecrawl_port=a.firecrawl_port.strip() or "3002",
             webdav_enabled=a.webdav_enabled.strip(),
             webdav_url=a.webdav_url.strip(),
-            webdav_port=a.webdav_port.strip() or "8790",
+            webdav_port=a.webdav_port.strip() or "80",
             webdav_root=a.webdav_root.strip(),
             webdav_public_path=a.webdav_public_path.strip() or "/artifacts/",
         ),

@@ -344,6 +344,7 @@ fleet_config_query() {
   "$PYTHON_BIN" - "$mode" "$FLEET_CONFIG" "$FLEET_REGISTRY_CONFIG" "$HUB_SELECTOR" "$@" <<'PY'
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import sys
@@ -436,11 +437,28 @@ def normalize_public_path(value: Any) -> str:
     return path
 
 
-def webdav_url(public_host: str, port: str, public_path: str) -> str:
-    host = text_field(public_host)
+def valid_dns_name(value: str) -> bool:
+    name = text_field(value).rstrip(".")
+    if not name or len(name) > 253 or "." not in name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return False
+    except ValueError:
+        pass
+    labels = name.split(".")
+    return all(
+        0 < len(label) <= 63
+        and re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$", label) is not None
+        for label in labels
+    )
+
+
+def webdav_url(dns_name: str, public_path: str) -> str:
+    host = text_field(dns_name).rstrip(".")
     if not host:
         return ""
-    return "http://%s:%s%s" % (host, text_field(port) or "8790", normalize_public_path(public_path))
+    return "https://%s%s" % (host, normalize_public_path(public_path))
 
 
 def stable_id(prefix: str, value: str) -> str:
@@ -660,14 +678,25 @@ for name in selected:
         raise SystemExit(2)
     qdrant_data_dir = text_field(qdrant.get("data_dir"))
     webdav_enabled = bool_field(webdav.get("enabled"), False)
-    webdav_port = text_field(webdav.get("port") or "8790")
+    webdav_port = text_field(webdav.get("port") or "80")
     webdav_public_path = normalize_public_path(webdav.get("public_path"))
+    webdav_dns_name = (
+        text_field(webdav.get("dns_name"))
+        or text_field(webdav.get("public_dns_name"))
+        or text_field(webdav.get("domain"))
+    ).rstrip(".")
+    if webdav_enabled == "1" and not valid_dns_name(webdav_dns_name):
+        print("ERROR: webdav.enabled requires webdav.dns_name to be a valid DNS name", file=sys.stderr)
+        raise SystemExit(2)
     webdav_public_host = (
         text_field(webdav.get("public_host"))
         or text_field(webdav.get("principal_host"))
         or host_from_target(by_name.get(hub_agent, {}).get("target"))
     )
-    webdav_public_url = text_field(webdav.get("url")) or webdav_url(webdav_public_host, webdav_port, webdav_public_path)
+    webdav_public_url = text_field(webdav.get("url")) or webdav_url(webdav_dns_name, webdav_public_path)
+    if webdav_enabled == "1" and not webdav_public_url.lower().startswith("https://"):
+        print("ERROR: webdav public url must use https:// when webdav.enabled is true", file=sys.stderr)
+        raise SystemExit(2)
     target = text_field(agent.get("target"))
     os_kind = text_field(agent.get("os"))
     if not target or not os_kind:
@@ -1147,7 +1176,7 @@ WEBDAV_ENABLED="${MAC_DEPLOY_WEBDAV_ENABLED:-0}"
 WEBDAV_URL_CONFIGURED="${MAC_DEPLOY_WEBDAV_URL:-${MAC_DEPLOY_WEBDAV_PUBLIC_URL:-}}"
 WEBDAV_INSTALL="${MAC_DEPLOY_WEBDAV_INSTALL:-auto}"
 WEBDAV_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_WEBDAV_BIND_ADDR:-0.0.0.0}"
-WEBDAV_PORT_CONFIGURED="${MAC_DEPLOY_WEBDAV_PORT:-8790}"
+WEBDAV_PORT_CONFIGURED="${MAC_DEPLOY_WEBDAV_PORT:-80}"
 WEBDAV_ROOT_CONFIGURED="${MAC_DEPLOY_WEBDAV_ROOT:-}"
 WEBDAV_PUBLIC_PATH_CONFIGURED="${MAC_DEPLOY_WEBDAV_PUBLIC_PATH:-/artifacts/}"
 WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED="${MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES:-536870912}"

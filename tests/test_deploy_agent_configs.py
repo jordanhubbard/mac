@@ -1166,6 +1166,7 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert cfg["defaults"]["firecrawl"]["required"] is True
     assert cfg["defaults"]["firecrawl"]["url"] == "http://hub.example.internal:3002"
     assert cfg["defaults"]["webdav"]["enabled"] is False
+    assert cfg["defaults"]["webdav"]["dns_name"] == ""
     assert cfg["defaults"]["webdav"]["public_host"] == "hub.example.internal"
     assert cfg["defaults"]["webdav"]["public_path"] == "/artifacts/"
     # TokenHub is retired — the wizard no longer writes a tokenhub config block.

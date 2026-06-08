@@ -33,3 +33,9 @@ def test_build_agent_never_writes_blank_model():
     explicit = m.build_agent(name="x", target="t", os_kind="linux", model="custom/y",
                              supervisor="systemd", mode="loop", require_canary=False)
     assert explicit["hermes"]["gateway_model"] == "custom/y"
+
+
+def test_webdav_default_url_uses_https_dns_name():
+    m = _load()
+    assert m.webdav_url_from_dns("jordanhubbard.net") == "https://jordanhubbard.net/artifacts/"
+    assert m.webdav_url_from_dns("jordanhubbard.net", "pub") == "https://jordanhubbard.net/pub/"

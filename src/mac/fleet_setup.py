@@ -8,8 +8,10 @@ registry shape plus the caller-side deploy env values.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -21,7 +23,7 @@ SETUP_SPEC_SCHEMA = "mac.fleet_setup.v1"
 DEFAULT_CONTROL_PORT = 8789
 DEFAULT_QDRANT_PORT = 6333
 DEFAULT_FIRECRAWL_PORT = 3002
-DEFAULT_WEBDAV_PORT = 8790
+DEFAULT_WEBDAV_PORT = 80
 DEFAULT_WEBDAV_PUBLIC_PATH = "/artifacts/"
 
 # The fleet's default chat model, materialized into fleets.yaml so the picked
@@ -144,7 +146,7 @@ def build_setup_plan(
     network = _network_config(spec, defaults_block, errors)
     qdrant = _qdrant_config(spec, defaults_block, hub_url)
     firecrawl = _firecrawl_config(spec, defaults_block, hub_url)
-    webdav = _webdav_config(spec, defaults_block, hub_block)
+    webdav = _webdav_config(spec, defaults_block, hub_block, errors)
     hermes_defaults = _mapping(defaults_block.get("hermes"))
     worker_defaults = _mapping(defaults_block.get("worker"))
 
@@ -312,10 +314,17 @@ def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] =
     )
     webdav = _mapping(defaults.get("webdav"))
     if webdav.get("enabled") is True:
+        dns_name = _str(webdav.get("dns_name"))
+        _check(
+            checks,
+            "webdav.dns_name",
+            "pass" if _valid_dns_name(dns_name) else "fail",
+            dns_name or "missing",
+        )
         _check(
             checks,
             "webdav.url",
-            "pass" if _str(webdav.get("url")) else "warn",
+            "pass" if _str(webdav.get("url")).lower().startswith("https://") else "fail",
             _str(webdav.get("url")) or "missing",
         )
 
@@ -552,22 +561,55 @@ def _firecrawl_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_
     }
 
 
-def _webdav_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub: Mapping[str, Any]) -> Dict[str, Any]:
+def _valid_dns_name(value: str) -> bool:
+    name = _str(value).rstrip(".")
+    if not name or len(name) > 253 or "." not in name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return False
+    except ValueError:
+        pass
+    labels = name.split(".")
+    return all(
+        0 < len(label) <= 63
+        and re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$", label) is not None
+        for label in labels
+    )
+
+
+def _webdav_config(
+    spec: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    hub: Mapping[str, Any],
+    errors: List[str],
+) -> Dict[str, Any]:
     webdav = {**_mapping(defaults.get("webdav")), **_mapping(spec.get("webdav"))}
+    enabled = webdav.get("enabled", False) is True
     port = _int(webdav.get("port"), DEFAULT_WEBDAV_PORT)
     public_path = _normalize_public_path(_str(webdav.get("public_path")) or DEFAULT_WEBDAV_PUBLIC_PATH)
+    dns_name = (
+        _str(webdav.get("dns_name"))
+        or _str(webdav.get("public_dns_name"))
+        or _str(webdav.get("domain"))
+    ).rstrip(".")
+    if enabled and not _valid_dns_name(dns_name):
+        errors.append("webdav.enabled requires webdav.dns_name to be a valid DNS name")
     public_host = (
         _str(webdav.get("public_host"))
         or _str(webdav.get("principal_host"))
         or _host_from_target(_str(hub.get("target")))
     )
     url = _str(webdav.get("url"))
-    if not url and public_host:
-        url = "http://%s:%d%s" % (public_host, port, public_path)
+    if not url and dns_name:
+        url = "https://%s%s" % (dns_name, public_path)
+    if enabled and url and not url.lower().startswith("https://"):
+        errors.append("webdav.url must use https:// when webdav.enabled is true")
     return {
-        "enabled": webdav.get("enabled", False) is True,
+        "enabled": enabled,
         "install": _str(webdav.get("install")) or "auto",
         "url": url,
+        "dns_name": dns_name,
         "public_host": public_host,
         "bind_addr": _str(webdav.get("bind_addr")) or "0.0.0.0",
         "port": port,

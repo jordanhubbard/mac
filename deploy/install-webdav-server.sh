@@ -15,7 +15,7 @@ SUPERVISOR_KIND="${WEBDAV_SUPERVISOR:-${MAC_SUPERVISOR_KIND:-auto}}"
 LOG_DIR="${LOG_DIR:-$MAC_HOME/logs}"
 
 WEBDAV_BIND_ADDR="${WEBDAV_BIND_ADDR:-0.0.0.0}"
-WEBDAV_PORT="${WEBDAV_PORT:-8790}"
+WEBDAV_PORT="${WEBDAV_PORT:-80}"
 WEBDAV_ROOT="${WEBDAV_ROOT:-$MAC_HOME/public-artifacts}"
 WEBDAV_PUBLIC_PATH="${WEBDAV_PUBLIC_PATH:-/artifacts/}"
 WEBDAV_PUBLIC_URL="${WEBDAV_PUBLIC_URL:-}"
@@ -109,7 +109,11 @@ fi
 
 WEBDAV_PUBLIC_PATH="$(normalize_public_path "$WEBDAV_PUBLIC_PATH")"
 if [ -z "$WEBDAV_PUBLIC_URL" ]; then
-  WEBDAV_PUBLIC_URL="http://${WEBDAV_BIND_ADDR}:${WEBDAV_PORT}${WEBDAV_PUBLIC_PATH}"
+  if [ "$WEBDAV_PORT" = "80" ]; then
+    WEBDAV_PUBLIC_URL="http://${WEBDAV_BIND_ADDR}${WEBDAV_PUBLIC_PATH}"
+  else
+    WEBDAV_PUBLIC_URL="http://${WEBDAV_BIND_ADDR}:${WEBDAV_PORT}${WEBDAV_PUBLIC_PATH}"
+  fi
 fi
 
 if [ "${1:-}" = "--print-public-url" ]; then
@@ -165,7 +169,7 @@ set +a
 export PYTHONPATH="${WORKSPACE}/src:\${PYTHONPATH:-}"
 exec "${MAC_HOME}/venv/bin/python" -m mac.webdav_server \
   --host "\${MAC_WEBDAV_BIND_ADDR:-0.0.0.0}" \
-  --port "\${MAC_WEBDAV_PORT:-8790}" \
+  --port "\${MAC_WEBDAV_PORT:-80}" \
   --root "\${MAC_WEBDAV_ROOT:-\$HOME/.mac/public-artifacts}" \
   --public-prefix "\${MAC_WEBDAV_PUBLIC_PATH:-/artifacts/}"
 EOF
@@ -194,6 +198,8 @@ ExecStart=${MAC_HOME}/bin/mac-webdav-server-run
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
