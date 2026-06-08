@@ -205,6 +205,8 @@ def test_runtime_context_advertises_directory_backed_public_artifact_publish(tmp
     assert method["public_url"] == "http://principal.example:8790/artifacts"
     assert method["write"]["http_ingress"] is False
     assert method["crud"]["cli"] == "mac agentbus artifact-publish"
+    assert "--path artifact" in method["example_upload"]
+    assert "--public-url" not in method["example_upload"]
     markdown = markdown_path.read_text(encoding="utf-8")
     assert "Artifact Publication" in markdown
     assert "MAC_PUBLISH_DIR" in markdown

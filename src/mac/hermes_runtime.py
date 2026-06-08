@@ -332,7 +332,7 @@ def _webdav_publish_method() -> Dict[str, Any]:
             "Publish bytes by writing them under MAC_PUBLISH_DIR on the hub, then record or update the artifact through MAC/AgentBus.",
             "Record sha256, size, content type, source task, publish path, and public URL as MAC evidence/publication metadata.",
         ],
-        "example_upload": 'install -m 0644 ./artifact "$MAC_PUBLISH_DIR/artifact" && mac agentbus artifact-publish "$MAC_AGENT_ID" --operation upsert --path artifact --public-url "$MAC_PUBLISH_PUBLIC_URL/artifact" --digest sha256:<digest> --all-agents',
+        "example_upload": 'install -m 0644 ./artifact "$MAC_PUBLISH_DIR/artifact" && mac agentbus artifact-publish "$MAC_AGENT_ID" --operation upsert --path artifact --digest sha256:<digest> --all-agents',
         "example_read": "%s/artifact" % connection_url(public_url),
     }
 
