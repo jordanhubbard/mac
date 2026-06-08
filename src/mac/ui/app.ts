@@ -540,6 +540,8 @@ interface DashboardState {
   projectFilter: string;
   showDerivedProjects: boolean;
   taskFilter: string;
+  taskSort: string;
+  taskQuery: string;
   selectedId: string;
   laneCollapse: Record<string, boolean>;
   laneSort: Record<string, LaneSort>;
@@ -752,6 +754,71 @@ function sortLaneTasks(laneTasks: TaskDetail[], sort: LaneSort): TaskDetail[] {
   return sorted;
 }
 
+// Page-level task sort applied across every lane on the Tasks page. Distinct
+// from the per-lane LaneSort above; this drives the filter-bar Sort dropdown.
+type TaskSort = "completed" | "newest" | "priority" | "updated" | "title";
+const TASK_SORTS: TaskSort[] = ["completed", "newest", "priority", "updated", "title"];
+const TASK_SORT_LABELS: Record<TaskSort, string> = {
+  completed: "Last completed",
+  newest: "Newest",
+  priority: "Priority",
+  updated: "Last updated",
+  title: "A\u2192Z",
+};
+const DEFAULT_TASK_SORT: TaskSort = "completed";
+
+function taskSortValue(): TaskSort {
+  return (TASK_SORTS as string[]).includes(state.taskSort) ? (state.taskSort as TaskSort) : DEFAULT_TASK_SORT;
+}
+
+function sortTasksForPage(tasks: TaskDetail[], sort: TaskSort): TaskDetail[] {
+  const sorted = tasks.slice();
+  if (sort === "priority") {
+    sorted.sort((a, b) => (b.task.priority || 0) - (a.task.priority || 0)
+      || String(a.task.title || "").localeCompare(String(b.task.title || "")));
+  } else if (sort === "title") {
+    sorted.sort((a, b) => String(a.task.title || "").localeCompare(String(b.task.title || "")));
+  } else if (sort === "newest") {
+    sorted.sort((a, b) => {
+      const at = Date.parse(String(a.task.started_at || a.task.last_updated_at || a.task.updated_at || "")) || 0;
+      const bt = Date.parse(String(b.task.started_at || b.task.last_updated_at || b.task.updated_at || "")) || 0;
+      return bt - at;
+    });
+  } else if (sort === "updated") {
+    sorted.sort((a, b) => {
+      const at = Date.parse(String(a.task.last_updated_at || a.task.updated_at || "")) || 0;
+      const bt = Date.parse(String(b.task.last_updated_at || b.task.updated_at || "")) || 0;
+      return bt - at;
+    });
+  } else {
+    // completed: most recently completed first; never-completed sink to bottom.
+    sorted.sort((a, b) => {
+      const at = Date.parse(String(a.task.completed_at || "")) || 0;
+      const bt = Date.parse(String(b.task.completed_at || "")) || 0;
+      return bt - at;
+    });
+  }
+  return sorted;
+}
+
+function taskMatchesQuery(detail: TaskDetail, query: string): boolean {
+  if (!query) return true;
+  const task = detail.task;
+  const haystack = [
+    task.title,
+    task.id,
+    task.description,
+    task.project,
+    task.state,
+    detail.summary?.summary,
+    (task.required_capabilities || []).join(" "),
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase())
+    .join(" ");
+  return haystack.includes(query.toLowerCase());
+}
+
 const TASK_STATES = [
   "open",
   "blocked",
@@ -882,6 +949,8 @@ const state: DashboardState = {
   projectFilter: DEFAULT_URL_STATE.projectFilter,
   showDerivedProjects: DEFAULT_URL_STATE.showDerivedProjects,
   taskFilter: DEFAULT_URL_STATE.taskFilter,
+  taskSort: DEFAULT_URL_STATE.taskSort,
+  taskQuery: DEFAULT_URL_STATE.taskQuery,
   selectedId: DEFAULT_URL_STATE.selectedId,
   laneCollapse: readLaneCollapse(),
   laneSort: readLaneSort(),
@@ -1450,11 +1519,12 @@ function hideLoginScreen(): void {
   nodes.loginScreen.hidden = true;
 }
 
-function readUrlState(): Pick<DashboardState, "activeView" | "agentQuery" | "agentFilter" | "agentSort" | "agentPage" | "projectFilter" | "showDerivedProjects" | "taskFilter" | "selectedId" | "auditSubjectType" | "auditSubjectId" | "auditEventPrefix" | "auditActor" | "auditLayer" | "auditLevel" | "auditAgentId" | "auditTaskId" | "auditProject" | "auditFleet" | "auditSince" | "auditUntil"> {
+function readUrlState(): Pick<DashboardState, "activeView" | "agentQuery" | "agentFilter" | "agentSort" | "agentPage" | "projectFilter" | "showDerivedProjects" | "taskFilter" | "taskSort" | "taskQuery" | "selectedId" | "auditSubjectType" | "auditSubjectId" | "auditEventPrefix" | "auditActor" | "auditLayer" | "auditLevel" | "auditAgentId" | "auditTaskId" | "auditProject" | "auditFleet" | "auditSince" | "auditUntil"> {
   const params = new URLSearchParams(window.location.search);
   const rawView = params.get("view") || "overview";
   const page = Number(params.get("agent_page") || "1");
   const subjectType = params.get("obs_subject_type") || "";
+  const rawTaskSort = params.get("task_sort") || "";
   return {
     activeView: VIEW_KEYS.has(rawView) ? rawView as ViewKey : "overview",
     agentQuery: params.get("agent_q") || "",
@@ -1464,6 +1534,8 @@ function readUrlState(): Pick<DashboardState, "activeView" | "agentQuery" | "age
     projectFilter: params.get("project") || "all",
     showDerivedProjects: params.get("show_derived") === "1",
     taskFilter: params.get("task_state") || "all",
+    taskSort: (TASK_SORTS as string[]).includes(rawTaskSort) ? rawTaskSort : DEFAULT_TASK_SORT,
+    taskQuery: params.get("task_q") || "",
     selectedId: params.get("selected") || "",
     auditSubjectType: AUDIT_SUBJECT_TYPES.includes(subjectType) ? subjectType : "",
     auditSubjectId: params.get("obs_subject_id") || "",
@@ -1490,6 +1562,8 @@ function applyUrlState(): void {
   state.projectFilter = next.projectFilter;
   state.showDerivedProjects = next.showDerivedProjects;
   state.taskFilter = next.taskFilter;
+  state.taskSort = next.taskSort;
+  state.taskQuery = next.taskQuery;
   state.selectedId = next.selectedId;
   state.auditSubjectType = next.auditSubjectType;
   state.auditSubjectId = next.auditSubjectId;
@@ -1515,6 +1589,8 @@ function updateUrlState(replace = false): void {
   if (state.projectFilter !== "all") params.set("project", state.projectFilter);
   if (state.showDerivedProjects) params.set("show_derived", "1");
   if (state.taskFilter !== "all") params.set("task_state", state.taskFilter);
+  if (state.taskSort !== DEFAULT_TASK_SORT) params.set("task_sort", state.taskSort);
+  if (state.taskQuery.trim()) params.set("task_q", state.taskQuery.trim());
   if (state.selectedId) params.set("selected", state.selectedId);
   if (state.auditSubjectType) params.set("obs_subject_type", state.auditSubjectType);
   if (state.auditSubjectId.trim()) params.set("obs_subject_id", state.auditSubjectId.trim());
@@ -1949,15 +2025,24 @@ function renderAgents(): string {
 
 function renderTasks(): string {
   const data = mustData();
-  const tasks = state.taskFilter === "all"
+  const query = state.taskQuery.trim();
+  const taskSort = taskSortValue();
+  const stateFiltered = state.taskFilter === "all"
     ? data.tasks
     : data.tasks.filter((detail) => detail.task.state === state.taskFilter);
+  const tasks = query
+    ? stateFiltered.filter((detail) => taskMatchesQuery(detail, query))
+    : stateFiltered;
   return `
     <section class="toolbar">
       <select id="taskFilter">
         ${option("all", "All states", state.taskFilter)}
         ${TASK_STATES.map((taskState) => option(taskState, labelize(taskState), state.taskFilter)).join("")}
       </select>
+      <select id="taskSort" aria-label="Sort tasks">
+        ${TASK_SORTS.map((value) => option(value, TASK_SORT_LABELS[value], state.taskSort)).join("")}
+      </select>
+      <input id="taskSearch" type="search" placeholder="Search tasks by title, id, project, capability" value="${escapeHtml(state.taskQuery)}">
       <button type="button" id="clearTaskFilter">Clear</button>
     </section>
     <details class="surface action-drawer">
@@ -1978,7 +2063,7 @@ function renderTasks(): string {
     </details>
     <section class="task-lanes">
       ${TASK_STATES.filter((taskState) => state.taskFilter === "all" || state.taskFilter === taskState)
-        .map((taskState) => taskLane(taskState, tasks, data.agents))
+        .map((taskState) => taskLane(taskState, tasks, data.agents, taskSort))
         .join("")}
     </section>
     ${taskInspector(tasks, data)}
@@ -4841,14 +4926,10 @@ function agentCard(item: AgentItem, data: DashboardData): string {
   `;
 }
 
-function taskLane(taskState: string, tasks: TaskDetail[], agents: AgentItem[]): string {
+function taskLane(taskState: string, tasks: TaskDetail[], agents: AgentItem[], pageSort: TaskSort): string {
   const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
   const collapsed = isLaneCollapsed(taskState, laneTasks.length);
-  const sort = laneSortFor(taskState);
-  const sortOptions = LANE_SORTS
-    .map((value) => `<option value="${escapeHtml(value)}"${value === sort ? " selected" : ""}>${escapeHtml(LANE_SORT_LABELS[value])}</option>`)
-    .join("");
-  const sortedTasks = sortLaneTasks(laneTasks, sort);
+  const sortedTasks = sortTasksForPage(laneTasks, pageSort);
   return `
     <div class="task-lane status-${escapeHtml(taskState)}${collapsed ? " is-collapsed" : ""}" data-lane="${escapeHtml(taskState)}">
       <h2>
@@ -4857,7 +4938,6 @@ function taskLane(taskState: string, tasks: TaskDetail[], agents: AgentItem[]): 
           <span class="lane-title">${escapeHtml(labelize(taskState))}</span>
         </button>
         <span class="lane-header-meta">
-          <select class="lane-sort" data-lane-sort="${escapeHtml(taskState)}" title="Sort lane" aria-label="Sort ${escapeHtml(labelize(taskState))} lane">${sortOptions}</select>
           <span class="pill lane-count">${laneTasks.length}</span>
         </span>
       </h2>
@@ -5701,9 +5781,23 @@ function bindViewControls(): void {
     updateUrlState();
     render();
   });
+  const taskSort = document.querySelector<HTMLSelectElement>("#taskSort");
+  if (taskSort) taskSort.addEventListener("change", (event) => {
+    state.taskSort = (event.target as HTMLSelectElement).value;
+    updateUrlState();
+    render();
+  });
+  const taskSearch = document.querySelector<HTMLInputElement>("#taskSearch");
+  if (taskSearch) taskSearch.addEventListener("input", (event) => {
+    state.taskQuery = (event.target as HTMLInputElement).value;
+    updateUrlState(true);
+    renderPreservingFocusedControl();
+  });
   const clearTasks = document.querySelector<HTMLButtonElement>("#clearTaskFilter");
   if (clearTasks) clearTasks.addEventListener("click", () => {
     state.taskFilter = "all";
+    state.taskSort = DEFAULT_TASK_SORT;
+    state.taskQuery = "";
     updateUrlState();
     render();
   });
