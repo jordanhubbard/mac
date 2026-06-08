@@ -5,6 +5,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from mac.agentbus_control import HERMES_CONFIG_APPLY_CONTENT_TYPE, HERMES_CONFIG_APPLY_TOPIC
 from mac.api import create_app
 from mac.deploy_env import parse_env_text
 from mac.services import ControlPlane, sign_verification_manifest
@@ -1157,6 +1158,29 @@ fleets:
     body = response.json()
     assert body["registry_updated"] is True
     assert body["local_apply"]["applied"] is True
+
+    published = client.post(
+        "/dashboard/hermes/fleets/%s/config-surface/apply" % fleet["id"],
+        json={"sender_agent_id": agent["id"], "request_id": "req-hermes-apply"},
+    )
+    assert published.status_code == 200, published.text
+    apply_body = published.json()
+    assert apply_body["schema"] == "mac.dashboard.hermes_config_apply.v1"
+    assert apply_body["count"] == 1
+    assert "nvidia-secret" not in json.dumps(apply_body["payload_redacted"])
+    stream = apply_body["streams"][0]
+    assert stream["topic"] == HERMES_CONFIG_APPLY_TOPIC
+    assert stream["content_type"] == HERMES_CONFIG_APPLY_CONTENT_TYPE
+    chunks = client.get(
+        "/agentbus/streams/%s/chunks" % stream["id"],
+        params={"agent_id": agent["id"]},
+    ).json()
+    assert chunks[0]["payload"]["schema"] == "mac.agentbus.hermes_config_apply.v1"
+    assert chunks[0]["payload"]["payload"]["config"]["tools"]["web_search"]["enabled"] is True
+    assert chunks[0]["payload"]["request_id"] == "req-hermes-apply"
+
+    refreshed = client.get("/dashboard/state").json()["hermes_config_surfaces"][0]
+    assert refreshed["apply_status"][0]["state"] == "sent"
 
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     desired = registry["fleets"]["classic"]["defaults"]["hermes"]

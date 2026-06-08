@@ -362,6 +362,7 @@ const state = {
     auditFleet: DEFAULT_URL_STATE.auditFleet,
     auditSince: DEFAULT_URL_STATE.auditSince,
     auditUntil: DEFAULT_URL_STATE.auditUntil,
+    hermesSurfaceQuery: "",
     observabilityLive: [],
     dashboardStream: null,
     dashboardStreamStatus: "idle",
@@ -2607,6 +2608,8 @@ function hermesConfigSurfacePanel(data) {
     const envField = surface.env_vars.find((field) => field.desired) || surface.env_vars.find((field) => field.required) || surface.env_vars[0];
     const desiredPlugins = (surface.desired?.plugins || {});
     const desiredSkills = (surface.desired?.skills || {});
+    const pluginConfig = hermesPluginConfigValue(surface);
+    const query = state.hermesSurfaceQuery;
     return `
     <section class="surface">
       <div class="surface-heading">
@@ -2626,10 +2629,16 @@ function hermesConfigSurfacePanel(data) {
             ${surfaces.map((item) => option(String(item.fleet_id || item.fleet_name || item.registry_key), String(item.fleet_name || item.fleet_id || item.registry_key), surfaceId)).join("")}
           </select>
         </label>
+        <label>Search <input id="hermesSurfaceSearch" value="${escapeHtml(query)}" autocomplete="off"></label>
         ${field("Hermes home", surface.hermes_home || "unknown")}
+        ${field("Digest", truncate(surface.desired_digest || "", 24))}
         ${field("Config fields", surface.config_fields.length)}
         ${field("Env vars", surface.env_vars.length)}
       </div>
+      <form class="action-form compact" data-action="hermesFleetApply" data-fleet-id="${escapeHtml(surfaceId)}">
+        <label>Sender ${hermesSurfaceAgentSelect(surface, disabled)}</label>
+        <div class="form-actions"><button type="submit" ${disabled}>Apply Fleet</button></div>
+      </form>
       <form class="action-form" data-action="hermesRuntimeUpdate" data-fleet-id="${escapeHtml(surfaceId)}">
         <label>Gateway Model <input name="gateway_model" value="${escapeHtml(runtime.gateway_model || "")}" ${disabled}></label>
         <label>Gateway Provider <input name="gateway_provider" value="${escapeHtml(runtime.gateway_provider || "")}" ${disabled}></label>
@@ -2642,7 +2651,8 @@ function hermesConfigSurfacePanel(data) {
         <div class="record-section">
           <h3>Config</h3>
           <form class="action-form compact" data-action="hermesConfigSet" data-fleet-id="${escapeHtml(surfaceId)}">
-            <label>Key <select name="config_key" ${disabled}>${hermesConfigFieldOptions(surface, configField?.key || "")}</select></label>
+            <label>Key <input name="config_key" list="hermesConfigKeys" value="${escapeHtml(configField?.key || "")}" autocomplete="off" ${disabled}></label>
+            <datalist id="hermesConfigKeys">${hermesConfigFieldOptions(surface, configField?.key || "")}</datalist>
             <label class="field-full">Value JSON <textarea class="json-editor" name="value_json" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(jsonValue(configField?.value ?? ""))}</textarea></label>
             <label class="inline-checkbox toolbar-checkbox"><input type="checkbox" name="remove" ${disabled}>Remove</label>
             <div class="form-actions"><button type="submit" ${disabled}>Save Config</button></div>
@@ -2651,8 +2661,10 @@ function hermesConfigSurfacePanel(data) {
         <div class="record-section">
           <h3>Environment</h3>
           <form class="action-form compact" data-action="hermesEnvSet" data-fleet-id="${escapeHtml(surfaceId)}">
-            <label>Variable <select name="env_key" ${disabled}>${hermesEnvOptions(surface, envField?.name || "")}</select></label>
+            <label>Variable <input name="env_key" list="hermesEnvKeys" value="${escapeHtml(envField?.name || "")}" autocomplete="off" ${disabled}></label>
+            <datalist id="hermesEnvKeys">${hermesEnvOptions(surface, envField?.name || "")}</datalist>
             <label>Value <input name="value" type="${envField?.password ? "password" : "text"}" autocomplete="off" ${disabled}></label>
+            <label>Secret Ref <input name="secret_ref" placeholder="secret://..." autocomplete="off" ${disabled}></label>
             <label class="inline-checkbox toolbar-checkbox"><input type="checkbox" name="remove" ${disabled}>Remove</label>
             <div class="form-actions"><button type="submit" ${disabled}>Save Env</button></div>
           </form>
@@ -2664,6 +2676,7 @@ function hermesConfigSurfacePanel(data) {
           <form class="action-form compact" data-action="hermesPluginsUpdate" data-fleet-id="${escapeHtml(surfaceId)}">
             <label class="field-full">Enabled <textarea name="enabled" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(listFromUnknown(desiredPlugins.enabled).join(", "))}</textarea></label>
             <label class="field-full">Disabled <textarea name="disabled" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(listFromUnknown(desiredPlugins.disabled).join(", "))}</textarea></label>
+            <label class="field-full">Plugin Config JSON <textarea class="json-editor" name="plugin_config_json" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(jsonValue(pluginConfig))}</textarea></label>
             <div class="form-actions"><button type="submit" ${disabled}>Save Plugins</button></div>
           </form>
         </div>
@@ -2671,11 +2684,22 @@ function hermesConfigSurfacePanel(data) {
           <h3>Skills</h3>
           <form class="action-form compact" data-action="hermesSkillsUpdate" data-fleet-id="${escapeHtml(surfaceId)}">
             <label class="field-full">Disabled <textarea name="disabled" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(listFromUnknown(desiredSkills.disabled).join(", "))}</textarea></label>
+            <label class="field-full">Platform Disabled JSON <textarea class="json-editor" name="platform_disabled" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(jsonValue(desiredSkills.platform_disabled || {}))}</textarea></label>
             <div class="form-actions"><button type="submit" ${disabled}>Save Skills</button></div>
           </form>
         </div>
       </section>
-      ${hermesSurfaceInspectorTables(surface)}
+      <section class="record-section">
+        <h3>Desired Payload</h3>
+        <div class="row-grid">
+          ${field("Digest", surface.desired_digest || "none")}
+          ${field("Env keys", listFromUnknown(surface.desired?.env_keys).join(", ") || "none")}
+          ${field("Plugins", jsonSummary(desiredPlugins))}
+          ${field("Skills", jsonSummary(desiredSkills))}
+        </div>
+        <textarea class="json-editor" rows="8" readonly spellcheck="false">${escapeHtml(jsonValue(surface.desired_payload_redacted || surface.desired || {}))}</textarea>
+      </section>
+      ${hermesSurfaceInspectorTables(surface, query)}
     </section>
   `;
 }
@@ -2687,14 +2711,64 @@ function hermesEnvOptions(surface, selected) {
     const fields = surface.env_vars.length ? surface.env_vars : [{ name: "" }];
     return fields.map((field) => option(String(field.name), String(field.name || "Select variable"), selected)).join("");
 }
-function hermesSurfaceInspectorTables(surface) {
+function hermesPluginConfigValue(surface) {
+    const desiredConfig = surface.desired?.config;
+    if (desiredConfig && typeof desiredConfig === "object" && !Array.isArray(desiredConfig)) {
+        const plugins = desiredConfig.plugins;
+        if (plugins && typeof plugins === "object" && !Array.isArray(plugins)) {
+            const config = plugins.config;
+            if (config && typeof config === "object" && !Array.isArray(config))
+                return config;
+        }
+    }
+    const field = surface.config_fields.find((item) => item.key === "plugins.config");
+    return field?.value && typeof field.value === "object" && !Array.isArray(field.value) ? field.value : {};
+}
+function hermesSurfaceAgentSelect(surface, disabled) {
     return `
+    <select name="sender_agent_id" ${disabled}>
+      ${surface.agents.map((agent) => option(String(agent.id || ""), String(agent.name || agent.id || "agent"), String(surface.agents[0]?.id || ""))).join("")}
+    </select>
+  `;
+}
+function hermesSurfaceMatches(value, query) {
+    const q = query.trim().toLowerCase();
+    if (!q)
+        return true;
+    return JSON.stringify(value || {}).toLowerCase().includes(q);
+}
+function hermesSurfaceInspectorTables(surface, query = "") {
+    const configFields = surface.config_fields.filter((item) => hermesSurfaceMatches(item, query));
+    const envVars = surface.env_vars.filter((item) => hermesSurfaceMatches(item, query));
+    const plugins = surface.plugins.filter((item) => hermesSurfaceMatches(item, query));
+    const skills = surface.skills.filter((item) => hermesSurfaceMatches(item, query));
+    const applyStatus = (surface.apply_status || []).filter((item) => hermesSurfaceMatches(item, query));
+    const agents = surface.agents.filter((item) => hermesSurfaceMatches(item, query));
+    return `
+    <section class="record-section">
+      <h3>Apply Status</h3>
+      <div class="table-wrap responsive-table">
+        <table class="data-table compact-table">
+          <thead><tr><th>Agent</th><th>State</th><th>Apply</th><th>Result</th></tr></thead>
+          <tbody>${applyStatus.length ? applyStatus.slice(0, 120).map(hermesApplyStatusRow).join("") : `<tr><td colspan="4" class="muted">No matching apply status</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="record-section">
+      <h3>Agent Support</h3>
+      <div class="table-wrap responsive-table">
+        <table class="data-table compact-table">
+          <thead><tr><th>Agent</th><th>Hermes</th><th>Capabilities</th><th>Packages</th></tr></thead>
+          <tbody>${agents.length ? agents.slice(0, 120).map(hermesAgentSupportRow).join("") : `<tr><td colspan="4" class="muted">No matching agents</td></tr>`}</tbody>
+        </table>
+      </div>
+    </section>
     <section class="record-section">
       <h3>Config Fields</h3>
       <div class="table-wrap responsive-table">
         <table class="data-table compact-table">
           <thead><tr><th>Key</th><th>Value</th><th>Source</th><th>Type</th></tr></thead>
-          <tbody>${surface.config_fields.slice(0, 80).map(hermesConfigFieldRow).join("")}</tbody>
+          <tbody>${configFields.length ? configFields.slice(0, 80).map(hermesConfigFieldRow).join("") : `<tr><td colspan="4" class="muted">No matching config fields</td></tr>`}</tbody>
         </table>
       </div>
     </section>
@@ -2703,7 +2777,7 @@ function hermesSurfaceInspectorTables(surface) {
       <div class="table-wrap responsive-table">
         <table class="data-table compact-table">
           <thead><tr><th>Name</th><th>Category</th><th>State</th><th>Source</th><th>Value</th></tr></thead>
-          <tbody>${surface.env_vars.slice(0, 80).map(hermesEnvRow).join("")}</tbody>
+          <tbody>${envVars.length ? envVars.slice(0, 80).map(hermesEnvRow).join("") : `<tr><td colspan="5" class="muted">No matching environment variables</td></tr>`}</tbody>
         </table>
       </div>
     </section>
@@ -2712,7 +2786,7 @@ function hermesSurfaceInspectorTables(surface) {
       <div class="table-wrap responsive-table">
         <table class="data-table compact-table">
           <thead><tr><th>Key</th><th>Kind</th><th>State</th><th>Env</th><th>Tools</th></tr></thead>
-          <tbody>${surface.plugins.slice(0, 100).map(hermesPluginRow).join("")}</tbody>
+          <tbody>${plugins.length ? plugins.slice(0, 100).map(hermesPluginRow).join("") : `<tr><td colspan="5" class="muted">No matching plugins</td></tr>`}</tbody>
         </table>
       </div>
     </section>
@@ -2721,10 +2795,35 @@ function hermesSurfaceInspectorTables(surface) {
       <div class="table-wrap responsive-table">
         <table class="data-table compact-table">
           <thead><tr><th>Name</th><th>Category</th><th>State</th><th>Env</th><th>Description</th></tr></thead>
-          <tbody>${surface.skills.slice(0, 120).map(hermesSkillRow).join("")}</tbody>
+          <tbody>${skills.length ? skills.slice(0, 120).map(hermesSkillRow).join("") : `<tr><td colspan="5" class="muted">No matching skills</td></tr>`}</tbody>
         </table>
       </div>
     </section>
+  `;
+}
+function hermesApplyStatusRow(item) {
+    return `
+    <tr>
+      <td><span class="mono">${escapeHtml(item.agent_name || item.agent_id || "")}</span><br><span class="muted small">${escapeHtml(item.agent_id || "")}</span></td>
+      <td>${chip(item.state || "never", item.state === "acknowledged" ? "good" : item.state === "sent" ? "warn" : "info")}</td>
+      <td><span class="mono">${escapeHtml(item.last_apply_stream_id || "")}</span><br><span class="muted small">${escapeHtml(item.last_apply_at ? formatAge(item.last_apply_at) : "")}</span></td>
+      <td><span class="mono">${escapeHtml(item.last_result_stream_id || "")}</span><br><span class="muted small">${escapeHtml(item.last_result_at ? formatAge(item.last_result_at) : "")}</span></td>
+    </tr>
+  `;
+}
+function hermesAgentSupportRow(agent) {
+    const support = agent.support_surface || {};
+    const capabilities = Array.isArray(support.capabilities) ? support.capabilities.map((item) => String(item)).join(", ") : "";
+    const packages = support.installed_packages && typeof support.installed_packages === "object"
+        ? Object.keys(support.installed_packages).slice(0, 8).join(", ")
+        : "";
+    return `
+    <tr>
+      <td><span class="mono">${escapeHtml(agent.name || agent.id || "")}</span><br><span class="muted small">${escapeHtml(agent.id || "")}</span></td>
+      <td class="mono">${escapeHtml(agent.hermes_instance_id || "")}</td>
+      <td>${escapeHtml(truncate(capabilities, 120))}</td>
+      <td>${escapeHtml(packages || "none")}</td>
+    </tr>
   `;
 }
 function hermesConfigFieldRow(field) {
@@ -5052,6 +5151,12 @@ function bindViewControls() {
             updateUrlState(true);
             renderPreservingFocusedControl();
         });
+    const hermesSurfaceSearch = document.querySelector("#hermesSurfaceSearch");
+    if (hermesSurfaceSearch)
+        hermesSurfaceSearch.addEventListener("input", (event) => {
+            state.hermesSurfaceQuery = event.target.value;
+            renderPreservingFocusedControl();
+        });
     const projectFilter = document.querySelector("#projectFilter");
     if (projectFilter)
         projectFilter.addEventListener("change", (event) => {
@@ -5966,6 +6071,12 @@ async function runAction(action, form, values) {
             evidence_id: emptyToNull(values.evidence_id),
         });
     }
+    if (action === "hermesFleetApply") {
+        return postJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface/apply`, {
+            sender_agent_id: emptyToNull(values.sender_agent_id),
+            actor: "human",
+        });
+    }
     if (action === "hermesRuntimeUpdate") {
         return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, {
             runtime: {
@@ -5996,23 +6107,30 @@ async function runAction(action, form, values) {
             body.remove_env = [key];
         }
         else {
-            body.env = { [key]: requiredString(values.value) };
+            const secretRef = String(values.secret_ref || "").trim();
+            body.env = { [key]: secretRef || requiredString(values.value) };
         }
         return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, body);
     }
     if (action === "hermesPluginsUpdate") {
-        return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, {
+        const body = {
             plugins: {
                 enabled: csvList(values.enabled),
                 disabled: csvList(values.disabled),
             },
             actor: "human",
-        });
+        };
+        const pluginConfigText = String(values.plugin_config_json || "").trim();
+        if (pluginConfigText && pluginConfigText !== "{}") {
+            body.config = { "plugins.config": parseJsonObject(pluginConfigText) };
+        }
+        return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, body);
     }
     if (action === "hermesSkillsUpdate") {
         return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, {
             skills: {
                 disabled: csvList(values.disabled),
+                platform_disabled: parseJsonObject(values.platform_disabled),
             },
             actor: "human",
         });
@@ -6670,6 +6788,9 @@ function actionSuccessMessage(action, result) {
     if (action === "workflowPlanAccept") {
         const created = Array.isArray(record.created) ? record.created : [];
         return `Workflow accepted: ${created.length} tasks created`;
+    }
+    if (action === "hermesFleetApply") {
+        return `Hermes fleet apply published: ${Number(record.count || 0)} streams`;
     }
     if (action === "projectCreate")
         return `Project created: ${compactObjectTitle(record)}`;

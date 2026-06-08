@@ -1077,6 +1077,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 },
             ],
         },
+        ("POST", "/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply"): {
+            "sender_agent_id": ctx["agent_id"],
+            "request_id": "route-hermes-apply",
+        },
         ("POST", "/workflows/{workflow_id_or_slug}/preview"): {"input": {"ticket": "route"}},
         ("POST", "/workflows/import-yaml"): {
             "yaml": """

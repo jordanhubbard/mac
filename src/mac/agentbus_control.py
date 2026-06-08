@@ -16,6 +16,14 @@ ARTIFACT_PUBLISH_SCHEMA = "mac.agentbus.artifact_publish.v1"
 ARTIFACT_PUBLISH_TOPIC = "mac.artifact.publish.v1"
 ARTIFACT_PUBLISH_CONTENT_TYPE = "application/vnd.mac.artifact-publish+json"
 
+HERMES_CONFIG_APPLY_SCHEMA = "mac.agentbus.hermes_config_apply.v1"
+HERMES_CONFIG_APPLY_TOPIC = "mac.hermes.config.apply.v1"
+HERMES_CONFIG_APPLY_CONTENT_TYPE = "application/vnd.mac.hermes-config-apply+json"
+
+HERMES_CONFIG_APPLY_RESULT_SCHEMA = "mac.agentbus.hermes_config_apply_result.v1"
+HERMES_CONFIG_APPLY_RESULT_TOPIC = "mac.hermes.config.apply.result.v1"
+HERMES_CONFIG_APPLY_RESULT_CONTENT_TYPE = "application/vnd.mac.hermes-config-apply-result+json"
+
 
 def repo_update_payload(
     *,
@@ -65,3 +73,26 @@ def artifact_publish_payload(
     if request_id:
         payload["request_id"] = request_id
     return payload
+
+
+def hermes_config_apply_payload(
+    *,
+    payload: JsonDict,
+    fleet_id: Optional[str] = None,
+    fleet_name: Optional[str] = None,
+    registry_path: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> JsonDict:
+    message: JsonDict = {
+        "schema": HERMES_CONFIG_APPLY_SCHEMA,
+        "payload": payload,
+    }
+    if fleet_id:
+        message["fleet_id"] = fleet_id
+    if fleet_name:
+        message["fleet_name"] = fleet_name
+    if registry_path:
+        message["registry_path"] = registry_path
+    if request_id:
+        message["request_id"] = request_id
+    return message

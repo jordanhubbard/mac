@@ -21,6 +21,12 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote, urlencode
 
 from mac.agentbus_control import (
+    HERMES_CONFIG_APPLY_CONTENT_TYPE,
+    HERMES_CONFIG_APPLY_RESULT_CONTENT_TYPE,
+    HERMES_CONFIG_APPLY_RESULT_SCHEMA,
+    HERMES_CONFIG_APPLY_RESULT_TOPIC,
+    HERMES_CONFIG_APPLY_SCHEMA,
+    HERMES_CONFIG_APPLY_TOPIC,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_RESULT_CONTENT_TYPE,
     REPO_UPDATE_RESULT_SCHEMA,
@@ -29,6 +35,7 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
 )
 from mac.hermes_adapter import MacApiClient, MacApiError
+from mac.hermes_config_surface import apply_hermes_surface_payload
 
 
 JsonDict = Dict[str, Any]
@@ -1094,18 +1101,129 @@ class MacWorker:
                 continue
             if stream.get("recipient_agent_id") != self.agent_id:
                 continue
-            if stream.get("topic") != REPO_UPDATE_TOPIC:
+            topic = str(stream.get("topic") or "")
+            content_type = str(stream.get("content_type") or "").split(";", 1)[0]
+            if topic == REPO_UPDATE_TOPIC and content_type == REPO_UPDATE_CONTENT_TYPE:
+                result = self._handle_repo_update_stream(stream)
+                processed.append(stream_id)
+                self._save_agentbus_control_state(processed)
+                self._publish_repo_update_result(stream, result)
+                if result.get("restart_requested"):
+                    return result
                 continue
-            if str(stream.get("content_type") or "").split(";", 1)[0] != REPO_UPDATE_CONTENT_TYPE:
+            if topic == HERMES_CONFIG_APPLY_TOPIC and content_type == HERMES_CONFIG_APPLY_CONTENT_TYPE:
+                result = self._handle_hermes_config_apply_stream(stream)
+                processed.append(stream_id)
+                self._save_agentbus_control_state(processed)
+                self._publish_hermes_config_apply_result(stream, result)
                 continue
-
-            result = self._handle_repo_update_stream(stream)
-            processed.append(stream_id)
-            self._save_agentbus_control_state(processed)
-            self._publish_repo_update_result(stream, result)
-            if result.get("restart_requested"):
-                return result
+            continue
         return None
+
+    def _handle_hermes_config_apply_stream(self, stream: JsonDict) -> JsonDict:
+        stream_id = str(stream.get("id") or "")
+        chunks = self.client.get(
+            "/agentbus/streams/%s/chunks?%s"
+            % (
+                quote(stream_id, safe=""),
+                urlencode({"agent_id": self.agent_id, "after_sequence": 0, "limit": 10}),
+            )
+        )
+        payload: Any = None
+        if isinstance(chunks, list) and chunks:
+            payload = chunks[-1].get("payload") if isinstance(chunks[-1], dict) else None
+        try:
+            result = self._execute_hermes_config_apply(payload, stream_id)
+        except Exception as exc:  # noqa: BLE001 - malformed control messages should report failure.
+            result = self._hermes_config_apply_result(
+                stream_id,
+                "error",
+                "Hermes config apply handler failed: %s" % exc,
+                {},
+            )
+        self._observe_log(
+            "worker.agentbus.hermes_config_apply.%s" % result["status"],
+            level="info" if result["status"] == "applied" else "error",
+            detail=result,
+        )
+        return result
+
+    def _execute_hermes_config_apply(self, payload: Any, stream_id: str) -> JsonDict:
+        request: JsonDict = payload if isinstance(payload, dict) else {}
+        if request.get("schema") not in {None, "", HERMES_CONFIG_APPLY_SCHEMA}:
+            return self._hermes_config_apply_result(
+                stream_id,
+                "error",
+                "unsupported Hermes config apply schema: %s" % request.get("schema"),
+                request,
+            )
+        hermes_payload = request.get("payload")
+        if not isinstance(hermes_payload, dict):
+            return self._hermes_config_apply_result(
+                stream_id,
+                "error",
+                "Hermes config apply payload is missing",
+                request,
+            )
+        applied = apply_hermes_surface_payload(hermes_payload)
+        return self._hermes_config_apply_result(
+            stream_id,
+            "applied",
+            "Hermes config applied",
+            request,
+            apply_result=applied,
+            config_keys=applied.get("config_keys", []),
+            env_keys=applied.get("env_keys", []),
+            removed_env=applied.get("removed_env", []),
+        )
+
+    def _hermes_config_apply_result(
+        self,
+        stream_id: str,
+        status: str,
+        summary: str,
+        request: JsonDict,
+        **extra: Any,
+    ) -> JsonDict:
+        result: JsonDict = {
+            "schema": HERMES_CONFIG_APPLY_RESULT_SCHEMA,
+            "status": status,
+            "summary": summary,
+            "agent_id": self.agent_id,
+            "stream_id": stream_id,
+            "request_id": request.get("request_id"),
+            "fleet_id": request.get("fleet_id"),
+            "fleet_name": request.get("fleet_name"),
+            "restart_requested": False,
+        }
+        for key, value in extra.items():
+            if isinstance(value, str):
+                result[key] = value[:4000]
+            else:
+                result[key] = value
+        return result
+
+    def _publish_hermes_config_apply_result(self, stream: JsonDict, result: JsonDict) -> None:
+        sender = str(stream.get("sender_agent_id") or "")
+        if not sender:
+            return
+        try:
+            self.client.post(
+                "/agentbus",
+                {
+                    "sender_agent_id": self.agent_id,
+                    "recipient_agent_id": sender,
+                    "content_type": HERMES_CONFIG_APPLY_RESULT_CONTENT_TYPE,
+                    "topic": HERMES_CONFIG_APPLY_RESULT_TOPIC,
+                    "payload": result,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
+            self._observe_log(
+                "worker.agentbus.hermes_config_apply_result_failed",
+                level="warning",
+                detail={"stream_id": stream.get("id"), "error": str(exc)},
+            )
 
     def _handle_repo_update_stream(self, stream: JsonDict) -> JsonDict:
         stream_id = str(stream.get("id") or "")

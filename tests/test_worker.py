@@ -8,16 +8,22 @@ import types
 from typing import Any, Dict, Optional
 
 import pytest
+import yaml
 
 from fastapi.testclient import TestClient
 
 from mac.agentbus_control import (
+    HERMES_CONFIG_APPLY_CONTENT_TYPE,
+    HERMES_CONFIG_APPLY_RESULT_TOPIC,
+    HERMES_CONFIG_APPLY_TOPIC,
+    hermes_config_apply_payload,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_RESULT_TOPIC,
     REPO_UPDATE_SCHEMA,
     REPO_UPDATE_TOPIC,
 )
 from mac.api import create_app
+from mac.deploy_env import parse_env_text
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
@@ -1613,6 +1619,67 @@ def test_mac_worker_processes_agentbus_repo_update_and_requests_restart(tmp_path
     assert chunks[0].payload["status"] == "updated"
     assert chunks[0].payload["restart_requested"] is True
     assert chunks[0].payload["request_id"] == "req-1"
+
+
+def test_mac_worker_processes_agentbus_hermes_config_apply(monkeypatch, tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    sender_machine = cp.register_machine("sender-host")
+    sender = cp.register_agent(sender_machine.id, "sender")
+    agent = register_worker_fixture(cp)
+    hermes_home = tmp_path / "hermes-home"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    cp.publish_agentbus_content(
+        sender.id,
+        recipient_agent_id=agent.id,
+        content_type=HERMES_CONFIG_APPLY_CONTENT_TYPE,
+        topic=HERMES_CONFIG_APPLY_TOPIC,
+        payload=hermes_config_apply_payload(
+            fleet_id="fleet-test",
+            fleet_name="test-fleet",
+            request_id="req-hermes-worker",
+            payload={
+                "schema": "mac.hermes_fleet_config_payload.v1",
+                "config": {"model": "fleet-model", "tools.web_search.enabled": True},
+                "env": {"OPENAI_API_KEY": "secret://openai"},
+                "plugins": {"enabled": ["image_gen/nvidia"], "disabled": ["old-plugin"]},
+                "skills": {
+                    "disabled": ["legacy-skill"],
+                    "platform_disabled": {"darwin": ["mac-only-skill"]},
+                },
+            },
+        ),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    result = worker.run_once()
+
+    assert result.status == "no_task"
+    config = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
+    assert config["model"] == "fleet-model"
+    assert config["tools"]["web_search"]["enabled"] is True
+    assert config["plugins"]["enabled"] == ["image_gen/nvidia"]
+    assert config["plugins"]["disabled"] == ["old-plugin"]
+    assert config["skills"]["disabled"] == ["legacy-skill"]
+    assert config["skills"]["platform_disabled"]["darwin"] == ["mac-only-skill"]
+    env = parse_env_text((hermes_home / ".env").read_text(encoding="utf-8"))
+    assert env["OPENAI_API_KEY"] == "secret://openai"
+    result_streams = [
+        stream
+        for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed")
+        if stream.topic == HERMES_CONFIG_APPLY_RESULT_TOPIC
+    ]
+    assert result_streams
+    chunks = cp.read_agentbus_chunks(sender.id, result_streams[0].id)
+    assert chunks[0].payload["status"] == "applied"
+    assert chunks[0].payload["request_id"] == "req-hermes-worker"
+    assert chunks[0].payload["config_keys"] == ["model", "tools.web_search.enabled"]
+    assert chunks[0].payload["env_keys"] == ["OPENAI_API_KEY"]
 
 
 def test_mac_worker_repo_update_noops_without_restart_when_current(tmp_path: Path):

@@ -22,6 +22,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import yaml
 
 from mac.deploy_env import parse_env_text, render_env
+from mac.agentbus_control import (
+    HERMES_CONFIG_APPLY_RESULT_TOPIC,
+    HERMES_CONFIG_APPLY_TOPIC,
+)
 from mac.hermes_vendor import VENDOR_DIR, ensure_on_path
 from mac.models import ValidationError, utcnow
 
@@ -476,6 +480,37 @@ def _fleet_hermes_defaults(entry: Mapping[str, Any]) -> Dict[str, Any]:
     return deepcopy(hermes)
 
 
+def hermes_payload_from_defaults(hermes: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "schema": PAYLOAD_SCHEMA,
+        "runtime": {key: hermes.get(key, "") for key in _RUNTIME_FIELDS if key in hermes},
+        "config": hermes.get("config") if isinstance(hermes.get("config"), dict) else {},
+        "env": hermes.get("env") if isinstance(hermes.get("env"), dict) else {},
+        "plugins": hermes.get("plugins") if isinstance(hermes.get("plugins"), dict) else {},
+        "skills": hermes.get("skills") if isinstance(hermes.get("skills"), dict) else {},
+    }
+
+
+def fleet_hermes_payload(fleet: Mapping[str, Any], *, path: Optional[Path] = None) -> Dict[str, Any]:
+    registry = _load_registry(path)
+    temp = deepcopy(registry)
+    _entry_key, entry = _find_or_create_fleet_entry(temp, fleet)
+    return hermes_payload_from_defaults(_fleet_hermes_defaults(entry))
+
+
+def payload_digest(payload: Mapping[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def redacted_hermes_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    redacted = deepcopy(dict(payload))
+    env = redacted.get("env")
+    if isinstance(env, dict):
+        redacted["env"] = {str(key): _redacted(value) for key, value in env.items()}
+    return redacted
+
+
 def _current_config_defaults() -> Dict[str, Any]:
     try:
         default = getattr(_hermes_config_module(), "DEFAULT_CONFIG", {}) or {}
@@ -595,11 +630,82 @@ def _skill_records_with_state(
     return out
 
 
+def _latest_stream_by_agent(
+    streams: Iterable[Mapping[str, Any]],
+    *,
+    topic: str,
+    agent_field: str,
+    agent_ids: set[str],
+) -> Dict[str, Mapping[str, Any]]:
+    latest: Dict[str, Mapping[str, Any]] = {}
+    for stream in streams:
+        if str(stream.get("topic") or "") != topic:
+            continue
+        agent_id = str(stream.get(agent_field) or "")
+        if agent_id not in agent_ids:
+            continue
+        previous = latest.get(agent_id)
+        stamp = str(stream.get("updated_at") or stream.get("created_at") or "")
+        previous_stamp = str(previous.get("updated_at") or previous.get("created_at") or "") if previous else ""
+        if previous is None or stamp >= previous_stamp:
+            latest[agent_id] = stream
+    return latest
+
+
+def _agent_apply_status_records(
+    agents: Iterable[Mapping[str, Any]],
+    agentbus_streams: Iterable[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    agent_rows = list(agents)
+    agent_ids = {
+        str(agent.get("id") or agent.get("agent", {}).get("id") or "")
+        for agent in agent_rows
+        if str(agent.get("id") or agent.get("agent", {}).get("id") or "")
+    }
+    streams = list(agentbus_streams)
+    applies = _latest_stream_by_agent(
+        streams,
+        topic=HERMES_CONFIG_APPLY_TOPIC,
+        agent_field="recipient_agent_id",
+        agent_ids=agent_ids,
+    )
+    results = _latest_stream_by_agent(
+        streams,
+        topic=HERMES_CONFIG_APPLY_RESULT_TOPIC,
+        agent_field="sender_agent_id",
+        agent_ids=agent_ids,
+    )
+    rows: List[Dict[str, Any]] = []
+    for agent in agent_rows:
+        agent_id = str(agent.get("id") or agent.get("agent", {}).get("id") or "")
+        apply_stream = applies.get(agent_id)
+        result_stream = results.get(agent_id)
+        if result_stream:
+            state = "acknowledged"
+        elif apply_stream:
+            state = "sent"
+        else:
+            state = "never"
+        rows.append({
+            "agent_id": agent_id,
+            "agent_name": agent.get("name") or agent.get("agent", {}).get("name"),
+            "state": state,
+            "last_apply_stream_id": apply_stream.get("id") if apply_stream else None,
+            "last_apply_status": apply_stream.get("status") if apply_stream else None,
+            "last_apply_at": apply_stream.get("updated_at") or apply_stream.get("created_at") if apply_stream else None,
+            "last_result_stream_id": result_stream.get("id") if result_stream else None,
+            "last_result_status": result_stream.get("status") if result_stream else None,
+            "last_result_at": result_stream.get("updated_at") or result_stream.get("created_at") if result_stream else None,
+        })
+    return rows
+
+
 def build_hermes_config_surfaces(
     fleets: Iterable[Mapping[str, Any]],
     agents: Iterable[Mapping[str, Any]],
     *,
     registry: Optional[Mapping[str, Any]] = None,
+    agentbus_streams: Iterable[Mapping[str, Any]] = (),
 ) -> List[Dict[str, Any]]:
     reg = dict(registry) if registry is not None else _load_registry()
     reg_path = registry_path()
@@ -619,6 +725,7 @@ def build_hermes_config_surfaces(
         desired_env = hermes_defaults.get("env") if isinstance(hermes_defaults.get("env"), dict) else {}
         desired_plugins = hermes_defaults.get("plugins") if isinstance(hermes_defaults.get("plugins"), dict) else {}
         desired_skills = hermes_defaults.get("skills") if isinstance(hermes_defaults.get("skills"), dict) else {}
+        desired_payload = hermes_payload_from_defaults(hermes_defaults)
         fleet_agent_ids = set(str(v) for v in fleet.get("agent_ids") or [])
         fleet_agents = [
             agent for agent in agents_list
@@ -649,6 +756,10 @@ def build_hermes_config_surfaces(
                     "id": agent.get("id") or agent.get("agent", {}).get("id"),
                     "name": agent.get("name") or agent.get("agent", {}).get("name"),
                     "hermes_instance_id": agent.get("hermes_instance_id") or agent.get("agent", {}).get("hermes_instance_id"),
+                    "support_surface": {
+                        "capabilities": agent.get("capabilities") or agent.get("agent", {}).get("capabilities") or [],
+                        "installed_packages": agent.get("installed_packages") or agent.get("agent", {}).get("installed_packages") or {},
+                    },
                 }
                 for agent in fleet_agents
             ],
@@ -657,6 +768,9 @@ def build_hermes_config_surfaces(
             "env_vars": _env_field_records(env_specs, local_env, desired_env),
             "plugins": _plugin_records_with_state(plugins, desired_plugins, current_config),
             "skills": _skill_records_with_state(skills, desired_skills, current_config),
+            "apply_status": _agent_apply_status_records(fleet_agents, agentbus_streams),
+            "desired_digest": payload_digest(desired_payload),
+            "desired_payload_redacted": redacted_hermes_payload(desired_payload),
             "desired": {
                 "runtime": {key: hermes_defaults.get(key, "") for key in _RUNTIME_FIELDS},
                 "config": desired_config,
@@ -824,14 +938,7 @@ def update_fleet_hermes_surface(
 
 
 def encode_deploy_payload(hermes: Mapping[str, Any]) -> str:
-    payload = {
-        "schema": PAYLOAD_SCHEMA,
-        "runtime": {key: hermes.get(key, "") for key in _RUNTIME_FIELDS if key in hermes},
-        "config": hermes.get("config") if isinstance(hermes.get("config"), dict) else {},
-        "env": hermes.get("env") if isinstance(hermes.get("env"), dict) else {},
-        "plugins": hermes.get("plugins") if isinstance(hermes.get("plugins"), dict) else {},
-        "skills": hermes.get("skills") if isinstance(hermes.get("skills"), dict) else {},
-    }
+    payload = hermes_payload_from_defaults(hermes)
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(raw).decode("ascii")
 

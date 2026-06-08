@@ -129,7 +129,7 @@ Key route groups:
 
 - `/tenants`, `/users`, `/personas`
 - `/hermes-instances`, `/hermes-instances/{id}/context`, `/hermes-instances/{id}/work-context`, `/platform-bindings`
-- `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/rollouts/{id}/status`
+- `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/hermes/fleets/{id}/config-surface`, `/dashboard/hermes/fleets/{id}/config-surface/apply`, `/dashboard/rollouts/{id}/status`
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`
@@ -137,7 +137,7 @@ Key route groups:
 - `/workflows`, `/workflows/import-yaml`, `/workflows/seed`, `/workflows/{id}/start`, `/workflows/runs`, `/workflows/runs/tick`
 - `/messages`
 - `/agentbus`, `/agentbus/streams`, `/agentbus/streams/{id}/chunks`, `/agentbus/streams/{id}/events`
-- `/agentbus/repo-update`
+- `/agentbus/repo-update`, `/agentbus/artifact-publish`
 - `/command-audit`, `/agents/{id}/command-audit`
 - `/secrets`, `/secrets/{id}/access`, `/secrets/{id}/reveal`, `/secret-audits`
 - `/runtimes`, `/runtime-runs`
