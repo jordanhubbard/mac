@@ -84,42 +84,43 @@ def test_kustomization_tree_includes_expected_resources() -> None:
     runner_kust = _load(ROOT / "mac-runner" / "kustomization.yaml")[0]
     for res in ("serviceaccount.yaml", "rbac.yaml", "deployment.yaml"):
         assert res in runner_kust["resources"]
-    controller_kust = _load(ROOT / "mac-controller" / "kustomization.yaml")[0]
-    for res in ("serviceaccount.yaml", "rbac.yaml", "deployment.yaml"):
-        assert res in controller_kust["resources"]
 
 
 def test_runner_has_two_service_accounts() -> None:
     docs = _load(ROOT / "mac-runner" / "serviceaccount.yaml")
     names = {d["metadata"]["name"] for d in docs}
-    assert names == {"mac-k8s-runner", "mac-task-runner"}
+    assert names == {"mac-k8s-orchestrator", "mac-task-runner"}
     task_sa = next(d for d in docs if d["metadata"]["name"] == "mac-task-runner")
     assert task_sa.get("automountServiceAccountToken") is False
 
 
-def test_runner_rbac_is_scoped_to_namespace() -> None:
+def test_orchestrator_rbac_is_scoped_to_namespace() -> None:
     docs = _load(ROOT / "mac-runner" / "rbac.yaml")
     kinds = [d["kind"] for d in docs]
     assert "Role" in kinds and "RoleBinding" in kinds
-    # No ClusterRole / ClusterRoleBinding — runner stays in its namespace.
+    # No ClusterRole / ClusterRoleBinding — orchestrator stays in its namespace.
     assert "ClusterRole" not in kinds
     assert "ClusterRoleBinding" not in kinds
     role = next(d for d in docs if d["kind"] == "Role")
-    # Has create+delete on batch.jobs (the runner's whole purpose).
+    # Has create+delete on batch.jobs (task/review Job dispatch + reconcile).
     job_rule = next(
         r for r in role["rules"] if "jobs" in (r.get("resources") or [])
     )
     assert "create" in job_rule["verbs"]
     assert "delete" in job_rule["verbs"]
+    scale_rule = next(
+        r for r in role["rules"] if "deployments/scale" in (r.get("resources") or [])
+    )
+    assert "patch" in scale_rule["verbs"]
 
 
-def test_runner_deployment_uses_runner_sa_and_runs_correct_binary() -> None:
+def test_orchestrator_deployment_uses_orchestrator_sa_and_runs_correct_binary() -> None:
     deploy = _load(ROOT / "mac-runner" / "deployment.yaml")[0]
     pod = deploy["spec"]["template"]["spec"]
-    assert pod["serviceAccountName"] == "mac-k8s-runner"
+    assert pod["serviceAccountName"] == "mac-k8s-orchestrator"
     assert pod["automountServiceAccountToken"] is True
     container = pod["containers"][0]
-    assert container["command"] == ["mac-k8s-runner"]
+    assert container["command"] == ["mac-k8s-orchestrator"]
     env_names = {e["name"] for e in container["env"]}
     for required in (
         "MAC_URL",
@@ -140,24 +141,4 @@ def test_runner_image_is_not_latest() -> None:
     deploy = _load(ROOT / "mac-runner" / "deployment.yaml")[0]
     image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
     assert ":latest" not in image
-
-
-def test_controller_rbac_has_scale_and_delete_only() -> None:
-    docs = _load(ROOT / "mac-controller" / "rbac.yaml")
-    role = next(d for d in docs if d["kind"] == "Role")
-    job_rule = next(r for r in role["rules"] if "jobs" in (r.get("resources") or []))
-    # Controller deletes stuck Jobs; it does NOT create them (runner does).
-    assert "delete" in job_rule["verbs"]
-    assert "create" not in job_rule["verbs"]
-    scale_rule = next(
-        r for r in role["rules"] if "deployments/scale" in (r.get("resources") or [])
-    )
-    assert "patch" in scale_rule["verbs"]
-
-
-def test_controller_is_singleton() -> None:
-    deploy = _load(ROOT / "mac-controller" / "deployment.yaml")[0]
-    assert deploy["spec"]["replicas"] == 1
-    assert deploy["spec"]["strategy"]["type"] == "Recreate"
-
 

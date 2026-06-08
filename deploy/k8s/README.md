@@ -1,8 +1,8 @@
 # mac on Kubernetes
 
 Stateless `mac-api` Deployment backed by an externally-managed Postgres
-17 database, plus the Phase 4 `mac-k8s-runner` and Phase 5
-`mac-k8s-controller`. Designed for the K8s-native rewrite Phases 3-5
+17 database, plus the `mac-k8s-orchestrator` Deployment that claims tasks,
+creates Jobs, opens review ticks, and reconciles stuck Jobs. Designed for the K8s-native rewrite Phases 3-5
 in [`docs/k8s-native-rewrite-plan.md`](../../docs/k8s-native-rewrite-plan.md).
 
 The Postgres cluster itself is **not** managed from this repo. Bring
@@ -11,8 +11,7 @@ whatever your platform team owns — and supply the DSN via the
 `mac-api-config` Secret (key `MAC_DATABASE_URL`). Likewise, ArgoCD
 `Application` manifests are not shipped here; if you sync with ArgoCD,
 point one Application per kustomize tree from your platform-config
-repo at `deploy/k8s/mac-api`, `deploy/k8s/mac-runner`, and
-`deploy/k8s/mac-controller`.
+repo at `deploy/k8s/mac-api` and `deploy/k8s/mac-runner`.
 
 ## Architecture
 
@@ -46,15 +45,10 @@ deploy/k8s/
 │   ├── service.yaml
 │   ├── secret.example.yaml                ← copy + fill + apply out-of-band
 │   └── kustomization.yaml
-├── mac-runner/                            ← Phase 4: job-per-task runner
-│   ├── serviceaccount.yaml                ← mac-k8s-runner + mac-task-runner SAs
-│   ├── rbac.yaml                          ← batch.jobs CRUD in namespace
-│   ├── deployment.yaml                    ← replicas: 2, claims tasks → creates Jobs
-│   └── kustomization.yaml
-└── mac-controller/                        ← Phase 5: reconciler
-    ├── serviceaccount.yaml
-    ├── rbac.yaml                          ← Jobs delete + Deployments scale
-    ├── deployment.yaml                    ← singleton, recreates stuck Jobs
+└── mac-runner/                            ← orchestrator + job-per-task runner
+    ├── serviceaccount.yaml                ← mac-k8s-orchestrator + mac-task-runner SAs
+    ├── rbac.yaml                          ← Jobs CRUD + Deployment scale in namespace
+    ├── deployment.yaml                    ← replicas: 2, claims tasks → creates Jobs
     └── kustomization.yaml
 ```
 
@@ -64,12 +58,10 @@ deploy/k8s/
   mac-api  ←─────── claim-next, lease renew, evidence/transition ────┐
     ▲                                                                │
     │                                                                │
-  mac-k8s-runner  ──── kubectl-create  ───►   batch/v1 Job  ───►  mac-task-runner
+  mac-k8s-orchestrator ─ kubectl-create ─►   batch/v1 Job  ───►  mac-task-runner
     │                                            ▲
-    │                                            │  reconciler
-    └────────────────►  mac-k8s-controller  ─────┘
-                       (deletes stuck Jobs,
-                        scales worker pools)
+    │                                            │
+    └──────── reconciles stuck Jobs + scales worker pools
 ```
 
 ## Prerequisites
@@ -84,8 +76,8 @@ deploy/k8s/
    create secret`, Sealed Secrets, ExternalSecrets, SOPS).
 3. A built `mac` image with the `[postgres]` extra. The repo Dockerfile
    already installs it; tag and push to your registry, then replace the
-   `image:` placeholder in `mac-api/deployment.yaml`,
-   `mac-runner/deployment.yaml`, and `mac-controller/deployment.yaml`.
+   `image:` placeholder in `mac-api/deployment.yaml` and
+   `mac-runner/deployment.yaml`.
    The helper script `scripts/build-and-push-image.sh` handles the
    common case (Apple Silicon dev machine → linux/amd64 K8s nodes via
    `docker buildx`, optional `--push` and `--update-manifests`):
@@ -94,7 +86,7 @@ deploy/k8s/
    # build only, into the local daemon (no push):
    scripts/build-and-push-image.sh --registry ghcr.io/your-org
 
-   # build + push + pin the digest in all three deployment.yaml files:
+   # build + push + pin the digest in both deployment.yaml files:
    scripts/build-and-push-image.sh \
      --registry ghcr.io/your-org \
      --tag v0.1.0 \
@@ -119,13 +111,9 @@ kubectl -n mac create secret generic mac-api-config \
 # 2. mac-api Deployment + Service.
 kubectl apply -k deploy/k8s/mac-api
 
-# 3. (Phase 4) mac-k8s-runner Deployment: claims tasks and creates
-#    one batch/v1 Job per claimed lease.
+# 3. mac-k8s-orchestrator Deployment: claims tasks, creates one batch/v1
+#    Job per claimed lease, opens reviews, and reconciles stuck Jobs.
 kubectl apply -k deploy/k8s/mac-runner
-
-# 4. (Phase 5) mac-k8s-controller Deployment: reconciles stuck Jobs
-#    and (optionally) scales worker-pool Deployments.
-kubectl apply -k deploy/k8s/mac-controller
 ```
 
 ## Schema bootstrap
@@ -144,8 +132,7 @@ default schema.
 ```bash
 kubectl -n mac get pods
 kubectl -n mac logs -l app.kubernetes.io/name=mac-api -f
-kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-runner -f
-kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-controller -f
+kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-orchestrator -f
 ```
 
 ## Health

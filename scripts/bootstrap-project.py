@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv"
 BIN_DIR = "Scripts" if os.name == "nt" else "bin"
 VENV_PYTHON = VENV / BIN_DIR / ("python.exe" if os.name == "nt" else "python")
-REQUIRED_COMMANDS = ("python3", "git", "gh", "bd")
+REQUIRED_COMMANDS = ("python3", "git", "gh")
 
 
 def run(command: list[str]) -> None:
@@ -26,6 +26,13 @@ def run(command: list[str]) -> None:
 def main() -> int:
     if not (ROOT / "pyproject.toml").exists():
         print("bootstrap-project.py must be run from a mac checkout", file=sys.stderr)
+        return 2
+    if sys.version_info < (3, 11):
+        print(
+            "Python 3.11+ is required to bootstrap mac; current interpreter is %s"
+            % sys.version.split()[0],
+            file=sys.stderr,
+        )
         return 2
     missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
     if missing:

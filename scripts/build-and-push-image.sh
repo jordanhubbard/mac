@@ -252,14 +252,13 @@ if [[ "${UPDATE_MANIFESTS}" == "1" ]]; then
         exit 1
     fi
     PINNED="${IMAGE}@${DIGEST}"
-    echo "==> rewriting image: lines in deploy/k8s/{mac-api,mac-runner,mac-controller}/deployment.yaml"
+    echo "==> rewriting image: lines in deploy/k8s/{mac-api,mac-runner}/deployment.yaml"
     # Portable in-place sed for both macOS and GNU. The pattern matches
     # the whole image: line (everything from `image:` through the rest
     # of the line) and replaces it with the new pinned reference.
     for f in \
         "${REPO_ROOT}/deploy/k8s/mac-api/deployment.yaml" \
-        "${REPO_ROOT}/deploy/k8s/mac-runner/deployment.yaml" \
-        "${REPO_ROOT}/deploy/k8s/mac-controller/deployment.yaml"; do
+        "${REPO_ROOT}/deploy/k8s/mac-runner/deployment.yaml"; do
         if [[ ! -f "${f}" ]]; then
             echo "    skip (missing): ${f}"
             continue

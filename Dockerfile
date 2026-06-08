@@ -30,12 +30,13 @@ RUN groupadd --system mac && \
     chown -R mac:mac /var/lib/mac
 
 COPY --from=builder /wheels/*.whl /tmp/
-# Install with both optional extras so the single image serves every
+# Install optional extras so the single image serves every
 # console-script the K8s topology needs:
 #   [postgres]  PostgresStore (mac-api)
-#   [k8s]       kubernetes client (mac-k8s-runner, mac-k8s-controller)
+#   [k8s]       kubernetes client (mac-k8s-orchestrator, mac-task-runner)
+#   [hermes-gateway] platform adapters for mac-hermes-gateway
 # Backend selection is runtime via MAC_DATABASE_URL / which entry point runs.
-RUN WHEEL=$(ls /tmp/*.whl) && pip install --no-cache-dir "${WHEEL}[postgres,k8s]" && rm -f /tmp/*.whl
+RUN WHEEL=$(ls /tmp/*.whl) && pip install --no-cache-dir "${WHEEL}[postgres,k8s,hermes-gateway]" && rm -f /tmp/*.whl
 
 USER mac
 WORKDIR /var/lib/mac

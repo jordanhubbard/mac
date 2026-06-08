@@ -95,7 +95,7 @@ def _executable(path, content: str = "#!/bin/sh\nexit 0\n") -> None:
 def _prepare_direct_session_tools(monkeypatch, mac_home, workspace) -> None:
     for name in ("mac", "mac-hermes", "hgmac", "mac-firecrawl-gateway"):
         _executable(mac_home / "venv" / "bin" / name)
-    for name in ("bd", "mac-hermes-task-executor"):
+    for name in ("mac-hermes-task-executor",):
         _executable(mac_home / "bin" / name)
     _executable(workspace / "scripts" / "run-contract-tests.sh")
     monkeypatch.setenv(
@@ -522,7 +522,6 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
                 "  required_commands:",
                 "    - python3",
                 "    - git",
-                "    - bd",
                 "test:",
                 "  command: scripts/run-contract-tests.sh",
                 "",
@@ -645,7 +644,8 @@ def test_required_task_project_runtime_context_blocks_when_session_tools_missing
                 "project: repo-beads-mac",
                 "toolchain:",
                 "  required_commands:",
-                "    - bd",
+                "    - python3",
+                "    - git",
                 "test:",
                 "  command: scripts/run-contract-tests.sh",
                 "",
@@ -707,7 +707,8 @@ def test_required_task_project_runtime_context_blocks_when_markdown_contract_mis
                 "project: repo-beads-mac",
                 "toolchain:",
                 "  required_commands:",
-                "    - bd",
+                "    - python3",
+                "    - git",
                 "test:",
                 "  command: scripts/run-contract-tests.sh",
                 "",

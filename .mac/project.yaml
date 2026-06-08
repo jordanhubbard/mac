@@ -10,7 +10,6 @@ toolchain:
     - python3
     - git
     - gh
-    - bd
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:

@@ -1277,8 +1277,8 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     assert "def parse_setup_args" in setup_py
     assert "def configure_then_deploy" in setup_py
     assert "def deploy_env" in setup_py
-    assert "PYTHON ?= $(shell for candidate in python3 python" in makefile
-    assert "sys.version_info >= (3, 9)" in makefile
+    assert 'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python' in makefile
+    assert "sys.version_info >= (3, 11)" in makefile
     assert "setup: require-python" in makefile
     assert "deploy: require-python" in makefile
     assert "--(hub|new-hub)" in makefile

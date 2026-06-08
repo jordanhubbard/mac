@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mac-k8s-runner
+  name: mac-k8s-orchestrator
   namespace: mac
   labels:
-    app.kubernetes.io/name: mac-k8s-runner
-    app.kubernetes.io/component: runner
+    app.kubernetes.io/name: mac-k8s-orchestrator
+    app.kubernetes.io/component: orchestrator
 spec:
   # Multi-replica is safe: claim-next is atomic at the database layer
   # (uniq_leases_active_per_task partial unique index). Two runners
@@ -18,14 +18,14 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: mac-k8s-runner
+      app.kubernetes.io/name: mac-k8s-orchestrator
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mac-k8s-runner
-        app.kubernetes.io/component: runner
+        app.kubernetes.io/name: mac-k8s-orchestrator
+        app.kubernetes.io/component: orchestrator
     spec:
-      serviceAccountName: mac-k8s-runner
+      serviceAccountName: mac-k8s-orchestrator
       automountServiceAccountToken: true   # needed for in-cluster K8s API
       securityContext:
         runAsUser: 1000
@@ -34,11 +34,11 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: mac-k8s-runner
+        - name: mac-k8s-orchestrator
           # Same mac image as mac-api; selection is via console-script.
           image: ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME
           imagePullPolicy: IfNotPresent
-          command: ["mac-k8s-runner"]
+          command: ["mac-k8s-orchestrator"]
           env:
             - name: MAC_URL
               value: "http://mac-api.mac.svc:80"
@@ -70,7 +70,7 @@ spec:
               memory: 512Mi
           livenessProbe:
             exec:
-              command: ["pgrep", "-f", "mac-k8s-runner"]
+              command: ["pgrep", "-f", "mac-k8s-orchestrator"]
             initialDelaySeconds: 15
             periodSeconds: 30
           securityContext:
@@ -90,4 +90,4 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
-              app.kubernetes.io/name: mac-k8s-runner
+              app.kubernetes.io/name: mac-k8s-orchestrator

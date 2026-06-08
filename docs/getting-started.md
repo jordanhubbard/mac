@@ -94,7 +94,7 @@ Start here before deploying a real fleet.
 Prerequisites:
 
 - A terminal: a text window where you run commands.
-- Python 3.9 or newer for setup orchestration.
+- Python 3.11 or newer for setup orchestration.
 - This repository checked out locally.
 - `uv` installed, or a Python environment that can install the dependencies.
 
@@ -251,7 +251,7 @@ Re-run deployment for an existing hub:
 make deploy HUB=horde
 ```
 
-The Make targets pick a Python 3.9+ `python3` or `python` automatically:
+The Make targets pick a Python 3.11+ `.venv/bin/python`, `python3.11`, `python3`, or `python` automatically:
 
 ```bash
 make setup

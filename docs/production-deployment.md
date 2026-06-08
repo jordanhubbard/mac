@@ -792,13 +792,9 @@ kubectl -n mac create secret generic mac-api-config \
 # 2. mac-api Deployment + Service (replicas: 2, no PVC).
 kubectl apply -k deploy/k8s/mac-api
 
-# 3. (Phase 4) mac-k8s-runner — claims ready tasks and creates one
-#    batch/v1 Job per claim (mac-task-runner runs inside each Job).
+# 3. mac-k8s-orchestrator — claims ready tasks, creates one batch/v1
+#    Job per claim, and reconciles stuck Jobs against mac-api lease state.
 kubectl apply -k deploy/k8s/mac-runner
-
-# 4. (Phase 5) mac-k8s-controller — reconciles stuck Jobs against
-#    mac-api lease state, optional worker-pool scaling.
-kubectl apply -k deploy/k8s/mac-controller
 ```
 
 The full apply order and ExternalSecret wiring are documented in

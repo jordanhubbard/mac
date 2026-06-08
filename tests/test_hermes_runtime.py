@@ -29,7 +29,6 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
                 "  required_commands:",
                 "    - python3",
                 "    - git",
-                "    - bd",
                 "bootstrap:",
                 "  command: python3 scripts/bootstrap-project.py",
                 "test:",

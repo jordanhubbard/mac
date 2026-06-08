@@ -38,9 +38,9 @@ REQUESTED_AGENTS=()
 
 resolve_python_bin() {
   local candidate
-  for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" python3 python; do
+  for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.11 python3 python; do
     [ -n "$candidate" ] || continue
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -286,7 +286,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if ! PYTHON_BIN="$(resolve_python_bin)"; then
-  echo "ERROR: Python 3.9+ is required (python3 or python)" >&2
+  echo "ERROR: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
   exit 127
 fi
 

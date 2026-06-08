@@ -1,16 +1,16 @@
-PYTHON ?= $(shell for candidate in python3 python; do if $$candidate -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then command -v $$candidate; break; fi; done)
+PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python; do if $$candidate -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then command -v $$candidate || printf '%s\n' "$$candidate"; break; fi; done)
 ARGS ?=
 HUB ?=
 VENV ?= .venv
 LOCAL_BIN ?= $(HOME)/.local/bin
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
-CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hermes-gateway
+CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-evidence mac-hermes-gateway
 
 .PHONY: require-python install-hooks setup deploy test test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 
 require-python:
 	@if [ -z "$(PYTHON)" ]; then \
-		echo "Python 3.9+ is required (python3 or python)"; \
+			echo "Python 3.11+ is required ($(VENV)/bin/python, python3.11, python3, or python)"; \
 		exit 127; \
 	fi
 
@@ -66,11 +66,14 @@ build: require-python
 publish: build
 	@whl=$$(ls dist/mac-*.whl); \
 	echo "verifying entry points in $$whl ..."; \
-	if unzip -p "$$whl" 'mac-*.dist-info/entry_points.txt' 2>/dev/null | grep -q '^mac = mac.cli:main'; then \
-		echo "  ok: mac console script present"; \
-	else \
-		echo "  ERROR: mac console script missing from wheel" >&2; exit 1; \
-	fi; \
+	entries=$$(unzip -p "$$whl" 'mac-*.dist-info/entry_points.txt' 2>/dev/null); \
+	for s in $(CONSOLE_SCRIPTS); do \
+		if printf '%s\n' "$$entries" | grep -q "^$$s = "; then \
+			echo "  ok: $$s console script present"; \
+		else \
+			echo "  ERROR: $$s console script missing from wheel" >&2; exit 1; \
+		fi; \
+	done; \
 	echo "published $$whl"; \
 	echo "  this machine:  make link-cli                              # symlink venv scripts onto PATH"; \
 	echo "  fleet node:    scp $$whl <node>: && <node-venv>/bin/pip install --reinstall $$whl"
