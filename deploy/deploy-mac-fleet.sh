@@ -415,6 +415,34 @@ def model_field(value: Any) -> str:
     return "" if value == "*" else value
 
 
+def host_from_target(target: Any) -> str:
+    text = text_field(target)
+    if not text:
+        return ""
+    host = text.rsplit("@", 1)[-1]
+    if host.count(":") == 1:
+        maybe_host, maybe_port = host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+    return host
+
+
+def normalize_public_path(value: Any) -> str:
+    path = text_field(value) or "/artifacts/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("/"):
+        path += "/"
+    return path
+
+
+def webdav_url(public_host: str, port: str, public_path: str) -> str:
+    host = text_field(public_host)
+    if not host:
+        return ""
+    return "http://%s:%s%s" % (host, text_field(port) or "8790", normalize_public_path(public_path))
+
+
 def stable_id(prefix: str, value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).lower()).strip("_")
     return "%s_%s" % (prefix, safe or "default")
@@ -616,6 +644,7 @@ for name in selected:
     worker = merge_dicts(defaults.get("worker", {}) if isinstance(defaults.get("worker"), dict) else {}, agent.get("worker", {}) if isinstance(agent.get("worker"), dict) else {})
     qdrant = merge_dicts(defaults.get("qdrant", {}) if isinstance(defaults.get("qdrant"), dict) else {}, agent.get("qdrant", {}) if isinstance(agent.get("qdrant"), dict) else {})
     firecrawl = merge_dicts(defaults.get("firecrawl", {}) if isinstance(defaults.get("firecrawl"), dict) else {}, agent.get("firecrawl", {}) if isinstance(agent.get("firecrawl"), dict) else {})
+    webdav = merge_dicts(defaults.get("webdav", {}) if isinstance(defaults.get("webdav"), dict) else {}, agent.get("webdav", {}) if isinstance(agent.get("webdav"), dict) else {})
     network = merge_dicts(defaults.get("network", {}) if isinstance(defaults.get("network"), dict) else {}, agent.get("network", {}) if isinstance(agent.get("network"), dict) else {})
     network_provider = text_field(network.get("provider"))
     if not network_provider:
@@ -630,6 +659,15 @@ for name in selected:
         print("ERROR: Headscale provider requires network.headscale.login_server", file=sys.stderr)
         raise SystemExit(2)
     qdrant_data_dir = text_field(qdrant.get("data_dir"))
+    webdav_enabled = bool_field(webdav.get("enabled"), False)
+    webdav_port = text_field(webdav.get("port") or "8790")
+    webdav_public_path = normalize_public_path(webdav.get("public_path"))
+    webdav_public_host = (
+        text_field(webdav.get("public_host"))
+        or text_field(webdav.get("principal_host"))
+        or host_from_target(by_name.get(hub_agent, {}).get("target"))
+    )
+    webdav_public_url = text_field(webdav.get("url")) or webdav_url(webdav_public_host, webdav_port, webdav_public_path)
     target = text_field(agent.get("target"))
     os_kind = text_field(agent.get("os"))
     if not target or not os_kind:
@@ -684,6 +722,13 @@ for name in selected:
         text_field(headscale.get("public_addr")),
         text_field(headscale.get("dns") or "magicdns"),
         text_field(headscale.get("ip_prefix") or "100.64.0.0/10"),
+        webdav_enabled,
+        text_field(webdav.get("install") or "auto"),
+        webdav_public_url,
+        text_field(webdav.get("bind_addr") or "0.0.0.0"),
+        webdav_port,
+        text_field(webdav.get("root")),
+        webdav_public_path,
     ]
     require_no_pipe(fields)
     print("|".join(fields))
@@ -881,8 +926,8 @@ REMOTE
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix <<<"$spec"
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -971,6 +1016,14 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_REQUIRE_FIRECRAWL "$firecrawl_required"
   add_remote_env MAC_DEPLOY_FIRECRAWL_BIND_ADDR "$firecrawl_bind_addr"
   add_remote_env MAC_DEPLOY_FIRECRAWL_PORT "$firecrawl_port"
+  add_remote_env MAC_DEPLOY_WEBDAV_ENABLED "$webdav_enabled"
+  add_remote_env MAC_DEPLOY_WEBDAV_INSTALL "$webdav_install"
+  add_remote_env MAC_DEPLOY_WEBDAV_URL "$webdav_url"
+  add_remote_env MAC_DEPLOY_WEBDAV_BIND_ADDR "$webdav_bind_addr"
+  add_remote_env MAC_DEPLOY_WEBDAV_PORT "$webdav_port"
+  add_remote_env MAC_DEPLOY_WEBDAV_ROOT "$webdav_root"
+  add_remote_env MAC_DEPLOY_WEBDAV_PUBLIC_PATH "$webdav_public_path"
+  add_remote_env MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES "${MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES:-}"
   add_remote_env MAC_DEPLOY_NETWORK_PROVIDER "$network_provider"
   add_remote_env MAC_DEPLOY_NETWORK_INSTALL "$network_install"
   add_remote_env MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX "$network_hostname_prefix"
@@ -1090,6 +1143,14 @@ FIRECRAWL_INSTALL="${MAC_DEPLOY_FIRECRAWL_INSTALL:-auto}"
 FIRECRAWL_REQUIRE="1"
 FIRECRAWL_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_BIND_ADDR:-}"
 FIRECRAWL_PORT_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_PORT:-3002}"
+WEBDAV_ENABLED="${MAC_DEPLOY_WEBDAV_ENABLED:-0}"
+WEBDAV_URL_CONFIGURED="${MAC_DEPLOY_WEBDAV_URL:-${MAC_DEPLOY_WEBDAV_PUBLIC_URL:-}}"
+WEBDAV_INSTALL="${MAC_DEPLOY_WEBDAV_INSTALL:-auto}"
+WEBDAV_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_WEBDAV_BIND_ADDR:-0.0.0.0}"
+WEBDAV_PORT_CONFIGURED="${MAC_DEPLOY_WEBDAV_PORT:-8790}"
+WEBDAV_ROOT_CONFIGURED="${MAC_DEPLOY_WEBDAV_ROOT:-}"
+WEBDAV_PUBLIC_PATH_CONFIGURED="${MAC_DEPLOY_WEBDAV_PUBLIC_PATH:-/artifacts/}"
+WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED="${MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES:-536870912}"
 NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"
 # gketun-02: network=none spokes reach hub-managed shared services through the
 # reverse tunnel's localhost forwards (install_reverse_tunnel_on_hub:
@@ -1232,7 +1293,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1523,6 +1584,26 @@ firecrawl_install_enabled() {
   esac
 }
 
+webdav_enabled() {
+  case "${WEBDAV_ENABLED:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+webdav_install_enabled() {
+  webdav_enabled || return 1
+  case "${WEBDAV_INSTALL:-auto}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|none|disabled) return 1 ;;
+    auto|"") [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; return ;;
+    *)
+      log "ERROR: unsupported MAC_DEPLOY_WEBDAV_INSTALL value: $WEBDAV_INSTALL"
+      exit 1
+      ;;
+  esac
+}
+
 ensure_hub_tunnel_key() {
   local key_file="$HOME/.ssh/mac_tunnel_id"
   if [ ! -f "$key_file" ]; then
@@ -1619,6 +1700,33 @@ validate_firecrawl_endpoint() {
   exit 1
 }
 
+validate_webdav_endpoint() {
+  webdav_enabled || return 0
+  local webdav_url health_url
+  webdav_url="${MAC_PUBLISH_WEBDAV_URL:-${MAC_WEBDAV_PUBLIC_URL:-${WEBDAV_URL_CONFIGURED:-}}}"
+  if [ -z "$webdav_url" ]; then
+    log "ERROR: WebDAV publishing is enabled but no public URL is configured"
+    exit 1
+  fi
+  health_url="$("$PYTHON_BIN" - "$webdav_url" <<'PY'
+from urllib.parse import urlsplit, urlunsplit
+import sys
+
+url = sys.argv[1].strip()
+parts = urlsplit(url)
+if parts.scheme and parts.netloc:
+    print(urlunsplit((parts.scheme, parts.netloc, "/health", "", "")))
+else:
+    print(url.rstrip("/") + "/health")
+PY
+)"
+  if curl -fsS --connect-timeout 2 --max-time 5 "$health_url" >/dev/null; then
+    log "WebDAV public artifact server reachable at $health_url"
+    return
+  fi
+  log "WARNING: WebDAV public artifact server is not reachable at $health_url from this node; continuing because public reachability may differ from node-local routing"
+}
+
 reload_mac_env() {
   unset MAC_HERMES_GATEWAY_MODEL ACC_HERMES_GATEWAY_MODEL HERMES_INFERENCE_MODEL ACC_LLM_MODEL
   set -a
@@ -1670,6 +1778,31 @@ install_or_validate_web_search_service() {
     log "using hub-managed Firecrawl web search from $SHARED_SERVICES_MANAGER_AGENT"
   fi
   validate_firecrawl_endpoint
+}
+
+install_or_validate_publish_service() {
+  webdav_enabled || return 0
+  if webdav_install_enabled; then
+    log "installing hub-managed public artifact WebDAV service"
+    export WEBDAV_BIND_ADDR="$WEBDAV_BIND_ADDR_CONFIGURED"
+    export WEBDAV_PORT="$WEBDAV_PORT_CONFIGURED"
+    if [ -n "$WEBDAV_ROOT_CONFIGURED" ]; then
+      export WEBDAV_ROOT="$WEBDAV_ROOT_CONFIGURED"
+    else
+      unset WEBDAV_ROOT
+    fi
+    export WEBDAV_PUBLIC_PATH="$WEBDAV_PUBLIC_PATH_CONFIGURED"
+    export WEBDAV_PUBLIC_URL="$WEBDAV_URL_CONFIGURED"
+    export WEBDAV_MAX_UPLOAD_BYTES="$WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED"
+    export FLEET_NAME="$FLEET_NAME"
+    export WEBDAV_SUPERVISOR="$SUPERVISOR_KIND"
+    MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
+      bash "$SRC_DIR/deploy/install-webdav-server.sh"
+    reload_mac_env
+  else
+    log "using hub-managed WebDAV publishing from $SHARED_SERVICES_MANAGER_AGENT"
+  fi
+  validate_webdav_endpoint
 }
 
 write_hermes_memory_topology() {
@@ -2203,6 +2336,15 @@ manifest = {
             "required": os.environ.get("FIRECRAWL_REQUIRE") or None,
             "url_configured": bool(os.environ.get("FIRECRAWL_URL_CONFIGURED")),
             "port": os.environ.get("FIRECRAWL_PORT_CONFIGURED") or None,
+        },
+        "webdav": {
+            "enabled": os.environ.get("WEBDAV_ENABLED") or None,
+            "install": os.environ.get("WEBDAV_INSTALL") or None,
+            "url": os.environ.get("WEBDAV_URL_CONFIGURED") or None,
+            "bind_addr": os.environ.get("WEBDAV_BIND_ADDR_CONFIGURED") or None,
+            "port": os.environ.get("WEBDAV_PORT_CONFIGURED") or None,
+            "root_configured": bool(os.environ.get("WEBDAV_ROOT_CONFIGURED")),
+            "public_path": os.environ.get("WEBDAV_PUBLIC_PATH_CONFIGURED") or None,
         },
         "network": {
             "provider": os.environ.get("NETWORK_PROVIDER") or None,
@@ -3746,7 +3888,9 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
   "$WORKER_REQUIRED_METADATA" "$WORKER_REQUIRE_CANARY" \
   "$AGENT" "$SUPERVISOR_KIND" "$SHARED_SERVICES_MANAGER_AGENT" \
   "$QDRANT_URL_CONFIGURED" "$QDRANT_REQUIRE" "$QDRANT_PORT_CONFIGURED" \
-  "$FIRECRAWL_URL_CONFIGURED" "$FIRECRAWL_REQUIRE" "$FIRECRAWL_PORT_CONFIGURED"
+  "$FIRECRAWL_URL_CONFIGURED" "$FIRECRAWL_REQUIRE" "$FIRECRAWL_PORT_CONFIGURED" \
+  "$WEBDAV_ENABLED" "$WEBDAV_URL_CONFIGURED" "$WEBDAV_PORT_CONFIGURED" \
+  "$WEBDAV_ROOT_CONFIGURED" "$WEBDAV_PUBLIC_PATH_CONFIGURED"
 
 normalize_hermes_redaction_env
 
@@ -3771,6 +3915,7 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
 write_hermes_web_search_config
+install_or_validate_publish_service
 
 log "using vendored in-tree Hermes runtime (ADR 0001 hu-04; no upstream clone)"
 # The Hermes runtime ships pinned + patched in the mac package at

@@ -712,6 +712,25 @@ class AgentBusRepoUpdate(BaseModel):
     request_id: Optional[str] = None
 
 
+class AgentBusArtifactPublish(BaseModel):
+    sender_agent_id: str
+    operation: str = "upsert"
+    recipient_agent_ids: List[str] = Field(default_factory=list)
+    all_agents: bool = False
+    artifact_id: Optional[str] = None
+    digest: Optional[str] = None
+    kind: str = "public-artifact"
+    uri: Optional[str] = None
+    public_url: Optional[str] = None
+    path: Optional[str] = None
+    publish_dir: Optional[str] = None
+    sbom_uri: Optional[str] = None
+    signers: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    task_id: Optional[str] = None
+    request_id: Optional[str] = None
+
+
 class ObservabilityMetricCreate(BaseModel):
     name: str
     value: float
@@ -4232,6 +4251,14 @@ def create_app(
             "streams": [item["stream"] for item in published],
         }
 
+    @app.post("/agentbus/artifact-publish")
+    def publish_agentbus_artifact(
+        body: AgentBusArtifactPublish,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.sender_agent_id)
+        return cp.publish_agentbus_artifact(**_data(body))
+
     @app.get("/agentbus/streams/{stream_id}/events")
     async def agentbus_stream_events(
         stream_id: str,
@@ -4498,6 +4525,14 @@ def create_app(
     @app.get("/artifacts/{artifact_id_or_digest}")
     def get_artifact(artifact_id_or_digest: str) -> Dict[str, Any]:
         return cp.get_artifact(artifact_id_or_digest).to_dict()
+
+    @app.delete("/artifacts/{artifact_id_or_digest}")
+    def delete_artifact(
+        artifact_id_or_digest: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        actor = getattr(principal, "agent_id", None) or "operator"
+        return cp.delete_artifact(artifact_id_or_digest, actor=actor)
 
     @app.post("/conversation-threads")
     def track_conversation(body: ConversationThreadTrack) -> Dict[str, Any]:

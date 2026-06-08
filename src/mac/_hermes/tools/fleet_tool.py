@@ -12,6 +12,7 @@ plumbing. Three actions behind one tool:
   fleet status            → who is on the fleet, their status, and current task
   fleet message <agent>   → send a quick message to another agent (agentbus)
   fleet inbox             → read recent messages addressed to me (agentbus)
+  fleet publish           → artifact publish info + CRUD records (agentbus)
 
 This module ALSO registers a companion ``tasks`` tool (tasks-01) on the same hub
 plumbing. That one is the chat agent's read/write window onto the SHARED hub task
@@ -21,8 +22,8 @@ which is in-memory and per-session: when one agent "filed tasks for itself" via
 ``todo`` the rest of the fleet couldn't see them. ``tasks`` fixes that — work
 filed/claimed/closed there is visible fleet-wide.
 
-The fleet actions are best-effort + read-mostly (the only write is an agentbus
-message); the ``tasks`` tool deliberately writes to the shared ledger.
+The fleet actions are best-effort; writes are limited to agentbus messages and
+publish-record CRUD. The ``tasks`` tool deliberately writes to the shared ledger.
 """
 
 from __future__ import annotations
@@ -190,6 +191,67 @@ def _action_inbox(limit: int) -> str:
     return format_inbox(chunks, limit=limit)
 
 
+def _publish_info() -> Dict[str, Any]:
+    return {
+        "schema": "mac.hermes.publish_info.v1",
+        "method": os.environ.get("MAC_PUBLISH_METHOD") or "hub_directory_http",
+        "publish_dir": os.environ.get("MAC_PUBLISH_DIR") or os.environ.get("MAC_WEBDAV_ROOT") or "",
+        "public_url": (
+            os.environ.get("MAC_PUBLISH_PUBLIC_URL")
+            or os.environ.get("MAC_PUBLISH_WEBDAV_URL")
+            or os.environ.get("MAC_WEBDAV_PUBLIC_URL")
+            or ""
+        ),
+        "agentbus_crud": "/agentbus/artifact-publish",
+        "http_ingress": False,
+    }
+
+
+def _metadata_arg(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("metadata must be a JSON object: %s" % exc) from exc
+        if isinstance(loaded, dict):
+            return loaded
+        raise ValueError("metadata must be a JSON object")
+    return {}
+
+
+def _action_publish(args: Dict[str, Any]) -> str:
+    me = _self_agent_id()
+    if not me:
+        return tool_error("cannot determine my own agent id (MAC_AGENT_ID unset)")
+    operation = str(args.get("operation") or "info").strip().lower()
+    if operation == "info":
+        return json.dumps(_publish_info(), sort_keys=True)
+    payload: Dict[str, Any] = {
+        "sender_agent_id": me,
+        "operation": operation,
+        "artifact_id": args.get("artifact") or None,
+        "digest": args.get("digest") or None,
+        "kind": args.get("kind") or "public-artifact",
+        "uri": args.get("uri") or None,
+        "public_url": args.get("public_url") or None,
+        "path": args.get("path") or None,
+        "publish_dir": args.get("publish_dir") or _publish_info().get("publish_dir") or None,
+        "task_id": args.get("task_id") or None,
+        "request_id": args.get("request_id") or None,
+        "metadata": _metadata_arg(args.get("metadata")),
+        "all_agents": bool(args.get("all_agents")),
+    }
+    recipients = args.get("recipient_agent_ids") or args.get("recipient_agent_id") or args.get("recipient")
+    if isinstance(recipients, str):
+        payload["recipient_agent_ids"] = [item.strip() for item in recipients.split(",") if item.strip()]
+    elif isinstance(recipients, list):
+        payload["recipient_agent_ids"] = [str(item).strip() for item in recipients if str(item).strip()]
+    result = _hub_request("POST", "/agentbus/artifact-publish", payload)
+    return json.dumps(result, sort_keys=True)
+
+
 FLEET_SCHEMA = {
     "name": "fleet",
     "description": (
@@ -204,13 +266,35 @@ FLEET_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["status", "message", "inbox"],
+                "enum": ["status", "message", "inbox", "publish"],
                 "description": "status = fleet roster + what each agent is working on; "
-                "message = send a message to another agent; inbox = read your recent messages",
+                "message = send a message to another agent; inbox = read your recent messages; "
+                "publish = show publish directory info or run artifact publish CRUD",
             },
             "recipient": {"type": "string", "description": "for action=message: the agent name or id to send to"},
+            "recipient_agent_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "for action=publish: recipient agent ids to notify",
+            },
             "message": {"type": "string", "description": "for action=message: the message text"},
             "limit": {"type": "integer", "description": "for action=inbox: how many recent messages (default 10)"},
+            "operation": {
+                "type": "string",
+                "enum": ["info", "create", "upsert", "update", "get", "read", "list", "delete"],
+                "description": "for action=publish: info or artifact CRUD operation",
+            },
+            "artifact": {"type": "string", "description": "for action=publish get/delete: artifact id"},
+            "digest": {"type": "string", "description": "for action=publish upsert/get/delete: sha256 digest"},
+            "kind": {"type": "string", "description": "for action=publish: artifact kind"},
+            "uri": {"type": "string", "description": "for action=publish upsert: canonical artifact URI"},
+            "public_url": {"type": "string", "description": "for action=publish upsert: public read URL"},
+            "path": {"type": "string", "description": "for action=publish: path under MAC_PUBLISH_DIR"},
+            "publish_dir": {"type": "string", "description": "for action=publish: override publish directory metadata"},
+            "task_id": {"type": "string", "description": "for action=publish: source task id"},
+            "request_id": {"type": "string", "description": "for action=publish: idempotency/correlation id"},
+            "metadata": {"type": "object", "description": "for action=publish: artifact metadata"},
+            "all_agents": {"type": "boolean", "description": "for action=publish: notify every agent"},
         },
         "required": ["action"],
     },
@@ -230,7 +314,9 @@ def _handle_fleet(args, **kw):
             except (TypeError, ValueError):
                 limit = 10
             return _action_inbox(max(1, min(50, limit)))
-        return tool_error("unknown fleet action %r (use status/message/inbox)" % action)
+        if action == "publish":
+            return _action_publish(args)
+        return tool_error("unknown fleet action %r (use status/message/inbox/publish)" % action)
     except RuntimeError as exc:
         return tool_error(str(exc))
     except Exception as exc:  # noqa: BLE001

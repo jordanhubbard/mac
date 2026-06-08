@@ -627,6 +627,17 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
         )
     )
     ctx["artifact_id"] = artifact["id"]
+    ctx["delete_artifact_id"] = _ok(
+        client.post(
+            "/artifacts",
+            json={
+                "kind": "runtime",
+                "digest": "sha256:" + "9" * 64,
+                "uri": "https://example.test/artifacts/delete-me.tar",
+                "created_by": "operator",
+            },
+        )
+    )["id"]
     thread = _ok(
         client.post(
             "/conversation-threads",
@@ -792,6 +803,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/provisioning/requests/{request_id}/cancel"): {"request_id": "cancel_request_id"},
         ("DELETE", "/roles/{role_id}"): {"role_id": "delete_role_id"},
         ("DELETE", "/workflows/{workflow_id}"): {"workflow_id": "delete_workflow_id"},
+        ("DELETE", "/artifacts/{artifact_id_or_digest}"): {"artifact_id_or_digest": "delete_artifact_id"},
         ("POST", "/runtime-deltas/{delta_id}/validate"): {"delta_id": "validate_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/reject"): {"delta_id": "reject_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/promote"): {"delta_id": "promote_delta_id"},
@@ -1175,6 +1187,14 @@ edges:
             "remote": "origin",
             "branch": "main",
             "restart": False,
+        },
+        ("POST", "/agentbus/artifact-publish"): {
+            "sender_agent_id": ctx["agent_id"],
+            "recipient_agent_ids": [ctx["reviewer_agent_id"]],
+            "digest": "sha256:" + "8" * 64,
+            "path": "route/artifact.txt",
+            "public_url": "https://example.test/artifacts/route/artifact.txt",
+            "metadata": {"route_case": True},
         },
         ("POST", "/tasks/{task_id}/reviews"): {
             "reviewer_agent_id": ctx["reviewer_agent_id"],

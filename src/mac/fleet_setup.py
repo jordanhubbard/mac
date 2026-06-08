@@ -21,6 +21,8 @@ SETUP_SPEC_SCHEMA = "mac.fleet_setup.v1"
 DEFAULT_CONTROL_PORT = 8789
 DEFAULT_QDRANT_PORT = 6333
 DEFAULT_FIRECRAWL_PORT = 3002
+DEFAULT_WEBDAV_PORT = 8790
+DEFAULT_WEBDAV_PUBLIC_PATH = "/artifacts/"
 
 # The fleet's default chat model, materialized into fleets.yaml so the picked
 # model is ALWAYS visible there. A blank gateway_model silently fell through to
@@ -142,6 +144,7 @@ def build_setup_plan(
     network = _network_config(spec, defaults_block, errors)
     qdrant = _qdrant_config(spec, defaults_block, hub_url)
     firecrawl = _firecrawl_config(spec, defaults_block, hub_url)
+    webdav = _webdav_config(spec, defaults_block, hub_block)
     hermes_defaults = _mapping(defaults_block.get("hermes"))
     worker_defaults = _mapping(defaults_block.get("worker"))
 
@@ -222,6 +225,7 @@ def build_setup_plan(
             },
             "qdrant": qdrant,
             "firecrawl": firecrawl,
+            "webdav": webdav,
             "network": network,
         },
         "agents": agents,
@@ -306,6 +310,14 @@ def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] =
         "pass" if _str(firecrawl.get("url")) else "warn",
         _str(firecrawl.get("url")) or "missing",
     )
+    webdav = _mapping(defaults.get("webdav"))
+    if webdav.get("enabled") is True:
+        _check(
+            checks,
+            "webdav.url",
+            "pass" if _str(webdav.get("url")) else "warn",
+            _str(webdav.get("url")) or "missing",
+        )
 
     env_values = _mapping(plan.get("env_values"))
     router_providers = _str(env_values.get("MAC_ROUTER_PROVIDERS"))
@@ -540,12 +552,46 @@ def _firecrawl_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_
     }
 
 
+def _webdav_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub: Mapping[str, Any]) -> Dict[str, Any]:
+    webdav = {**_mapping(defaults.get("webdav")), **_mapping(spec.get("webdav"))}
+    port = _int(webdav.get("port"), DEFAULT_WEBDAV_PORT)
+    public_path = _normalize_public_path(_str(webdav.get("public_path")) or DEFAULT_WEBDAV_PUBLIC_PATH)
+    public_host = (
+        _str(webdav.get("public_host"))
+        or _str(webdav.get("principal_host"))
+        or _host_from_target(_str(hub.get("target")))
+    )
+    url = _str(webdav.get("url"))
+    if not url and public_host:
+        url = "http://%s:%d%s" % (public_host, port, public_path)
+    return {
+        "enabled": webdav.get("enabled", False) is True,
+        "install": _str(webdav.get("install")) or "auto",
+        "url": url,
+        "public_host": public_host,
+        "bind_addr": _str(webdav.get("bind_addr")) or "0.0.0.0",
+        "port": port,
+        "root": _str(webdav.get("root")),
+        "public_path": public_path,
+        "max_upload_bytes": _int(webdav.get("max_upload_bytes"), 512 * 1024 * 1024),
+    }
+
+
 def _service_url_from_hub(hub_url: str, port: int) -> str:
     if not hub_url or "://" not in hub_url:
         return ""
     scheme, rest = hub_url.split("://", 1)
     host = rest.split("/", 1)[0].rsplit(":", 1)[0]
     return "%s://%s:%d" % (scheme, host, port)
+
+
+def _normalize_public_path(path: str) -> str:
+    out = (path or DEFAULT_WEBDAV_PUBLIC_PATH).strip()
+    if not out.startswith("/"):
+        out = "/" + out
+    if not out.endswith("/"):
+        out += "/"
+    return out
 
 
 def _host_from_target(target: str) -> str:

@@ -133,6 +133,49 @@ def test_parse_env_text_trailing_unquoted_tokens_take_leading_assignment():
     assert parse_env_text("export RAW=plainvalue\n") == {"RAW": "plainvalue"}
 
 
+def test_build_mac_env_advertises_enabled_webdav_publish_service(tmp_path):
+    base = deploy_env_config(tmp_path)
+    cfg = DeployEnvConfig(
+        paths=base.paths,
+        control=base.control,
+        gateway=base.gateway,
+        worker=base.worker,
+        services=SharedServicesConfig(
+            qdrant_url="",
+            qdrant_port="6333",
+            firecrawl_url="",
+            firecrawl_port="3002",
+            webdav_enabled="1",
+            webdav_url="http://principal.example:8790/artifacts/",
+            webdav_root="/srv/mac-artifacts",
+            webdav_public_path="artifacts",
+        ),
+        identity=base.identity,
+    )
+
+    env = build_mac_env(
+        {
+            "MAC_PUBLISH_WEBDAV_URL": "http://stale.example/artifacts/",
+            "MAC_WEBDAV_WRITE_TOKEN": "old-token",
+        },
+        cfg,
+        environ={
+            "MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES": "1024",
+        },
+    )
+
+    assert env["MAC_PUBLISH_WEBDAV_ENABLED"] == "1"
+    assert env["MAC_PUBLISH_DIR"] == "/srv/mac-artifacts"
+    assert env["MAC_PUBLISH_METHOD"] == "hub_directory_http"
+    assert env["MAC_PUBLISH_PUBLIC_URL"] == "http://principal.example:8790/artifacts"
+    assert env["MAC_PUBLISH_WEBDAV_URL"] == "http://principal.example:8790/artifacts"
+    assert env["MAC_WEBDAV_PUBLIC_URL"] == "http://principal.example:8790/artifacts"
+    assert env["MAC_WEBDAV_PUBLIC_PATH"] == "/artifacts/"
+    assert env["MAC_WEBDAV_ROOT"] == "/srv/mac-artifacts"
+    assert "MAC_WEBDAV_WRITE_TOKEN" not in env
+    assert env["MAC_WEBDAV_MAX_UPLOAD_BYTES"] == "1024"
+
+
 def test_deploy_env_import_is_dependency_light():
     # Regression: deploy-mac-fleet.sh runs `python -m mac.deploy_env write-mac-env`
     # on the bootstrap python BEFORE the deploy venv exists, so importing
@@ -984,6 +1027,11 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
         "",
         "1",
         "3002",
+        "1",
+        "http://principal.example:8790/artifacts/",
+        "8790",
+        "",
+        "/artifacts/",
     ]
     hub_env = build_mac_env(
         {},
@@ -1025,6 +1073,8 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert "HEADSCALE_HEALTH_URL" in script
     assert "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE" in script
     assert config_from_legacy_args(legacy_args, {}).control.network_provider == "tailscale"
+    assert config_from_legacy_args(legacy_args, {}).services.webdav_enabled == "1"
+    assert config_from_legacy_args(legacy_args, {}).services.webdav_url == "http://principal.example:8790/artifacts/"
     assert (
         config_from_legacy_args(legacy_args, {"MAC_DEPLOY_NETWORK_PROVIDER": "none"})
         .control.network_provider
@@ -1045,6 +1095,8 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert "network:" in sample
     assert "provider: none" in sample
     assert "provider: headscale" in sample
+    assert "webdav:" in sample
+    assert "public_path: \"/artifacts/\"" in sample
 
 
 def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
@@ -1069,6 +1121,7 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
             "",
             "",
             "",
+            "n",
             "",
             "",
             "",
@@ -1112,6 +1165,9 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert cfg["defaults"]["qdrant"]["url"] == "http://hub.example.internal:6333"
     assert cfg["defaults"]["firecrawl"]["required"] is True
     assert cfg["defaults"]["firecrawl"]["url"] == "http://hub.example.internal:3002"
+    assert cfg["defaults"]["webdav"]["enabled"] is False
+    assert cfg["defaults"]["webdav"]["public_host"] == "hub.example.internal"
+    assert cfg["defaults"]["webdav"]["public_path"] == "/artifacts/"
     # TokenHub is retired — the wizard no longer writes a tokenhub config block.
     assert "tokenhub" not in cfg["defaults"]
     assert cfg["defaults"]["network"]["provider"] == "tailscale"
@@ -1161,6 +1217,7 @@ def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):
             "",
             "",
             "",
+            "n",
             "headscale",
             "external",
             "https://headscale.example.internal",

@@ -111,6 +111,11 @@ class SharedServicesConfig:
     qdrant_port: str
     firecrawl_url: str
     firecrawl_port: str
+    webdav_enabled: str = ""
+    webdav_url: str = ""
+    webdav_port: str = "8790"
+    webdav_root: str = ""
+    webdav_public_path: str = "/artifacts/"
 
 
 @dataclass(frozen=True)
@@ -407,6 +412,64 @@ def _shared_service_url_values(values: Mapping[str, str], cfg: DeployEnvConfig) 
     return out
 
 
+_WEBDAV_MANAGED_KEYS = (
+    "MAC_PUBLISH_DIR",
+    "MAC_PUBLISH_METHOD",
+    "MAC_PUBLISH_PUBLIC_URL",
+    "MAC_PUBLISH_WEBDAV_ENABLED",
+    "MAC_PUBLISH_WEBDAV_URL",
+    "MAC_WEBDAV_PUBLIC_URL",
+    "MAC_WEBDAV_PUBLIC_PATH",
+    "MAC_WEBDAV_ROOT",
+    "MAC_WEBDAV_WRITE_TOKEN",
+    "MAC_WEBDAV_MAX_UPLOAD_BYTES",
+)
+
+
+def _enabled(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_public_path(path: str) -> str:
+    out = (path or "/artifacts/").strip()
+    if not out.startswith("/"):
+        out = "/" + out
+    if not out.endswith("/"):
+        out += "/"
+    return out
+
+
+def _webdav_values(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> Dict[str, str]:
+    _clear(values, _WEBDAV_MANAGED_KEYS)
+    services = cfg.services
+    enabled = _enabled(services.webdav_enabled)
+    deploy_enabled = (env.get("MAC_DEPLOY_WEBDAV_ENABLED") or "").strip()
+    if deploy_enabled:
+        enabled = _enabled(deploy_enabled)
+    if not enabled:
+        return {"MAC_PUBLISH_WEBDAV_ENABLED": "0"}
+    public_path = _normalize_public_path(services.webdav_public_path)
+    public_url = (
+        services.webdav_url
+        or (env.get("MAC_DEPLOY_WEBDAV_URL") or "").strip()
+        or (env.get("MAC_DEPLOY_WEBDAV_PUBLIC_URL") or "").strip()
+    ).rstrip("/")
+    root = services.webdav_root or str(cfg.paths.mac_home / "public-artifacts")
+    out = {
+        "MAC_PUBLISH_DIR": root,
+        "MAC_PUBLISH_METHOD": "hub_directory_http",
+        "MAC_PUBLISH_WEBDAV_ENABLED": "1",
+        "MAC_WEBDAV_PUBLIC_PATH": public_path,
+        "MAC_WEBDAV_ROOT": root,
+        "MAC_WEBDAV_MAX_UPLOAD_BYTES": (env.get("MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES") or "536870912").strip(),
+    }
+    if public_url:
+        out["MAC_PUBLISH_PUBLIC_URL"] = public_url
+        out["MAC_PUBLISH_WEBDAV_URL"] = public_url
+        out["MAC_WEBDAV_PUBLIC_URL"] = public_url
+    return out
+
+
 def _deploy_router_config(env: Mapping[str, str]) -> Dict[str, str]:
     return {
         "backend": (env.get("MAC_DEPLOY_ROUTER_BACKEND") or "").strip(),
@@ -547,6 +610,7 @@ def build_mac_env(
     values.update(_worker_values(cfg, values))
     values.update(_shared_service_requirement_values())
     values.update(_shared_service_url_values(values, cfg))
+    values.update(_webdav_values(values, cfg, env))
     memory_model = (env.get("MAC_DEPLOY_MEMORY_EMBED_MODEL") or "").strip()
     if memory_model:
         values["MAC_MEMORY_EMBED_MODEL"] = memory_model
@@ -605,7 +669,7 @@ def write_mac_env_file(
 
 @dataclass(frozen=True)
 class LegacyDeployArgs:
-    """Named view over the 25 positional arguments that deploy-mac-fleet.sh passes
+    """Named view over the 30 positional arguments that deploy-mac-fleet.sh passes
     to ``write-mac-env`` (in the order it passes them). This is the single place
     the positional contract lives, so ``config_from_legacy_args`` below reads by
     name instead of by magic index. ``*_require`` mirror the deploy script's
@@ -637,8 +701,13 @@ class LegacyDeployArgs:
     firecrawl_url: str
     firecrawl_require: str
     firecrawl_port: str
+    webdav_enabled: str
+    webdav_url: str
+    webdav_port: str
+    webdav_root: str
+    webdav_public_path: str
 
-    ARITY = 25
+    ARITY = 30
 
     @classmethod
     def from_argv(cls, args: Sequence[str]) -> "LegacyDeployArgs":
@@ -692,6 +761,11 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
             qdrant_port=a.qdrant_port.strip() or "6333",
             firecrawl_url=a.firecrawl_url.strip(),
             firecrawl_port=a.firecrawl_port.strip() or "3002",
+            webdav_enabled=a.webdav_enabled.strip(),
+            webdav_url=a.webdav_url.strip(),
+            webdav_port=a.webdav_port.strip() or "8790",
+            webdav_root=a.webdav_root.strip(),
+            webdav_public_path=a.webdav_public_path.strip() or "/artifacts/",
         ),
         identity=DeployIdentity(
             agent=agent,
@@ -705,7 +779,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mac.deploy_env")
     subparsers = parser.add_subparsers(dest="command", required=True)
     write_parser = subparsers.add_parser("write-mac-env")
-    write_parser.add_argument("legacy_args", nargs=25)
+    write_parser.add_argument("legacy_args", nargs=30)
     ns = parser.parse_args(argv)
     if ns.command == "write-mac-env":
         cfg = config_from_legacy_args(ns.legacy_args, os.environ)

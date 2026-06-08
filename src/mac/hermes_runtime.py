@@ -114,129 +114,138 @@ def _session_capability_contract(
     repository_contract: Dict[str, Any],
 ) -> Dict[str, Any]:
     test_command = str(repository_contract.get("test_command") or "scripts/run-contract-tests.sh")
-    return {
-        "schema": "mac.hermes.session_capabilities.v1",
-        "parity_target": "direct_codex_or_claude_session_in_mac_repo",
-        "workspace": {
-            "path": str(workspace_path),
-            "project_contract": repository_contract,
-            "working_directory_rule": "Run repository commands from this workspace unless a task repository contract says otherwise.",
+    capabilities = [
+        {
+            "name": "mac_api",
+            "kind": "api",
+            "required": True,
+            "endpoint": mac_url,
+            "purpose": "Read and mutate MAC fleet, agent, task, project, review, memory, and dashboard state.",
         },
-        "capabilities": [
+        {
+            "name": "mac_cli",
+            "kind": "cli",
+            "required": True,
+            "command": "mac --help",
+            "expected_path": str(mac_home / "venv" / "bin" / "mac"),
+            "purpose": "Operator-grade MAC API access from a shell session.",
+        },
+        {
+            "name": "mac_hermes_cli",
+            "kind": "cli",
+            "required": True,
+            "command": "mac-hermes work-context %s --active-only" % hermes_instance_id,
+            "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
+            "purpose": "Hermes-safe task/project lifecycle bridge.",
+        },
+        {
+            "name": "shell_execution",
+            "kind": "shell",
+            "required": True,
+            "command": "sh -c true",
+            "cwd": str(workspace_path),
+            "purpose": "Run non-interactive shell commands from the MAC workspace like a direct Codex or Claude session.",
+        },
+        {
+            "name": "workspace_file_access",
+            "kind": "filesystem",
+            "required": True,
+            "cwd": str(workspace_path),
+            "purpose": "Read and write repository source files in the MAC workspace before committing work.",
+        },
+        {
+            "name": "ticket_mirror",
+            "kind": "filesystem",
+            "required": True,
+            "command": "ls .tickets",
+            "cwd": str(workspace_path),
+            "purpose": "Read project tickets directly from .tickets/<id>.md (wedow-compatible markdown + YAML frontmatter; canonical text for each issue).",
+        },
+        {
+            "name": "mac_task_cli",
+            "kind": "cli",
+            "required": True,
+            "command": "mac task ready --limit 5",
+            "expected_path": str(mac_home / "venv" / "bin" / "mac"),
+            "purpose": "List/create/claim/close tasks via the MAC hub task ledger (the canonical execution store).",
+        },
+        {
+            "name": "git_source_control",
+            "kind": "cli",
+            "required": True,
+            "command": "git status --short --branch",
+            "cwd": str(workspace_path),
+            "purpose": "Inspect, commit, rebase, and push repository state.",
+        },
+        {
+            "name": "quality_gate",
+            "kind": "command",
+            "required": True,
+            "command": test_command,
+            "cwd": str(workspace_path),
+            "purpose": "Run the repository contract test gate before completion.",
+        },
+        {
+            "name": "hermes_oneshot_executor",
+            "kind": "executor",
+            "required": True,
+            "command": "mac-hermes-task-executor",
+            "expected_path": str(mac_home / "bin" / "mac-hermes-task-executor"),
+            "purpose": "Run a MAC task through Hermes oneshot mode with the same workspace, prompt context, and command audit envelope as deployed agents.",
+        },
+        {
+            "name": "command_audit",
+            "kind": "cli",
+            "required": True,
+            "command": "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
+            "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
+            "purpose": "Record and inspect auditable shell work tied to MAC agents and tasks.",
+        },
+        {
+            "name": "web_search",
+            "kind": "service",
+            "required": True,
+            "command": "mac-hermes web-search \"mac release notes\" --limit 1",
+            "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
+            "environment": ["FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL", "MAC_WEB_SEARCH_PROVIDER"],
+            "purpose": "Web search, extraction, and crawl access through the Hermes bridge to the hub Firecrawl-compatible service.",
+        },
+    ]
+    webdav_method = _webdav_publish_method()
+    if webdav_method.get("enabled"):
+        capabilities.append(
             {
-                "name": "mac_api",
-                "kind": "api",
-                "required": True,
-                "endpoint": mac_url,
-                "purpose": "Read and mutate MAC fleet, agent, task, project, review, memory, and dashboard state.",
-            },
-            {
-                "name": "mac_cli",
-                "kind": "cli",
-                "required": True,
-                "command": "mac --help",
-                "expected_path": str(mac_home / "venv" / "bin" / "mac"),
-                "purpose": "Operator-grade MAC API access from a shell session.",
-            },
-            {
-                "name": "mac_hermes_cli",
-                "kind": "cli",
-                "required": True,
-                "command": "mac-hermes work-context %s --active-only" % hermes_instance_id,
-                "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
-                "purpose": "Hermes-safe task/project lifecycle bridge.",
-            },
-            {
-                "name": "shell_execution",
-                "kind": "shell",
-                "required": True,
-                "command": "sh -c true",
-                "cwd": str(workspace_path),
-                "purpose": "Run non-interactive shell commands from the MAC workspace like a direct Codex or Claude session.",
-            },
-            {
-                "name": "workspace_file_access",
-                "kind": "filesystem",
-                "required": True,
-                "cwd": str(workspace_path),
-                "purpose": "Read and write repository source files in the MAC workspace before committing work.",
-            },
-            {
-                "name": "ticket_mirror",
-                "kind": "filesystem",
-                "required": True,
-                "command": "ls .tickets",
-                "cwd": str(workspace_path),
-                "purpose": "Read project tickets directly from .tickets/<id>.md (wedow-compatible markdown + YAML frontmatter; canonical text for each issue).",
-            },
-            {
-                "name": "mac_task_cli",
-                "kind": "cli",
-                "required": True,
-                "command": "mac task ready --limit 5",
-                "expected_path": str(mac_home / "venv" / "bin" / "mac"),
-                "purpose": "List/create/claim/close tasks via the MAC hub task ledger (the canonical execution store).",
-            },
-            {
-                "name": "git_source_control",
-                "kind": "cli",
-                "required": True,
-                "command": "git status --short --branch",
-                "cwd": str(workspace_path),
-                "purpose": "Inspect, commit, rebase, and push repository state.",
-            },
-            {
-                "name": "quality_gate",
-                "kind": "command",
-                "required": True,
-                "command": test_command,
-                "cwd": str(workspace_path),
-                "purpose": "Run the repository contract test gate before completion.",
-            },
-            {
-                "name": "hermes_oneshot_executor",
-                "kind": "executor",
-                "required": True,
-                "command": "mac-hermes-task-executor",
-                "expected_path": str(mac_home / "bin" / "mac-hermes-task-executor"),
-                "purpose": "Run a MAC task through Hermes oneshot mode with the same workspace, prompt context, and command audit envelope as deployed agents.",
-            },
-            {
-                "name": "command_audit",
-                "kind": "cli",
-                "required": True,
-                "command": "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
-                "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
-                "purpose": "Record and inspect auditable shell work tied to MAC agents and tasks.",
-            },
-            {
-                "name": "web_search",
-                "kind": "service",
-                "required": True,
-                "command": "mac-hermes web-search \"mac release notes\" --limit 1",
-                "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
-                "environment": ["FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL", "MAC_WEB_SEARCH_PROVIDER"],
-                "purpose": "Web search, extraction, and crawl access through the Hermes bridge to the hub Firecrawl-compatible service.",
-            },
-        ],
-        "direct_session_workflow": [
-            "cd %s" % workspace_path,
-            "ls .tickets",
-            "mac task ready --limit 10",
-            "mac task stats",
-            "mac-hermes runtime-proof %s" % hermes_instance_id,
-            "mac-hermes work-context %s --active-only" % hermes_instance_id,
-            "mac-hermes tasks --state open",
-            "mac-hermes projects",
-            "mac-hermes project-items",
-            "mac-hermes agents",
-            "hgmac fleets list",
-            "hgmac projects list",
-            "hgmac tasks list",
-            "hgmac tasks add-child {task_id} --title <child>",
-            "mac-hermes claim-next %s --dry-run" % agent_id,
-            "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
-            "mac-hermes web-search \"project dependency release notes\" --limit 5",
+                "name": "public_artifact_publish",
+                "kind": "hub_directory_static_http",
+                "required": False,
+                "endpoint": webdav_method.get("public_url", ""),
+                "environment": ["MAC_PUBLISH_DIR", "MAC_PUBLISH_PUBLIC_URL"],
+                "purpose": "Publish task artifacts by writing to the hub publish directory and exposing public GET/HEAD reads without HTTP write ingress.",
+            }
+        )
+    direct_session_workflow = [
+        "cd %s" % workspace_path,
+        "ls .tickets",
+        "mac task ready --limit 10",
+        "mac task stats",
+        "mac-hermes runtime-proof %s" % hermes_instance_id,
+        "mac-hermes work-context %s --active-only" % hermes_instance_id,
+        "mac-hermes tasks --state open",
+        "mac-hermes projects",
+        "mac-hermes project-items",
+        "mac-hermes agents",
+        "hgmac fleets list",
+        "hgmac projects list",
+        "hgmac tasks list",
+        "hgmac tasks add-child {task_id} --title <child>",
+        "mac-hermes claim-next %s --dry-run" % agent_id,
+        "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
+        "mac-hermes web-search \"project dependency release notes\" --limit 5",
+    ]
+    if webdav_method.get("enabled"):
+        direct_session_workflow.append(str(webdav_method.get("example_upload") or ""))
+    direct_session_workflow.extend(
+        [
             "hgmac agents identity %s" % agent_id,
             "hgmac agents claim-next %s --dry-run" % agent_id,
             "mac-agent --loop --executor %s" % (mac_home / "bin" / "mac-hermes-task-executor"),
@@ -246,7 +255,18 @@ def _session_capability_contract(
             "git commit -m \"<message>\"",
             "git pull --rebase",
             "git push",
-        ],
+        ]
+    )
+    return {
+        "schema": "mac.hermes.session_capabilities.v1",
+        "parity_target": "direct_codex_or_claude_session_in_mac_repo",
+        "workspace": {
+            "path": str(workspace_path),
+            "project_contract": repository_contract,
+            "working_directory_rule": "Run repository commands from this workspace unless a task repository contract says otherwise.",
+        },
+        "capabilities": capabilities,
+        "direct_session_workflow": direct_session_workflow,
         "rules": [
             "Treat MAC fleets, agents, tasks, and projects as first-class operational objects.",
             "Read issue text from .tickets/<id>.md (wedow-compatible markdown). The MAC hub task ledger is the canonical execution store; .tickets/ is the git-trackable mirror.",
@@ -257,6 +277,63 @@ def _session_capability_contract(
             "Use mac-hermes-task-executor through mac-agent loop mode for production Hermes oneshot task execution.",
             "Commit, pull/rebase, and push Git before reporting completed code work.",
         ],
+    }
+
+
+def _webdav_publish_method() -> Dict[str, Any]:
+    enabled = (os.environ.get("MAC_PUBLISH_WEBDAV_ENABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    public_url = (
+        os.environ.get("MAC_PUBLISH_PUBLIC_URL")
+        or os.environ.get("MAC_PUBLISH_WEBDAV_URL")
+        or os.environ.get("MAC_WEBDAV_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not enabled or not public_url:
+        return {"enabled": False}
+    public_path = os.environ.get("MAC_WEBDAV_PUBLIC_PATH") or "/artifacts/"
+    publish_dir = (
+        os.environ.get("MAC_PUBLISH_DIR")
+        or os.environ.get("MAC_WEBDAV_ROOT")
+        or str(Path.home() / ".mac" / "public-artifacts")
+    )
+    return {
+        "enabled": True,
+        "name": "hub_webdav_public_artifact",
+        "kind": "hub_directory_static_http",
+        "public_url": connection_url(public_url),
+        "public_path": public_path,
+        "publish_dir": publish_dir,
+        "read": {
+            "public": True,
+            "methods": ["GET", "HEAD"],
+            "auth_required": False,
+        },
+        "write": {
+            "mode": "hub_shared_directory",
+            "directory_env": "MAC_PUBLISH_DIR",
+            "directory": publish_dir,
+            "http_ingress": False,
+            "operations": ["create", "update"],
+        },
+        "crud": {
+            "transport": "mac_agentbus",
+            "endpoint": "/agentbus/artifact-publish",
+            "cli": "mac agentbus artifact-publish",
+            "operations": ["upsert", "get", "list", "delete"],
+        },
+        "rules": [
+            "Public readers may only GET or HEAD static artifact bytes.",
+            "Do not use HTTP PUT/MKCOL/DELETE for publishing; the public WebDAV/HTTP address is read-only.",
+            "Publish bytes by writing them under MAC_PUBLISH_DIR on the hub, then record or update the artifact through MAC/AgentBus.",
+            "Record sha256, size, content type, source task, publish path, and public URL as MAC evidence/publication metadata.",
+        ],
+        "example_upload": 'install -m 0644 ./artifact "$MAC_PUBLISH_DIR/artifact" && mac agentbus artifact-publish "$MAC_AGENT_ID" --operation upsert --path artifact --public-url "$MAC_PUBLISH_PUBLIC_URL/artifact" --digest sha256:<digest> --all-agents',
+        "example_read": "%s/artifact" % connection_url(public_url),
     }
 
 
@@ -495,6 +572,14 @@ def build_runtime_context(
         agent_id=resolved_agent_id,
         repository_contract=repository_contract,
     )
+    publication = {
+        "schema": "mac.hermes.publication_methods.v1",
+        "methods": [
+            method
+            for method in [_webdav_publish_method()]
+            if method.get("enabled")
+        ],
+    }
     return {
         "schema": RUNTIME_CONTEXT_SCHEMA,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -604,7 +689,13 @@ def build_runtime_context(
                 % resolved_agent_id,
                 "mac-hermes writeback %s {task_id}" % resolved_instance_id,
             ],
+            "publish_artifact": [
+                method["example_upload"]
+                for method in publication["methods"]
+                if method.get("example_upload")
+            ],
         },
+        "publication": publication,
         "first_class_objects": _first_class_object_contract(
             resolved_instance_id,
             resolved_agent_id,
@@ -640,6 +731,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         else {}
     )
     session = context.get("session_capabilities") if isinstance(context.get("session_capabilities"), dict) else {}
+    publication = context.get("publication") if isinstance(context.get("publication"), dict) else {}
     workspace = session.get("workspace") if isinstance(session.get("workspace"), dict) else {}
     project_contract = (
         workspace.get("project_contract")
@@ -718,6 +810,27 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
     lines.extend(["", "## Task Lifecycle", ""])
     for command in operations["create_task"] + operations["task_lifecycle"]:
         lines.append("- `%s`" % command)
+    publish_methods = [
+        item
+        for item in (publication.get("methods") or [])
+        if isinstance(item, dict)
+    ]
+    if publish_methods:
+        lines.extend(["", "## Artifact Publication", ""])
+        for method in publish_methods:
+            lines.append(
+                "- `%s`: public reads at `%s`; publish directory `%s`; CRUD via `%s`"
+                % (
+                    method.get("name") or "publish",
+                    method.get("public_url") or "",
+                    method.get("publish_dir") or "",
+                    (method.get("crud") or {}).get("cli") or "",
+                )
+            )
+            for rule in method.get("rules") or []:
+                lines.append("- %s" % rule)
+            if method.get("example_upload"):
+                lines.append("- `%s`" % method["example_upload"])
     lines.extend(["", "## Direct Session Parity", ""])
     lines.append("- Workspace: `%s`" % (workspace.get("path") or context["environment"].get("MAC_HERMES_WORKSPACE") or "unconfigured"))
     lines.append("- Repository contract: `%s`" % (project_contract.get("path") or "unconfigured"))
@@ -874,25 +987,40 @@ def write_runtime_context(
     context_path.chmod(0o600)
     markdown_path.write_text(render_runtime_markdown(context), encoding="utf-8")
     markdown_path.chmod(0o600)
+    env_updates = {
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(context_path),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(markdown_path),
+        "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
+        "MAC_FLEET_TENANT_ID": context["identity"]["tenant_id"],
+        "MAC_HERMES_PERSONA_ID": context["identity"]["persona_id"],
+        "MAC_HERMES_INSTANCE_ID": context["identity"]["hermes_instance_id"],
+        "MAC_WORKER_HERMES_INSTANCE_ID": context["identity"]["hermes_instance_id"],
+        "MAC_AGENT_ID": context["identity"]["agent_id"],
+        "MAC_WORKER_AGENT_NAME": context["agent"]["name"],
+        "MAC_WORKER_HOSTNAME": context["agent"]["name"],
+        "MAC_URL": context["environment"]["MAC_URL"],
+        "MAC_HUB_URL": context["environment"]["MAC_URL"],
+        "HERMES_HOME": context["environment"]["HERMES_HOME"],
+        "MAC_HERMES_WORKSPACE": context["environment"]["MAC_HERMES_WORKSPACE"],
+        "MAC_PROJECT_CONTRACT_FILE": context["environment"]["MAC_PROJECT_CONTRACT_FILE"],
+    }
+    methods = [
+        item
+        for item in (context.get("publication", {}).get("methods") or [])
+        if isinstance(item, dict)
+    ]
+    webdav = next((item for item in methods if item.get("name") == "hub_webdav_public_artifact"), None)
+    if webdav:
+        env_updates["MAC_PUBLISH_WEBDAV_ENABLED"] = "1"
+        env_updates["MAC_PUBLISH_WEBDAV_URL"] = str(webdav.get("public_url") or "")
+        env_updates["MAC_PUBLISH_PUBLIC_URL"] = str(webdav.get("public_url") or "")
+        env_updates["MAC_PUBLISH_DIR"] = str(webdav.get("publish_dir") or "")
+        env_updates["MAC_PUBLISH_METHOD"] = "hub_directory_http"
+        env_updates["MAC_WEBDAV_PUBLIC_URL"] = str(webdav.get("public_url") or "")
+        env_updates["MAC_WEBDAV_PUBLIC_PATH"] = str(webdav.get("public_path") or "/artifacts/")
     set_env(
         hermes_env_path,
-        {
-            "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(context_path),
-            "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(markdown_path),
-            "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
-            "MAC_FLEET_TENANT_ID": context["identity"]["tenant_id"],
-            "MAC_HERMES_PERSONA_ID": context["identity"]["persona_id"],
-            "MAC_HERMES_INSTANCE_ID": context["identity"]["hermes_instance_id"],
-            "MAC_WORKER_HERMES_INSTANCE_ID": context["identity"]["hermes_instance_id"],
-            "MAC_AGENT_ID": context["identity"]["agent_id"],
-            "MAC_WORKER_AGENT_NAME": context["agent"]["name"],
-            "MAC_WORKER_HOSTNAME": context["agent"]["name"],
-            "MAC_URL": context["environment"]["MAC_URL"],
-            "MAC_HUB_URL": context["environment"]["MAC_URL"],
-            "HERMES_HOME": context["environment"]["HERMES_HOME"],
-            "MAC_HERMES_WORKSPACE": context["environment"]["MAC_HERMES_WORKSPACE"],
-            "MAC_PROJECT_CONTRACT_FILE": context["environment"]["MAC_PROJECT_CONTRACT_FILE"],
-        },
+        env_updates,
     )
     return context
 

@@ -4,7 +4,7 @@ HUB ?=
 VENV ?= .venv
 LOCAL_BIN ?= $(HOME)/.local/bin
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
-CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-evidence mac-hermes-gateway
+CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
 .PHONY: require-python install-hooks setup deploy test test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 

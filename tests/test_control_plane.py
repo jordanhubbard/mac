@@ -7688,6 +7688,49 @@ def test_agentbus_streams_typed_content_without_weakening_control_messages(cp):
         cp.append_agentbus_chunk(stream.id, sender.id, payload={"late": True})
 
 
+def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):
+    sender = register_agent(cp, "sender", ["python"])
+    recipient = register_agent(cp, "recipient", ["python"])
+    monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
+    monkeypatch.setenv("MAC_PUBLISH_PUBLIC_URL", "http://hub.example:8790/artifacts")
+
+    created = cp.publish_agentbus_artifact(
+        sender.id,
+        operation="upsert",
+        recipient_agent_ids=[recipient.id],
+        digest="sha256:publish1",
+        path="reports/one.txt",
+        metadata={"content_type": "text/plain"},
+    )
+
+    assert created["schema"] == "mac.agentbus.artifact_publish_crud.v1"
+    assert created["operation"] == "upsert"
+    assert created["artifact"]["uri"] == "http://hub.example:8790/artifacts/reports/one.txt"
+    assert created["artifact"]["metadata"]["publish_dir"] == "/srv/mac-artifacts"
+    assert created["artifact"]["metadata"]["publish_path"] == "reports/one.txt"
+    assert created["artifact"]["metadata"]["public_url"] == "http://hub.example:8790/artifacts/reports/one.txt"
+    assert created["count"] == 1
+
+    chunks = cp.read_agentbus_chunks(recipient.id, created["streams"][0]["id"])
+    assert chunks[0].content_type == "application/vnd.mac.artifact-publish+json"
+    assert chunks[0].payload["schema"] == "mac.agentbus.artifact_publish.v1"
+    assert chunks[0].payload["operation"] == "upsert"
+    assert chunks[0].payload["artifact"]["digest"] == "sha256:publish1"
+
+    listed = cp.publish_agentbus_artifact(sender.id, operation="list")
+    assert [item["digest"] for item in listed["artifacts"]] == ["sha256:publish1"]
+    deleted = cp.publish_agentbus_artifact(
+        sender.id,
+        operation="delete",
+        digest="sha256:publish1",
+        recipient_agent_ids=[recipient.id],
+    )
+    assert deleted["deleted"] is True
+    assert deleted["artifact"]["digest"] == "sha256:publish1"
+    with pytest.raises(NotFoundError):
+        cp.get_artifact("sha256:publish1")
+
+
 def test_agentbus_enforces_recipient_chunk_size_and_stream_id_shape(cp):
     sender = register_agent(cp, "sender", ["python"])
     recipient = register_agent(cp, "recipient", ["python"])

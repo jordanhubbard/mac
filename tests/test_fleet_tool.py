@@ -98,6 +98,50 @@ def test_message_action_resolves_name_and_posts(monkeypatch):
     assert posted["payload"] == "hi"
 
 
+def test_publish_action_reports_directory_info(monkeypatch):
+    mod = _load()
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_rocky")
+    monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
+    monkeypatch.setenv("MAC_PUBLISH_PUBLIC_URL", "http://hub.example:8790/artifacts")
+    out = json.loads(mod._handle_fleet({"action": "publish", "operation": "info"}))
+    assert out["publish_dir"] == "/srv/mac-artifacts"
+    assert out["public_url"] == "http://hub.example:8790/artifacts"
+    assert out["http_ingress"] is False
+
+
+def test_publish_action_posts_agentbus_artifact_crud(monkeypatch):
+    mod = _load()
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_rocky")
+    monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
+    posted = {}
+
+    def fake_req(method, path, payload=None, **kw):
+        if method == "POST" and path == "/agentbus/artifact-publish":
+            posted.update(payload)
+            return {"schema": "mac.agentbus.artifact_publish_crud.v1", "operation": "upsert"}
+        return []
+
+    monkeypatch.setattr(mod, "_hub_request", fake_req)
+    out = json.loads(
+        mod._handle_fleet(
+            {
+                "action": "publish",
+                "operation": "upsert",
+                "digest": "sha256:abc",
+                "path": "out/report.txt",
+                "recipient_agent_ids": ["agent_natasha"],
+                "metadata": {"content_type": "text/plain"},
+            }
+        )
+    )
+    assert out["operation"] == "upsert"
+    assert posted["sender_agent_id"] == "agent_rocky"
+    assert posted["digest"] == "sha256:abc"
+    assert posted["path"] == "out/report.txt"
+    assert posted["publish_dir"] == "/srv/mac-artifacts"
+    assert posted["recipient_agent_ids"] == ["agent_natasha"]
+
+
 def test_unknown_action_errors():
     mod = _load()
     out = mod._handle_fleet({"action": "bogus"})

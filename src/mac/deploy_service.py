@@ -234,6 +234,29 @@ class DeployService:
             rows = self.store.query_all("SELECT * FROM artifacts ORDER BY created_at, id")
         return [self._artifact_from_row(row) for row in rows]
 
+    def delete_artifact(self, artifact_id_or_digest: str, actor: str = "operator") -> Dict[str, Any]:
+        artifact = self.get_artifact(artifact_id_or_digest)
+        deployment = self.store.query_one(
+            "SELECT id FROM deployments WHERE artifact_id = ? LIMIT 1",
+            (artifact.id,),
+        )
+        if deployment is not None:
+            raise ValidationError("artifact is referenced by deployment %s" % deployment["id"])
+        self.store.execute("DELETE FROM artifacts WHERE id = ?", (artifact.id,))
+        self.observability.record_log(
+            "artifact.deleted",
+            layer="deploy",
+            source=actor,
+            subject_type="artifact",
+            subject_id=artifact.id,
+            detail={
+                "digest": artifact.digest,
+                "kind": artifact.kind,
+                "uri": artifact.uri,
+            },
+        )
+        return {"deleted": True, "artifact": artifact.to_dict()}
+
     # Environments + deployments ---------------------------------------
 
     def register_environment(

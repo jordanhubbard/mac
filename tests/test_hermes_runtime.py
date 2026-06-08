@@ -173,3 +173,41 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
 def test_stable_id_matches_deployed_worker_id_shape():
     assert stable_id("agent", "Rocky Host") == "agent_rocky_host"
     assert stable_id("hermes", "puck.local") == "hermes_puck.local"
+
+
+def test_runtime_context_advertises_directory_backed_public_artifact_publish(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_PUBLISH_WEBDAV_ENABLED", "1")
+    monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
+    monkeypatch.setenv("MAC_PUBLISH_PUBLIC_URL", "http://principal.example:8790/artifacts")
+    hermes_home = tmp_path / ".hermes"
+    mac_home = tmp_path / ".mac"
+    workspace = tmp_path / "workspace" / "mac"
+    workspace.mkdir(parents=True)
+    context_path = hermes_home / "mac-runtime-context.json"
+    markdown_path = hermes_home / "mac-runtime-context.md"
+    env_path = hermes_home / ".env"
+
+    context = write_runtime_context(
+        context_path=context_path,
+        markdown_path=markdown_path,
+        hermes_env_path=env_path,
+        agent_name="Rocky Host",
+        fleet_name="rocky",
+        mac_url="http://hub.example:8789",
+        hermes_home=hermes_home,
+        mac_home=mac_home,
+        workspace_path=workspace,
+    )
+
+    method = context["publication"]["methods"][0]
+    assert method["kind"] == "hub_directory_static_http"
+    assert method["publish_dir"] == "/srv/mac-artifacts"
+    assert method["public_url"] == "http://principal.example:8790/artifacts"
+    assert method["write"]["http_ingress"] is False
+    assert method["crud"]["cli"] == "mac agentbus artifact-publish"
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "Artifact Publication" in markdown
+    assert "MAC_PUBLISH_DIR" in markdown
+    env = parse_env(env_path)
+    assert env["MAC_PUBLISH_DIR"] == "/srv/mac-artifacts"
+    assert env["MAC_PUBLISH_PUBLIC_URL"] == "http://principal.example:8790/artifacts"

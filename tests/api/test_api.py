@@ -2251,6 +2251,59 @@ def test_fastapi_publishes_agentbus_repo_update_to_all_agents():
     assert chunks[0]["payload"]["request_id"] == "req-api"
 
 
+def test_fastapi_agentbus_artifact_publish_crud(monkeypatch):
+    monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
+    monkeypatch.setenv("MAC_PUBLISH_PUBLIC_URL", "http://hub.example:8790/artifacts")
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    machine = client.post("/machines", json={"hostname": "artifact-bus-host"}).json()
+    sender = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "sender"},
+    ).json()
+    recipient = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "recipient"},
+    ).json()
+
+    published = client.post(
+        "/agentbus/artifact-publish",
+        json={
+            "sender_agent_id": sender["id"],
+            "recipient_agent_ids": [recipient["id"]],
+            "digest": "sha256:api-artifact",
+            "path": "out/report.txt",
+            "metadata": {"content_type": "text/plain"},
+        },
+    ).json()
+
+    assert published["schema"] == "mac.agentbus.artifact_publish_crud.v1"
+    assert published["artifact"]["uri"] == "http://hub.example:8790/artifacts/out/report.txt"
+    assert published["artifact"]["metadata"]["publish_dir"] == "/srv/mac-artifacts"
+    stream = published["streams"][0]
+    chunks = client.get(
+        "/agentbus/streams/%s/chunks" % stream["id"],
+        params={"agent_id": recipient["id"]},
+    ).json()
+    assert chunks[0]["payload"]["schema"] == "mac.agentbus.artifact_publish.v1"
+    assert chunks[0]["payload"]["artifact"]["digest"] == "sha256:api-artifact"
+
+    listed = client.post(
+        "/agentbus/artifact-publish",
+        json={"sender_agent_id": sender["id"], "operation": "list"},
+    ).json()
+    assert [item["digest"] for item in listed["artifacts"]] == ["sha256:api-artifact"]
+    deleted = client.post(
+        "/agentbus/artifact-publish",
+        json={
+            "sender_agent_id": sender["id"],
+            "operation": "delete",
+            "digest": "sha256:api-artifact",
+        },
+    ).json()
+    assert deleted["deleted"] is True
+    assert client.get("/artifacts/sha256:api-artifact").status_code == 404
+
+
 def test_fastapi_project_import_preserves_first_class_task_fields():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))

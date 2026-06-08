@@ -107,6 +107,11 @@ from mac.models import (
     WorkflowDraft,
 )
 from mac.agent_state_service import AgentStateService
+from mac.agentbus_control import (
+    ARTIFACT_PUBLISH_CONTENT_TYPE,
+    ARTIFACT_PUBLISH_TOPIC,
+    artifact_publish_payload,
+)
 from mac.agentbus_service import AgentBusService
 from mac.beads_bridge_service import BeadsBridgeService
 from mac.deploy_service import DeployService
@@ -7545,6 +7550,137 @@ class ControlPlane:
     def publish_agentbus_content(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.publish(*args, **kwargs)
 
+    def publish_agentbus_artifact(
+        self,
+        sender_agent_id: str,
+        operation: str = "upsert",
+        recipient_agent_ids: Optional[List[str]] = None,
+        all_agents: bool = False,
+        artifact_id: Optional[str] = None,
+        digest: Optional[str] = None,
+        kind: str = "public-artifact",
+        uri: Optional[str] = None,
+        public_url: Optional[str] = None,
+        path: Optional[str] = None,
+        publish_dir: Optional[str] = None,
+        sbom_uri: Optional[str] = None,
+        signers: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> JsonDict:
+        self.get_agent(sender_agent_id)
+        op = (operation or "upsert").strip().lower()
+        if op == "create":
+            op = "upsert"
+        if op == "read":
+            op = "get"
+        if op not in {"upsert", "update", "get", "list", "delete"}:
+            raise ValidationError("unsupported artifact publish operation: %s" % operation)
+
+        configured_publish_dir = (
+            publish_dir
+            or os.environ.get("MAC_PUBLISH_DIR")
+            or os.environ.get("MAC_WEBDAV_ROOT")
+            or ""
+        ).strip()
+        configured_public_url = (
+            public_url
+            or os.environ.get("MAC_PUBLISH_PUBLIC_URL")
+            or os.environ.get("MAC_PUBLISH_WEBDAV_URL")
+            or os.environ.get("MAC_WEBDAV_PUBLIC_URL")
+            or ""
+        ).strip()
+        if not public_url and configured_public_url and path:
+            configured_public_url = "%s/%s" % (configured_public_url.rstrip("/"), path.strip("/"))
+        else:
+            configured_public_url = configured_public_url.rstrip("/")
+
+        artifact: Optional[JsonDict] = None
+        artifacts: Optional[List[JsonDict]] = None
+        deleted: Optional[JsonDict] = None
+
+        if op in {"upsert", "update"}:
+            if not digest:
+                raise ValidationError("artifact publish upsert requires digest")
+            artifact_uri = (uri or configured_public_url or "").strip()
+            if not artifact_uri:
+                raise ValidationError("artifact publish upsert requires uri or public_url")
+            merged_metadata = dict(metadata or {})
+            if path:
+                merged_metadata.setdefault("publish_path", path.strip("/"))
+            if configured_publish_dir:
+                merged_metadata.setdefault("publish_dir", configured_publish_dir)
+            if configured_public_url:
+                merged_metadata.setdefault("public_url", configured_public_url)
+            artifact = self.register_artifact(
+                kind,
+                digest,
+                artifact_uri,
+                sender_agent_id,
+                sbom_uri=sbom_uri,
+                signers=signers or [],
+                metadata=merged_metadata,
+            ).to_dict()
+        elif op == "get":
+            key = artifact_id or digest
+            if not key:
+                raise ValidationError("artifact publish get requires artifact_id or digest")
+            artifact = self.get_artifact(key).to_dict()
+        elif op == "list":
+            artifacts = [item.to_dict() for item in self.list_artifacts(kind or None)]
+        elif op == "delete":
+            key = artifact_id or digest
+            if not key:
+                raise ValidationError("artifact publish delete requires artifact_id or digest")
+            deleted = self.delete_artifact(key, actor=sender_agent_id)
+            artifact_value = deleted.get("artifact") if isinstance(deleted, dict) else None
+            artifact = artifact_value if isinstance(artifact_value, dict) else None
+
+        recipients = list(recipient_agent_ids or [])
+        if all_agents:
+            recipients.extend(agent.id for agent in self.list_agents())
+        recipients = list(dict.fromkeys(item for item in recipients if item))
+        streams: List[JsonDict] = []
+        if recipients and op in {"upsert", "update", "delete"}:
+            payload = artifact_publish_payload(
+                operation=op,
+                artifact=artifact,
+                publish_dir=configured_publish_dir,
+                public_url=configured_public_url,
+                path=path,
+                request_id=request_id,
+            )
+            streams = [
+                self.publish_agentbus_content(
+                    sender_agent_id=sender_agent_id,
+                    recipient_agent_id=recipient_id,
+                    content_type=ARTIFACT_PUBLISH_CONTENT_TYPE,
+                    topic=ARTIFACT_PUBLISH_TOPIC,
+                    payload=payload,
+                    task_id=task_id,
+                )["stream"]
+                for recipient_id in recipients
+            ]
+
+        response: JsonDict = {
+            "schema": "mac.agentbus.artifact_publish_crud.v1",
+            "operation": op,
+            "count": len(streams),
+            "streams": streams,
+        }
+        if artifact is not None:
+            response["artifact"] = artifact
+        if artifacts is not None:
+            response["artifacts"] = artifacts
+        if deleted is not None:
+            response["deleted"] = bool(deleted.get("deleted"))
+        if configured_publish_dir:
+            response["publish_dir"] = configured_publish_dir
+        if configured_public_url:
+            response["public_url"] = configured_public_url
+        return response
+
     # Reviews + publication: thin facade over ``self.reviews``.
 
     def request_review(self, *args: Any, **kwargs: Any) -> Review:
@@ -8666,6 +8802,9 @@ class ControlPlane:
 
     def list_artifacts(self, *args: Any, **kwargs: Any) -> List[Artifact]:
         return self.deploy.list_artifacts(*args, **kwargs)
+
+    def delete_artifact(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self.deploy.delete_artifact(*args, **kwargs)
 
     def register_environment(self, *args: Any, **kwargs: Any) -> Environment:
         return self.deploy.register_environment(*args, **kwargs)

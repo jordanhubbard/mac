@@ -847,7 +847,7 @@ def cmd_agentbus_read(args: argparse.Namespace) -> None:
 def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_content(
-            args.sender_agent_id,
+            sender_agent_id=args.sender_agent_id,
             recipient_agent_id=args.recipient_agent_id,
             content_type=args.content_type,
             payload=_agentbus_payload_arg(args),
@@ -880,7 +880,7 @@ def cmd_agentbus_repo_update(args: argparse.Namespace) -> None:
             "count": len(recipients),
             "streams": [
                 cp.publish_agentbus_content(
-                    args.sender_agent_id,
+                    sender_agent_id=args.sender_agent_id,
                     recipient_agent_id=recipient_id,
                     content_type=REPO_UPDATE_CONTENT_TYPE,
                     payload=payload,
@@ -889,6 +889,29 @@ def cmd_agentbus_repo_update(args: argparse.Namespace) -> None:
                 for recipient_id in recipients
             ],
         }
+    )
+
+
+def cmd_agentbus_artifact_publish(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).publish_agentbus_artifact(
+            sender_agent_id=args.sender_agent_id,
+            operation=args.operation,
+            recipient_agent_ids=list(args.recipient_agent_id or []),
+            all_agents=args.all_agents,
+            artifact_id=args.artifact,
+            digest=args.digest,
+            kind=args.kind,
+            uri=args.uri,
+            public_url=args.public_url,
+            path=args.path,
+            publish_dir=args.publish_dir,
+            sbom_uri=args.sbom_uri,
+            signers=list(_csv(args.signers)),
+            metadata=_json_arg(args.metadata, {}),
+            task_id=args.task_id,
+            request_id=args.request_id,
+        )
     )
 
 
@@ -1060,10 +1083,10 @@ def cmd_runtime_delta_promote(args: argparse.Namespace) -> None:
 def cmd_artifact_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_artifact(
-            args.kind,
-            args.digest,
-            args.uri,
-            args.created_by,
+            kind=args.kind,
+            digest=args.digest,
+            uri=args.uri,
+            created_by=args.created_by,
             sbom_uri=args.sbom_uri,
             signers=_csv(args.signers),
             metadata=_json_arg(args.metadata, {}),
@@ -1077,6 +1100,10 @@ def cmd_artifact_list(args: argparse.Namespace) -> None:
 
 def cmd_artifact_show(args: argparse.Namespace) -> None:
     _print(_plane(args).get_artifact(args.artifact))
+
+
+def cmd_artifact_delete(args: argparse.Namespace) -> None:
+    _print(_plane(args).delete_artifact(args.artifact, actor=args.actor))
 
 
 def cmd_migrate_import(args: argparse.Namespace) -> None:
@@ -2339,6 +2366,29 @@ def build_parser() -> argparse.ArgumentParser:
     bus_repo_update.add_argument("--no-restart", action="store_true")
     _set(cmd_agentbus_repo_update, bus_repo_update)
 
+    bus_artifact_publish = agentbus.add_parser("artifact-publish")
+    bus_artifact_publish.add_argument("sender_agent_id")
+    bus_artifact_publish.add_argument(
+        "--operation",
+        choices=("create", "upsert", "update", "get", "read", "list", "delete"),
+        default="upsert",
+    )
+    bus_artifact_publish.add_argument("--recipient-agent-id", action="append")
+    bus_artifact_publish.add_argument("--all-agents", action="store_true")
+    bus_artifact_publish.add_argument("--artifact", help="artifact id for get/delete")
+    bus_artifact_publish.add_argument("--digest")
+    bus_artifact_publish.add_argument("--kind", default="public-artifact")
+    bus_artifact_publish.add_argument("--uri")
+    bus_artifact_publish.add_argument("--public-url")
+    bus_artifact_publish.add_argument("--path", help="path under MAC_PUBLISH_DIR/public URL")
+    bus_artifact_publish.add_argument("--publish-dir")
+    bus_artifact_publish.add_argument("--sbom-uri")
+    bus_artifact_publish.add_argument("--signers", help="comma-separated signer identities")
+    bus_artifact_publish.add_argument("--metadata")
+    bus_artifact_publish.add_argument("--task-id")
+    bus_artifact_publish.add_argument("--request-id")
+    _set(cmd_agentbus_artifact_publish, bus_artifact_publish)
+
     review = sub.add_parser("review", help="review pipeline commands").add_subparsers(dest="review_command", required=True)
     request = review.add_parser("request")
     request.add_argument("task_id")
@@ -2474,6 +2524,10 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_show = artifact.add_parser("show")
     artifact_show.add_argument("artifact", help="artifact id or digest")
     _set(cmd_artifact_show, artifact_show)
+    artifact_delete = artifact.add_parser("delete")
+    artifact_delete.add_argument("artifact", help="artifact id or digest")
+    artifact_delete.add_argument("--actor", default="operator")
+    _set(cmd_artifact_delete, artifact_delete)
 
     env_root = sub.add_parser(
         "env",

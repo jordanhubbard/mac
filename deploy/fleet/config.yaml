@@ -48,6 +48,22 @@ defaults:
     url: ""
     bind_addr: ""
     port: 3002
+  webdav:
+    enabled: false
+    install: auto
+    # Public read URL. When omitted by setup specs, mac derives this from the
+    # hub SSH target/principal host rather than hub_url, so it does not publish
+    # a Tailscale MagicDNS name or reverse-proxy URL by accident.
+    url: ""
+    public_host: ""
+    bind_addr: "0.0.0.0"
+    port: 8790
+    # Hub publish directory served by WebDAV/HTTP. Set this explicitly when
+    # spokes should learn a real hub path or a shared mount path for publish
+    # actions; blank defaults to each node's ~/.mac/public-artifacts.
+    root: ""
+    public_path: "/artifacts/"
+    max_upload_bytes: 536870912
   network:
     provider: none
     install: auto

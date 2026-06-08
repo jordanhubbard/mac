@@ -579,6 +579,9 @@ class RemoteDispatch:
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 
+    def publish_agentbus_artifact(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agentbus/artifact-publish", _drop_none(kw)))
+
     # -- Review / Publish ---------------------------------------------------
 
     def request_review(self, task_id: str, reviewer_agent_id: str, actor: str) -> _Dictish:
@@ -754,6 +757,9 @@ class RemoteDispatch:
 
     def get_artifact(self, artifact: str) -> _Dictish:
         return _Dictish(self._get("/artifacts/%s" % quote(artifact, safe="")))
+
+    def delete_artifact(self, artifact: str, actor: Optional[str] = None) -> _Dictish:
+        return _Dictish(self._delete("/artifacts/%s" % quote(artifact, safe="")))
 
     def register_environment(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/environments", _drop_none(kw)))

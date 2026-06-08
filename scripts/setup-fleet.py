@@ -77,6 +77,15 @@ def qdrant_url_from_hub(hub_url: str, qdrant_port: int = 6333) -> str:
     return ""
 
 
+def webdav_url_from_target(target: str, port: int = 8790, public_path: str = "/artifacts/") -> str:
+    host = host_from_target(target)
+    if not public_path.startswith("/"):
+        public_path = "/" + public_path
+    if not public_path.endswith("/"):
+        public_path += "/"
+    return "http://%s:%d%s" % (host, port, public_path)
+
+
 def yaml_scalar(value: Any) -> str:
     if value is None:
         return '""'
@@ -312,6 +321,30 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     qdrant_data_dir = prompt("Qdrant data directory override (blank for default /var/lib/<fleet>/qdrant)", default="")
     firecrawl_port = 3002
     firecrawl_url = qdrant_url_from_hub(hub_url, firecrawl_port)
+    webdav_enabled = prompt_bool("Enable hub public artifact WebDAV server?", default=False)
+    webdav_port = 8790
+    webdav_public_path = "/artifacts/"
+    webdav_url = ""
+    webdav_bind_addr = "0.0.0.0"
+    webdav_root = ""
+    if webdav_enabled:
+        webdav_port_str = prompt("WebDAV public artifact port", default="8790")
+        webdav_port = int(webdav_port_str) if webdav_port_str.isdigit() else 8790
+        webdav_public_path = prompt("WebDAV public path prefix", default="/artifacts/")
+        if not webdav_public_path.startswith("/"):
+            webdav_public_path = "/" + webdav_public_path
+        if not webdav_public_path.endswith("/"):
+            webdav_public_path += "/"
+        webdav_url = prompt(
+            "WebDAV public read URL (hub principal address, not mesh/proxy)",
+            default=webdav_url_from_target(hub_target, webdav_port, webdav_public_path),
+            required=True,
+        )
+        webdav_bind_addr = prompt("WebDAV bind address", default="0.0.0.0")
+        webdav_root = prompt(
+            "Hub publish directory (blank for each node's ~/.mac/public-artifacts)",
+            default="",
+        )
 
     print("")
     print("Fleet mesh networking connects agents across networks without manual VPN config.")
@@ -471,6 +504,17 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                 "url": firecrawl_url,
                 "bind_addr": "",
                 "port": firecrawl_port,
+            },
+            "webdav": {
+                "enabled": webdav_enabled,
+                "install": "auto",
+                "url": webdav_url,
+                "public_host": host_from_target(hub_target),
+                "bind_addr": webdav_bind_addr,
+                "port": webdav_port,
+                "root": webdav_root,
+                "public_path": webdav_public_path,
+                "max_upload_bytes": 536870912,
             },
             "network": {
                 "provider": network_provider,
@@ -799,6 +843,12 @@ def main(argv: List[str]) -> int:
     )
     parser.add_argument("--headscale-login-server", default="", help="Headscale login server for --new-hub.")
     parser.add_argument("--headscale-preauth-key", default="", help="Headscale preauth key to place in env file.")
+    parser.add_argument("--webdav", action="store_true", help="Enable hub public artifact WebDAV server for --new-hub.")
+    parser.add_argument("--webdav-port", type=int, default=8790, help="WebDAV public artifact port for --new-hub.")
+    parser.add_argument("--webdav-url", default="", help="Public WebDAV read URL for --new-hub.")
+    parser.add_argument("--webdav-bind-addr", default="0.0.0.0", help="WebDAV bind address for --new-hub.")
+    parser.add_argument("--webdav-root", default="", help="Hub/shared artifact publish directory for --new-hub.")
+    parser.add_argument("--webdav-public-path", default="/artifacts/", help="WebDAV public path prefix for --new-hub.")
     args = parser.parse_args(argv)
 
     fleets_config = Path(args.fleets_config).expanduser()
@@ -870,6 +920,16 @@ def main(argv: List[str]) -> int:
         hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
         qdrant_port = 6333
         firecrawl_port = 3002
+        webdav_public_path = args.webdav_public_path.strip() or "/artifacts/"
+        if not webdav_public_path.startswith("/"):
+            webdav_public_path = "/" + webdav_public_path
+        if not webdav_public_path.endswith("/"):
+            webdav_public_path += "/"
+        webdav_url = args.webdav_url.strip() or (
+            webdav_url_from_target(hub_target, args.webdav_port, webdav_public_path)
+            if args.webdav
+            else ""
+        )
         headscale_login_server = args.headscale_login_server.strip()
         if args.network_provider == "headscale" and not headscale_login_server:
             print("--network-provider headscale requires --headscale-login-server", file=sys.stderr)
@@ -912,6 +972,17 @@ def main(argv: List[str]) -> int:
                     "url": qdrant_url_from_hub(hub_url, firecrawl_port),
                     "bind_addr": "",
                     "port": firecrawl_port,
+                },
+                "webdav": {
+                    "enabled": bool(args.webdav),
+                    "install": "auto",
+                    "url": webdav_url,
+                    "public_host": host,
+                    "bind_addr": args.webdav_bind_addr,
+                    "port": args.webdav_port,
+                    "root": args.webdav_root,
+                    "public_path": webdav_public_path,
+                    "max_upload_bytes": 536870912,
                 },
                 "network": {
                     "provider": args.network_provider,
