@@ -25,6 +25,21 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     assert thread is not None and thread.daemon is True and thread.is_alive()
 
 
+def test_post_tasks_accepts_summary_alias_for_description():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    resp = client.post(
+        "/tasks",
+        json={"title": "summary alias", "summary": "worker instructions"},
+    )
+
+    assert resp.status_code == 200
+    created = resp.json()
+    assert created["description"] == "worker instructions"
+    detail = client.get("/tasks/%s" % created["id"]).json()["task"]
+    assert detail["description"] == "worker instructions"
+
+
 def test_repositories_onboard_creates_contract_backed_task():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     resp = client.post(
