@@ -1862,6 +1862,113 @@ button.mobile-object-card {
   overflow-wrap: anywhere;
 }
 
+/* Click-to-copy task id chip. */
+.task-id-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 1px 6px 1px 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-id-copy:hover {
+  border-color: var(--line);
+  color: var(--accent);
+}
+
+.task-id-copy .task-id-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-id-copy .task-id-copied {
+  display: none;
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.task-id-copy.is-copied .task-id-text {
+  display: none;
+}
+
+.task-id-copy.is-copied .task-id-copied {
+  display: inline;
+}
+
+/* Collapsible description/summary clamped to 2 lines with a Show more toggle. */
+.task-summary {
+  margin-top: 8px;
+}
+
+.task-summary .task-summary-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-summary.is-clamped .task-summary-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-summary .task-summary-toggle {
+  margin-top: 2px;
+  padding: 0;
+  font-size: 0.75rem;
+}
+
+.task-summary .summary-hide {
+  display: inline;
+}
+
+.task-summary .summary-show {
+  display: none;
+}
+
+.task-summary.is-clamped .summary-show {
+  display: inline;
+}
+
+.task-summary.is-clamped .summary-hide {
+  display: none;
+}
+
+/* Hover-revealed quick-action bar (Retry / Cancel). */
+.task-card .quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease, max-height 0.12s ease;
+}
+
+.task-card .quick-actions:empty {
+  display: none;
+}
+
+.task-card:hover .quick-actions,
+.task-card:focus-within .quick-actions {
+  max-height: 60px;
+  opacity: 1;
+}
+
+.task-card .quick-action {
+  flex: 0 0 auto;
+}
+
 .task-card p,
 .record p,
 .runtime-record p,

@@ -297,6 +297,46 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
 
 
 # ---------------------------------------------------------------------------
+# JS — task card quick-actions, density, and timestamp display
+# ---------------------------------------------------------------------------
+
+
+def test_app_ts_and_app_js_have_task_card_quick_actions_and_copy():
+    """Task card improvements must exist in both the TS source and compiled JS."""
+    ts = (_UI_ROOT / "app.ts").read_text(encoding="utf-8")
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    for source in (ts, js):
+        # Relative timestamps with ISO tooltip
+        assert "formatIso" in source
+        assert "toISOString" in source
+        # Click-to-copy task id chip with feedback
+        assert "data-copy-id" in source
+        assert "copyTaskId" in source
+        assert "writeText" in source
+        assert "is-copied" in source
+        # Hover-revealed quick actions: Retry (failed) / Cancel (active)
+        assert "data-quick-action" in source
+        assert "runQuickAction" in source
+        assert 'data-quick-action="retry"' in source
+        assert 'data-quick-action="cancel"' in source
+        assert "/transition" in source
+        # Collapsible description/summary block with Show more toggle
+        assert "data-summary-toggle" in source
+        assert "data-task-summary" in source
+        assert "is-clamped" in source
+
+
+def test_css_contains_task_card_density_styles():
+    css = (_UI_ROOT / "styles.css").read_text(encoding="utf-8")
+    assert ".task-id-copy" in css
+    assert ".task-id-copied" in css
+    assert ".task-summary" in css
+    assert "line-clamp" in css
+    assert ".quick-actions" in css
+    assert ".task-card:hover .quick-actions" in css
+
+
+# ---------------------------------------------------------------------------
 # TS/JS source consistency
 # ---------------------------------------------------------------------------
 

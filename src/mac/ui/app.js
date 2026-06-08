@@ -4201,11 +4201,13 @@ function taskCard(detail, agents) {
     const origin = taskOrigin(task);
     const isSelected = state.selectedId === task.id;
     const recentHistory = detail.history.slice(-3);
-    const summaryText = String(detail.summary?.summary || "");
+    const summaryText = String(task.description || detail.summary?.summary || "");
+    const isFailed = task.state === "failed";
+    const isActive = !TERMINAL_TASK_STATES.has(task.state);
     return `
     <article class="task-card status-${escapeHtml(task.state)} ${selectedClass(task.id)}">
       <div class="record-header">
-        <div class="task-card-heading"><h3>${escapeHtml(task.title)}</h3><p class="muted small mono task-id" title="${escapeHtml(task.id)}">${escapeHtml(task.id)}</p></div>
+        <div class="task-card-heading"><h3>${escapeHtml(task.title)}</h3><button class="task-id-copy muted small mono task-id" type="button" data-copy-id="${escapeHtml(task.id)}" title="Click to copy: ${escapeHtml(task.id)}" aria-label="Copy task id ${escapeHtml(task.id)}"><span class="task-id-text">${escapeHtml(task.id)}</span><span class="task-id-copied" aria-hidden="true">Copied!</span></button></div>
         <button class="select-button${isSelected ? " is-selected" : ""}" type="button" data-select-id="${escapeHtml(task.id)}" aria-pressed="${isSelected ? "true" : "false"}">${isSelected ? "Selected" : "Inspect"}</button>
       </div>
       <div class="chip-row">
@@ -4215,11 +4217,14 @@ function taskCard(detail, agents) {
         ${origin.hermes_instance_id ? chip("Hermes origin", "info") : ""}
       </div>
       <div class="time-summary">
-        <span class="time-cell"><span class="time-label">Started</span><span class="time-value">${escapeHtml(task.started_at ? formatAge(task.started_at) : "not started")}</span></span>
-        <span class="time-cell"><span class="time-label">Completed</span><span class="time-value">${escapeHtml(task.completed_at ? formatAge(task.completed_at) : "not completed")}</span></span>
-        <span class="time-cell"><span class="time-label">Updated</span><span class="time-value">${escapeHtml(formatAge(task.last_updated_at || task.updated_at))}</span></span>
+        <span class="time-cell"><span class="time-label">Started</span><span class="time-value" title="${escapeHtml(formatIso(task.started_at))}">${escapeHtml(task.started_at ? formatAge(task.started_at) : "not started")}</span></span>
+        <span class="time-cell"><span class="time-label">Completed</span><span class="time-value" title="${escapeHtml(formatIso(task.completed_at))}">${escapeHtml(task.completed_at ? formatAge(task.completed_at) : "not completed")}</span></span>
+        <span class="time-cell"><span class="time-label">Updated</span><span class="time-value" title="${escapeHtml(formatIso(task.last_updated_at || task.updated_at))}">${escapeHtml(formatAge(task.last_updated_at || task.updated_at))}</span></span>
       </div>
-      ${summaryText ? `<p class="small muted">${escapeHtml(summaryText)}</p>` : ""}
+      ${summaryText ? `<div class="task-summary is-clamped" data-task-summary>
+        <p class="small muted task-summary-text">${escapeHtml(summaryText)}</p>
+        <button class="link-button task-summary-toggle" type="button" data-summary-toggle><span class="summary-show">Show more</span><span class="summary-hide">Show less</span></button>
+      </div>` : ""}
       ${recentHistory.length ? `<details class="activity-disclosure">
         <summary><span class="activity-show">Show activity</span><span class="activity-hide">Hide activity</span></summary>
         <div class="timeline">
@@ -4228,6 +4233,10 @@ function taskCard(detail, agents) {
       </details>` : ""}
       <div class="record-actions">
         <button class="link-button" type="button" data-select-id="${escapeHtml(task.id)}">Inspect</button>
+      </div>
+      <div class="quick-actions" role="group" aria-label="Quick actions">
+        ${isFailed ? `<button class="link-button quick-action quick-action-retry" type="button" data-quick-action="retry" data-task-id="${escapeHtml(task.id)}">Retry</button>` : ""}
+        ${isActive ? `<button class="danger-button quick-action quick-action-cancel" type="button" data-quick-action="cancel" data-task-id="${escapeHtml(task.id)}">Cancel</button>` : ""}
       </div>
     </article>
   `;
@@ -5290,6 +5299,26 @@ async function handleContentClick(event) {
         render();
         return;
     }
+    const copyTarget = event.target?.closest("[data-copy-id]");
+    if (copyTarget) {
+        event.preventDefault();
+        await copyTaskId(copyTarget);
+        return;
+    }
+    const summaryToggle = event.target?.closest("[data-summary-toggle]");
+    if (summaryToggle) {
+        event.preventDefault();
+        const block = summaryToggle.closest("[data-task-summary]");
+        if (block)
+            block.classList.toggle("is-clamped");
+        return;
+    }
+    const quickAction = event.target?.closest("[data-quick-action]");
+    if (quickAction) {
+        event.preventDefault();
+        await runQuickAction(quickAction);
+        return;
+    }
     const target = event.target?.closest("[data-select-id]");
     if (!target)
         return;
@@ -5299,6 +5328,69 @@ async function handleContentClick(event) {
     state.selectedId = state.selectedId === selectedId ? "" : selectedId;
     updateUrlState();
     render();
+}
+async function copyTaskId(button) {
+    const id = button.dataset.copyId || "";
+    if (!id)
+        return;
+    let copied = false;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(id);
+            copied = true;
+        }
+    }
+    catch {
+        copied = false;
+    }
+    if (!copied) {
+        try {
+            const helper = document.createElement("textarea");
+            helper.value = id;
+            helper.setAttribute("readonly", "");
+            helper.style.position = "absolute";
+            helper.style.left = "-9999px";
+            document.body.appendChild(helper);
+            helper.select();
+            document.execCommand("copy");
+            document.body.removeChild(helper);
+            copied = true;
+        }
+        catch {
+            copied = false;
+        }
+    }
+    if (copied) {
+        button.classList.add("is-copied");
+        window.setTimeout(() => button.classList.remove("is-copied"), 1200);
+    }
+}
+async function runQuickAction(button) {
+    const taskId = button.dataset.taskId || "";
+    const action = button.dataset.quickAction || "";
+    if (!taskId || !action)
+        return;
+    const targetState = action === "retry" ? "open" : "cancelled";
+    const label = action === "retry" ? "Retry" : "Cancel";
+    if (action === "cancel" && !window.confirm("Cancel this task?"))
+        return;
+    button.disabled = true;
+    try {
+        const result = await postJSON(`/tasks/${encodeURIComponent(taskId)}/transition`, {
+            target_state: targetState,
+            actor: "human",
+            detail: {},
+        });
+        state.actionMessage = `${label} ok: ${redactedJson(result)}`;
+        await loadDashboard();
+    }
+    catch (error) {
+        state.actionMessage = `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+        render();
+    }
+    finally {
+        button.disabled = false;
+    }
 }
 function navigateDashboardView(view) {
     if (!view || !VIEW_KEYS.has(view))
@@ -6573,6 +6665,12 @@ function formatAge(value) {
 }
 function formatTime(value) {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(value);
+}
+function formatIso(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime()))
+        return "unknown";
+    return date.toISOString();
 }
 function labelize(value) {
     return String(value == null || value === "" ? "none" : value).replaceAll("_", " ");
