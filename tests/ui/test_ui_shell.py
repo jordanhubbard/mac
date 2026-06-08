@@ -281,6 +281,17 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
         "runtimeCreate",
         "rolloutVerifyArtifact",
         "secretCreate",
+        "hermesConfigSurfacePanel",
+        "hermesFleetSelect",
+        "hermesRuntimeUpdate",
+        "hermesConfigSet",
+        "hermesEnvSet",
+        "hermesPluginsUpdate",
+        "hermesSkillsUpdate",
+        "Config Fields",
+        "Environment Variables",
+        "Plugins",
+        "Skills",
     ):
         assert marker in js
 

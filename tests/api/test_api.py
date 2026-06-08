@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
+from mac.deploy_env import parse_env_text
 from mac.services import ControlPlane, sign_verification_manifest
 
 
@@ -1058,6 +1060,103 @@ def test_agent_registration_observes_created_agent_in_existing_fleet():
     assert refreshed["agent_ids"] == []
     assert refreshed["observed_agent_ids"] == ["agent_rocky"]
     assert refreshed["unmanaged_agent_ids"] == ["agent_rocky"]
+
+
+def test_dashboard_exposes_and_updates_hermes_fleet_config_surface(monkeypatch, tmp_path):
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "model: local-model\nplugins:\n  enabled:\n    - local-plugin\n",
+        encoding="utf-8",
+    )
+    (hermes_home / ".env").write_text("OPENAI_API_KEY=local-secret\n", encoding="utf-8")
+    registry_path = tmp_path / "fleets.yaml"
+    registry_path.write_text(
+        """
+version: 1
+fleets:
+  classic:
+    fleet_name: classic
+    hub_agent: classic
+    defaults:
+      hermes:
+        gateway_model: openai/gpt-5
+        gateway_provider: custom
+        gateway_base_url: https://gateway.example.test/v1
+        config:
+          model: fleet-model
+        env:
+          OPENAI_API_KEY: fleet-secret
+        plugins:
+          enabled:
+            - image_gen/nvidia
+        skills:
+          disabled:
+            - old-skill
+    agents: []
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(registry_path))
+
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    machine = client.post("/machines", json={"hostname": "host-1"}).json()
+    agent = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "worker", "agent_id": "agent_worker"},
+    ).json()
+    fleet = client.post(
+        "/fleets",
+        json={"name": "classic", "agent_ids": [agent["id"]]},
+    ).json()
+
+    state = client.get("/dashboard/state").json()
+    surfaces = state["hermes_config_surfaces"]
+    assert len(surfaces) == 1
+    surface = surfaces[0]
+    assert surface["schema"] == "mac.hermes_config_surface.v1"
+    assert surface["fleet_name"] == "classic"
+    assert surface["agent_count"] == 1
+    assert surface["runtime"]["gateway_model"] == "openai/gpt-5"
+    model_field = next(item for item in surface["config_fields"] if item["key"] == "model")
+    assert model_field["value"] == "fleet-model"
+    assert model_field["desired"] is True
+    openai_key = next(item for item in surface["env_vars"] if item["name"] == "OPENAI_API_KEY")
+    assert openai_key["desired"] is True
+    assert openai_key["redacted_value"].startswith("<redacted:")
+    assert "fleet-secret" not in json.dumps(surface)
+    assert "plugins" in surface and "skills" in surface
+
+    response = client.put(
+        "/dashboard/hermes/fleets/%s/config-surface" % fleet["id"],
+        json={
+            "runtime": {"gateway_model": "openai/gpt-5-mini"},
+            "config": {"tools.web_search.enabled": True},
+            "env": {"NVIDIA_API_KEY": "nvidia-secret"},
+            "plugins": {"enabled": ["image_gen/nvidia"], "disabled": ["local-plugin"]},
+            "skills": {"disabled": ["imagegen"]},
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["registry_updated"] is True
+    assert body["local_apply"]["applied"] is True
+
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    desired = registry["fleets"]["classic"]["defaults"]["hermes"]
+    assert desired["gateway_model"] == "openai/gpt-5-mini"
+    assert desired["config"]["tools"]["web_search"]["enabled"] is True
+    assert desired["env"]["NVIDIA_API_KEY"] == "nvidia-secret"
+    assert desired["plugins"]["disabled"] == ["local-plugin"]
+    assert desired["skills"]["disabled"] == ["imagegen"]
+
+    local_config = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
+    assert local_config["tools"]["web_search"]["enabled"] is True
+    assert local_config["plugins"]["disabled"] == ["local-plugin"]
+    assert local_config["skills"]["disabled"] == ["imagegen"]
+    local_env = parse_env_text((hermes_home / ".env").read_text(encoding="utf-8"))
+    assert local_env["NVIDIA_API_KEY"] == "nvidia-secret"
 
 
 def test_fleet_observed_agents_endpoint_does_not_change_configured_members():

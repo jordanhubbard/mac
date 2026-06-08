@@ -344,7 +344,9 @@ fleet_config_query() {
   "$PYTHON_BIN" - "$mode" "$FLEET_CONFIG" "$FLEET_REGISTRY_CONFIG" "$HUB_SELECTOR" "$@" <<'PY'
 from __future__ import annotations
 
+import base64
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -464,6 +466,28 @@ def webdav_url(dns_name: str, public_path: str) -> str:
 def stable_id(prefix: str, value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).lower()).strip("_")
     return "%s_%s" % (prefix, safe or "default")
+
+
+def hermes_surface_payload(hermes: Dict[str, Any]) -> str:
+    payload = {
+        "schema": "mac.hermes_fleet_config_payload.v1",
+        "runtime": {
+            key: hermes.get(key, "")
+            for key in (
+                "slack_home_channel_name",
+                "gateway_model",
+                "gateway_provider",
+                "gateway_base_url",
+            )
+            if key in hermes
+        },
+        "config": hermes.get("config") if isinstance(hermes.get("config"), dict) else {},
+        "env": hermes.get("env") if isinstance(hermes.get("env"), dict) else {},
+        "plugins": hermes.get("plugins") if isinstance(hermes.get("plugins"), dict) else {},
+        "skills": hermes.get("skills") if isinstance(hermes.get("skills"), dict) else {},
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
 
 
 def scrub_registry(value: Any) -> Any:
@@ -758,6 +782,7 @@ for name in selected:
         webdav_port,
         text_field(webdav.get("root")),
         webdav_public_path,
+        hermes_surface_payload(hermes),
     ]
     require_no_pipe(fields)
     print("|".join(fields))
@@ -955,8 +980,8 @@ REMOTE
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path <<<"$spec"
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -1019,6 +1044,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_MODEL "$gateway_model"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_PROVIDER "$gateway_provider"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_BASE_URL "$gateway_base_url"
+  add_remote_env MAC_DEPLOY_HERMES_SURFACE_B64 "$hermes_surface_b64"
   add_remote_env MAC_DEPLOY_HUB_URL "$hub_url"
   add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"
   add_remote_env MAC_DEPLOY_CONTROL_BIND_HOST "$bind_host"
@@ -1150,6 +1176,7 @@ if [ "$HERMES_GATEWAY_MODEL" = "*" ]; then
 fi
 HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
+HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
 HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
@@ -1322,7 +1349,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_SURFACE_B64 HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -3084,6 +3111,17 @@ sync_hermes_chat_config() {
     || log "WARNING: hermes chat config sync failed; agent chat self-test may stay degraded"
 }
 
+apply_hermes_fleet_surface() {
+  if [ -z "${HERMES_SURFACE_B64:-}" ]; then
+    return 0
+  fi
+  log "applying fleet Hermes config surface"
+  "$VENV/bin/python" -m mac.hermes_config_surface apply \
+    --payload-b64 "$HERMES_SURFACE_B64" \
+    --hermes-home "$HOME/.hermes" \
+    || log "WARNING: fleet Hermes config surface apply failed; preserving existing Hermes config"
+}
+
 install_fleet_skills() {
   # Fleet-wide (no GPU gate): these skills drive the hub's hosted models through
   # the in-mac router (vision + image generation), so every agent benefits — no
@@ -3957,6 +3995,7 @@ initialize_hermes_home
 ensure_hermes_identity_memory_continuity
 apply_hermes_gateway_runtime_shim
 sync_hermes_chat_config
+apply_hermes_fleet_surface
 install_fleet_skills
 install_omniverse_gpu_skills
 install_hermes_web_deps

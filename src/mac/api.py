@@ -25,6 +25,10 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
     repo_update_payload,
 )
+from mac.hermes_config_surface import (
+    build_hermes_config_surfaces,
+    update_fleet_hermes_surface,
+)
 from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.services import ControlPlane
@@ -600,6 +604,18 @@ class DashboardWorkflowPlanAccept(BaseModel):
     nodes: List[DashboardWorkflowPlanNode]
     actor: str = "human"
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardHermesConfigUpdate(BaseModel):
+    runtime: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
+    remove_config: List[str] = Field(default_factory=list)
+    env: Dict[str, Any] = Field(default_factory=dict)
+    remove_env: List[str] = Field(default_factory=list)
+    plugins: Dict[str, Any] = Field(default_factory=dict)
+    skills: Dict[str, Any] = Field(default_factory=dict)
+    apply_local: bool = True
+    actor: str = "human"
 
 
 class HeartbeatRequest(BaseModel):
@@ -1975,6 +1991,10 @@ def _dashboard_state(
         "hermes_instances": hermes_instances,
         "hermes_work_contexts": hermes_work_contexts,
         "hermes_runtime_proofs": hermes_runtime_proofs,
+        "hermes_config_surfaces": build_hermes_config_surfaces(
+            fleets,
+            agents=[agent.to_dict() for agent in agents],
+        ),
         "platform_bindings": bindings,
         "roles": roles,
         "provisioning_requests": provisioning_requests,
@@ -2743,6 +2763,23 @@ def create_app(
     @app.get("/dashboard/hermes/{instance_id}/activity")
     def dashboard_hermes_activity(instance_id: str) -> Dict[str, Any]:
         return _dashboard_hermes_activity(cp, instance_id)
+
+    @app.put("/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface")
+    def dashboard_hermes_config_surface_update(
+        fleet_id_or_name: str,
+        body: DashboardHermesConfigUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        data = _data(body)
+        for key in ("runtime", "config", "env", "plugins", "skills"):
+            _ensure_payload_bounded(data.get(key) or {}, "dashboard.hermes_config.%s" % key)
+        fleet = cp.get_fleet(fleet_id_or_name).to_dict()
+        return update_fleet_hermes_surface(
+            fleet,
+            data,
+            apply_local=bool(data.get("apply_local", True)),
+        )
 
     @app.get("/dashboard/rollouts/{rollout_id}/status")
     def dashboard_rollout_status(rollout_id: str) -> Dict[str, Any]:

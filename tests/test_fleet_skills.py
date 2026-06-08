@@ -32,4 +32,4 @@ def test_fleet_skills_installed_for_every_agent():
     assert 'deploy/skills/fleet' in fn
     assert '"$HOME/.hermes/skills"' in fn
     # invoked in the agent setup flow, before the GPU-only omniverse install
-    assert "\nsync_hermes_chat_config\ninstall_fleet_skills\ninstall_omniverse_gpu_skills\n" in script
+    assert "\nsync_hermes_chat_config\napply_hermes_fleet_surface\ninstall_fleet_skills\ninstall_omniverse_gpu_skills\n" in script

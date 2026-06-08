@@ -952,6 +952,17 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "source": "route-test",
             "metadata": {"seen": True},
         },
+        ("PUT", "/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface"): {
+            "runtime": {
+                "gateway_model": "route-coverage-model",
+                "gateway_provider": "custom",
+            },
+            "config": {"route.coverage.enabled": True},
+            "env": {"ROUTE_COVERAGE_TOKEN": "route-token"},
+            "plugins": {"enabled": ["route-plugin"], "disabled": []},
+            "skills": {"disabled": ["route-skill"]},
+            "apply_local": False,
+        },
         ("POST", "/projects"): {"name": "route-project-case", "description": "created by route coverage"},
         ("PUT", "/projects/{project}"): {
             "description": "updated route project",
@@ -1367,12 +1378,17 @@ edges:
     return RequestCase(path, kwargs, expected)
 
 
-def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch):
+def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
     monkeypatch.setenv("TOKENHUB_URL", "https://tokenhub.example.test")
     monkeypatch.setenv("TOKENHUB_ADMIN_TOKEN", "route-tokenhub-admin")
     monkeypatch.setenv("QDRANT_URL", "https://qdrant.example.test")
     monkeypatch.setenv("MAC_QDRANT_URL", "https://qdrant.example.test")
     monkeypatch.setenv("FIRECRAWL_API_URL", "https://firecrawl.example.test")
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "fleets.yaml"))
 
     class FakeVectorWriter:
         def __init__(self, *args, **kwargs):
