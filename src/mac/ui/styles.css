@@ -505,6 +505,55 @@ h3 {
   display: none;
 }
 
+/* Connection config drawer: once connected, the config row collapses behind
+   the gear toggle and the freed vertical space is returned to the board. */
+.topbar.config-collapsed .connection-form {
+  display: none;
+}
+
+.config-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.config-toggle[hidden] {
+  display: none;
+}
+
+.config-toggle:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.config-toggle.is-active {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.config-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.config-toggle-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
 .sync-state {
   min-width: 120px;
   color: var(--muted);

@@ -271,6 +271,7 @@ const state = {
     data: null,
     error: null,
     actionMessage: null,
+    configCollapsed: false,
     agentQuery: DEFAULT_URL_STATE.agentQuery,
     agentFilter: DEFAULT_URL_STATE.agentFilter,
     agentSort: DEFAULT_URL_STATE.agentSort,
@@ -334,6 +335,8 @@ const nodes = {
     serviceLinks: requiredElement("#serviceLinks"),
     connectionBadge: requiredElement("#connectionBadge"),
     themeToggle: requiredElement("#themeToggle"),
+    topbar: requiredElement("#topbar"),
+    configToggle: requiredElement("#configToggle"),
 };
 const api = createDashboardApi(() => state.token, () => state.apiBaseUrl);
 applyTheme(readStoredTheme());
@@ -366,6 +369,7 @@ function bindEvents() {
     });
     nodes.refresh.addEventListener("click", () => loadDashboard());
     nodes.themeToggle.addEventListener("click", () => toggleTheme());
+    nodes.configToggle.addEventListener("click", () => toggleConfigCollapsed());
     nodes.viewSelect.addEventListener("change", () => {
         navigateDashboardView(nodes.viewSelect.value);
     });
@@ -461,6 +465,7 @@ async function loadDashboard() {
     try {
         applyDashboardData((await requestJSON("/dashboard/state")));
         state.connection = { ...state.connection, connected: true };
+        state.configCollapsed = true;
         syncDashboardSubscription();
     }
     catch (error) {
@@ -614,6 +619,7 @@ async function disconnectFromControls() {
     else {
         state.connection = { ...api.connection(), connected: false };
     }
+    state.configCollapsed = false;
     render();
 }
 async function applySelectedTarget(targetId, testingUrl, tokenSourceId = "", manualToken = "") {
@@ -824,6 +830,25 @@ function renderSyncState() {
             : connected
                 ? "Not updated"
                 : "Not connected";
+    renderConfigVisibility();
+}
+function renderConfigVisibility() {
+    const connected = isConnectionLive();
+    const collapsed = connected && state.configCollapsed;
+    nodes.topbar.classList.toggle("config-collapsed", collapsed);
+    nodes.connectionForm.hidden = collapsed;
+    nodes.configToggle.hidden = !connected;
+    nodes.configToggle.setAttribute("aria-expanded", String(!collapsed));
+    nodes.configToggle.setAttribute("aria-label", collapsed ? "Show connection settings" : "Hide connection settings");
+    nodes.configToggle.title = collapsed ? "Show connection settings" : "Hide connection settings";
+    nodes.configToggle.classList.toggle("is-active", !collapsed);
+}
+function setConfigCollapsed(collapsed) {
+    state.configCollapsed = collapsed;
+    renderConfigVisibility();
+}
+function toggleConfigCollapsed() {
+    setConfigCollapsed(!state.configCollapsed);
 }
 function renderBanner() {
     if (!state.error) {
