@@ -533,6 +533,7 @@ interface DashboardState {
   data: DashboardData | null;
   error: string | null;
   actionMessage: string | null;
+  configCollapsed: boolean;
   agentQuery: string;
   agentFilter: string;
   agentSort: string;
@@ -599,6 +600,8 @@ interface DashboardNodes {
   serviceLinks: HTMLElement;
   connectionBadge: HTMLElement;
   themeToggle: HTMLButtonElement;
+  topbar: HTMLElement;
+  configToggle: HTMLButtonElement;
 }
 
 const TOKEN_KEY = "mac.dashboard.token";
@@ -875,6 +878,7 @@ const state: DashboardState = {
   data: null,
   error: null,
   actionMessage: null,
+  configCollapsed: false,
   agentQuery: DEFAULT_URL_STATE.agentQuery,
   agentFilter: DEFAULT_URL_STATE.agentFilter,
   agentSort: DEFAULT_URL_STATE.agentSort,
@@ -939,6 +943,8 @@ const nodes: DashboardNodes = {
   serviceLinks: requiredElement("#serviceLinks"),
   connectionBadge: requiredElement("#connectionBadge"),
   themeToggle: requiredElement<HTMLButtonElement>("#themeToggle"),
+  topbar: requiredElement("#topbar"),
+  configToggle: requiredElement<HTMLButtonElement>("#configToggle"),
 };
 const api = createDashboardApi(() => state.token, () => state.apiBaseUrl);
 
@@ -971,6 +977,7 @@ function bindEvents(): void {
   });
   nodes.refresh.addEventListener("click", () => loadDashboard());
   nodes.themeToggle.addEventListener("click", () => toggleTheme());
+  nodes.configToggle.addEventListener("click", () => toggleConfigCollapsed());
   nodes.viewSelect.addEventListener("change", () => {
     navigateDashboardView(nodes.viewSelect.value as ViewKey);
   });
@@ -1054,6 +1061,9 @@ async function loadDashboard(): Promise<void> {
   try {
     applyDashboardData((await requestJSON("/dashboard/state")) as DashboardData);
     state.connection = { ...state.connection, connected: true };
+    // First successful connection collapses the config row so the board gets
+    // the vertical space back; the gear toggle re-opens it on demand.
+    state.configCollapsed = true;
     syncDashboardSubscription();
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
@@ -1209,6 +1219,9 @@ async function disconnectFromControls(): Promise<void> {
   } else {
     state.connection = { ...api.connection(), connected: false };
   }
+  // Re-expand the config row on disconnect so the inputs are immediately
+  // available for reconnecting.
+  state.configCollapsed = false;
   render();
 }
 
@@ -1420,7 +1433,39 @@ function renderSyncState(): void {
       : connected
         ? "Not updated"
         : "Not connected";
+  renderConfigVisibility();
 }
+
+// Connection config drawer. When a connection is live the config row collapses
+// behind a gear toggle so the kanban board gains the freed vertical space; when
+// disconnected the row stays visible by default so users can connect.
+function renderConfigVisibility(): void {
+  const connected = isConnectionLive();
+  // Force the config open whenever we are disconnected — there is nothing to
+  // collapse into and the user needs the inputs to establish a connection.
+  const collapsed = connected && state.configCollapsed;
+  nodes.topbar.classList.toggle("config-collapsed", collapsed);
+  nodes.connectionForm.hidden = collapsed;
+  // The gear toggle is only useful once a connection exists.
+  nodes.configToggle.hidden = !connected;
+  nodes.configToggle.setAttribute("aria-expanded", String(!collapsed));
+  nodes.configToggle.setAttribute(
+    "aria-label",
+    collapsed ? "Show connection settings" : "Hide connection settings",
+  );
+  nodes.configToggle.title = collapsed ? "Show connection settings" : "Hide connection settings";
+  nodes.configToggle.classList.toggle("is-active", !collapsed);
+}
+
+function setConfigCollapsed(collapsed: boolean): void {
+  state.configCollapsed = collapsed;
+  renderConfigVisibility();
+}
+
+function toggleConfigCollapsed(): void {
+  setConfigCollapsed(!state.configCollapsed);
+}
+
 
 function renderBanner(): void {
   if (!state.error) {

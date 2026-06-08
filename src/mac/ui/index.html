@@ -99,7 +99,7 @@
         </form>
       </aside>
       <main class="main">
-        <header class="topbar">
+        <header class="topbar" id="topbar">
           <div>
             <p class="eyebrow">MAC</p>
             <h1 id="viewTitle">Overview</h1>
@@ -152,6 +152,9 @@
             </form>
             <span class="connection-badge" id="connectionBadge">Same origin</span>
             <span class="sync-state" id="syncState">Not loaded</span>
+            <button class="config-toggle" type="button" id="configToggle" aria-label="Connection settings" aria-expanded="true" aria-controls="connectionForm" title="Connection settings" hidden>
+              <span class="config-toggle-icon" aria-hidden="true">&#9881;</span>
+            </button>
             <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark mode" aria-pressed="false" title="Toggle dark mode">
               <span class="theme-toggle-icon" aria-hidden="true"></span>
               <span class="theme-toggle-label">Dark</span>
