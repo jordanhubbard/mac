@@ -51,6 +51,106 @@ function toggleTheme() {
     const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
     setTheme(current === "dark" ? "light" : "dark");
 }
+// Per-lane collapse + sort persistence. Collapse state is keyed by lane name
+// so it survives refreshes; empty lanes auto-collapse on first load.
+const LANE_COLLAPSE_KEY = "mac.dashboard.laneCollapse";
+const LANE_SORT_KEY = "mac.dashboard.laneSort";
+const LANE_SORTS = ["updated", "priority", "title"];
+const LANE_SORT_LABELS = {
+    updated: "Recently updated",
+    priority: "Priority",
+    title: "Title",
+};
+function readLaneCollapse() {
+    try {
+        const raw = localStorage.getItem(LANE_COLLAPSE_KEY);
+        if (!raw)
+            return {};
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+            const out = {};
+            for (const [key, value] of Object.entries(parsed)) {
+                out[key] = Boolean(value);
+            }
+            return out;
+        }
+    }
+    catch {
+        /* ignore corrupt/unavailable storage */
+    }
+    return {};
+}
+function writeLaneCollapse(map) {
+    try {
+        localStorage.setItem(LANE_COLLAPSE_KEY, JSON.stringify(map));
+    }
+    catch {
+        /* storage unavailable — collapse still applies for this session */
+    }
+}
+function readLaneSort() {
+    try {
+        const raw = localStorage.getItem(LANE_SORT_KEY);
+        if (!raw)
+            return {};
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+            const out = {};
+            for (const [key, value] of Object.entries(parsed)) {
+                if (LANE_SORTS.includes(String(value)))
+                    out[key] = value;
+            }
+            return out;
+        }
+    }
+    catch {
+        /* ignore */
+    }
+    return {};
+}
+function writeLaneSort(map) {
+    try {
+        localStorage.setItem(LANE_SORT_KEY, JSON.stringify(map));
+    }
+    catch {
+        /* storage unavailable */
+    }
+}
+function laneSortFor(taskState) {
+    const sort = state.laneSort[taskState];
+    return sort && LANE_SORTS.includes(sort) ? sort : "updated";
+}
+// Lanes the operator has explicitly toggled (so auto-collapse of empty lanes
+// only applies until the operator makes a choice for that lane).
+const laneCollapseExplicit = new Set();
+function isLaneCollapsed(taskState, laneCount) {
+    if (laneCollapseExplicit.has(taskState)) {
+        return Boolean(state.laneCollapse[taskState]);
+    }
+    if (Object.prototype.hasOwnProperty.call(state.laneCollapse, taskState)) {
+        return Boolean(state.laneCollapse[taskState]);
+    }
+    // Empty lanes auto-collapse on first load.
+    return laneCount === 0;
+}
+function sortLaneTasks(laneTasks, sort) {
+    const sorted = laneTasks.slice();
+    if (sort === "priority") {
+        sorted.sort((a, b) => (b.task.priority || 0) - (a.task.priority || 0));
+    }
+    else if (sort === "title") {
+        sorted.sort((a, b) => String(a.task.title || "").localeCompare(String(b.task.title || "")));
+    }
+    else {
+        // updated: most recently updated first.
+        sorted.sort((a, b) => {
+            const at = Date.parse(String(a.task.last_updated_at || a.task.updated_at || "")) || 0;
+            const bt = Date.parse(String(b.task.last_updated_at || b.task.updated_at || "")) || 0;
+            return bt - at;
+        });
+    }
+    return sorted;
+}
 const TASK_STATES = [
     "open",
     "blocked",
@@ -179,6 +279,8 @@ const state = {
     showDerivedProjects: DEFAULT_URL_STATE.showDerivedProjects,
     taskFilter: DEFAULT_URL_STATE.taskFilter,
     selectedId: DEFAULT_URL_STATE.selectedId,
+    laneCollapse: readLaneCollapse(),
+    laneSort: readLaneSort(),
     targets: [],
     selectedTargetId: readStoredTargetId(),
     selectedTokenSourceId: readStoredTokenSourceId(),
@@ -4071,10 +4173,25 @@ function agentCard(item, data) {
 }
 function taskLane(taskState, tasks, agents) {
     const laneTasks = tasks.filter((detail) => detail.task.state === taskState);
+    const collapsed = isLaneCollapsed(taskState, laneTasks.length);
+    const sort = laneSortFor(taskState);
+    const sortOptions = LANE_SORTS
+        .map((value) => `<option value="${escapeHtml(value)}"${value === sort ? " selected" : ""}>${escapeHtml(LANE_SORT_LABELS[value])}</option>`)
+        .join("");
+    const sortedTasks = sortLaneTasks(laneTasks, sort);
     return `
-    <div class="task-lane status-${escapeHtml(taskState)}">
-      <h2><span class="lane-title">${escapeHtml(labelize(taskState))}</span><span class="pill lane-count">${laneTasks.length}</span></h2>
-      ${laneTasks.length ? laneTasks.map((detail) => taskCard(detail, agents)).join("") : `<div class="empty-state">Empty</div>`}
+    <div class="task-lane status-${escapeHtml(taskState)}${collapsed ? " is-collapsed" : ""}" data-lane="${escapeHtml(taskState)}">
+      <h2>
+        <button class="lane-toggle" type="button" data-lane-toggle="${escapeHtml(taskState)}" aria-expanded="${collapsed ? "false" : "true"}" title="${collapsed ? "Expand" : "Collapse"} lane">
+          <span class="lane-chevron" aria-hidden="true">${collapsed ? "&#9656;" : "&#9662;"}</span>
+          <span class="lane-title">${escapeHtml(labelize(taskState))}</span>
+        </button>
+        <span class="lane-header-meta">
+          <select class="lane-sort" data-lane-sort="${escapeHtml(taskState)}" title="Sort lane" aria-label="Sort ${escapeHtml(labelize(taskState))} lane">${sortOptions}</select>
+          <span class="pill lane-count">${laneTasks.length}</span>
+        </span>
+      </h2>
+      ${collapsed ? "" : `<div class="lane-body">${sortedTasks.length ? sortedTasks.map((detail) => taskCard(detail, agents)).join("") : `<div class="empty-state">Empty</div>`}</div>`}
     </div>
   `;
 }
@@ -4952,6 +5069,17 @@ function handleContentChange(event) {
     const target = event.target;
     if (!target)
         return;
+    const laneSort = target.closest("select[data-lane-sort]");
+    if (laneSort) {
+        const lane = laneSort.dataset.laneSort || "";
+        const value = laneSort.value;
+        if (lane && LANE_SORTS.includes(value)) {
+            state.laneSort = { ...state.laneSort, [lane]: value };
+            writeLaneSort(state.laneSort);
+            render();
+        }
+        return;
+    }
     const planField = target.closest("[data-plan-field]");
     if (planField) {
         syncWorkflowPlanDraftFromDom();
@@ -5005,6 +5133,20 @@ function handleContentKeydown(event) {
     }
 }
 async function handleContentClick(event) {
+    const laneToggle = event.target?.closest("[data-lane-toggle]");
+    if (laneToggle) {
+        event.preventDefault();
+        const lane = laneToggle.dataset.laneToggle || "";
+        if (lane) {
+            const laneEl = laneToggle.closest(".task-lane");
+            const currentlyCollapsed = laneEl?.classList.contains("is-collapsed") ?? false;
+            laneCollapseExplicit.add(lane);
+            state.laneCollapse = { ...state.laneCollapse, [lane]: !currentlyCollapsed };
+            writeLaneCollapse(state.laneCollapse);
+            render();
+        }
+        return;
+    }
     const launchpad = event.target?.closest("[data-dashboard-go]");
     if (launchpad) {
         event.preventDefault();
