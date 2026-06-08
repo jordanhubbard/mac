@@ -1624,7 +1624,9 @@ button.mobile-object-card {
   padding: 12px;
 }
 
-/* Per-status lane accent colours give an at-a-glance status cue. */
+/* Per-status lane accent colours give an at-a-glance status cue.
+ * Needs Review (amber) and Reviewing (blue) are intentionally distinct so the
+ * two review lanes are not confused with each other. */
 .task-lane.status-completed {
   --lane-accent: var(--accent);
 }
@@ -1634,14 +1636,14 @@ button.mobile-object-card {
   --lane-accent: var(--danger);
 }
 
-.task-lane.status-blocked {
+.task-lane.status-blocked,
+.task-lane.status-needs_review {
   --lane-accent: var(--warning);
 }
 
 .task-lane.status-running,
 .task-lane.status-claimed,
-.task-lane.status-reviewing,
-.task-lane.status-needs_review {
+.task-lane.status-reviewing {
   --lane-accent: var(--blue);
 }
 
@@ -1659,8 +1661,67 @@ button.mobile-object-card {
   padding: 12px;
 }
 
+/* Collapsed lanes shrink to just their header so empty/parked lanes get out
+ * of the way; the chevron in the header toggles this. */
+.task-lane.is-collapsed {
+  min-height: 0;
+  gap: 0;
+}
+
+.task-lane.is-collapsed h2 {
+  margin-bottom: -12px;
+  border-bottom: none;
+}
+
+.task-lane h2 .lane-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-lane h2 .lane-toggle:focus-visible {
+  outline: 2px solid var(--lane-accent, var(--blue));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.task-lane h2 .lane-chevron {
+  display: inline-flex;
+  width: 0.9em;
+  justify-content: center;
+  color: var(--lane-accent, var(--muted));
+  font-size: 0.85em;
+}
+
+.task-lane h2 .lane-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.task-lane h2 .lane-sort {
+  min-height: 22px;
+  padding: 0 6px;
+  font-size: 0.74rem;
+}
+
 .task-lane h2 .lane-title {
   text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-lane h2 .lane-count {
@@ -1670,6 +1731,11 @@ button.mobile-object-card {
   color: var(--ink);
   padding: 0 8px;
   font-size: 0.78rem;
+}
+
+.task-lane .lane-body {
+  display: grid;
+  gap: 10px;
 }
 
 .task-card {
@@ -1692,14 +1758,14 @@ button.mobile-object-card {
   --lane-accent: var(--danger);
 }
 
-.task-lane.status-blocked .task-card {
+.task-lane.status-blocked .task-card,
+.task-lane.status-needs_review .task-card {
   --lane-accent: var(--warning);
 }
 
 .task-lane.status-running .task-card,
 .task-lane.status-claimed .task-card,
-.task-lane.status-reviewing .task-card,
-.task-lane.status-needs_review .task-card {
+.task-lane.status-reviewing .task-card {
   --lane-accent: var(--blue);
 }
 
