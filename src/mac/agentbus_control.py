@@ -24,6 +24,18 @@ HERMES_CONFIG_APPLY_RESULT_SCHEMA = "mac.agentbus.hermes_config_apply_result.v1"
 HERMES_CONFIG_APPLY_RESULT_TOPIC = "mac.hermes.config.apply.result.v1"
 HERMES_CONFIG_APPLY_RESULT_CONTENT_TYPE = "application/vnd.mac.hermes-config-apply-result+json"
 
+DEBUG_TERMINAL_OPEN_SCHEMA = "mac.agentbus.debug_terminal_open.v1"
+DEBUG_TERMINAL_OPEN_TOPIC = "mac.debug.terminal.open.v1"
+DEBUG_TERMINAL_OPEN_CONTENT_TYPE = "application/vnd.mac.debug-terminal-open+json"
+
+DEBUG_TERMINAL_INPUT_SCHEMA = "mac.agentbus.debug_terminal_input.v1"
+DEBUG_TERMINAL_INPUT_TOPIC = "mac.debug.terminal.input.v1"
+DEBUG_TERMINAL_INPUT_CONTENT_TYPE = "application/vnd.mac.debug-terminal-input+json"
+
+DEBUG_TERMINAL_OUTPUT_SCHEMA = "mac.agentbus.debug_terminal_output.v1"
+DEBUG_TERMINAL_OUTPUT_TOPIC = "mac.debug.terminal.output.v1"
+DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE = "application/vnd.mac.debug-terminal-output+json"
+
 
 def repo_update_payload(
     *,
@@ -96,3 +108,81 @@ def hermes_config_apply_payload(
     if request_id:
         message["request_id"] = request_id
     return message
+
+
+def debug_terminal_open_payload(
+    *,
+    session_id: str,
+    input_stream_id: str,
+    output_stream_id: str,
+    sender_agent_id: str,
+    shell: Optional[str] = None,
+    cwd: Optional[str] = None,
+    rows: int = 32,
+    cols: int = 120,
+    ttl_seconds: int = 900,
+    request_id: Optional[str] = None,
+) -> JsonDict:
+    payload: JsonDict = {
+        "schema": DEBUG_TERMINAL_OPEN_SCHEMA,
+        "session_id": session_id,
+        "input_stream_id": input_stream_id,
+        "output_stream_id": output_stream_id,
+        "sender_agent_id": sender_agent_id,
+        "rows": int(rows),
+        "cols": int(cols),
+        "ttl_seconds": int(ttl_seconds),
+    }
+    if shell:
+        payload["shell"] = shell
+    if cwd:
+        payload["cwd"] = cwd
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
+def debug_terminal_input_payload(
+    *,
+    session_id: str,
+    data_b64: Optional[str] = None,
+    close: bool = False,
+    rows: Optional[int] = None,
+    cols: Optional[int] = None,
+) -> JsonDict:
+    payload: JsonDict = {
+        "schema": DEBUG_TERMINAL_INPUT_SCHEMA,
+        "session_id": session_id,
+    }
+    if data_b64 is not None:
+        payload["data_b64"] = data_b64
+    if close:
+        payload["close"] = True
+    if rows is not None or cols is not None:
+        payload["resize"] = {
+            "rows": int(rows or 0),
+            "cols": int(cols or 0),
+        }
+    return payload
+
+
+def debug_terminal_output_payload(
+    *,
+    session_id: str,
+    event: str,
+    data_b64: Optional[str] = None,
+    message: Optional[str] = None,
+    exit_code: Optional[int] = None,
+) -> JsonDict:
+    payload: JsonDict = {
+        "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA,
+        "session_id": session_id,
+        "event": event,
+    }
+    if data_b64 is not None:
+        payload["data_b64"] = data_b64
+    if message:
+        payload["message"] = message
+    if exit_code is not None:
+        payload["exit_code"] = int(exit_code)
+    return payload

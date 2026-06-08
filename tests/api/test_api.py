@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 
@@ -5,7 +6,11 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from mac.agentbus_control import HERMES_CONFIG_APPLY_CONTENT_TYPE, HERMES_CONFIG_APPLY_TOPIC
+from mac.agentbus_control import (
+    DEBUG_TERMINAL_OUTPUT_SCHEMA,
+    HERMES_CONFIG_APPLY_CONTENT_TYPE,
+    HERMES_CONFIG_APPLY_TOPIC,
+)
 from mac.api import create_app
 from mac.deploy_env import parse_env_text
 from mac.services import ControlPlane, sign_verification_manifest
@@ -2351,6 +2356,63 @@ def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
     ).json()
     assert published["stream"]["status"] == "closed"
     assert published["chunk"]["payload"] == "one-shot"
+
+
+def test_dashboard_terminal_session_creates_agentbus_streams_and_streams_events():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    machine = client.post("/machines", json={"hostname": "terminal-host"}).json()
+    agent = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "terminal-agent"},
+    ).json()
+
+    opened = client.post(
+        "/dashboard/agents/%s/terminal-sessions" % agent["id"],
+        json={"rows": 24, "cols": 100, "ttl_seconds": 60},
+    ).json()
+
+    assert opened["schema"] == "mac.dashboard.terminal_session.v1"
+    assert opened["agent_id"] == agent["id"]
+    assert opened["input_stream"]["topic"] == "mac.debug.terminal.input.v1"
+    assert opened["output_stream"]["topic"] == "mac.debug.terminal.output.v1"
+
+    client.post(
+        "/dashboard/terminal-sessions/%s/input" % opened["session_id"],
+        json={
+            "input_stream_id": opened["input_stream_id"],
+            "data": "printf hello\n",
+        },
+    )
+    input_chunks = client.get(
+        "/agentbus/streams/%s/chunks" % opened["input_stream_id"],
+        params={"agent_id": agent["id"]},
+    ).json()
+    assert input_chunks[-1]["payload"]["session_id"] == opened["session_id"]
+    assert base64.b64decode(input_chunks[-1]["payload"]["data_b64"]).decode() == "printf hello\n"
+
+    client.post(
+        "/agentbus/streams/%s/chunks" % opened["output_stream_id"],
+        json={
+            "sender_agent_id": agent["id"],
+            "payload": {
+                "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA,
+                "session_id": opened["session_id"],
+                "event": "output",
+                "data_b64": base64.b64encode(b"hello\n").decode("ascii"),
+            },
+            "final": True,
+        },
+    )
+    events = client.get(
+        "/dashboard/terminal-sessions/%s/events" % opened["session_id"],
+        params={
+            "output_stream_id": opened["output_stream_id"],
+            "after_sequence": 0,
+            "timeout_seconds": 0,
+        },
+    )
+    lines = [json.loads(line) for line in events.text.splitlines() if line]
+    assert base64.b64decode(lines[-1]["payload"]["data_b64"]).decode() == "hello\n"
 
 
 def test_fastapi_publishes_agentbus_repo_update_to_all_agents():

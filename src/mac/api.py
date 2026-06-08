@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import logging
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -21,8 +23,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from mac.agentbus_control import (
+    DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_INPUT_SCHEMA,
+    DEBUG_TERMINAL_INPUT_TOPIC,
+    DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+    DEBUG_TERMINAL_OPEN_TOPIC,
+    DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_OUTPUT_SCHEMA,
+    DEBUG_TERMINAL_OUTPUT_TOPIC,
     HERMES_CONFIG_APPLY_CONTENT_TYPE,
     HERMES_CONFIG_APPLY_TOPIC,
+    debug_terminal_input_payload,
+    debug_terminal_open_payload,
     hermes_config_apply_payload,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_TOPIC,
@@ -760,6 +772,36 @@ class AgentBusArtifactPublish(BaseModel):
     request_id: Optional[str] = None
 
 
+class DashboardTerminalOpen(BaseModel):
+    sender_agent_id: Optional[str] = None
+    shell: Optional[str] = None
+    cwd: Optional[str] = None
+    rows: int = 32
+    cols: int = 120
+    ttl_seconds: int = 900
+    request_id: Optional[str] = None
+
+
+class DashboardTerminalInput(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+    data: str = ""
+    data_b64: Optional[str] = None
+    close: bool = False
+
+
+class DashboardTerminalResize(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+    rows: int = 32
+    cols: int = 120
+
+
+class DashboardTerminalClose(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+
+
 class ObservabilityMetricCreate(BaseModel):
     name: str
     value: float
@@ -1213,6 +1255,83 @@ def _ensure_payload_bounded(value: Any, field: str) -> None:
         raise ValidationError(
             "%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES)
         )
+
+
+MAX_TERMINAL_INPUT_BYTES = 16 * 1024
+MIN_TERMINAL_ROWS = 8
+MAX_TERMINAL_ROWS = 80
+MIN_TERMINAL_COLS = 40
+MAX_TERMINAL_COLS = 240
+MIN_TERMINAL_TTL_SECONDS = 30
+MAX_TERMINAL_TTL_SECONDS = 3600
+
+
+def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(maximum, max(minimum, parsed))
+
+
+def _new_terminal_session_id() -> str:
+    return "term_" + secrets.token_hex(12)
+
+
+def _validate_terminal_session_id(session_id: str) -> str:
+    value = str(session_id or "").strip()
+    if (
+        not value
+        or len(value) > 64
+        or not value[0].isalnum()
+        or not all(ch.isalnum() or ch in "._-" for ch in value)
+    ):
+        raise ValidationError("invalid terminal session_id: %s" % session_id)
+    return value
+
+
+def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
+    if body.data_b64 is not None:
+        try:
+            raw = base64.b64decode(body.data_b64.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise ValidationError("terminal input data_b64 is invalid") from exc
+        if len(raw) > MAX_TERMINAL_INPUT_BYTES:
+            raise ValidationError(
+                "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
+            )
+        return base64.b64encode(raw).decode("ascii")
+    raw = str(body.data or "").encode("utf-8")
+    if not raw:
+        return None
+    if len(raw) > MAX_TERMINAL_INPUT_BYTES:
+        raise ValidationError(
+            "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
+        )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _terminal_stream_for_session(
+    cp: ControlPlane,
+    *,
+    session_id: str,
+    stream_id: str,
+    expected_topic: str,
+    expected_content_type: str,
+    expected_schema: str,
+) -> Dict[str, Any]:
+    session = _validate_terminal_session_id(session_id)
+    stream = cp.get_agentbus_stream(stream_id).to_dict()
+    headers = stream.get("headers") if isinstance(stream.get("headers"), dict) else {}
+    content_type = str(stream.get("content_type") or "").split(";", 1)[0]
+    if (
+        stream.get("topic") != expected_topic
+        or content_type != expected_content_type
+        or headers.get("schema") != expected_schema
+        or headers.get("terminal_session_id") != session
+    ):
+        raise ValidationError("agentbus stream is not part of terminal session %s" % session)
+    return stream
 
 
 
@@ -2842,6 +2961,253 @@ def create_app(
             "payload_redacted": redacted_hermes_payload(payload),
             "streams": [item["stream"] for item in published],
         }
+
+    @app.post("/dashboard/agents/{agent_id}/terminal-sessions")
+    def dashboard_terminal_session_open(
+        agent_id: str,
+        body: DashboardTerminalOpen,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        agent = cp.get_agent(agent_id)
+        sender_agent_id = str(body.sender_agent_id or agent.id)
+        cp.get_agent(sender_agent_id)
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(agent.id)
+            principal.assert_actor(sender_agent_id)
+        session_id = _new_terminal_session_id()
+        input_stream_id = session_id + ".in"
+        output_stream_id = session_id + ".out"
+        rows = _clamp_int(body.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS, 32)
+        cols = _clamp_int(body.cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS, 120)
+        ttl_seconds = _clamp_int(
+            body.ttl_seconds,
+            MIN_TERMINAL_TTL_SECONDS,
+            MAX_TERMINAL_TTL_SECONDS,
+            900,
+        )
+        if body.shell and len(body.shell) > 512:
+            raise ValidationError("terminal shell exceeds 512-byte limit")
+        if body.cwd and len(body.cwd) > 4096:
+            raise ValidationError("terminal cwd exceeds 4096-byte limit")
+        base_headers = {
+            "terminal_session_id": session_id,
+            "request_id": body.request_id or "",
+        }
+        input_stream = cp.open_agentbus_stream(
+            sender_agent_id=sender_agent_id,
+            recipient_agent_id=agent.id,
+            content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            headers={**base_headers, "schema": DEBUG_TERMINAL_INPUT_SCHEMA},
+            stream_id=input_stream_id,
+        )
+        output_stream = cp.open_agentbus_stream(
+            sender_agent_id=agent.id,
+            recipient_agent_id=sender_agent_id,
+            content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+            headers={**base_headers, "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA},
+            stream_id=output_stream_id,
+        )
+        control = cp.publish_agentbus_content(
+            sender_agent_id=sender_agent_id,
+            recipient_agent_id=agent.id,
+            content_type=DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_OPEN_TOPIC,
+            payload=debug_terminal_open_payload(
+                session_id=session_id,
+                input_stream_id=input_stream_id,
+                output_stream_id=output_stream_id,
+                sender_agent_id=sender_agent_id,
+                shell=body.shell,
+                cwd=body.cwd,
+                rows=rows,
+                cols=cols,
+                ttl_seconds=ttl_seconds,
+                request_id=body.request_id,
+            ),
+        )
+        return {
+            "schema": "mac.dashboard.terminal_session.v1",
+            "session_id": session_id,
+            "agent_id": agent.id,
+            "sender_agent_id": sender_agent_id,
+            "input_stream_id": input_stream_id,
+            "output_stream_id": output_stream_id,
+            "rows": rows,
+            "cols": cols,
+            "ttl_seconds": ttl_seconds,
+            "input_stream": input_stream.to_dict(),
+            "output_stream": output_stream.to_dict(),
+            "control_stream": control.get("stream"),
+        }
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/input")
+    def dashboard_terminal_session_input(
+        session_id: str,
+        body: DashboardTerminalInput,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal input sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        payload = debug_terminal_input_payload(
+            session_id=_validate_terminal_session_id(session_id),
+            data_b64=_terminal_input_data_b64(body),
+            close=bool(body.close),
+        )
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=payload,
+            final=bool(body.close),
+        )
+        return {"schema": "mac.dashboard.terminal_input.v1", "chunk": chunk.to_dict()}
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/resize")
+    def dashboard_terminal_session_resize(
+        session_id: str,
+        body: DashboardTerminalResize,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal resize sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        rows = _clamp_int(body.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS, 32)
+        cols = _clamp_int(body.cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS, 120)
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=debug_terminal_input_payload(
+                session_id=_validate_terminal_session_id(session_id),
+                rows=rows,
+                cols=cols,
+            ),
+        )
+        return {
+            "schema": "mac.dashboard.terminal_resize.v1",
+            "rows": rows,
+            "cols": cols,
+            "chunk": chunk.to_dict(),
+        }
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/close")
+    def dashboard_terminal_session_close(
+        session_id: str,
+        body: DashboardTerminalClose,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal close sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        if stream.get("status") != "open":
+            return {
+                "schema": "mac.dashboard.terminal_close.v1",
+                "stream": stream,
+                "chunk": None,
+            }
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=debug_terminal_input_payload(
+                session_id=_validate_terminal_session_id(session_id),
+                close=True,
+            ),
+            final=True,
+        )
+        return {
+            "schema": "mac.dashboard.terminal_close.v1",
+            "chunk": chunk.to_dict(),
+            "stream": cp.get_agentbus_stream(body.input_stream_id).to_dict(),
+        }
+
+    @app.get("/dashboard/terminal-sessions/{session_id}/events")
+    async def dashboard_terminal_session_events(
+        session_id: str,
+        request: Request,
+        output_stream_id: str,
+        after_sequence: int = Query(default=0),
+        timeout_seconds: float = Query(default=30.0),
+        poll_interval_seconds: float = Query(default=0.25),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> StreamingResponse:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=output_stream_id,
+            expected_topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_OUTPUT_SCHEMA,
+        )
+        if principal.agent_id and not principal.is_admin:
+            allowed = {stream.get("sender_agent_id"), stream.get("recipient_agent_id")}
+            if principal.agent_id not in allowed:
+                raise AuthorizationError("token is not bound to this terminal stream")
+        accessor_agent_id = str(stream.get("recipient_agent_id") or stream.get("sender_agent_id") or "")
+
+        async def iter_events() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                if await request.is_disconnected():
+                    break
+                chunks = cp.read_agentbus_chunks(
+                    accessor_agent_id,
+                    output_stream_id,
+                    cursor,
+                    limit=100,
+                )
+                for chunk in chunks:
+                    cursor = chunk.sequence
+                    yield json.dumps(chunk.to_dict(), sort_keys=True) + "\n"
+                if chunks:
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if cp.get_agentbus_stream(output_stream_id).status != "open":
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
 
     @app.get("/dashboard/rollouts/{rollout_id}/status")
     def dashboard_rollout_status(rollout_id: str) -> Dict[str, Any]:

@@ -371,6 +371,7 @@ const state = {
     selectedWorkflowId: "",
     selectedNodeKey: "",
     workflowPlanDraft: null,
+    terminalSessions: {},
 };
 const nodes = {
     nav: requiredElement("#viewNav"),
@@ -531,6 +532,8 @@ async function loadDashboard() {
     try {
         applyDashboardData((await requestJSON("/dashboard/state")));
         state.connection = { ...state.connection, connected: true };
+        // First successful connection collapses the config row so the board gets
+        // the vertical space back; the gear toggle re-opens it on demand.
         state.configCollapsed = true;
         syncDashboardSubscription();
     }
@@ -685,6 +688,8 @@ async function disconnectFromControls() {
     else {
         state.connection = { ...api.connection(), connected: false };
     }
+    // Re-expand the config row on disconnect so the inputs are immediately
+    // available for reconnecting.
     state.configCollapsed = false;
     render();
 }
@@ -898,11 +903,17 @@ function renderSyncState() {
                 : "Not connected";
     renderConfigVisibility();
 }
+// Connection config drawer. When a connection is live the config row collapses
+// behind a gear toggle so the kanban board gains the freed vertical space; when
+// disconnected the row stays visible by default so users can connect.
 function renderConfigVisibility() {
     const connected = isConnectionLive();
+    // Force the config open whenever we are disconnected — there is nothing to
+    // collapse into and the user needs the inputs to establish a connection.
     const collapsed = connected && state.configCollapsed;
     nodes.topbar.classList.toggle("config-collapsed", collapsed);
     nodes.connectionForm.hidden = collapsed;
+    // The gear toggle is only useful once a connection exists.
     nodes.configToggle.hidden = !connected;
     nodes.configToggle.setAttribute("aria-expanded", String(!collapsed));
     nodes.configToggle.setAttribute("aria-label", collapsed ? "Show connection settings" : "Hide connection settings");
@@ -4312,6 +4323,7 @@ function agentInspector(data) {
         ${field("Machine resources", jsonSummary(item.machine?.resources))}
       </div>
       <div class="chip-row">${reasons}</div>
+      ${agentTerminalPanel(agent, writable)}
       <form class="action-form inspector-form" data-action="agentUpdate" data-agent-id="${escapeHtml(agent.id)}">
         <label>Name <input name="name" value="${escapeHtml(agent.name)}" ${disabledAttr(!writable)}></label>
         <label>Status ${select("status", ["idle", "busy", "draining", "offline"], agent.status, !writable)}</label>
@@ -4332,6 +4344,59 @@ function agentInspector(data) {
       </div>
     </section>
   `;
+}
+function agentTerminalPanel(agent, writable) {
+    const disabled = disabledAttr(!writable);
+    const session = state.terminalSessions[agent.id];
+    if (!session) {
+        return `
+      <div class="record-section terminal-panel" data-terminal-panel="${escapeHtml(agent.id)}">
+        <div class="record-header">
+          <div>
+            <h3>Debug Terminal</h3>
+            <p class="muted small mono">${escapeHtml(agent.id)}</p>
+          </div>
+          ${chip("closed", "warn")}
+        </div>
+        <div class="terminal-open-grid">
+          <label>Shell <input name="shell" value="" placeholder="/bin/sh" ${disabled}></label>
+          <label>CWD <input name="cwd" value="" placeholder="${escapeHtml(agent.resources?.workspace || "")}" ${disabled}></label>
+          <label>Rows <input name="rows" type="number" min="8" max="80" value="32" ${disabled}></label>
+          <label>Cols <input name="cols" type="number" min="40" max="240" value="120" ${disabled}></label>
+          <button type="button" data-terminal-open="${escapeHtml(agent.id)}" ${disabled}>Open Terminal</button>
+        </div>
+      </div>
+    `;
+    }
+    return `
+    <div class="record-section terminal-panel is-open" data-terminal-panel="${escapeHtml(agent.id)}">
+      <div class="record-header">
+        <div>
+          <h3>Debug Terminal</h3>
+          <p class="muted small mono">${escapeHtml(session.session_id)} / ${escapeHtml(session.output_stream_id)}</p>
+        </div>
+        <div class="chip-row">
+          ${chip(session.status || "open", terminalStatusTone(session.status))}
+          <button class="secondary-button" type="button" data-terminal-close="${escapeHtml(agent.id)}" ${disabledAttr(!writable || session.status !== "open")}>Close</button>
+        </div>
+      </div>
+      <pre class="terminal-screen" tabindex="0" data-terminal-screen="1" data-terminal-agent-id="${escapeHtml(agent.id)}" aria-label="Debug terminal for ${escapeHtml(agent.name)}">${escapeHtml(terminalDisplay(session.buffer))}</pre>
+      <div class="terminal-input-row">
+        <input class="terminal-line-input mono" data-terminal-line-input="${escapeHtml(agent.id)}" placeholder="$" autocomplete="off" autocapitalize="off" spellcheck="false" ${disabledAttr(!writable || session.status !== "open")}>
+        <button type="button" data-terminal-send="${escapeHtml(agent.id)}" ${disabledAttr(!writable || session.status !== "open")}>Send</button>
+        <button type="button" data-terminal-send-control="${escapeHtml(agent.id)}" data-terminal-control="ctrl-c" ${disabledAttr(!writable || session.status !== "open")}>Ctrl-C</button>
+      </div>
+    </div>
+  `;
+}
+function terminalStatusTone(status) {
+    if (status === "open" || status === "opened" || status === "output")
+        return "good";
+    if (status === "closed" || status === "exit")
+        return "warn";
+    if (status === "error" || status === "expired")
+        return "bad";
+    return "info";
 }
 function swarmBuckets(items) {
     if (!items.length)
@@ -5350,9 +5415,24 @@ function handleContentChange(event) {
     }
 }
 function handleContentKeydown(event) {
+    const target = event.target;
+    const terminalLineInput = target?.closest("[data-terminal-line-input]");
+    if (terminalLineInput && event.key === "Enter") {
+        event.preventDefault();
+        void sendTerminalLine(terminalLineInput);
+        return;
+    }
+    const terminalScreen = target?.closest("[data-terminal-screen]");
+    if (terminalScreen) {
+        const sequence = terminalKeySequence(event);
+        if (sequence !== null) {
+            event.preventDefault();
+            void sendTerminalInput(terminalScreen.dataset.terminalAgentId || "", sequence);
+        }
+        return;
+    }
     if (event.key !== "Enter" && event.key !== " ")
         return;
-    const target = event.target;
     const workflowNode = target?.closest("[data-action='workflowNodeOpen']");
     const launchpad = target?.closest("[data-dashboard-go]");
     if (!workflowNode && !launchpad)
@@ -5384,6 +5464,39 @@ async function handleContentClick(event) {
     if (launchpad) {
         event.preventDefault();
         navigateDashboardView(launchpad.dataset.dashboardGo);
+        return;
+    }
+    const terminalOpen = event.target?.closest("[data-terminal-open]");
+    if (terminalOpen) {
+        event.preventDefault();
+        await openAgentTerminal(terminalOpen);
+        return;
+    }
+    const terminalSend = event.target?.closest("[data-terminal-send]");
+    if (terminalSend) {
+        event.preventDefault();
+        const agentId = terminalSend.dataset.terminalSend || "";
+        const panel = terminalSend.closest(".terminal-panel");
+        const input = panel?.querySelector("[data-terminal-line-input]");
+        if (agentId && input)
+            await sendTerminalLine(input);
+        return;
+    }
+    const terminalControl = event.target?.closest("[data-terminal-send-control]");
+    if (terminalControl) {
+        event.preventDefault();
+        const agentId = terminalControl.dataset.terminalSendControl || "";
+        const control = terminalControl.dataset.terminalControl || "";
+        if (agentId && control === "ctrl-c")
+            await sendTerminalInput(agentId, "\x03");
+        return;
+    }
+    const terminalClose = event.target?.closest("[data-terminal-close]");
+    if (terminalClose) {
+        event.preventDefault();
+        const agentId = terminalClose.dataset.terminalClose || "";
+        if (agentId)
+            await closeAgentTerminal(agentId);
         return;
     }
     const workflowPlanAdd = event.target?.closest("[data-action='workflowPlanNodeAdd']");
@@ -5821,6 +5934,255 @@ function stopObservabilityStream() {
     state.observabilityStream.abort();
     state.observabilityStream = null;
     state.observabilityStreamStatus = "idle";
+}
+async function openAgentTerminal(button) {
+    const agentId = button.dataset.terminalOpen || "";
+    if (!agentId)
+        return;
+    const panel = button.closest(".terminal-panel");
+    const shell = panel?.querySelector("input[name='shell']")?.value || "";
+    const cwd = panel?.querySelector("input[name='cwd']")?.value || "";
+    const rows = panel?.querySelector("input[name='rows']")?.value || "32";
+    const cols = panel?.querySelector("input[name='cols']")?.value || "120";
+    button.setAttribute("aria-busy", "true");
+    try {
+        const result = await postJSON(`/dashboard/agents/${encodeURIComponent(agentId)}/terminal-sessions`, {
+            shell: emptyToNull(shell),
+            cwd: emptyToNull(cwd),
+            rows: numberValue(rows, 32),
+            cols: numberValue(cols, 120),
+            ttl_seconds: 900,
+        });
+        const session = {
+            session_id: String(result.session_id || ""),
+            agent_id: String(result.agent_id || agentId),
+            sender_agent_id: String(result.sender_agent_id || ""),
+            input_stream_id: String(result.input_stream_id || ""),
+            output_stream_id: String(result.output_stream_id || ""),
+            rows: Number(result.rows || 32),
+            cols: Number(result.cols || 120),
+            status: "open",
+            buffer: "",
+            cursor: 0,
+            stream: null,
+        };
+        state.terminalSessions[agentId] = session;
+        state.actionMessage = `Terminal opened: ${session.session_id}`;
+        startTerminalStream(session);
+        render();
+        window.setTimeout(() => terminalScreenElement(agentId)?.focus(), 0);
+    }
+    catch (error) {
+        state.actionMessage = `Terminal open failed: ${error instanceof Error ? error.message : String(error)}`;
+        render();
+    }
+    finally {
+        button.removeAttribute("aria-busy");
+    }
+}
+function startTerminalStream(session) {
+    if (!session.session_id || !session.output_stream_id)
+        return;
+    session.stream?.abort();
+    const controller = new AbortController();
+    session.stream = controller;
+    const path = `/dashboard/terminal-sessions/${encodeURIComponent(session.session_id)}/events?${new URLSearchParams({
+        output_stream_id: session.output_stream_id,
+        after_sequence: String(session.cursor),
+        timeout_seconds: "60",
+        poll_interval_seconds: "0.25",
+    }).toString()}`;
+    api.stream(path, {
+        headers: { Accept: "application/x-ndjson" },
+        signal: controller.signal,
+    })
+        .then(async (response) => {
+        if (!response.ok)
+            throw new Error(`${response.status} ${response.statusText}`);
+        const reader = response.body?.getReader();
+        if (!reader)
+            return;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done)
+                break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+                const text = line.trim();
+                if (!text)
+                    continue;
+                applyTerminalChunk(session.agent_id, JSON.parse(text));
+            }
+        }
+    })
+        .catch((error) => {
+        if (!controller.signal.aborted) {
+            session.status = "error";
+            appendTerminalText(session, `\n[stream] ${error instanceof Error ? error.message : String(error)}\n`);
+            renderPreservingFocusedControl();
+        }
+    })
+        .finally(() => {
+        if (session.stream === controller)
+            session.stream = null;
+        const current = state.terminalSessions[session.agent_id];
+        if (!controller.signal.aborted && current === session && ["open", "closing"].includes(session.status)) {
+            window.setTimeout(() => startTerminalStream(session), 500);
+        }
+    });
+}
+function applyTerminalChunk(agentId, chunk) {
+    const session = state.terminalSessions[agentId];
+    if (!session)
+        return;
+    const sequence = Number(chunk.sequence || 0);
+    if (Number.isFinite(sequence))
+        session.cursor = Math.max(session.cursor, sequence);
+    const payload = chunk.payload && typeof chunk.payload === "object" ? chunk.payload : {};
+    const event = String(payload.event || "output");
+    session.status = ["opened", "output"].includes(event) ? "open" : event;
+    if (payload.message)
+        appendTerminalText(session, `\n[${event}] ${String(payload.message)}\n`);
+    if (payload.data_b64)
+        appendTerminalText(session, base64ToText(String(payload.data_b64)));
+    if (payload.exit_code !== undefined && payload.exit_code !== null) {
+        appendTerminalText(session, `\n[exit ${String(payload.exit_code)}]\n`);
+    }
+    if (session.status === "open") {
+        renderTerminalScreen(agentId);
+    }
+    else {
+        renderPreservingFocusedControl();
+    }
+}
+function appendTerminalText(session, text) {
+    session.buffer = `${session.buffer}${text}`.slice(-50000);
+}
+function renderTerminalScreen(agentId) {
+    const session = state.terminalSessions[agentId];
+    const screen = terminalScreenElement(agentId);
+    if (!session || !screen)
+        return;
+    screen.textContent = terminalDisplay(session.buffer);
+    screen.scrollTop = screen.scrollHeight;
+}
+function terminalScreenElement(agentId) {
+    for (const item of Array.from(document.querySelectorAll("[data-terminal-screen]"))) {
+        if (item.dataset.terminalAgentId === agentId)
+            return item;
+    }
+    return null;
+}
+async function sendTerminalLine(input) {
+    const agentId = input.dataset.terminalLineInput || "";
+    const value = input.value;
+    if (!agentId || !value)
+        return;
+    input.value = "";
+    await sendTerminalInput(agentId, `${value}\r`);
+}
+async function sendTerminalInput(agentId, text) {
+    const session = state.terminalSessions[agentId];
+    if (!session || session.status !== "open" || !text)
+        return;
+    try {
+        await postJSON(`/dashboard/terminal-sessions/${encodeURIComponent(session.session_id)}/input`, {
+            input_stream_id: session.input_stream_id,
+            data_b64: textToBase64(text),
+        });
+    }
+    catch (error) {
+        session.status = "error";
+        appendTerminalText(session, `\n[input] ${error instanceof Error ? error.message : String(error)}\n`);
+        renderPreservingFocusedControl();
+    }
+}
+async function closeAgentTerminal(agentId) {
+    const session = state.terminalSessions[agentId];
+    if (!session)
+        return;
+    session.status = "closing";
+    renderPreservingFocusedControl();
+    try {
+        await postJSON(`/dashboard/terminal-sessions/${encodeURIComponent(session.session_id)}/close`, {
+            input_stream_id: session.input_stream_id,
+        });
+    }
+    catch (error) {
+        session.status = "error";
+        appendTerminalText(session, `\n[close] ${error instanceof Error ? error.message : String(error)}\n`);
+        renderPreservingFocusedControl();
+    }
+}
+function terminalKeySequence(event) {
+    if (event.metaKey || event.altKey)
+        return null;
+    if (event.ctrlKey) {
+        const key = event.key.toLowerCase();
+        if (key === "c")
+            return "\x03";
+        if (key === "d")
+            return "\x04";
+        if (key === "l")
+            return "\x0c";
+        if (key === "[")
+            return "\x1b";
+        return null;
+    }
+    if (event.key.length === 1)
+        return event.key;
+    if (event.key === "Enter")
+        return "\r";
+    if (event.key === "Backspace")
+        return "\x7f";
+    if (event.key === "Tab")
+        return "\t";
+    if (event.key === "Escape")
+        return "\x1b";
+    if (event.key === "ArrowUp")
+        return "\x1b[A";
+    if (event.key === "ArrowDown")
+        return "\x1b[B";
+    if (event.key === "ArrowRight")
+        return "\x1b[C";
+    if (event.key === "ArrowLeft")
+        return "\x1b[D";
+    return null;
+}
+function textToBase64(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+}
+function base64ToText(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1)
+        bytes[index] = binary.charCodeAt(index);
+    return new TextDecoder().decode(bytes);
+}
+function terminalDisplay(text) {
+    const stripped = text
+        .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+        .replace(/\x1b[()][A-Za-z0-9]/g, "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
+    let output = "";
+    for (const char of stripped) {
+        if (char === "\b" || char === "\x7f") {
+            output = output.slice(0, -1);
+        }
+        else if (char === "\n" || char === "\t" || char >= " ") {
+            output += char;
+        }
+    }
+    return output;
 }
 async function handleActionSubmit(event) {
     const form = event.target?.closest("form[data-action]");

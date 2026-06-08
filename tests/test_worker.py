@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import json
@@ -13,9 +14,19 @@ import yaml
 from fastapi.testclient import TestClient
 
 from mac.agentbus_control import (
+    DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_INPUT_SCHEMA,
+    DEBUG_TERMINAL_INPUT_TOPIC,
+    DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+    DEBUG_TERMINAL_OPEN_TOPIC,
+    DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_OUTPUT_SCHEMA,
+    DEBUG_TERMINAL_OUTPUT_TOPIC,
     HERMES_CONFIG_APPLY_CONTENT_TYPE,
     HERMES_CONFIG_APPLY_RESULT_TOPIC,
     HERMES_CONFIG_APPLY_TOPIC,
+    debug_terminal_input_payload,
+    debug_terminal_open_payload,
     hermes_config_apply_payload,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_RESULT_TOPIC,
@@ -1680,6 +1691,85 @@ def test_mac_worker_processes_agentbus_hermes_config_apply(monkeypatch, tmp_path
     assert chunks[0].payload["request_id"] == "req-hermes-worker"
     assert chunks[0].payload["config_keys"] == ["model", "tools.web_search.enabled"]
     assert chunks[0].payload["env_keys"] == ["OPENAI_API_KEY"]
+
+
+def test_mac_worker_opens_debug_terminal_and_streams_pty_output(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    sender_machine = cp.register_machine("sender-host")
+    sender = cp.register_agent(sender_machine.id, "sender")
+    agent = register_worker_fixture(cp)
+    session_id = "term_worker_test"
+    input_stream_id = session_id + ".in"
+    output_stream_id = session_id + ".out"
+    cp.open_agentbus_stream(
+        sender_agent_id=sender.id,
+        recipient_agent_id=agent.id,
+        content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+        topic=DEBUG_TERMINAL_INPUT_TOPIC,
+        headers={"schema": DEBUG_TERMINAL_INPUT_SCHEMA, "terminal_session_id": session_id},
+        stream_id=input_stream_id,
+    )
+    cp.open_agentbus_stream(
+        sender_agent_id=agent.id,
+        recipient_agent_id=sender.id,
+        content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+        topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+        headers={"schema": DEBUG_TERMINAL_OUTPUT_SCHEMA, "terminal_session_id": session_id},
+        stream_id=output_stream_id,
+    )
+    cp.publish_agentbus_content(
+        sender.id,
+        recipient_agent_id=agent.id,
+        content_type=DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+        topic=DEBUG_TERMINAL_OPEN_TOPIC,
+        payload=debug_terminal_open_payload(
+            session_id=session_id,
+            input_stream_id=input_stream_id,
+            output_stream_id=output_stream_id,
+            sender_agent_id=sender.id,
+            shell="/bin/sh",
+            cwd=str(tmp_path),
+            rows=24,
+            cols=100,
+            ttl_seconds=60,
+            request_id="req-terminal-worker",
+        ),
+    )
+    client = TestClient(create_app(control_plane=cp))
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+        poll_interval_seconds=0.0,
+    )
+
+    assert worker.run_once().status == "no_task"
+    cp.append_agentbus_chunk(
+        input_stream_id,
+        sender_agent_id=sender.id,
+        payload=debug_terminal_input_payload(
+            session_id=session_id,
+            data_b64=base64.b64encode(b"printf 'worker_terminal_ok\\n'\nexit\n").decode("ascii"),
+        ),
+    )
+
+    output_text = ""
+    for _ in range(30):
+        worker.run_once()
+        chunks = cp.read_agentbus_chunks(sender.id, output_stream_id)
+        parts = []
+        for chunk in chunks:
+            payload = chunk.payload if isinstance(chunk.payload, dict) else {}
+            if payload.get("data_b64"):
+                parts.append(base64.b64decode(payload["data_b64"]).decode(errors="ignore"))
+        output_text = "".join(parts)
+        if "worker_terminal_ok" in output_text and cp.get_agentbus_stream(output_stream_id).status == "closed":
+            break
+        time.sleep(0.02)
+
+    assert "worker_terminal_ok" in output_text
+    assert cp.get_agentbus_stream(output_stream_id).status == "closed"
 
 
 def test_mac_worker_repo_update_noops_without_restart_when_current(tmp_path: Path):

@@ -6,6 +6,14 @@ from typing import Any, Dict, Iterable, Mapping, Tuple
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from mac.agentbus_control import (
+    DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_INPUT_SCHEMA,
+    DEBUG_TERMINAL_INPUT_TOPIC,
+    DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_OUTPUT_SCHEMA,
+    DEBUG_TERMINAL_OUTPUT_TOPIC,
+)
 from mac.api import create_app
 from mac.services import ControlPlane, sign_verification_manifest
 
@@ -277,6 +285,31 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
     reviewer = agent("natasha-route", ["review", "qa"])
     ctx["reviewer_agent_id"] = reviewer["id"]
     ctx["reviewer_attestation_key"] = reviewer["attestation_key"]
+    ctx["terminal_session_id"] = "term_route_case"
+    ctx["terminal_input_stream_id"] = "term_route_case.in"
+    ctx["terminal_output_stream_id"] = "term_route_case.out"
+    cp.open_agentbus_stream(
+        sender_agent_id=default_agent["id"],
+        recipient_agent_id=default_agent["id"],
+        content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+        topic=DEBUG_TERMINAL_INPUT_TOPIC,
+        headers={
+            "schema": DEBUG_TERMINAL_INPUT_SCHEMA,
+            "terminal_session_id": ctx["terminal_session_id"],
+        },
+        stream_id=ctx["terminal_input_stream_id"],
+    )
+    cp.open_agentbus_stream(
+        sender_agent_id=default_agent["id"],
+        recipient_agent_id=default_agent["id"],
+        content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+        topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+        headers={
+            "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA,
+            "terminal_session_id": ctx["terminal_session_id"],
+        },
+        stream_id=ctx["terminal_output_stream_id"],
+    )
     ctx["delegate_agent_id"] = agent("bullwinkle-route", ["python"])["id"]
     ctx["delete_agent_id"] = agent("delete-route-agent", ["python"])["id"]
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
@@ -837,6 +870,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "rollout_id": ctx["rollout_id"],
         "run_id": ctx["workflow_run_id"],
         "secret_id": ctx["secret_id"],
+        "session_id": ctx["terminal_session_id"],
         "stream_id": ctx["stream_id"],
         "task_id": ctx["task_id"],
         "thread_id": ctx["thread_id"],
@@ -867,6 +901,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 "agent_id": ctx["reviewer_agent_id"],
                 "after_sequence": 0,
                 "timeout_seconds": 0,
+            }
+        elif path_template == "/dashboard/terminal-sessions/{session_id}/events":
+            kwargs["params"] = {
+                "output_stream_id": ctx["terminal_output_stream_id"],
+                "after_sequence": 0,
+                "timeout_seconds": 0,
+                "poll_interval_seconds": 0.25,
             }
         elif path_template == "/observability/stream":
             kwargs["params"] = {"after_sequence": 0, "timeout_seconds": 0, "poll_interval_seconds": 0.25}
@@ -1080,6 +1121,26 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply"): {
             "sender_agent_id": ctx["agent_id"],
             "request_id": "route-hermes-apply",
+        },
+        ("POST", "/dashboard/agents/{agent_id}/terminal-sessions"): {
+            "sender_agent_id": ctx["agent_id"],
+            "shell": "/bin/sh",
+            "rows": 24,
+            "cols": 100,
+            "ttl_seconds": 60,
+            "request_id": "route-terminal-open",
+        },
+        ("POST", "/dashboard/terminal-sessions/{session_id}/input"): {
+            "input_stream_id": ctx["terminal_input_stream_id"],
+            "data": "echo route\n",
+        },
+        ("POST", "/dashboard/terminal-sessions/{session_id}/resize"): {
+            "input_stream_id": ctx["terminal_input_stream_id"],
+            "rows": 30,
+            "cols": 120,
+        },
+        ("POST", "/dashboard/terminal-sessions/{session_id}/close"): {
+            "input_stream_id": ctx["terminal_input_stream_id"],
         },
         ("POST", "/workflows/{workflow_id_or_slug}/preview"): {"input": {"ticket": "route"}},
         ("POST", "/workflows/import-yaml"): {
