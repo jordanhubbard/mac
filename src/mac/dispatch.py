@@ -17,13 +17,16 @@ A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
    with a stderr banner so silent local writes can't happen.
 2. ``--hub-url URL`` (with optional ``--token``) → remote HTTP.
 3. ``MAC_API_URL`` / ``MAC_URL`` / ``MAC_HUB_URL`` env → remote HTTP.
-4. ``~/.mac/config.yaml`` ``default_fleet`` + ``~/.mac/fleets.yaml``
-   ``hub_url`` → remote HTTP.
+4. A fleet → its ``hub_url`` in ``~/.mac/fleets.yaml`` → remote HTTP. The
+   fleet is ``--fleet`` / ``MAC_FLEET`` if set, else the default fleet:
+   the lone fleet, or the one marked ``default: true`` in fleets.yaml.
 5. Nothing configured → error with help text. No silent fallback.
 
-When ``args.fleet`` is set (or ``MAC_FLEET`` env), the token resolution
-goes through :func:`mac.fleet_env.resolve` so ``MAC_API_TOKEN__<FLEET>``
-takes precedence over the flat ``MAC_API_TOKEN``.
+The effective fleet (explicit, env, or default) also scopes the token via
+:func:`mac.fleet_env.resolve` so ``MAC_API_TOKEN__<FLEET>`` takes precedence
+over the flat ``MAC_API_TOKEN``. Token values missing from the live
+environment are filled from ``~/.mac/.env`` (see :func:`_load_dotenv_into`),
+so a configured fleet needs no manual ``source``.
 
 Mirroring ControlPlane's surface
 --------------------------------
