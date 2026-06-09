@@ -1042,7 +1042,7 @@ def _resolve_hub_url(args: Any, env: Dict[str, str]) -> Optional[str]:
         value = env.get(name)
         if value:
             return value
-    fleet = getattr(args, "fleet", None) or env.get("MAC_FLEET")
+    fleet = _effective_fleet(args, env)
     if fleet:
         url = _fleet_url_from_yaml(fleet)
         if url:
@@ -1054,7 +1054,7 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     explicit = getattr(args, "token", None)
     if explicit:
         return explicit
-    fleet = getattr(args, "fleet", None) or env.get("MAC_FLEET")
+    fleet = _effective_fleet(args, env)
     token = resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
     if token:
         return token
@@ -1064,22 +1064,30 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     return env.get("MAC_WORKER_TOKEN") or None
 
 
-def _fleet_url_from_yaml(fleet: str) -> Optional[str]:
-    """Look up hub_url for a named fleet in ~/.mac/fleets.yaml."""
-    candidate = Path(os.environ.get("MAC_FLEETS_CONFIG", "")) if os.environ.get("MAC_FLEETS_CONFIG") else (
-        Path.home() / ".mac" / "fleets.yaml"
-    )
-    if not candidate.is_file():
-        return None
+def _fleets_config_path() -> Path:
+    override = os.environ.get("MAC_FLEETS_CONFIG")
+    return Path(override) if override else (Path.home() / ".mac" / "fleets.yaml")
+
+
+def _load_fleets_yaml() -> Dict[str, Any]:
+    """Parse ~/.mac/fleets.yaml (or $MAC_FLEETS_CONFIG); {} on any problem."""
+    path = _fleets_config_path()
+    if not path.is_file():
+        return {}
     try:
         import yaml  # type: ignore
     except ImportError:
-        return None
+        return {}
     try:
-        data = yaml.safe_load(candidate.read_text()) or {}
+        data = yaml.safe_load(path.read_text()) or {}
     except Exception:
-        return None
-    fleets = (data or {}).get("fleets") or {}
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _fleet_url_from_yaml(fleet: str) -> Optional[str]:
+    """Look up hub_url for a named fleet in ~/.mac/fleets.yaml."""
+    fleets = _load_fleets_yaml().get("fleets") or {}
     entry = fleets.get(fleet)
     if not isinstance(entry, dict):
         return None
@@ -1087,23 +1095,54 @@ def _fleet_url_from_yaml(fleet: str) -> Optional[str]:
     return str(url) if url else None
 
 
+def _default_fleet_from_yaml() -> Optional[str]:
+    """Pick the default fleet when --fleet / $MAC_FLEET are unset.
+
+    A fleet entry in ~/.mac/fleets.yaml may set ``default: true``.
+    Resolution:
+      * exactly one fleet marked ``default: true`` -> that fleet;
+      * none marked but exactly one fleet defined -> that lone fleet;
+      * otherwise (none/several marked among multiple fleets) -> None,
+        leaving the choice to an explicit --fleet so we never guess.
+    """
+    fleets = _load_fleets_yaml().get("fleets") or {}
+    if not isinstance(fleets, dict) or not fleets:
+        return None
+    marked = [
+        name
+        for name, entry in fleets.items()
+        if isinstance(entry, dict) and entry.get("default") is True
+    ]
+    if len(marked) == 1:
+        return marked[0]
+    if not marked and len(fleets) == 1:
+        return next(iter(fleets))
+    return None
+
+
+def _effective_fleet(args: Any, env: Dict[str, str]) -> Optional[str]:
+    """The fleet to use: explicit --fleet, then $MAC_FLEET, then the
+    fleets.yaml default (the lone fleet, or the one marked ``default: true``)."""
+    return getattr(args, "fleet", None) or env.get("MAC_FLEET") or _default_fleet_from_yaml()
+
+
 def _load_dotenv_into(env: Dict[str, str]) -> None:
-    """Merge ~/.mac/.env into the env dict without clobbering live env."""
+    """Merge ~/.mac/.env into the env dict without clobbering live env.
+
+    Uses :func:`mac.fleet_env.parse_env_file` so ``export``-prefixed lines and
+    quoted values (e.g. a JSON ``MAC_API_TOKENS=...``) are handled the same way
+    a shell would, rather than landing as a bogus ``export MAC_API_TOKEN`` key
+    or a value with stray quotes.
+    """
     path = Path(os.environ.get("MAC_DEPLOY_ENV_FILE") or (Path.home() / ".mac" / ".env"))
     if not path.is_file():
         return
     try:
-        for line in path.read_text().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, _, value = stripped.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if not key:
-                continue
+        from mac.fleet_env import parse_env_file
+
+        for key, value in parse_env_file(path).items():
             env.setdefault(key, value)
-    except OSError:
+    except Exception:
         return
 
 
@@ -1139,7 +1178,9 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         "mac: no hub configured and no --db specified.\n"
         "  Set MAC_API_URL (or pass --hub-url <URL>) to target a hub, or\n"
         "  pass --db <path> to use a local SQLite database.\n"
-        "  For a named fleet: --fleet <name> reads ~/.mac/fleets.yaml.",
+        "  For a named fleet: --fleet <name> reads ~/.mac/fleets.yaml.\n"
+        "  With multiple fleets, mark one `default: true` in fleets.yaml to\n"
+        "  make it the flagless default (a lone fleet is the default already).",
         file=sys.stderr,
     )
     raise SystemExit(2)
