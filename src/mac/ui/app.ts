@@ -30,12 +30,22 @@ type XtermTerminal = {
   write: (text: string) => void;
   focus: () => void;
   dispose: () => void;
+  loadAddon: (addon: XtermAddon) => void;
+  resize: (cols: number, rows: number) => void;
   onData: (callback: (data: string) => void) => XtermDisposable;
+  cols: number;
+  rows: number;
+};
+type XtermAddon = { dispose: () => void };
+type XtermFitAddon = XtermAddon & {
+  fit: () => void;
+  proposeDimensions: () => { cols: number; rows: number } | undefined;
 };
 
 declare global {
   interface Window {
     Terminal?: new (options: JsonObject) => XtermTerminal;
+    FitAddon?: { FitAddon: new () => XtermFitAddon };
   }
 }
 
@@ -505,6 +515,7 @@ interface DashboardData {
   workflow_drafts: WorkflowDraftRecord[];
   workflow_runs: { counts?: Record<string, number>; total?: number; latest?: ApiRecord[] };
   agentbus_streams: ApiRecord[];
+  terminal_sessions?: TerminalAttachRecord[];
   artifacts: ApiRecord[];
   bridge_items: ApiRecord[];
   beads_repositories: ApiRecord[];
@@ -571,6 +582,9 @@ interface TerminalSession {
   terminal: XtermTerminal | null;
   terminalDisposer: XtermDisposable | null;
   terminalElement: HTMLElement | null;
+  fitAddon: XtermFitAddon | null;
+  resizeObserver: ResizeObserver | null;
+  resizeTimer: number | null;
 }
 
 interface TerminalAttachRecord {
@@ -580,6 +594,7 @@ interface TerminalAttachRecord {
   input_stream_id: string;
   output_stream_id: string;
   status: string;
+  created_at?: string;
   updated_at: string;
 }
 
@@ -598,6 +613,7 @@ interface DashboardState {
   agentFilter: string;
   agentSort: string;
   agentPage: number;
+  selectedAgentIds: Record<string, boolean>;
   projectFilter: string;
   showDerivedProjects: boolean;
   taskFilter: string;
@@ -1015,6 +1031,7 @@ const state: DashboardState = {
   agentFilter: DEFAULT_URL_STATE.agentFilter,
   agentSort: DEFAULT_URL_STATE.agentSort,
   agentPage: DEFAULT_URL_STATE.agentPage,
+  selectedAgentIds: {},
   projectFilter: DEFAULT_URL_STATE.projectFilter,
   showDerivedProjects: DEFAULT_URL_STATE.showDerivedProjects,
   taskFilter: DEFAULT_URL_STATE.taskFilter,
@@ -1218,7 +1235,15 @@ async function loadDashboard(): Promise<void> {
 
 function applyDashboardData(data: DashboardData): void {
   state.data = data;
+  pruneSelectedAgents(data);
   applyServerTime(data.server_time || data.updated_at || "");
+}
+
+function pruneSelectedAgents(data: DashboardData): void {
+  const known = new Set(data.agents.map((item) => item.agent.id));
+  for (const agentId of Object.keys(state.selectedAgentIds)) {
+    if (!known.has(agentId)) delete state.selectedAgentIds[agentId];
+  }
 }
 
 function applyServerTime(serverTime: string): void {
@@ -2055,6 +2080,8 @@ function renderAgents(): string {
   const start = (state.agentPage - 1) * AGENT_PAGE_SIZE;
   const visible = agents.slice(start, start + AGENT_PAGE_SIZE);
   const visibleIds = visible.map((item) => item.agent.id);
+  const selectedIds = selectedAgentIds(data);
+  const selectedVisibleCount = visibleIds.filter((agentId) => state.selectedAgentIds[agentId]).length;
   const writable = canWrite(data);
   return `
     <section class="metric-grid">
@@ -2108,13 +2135,21 @@ function renderAgents(): string {
     <section class="surface">
       <div class="surface-heading">
         <h2>Agent Resource Table</h2>
-        ${chip(`${agents.length} matching`, "info")}
+        <div class="chip-row">
+          ${chip(`${agents.length} matching`, "info")}
+          ${chip(`${selectedIds.length} selected`, selectedIds.length ? "warn" : "info")}
+        </div>
+      </div>
+      <div class="action-strip">
+        <button type="button" data-agent-select-page ${disabledAttr(!visibleIds.length)}>Select Page</button>
+        <button type="button" data-agent-clear-selection ${disabledAttr(!selectedIds.length)}>Clear Selection</button>
+        <span class="muted small">${selectedVisibleCount}/${visibleIds.length} rows selected on this page</span>
       </div>
       <form class="action-form compact" data-action="agentBulkUpdate">
-        <input type="hidden" name="agent_ids" value="${escapeHtml(visibleIds.join(","))}">
+        <input type="hidden" name="agent_ids" value="${escapeHtml(selectedIds.join(","))}">
         <label>Status <select name="status" ${disabledAttr(!writable)}>${option("", "No status change", "")}${["idle", "draining", "offline"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
         <label>Health <select name="health_status" ${disabledAttr(!writable)}>${option("", "No health change", "")}${["healthy", "degraded", "unhealthy"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
-        <button type="submit" ${disabledAttr(!writable || !visibleIds.length)}>Apply To Current Page</button>
+        <button type="submit" ${disabledAttr(!writable || !selectedIds.length)}>Apply To Selected</button>
       </form>
       ${agentTable(visible, data)}
       <div class="pager">
@@ -4953,6 +4988,13 @@ function filteredAgents(data: DashboardData): AgentItem[] {
   return agents.sort(agentSort);
 }
 
+function selectedAgentIds(data: DashboardData): string[] {
+  const known = new Set(data.agents.map((item) => item.agent.id));
+  return Object.keys(state.selectedAgentIds)
+    .filter((agentId) => state.selectedAgentIds[agentId] && known.has(agentId))
+    .sort((left, right) => compareText(left, right));
+}
+
 function agentSort(left: AgentItem, right: AgentItem): number {
   const data = mustData();
   if (state.agentSort === "fleet") return compareText(agentFleetLabel(data, left.agent.id), agentFleetLabel(data, right.agent.id)) || compareText(left.agent.name, right.agent.name);
@@ -4969,26 +5011,33 @@ function compareText(left: string, right: string): number {
 
 function agentTable(agents: AgentItem[], data: DashboardData, compact = false): string {
   if (!agents.length) return `<div class="empty-state">No matching agents</div>`;
+  const selectionHeader = compact ? "" : `<th class="select-cell">Select</th>`;
   return `
     <div class="table-wrap responsive-table">
       <table class="data-table ${compact ? "compact-table" : ""}">
-        <thead><tr><th>Agent</th><th>Fleet</th><th>Role</th><th>Project</th><th>Status</th><th>Health</th><th>Capacity</th><th>Machine</th><th>Last Seen</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
+        <thead><tr>${selectionHeader}<th>Agent</th><th>Fleet</th><th>Role</th><th>Project</th><th>Status</th><th>Health</th><th>Capacity</th><th>Machine</th><th>Last Seen</th><th>Capabilities</th><th>Task</th><th></th></tr></thead>
         <tbody>
-          ${agents.map((item) => agentRow(item, data)).join("")}
+          ${agents.map((item) => agentRow(item, data, compact)).join("")}
         </tbody>
       </table>
     </div>
     <div class="mobile-card-list">
-      ${agents.map((item) => agentMobileCard(item, data)).join("")}
+      ${agents.map((item) => agentMobileCard(item, data, compact)).join("")}
     </div>
   `;
 }
 
-function agentRow(item: AgentItem, data: DashboardData): string {
+function agentRow(item: AgentItem, data: DashboardData, compact = false): string {
   const task = item.active_tasks[0];
   const writable = canWrite(data);
+  const selected = !!state.selectedAgentIds[item.agent.id];
+  const selectionCell = compact ? "" : `
+      <td class="select-cell">
+        <input type="checkbox" data-agent-row-select="${escapeHtml(item.agent.id)}" aria-label="Select ${escapeHtml(item.agent.name)}" ${selected ? "checked" : ""}>
+      </td>`;
   return `
     <tr class="${selectedClass(item.agent.id)}">
+      ${selectionCell}
       <td><button class="link-button mono" type="button" data-select-id="${escapeHtml(item.agent.id)}">${escapeHtml(item.agent.name)}</button><br><span class="muted small">${escapeHtml(item.agent.id)}</span></td>
       <td>${escapeHtml(agentFleetLabel(data, item.agent.id))}</td>
       <td>${escapeHtml(roleLabel(data, item.agent.role_id))}</td>
@@ -5014,9 +5063,10 @@ function agentRow(item: AgentItem, data: DashboardData): string {
   `;
 }
 
-function agentMobileCard(item: AgentItem, data: DashboardData): string {
+function agentMobileCard(item: AgentItem, data: DashboardData, compact = false): string {
   const task = item.active_tasks[0];
   const writable = canWrite(data);
+  const selected = !!state.selectedAgentIds[item.agent.id];
   return `
     <article class="mobile-object-card ${item.availability.eligible ? "" : "is-blocked"} ${selectedClass(item.agent.id)}">
       <div class="record-header">
@@ -5026,6 +5076,7 @@ function agentMobileCard(item: AgentItem, data: DashboardData): string {
         </div>
         <div class="chip-row">${chip(item.agent.status, statusTone(item.agent.status))}${chip(item.agent.health_status, healthTone(item.agent.health_status))}</div>
       </div>
+      ${compact ? "" : `<label class="inline-checkbox agent-card-select"><input type="checkbox" data-agent-row-select="${escapeHtml(item.agent.id)}" ${selected ? "checked" : ""}> Select</label>`}
       <div class="row-grid compact-grid">
         ${field("Fleet", agentFleetLabel(data, item.agent.id))}
         ${field("Role", roleLabel(data, item.agent.role_id))}
@@ -6170,6 +6221,16 @@ function bindAuditControl(selector: string, key: keyof Pick<DashboardState, "aud
 function handleContentChange(event: Event): void {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  const agentSelection = target.closest<HTMLInputElement>("[data-agent-row-select]");
+  if (agentSelection) {
+    const agentId = agentSelection.dataset.agentRowSelect || "";
+    if (agentId) {
+      state.selectedAgentIds = { ...state.selectedAgentIds, [agentId]: agentSelection.checked };
+      if (!agentSelection.checked) delete state.selectedAgentIds[agentId];
+      render();
+    }
+    return;
+  }
   const laneSort = target.closest<HTMLSelectElement>("select[data-lane-sort]");
   if (laneSort) {
     const lane = laneSort.dataset.laneSort || "";
@@ -6271,6 +6332,28 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
       state.runtimePanel = panel;
       render();
     }
+    return;
+  }
+  const agentSelectPage = (event.target as Element | null)?.closest<HTMLElement>("[data-agent-select-page]");
+  if (agentSelectPage) {
+    event.preventDefault();
+    const data = state.data;
+    if (!data) return;
+    const agents = filteredAgents(data);
+    const start = (state.agentPage - 1) * AGENT_PAGE_SIZE;
+    const visible = agents.slice(start, start + AGENT_PAGE_SIZE);
+    state.selectedAgentIds = {
+      ...state.selectedAgentIds,
+      ...Object.fromEntries(visible.map((item) => [item.agent.id, true])),
+    };
+    render();
+    return;
+  }
+  const agentClearSelection = (event.target as Element | null)?.closest<HTMLElement>("[data-agent-clear-selection]");
+  if (agentClearSelection) {
+    event.preventDefault();
+    state.selectedAgentIds = {};
+    render();
     return;
   }
   const terminalOpen = (event.target as Element | null)?.closest<HTMLElement>("[data-terminal-open]");
@@ -6739,6 +6822,21 @@ function stopObservabilityStream(): void {
 function terminalAttachRecordsForAgent(agentId: string): TerminalAttachRecord[] {
   const data = state.data;
   if (!data) return [];
+  if (data.terminal_sessions?.length) {
+    return data.terminal_sessions
+      .filter((item) => item.agent_id === agentId)
+      .map((item) => ({
+        session_id: String(item.session_id || ""),
+        agent_id: String(item.agent_id || agentId),
+        sender_agent_id: String(item.sender_agent_id || ""),
+        input_stream_id: String(item.input_stream_id || `${item.session_id}.in`),
+        output_stream_id: String(item.output_stream_id || `${item.session_id}.out`),
+        status: String(item.status || "unknown"),
+        updated_at: String(item.updated_at || item.created_at || ""),
+      }))
+      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+      .slice(0, 5);
+  }
   const records = new Map<string, { input?: ApiRecord; output?: ApiRecord }>();
   for (const stream of data.agentbus_streams || []) {
     const sessionId = terminalSessionId(stream);
@@ -6801,6 +6899,9 @@ function reattachAgentTerminal(button: HTMLElement): void {
     terminal: null,
     terminalDisposer: null,
     terminalElement: null,
+    fitAddon: null,
+    resizeObserver: null,
+    resizeTimer: null,
   };
   state.terminalSessions[agentId] = session;
   state.actionMessage = `Terminal attached: ${session.session_id}`;
@@ -6846,6 +6947,9 @@ async function openAgentTerminal(button: HTMLElement): Promise<void> {
       terminal: null,
       terminalDisposer: null,
       terminalElement: null,
+      fitAddon: null,
+      resizeObserver: null,
+      resizeTimer: null,
     };
     state.terminalSessions[agentId] = session;
     state.actionMessage = `Terminal opened: ${session.session_id}`;
@@ -6987,6 +7091,17 @@ function mountTerminalSession(session: TerminalSession, element: HTMLElement): v
   if (session.buffer) terminal.write(session.buffer);
   session.terminal = terminal;
   session.terminalElement = element;
+  const fitAddon = createTerminalFitAddon();
+  if (fitAddon) {
+    terminal.loadAddon(fitAddon);
+    session.fitAddon = fitAddon;
+    window.setTimeout(() => fitTerminalSession(session, true), 0);
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => scheduleTerminalFit(session));
+      observer.observe(element);
+      session.resizeObserver = observer;
+    }
+  }
   session.terminalDisposer = state.data && canWrite(state.data)
     ? terminal.onData((data) => {
       void sendTerminalInput(session.agent_id, data);
@@ -6994,10 +7109,70 @@ function mountTerminalSession(session: TerminalSession, element: HTMLElement): v
     : null;
 }
 
+function createTerminalFitAddon(): XtermFitAddon | null {
+  const ctor = window.FitAddon?.FitAddon;
+  if (!ctor) return null;
+  try {
+    return new ctor();
+  } catch {
+    return null;
+  }
+}
+
+function scheduleTerminalFit(session: TerminalSession): void {
+  if (session.resizeTimer !== null) window.clearTimeout(session.resizeTimer);
+  session.resizeTimer = window.setTimeout(() => {
+    session.resizeTimer = null;
+    fitTerminalSession(session, true);
+  }, 150);
+}
+
+function fitTerminalSession(session: TerminalSession, notifyWorker: boolean): void {
+  if (!session.terminal || !session.fitAddon || !session.terminalElement?.isConnected) return;
+  const proposed = session.fitAddon.proposeDimensions();
+  if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
+  const cols = Math.max(40, Math.min(240, Math.floor(proposed.cols)));
+  const rows = Math.max(8, Math.min(80, Math.floor(proposed.rows)));
+  if (cols === session.cols && rows === session.rows) return;
+  session.terminal.resize(cols, rows);
+  session.cols = cols;
+  session.rows = rows;
+  if (notifyWorker) scheduleTerminalResize(session);
+}
+
+function scheduleTerminalResize(session: TerminalSession): void {
+  if (session.status !== "open" || !state.data || !canWrite(state.data)) return;
+  window.setTimeout(() => {
+    void sendTerminalResize(session);
+  }, 0);
+}
+
+async function sendTerminalResize(session: TerminalSession): Promise<void> {
+  if (session.status !== "open" || !session.input_stream_id) return;
+  try {
+    await postJSON(`/dashboard/terminal-sessions/${encodeURIComponent(session.session_id)}/resize`, {
+      input_stream_id: session.input_stream_id,
+      rows: session.rows,
+      cols: session.cols,
+    });
+  } catch (error) {
+    appendTerminalText(session, `\n[resize] ${error instanceof Error ? error.message : String(error)}\n`);
+    renderTerminalScreen(session.agent_id);
+  }
+}
+
 function disposeTerminalSession(session: TerminalSession): void {
+  if (session.resizeTimer !== null) {
+    window.clearTimeout(session.resizeTimer);
+    session.resizeTimer = null;
+  }
+  session.resizeObserver?.disconnect();
   session.terminalDisposer?.dispose();
+  session.fitAddon?.dispose();
   session.terminal?.dispose();
+  session.resizeObserver = null;
   session.terminalDisposer = null;
+  session.fitAddon = null;
   session.terminal = null;
   session.terminalElement = null;
 }
@@ -7121,6 +7296,7 @@ async function handleActionSubmit(event: SubmitEvent): Promise<void> {
       return;
     }
     state.actionMessage = actionSuccessMessage(action, result);
+    if (action === "agentBulkUpdate") clearSubmittedAgentSelection(values);
     await loadDashboard();
   } catch (error) {
     state.actionMessage = `${labelize(action)} failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -7145,6 +7321,13 @@ function confirmAgentBulkUpdate(values: JsonObject): boolean {
   const preview = agentIds.slice(0, 12).join("\n");
   const extra = agentIds.length > 12 ? `\n...and ${agentIds.length - 12} more` : "";
   return window.confirm(`Apply this agent update to ${agentIds.length} agents?\n\n${preview}${extra}`);
+}
+
+function clearSubmittedAgentSelection(values: JsonObject): void {
+  const agentIds = String(values.agent_ids || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (!agentIds.length) return;
+  state.selectedAgentIds = { ...state.selectedAgentIds };
+  for (const agentId of agentIds) delete state.selectedAgentIds[agentId];
 }
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {

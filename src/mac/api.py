@@ -1334,6 +1334,80 @@ def _terminal_stream_for_session(
     return stream
 
 
+def _terminal_session_id_from_stream(stream: Mapping[str, Any]) -> str:
+    headers = stream.get("headers") if isinstance(stream.get("headers"), Mapping) else {}
+    return str(headers.get("terminal_session_id") or "")
+
+
+def _dashboard_terminal_sessions_from_streams(
+    streams: Iterable[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    sessions: Dict[str, Dict[str, Any]] = {}
+    for stream in streams:
+        session_id = _terminal_session_id_from_stream(stream)
+        if not session_id:
+            continue
+        topic = str(stream.get("topic") or "")
+        if topic not in {DEBUG_TERMINAL_INPUT_TOPIC, DEBUG_TERMINAL_OUTPUT_TOPIC}:
+            continue
+        record = sessions.setdefault(
+            session_id,
+            {
+                "schema": "mac.dashboard.terminal_session_summary.v1",
+                "session_id": session_id,
+                "agent_id": "",
+                "sender_agent_id": "",
+                "input_stream_id": "",
+                "output_stream_id": "",
+                "status": "unknown",
+                "created_at": "",
+                "updated_at": "",
+                "closed_at": None,
+                "input_stream": None,
+                "output_stream": None,
+            },
+        )
+        created_at = str(stream.get("created_at") or "")
+        updated_at = str(stream.get("updated_at") or created_at)
+        if created_at and (not record["created_at"] or created_at < record["created_at"]):
+            record["created_at"] = created_at
+        if updated_at and (not record["updated_at"] or updated_at > record["updated_at"]):
+            record["updated_at"] = updated_at
+        if topic == DEBUG_TERMINAL_INPUT_TOPIC:
+            record["input_stream"] = dict(stream)
+            record["input_stream_id"] = str(stream.get("id") or "")
+            record["agent_id"] = str(stream.get("recipient_agent_id") or record["agent_id"] or "")
+            record["sender_agent_id"] = str(stream.get("sender_agent_id") or record["sender_agent_id"] or "")
+        else:
+            record["output_stream"] = dict(stream)
+            record["output_stream_id"] = str(stream.get("id") or "")
+            record["agent_id"] = str(stream.get("sender_agent_id") or record["agent_id"] or "")
+            record["sender_agent_id"] = str(stream.get("recipient_agent_id") or record["sender_agent_id"] or "")
+            record["status"] = str(stream.get("status") or record["status"] or "unknown")
+            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
+        if record["status"] == "unknown":
+            record["status"] = str(stream.get("status") or "unknown")
+            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
+    return sorted(
+        sessions.values(),
+        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+def _dashboard_terminal_sessions(
+    cp: ControlPlane,
+    *,
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 120,
+) -> List[Dict[str, Any]]:
+    stream_limit = max(1, min(int(limit) * 4, 1000))
+    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(agent_id=agent_id, limit=stream_limit)]
+    sessions = _dashboard_terminal_sessions_from_streams(streams)
+    if status:
+        sessions = [item for item in sessions if str(item.get("status") or "") == status]
+    return sessions[: max(1, min(int(limit), 500))]
 
 
 TERMINAL_DASHBOARD_STATES = {"completed", "failed", "cancelled"}
@@ -2039,6 +2113,7 @@ def _dashboard_state(
     agentbus_streams = [
         stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)
     ]
+    terminal_sessions = _dashboard_terminal_sessions_from_streams(agentbus_streams)
     artifacts = [artifact.to_dict() for artifact in cp.list_artifacts()]
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
     # beads removed as a read/write source; the status view no longer lists
@@ -2103,6 +2178,7 @@ def _dashboard_state(
                 "workflow_runs": workflow_runs.get("total", 0),
                 "notifier_channels": len(notifier_channels),
                 "agentbus_streams": len(agentbus_streams),
+                "terminal_sessions": len(terminal_sessions),
                 "artifacts": len(artifacts),
                 "beads_repositories": len(beads_repositories),
                 "projects": len(project_summaries),
@@ -2152,6 +2228,7 @@ def _dashboard_state(
         "workflow_drafts": workflow_drafts,
         "workflow_runs": workflow_runs,
         "agentbus_streams": agentbus_streams,
+        "terminal_sessions": terminal_sessions,
         "artifacts": artifacts,
         "bridge_items": bridge_items,
         "beads_repositories": beads_repositories,
@@ -2960,6 +3037,35 @@ def create_app(
             "payload_digest": payload_digest(payload),
             "payload_redacted": redacted_hermes_payload(payload),
             "streams": [item["stream"] for item in published],
+        }
+
+    @app.get("/dashboard/terminal-sessions")
+    def dashboard_terminal_sessions(
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = Query(default=120),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        query_agent_id = agent_id
+        if principal.agent_id and not principal.is_admin:
+            if query_agent_id and query_agent_id != principal.agent_id:
+                principal.assert_actor(query_agent_id)
+            query_agent_id = principal.agent_id
+        sessions = _dashboard_terminal_sessions(
+            cp,
+            agent_id=query_agent_id,
+            status=status,
+            limit=limit,
+        )
+        if principal.agent_id and not principal.is_admin:
+            sessions = [
+                item for item in sessions
+                if principal.agent_id in {item.get("agent_id"), item.get("sender_agent_id")}
+            ]
+        return {
+            "schema": "mac.dashboard.terminal_sessions.v1",
+            "terminal_sessions": sessions,
         }
 
     @app.post("/dashboard/agents/{agent_id}/terminal-sessions")

@@ -1177,6 +1177,23 @@ details.action-box summary {
   text-transform: uppercase;
 }
 
+.data-table .select-cell {
+  width: 48px;
+  text-align: center;
+}
+
+.data-table .select-cell input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+}
+
+.agent-card-select {
+  justify-content: flex-start;
+  margin: 8px 0 0;
+}
+
 .data-table input,
 .data-table select,
 .data-table textarea {
@@ -1449,6 +1466,7 @@ button.mobile-object-card {
 
 .terminal-screen {
   width: 100%;
+  height: min(360px, 48vh);
   min-height: 280px;
   max-height: 360px;
   overflow: auto;

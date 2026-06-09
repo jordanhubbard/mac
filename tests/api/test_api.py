@@ -2375,6 +2375,12 @@ def test_dashboard_terminal_session_creates_agentbus_streams_and_streams_events(
     assert opened["agent_id"] == agent["id"]
     assert opened["input_stream"]["topic"] == "mac.debug.terminal.input.v1"
     assert opened["output_stream"]["topic"] == "mac.debug.terminal.output.v1"
+    listed = client.get("/dashboard/terminal-sessions").json()
+    assert listed["schema"] == "mac.dashboard.terminal_sessions.v1"
+    assert listed["terminal_sessions"][0]["session_id"] == opened["session_id"]
+    assert listed["terminal_sessions"][0]["agent_id"] == agent["id"]
+    assert listed["terminal_sessions"][0]["input_stream_id"] == opened["input_stream_id"]
+    assert listed["terminal_sessions"][0]["output_stream_id"] == opened["output_stream_id"]
 
     client.post(
         "/dashboard/terminal-sessions/%s/input" % opened["session_id"],

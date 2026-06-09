@@ -82,6 +82,7 @@ def test_ui_html_loads_vendored_xterm_assets():
     html = _client().get("/ui").text
     assert "/ui/assets/vendor/xterm/xterm.css?v=5.5.0" in html
     assert "/ui/assets/vendor/xterm/xterm.js?v=5.5.0" in html
+    assert "/ui/assets/vendor/xterm/addon-fit.js?v=0.10.0" in html
 
 
 def test_ui_assets_app_js_serves():
@@ -100,7 +101,10 @@ def test_ui_assets_vendored_xterm_serves():
     client = _client()
     assert client.get("/ui/assets/vendor/xterm/xterm.js").status_code == 200
     assert client.get("/ui/assets/vendor/xterm/xterm.css").status_code == 200
+    assert client.get("/ui/assets/vendor/xterm/addon-fit.js").status_code == 200
+    assert client.get("/ui/assets/vendor/xterm/addon-fit.js.map").status_code == 200
     assert (_UI_ROOT / "vendor" / "xterm" / "LICENSE").exists()
+    assert (_UI_ROOT / "vendor" / "xterm" / "LICENSE.addon-fit").exists()
 
 
 def test_ui_served_without_api_token_auth():
@@ -293,7 +297,9 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
         "data-terminal-reattach",
         "data-terminal-screen",
         "window.Terminal",
+        "window.FitAddon",
         "terminalAttachRecordsForAgent",
+        "fitTerminalSession",
         "dashboard/terminal-sessions",
         "Task Inspector",
         "Rollout Inspector",
@@ -332,14 +338,18 @@ def test_app_js_has_ui_review_gap_fixes():
     assert "actionRequiresWrite" in js
     assert "Read-only token: this action requires write access." in js
     assert "confirmAgentBulkUpdate" in js
-    assert "Apply To Current Page" in js
+    assert "Apply To Selected" in js
+    assert "data-agent-row-select" in js
+    assert "data-agent-select-page" in js
     assert "Runtime panels" in js
     assert "data-runtime-panel" in js
     assert ".segmented-control" in css
     assert ".terminal-screen .xterm" in css
+    assert "/ui/assets/vendor/xterm/addon-fit.js" in html
     assert "/ui/assets/vendor/xterm/xterm.js" in html
     assert "Legacy Repos" not in js
     assert "Apply To Visible" not in js
+    assert "Apply To Current Page" not in js
 
 
 # ---------------------------------------------------------------------------
