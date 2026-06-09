@@ -2197,17 +2197,24 @@ function renderTasks(): string {
     <details class="surface action-drawer">
       <summary>
         <span>New Task</span>
-        <span class="muted small">Create work only when the queue needs a human-authored item</span>
+        <span class="muted small">CEO mode: just describe the task — first line becomes the title, the full text the description. Open Advanced for full control.</span>
       </summary>
       <form class="action-form" data-action="taskCreate">
-        <label>Title <input name="title" required></label>
-        <label>Description <textarea name="description"></textarea></label>
-        <label>Project <input name="project" value="${escapeHtml(state.projectFilter === "all" ? "" : state.projectFilter)}"></label>
-        <label>Priority <input name="priority" type="number" value="0"></label>
-        <label>Capabilities <input name="required_capabilities" placeholder="python,deploy"></label>
-        <label>Dependencies <input name="dependencies" placeholder="task_a,task_b"></label>
-        <label>Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
-        <button type="submit">Create</button>
+        <label class="field-full">Task
+          <textarea name="prompt" rows="4" required placeholder="Describe the task in plain language. The first line becomes the title; the whole thing becomes the description."></textarea>
+        </label>
+        <details class="field-full advanced-options">
+          <summary>Advanced options</summary>
+          <div class="advanced-grid">
+            <label>Title override <input name="title" placeholder="defaults to the first line above"></label>
+            <label>Project <input name="project" value="${escapeHtml(state.projectFilter === "all" ? "" : state.projectFilter)}"></label>
+            <label>Priority <input name="priority" type="number" value="0"></label>
+            <label>Capabilities <input name="required_capabilities" placeholder="python,deploy"></label>
+            <label>Dependencies <input name="dependencies" placeholder="task_a,task_b"></label>
+            <label class="field-full">Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
+          </div>
+        </details>
+        <div class="field-full form-actions"><button type="submit">Create</button></div>
       </form>
     </details>
     <section class="task-lanes">
@@ -7396,9 +7403,17 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
     });
   }
   if (action === "taskCreate") {
+    // CEO mode: a single self-describing prompt. The first non-empty line is
+    // the title; the full prompt is the description. An explicit "Title
+    // override" (Advanced) wins. Falls back to the legacy title/description
+    // fields so the project-level task form keeps working unchanged.
+    const prompt = String(values.prompt || "").trim();
+    const firstLine = prompt.split("\n").map((line) => line.trim()).find(Boolean) || "";
+    const title = String(values.title || "").trim() || firstLine.slice(0, 120);
+    const description = prompt || String(values.description || "");
     return postJSON("/tasks", {
-      title: requiredString(values.title),
-      description: String(values.description || ""),
+      title: requiredString(title),
+      description,
       project: emptyToNull(values.project),
       priority: numberValue(values.priority, 0),
       required_capabilities: csvList(values.required_capabilities),
