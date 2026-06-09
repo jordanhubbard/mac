@@ -1943,6 +1943,14 @@ def _dashboard_service_links(
         _lookup_config_value(("FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL"), env_files).get("value")
         or ""
     ).rstrip("/")
+    # kanban-adopt-01: link out to the Hermes dashboard's kanban board rather
+    # than re-implementing one. Shown only when the operator points us at a
+    # running Hermes dashboard.
+    hermes_dashboard_url = str(
+        _lookup_config_value(("MAC_HERMES_DASHBOARD_URL", "HERMES_DASHBOARD_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    hermes_kanban_url = _join_service_url(hermes_dashboard_url, "/kanban") if hermes_dashboard_url else ""
     tokenhub_admin = _credential_ref(("TOKENHUB_ADMIN_TOKEN",), env_files)
     tokenhub_client = _credential_ref(
         ("TOKENHUB_API_KEY", "TOKENHUB_AGENT_KEY", "OPENAI_API_KEY"),
@@ -2024,6 +2032,30 @@ def _dashboard_service_links(
                 ),
             },
             "credentials": [firecrawl_key],
+        },
+        {
+            "id": "kanban",
+            "name": "Kanban",
+            "kind": "external_ui",
+            "role": "Hermes multi-agent kanban board",
+            "status": "configured" if hermes_dashboard_url else "not_configured",
+            "url": _redact_service_url(hermes_kanban_url),
+            "ui_url": _redact_service_url(hermes_kanban_url),
+            "health_url": (
+                _redact_service_url(_join_service_url(hermes_dashboard_url, "/healthz"))
+                if hermes_dashboard_url else ""
+            ),
+            "auth": {
+                "type": "dashboard_session",
+                "credential_pass_through": False,
+                "pass_through_url": "",
+                "notes": (
+                    "Opens the Hermes dashboard kanban (separate dashboard login)"
+                    if hermes_dashboard_url
+                    else "Set MAC_HERMES_DASHBOARD_URL (or HERMES_DASHBOARD_URL) to link the Hermes kanban board"
+                ),
+            },
+            "credentials": [],
         },
     ]
 
