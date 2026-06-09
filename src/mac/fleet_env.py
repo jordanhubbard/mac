@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
@@ -125,6 +126,60 @@ def parse_env_file(path: Path) -> Dict[str, str]:
             raw_value = raw_value[1:-1]
         values[key] = raw_value
     return values
+
+
+def _render_assignment(key: str, value: str, *, export: bool = False) -> str:
+    """Render a ``KEY=value`` line, double-quoting values that need it."""
+    prefix = "export " if export else ""
+    if value == "" or re.search(r"[\s\"'$`\\#]", value):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return '%s%s="%s"' % (prefix, key, escaped)
+    return "%s%s=%s" % (prefix, key, value)
+
+
+def set_env_key(path: Path, key: str, value: str, *, backup: bool = True) -> bool:
+    """Idempotently set ``key=value`` in a shell-style env file.
+
+    Replaces the first existing assignment for ``key`` in place (keeping an
+    ``export`` prefix if present) or appends it when absent; the rest of the
+    file is preserved byte-for-byte. Values containing whitespace or shell
+    metacharacters are double-quoted. Creates the file (mode 0600) if missing.
+    When ``backup`` is set and the file already exists, a timestamped copy is
+    written next to it before the change. Returns True iff the file changed.
+    """
+    existing = path.read_text(encoding="utf-8") if path.is_file() else None
+    out: list = []
+    found = False
+    for raw_line in (existing.splitlines() if existing is not None else []):
+        stripped = raw_line.strip()
+        is_export = stripped.startswith("export ")
+        candidate = stripped[len("export "):] if is_export else stripped
+        cur_key = candidate.split("=", 1)[0].strip() if "=" in candidate else None
+        if cur_key == key and not found:
+            out.append(_render_assignment(key, value, export=is_export))
+            found = True
+        else:
+            out.append(raw_line)
+    if not found:
+        out.append(_render_assignment(key, value))
+    new_text = "\n".join(out) + "\n"
+    if existing == new_text:
+        return False
+    if backup and existing is not None:
+        ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        backup_path = path.parent / ("%s.bak-setkey-%s" % (path.name, ts))
+        backup_path.write_text(existing, encoding="utf-8")
+        try:
+            backup_path.chmod(0o600)
+        except OSError:
+            pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new_text, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return True
 
 
 def migrate_env_file(
