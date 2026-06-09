@@ -1551,11 +1551,34 @@ function render(): void {
 }
 
 function renderPreservingFocusedControl(): void {
+  // A streamed refresh re-renders the active view via innerHTML, which would
+  // otherwise collapse open drawers and wipe whatever the user is mid-typing
+  // (e.g. a half-composed New Task prompt — see kanban-adopt-01 interim fix).
+  // Snapshot the open <details> (by id), the values of fields marked
+  // `data-preserve`, and the focused control's selection; restore them after
+  // the re-render so a background tick never discards in-progress work.
+  const openDrawers = Array.from(
+    document.querySelectorAll<HTMLDetailsElement>("details[id][open]"),
+  ).map((el) => el.id);
+  const drafts = new Map<string, string>();
+  document
+    .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-preserve][id]")
+    .forEach((el) => drafts.set(el.id, el.value));
   const active = document.activeElement as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
   const id = active?.id || "";
   const selectionStart = active && "selectionStart" in active ? active.selectionStart : null;
   const selectionEnd = active && "selectionEnd" in active ? active.selectionEnd : null;
   render();
+  for (const drawerId of openDrawers) {
+    const drawer = document.getElementById(drawerId) as HTMLDetailsElement | null;
+    if (drawer) drawer.open = true;
+  }
+  // Restore in-progress edits the re-render discarded — only when they differ,
+  // so a value the new render legitimately set is never clobbered.
+  drafts.forEach((value, draftId) => {
+    const el = document.getElementById(draftId) as HTMLInputElement | HTMLTextAreaElement | null;
+    if (el && "value" in el && el.value !== value) el.value = value;
+  });
   if (!id) return;
   const next = document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
   if (!next) return;
@@ -1564,9 +1587,13 @@ function renderPreservingFocusedControl(): void {
     selectionStart !== null
     && selectionEnd !== null
     && "setSelectionRange" in next
-    && next instanceof HTMLInputElement
+    && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)
   ) {
-    next.setSelectionRange(selectionStart, selectionEnd);
+    try {
+      next.setSelectionRange(selectionStart, selectionEnd);
+    } catch {
+      /* number/email inputs reject setSelectionRange — caret restore is best-effort */
+    }
   }
 }
 
@@ -2194,24 +2221,24 @@ function renderTasks(): string {
       <input id="taskSearch" type="search" placeholder="Search tasks by title, id, project, capability" value="${escapeHtml(state.taskQuery)}">
       <button type="button" id="clearTaskFilter">Clear</button>
     </section>
-    <details class="surface action-drawer">
+    <details id="newTaskDrawer" class="surface action-drawer">
       <summary>
         <span>New Task</span>
         <span class="muted small">CEO mode: just describe the task — first line becomes the title, the full text the description. Open Advanced for full control.</span>
       </summary>
       <form class="action-form" data-action="taskCreate">
         <label class="field-full">Task
-          <textarea name="prompt" rows="4" required placeholder="Describe the task in plain language. The first line becomes the title; the whole thing becomes the description."></textarea>
+          <textarea id="newTaskPrompt" name="prompt" rows="4" required data-preserve placeholder="Describe the task in plain language. The first line becomes the title; the whole thing becomes the description."></textarea>
         </label>
-        <details class="field-full advanced-options">
+        <details id="newTaskAdvanced" class="field-full advanced-options">
           <summary>Advanced options</summary>
           <div class="advanced-grid">
-            <label>Title override <input name="title" placeholder="defaults to the first line above"></label>
-            <label>Project <input name="project" value="${escapeHtml(state.projectFilter === "all" ? "" : state.projectFilter)}"></label>
-            <label>Priority <input name="priority" type="number" value="0"></label>
-            <label>Capabilities <input name="required_capabilities" placeholder="python,deploy"></label>
-            <label>Dependencies <input name="dependencies" placeholder="task_a,task_b"></label>
-            <label class="field-full">Metadata JSON <textarea name="metadata" placeholder="{}"></textarea></label>
+            <label>Title override <input id="newTaskTitle" name="title" data-preserve placeholder="defaults to the first line above"></label>
+            <label>Project <input id="newTaskProject" name="project" data-preserve value="${escapeHtml(state.projectFilter === "all" ? "" : state.projectFilter)}"></label>
+            <label>Priority <input id="newTaskPriority" name="priority" type="number" data-preserve value="0"></label>
+            <label>Capabilities <input id="newTaskCaps" name="required_capabilities" data-preserve placeholder="python,deploy"></label>
+            <label>Dependencies <input id="newTaskDeps" name="dependencies" data-preserve placeholder="task_a,task_b"></label>
+            <label class="field-full">Metadata JSON <textarea id="newTaskMetadata" name="metadata" data-preserve placeholder="{}"></textarea></label>
           </div>
         </details>
         <div class="field-full form-actions"><button type="submit">Create</button></div>

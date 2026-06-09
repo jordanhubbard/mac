@@ -97,6 +97,18 @@ def test_ui_assets_styles_css_serves():
     assert "text/css" in resp.headers.get("content-type", "")
 
 
+def test_new_task_form_is_preserved_across_stream_refresh():
+    # A streamed dashboard refresh re-renders via innerHTML; the New Task drawer
+    # + in-progress prompt must survive it (kanban-adopt-01 interim fix). The
+    # markup carries the ids + data-preserve hooks, and the focus-preserving
+    # renderer restores open drawers and preserved field values.
+    app_js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    assert 'id="newTaskDrawer"' in app_js
+    assert 'id="newTaskPrompt"' in app_js and "data-preserve" in app_js
+    assert "details[id][open]" in app_js  # open-drawer snapshot/restore
+    assert "[data-preserve][id]" in app_js  # draft value snapshot/restore
+
+
 def test_ui_assets_vendored_xterm_serves():
     client = _client()
     assert client.get("/ui/assets/vendor/xterm/xterm.js").status_code == 200
