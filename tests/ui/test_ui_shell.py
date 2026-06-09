@@ -78,6 +78,12 @@ def test_ui_html_loads_app_js_with_cache_bust():
     assert '/ui/assets/app.js?v=' in html
 
 
+def test_ui_html_loads_vendored_xterm_assets():
+    html = _client().get("/ui").text
+    assert "/ui/assets/vendor/xterm/xterm.css?v=5.5.0" in html
+    assert "/ui/assets/vendor/xterm/xterm.js?v=5.5.0" in html
+
+
 def test_ui_assets_app_js_serves():
     resp = _client().get("/ui/assets/app.js")
     assert resp.status_code == 200
@@ -88,6 +94,13 @@ def test_ui_assets_styles_css_serves():
     resp = _client().get("/ui/assets/styles.css")
     assert resp.status_code == 200
     assert "text/css" in resp.headers.get("content-type", "")
+
+
+def test_ui_assets_vendored_xterm_serves():
+    client = _client()
+    assert client.get("/ui/assets/vendor/xterm/xterm.js").status_code == 200
+    assert client.get("/ui/assets/vendor/xterm/xterm.css").status_code == 200
+    assert (_UI_ROOT / "vendor" / "xterm" / "LICENSE").exists()
 
 
 def test_ui_served_without_api_token_auth():
@@ -277,7 +290,10 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
         "Debug Terminal",
         "terminalSessions",
         "data-terminal-open",
+        "data-terminal-reattach",
         "data-terminal-screen",
+        "window.Terminal",
+        "terminalAttachRecordsForAgent",
         "dashboard/terminal-sessions",
         "Task Inspector",
         "Rollout Inspector",
@@ -307,6 +323,23 @@ def test_app_js_has_object_inspector_mobile_runtime_secret_surfaces():
         "Skills",
     ):
         assert marker in js
+
+
+def test_app_js_has_ui_review_gap_fixes():
+    js = (_UI_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (_UI_ROOT / "styles.css").read_text(encoding="utf-8")
+    html = (_UI_ROOT / "index.html").read_text(encoding="utf-8")
+    assert "actionRequiresWrite" in js
+    assert "Read-only token: this action requires write access." in js
+    assert "confirmAgentBulkUpdate" in js
+    assert "Apply To Current Page" in js
+    assert "Runtime panels" in js
+    assert "data-runtime-panel" in js
+    assert ".segmented-control" in css
+    assert ".terminal-screen .xterm" in css
+    assert "/ui/assets/vendor/xterm/xterm.js" in html
+    assert "Legacy Repos" not in js
+    assert "Apply To Visible" not in js
 
 
 # ---------------------------------------------------------------------------

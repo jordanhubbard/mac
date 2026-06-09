@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>MAC Control Plane</title>
     <link rel="stylesheet" href="/ui/assets/styles.css?v=20260602-theme-toggle">
+    <link rel="stylesheet" href="/ui/assets/vendor/xterm/xterm.css?v=5.5.0">
     <script>
       // No-FOUC theme bootstrap: apply the stored/preferred theme before the
       // first paint. app.js re-applies the same logic and wires the toggle.
@@ -167,6 +168,7 @@
       </main>
     </div>
     <!-- app.ts is the maintained source; app.js is checked-in browser output. -->
-    <script type="module" src="/ui/assets/app.js?v=20260606-connection"></script>
+    <script src="/ui/assets/vendor/xterm/xterm.js?v=5.5.0"></script>
+    <script type="module" src="/ui/assets/app.js?v=20260608-ui-review"></script>
   </body>
 </html>

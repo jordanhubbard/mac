@@ -23,6 +23,21 @@ type ViewKey =
   | "secrets";
 type Tone = "good" | "warn" | "bad" | "info";
 type JsonObject = Record<string, unknown>;
+type RuntimePanel = "deltas" | "runs" | "environments" | "rollouts";
+type XtermDisposable = { dispose: () => void };
+type XtermTerminal = {
+  open: (element: HTMLElement) => void;
+  write: (text: string) => void;
+  focus: () => void;
+  dispose: () => void;
+  onData: (callback: (data: string) => void) => XtermDisposable;
+};
+
+declare global {
+  interface Window {
+    Terminal?: new (options: JsonObject) => XtermTerminal;
+  }
+}
 
 interface ApiRecord {
   id: string;
@@ -553,6 +568,19 @@ interface TerminalSession {
   buffer: string;
   cursor: number;
   stream: AbortController | null;
+  terminal: XtermTerminal | null;
+  terminalDisposer: XtermDisposable | null;
+  terminalElement: HTMLElement | null;
+}
+
+interface TerminalAttachRecord {
+  session_id: string;
+  agent_id: string;
+  sender_agent_id: string;
+  input_stream_id: string;
+  output_stream_id: string;
+  status: string;
+  updated_at: string;
 }
 
 interface DashboardState {
@@ -604,6 +632,7 @@ interface DashboardState {
   selectedWorkflowId: string;
   selectedNodeKey: string;
   workflowPlanDraft: WorkflowPlanDraft | null;
+  runtimePanel: RuntimePanel;
   terminalSessions: Record<string, TerminalSession>;
 }
 
@@ -868,6 +897,8 @@ const TASK_STATES = [
   "cancelled",
 ];
 const TERMINAL_TASK_STATES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_INPUT_TOPIC = "mac.debug.terminal.input.v1";
+const TERMINAL_OUTPUT_TOPIC = "mac.debug.terminal.output.v1";
 const AUDIT_SUBJECT_TYPES = [
   "",
   "task",
@@ -1016,6 +1047,7 @@ const state: DashboardState = {
   selectedWorkflowId: "",
   selectedNodeKey: "",
   workflowPlanDraft: null,
+  runtimePanel: "deltas",
   terminalSessions: {},
 };
 
@@ -1488,6 +1520,7 @@ function render(): void {
                       : renderOverview();
   nodes.content.innerHTML = `${action}${body}`;
   bindViewControls();
+  mountVisibleTerminals();
   syncDashboardSubscription();
   syncObservabilitySubscription();
 }
@@ -2079,9 +2112,9 @@ function renderAgents(): string {
       </div>
       <form class="action-form compact" data-action="agentBulkUpdate">
         <input type="hidden" name="agent_ids" value="${escapeHtml(visibleIds.join(","))}">
-        <label>Status <select name="status">${option("", "No status change", "")}${["idle", "draining", "offline"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
-        <label>Health <select name="health_status">${option("", "No health change", "")}${["healthy", "degraded", "unhealthy"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
-        <button type="submit">Apply To Visible</button>
+        <label>Status <select name="status" ${disabledAttr(!writable)}>${option("", "No status change", "")}${["idle", "draining", "offline"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
+        <label>Health <select name="health_status" ${disabledAttr(!writable)}>${option("", "No health change", "")}${["healthy", "degraded", "unhealthy"].map((value) => option(value, labelize(value), "")).join("")}</select></label>
+        <button type="submit" ${disabledAttr(!writable || !visibleIds.length)}>Apply To Current Page</button>
       </form>
       ${agentTable(visible, data)}
       <div class="pager">
@@ -2517,6 +2550,11 @@ function cancelWorkflowPlan(): void {
 }
 
 async function acceptWorkflowPlan(button: HTMLButtonElement): Promise<void> {
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: this action requires write access.";
+    render();
+    return;
+  }
   const draft = syncWorkflowPlanDraftFromDom();
   if (!draft) return;
   if (!draft.nodes.length) {
@@ -3667,7 +3705,6 @@ function renderIntegrations(): string {
   const failingEvalRuns = data.eval_runs.filter((run) => run.passed === false);
   return `
     <section class="metric-grid">
-      ${metric("Legacy Repos", data.beads_repositories.length, "retired import sources")}
       ${metric("Imported Items", data.bridge_items.length, "project items from import bridges")}
       ${metric("Service UIs", data.service_links.length, "linked control surfaces")}
       ${metric("Artifacts", data.artifacts.length, "registered outputs")}
@@ -3679,10 +3716,9 @@ function renderIntegrations(): string {
     </section>
     <section class="split">
       <div class="surface">
-        <h2>Legacy Imports</h2>
+        <h2>Imports</h2>
         <div class="record-list">
-          ${data.beads_repositories.length ? data.beads_repositories.map(beadsRepositoryRecord).join("") : `<div class="empty-state">No legacy repositories</div>`}
-          ${data.bridge_items.length ? data.bridge_items.slice(0, 30).map(bridgeItemRecord).join("") : ""}
+          ${data.bridge_items.length ? data.bridge_items.slice(0, 30).map(bridgeItemRecord).join("") : `<div class="empty-state">No imported items</div>`}
         </div>
       </div>
       <div class="surface">
@@ -3710,10 +3746,32 @@ function renderIntegrations(): string {
   `;
 }
 
+function runtimePanelTabs(active: RuntimePanel): string {
+  const tabs: Array<{ id: RuntimePanel; label: string; detail: string }> = [
+    { id: "deltas", label: "Deltas", detail: "dependency changes" },
+    { id: "runs", label: "Runs", detail: "manual execution records" },
+    { id: "environments", label: "Environments", detail: "runtime manifests" },
+    { id: "rollouts", label: "Rollouts", detail: "promotion controls" },
+  ];
+  return `
+    <section class="segmented-control runtime-panel-tabs" role="tablist" aria-label="Runtime panels">
+      ${tabs.map((tab) => `
+        <button type="button" role="tab" data-runtime-panel="${tab.id}" aria-selected="${active === tab.id ? "true" : "false"}" class="${active === tab.id ? "is-active" : ""}">
+          <span>${escapeHtml(tab.label)}</span>
+          <span class="muted small">${escapeHtml(tab.detail)}</span>
+        </button>
+      `).join("")}
+    </section>
+  `;
+}
+
 function renderRuntime(): string {
   const data = mustData();
   const writable = canWrite(data);
   const disabled = disabledAttr(!writable);
+  const panel = state.runtimePanel;
+  const commandHidden = panel === "environments" || panel === "rollouts" ? "" : "hidden";
+  const environmentOrRolloutHidden = panel === "environments" || panel === "rollouts" ? "" : "hidden";
   const activeRollouts = data.rollouts.filter((item) => ["planned", "canarying", "paused", "rescuing"].includes(String(item.rollout.status))).length;
   const runningRuns = data.runtime_runs.filter((run) => run.status === "running").length;
   const activeDeltas = data.runtime_deltas.filter((delta) => ["proposed", "validated"].includes(String(delta.status))).length;
@@ -3725,8 +3783,9 @@ function renderRuntime(): string {
       ${metric("Rollouts", data.rollouts.length, `${activeRollouts} active`)}
       ${metric("Eval Gates", data.eval_sets.length, "available rollout gates")}
     </section>
-    <section class="command-drawer-grid">
-      <details class="surface action-drawer">
+    ${runtimePanelTabs(panel)}
+    <section class="command-drawer-grid" ${commandHidden}>
+      <details class="surface action-drawer" ${panel === "environments" ? "" : "hidden"}>
         <summary>
           <span>Create Runtime</span>
           <span class="muted small">Register a new execution environment manifest</span>
@@ -3738,7 +3797,7 @@ function renderRuntime(): string {
           <button type="submit" ${disabled}>Create Runtime</button>
         </form>
       </details>
-      <details class="surface action-drawer">
+      <details class="surface action-drawer" ${panel === "rollouts" ? "" : "hidden"}>
         <summary>
           <span>Create Rollout</span>
           <span class="muted small">Stage a canary, full promotion, or rescue rollout</span>
@@ -3759,7 +3818,7 @@ function renderRuntime(): string {
         </form>
       </details>
     </section>
-    <section class="surface">
+    <section class="surface" ${panel === "deltas" ? "" : "hidden"}>
       <div class="surface-heading">
         <h2>Runtime Deltas</h2>
         ${chip(`${activeDeltas} pending`, activeDeltas ? "warn" : "good")}
@@ -3788,7 +3847,7 @@ function renderRuntime(): string {
         ${data.runtime_deltas.length ? data.runtime_deltas.map((delta) => runtimeDeltaRecord(delta, data)).join("") : `<div class="empty-state">No runtime deltas</div>`}
       </div>
     </section>
-    <section class="surface">
+    <section class="surface" ${panel === "runs" ? "" : "hidden"}>
       <details class="action-drawer inline-drawer">
         <summary>
           <span>Runtime Run Controls</span>
@@ -3813,8 +3872,8 @@ function renderRuntime(): string {
         ${data.runtime_runs.length ? data.runtime_runs.slice(0, 12).map((run) => runtimeRunCard(run, data)).join("") : `<div class="empty-state">No runtime runs</div>`}
       </div>
     </section>
-    <section class="split">
-      <div class="surface">
+    <section class="split" ${environmentOrRolloutHidden}>
+      <div class="surface" ${panel === "environments" ? "" : "hidden"}>
         <div class="surface-heading">
           <h2>Runtime Environments</h2>
           ${chip(`${data.runtimes.length} configured`, data.runtimes.length ? "info" : "warn")}
@@ -3823,7 +3882,7 @@ function renderRuntime(): string {
           ${data.runtimes.length ? data.runtimes.map((runtime) => runtimeRecord(runtime, data)).join("") : `<div class="empty-state">No runtimes</div>`}
         </div>
       </div>
-      <div class="surface">
+      <div class="surface" ${panel === "rollouts" ? "" : "hidden"}>
         <div class="surface-heading">
           <h2>Rollouts</h2>
           ${chip(`${data.rollouts.length} tracked`, data.rollouts.length ? "info" : "warn")}
@@ -3839,6 +3898,8 @@ function renderRuntime(): string {
 
 function renderSecrets(): string {
   const data = mustData();
+  const writable = canWrite(data);
+  const disabled = disabledAttr(!writable);
   const grantedAudits = data.secret_audits.filter((audit) => audit.result === "granted").length;
   return `
     <section class="metric-grid">
@@ -3853,11 +3914,11 @@ function renderSecrets(): string {
         <span class="muted small">Add a scoped, audited secret record</span>
       </summary>
       <form class="action-form aligned-form" data-action="secretCreate">
-        <label>Name <input name="name" required></label>
-        <label>Created by <input name="created_by" value="human"></label>
-        <label>Value <input name="value" type="password" required autocomplete="new-password"></label>
-        <label>Scopes JSON <textarea class="json-editor" name="scopes" placeholder='{"agents":[]}' spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
-        <button type="submit">Create Secret</button>
+        <label>Name <input name="name" required ${disabled}></label>
+        <label>Created by <input name="created_by" value="human" ${disabled}></label>
+        <label>Value <input name="value" type="password" required autocomplete="new-password" ${disabled}></label>
+        <label>Scopes JSON <textarea class="json-editor" name="scopes" placeholder='{"agents":[]}' spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}></textarea></label>
+        <button type="submit" ${disabled}>Create Secret</button>
       </form>
     </details>
     <section class="split">
@@ -4325,25 +4386,6 @@ function napRunRecord(run: ApiRecord): string {
     <article class="record compact">
       <div class="record-header"><div><h3>${escapeHtml(run.agent_id)}</h3><p class="muted small mono">${escapeHtml(run.id)}</p></div>${chip(run.status, run.status === "completed" ? "good" : run.status === "failed" ? "bad" : "info")}</div>
       <p class="muted small">${escapeHtml(formatAge(String(run.started_at || run.created_at || "")))}</p>
-    </article>
-  `;
-}
-
-function beadsRepositoryRecord(repo: ApiRecord): string {
-  const metadata = (repo.metadata && typeof repo.metadata === "object" ? repo.metadata : {}) as JsonObject;
-  const health = (metadata.health && typeof metadata.health === "object" ? metadata.health : {}) as ApiRecord;
-  const healthStatus = String(health.status || (repo.last_error ? "unhealthy" : "healthy"));
-  const healthReason = String(health.reason || repo.last_error || "canonical");
-  return `
-    <article class="record compact ${selectedClass(String(repo.id))}">
-      <div class="record-header"><div><h3>${escapeHtml(repo.name)}</h3><p class="muted small mono">${escapeHtml(repo.id)}</p></div><div class="chip-row">${chip(repo.enabled ? "enabled" : "disabled", repo.enabled ? "good" : "warn")}${chip(healthStatus, healthTone(healthStatus))}</div></div>
-      <div class="row-grid compact-grid">
-        ${field("Project", repo.project || "none")}
-        ${field("Source", repo.source || "none")}
-        ${field("Poll", `${repo.poll_interval_seconds || 0}s`)}
-        ${field("Health", healthReason)}
-        ${field("Path", repo.path || "none")}
-      </div>
     </article>
   `;
 }
@@ -5066,6 +5108,7 @@ function agentInspector(data: DashboardData): string {
 function agentTerminalPanel(agent: AgentRecord, writable: boolean): string {
   const disabled = disabledAttr(!writable);
   const session = state.terminalSessions[agent.id];
+  const attachable = terminalAttachRecordsForAgent(agent.id);
   if (!session) {
     return `
       <div class="record-section terminal-panel" data-terminal-panel="${escapeHtml(agent.id)}">
@@ -5083,6 +5126,11 @@ function agentTerminalPanel(agent: AgentRecord, writable: boolean): string {
           <label>Cols <input name="cols" type="number" min="40" max="240" value="120" ${disabled}></label>
           <button type="button" data-terminal-open="${escapeHtml(agent.id)}" ${disabled}>Open Terminal</button>
         </div>
+        ${attachable.length ? `
+          <div class="terminal-session-list">
+            ${attachable.map(terminalAttachRecord).join("")}
+          </div>
+        ` : ""}
       </div>
     `;
   }
@@ -5098,13 +5146,37 @@ function agentTerminalPanel(agent: AgentRecord, writable: boolean): string {
           <button class="secondary-button" type="button" data-terminal-close="${escapeHtml(agent.id)}" ${disabledAttr(!writable || session.status !== "open")}>Close</button>
         </div>
       </div>
-      <pre class="terminal-screen" tabindex="0" data-terminal-screen="1" data-terminal-agent-id="${escapeHtml(agent.id)}" aria-label="Debug terminal for ${escapeHtml(agent.name)}">${escapeHtml(terminalDisplay(session.buffer))}</pre>
+      <div class="terminal-screen" tabindex="0" role="application" data-terminal-screen="1" data-terminal-agent-id="${escapeHtml(agent.id)}" aria-label="Debug terminal for ${escapeHtml(agent.name)}">${window.Terminal ? "" : escapeHtml(terminalDisplay(session.buffer))}</div>
       <div class="terminal-input-row">
         <input class="terminal-line-input mono" data-terminal-line-input="${escapeHtml(agent.id)}" placeholder="$" autocomplete="off" autocapitalize="off" spellcheck="false" ${disabledAttr(!writable || session.status !== "open")}>
         <button type="button" data-terminal-send="${escapeHtml(agent.id)}" ${disabledAttr(!writable || session.status !== "open")}>Send</button>
         <button type="button" data-terminal-send-control="${escapeHtml(agent.id)}" data-terminal-control="ctrl-c" ${disabledAttr(!writable || session.status !== "open")}>Ctrl-C</button>
       </div>
     </div>
+  `;
+}
+
+function terminalAttachRecord(record: TerminalAttachRecord): string {
+  return `
+    <article class="record compact terminal-session-record">
+      <div class="record-header">
+        <div>
+          <h4>${escapeHtml(record.session_id)}</h4>
+          <p class="muted small mono">${escapeHtml(record.output_stream_id)}</p>
+        </div>
+        <div class="chip-row">
+          ${chip(record.status || "unknown", terminalStatusTone(record.status))}
+          <button class="secondary-button" type="button"
+            data-terminal-reattach="${escapeHtml(record.agent_id)}"
+            data-terminal-session-id="${escapeHtml(record.session_id)}"
+            data-terminal-input-stream-id="${escapeHtml(record.input_stream_id)}"
+            data-terminal-output-stream-id="${escapeHtml(record.output_stream_id)}"
+            data-terminal-sender-agent-id="${escapeHtml(record.sender_agent_id)}"
+          >Attach</button>
+        </div>
+      </div>
+      <p class="muted small">Updated ${escapeHtml(formatAge(record.updated_at))}</p>
+    </article>
   `;
 }
 
@@ -5239,6 +5311,8 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
   const evidenceOptions = detail.evidence.map((item) => option(String(item.id), String(item.id), "")).join("");
   const pendingReviews = detail.reviews.filter((review) => review.status === "pending");
   const llmRoutes = llmRoutesForTask(data, task.id);
+  const writable = canWrite(data);
+  const disabled = disabledAttr(!writable);
   return `
     <section class="object-inspector">
       <div class="object-inspector-header">
@@ -5264,14 +5338,14 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
         ${field("Updated", formatAge(task.last_updated_at || task.updated_at))}
       </div>
       <form class="action-form inspector-form" data-action="taskUpdate" data-task-id="${escapeHtml(task.id)}">
-        <label>Title <input name="title" value="${escapeHtml(task.title)}"></label>
-        <label>Project <input name="project" value="${escapeHtml(task.project || "")}"></label>
-        <label>Priority <input name="priority" type="number" value="${escapeHtml(task.priority || 0)}"></label>
-        <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}"></label>
-        <label>Dependencies <input name="dependencies" value="${escapeHtml((task.dependencies || []).join(","))}"></label>
-        <label>Description <textarea name="description">${escapeHtml(String(task.description || ""))}</textarea></label>
-        <label>Metadata JSON <textarea class="json-editor" name="metadata">${escapeHtml(JSON.stringify(task.metadata || {}, null, 2))}</textarea></label>
-        <button type="submit">Save Task</button>
+        <label>Title <input name="title" value="${escapeHtml(task.title)}" ${disabled}></label>
+        <label>Project <input name="project" value="${escapeHtml(task.project || "")}" ${disabled}></label>
+        <label>Priority <input name="priority" type="number" value="${escapeHtml(task.priority || 0)}" ${disabled}></label>
+        <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}" ${disabled}></label>
+        <label>Dependencies <input name="dependencies" value="${escapeHtml((task.dependencies || []).join(","))}" ${disabled}></label>
+        <label>Description <textarea name="description" ${disabled}>${escapeHtml(String(task.description || ""))}</textarea></label>
+        <label>Metadata JSON <textarea class="json-editor" name="metadata" ${disabled}>${escapeHtml(JSON.stringify(task.metadata || {}, null, 2))}</textarea></label>
+        <button type="submit" ${disabled}>Save Task</button>
       </form>
       <details class="action-box action-drawer inline-drawer">
         <summary>
@@ -5279,23 +5353,23 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
           <span class="muted small">Claim, start, review, or transition this task</span>
         </summary>
         <form class="action-form compact" data-action="taskClaim" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
-          <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1"></label>
-          <button type="submit">Claim</button>
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "", !writable)}</label>
+          <label>Lease seconds <input name="lease_seconds" type="number" value="900" min="1" ${disabled}></label>
+          <button type="submit" ${disabled}>Claim</button>
         </form>
         <form class="action-form compact" data-action="taskStart" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
-          <button type="submit">Start</button>
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "", !writable)}</label>
+          <button type="submit" ${disabled}>Start</button>
         </form>
         <form class="action-form compact" data-action="taskSubmitReview" data-task-id="${escapeHtml(task.id)}">
-          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "")}</label>
-          <button type="submit">Submit Review</button>
+          <label>Agent ${agentSelect("agent_id", data.agents, task.owner_agent_id || "", !writable)}</label>
+          <button type="submit" ${disabled}>Submit Review</button>
         </form>
         <form class="action-form" data-action="taskTransition" data-task-id="${escapeHtml(task.id)}">
-          <label>State ${select("target_state", TASK_STATES, task.state)}</label>
-          <label>Actor <input name="actor" value="human"></label>
-          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}"></textarea></label>
-          <button type="submit">Transition</button>
+          <label>State ${select("target_state", TASK_STATES, task.state, !writable)}</label>
+          <label>Actor <input name="actor" value="human" ${disabled}></label>
+          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}" ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Transition</button>
         </form>
       </details>
       <details class="action-box action-drawer inline-drawer">
@@ -5304,41 +5378,41 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
           <span class="muted small">Attach proof or create follow-on work</span>
         </summary>
         <form class="action-form compact" data-action="taskAddChild" data-task-id="${escapeHtml(task.id)}">
-          <label>Child title <input name="title" required></label>
-          <label>Description <textarea name="description"></textarea></label>
-          <label>Project <input name="project" value="${escapeHtml(task.project || "")}"></label>
-          <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}"></label>
-          <label>Dependencies <input name="dependencies"></label>
-          <label>Actor <input name="actor" value="human"></label>
-          <button type="submit">Add Child</button>
+          <label>Child title <input name="title" required ${disabled}></label>
+          <label>Description <textarea name="description" ${disabled}></textarea></label>
+          <label>Project <input name="project" value="${escapeHtml(task.project || "")}" ${disabled}></label>
+          <label>Capabilities <input name="required_capabilities" value="${escapeHtml((task.required_capabilities || []).join(","))}" ${disabled}></label>
+          <label>Dependencies <input name="dependencies" ${disabled}></label>
+          <label>Actor <input name="actor" value="human" ${disabled}></label>
+          <button type="submit" ${disabled}>Add Child</button>
         </form>
         <form class="action-form" data-action="addEvidence" data-task-id="${escapeHtml(task.id)}">
-          <label>Kind ${select("kind", ["test", "review", "artifact", "publication", "log", "eval"], "test")}</label>
-          <label>URI <input name="uri" placeholder="artifact://..."></label>
-          <label>Summary <input name="summary" placeholder="What this proves"></label>
-          <label>Checksum <input name="checksum" placeholder="optional"></label>
-          <label>Created by <input name="created_by" value="${escapeHtml(task.owner_agent_id || "human")}"></label>
-          <button type="submit">Add Evidence</button>
+          <label>Kind ${select("kind", ["test", "review", "artifact", "publication", "log", "eval"], "test", !writable)}</label>
+          <label>URI <input name="uri" placeholder="artifact://..." ${disabled}></label>
+          <label>Summary <input name="summary" placeholder="What this proves" ${disabled}></label>
+          <label>Checksum <input name="checksum" placeholder="optional" ${disabled}></label>
+          <label>Created by <input name="created_by" value="${escapeHtml(task.owner_agent_id || "human")}" ${disabled}></label>
+          <button type="submit" ${disabled}>Add Evidence</button>
         </form>
         <form class="action-form compact" data-action="requestReview" data-task-id="${escapeHtml(task.id)}">
-          <label>Reviewer ${agentSelect("reviewer_agent_id", data.agents, "")}</label>
-          <label>Actor <input name="actor" value="dispatcher"></label>
-          <button type="submit">Request Review</button>
+          <label>Reviewer ${agentSelect("reviewer_agent_id", data.agents, "", !writable)}</label>
+          <label>Actor <input name="actor" value="dispatcher" ${disabled}></label>
+          <button type="submit" ${disabled}>Request Review</button>
         </form>
         ${pendingReviews.map((review) => `
           <form class="action-form" data-action="reviewDecision" data-review-id="${escapeHtml(review.id)}">
-            <label>Status ${select("status", ["approved", "changes_requested", "rejected"], "approved")}</label>
-            <label>Reviewer <input name="reviewer_agent_id" value="${escapeHtml(review.reviewer_agent_id)}"></label>
-            <label>Evidence <select name="evidence_id"><option value="">None</option>${evidenceOptions}</select></label>
-            <label>Reason <input name="reason" placeholder="optional"></label>
-            <button type="submit">Submit Review</button>
+            <label>Status ${select("status", ["approved", "changes_requested", "rejected"], "approved", !writable)}</label>
+            <label>Reviewer <input name="reviewer_agent_id" value="${escapeHtml(review.reviewer_agent_id)}" ${disabled}></label>
+            <label>Evidence <select name="evidence_id" ${disabled}><option value="">None</option>${evidenceOptions}</select></label>
+            <label>Reason <input name="reason" placeholder="optional" ${disabled}></label>
+            <button type="submit" ${disabled}>Submit Review</button>
           </form>`).join("")}
         <form class="action-form compact" data-action="publishTask">
           <input type="hidden" name="task_id" value="${escapeHtml(task.id)}">
-          <label>Target <input name="target" placeholder="release://..."></label>
-          <label>Created by <input name="created_by" value="human"></label>
-          <label>Evidence <select name="evidence_id"><option value="">None</option>${evidenceOptions}</select></label>
-          <button type="submit">Publish</button>
+          <label>Target <input name="target" placeholder="release://..." ${disabled}></label>
+          <label>Created by <input name="created_by" value="human" ${disabled}></label>
+          <label>Evidence <select name="evidence_id" ${disabled}><option value="">None</option>${evidenceOptions}</select></label>
+          <button type="submit" ${disabled}>Publish</button>
         </form>
       </details>
       <div class="record-section">
@@ -5359,7 +5433,7 @@ function taskInspector(tasks: TaskDetail[], data: DashboardData): string {
             <h3>Delete Task</h3>
             <p class="muted small">Deletes the selected task record.</p>
           </div>
-          <button class="danger-button" type="button" data-task-delete="${escapeHtml(task.id)}">Delete</button>
+          <button class="danger-button" type="button" data-task-delete="${escapeHtml(task.id)}" ${disabled}>Delete</button>
         </div>
       </div>
     </section>
@@ -5833,6 +5907,8 @@ function runtimeDeltaInspector(delta: ApiRecord, data: DashboardData): string {
 function rolloutInspector(status: RolloutStatus, data: DashboardData): string {
   const rollout = status.rollout;
   const evalSet = data.eval_sets.find((item) => item.id === rollout.required_eval_set_id);
+  const writable = canWrite(data);
+  const disabled = disabledAttr(!writable);
   return `
     <div class="record-section">
       <div class="object-inspector-header">
@@ -5855,28 +5931,28 @@ function rolloutInspector(status: RolloutStatus, data: DashboardData): string {
       </div>
       <div class="runtime-control-grid">
         <form class="action-form" data-action="rolloutAdvance" data-rollout-id="${escapeHtml(rollout.id)}">
-          <label>Action ${select("action", ["start_canary", "promote", "pause", "resume", "rollback"], "start_canary")}</label>
-          <label>Actor <input name="actor" value="human"></label>
-          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}"></textarea></label>
-          <button type="submit">Advance</button>
+          <label>Action ${select("action", ["start_canary", "promote", "pause", "resume", "rollback"], "start_canary", !writable)}</label>
+          <label>Actor <input name="actor" value="human" ${disabled}></label>
+          <label>Detail JSON <textarea class="json-editor" name="detail" placeholder="{}" ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Advance</button>
         </form>
         <form class="action-form" data-action="rolloutVerifyArtifact" data-rollout-id="${escapeHtml(rollout.id)}">
-          <label>Artifact URI <input name="artifact_uri" value="${escapeHtml(rollout.artifact_uri || "")}" required></label>
-          <label>Artifact hash <input name="artifact_hash" value="${escapeHtml(rollout.artifact_hash || "")}" required></label>
-          <label>Actor <input name="actor" value="human"></label>
-          <button type="submit">Verify Artifact</button>
+          <label>Artifact URI <input name="artifact_uri" value="${escapeHtml(rollout.artifact_uri || "")}" required ${disabled}></label>
+          <label>Artifact hash <input name="artifact_hash" value="${escapeHtml(rollout.artifact_hash || "")}" required ${disabled}></label>
+          <label>Actor <input name="actor" value="human" ${disabled}></label>
+          <button type="submit" ${disabled}>Verify Artifact</button>
         </form>
       </div>
       <div class="runtime-control-grid">
         <form class="action-form compact" data-action="rolloutHealth" data-rollout-id="${escapeHtml(rollout.id)}">
-          <label>Actor <input name="actor" value="monitor"></label>
-          <label>Checks JSON <textarea class="json-editor" name="checks" placeholder='{"runtime":"healthy"}'></textarea></label>
-          <button type="submit">Record Health</button>
+          <label>Actor <input name="actor" value="monitor" ${disabled}></label>
+          <label>Checks JSON <textarea class="json-editor" name="checks" placeholder='{"runtime":"healthy"}' ${disabled}></textarea></label>
+          <button type="submit" ${disabled}>Record Health</button>
         </form>
         <form class="action-form compact danger-action" data-action="rolloutRescue" data-rollout-id="${escapeHtml(rollout.id)}">
-          <label>Actor <input name="actor" value="human"></label>
-          <label>Reason <input name="reason" placeholder="why rescue is needed"></label>
-          <button type="submit">Rescue</button>
+          <label>Actor <input name="actor" value="human" ${disabled}></label>
+          <label>Reason <input name="reason" placeholder="why rescue is needed" ${disabled}></label>
+          <button type="submit" ${disabled}>Rescue</button>
         </form>
       </div>
       <div class="timeline">${status.events.length ? status.events.slice(-8).map((event) => timelineItem(String(event.event_type), String(event.actor || ""), String(event.created_at || ""))).join("") : `<div class="empty-state">No rollout events</div>`}</div>
@@ -5888,6 +5964,8 @@ function secretInspector(data: DashboardData): string {
   const secret = data.secrets.find((item) => item.id === state.selectedId) || data.secrets[0];
   if (!secret) return "";
   const audits = data.secret_audits.filter((audit) => audit.secret_id === secret.id);
+  const writable = canWrite(data);
+  const disabled = disabledAttr(!writable);
   return `
     <section class="object-inspector">
       <div class="object-inspector-header">
@@ -5907,10 +5985,10 @@ function secretInspector(data: DashboardData): string {
         ${field("Rotated", secret.rotated_at || "never")}
       </div>
       <form class="action-form inspector-form" data-action="secretAccess" data-secret-id="${escapeHtml(secret.id)}">
-        <label>Accessor ${agentSelect("accessor_agent_id", data.agents, "")}</label>
-        <label>Purpose <input name="purpose" placeholder="deploy, test, audit"></label>
-        <label>TTL seconds <input name="ttl_seconds" type="number" value="300" min="1"></label>
-        <button type="submit">Request Handle</button>
+        <label>Accessor ${agentSelect("accessor_agent_id", data.agents, "", !writable)}</label>
+        <label>Purpose <input name="purpose" placeholder="deploy, test, audit" ${disabled}></label>
+        <label>TTL seconds <input name="ttl_seconds" type="number" value="300" min="1" ${disabled}></label>
+        <button type="submit" ${disabled}>Request Handle</button>
       </form>
       <div class="record-section">
         <h3>Recent Access</h3>
@@ -5924,7 +6002,7 @@ function secretInspector(data: DashboardData): string {
             <h3>Delete Secret</h3>
             <p class="muted small">Hard-deletes the secret row and scrubs the stored value.</p>
           </div>
-          <button class="danger-button" type="button" data-secret-delete="${escapeHtml(secret.id)}">Delete</button>
+          <button class="danger-button" type="button" data-secret-delete="${escapeHtml(secret.id)}" ${disabled}>Delete</button>
         </div>
       </div>
     </section>
@@ -6152,15 +6230,6 @@ function handleContentKeydown(event: KeyboardEvent): void {
     void sendTerminalLine(terminalLineInput);
     return;
   }
-  const terminalScreen = target?.closest<HTMLElement>("[data-terminal-screen]");
-  if (terminalScreen) {
-    const sequence = terminalKeySequence(event);
-    if (sequence !== null) {
-      event.preventDefault();
-      void sendTerminalInput(terminalScreen.dataset.terminalAgentId || "", sequence);
-    }
-    return;
-  }
   if (event.key !== "Enter" && event.key !== " ") return;
   const workflowNode = target?.closest<HTMLElement>("[data-action='workflowNodeOpen']");
   const launchpad = target?.closest<HTMLElement>("[data-dashboard-go]");
@@ -6194,10 +6263,26 @@ async function handleContentClick(event: MouseEvent): Promise<void> {
     navigateDashboardView(launchpad.dataset.dashboardGo as ViewKey);
     return;
   }
+  const runtimePanel = (event.target as Element | null)?.closest<HTMLElement>("[data-runtime-panel]");
+  if (runtimePanel) {
+    event.preventDefault();
+    const panel = runtimePanel.dataset.runtimePanel as RuntimePanel;
+    if (["deltas", "runs", "environments", "rollouts"].includes(panel)) {
+      state.runtimePanel = panel;
+      render();
+    }
+    return;
+  }
   const terminalOpen = (event.target as Element | null)?.closest<HTMLElement>("[data-terminal-open]");
   if (terminalOpen) {
     event.preventDefault();
     await openAgentTerminal(terminalOpen);
+    return;
+  }
+  const terminalReattach = (event.target as Element | null)?.closest<HTMLElement>("[data-terminal-reattach]");
+  if (terminalReattach) {
+    event.preventDefault();
+    reattachAgentTerminal(terminalReattach);
     return;
   }
   const terminalSend = (event.target as Element | null)?.closest<HTMLElement>("[data-terminal-send]");
@@ -6425,6 +6510,11 @@ async function runQuickAction(button: HTMLButtonElement): Promise<void> {
   const taskId = button.dataset.taskId || "";
   const action = button.dataset.quickAction || "";
   if (!taskId || !action) return;
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: this action requires write access.";
+    render();
+    return;
+  }
   const targetState = action === "retry" ? "open" : "cancelled";
   const label = action === "retry" ? "Retry" : "Cancel";
   if (action === "cancel" && !window.confirm("Cancel this task?")) return;
@@ -6465,6 +6555,11 @@ async function runDirectDelete(
   path: string,
   onSuccess: () => void = () => {},
 ): Promise<void> {
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: this action requires write access.";
+    render();
+    return;
+  }
   if (!confirmDestructive(label)) return;
   button.disabled = true;
   try {
@@ -6641,9 +6736,87 @@ function stopObservabilityStream(): void {
   state.observabilityStreamStatus = "idle";
 }
 
+function terminalAttachRecordsForAgent(agentId: string): TerminalAttachRecord[] {
+  const data = state.data;
+  if (!data) return [];
+  const records = new Map<string, { input?: ApiRecord; output?: ApiRecord }>();
+  for (const stream of data.agentbus_streams || []) {
+    const sessionId = terminalSessionId(stream);
+    if (!sessionId) continue;
+    if (String(stream.topic || "") === TERMINAL_OUTPUT_TOPIC && String(stream.sender_agent_id || "") === agentId) {
+      records.set(sessionId, { ...(records.get(sessionId) || {}), output: stream });
+    } else if (String(stream.topic || "") === TERMINAL_INPUT_TOPIC && String(stream.recipient_agent_id || "") === agentId) {
+      records.set(sessionId, { ...(records.get(sessionId) || {}), input: stream });
+    }
+  }
+  return Array.from(records.entries())
+    .map(([sessionId, pair]) => {
+      const output = pair.output;
+      if (!output) return null;
+      return {
+        session_id: sessionId,
+        agent_id: agentId,
+        sender_agent_id: String(pair.input?.sender_agent_id || output.recipient_agent_id || ""),
+        input_stream_id: String(pair.input?.id || `${sessionId}.in`),
+        output_stream_id: String(output.id || `${sessionId}.out`),
+        status: String(output.status || "unknown"),
+        updated_at: String(output.updated_at || output.created_at || ""),
+      };
+    })
+    .filter((item): item is TerminalAttachRecord => !!item)
+    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+    .slice(0, 5);
+}
+
+function terminalSessionId(stream: ApiRecord): string {
+  const headers = stream.headers && typeof stream.headers === "object" ? stream.headers as JsonObject : {};
+  return String(headers.terminal_session_id || "");
+}
+
+function reattachAgentTerminal(button: HTMLElement): void {
+  const agentId = button.dataset.terminalReattach || "";
+  const sessionId = button.dataset.terminalSessionId || "";
+  if (!agentId || !sessionId) return;
+  const record = terminalAttachRecordsForAgent(agentId).find((item) => item.session_id === sessionId) || {
+    session_id: sessionId,
+    agent_id: agentId,
+    sender_agent_id: button.dataset.terminalSenderAgentId || "",
+    input_stream_id: button.dataset.terminalInputStreamId || `${sessionId}.in`,
+    output_stream_id: button.dataset.terminalOutputStreamId || `${sessionId}.out`,
+    status: "open",
+    updated_at: "",
+  };
+  const session: TerminalSession = {
+    session_id: record.session_id,
+    agent_id: record.agent_id,
+    sender_agent_id: record.sender_agent_id,
+    input_stream_id: record.input_stream_id,
+    output_stream_id: record.output_stream_id,
+    rows: 32,
+    cols: 120,
+    status: record.status === "open" ? "open" : "closed",
+    buffer: "",
+    cursor: 0,
+    stream: null,
+    terminal: null,
+    terminalDisposer: null,
+    terminalElement: null,
+  };
+  state.terminalSessions[agentId] = session;
+  state.actionMessage = `Terminal attached: ${session.session_id}`;
+  startTerminalStream(session);
+  render();
+  window.setTimeout(() => focusAgentTerminal(agentId), 0);
+}
+
 async function openAgentTerminal(button: HTMLElement): Promise<void> {
   const agentId = button.dataset.terminalOpen || "";
   if (!agentId) return;
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: terminal access requires write access.";
+    render();
+    return;
+  }
   const panel = button.closest<HTMLElement>(".terminal-panel");
   const shell = panel?.querySelector<HTMLInputElement>("input[name='shell']")?.value || "";
   const cwd = panel?.querySelector<HTMLInputElement>("input[name='cwd']")?.value || "";
@@ -6670,12 +6843,15 @@ async function openAgentTerminal(button: HTMLElement): Promise<void> {
       buffer: "",
       cursor: 0,
       stream: null,
+      terminal: null,
+      terminalDisposer: null,
+      terminalElement: null,
     };
     state.terminalSessions[agentId] = session;
     state.actionMessage = `Terminal opened: ${session.session_id}`;
     startTerminalStream(session);
     render();
-    window.setTimeout(() => terminalScreenElement(agentId)?.focus(), 0);
+    window.setTimeout(() => focusAgentTerminal(agentId), 0);
   } catch (error) {
     state.actionMessage = `Terminal open failed: ${error instanceof Error ? error.message : String(error)}`;
     render();
@@ -6756,14 +6932,83 @@ function applyTerminalChunk(agentId: string, chunk: JsonObject): void {
 
 function appendTerminalText(session: TerminalSession, text: string): void {
   session.buffer = `${session.buffer}${text}`.slice(-50000);
+  if (session.terminal && session.terminalElement?.isConnected) {
+    session.terminal.write(text);
+  }
 }
 
 function renderTerminalScreen(agentId: string): void {
   const session = state.terminalSessions[agentId];
   const screen = terminalScreenElement(agentId);
   if (!session || !screen) return;
+  if (session.terminal && session.terminalElement === screen) return;
   screen.textContent = terminalDisplay(session.buffer);
   screen.scrollTop = screen.scrollHeight;
+}
+
+function mountVisibleTerminals(): void {
+  for (const session of Object.values(state.terminalSessions)) {
+    const screen = terminalScreenElement(session.agent_id);
+    if (!screen) {
+      if (session.terminalElement && !session.terminalElement.isConnected) disposeTerminalSession(session);
+      continue;
+    }
+    mountTerminalSession(session, screen);
+  }
+}
+
+function mountTerminalSession(session: TerminalSession, element: HTMLElement): void {
+  if (session.terminal && session.terminalElement === element) return;
+  disposeTerminalSession(session);
+  if (!window.Terminal) {
+    element.textContent = terminalDisplay(session.buffer);
+    element.scrollTop = element.scrollHeight;
+    session.terminalElement = element;
+    return;
+  }
+  element.textContent = "";
+  const terminal = new window.Terminal({
+    cols: session.cols,
+    rows: session.rows,
+    cursorBlink: true,
+    convertEol: true,
+    scrollback: 4000,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    fontSize: 13,
+    lineHeight: 1.25,
+    theme: {
+      background: "#0c1117",
+      foreground: "#d9f2e7",
+      cursor: "#d9f2e7",
+      selectionBackground: "#264f78",
+    },
+  });
+  terminal.open(element);
+  if (session.buffer) terminal.write(session.buffer);
+  session.terminal = terminal;
+  session.terminalElement = element;
+  session.terminalDisposer = state.data && canWrite(state.data)
+    ? terminal.onData((data) => {
+      void sendTerminalInput(session.agent_id, data);
+    })
+    : null;
+}
+
+function disposeTerminalSession(session: TerminalSession): void {
+  session.terminalDisposer?.dispose();
+  session.terminal?.dispose();
+  session.terminalDisposer = null;
+  session.terminal = null;
+  session.terminalElement = null;
+}
+
+function focusAgentTerminal(agentId: string): void {
+  const session = state.terminalSessions[agentId];
+  if (session?.terminal) {
+    session.terminal.focus();
+    return;
+  }
+  terminalScreenElement(agentId)?.focus();
 }
 
 function terminalScreenElement(agentId: string): HTMLElement | null {
@@ -6784,6 +7029,11 @@ async function sendTerminalLine(input: HTMLInputElement): Promise<void> {
 async function sendTerminalInput(agentId: string, text: string): Promise<void> {
   const session = state.terminalSessions[agentId];
   if (!session || session.status !== "open" || !text) return;
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: terminal input requires write access.";
+    render();
+    return;
+  }
   try {
     await postJSON(`/dashboard/terminal-sessions/${encodeURIComponent(session.session_id)}/input`, {
       input_stream_id: session.input_stream_id,
@@ -6799,6 +7049,11 @@ async function sendTerminalInput(agentId: string, text: string): Promise<void> {
 async function closeAgentTerminal(agentId: string): Promise<void> {
   const session = state.terminalSessions[agentId];
   if (!session) return;
+  if (state.data && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: terminal close requires write access.";
+    render();
+    return;
+  }
   session.status = "closing";
   renderPreservingFocusedControl();
   try {
@@ -6810,28 +7065,6 @@ async function closeAgentTerminal(agentId: string): Promise<void> {
     appendTerminalText(session, `\n[close] ${error instanceof Error ? error.message : String(error)}\n`);
     renderPreservingFocusedControl();
   }
-}
-
-function terminalKeySequence(event: KeyboardEvent): string | null {
-  if (event.metaKey || event.altKey) return null;
-  if (event.ctrlKey) {
-    const key = event.key.toLowerCase();
-    if (key === "c") return "\x03";
-    if (key === "d") return "\x04";
-    if (key === "l") return "\x0c";
-    if (key === "[") return "\x1b";
-    return null;
-  }
-  if (event.key.length === 1) return event.key;
-  if (event.key === "Enter") return "\r";
-  if (event.key === "Backspace") return "\x7f";
-  if (event.key === "Tab") return "\t";
-  if (event.key === "Escape") return "\x1b";
-  if (event.key === "ArrowUp") return "\x1b[A";
-  if (event.key === "ArrowDown") return "\x1b[B";
-  if (event.key === "ArrowRight") return "\x1b[C";
-  if (event.key === "ArrowLeft") return "\x1b[D";
-  return null;
 }
 
 function textToBase64(text: string): string {
@@ -6872,6 +7105,12 @@ async function handleActionSubmit(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const action = form.dataset.action || "";
   const values = formValues(form);
+  if (state.data && actionRequiresWrite(action) && !canWrite(state.data)) {
+    state.actionMessage = "Read-only token: this action requires write access.";
+    render();
+    return;
+  }
+  if (action === "agentBulkUpdate" && !confirmAgentBulkUpdate(values)) return;
   setFormBusy(form, true);
   try {
     const result = await runAction(action, form, values);
@@ -6889,6 +7128,23 @@ async function handleActionSubmit(event: SubmitEvent): Promise<void> {
   } finally {
     if (form.isConnected) setFormBusy(form, false);
   }
+}
+
+function actionRequiresWrite(action: string): boolean {
+  return action !== "workflowPlanPreview";
+}
+
+function confirmAgentBulkUpdate(values: JsonObject): boolean {
+  const agentIds = String(values.agent_ids || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (!agentIds.length) {
+    state.actionMessage = "No agents selected for bulk update.";
+    render();
+    return false;
+  }
+  if (agentIds.length === 1) return true;
+  const preview = agentIds.slice(0, 12).join("\n");
+  const extra = agentIds.length > 12 ? `\n...and ${agentIds.length - 12} more` : "";
+  return window.confirm(`Apply this agent update to ${agentIds.length} agents?\n\n${preview}${extra}`);
 }
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {
