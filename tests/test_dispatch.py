@@ -180,13 +180,17 @@ def test_resolve_dispatch_explicit_db_wins_over_hub(tmp_path, monkeypatch):
     assert isinstance(disp, LocalDispatch)
 
 
-def test_resolve_dispatch_errors_when_nothing_configured(monkeypatch, capsys):
+def test_resolve_dispatch_errors_when_nothing_configured(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_URL", raising=False)
     monkeypatch.delenv("MAC_HUB_URL", raising=False)
     monkeypatch.delenv("HGMAC_URL", raising=False)
     monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.delenv("MAC_FLEET", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    # Isolate from the dev machine's real ~/.mac/fleets.yaml: point the loader
+    # at a path that doesn't exist so no default fleet is inferred.
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent.yaml"))
     with pytest.raises(SystemExit) as excinfo:
         resolve_dispatch(_ns())
     assert excinfo.value.code == 2
@@ -194,6 +198,68 @@ def test_resolve_dispatch_errors_when_nothing_configured(monkeypatch, capsys):
     assert "no hub configured" in captured.err
     assert "--db" in captured.err
     assert "MAC_API_URL" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# default-fleet selection + ~/.mac/.env auto-loading (flagless usability)
+# ---------------------------------------------------------------------------
+
+
+def _write_fleets(tmp_path, monkeypatch, body: str):
+    path = tmp_path / "fleets.yaml"
+    path.write_text(body)
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(path))
+    return path
+
+
+def _clear_hub_env(monkeypatch):
+    for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "HGMAC_URL", "MAC_DB", "MAC_FLEET"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+
+def test_default_fleet_lone_fleet_is_default(tmp_path, monkeypatch):
+    import mac.dispatch as d
+
+    _write_fleets(tmp_path, monkeypatch, "fleets:\n  only:\n    hub_url: http://only:8789\n")
+    assert d._default_fleet_from_yaml() == "only"
+
+
+def test_default_fleet_marked_wins_among_many(tmp_path, monkeypatch):
+    import mac.dispatch as d
+
+    _write_fleets(
+        tmp_path,
+        monkeypatch,
+        "fleets:\n"
+        "  a:\n    hub_url: http://a:8789\n"
+        "  b:\n    hub_url: http://b:8789\n    default: true\n",
+    )
+    assert d._default_fleet_from_yaml() == "b"
+
+
+def test_default_fleet_ambiguous_returns_none(tmp_path, monkeypatch):
+    import mac.dispatch as d
+
+    _write_fleets(
+        tmp_path,
+        monkeypatch,
+        "fleets:\n  a:\n    hub_url: http://a:8789\n  b:\n    hub_url: http://b:8789\n",
+    )
+    assert d._default_fleet_from_yaml() is None
+
+
+def test_resolve_dispatch_uses_default_fleet_url_and_dotenv_token(tmp_path, monkeypatch):
+    """Flagless `mac`: lone fleet -> hub_url, token pulled from ~/.mac/.env."""
+    _clear_hub_env(monkeypatch)
+    _write_fleets(tmp_path, monkeypatch, "fleets:\n  only:\n    hub_url: http://only:8789\n")
+    env_file = tmp_path / ".env"
+    env_file.write_text("export MAC_API_TOKEN__ONLY=sekret\n")
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", str(env_file))
+    disp = resolve_dispatch(_ns())  # no --fleet, no --hub-url, no --token
+    assert isinstance(disp, RemoteDispatch)
+    assert disp._client.base_url == "http://only:8789"
+    assert disp._client.token == "sekret"
 
 
 class _FakeTransport:
