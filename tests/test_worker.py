@@ -673,7 +673,7 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
             "target": {"channel_type": "slack"},
         },
     )
-    client = TestClient(create_app(control_plane=cp))
+    client = TestClient(create_app(control_plane=cp, auth_tokens={}))
     worker = MacWorker(
         MacApiClient("http://mac.test", transport=api_transport(client)),
         agent.id,
@@ -688,12 +688,12 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
         {
             "token": "xoxb-one",
             "channel": "C1",
-            "text": "Task completed\nRocky completed lifecycle proof\ntask.completed task_live",
+            "text": "[task.completed] Rocky completed lifecycle proof",
         },
         {
             "token": "xoxb-two",
             "channel": "C2",
-            "text": "Task completed\nRocky completed lifecycle proof\ntask.completed task_live",
+            "text": "[task.completed] Rocky completed lifecycle proof",
         },
     ]
     assert cp.list_messages(agent.id)[0].status == "delivered"

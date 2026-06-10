@@ -3062,17 +3062,21 @@ def _target_slack_route(target: JsonDict) -> tuple[str, str]:
 
 
 def _status_update_slack_text(notification: JsonDict) -> str:
-    title = str(notification.get("title") or "Task update").strip()
+    """Return a compact one-liner for Slack task-progress notifications.
+
+    Format: ``[event_type] body`` — the bracketed event type gives quick context
+    and the body carries the human-readable summary.  When body is absent or
+    duplicates the title, fall back to just the title so the line never looks
+    empty.  Subject ID is omitted from the visible text to keep it short
+    (it is already in the notification payload itself for any tool that needs it).
+    """
     body = str(notification.get("body") or "").strip()
+    title = str(notification.get("title") or "Task update").strip()
     event_type = str(notification.get("event_type") or "").strip()
-    subject_id = str(notification.get("subject_id") or "").strip()
-    lines = [title]
-    if body and body != title:
-        lines.append(body)
-    context = " ".join(item for item in (event_type, subject_id) if item)
-    if context:
-        lines.append(context)
-    return "\n".join(lines)[:3000]
+    text = body if body and body != title else title
+    if event_type:
+        return ("[%s] %s" % (event_type, text))[:3000]
+    return text[:3000]
 
 
 def _coerce_process_output(value: Any) -> str:
