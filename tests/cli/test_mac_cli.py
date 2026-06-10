@@ -186,6 +186,33 @@ def test_task_search_scopes_to_cwd_project(tmp_path, monkeypatch):
     assert {"alpha", "beta"} <= {t["project"] for t in everything}
 
 
+def test_task_create_emits_ticket_mirror(tmp_path, monkeypatch):
+    import mac.tickets_mirror as tm
+
+    d = tmp_path / ".tickets"
+    d.mkdir()
+    monkeypatch.setattr(tm, "tickets_dir", lambda: d)
+    monkeypatch.delenv("MAC_NO_TICKET_MIRROR", raising=False)
+    rc, task = _run(tmp_path, "task", "create", "Mirror me", "--project", "p")
+    assert rc == 0
+    files = list(d.glob("*.md"))
+    assert len(files) == 1
+    text = files[0].read_text(encoding="utf-8")
+    assert "# Mirror me" in text
+    assert ("id: %s" % task["id"]) in text
+
+
+def test_task_create_no_ticket_skips_mirror(tmp_path, monkeypatch):
+    import mac.tickets_mirror as tm
+
+    d = tmp_path / ".tickets"
+    d.mkdir()
+    monkeypatch.setattr(tm, "tickets_dir", lambda: d)
+    rc, _task = _run(tmp_path, "task", "create", "No mirror", "--project", "p", "--no-ticket")
+    assert rc == 0
+    assert list(d.glob("*.md")) == []
+
+
 def test_mac_cli_task_show(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "Show me")
     assert rc == 0

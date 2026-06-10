@@ -375,6 +375,27 @@ def _effective_read_project(args: argparse.Namespace) -> Optional[str]:
     return inferred
 
 
+def _maybe_emit_ticket(
+    result: Any, args: argparse.Namespace, *, close_reason: Optional[str] = None
+) -> None:
+    """Mirror a created/closed task to ``.tickets/<id>.md`` (parity-tickets-autoemit-01).
+
+    Best-effort and opt-out (``--no-ticket`` / ``MAC_NO_TICKET_MIRROR``); never
+    fails the command if the mirror can't be written.
+    """
+    if getattr(args, "no_ticket", False):
+        return
+    data = result.to_dict() if hasattr(result, "to_dict") else result
+    try:
+        from mac.tickets_mirror import emit
+
+        path = emit(data, close_reason=close_reason)
+    except Exception:  # noqa: BLE001 - the mirror is a convenience, not the operation
+        return
+    if path:
+        print("mac: wrote ticket mirror %s" % path, file=sys.stderr)
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     description = _read_text_arg(
@@ -402,19 +423,19 @@ def cmd_task_create(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
     project = project or None
-    _print(
-        cp.create_task(
-            args.title,
-            description=description,
-            project=project,
-            priority=args.priority,
-            required_capabilities=_csv(args.required_capabilities),
-            dependencies=_csv(args.dependencies),
-            metadata=metadata,
-            max_attempts=args.max_attempts,
-            actor=args.actor,
-        )
+    created = cp.create_task(
+        args.title,
+        description=description,
+        project=project,
+        priority=args.priority,
+        required_capabilities=_csv(args.required_capabilities),
+        dependencies=_csv(args.dependencies),
+        metadata=metadata,
+        max_attempts=args.max_attempts,
+        actor=args.actor,
     )
+    _maybe_emit_ticket(created, args)
+    _print(created)
 
 
 def cmd_task_list(args: argparse.Namespace) -> None:
@@ -450,7 +471,9 @@ def cmd_task_close(args: argparse.Namespace) -> None:
 
     detail = {"reason": args.reason} if args.reason else {}
     target = TaskState.COMPLETED.value if args.success else TaskState.CANCELLED.value
-    _print(cp.transition_task(args.task_id, target, args.actor, detail).to_dict())
+    result = cp.transition_task(args.task_id, target, args.actor, detail)
+    _maybe_emit_ticket(result, args, close_reason=args.reason or None)
+    _print(result)
 
 
 def cmd_task_search(args: argparse.Namespace) -> None:
@@ -1951,6 +1974,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="read JSON metadata from file path (or '-' for stdin)")
     create.add_argument("--max-attempts", type=int, default=3)
     create.add_argument("--actor", default="human")
+    create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
+                        help="don't write the .tickets/<id>.md mirror for this task")
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser("list")
@@ -1978,6 +2003,8 @@ def build_parser() -> argparse.ArgumentParser:
     close.add_argument("task_id")
     close.add_argument("--reason", default="")
     close.add_argument("--actor", default="human")
+    close.add_argument("--no-ticket", dest="no_ticket", action="store_true",
+                       help="don't update the .tickets/<id>.md mirror on close")
     close.add_argument("--cancelled", dest="success", action="store_false",
                        help="close as CANCELLED instead of COMPLETED")
     close.set_defaults(success=True)
