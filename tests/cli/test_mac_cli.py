@@ -154,6 +154,38 @@ def test_task_create_empty_project_means_none(tmp_path, monkeypatch):
     assert task["project"] is None
 
 
+def test_task_list_scopes_to_cwd_project(tmp_path, monkeypatch):
+    _run(tmp_path, "task", "create", "A", "--project", "alpha")
+    _run(tmp_path, "task", "create", "B", "--project", "beta")
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "alpha")
+    rc, scoped = _run(tmp_path, "task", "list")
+    assert rc == 0 and {t["project"] for t in scoped} == {"alpha"}
+    rc, everything = _run(tmp_path, "task", "list", "--all")
+    assert {"alpha", "beta"} <= {t["project"] for t in everything}
+    rc, chosen = _run(tmp_path, "task", "list", "--project", "beta")
+    assert {t["project"] for t in chosen} == {"beta"}
+
+
+def test_task_ready_scopes_to_cwd_project(tmp_path, monkeypatch):
+    _run(tmp_path, "task", "create", "RA", "--project", "alpha")
+    _run(tmp_path, "task", "create", "RB", "--project", "beta")
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "alpha")
+    rc, ready = _run(tmp_path, "task", "ready")
+    assert rc == 0 and ready and all(t["project"] == "alpha" for t in ready)
+    rc, everything = _run(tmp_path, "task", "ready", "--all")
+    assert {"alpha", "beta"} <= {t["project"] for t in everything}
+
+
+def test_task_search_scopes_to_cwd_project(tmp_path, monkeypatch):
+    _run(tmp_path, "task", "create", "searchable alpha", "--project", "alpha")
+    _run(tmp_path, "task", "create", "searchable beta", "--project", "beta")
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "alpha")
+    rc, hits = _run(tmp_path, "task", "search", "searchable")
+    assert rc == 0 and hits and all(t["project"] == "alpha" for t in hits)
+    rc, everything = _run(tmp_path, "task", "search", "searchable", "--all")
+    assert {"alpha", "beta"} <= {t["project"] for t in everything}
+
+
 def test_mac_cli_task_show(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "Show me")
     assert rc == 0
