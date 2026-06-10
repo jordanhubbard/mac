@@ -1,22 +1,27 @@
-# ADR 0004 — MAC task ledger vs. Hermes kanban: coexist with a thin delegation bridge
+# ADR 0004 — One task database: revert the Hermes kanban adoption, keep our own board
 
-- Status: **Proposed**
+- Status: **Accepted**
 - Date: 2026-06-09
 - Decision owner: Jordan Hubbard
-- Context: Phase 2 of `kanban-adopt-01`. We decided to **adopt** the Hermes
-  kanban dashboard rather than re-implement a board in the mac dashboard
-  (Phase 1 shipped a link-out, PR #122). That forces the question this ADR
-  answers: how should the Hermes kanban store (`kanban.db`) relate to the MAC
-  hub task ledger (`mac.db`, the `mac task` system)?
+- Context: Phase 2 of `kanban-adopt-01`. Phase 1 shipped a dashboard link-out to
+  the Hermes kanban (PR #122). This ADR answers how the Hermes kanban store
+  (`kanban.db`) should relate to the MAC hub task ledger (`mac.db`, the
+  `mac task` system) — and concludes by reversing the Phase-1 adoption.
 
 ## TL;DR verdict
 
-They are **different layers, not duplicates.** Keep both stores; do **not**
-force them into one schema. Add a **thin one-way delegation bridge**: the mac
-ledger stays the canonical fleet work-queue (system of record); a mac task may
-*delegate* to a Hermes kanban board for goal-decomposition / swarm execution,
-and the board's terminal outcome transitions the mac task. The dashboard shows
-the ledger as primary and deep-links to the kanban board for delegated tasks.
+**There must be exactly one task database — the MAC task ledger (`mac.db`).**
+We evaluated making Hermes' kanban read from that ledger (a pluggable task
+store). It is **not feasible cheaply**: `kanban_db.py` is a 7,386-line concrete
+SQLite module with no store seam, ~200 raw-SQL call sites, 7 tables, and
+SQLite-specific CAS/migration machinery — and it is vendored upstream, so a
+semantic rewrite is exactly the heavy fork ADR 0001 tells us not to carry.
+
+Per the decision rule ("if Hermes can't be patched to a pluggable task store
+*easily*, revert and keep our own"): **revert the Hermes kanban adoption** (the
+Phase-1 dashboard link) and keep the bespoke board (`renderTasks`) as the single
+task UI over the single store. An earlier draft of this ADR proposed coexisting
+with a bridge; that is **rejected** in favor of one store.
 
 ## Ground truth (today, not assumptions)
 
@@ -24,78 +29,57 @@ the ledger as primary and deep-links to the kanban board for delegated tasks.
 | --- | --- | --- |
 | Purpose | Fleet **work-queue** | **Goal-decomposition + multi-agent swarm** |
 | Model | `models.py` `Task`, `store.py` `tasks` | `_hermes/hermes_cli/kanban_db.py` `tasks` |
-| Distinctive fields | `required_capabilities`, `lease_id`/`leased_until`, `owner_agent_id`, `max_attempts`, `project` | `board`, `workspace_kind`/`workspace_path`/`branch_name` (git worktrees), `task_links` (goal tree), `task_comments`/`task_events`, `task_runs`, `worker_pid`/`last_heartbeat_at`, `claim_lock` CAS |
+| Distinctive fields | `required_capabilities`, `lease_id`/`leased_until`, `owner_agent_id`, `max_attempts`, `project` | `board`, `workspace_kind`/`workspace_path`/`branch_name` (git worktrees), `task_links`, `task_comments`/`task_events`, `task_runs`, `worker_pid`/`last_heartbeat_at`, `claim_lock` CAS |
 | States | `open/blocked/claimed/running/needs_review/reviewing/completed/failed/cancelled` | `triage/todo/scheduled/ready/running/blocked/review/done/archived` |
-| Dispatch | Agent polls; hub leases by capability | Kanban dispatcher subprocess spawns workers (`HERMES_KANBAN_TASK`) |
-| Scope / location | One **shared hub** DB per fleet (`~/.mac/mac.db`) | **Per-board local** SQLite (`~/.hermes/kanban.db`, `boards/<slug>/`) |
-| Answers | "*Who* can do this, and what's the contract?" | "*What's the goal tree*, and are my workers alive?" |
+| Location | One **shared hub** DB per fleet (`~/.mac/mac.db`) | **Per-board local** SQLite (`~/.hermes/kanban.db`) |
 
-**There is no bridge today.** Nothing in `src/mac/` (outside `_hermes/`) imports
-`kanban_db`/`kanban_tools`; the kanban dispatcher never reads `mac.db`; the mac
-dispatcher never reads `kanban.db`. The only links are an agent's optional
-`hermes_instance_id` and the read-only UI hyperlink added in PR #122. The
-schema divergence is intentional: capability-based fleet dispatch vs. worktree-
-bound worker-lifecycle decomposition solve different problems at different
-scales (fleet vs. single profile/goal).
+No bridge exists today: nothing in `src/mac/` (outside `_hermes/`) imports
+`kanban_db`; neither dispatcher reads the other's DB; the only links were agent
+identity and the PR #122 hyperlink (now reverted).
 
-## Options considered
+## Feasibility of a pluggable kanban store (the decision gate)
 
-1. **Unify into one store.** *Rejected.* The schemas, scales, and concerns
-   diverge; migration is large and either bloats the ledger with worktree/worker-
-   liveness columns or strips kanban's swarm semantics. High cost, high risk,
-   little near-term payoff.
-2. **Coexist, no bridge (status quo).** *Insufficient.* The two are invisible to
-   each other: a fleet task that is "really" a kanban swarm has no link, and the
-   dashboard can't show decomposition progress against the ledger item. This is
-   the gap that makes the bespoke board feel like duplication.
-3. **Coexist with a thin one-way delegation bridge.** *Recommended.* See below.
+Measured against `src/mac/_hermes/hermes_cli/kanban_db.py`:
+
+- **7,386 lines**, **no abstraction seam** — no `Protocol`/`ABC`/`Store`; the
+  classes are data records, not a swappable backend.
+- **Every function takes `conn: sqlite3.Connection`** and runs raw SQL; **~200**
+  `execute`/`BEGIN IMMEDIATE`/`ON CONFLICT`/`RETURNING` sites; plus
+  `_migrate_add_optional_columns`, `_table_has_drifted`, `_rebuild_drifted_tables`,
+  `_check_file_length_invariant` — all SQLite-specific.
+- **Vendored upstream.** Reworking the data layer is a large fork of a
+  fast-moving dependency, contradicting ADR 0001's "pinned, pruned snapshot; no
+  semantic surgery" guidance.
+
+Both routes to "kanban on mac.db" are expensive: (a) introduce a store interface
+and rewrite ~200 call sites in vendored code, or (b) recreate all 7 kanban tables
+inside `mac.db` (which is *hosting* the kanban schema, not *one* tasks table).
+Neither is "easy." → revert.
 
 ## Decision
 
-Adopt **Option 3.** Roles:
-
-- **mac ledger = system of record** for fleet work and its lifecycle. Every unit
-  of fleet work is a mac task; capability dispatch, leasing, review, and
-  cross-fleet visibility stay here.
-- **Hermes kanban = an execution strategy a task may delegate to** when the work
-  warrants decomposition + a worker swarm (the `decompose`/`specify`/`swarm`
-  pipeline). It owns the *inside* of a delegated task: the goal tree, worktrees,
-  and worker liveness.
-
-**Bridge contract (one-way, ledger-owned):**
-- A mac task records `metadata.kanban = {board_id, dashboard_url}` when delegated.
-- Delegation creates/links a kanban board for that task; the kanban dispatcher
-  runs the swarm as it does today (unchanged).
-- A reconcile step maps the board's **terminal** state back to a mac task
-  transition (`done` → `completed`, `archived/failed` → `failed`), idempotently.
-- The dashboard renders the ledger as primary and, for a delegated task,
-  deep-links to `<hermes-dashboard>/kanban?board=<id>` (extends PR #122). No
-  re-implementation of the board UI.
-
-Direction is strictly one-way: the ledger owns task lifecycle; kanban owns
-intra-task decomposition. We do **not** sync arbitrary status both ways.
+1. **`mac.db` is the single task database.** All fleet work is `mac task`.
+2. **Revert the Phase-1 Hermes kanban adoption** — remove the dashboard kanban
+   service link (PR #122). Keep the bespoke `renderTasks` board (with CEO-mode
+   creation, #119, and the refresh fix, #121) as the single task surface.
+3. **Do not fork Hermes kanban.** If the fleet later wants kanban-style
+   decomposition/swarm, build it **natively against `mac.db`** (a board *view* +
+   parent/child task links over the existing ledger), not by adopting a second
+   store.
 
 ## Consequences
 
-- **Pros:** each store keeps doing what it is good at; one pane of glass via the
-  ledger + deep links; incremental and reversible (no migration); the bespoke
-  `renderTasks` board can be retired without losing the fleet work-queue.
-- **Cons:** a small bridge + reconcile to maintain; two stores to back up and
-  observe; write-back can drift if a reconcile is missed (mitigated by making
-  reconcile idempotent and re-runnable).
-- **Non-goals:** migrating kanban into `mac.db`; teaching the ledger about
-  worktrees/worker PIDs; two-way status sync.
+- **Pros:** one store, one source of truth, no second DB to back up/observe, no
+  heavy vendored fork to carry. The board we keep already works (refresh fix +
+  CEO mode shipped).
+- **Cons:** we forgo Hermes' ready-made swarm/decompose UI; any such capability
+  is now ours to build on the ledger.
+- **Reversal:** `kanban-adopt-01` is closed as **won't-adopt**; reopen only if
+  Hermes upstream grows a pluggable task-store seam that removes the fork cost.
 
-## Follow-up work (tickets, not part of this ADR)
+## Follow-up
 
-1. Bridge: `metadata.kanban.board_id` on mac tasks + an idempotent reconcile
-   (board terminal → task transition). 
-2. Dashboard: deep-link a delegated task to its board (extends `kanban-adopt-01`
-   Phase 1). 
-3. Decide the trigger for delegation (explicit `mac task delegate-kanban`, or a
-   capability/heuristic). 
-4. Once the bridge + link exist, retire the bespoke `renderTasks` lanes
-   (`ui-modularize-01` can drop that view).
-
-Until the bridge lands, Phase 1 (the link-out from PR #122) is the interim
-surface and the two stores remain independent.
+- Closes `kanban-adopt-01` (won't-adopt). 
+- Optional, native: parent/child links + a board-style lens over `mac.db` tasks
+  if decomposition UX is wanted later — tracked separately, not by adopting
+  `kanban.db`.
