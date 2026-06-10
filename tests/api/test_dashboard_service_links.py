@@ -58,28 +58,6 @@ def test_service_links_present_when_services_configured(monkeypatch):
     assert "firecrawl" in links
 
 
-def test_kanban_link_present_when_hermes_dashboard_configured(monkeypatch):
-    monkeypatch.setenv("MAC_HERMES_DASHBOARD_URL", "http://hermes.internal:8765")
-    client = _client()
-    links = {item["id"]: item for item in client.get("/dashboard/state").json()["service_links"]}
-    assert "kanban" in links
-    k = links["kanban"]
-    assert k["status"] == "configured"
-    assert "hermes.internal:8765/kanban" in k["ui_url"]
-    # Links out to the Hermes dashboard (separate login) — no credential pass-through.
-    assert k["auth"]["credential_pass_through"] is False
-
-
-def test_kanban_link_not_configured_without_hermes_dashboard_url(monkeypatch):
-    monkeypatch.delenv("MAC_HERMES_DASHBOARD_URL", raising=False)
-    monkeypatch.delenv("HERMES_DASHBOARD_URL", raising=False)
-    client = _client()
-    links = {item["id"]: item for item in client.get("/dashboard/state").json()["service_links"]}
-    # Present in the list but unconfigured -> no ui_url, so the sidebar hides it.
-    assert links["kanban"]["status"] == "not_configured"
-    assert not links["kanban"]["ui_url"]
-
-
 def test_service_links_redact_credentials(monkeypatch):
     monkeypatch.setenv("TOKENHUB_URL", "http://tokenhub.internal:8090")
     monkeypatch.setenv("TOKENHUB_ADMIN_TOKEN", "super-secret-admin-key")

@@ -1,6 +1,6 @@
 ---
 id: kanban-adopt-01
-status: open
+status: closed
 deps: []
 links: [ui-modularize-01]
 created: 2026-06-09T00:00:00Z
@@ -8,8 +8,21 @@ type: epic
 priority: 1
 audit: dashboard-ui-review
 discovered_via: architecture_review
+resolution: wont-adopt
 ---
 # Adopt the Hermes kanban plugin instead of the bespoke dashboard board
+
+## Decision (2026-06-09): WON'T ADOPT — reverted
+
+Superseded by ADR 0004. The fleet needs **one task database** (`mac.db`).
+Making Hermes' kanban read from it requires reworking `kanban_db.py` — 7,386
+lines of vendored SQLite with no store seam, ~200 raw-SQL call sites, 7 tables —
+which is not feasible cheaply and would be a heavy fork of upstream
+(contra ADR 0001). Per the decision rule, the Phase-1 adoption (the dashboard
+kanban service link, PR #122) is **reverted** and the bespoke `renderTasks`
+board is kept as the single task surface over `mac.db`. Any future
+kanban-style decomposition UX should be built natively on the ledger, not by
+adopting `kanban.db`. The original plan below is retained for history.
 
 ## Why this exists
 
