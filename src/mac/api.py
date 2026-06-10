@@ -3478,6 +3478,33 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [task.to_dict() for task in cp.list_tasks(state, tenant_id)]
 
+    # parity-ready-http-01: serve ready/search/stats so the CLI works in hub
+    # mode (not just --db). Registered before /tasks/{task_id} so these static
+    # paths aren't captured by the path parameter.
+    @app.get("/tasks/ready")
+    def ready_tasks(
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [t.to_dict() for t in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)]
+
+    @app.get("/tasks/search")
+    def search_tasks(
+        q: str = Query(...),
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=50),
+    ) -> List[Dict[str, Any]]:
+        return [t.to_dict() for t in cp.search_tasks(q, project=project, tenant_id=tenant_id, limit=limit)]
+
+    @app.get("/tasks/stats")
+    def task_stats(
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+    ) -> Dict[str, int]:
+        return cp.task_stats(project=project, tenant_id=tenant_id)
+
     @app.get("/tasks/{task_id}")
     def get_task(task_id: str) -> Dict[str, Any]:
         return cp.task_detail(task_id)

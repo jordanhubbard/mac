@@ -1,0 +1,80 @@
+"""HTTP endpoints for task ready/search/stats (parity-ready-http-01).
+
+These let `mac task ready/search/stats` work against the hub instead of
+requiring --db (direct SQLite).
+"""
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from mac.api import create_app
+from mac.services import ControlPlane
+
+
+def _client() -> TestClient:
+    return TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+
+def _make(client, title, project=None, **extra):
+    body = {"title": title}
+    if project is not None:
+        body["project"] = project
+    body.update(extra)
+    resp = client.post("/tasks", json=body)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_ready_endpoint_lists_open_unclaimed_and_is_not_shadowed_by_task_id():
+    client = _client()
+    a = _make(client, "alpha task", project="alpha")
+    _make(client, "beta task", project="beta")
+
+    ready = client.get("/tasks/ready")
+    assert ready.status_code == 200
+    titles = {t["title"] for t in ready.json()}
+    assert {"alpha task", "beta task"} <= titles
+
+    # /tasks/ready must not be captured by /tasks/{task_id}; the real id still works.
+    assert client.get("/tasks/ready").json().__class__ is list
+    assert client.get(f"/tasks/{a['id']}").json()["task"]["id"] == a["id"]
+
+
+def test_ready_endpoint_filters_by_project_and_limit():
+    client = _client()
+    _make(client, "a1", project="alpha")
+    _make(client, "b1", project="beta")
+    scoped = client.get("/tasks/ready", params={"project": "alpha"}).json()
+    assert {t["project"] for t in scoped} == {"alpha"}
+    assert len(client.get("/tasks/ready", params={"limit": 1}).json()) == 1
+
+
+def test_ready_endpoint_excludes_tasks_with_unmet_dependencies():
+    client = _client()
+    parent = _make(client, "parent", project="p")
+    _make(client, "child", project="p", dependencies=[parent["id"]])
+    ready_titles = {t["title"] for t in client.get("/tasks/ready").json()}
+    assert "parent" in ready_titles
+    assert "child" not in ready_titles  # blocked until parent completes
+
+
+def test_search_endpoint_matches_title_and_filters_project():
+    client = _client()
+    _make(client, "searchable alpha thing", project="alpha")
+    _make(client, "searchable beta thing", project="beta")
+    _make(client, "unrelated", project="alpha")
+    hits = client.get("/tasks/search", params={"q": "searchable"}).json()
+    assert {t["title"] for t in hits} == {"searchable alpha thing", "searchable beta thing"}
+    scoped = client.get("/tasks/search", params={"q": "searchable", "project": "alpha"}).json()
+    assert {t["title"] for t in scoped} == {"searchable alpha thing"}
+
+
+def test_stats_endpoint_counts_by_state_and_filters_project():
+    client = _client()
+    _make(client, "o1", project="alpha")
+    _make(client, "o2", project="alpha")
+    _make(client, "o3", project="beta")
+    allstats = client.get("/tasks/stats").json()
+    assert allstats.get("open") == 3
+    scoped = client.get("/tasks/stats", params={"project": "alpha"}).json()
+    assert scoped == {"open": 2}

@@ -281,6 +281,31 @@ class _FakeTransport:
         return self.response_for.get(method, {})
 
 
+def test_remote_dispatch_read_endpoints_hit_correct_paths():
+    """ready/search/stats route to the hub endpoints (parity-ready-http-01)."""
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/tasks/ready"): [{"id": "t1"}],
+            ("GET", "/tasks/search"): [{"id": "t2"}],
+            ("GET", "/tasks/stats"): {"open": 5},
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    assert [x.to_dict() for x in disp.ready_tasks(project="mac", limit=3)] == [{"id": "t1"}]
+    assert [x.to_dict() for x in disp.search_tasks("foo", project="mac")] == [{"id": "t2"}]
+    assert disp.task_stats(project="mac") == {"open": 5}
+
+    gets = [url for (method, url, _body, _tok) in fake.calls if method == "GET"]
+    assert any("/tasks/ready" in u and "project=mac" in u and "limit=3" in u for u in gets)
+    assert any("/tasks/search" in u and "q=foo" in u and "project=mac" in u for u in gets)
+    assert any("/tasks/stats" in u and "project=mac" in u for u in gets)
+    # tenant_id was None and must be omitted from the query string.
+    assert all("tenant_id" not in u for u in gets)
+
+
 def test_remote_dispatch_create_task_via_cli(monkeypatch):
     """End-to-end: `mac --hub-url ... task create` posts to /tasks."""
     import io

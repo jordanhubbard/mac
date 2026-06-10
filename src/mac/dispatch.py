@@ -159,8 +159,8 @@ class _RemoteStore:
 
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise DispatchError(
-            "this command needs direct SQLite access (task ready/search/stats, "
-            "memory list/forget). It is not yet served over HTTP. Pass "
+            "this command needs direct SQLite access (memory list/forget, "
+            "observability prune). It is not yet served over HTTP. Pass "
             "--db <path> to run against a local SQLite database, or wait for "
             "the matching hub endpoint to be added."
         )
@@ -238,6 +238,37 @@ class RemoteDispatch:
         tenant_id: Optional[str] = None,
     ) -> List[_Dictish]:
         return _wrap_list(self._get("/tasks", state=state, tenant_id=tenant_id))
+
+    def ready_tasks(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/tasks/ready", project=project, tenant_id=tenant_id, limit=limit)
+        )
+
+    def search_tasks(
+        self,
+        query: str,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/tasks/search", q=query, project=project, tenant_id=tenant_id, limit=limit)
+        )
+
+    def task_stats(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
     def task_detail(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))

@@ -432,33 +432,10 @@ def cmd_task_show(args: argparse.Namespace) -> None:
 
 def cmd_task_ready(args: argparse.Namespace) -> None:
     """List tasks ready to work — state=open, all dependencies completed,
-    unclaimed. Matches dispatcher dependency semantics."""
+    unclaimed. Works in hub mode (parity-ready-http-01) and local --db mode."""
     cp = _plane(args)
-    from mac.models import TaskState
-
     project = _effective_read_project(args)
-    where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
-    params: list = [TaskState.OPEN.value]
-    if project is not None:
-        where.append("project = ?")
-        params.append(project)
-    rows = cp.store.query_all(
-        "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at"
-        % " AND ".join(where),
-        tuple(params),
-    )
-    out = []
-    for row in rows:
-        task = cp._task_from_row(row)
-        try:
-            dependencies_satisfied = cp._dependencies_satisfied(task)
-        except Exception:  # noqa: BLE001 - missing dep blocks readiness
-            dependencies_satisfied = False
-        if dependencies_satisfied:
-            out.append(task.to_dict())
-        if args.limit and len(out) >= args.limit:
-            break
-    _print(out)
+    _print([t.to_dict() for t in cp.ready_tasks(project=project, limit=args.limit or None)])
 
 
 def cmd_task_claim(args: argparse.Namespace) -> None:
@@ -479,27 +456,13 @@ def cmd_task_close(args: argparse.Namespace) -> None:
 def cmd_task_search(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
-    like = "%" + args.query + "%"
-    where = ["(title LIKE ? OR description LIKE ?)"]
-    params: list = [like, like]
-    if project is not None:
-        where.append("project = ?")
-        params.append(project)
-    params.append(int(args.limit))
-    rows = cp.store.query_all(
-        "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at DESC LIMIT ?"
-        % " AND ".join(where),
-        tuple(params),
-    )
-    _print([cp._task_from_row(row).to_dict() for row in rows])
+    _print([t.to_dict() for t in cp.search_tasks(args.query, project=project, limit=int(args.limit))])
 
 
 def cmd_task_stats(args: argparse.Namespace) -> None:
     cp = _plane(args)
-    rows = cp.store.query_all(
-        "SELECT state, COUNT(*) AS n FROM tasks GROUP BY state ORDER BY state"
-    )
-    _print({row["state"]: int(row["n"]) for row in rows})
+    project = _effective_read_project(args)
+    _print(cp.task_stats(project=project))
 
 
 def cmd_project_list(args: argparse.Namespace) -> None:
@@ -2028,6 +1991,8 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_task_search, search)
 
     stats = task.add_parser("stats", help="count tasks by state")
+    stats.add_argument("--project", help="filter to this project (default: the cwd's project)")
+    stats.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_stats, stats)
 
     start = task.add_parser("start")
