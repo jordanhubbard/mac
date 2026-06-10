@@ -110,6 +110,50 @@ def test_mac_cli_task_create_and_list(tmp_path):
     assert any(t["id"] == task["id"] for t in tasks)
 
 
+class _FakeProc:
+    def __init__(self, returncode, stdout):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def test_default_project_from_cwd_uses_git_toplevel(monkeypatch):
+    from mac.cli import _default_project_from_cwd
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(0, "/home/u/Src/myrepo\n"))
+    assert _default_project_from_cwd() == "myrepo"
+
+
+def test_default_project_from_cwd_falls_back_to_cwd_basename(monkeypatch):
+    from mac.cli import _default_project_from_cwd
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(128, ""))
+    monkeypatch.setattr("os.getcwd", lambda: "/tmp/some-project")
+    assert _default_project_from_cwd() == "some-project"
+
+
+def test_task_create_defaults_project_from_cwd(tmp_path, monkeypatch):
+    # bd parity: no --project tags the task with the working directory's project.
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "inferred-proj")
+    rc, task = _run(tmp_path, "task", "create", "Auto project")
+    assert rc == 0
+    assert task["project"] == "inferred-proj"
+
+
+def test_task_create_explicit_project_overrides_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "inferred-proj")
+    rc, task = _run(tmp_path, "task", "create", "Explicit", "--project", "chosen")
+    assert rc == 0
+    assert task["project"] == "chosen"
+
+
+def test_task_create_empty_project_means_none(tmp_path, monkeypatch):
+    # Explicit --project '' opts out of the cwd default (never silently inferred).
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "inferred-proj")
+    rc, task = _run(tmp_path, "task", "create", "No project", "--project", "")
+    assert rc == 0
+    assert task["project"] is None
+
+
 def test_mac_cli_task_show(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "Show me")
     assert rc == 0

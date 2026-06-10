@@ -323,6 +323,36 @@ def cmd_task_convert_ticketing(args: argparse.Namespace) -> None:
     )
 
 
+def _default_project_from_cwd() -> Optional[str]:
+    """Infer a task's project from the working directory (bd parity).
+
+    `bd` tagged new issues with the repo they were filed from; `mac task
+    create` historically left ``project`` null unless ``--project`` was passed,
+    so work filed from a checkout never showed up under that project. Use the
+    git top-level directory name (works from any subdirectory of a checkout),
+    falling back to the cwd basename outside git. Returns None when nothing
+    sensible can be derived.
+    """
+    import subprocess
+
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        root = top.stdout.strip()
+        if top.returncode == 0 and root:
+            return os.path.basename(root) or None
+    except Exception:
+        pass
+    try:
+        return os.path.basename(os.getcwd()) or None
+    except OSError:
+        return None
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     description = _read_text_arg(
@@ -337,11 +367,24 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         label="--metadata",
         default={},
     )
+    # bd parity: when --project is omitted, tag the task with the working
+    # directory's project (git repo name, else cwd basename). Pass an explicit
+    # --project (including --project '' for none) to override.
+    project = args.project
+    if project is None:
+        project = _default_project_from_cwd()
+        if project:
+            print(
+                "mac: tagging task with project %r (inferred from cwd; "
+                "pass --project to override, --project '' for none)" % project,
+                file=sys.stderr,
+            )
+    project = project or None
     _print(
         cp.create_task(
             args.title,
             description=description,
-            project=args.project,
+            project=project,
             priority=args.priority,
             required_capabilities=_csv(args.required_capabilities),
             dependencies=_csv(args.dependencies),
@@ -1901,7 +1944,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="task description (use --description-file for multi-line / shell-hostile content)")
     create.add_argument("--description-file", dest="description_file",
                         help="read description from file path (or '-' for stdin); avoids shell-quoting hazards")
-    create.add_argument("--project")
+    create.add_argument(
+        "--project",
+        help="project to tag the task with; defaults to the working directory's "
+        "project (git repo name, else cwd basename). Pass --project '' for none.",
+    )
     create.add_argument("--priority", type=int, default=0)
     create.add_argument("--required-capabilities")
     create.add_argument("--dependencies")
