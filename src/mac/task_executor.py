@@ -11,7 +11,7 @@ Previously this lived as ~500 lines of Python inside a bash heredoc in
 here as an importable, unit-tested module; the deploy writes only a 2-line shim
 that calls :func:`main`.
 
-Two capabilities beyond the original:
+Three capabilities beyond the original:
 
 * **Telemetry path** — every run emits executor-scoped observations
   (``layer="executor"``, ``executor.*``) to the hub so the autonomous loop is
@@ -22,6 +22,14 @@ Two capabilities beyond the original:
   ``deployment_learning`` memory from the outcome. The nap consolidator
   (mem-08) later promotes those records into the vector tier, so recall
   improves with every task the fleet completes.
+* **Automatic task sizing** — before running the agent, the executor inspects
+  the task title and description for "plan" signals (conjunctions of verbs,
+  numbered steps, multi-phase language, excessive scope).  When signals are
+  found the agent receives an explicit instruction to call ``add_child_tasks``
+  via the MAC API and write evidence_type=plan_decomposed, which causes the
+  parent to block on its children.  A post-run hook (``maybe_auto_decompose``)
+  also reads the agent's output for a ``plan_steps`` JSON block and auto-posts
+  child tasks when the agent explicitly declares them.
 
 All hub I/O is best-effort and gated on hub env (URL + token): absent those,
 the executor still runs and writes evidence — it just doesn't emit telemetry,
@@ -156,6 +164,267 @@ def _hub_get(path: str, *, timeout: float = 5.0) -> Optional[Any]:
         return json.loads(raw.decode("utf-8", "replace"))
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Task-sizing / plan-detection (automatic child-task decomposition)
+# ---------------------------------------------------------------------------
+
+# Phrases that suggest a task title describes a *plan* rather than a single
+# atomic unit of work.  A match on any of these increases the plan-signal
+# count.  All comparisons are lower-cased.
+_PLAN_TITLE_KEYWORDS: List[str] = [
+    # coordination verbs
+    "implement and",
+    "build and",
+    "design and",
+    "create and",
+    "set up and",
+    "configure and",
+    "deploy and",
+    "add and",
+    "write and",
+    "refactor and",
+    "migrate and",
+    "update and",
+    # multi-step indicators
+    "end-to-end",
+    "end to end",
+    "full pipeline",
+    "full workflow",
+    "complete pipeline",
+    "complete workflow",
+    "phase 1",
+    "phase 2",
+    "phase one",
+    "phase two",
+    "multiple",
+    "several",
+    # planning language
+    "plan and",
+    "plan for",
+    "architecture for",
+    "roadmap",
+    "epic",
+    "initiative",
+    "overview of",
+    "breakdown of",
+    "decompose",
+    "scaffold and",
+    "scaffold the",
+]
+
+# Patterns in the *description* field that strongly suggest a list-of-tasks
+# was embedded.  We look for numbered lists (1. / 1) / Step 1) and bullet
+# clusters of 3 or more items.
+import re as _re
+
+_NUMBERED_STEP_RE = _re.compile(
+    r"(?m)^\s*(?:\d+[\.\):]|step\s+\d+[\.\):]?)\s+\S",
+    _re.IGNORECASE,
+)
+_BULLET_RE = _re.compile(r"(?m)^\s*[-*•]\s+\S")
+
+
+def detect_plan_signals(title: str, description: str) -> tuple:
+    """Analyse *title* and *description* for signals that this task is actually
+    a multi-step plan rather than a single atomic work item.
+
+    Returns ``(is_plan: bool, signals: List[str])``.
+
+    Heuristics (any 2+ signals → is_plan=True):
+
+    1. Title contains a plan keyword/phrase (``_PLAN_TITLE_KEYWORDS``).
+    2. Title is very long (> 120 chars, suggests over-specification).
+    3. Description contains 3+ numbered steps.
+    4. Description contains 5+ bullet points.
+    5. Description word-count exceeds 300 words (dense spec).
+    6. Title contains " and " linking two distinct verb clauses.
+    """
+    signals: List[str] = []
+    title_lower = (title or "").lower().strip()
+    desc = description or ""
+
+    # Signal 1: plan keyword in title
+    for kw in _PLAN_TITLE_KEYWORDS:
+        if kw in title_lower:
+            signals.append("plan_keyword:%r" % kw)
+            break  # one keyword match is enough for signal 1
+
+    # Signal 2: title length
+    if len(title_lower) > 120:
+        signals.append("long_title:%d_chars" % len(title_lower))
+
+    # Signal 3: numbered steps in description
+    numbered_matches = _NUMBERED_STEP_RE.findall(desc)
+    if len(numbered_matches) >= 3:
+        signals.append("numbered_steps:%d" % len(numbered_matches))
+
+    # Signal 4: bullet cluster in description
+    bullet_matches = _BULLET_RE.findall(desc)
+    if len(bullet_matches) >= 5:
+        signals.append("bullet_cluster:%d" % len(bullet_matches))
+
+    # Signal 5: long description
+    word_count = len(desc.split())
+    if word_count > 300:
+        signals.append("long_description:%d_words" % word_count)
+
+    # Signal 6: conjunctive title with two verb clauses (e.g. "Implement X and add Y")
+    if " and " in title_lower:
+        # Heuristic: presence of a verb before *and* and another verb after
+        _verb_re = _re.compile(
+            r"\b(?:implement|build|create|add|write|design|configure|deploy|set up"
+            r"|migrate|refactor|update|fix|test|verify|expose|scaffold|wire)\b",
+            _re.IGNORECASE,
+        )
+        parts = title_lower.split(" and ", 1)
+        if _verb_re.search(parts[0]) and _verb_re.search(parts[1]):
+            signals.append("conjunctive_verb_title")
+
+    is_plan = len(signals) >= 2
+    return is_plan, signals
+
+
+def _plan_detection_section(task: Dict[str, Any]) -> str:
+    """Build the prompt section that tells the agent how to handle plan detection.
+
+    If the task already has children (parent_task metadata) or is itself a
+    child task, we skip — the agent should just execute, not re-decompose.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    relationships = metadata.get("relationships") if isinstance(metadata, dict) else {}
+    if isinstance(relationships, dict):
+        # Already a child task or already has children — don't recurse
+        if relationships.get("parent_task_id") or relationships.get("child_task_ids"):
+            return ""
+
+    title = str(task.get("title") or "")
+    description = str(task.get("description") or "")
+    is_plan, signals = detect_plan_signals(title, description)
+
+    plan_notice = ""
+    if is_plan:
+        plan_notice = (
+            "TASK-SIZING ALERT: This task has been flagged as a likely PLAN "
+            "(signals: %s). " % ", ".join(signals)
+        )
+
+    task_id = str(task.get("id") or "")
+    project = str(task.get("project") or "")
+    mac_url = (os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or "").rstrip("/")
+    children_endpoint = "%s/tasks/%s/children" % (mac_url, task_id) if mac_url and task_id else "/tasks/{task_id}/children"
+
+    return "\n".join([
+        "Task Sizing and Plan Detection:",
+        "%sIf you determine — from the title, description, or early investigation — that this"
+        " task represents a PLAN (multiple independent deliverables, phased work, or a"
+        " collection of steps each requiring its own evidence trail) rather than a single"
+        " atomic work item:" % plan_notice,
+        "  1. Do NOT attempt to implement all steps in one run.",
+        "  2. Break the work into 2-10 focused child tasks. Each child must be independently"
+        "     completable and verifiable by a different agent.",
+        "  3. Post the children to the MAC API: POST %s" % children_endpoint,
+        "     with JSON body: {\"children\": [{\"title\": \"...\", \"description\": \"...\"},...]}",
+        "     The MAC token is in the MAC_TOKEN / MAC_WORKER_TOKEN environment variable.",
+        "  4. Write mac-evidence.json with evidence_type=operator_result, a summary field,"
+        "     and a result field listing the child task titles you created.",
+        "  5. Exit — the parent task will automatically block on its children.",
+        "If the task IS a single atomic work item (< 1 day effort, single deliverable,"
+        " one clear verification command), execute it directly and skip step 1-5.",
+    ])
+
+
+def _hub_post_child_tasks(task_id: str, children: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """POST child task specs to /tasks/{task_id}/children.  Returns the parsed
+    response dict on success, None on any failure.  Best-effort / never raises.
+    """
+    if not task_id or not children:
+        return None
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return None
+    path = "/tasks/%s/children" % task_id
+    payload = {"children": children}
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + path,
+        data=data,
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        raw = urllib.request.urlopen(request, timeout=10.0).read()  # noqa: S310
+        return json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+
+
+def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
+    """Read the agent's mac-evidence.json for a ``plan_steps`` key; if found,
+    auto-post those steps as child tasks via the MAC API.
+
+    This is the "declarative" path: the agent writes ``plan_steps`` in its
+    evidence manifest instead of directly calling the API itself, and the
+    executor handles the hub call.  Returns True if children were posted.
+
+    Expected evidence shape::
+
+        {
+            "plan_steps": [
+                {"title": "Step A", "description": "..."},
+                {"title": "Step B", "description": "..."},
+                ...
+            ]
+        }
+
+    Only fires when:
+    - ``plan_steps`` is a non-empty list of objects with a ``title`` field.
+    - The task is not already a child (no parent_task_id in relationships).
+    - The hub env is present.
+    """
+    manifest_path = task_workspace / "mac-evidence.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(manifest, dict):
+        return False
+
+    plan_steps = manifest.get("plan_steps")
+    if not isinstance(plan_steps, list) or not plan_steps:
+        return False
+
+    # Don't decompose child tasks further
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    relationships = metadata.get("relationships") if isinstance(metadata, dict) else {}
+    if isinstance(relationships, dict) and relationships.get("parent_task_id"):
+        return False
+
+    task_id = str(task.get("id") or "")
+    if not task_id:
+        return False
+
+    # Normalise plan_steps: must be list of dicts with a title
+    children: List[Dict[str, Any]] = []
+    for step in plan_steps:
+        if isinstance(step, dict) and str(step.get("title") or "").strip():
+            child: Dict[str, Any] = {"title": str(step["title"]).strip()}
+            if step.get("description"):
+                child["description"] = str(step["description"]).strip()
+            if step.get("dependencies"):
+                child["dependencies"] = step["dependencies"]
+            if step.get("required_capabilities"):
+                child["required_capabilities"] = step["required_capabilities"]
+            children.append(child)
+
+    if not children:
+        return False
+
+    result = _hub_post_child_tasks(task_id, children)
+    return result is not None
 
 
 def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
@@ -535,6 +804,9 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "When you add task-local dependencies, include verification.environment_delta in mac-evidence.json with package_manager, commands, added_dependencies, lockfile_path, lockfile_digest, base_runtime_digest when known, and reason. MAC records that as a proposed runtime delta; it does not mutate the fleet runtime until an operator validates and promotes it.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
+    plan_section = _plan_detection_section(task)
+    if plan_section:
+        parts.append(plan_section)
     lessons_section = _lessons_section(lessons or [])
     if lessons_section:
         parts.append(lessons_section)
@@ -866,6 +1138,17 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
             run_deterministic_review_verdict(task_workspace, task, review_context)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("review verdict finalizer failed: %s\n" % exc)
+
+    # Task-sizing: if the agent wrote plan_steps in its evidence, auto-post them
+    # as child tasks so the parent blocks on the children.  Best-effort.
+    if not is_review:
+        try:
+            decomposed = maybe_auto_decompose(task_workspace, task)
+            if decomposed:
+                emit_telemetry("plan_decomposed", task_id=task_id, level="info")
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("auto-decompose failed: %s\n" % exc)
+
     write_fallback_evidence_manifest(task_workspace, task, result, review_context)
 
     # loop-01 resilience: if the run was bounded/failed (e.g. a wedged TokenHub

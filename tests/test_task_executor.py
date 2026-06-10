@@ -367,3 +367,316 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     # memory feed recorded a deployment lesson
     memory = [p for p in posts if p[0] == "/memory"]
     assert memory and memory[0][1]["record_type"] == "deployment_learning:demo"
+
+
+# ---------------------------------------------------------------------------
+# Task sizing — detect_plan_signals
+# ---------------------------------------------------------------------------
+
+
+def test_detect_plan_signals_atomic_task_no_signals():
+    """A tight, focused task title with no description produces no plan signals."""
+    is_plan, signals = te.detect_plan_signals("Fix null pointer in auth handler", "")
+    assert is_plan is False
+    assert signals == []
+
+
+def test_detect_plan_signals_keyword_in_title():
+    """A single plan keyword in the title contributes signal 1 only (below threshold)."""
+    is_plan, signals = te.detect_plan_signals("Build end-to-end test suite", "")
+    assert not is_plan  # only 1 signal: plan_keyword
+    assert any("plan_keyword" in s for s in signals)
+
+
+def test_detect_plan_signals_long_title():
+    """A very long title alone is one signal — still not enough."""
+    long_title = "A" * 125
+    is_plan, signals = te.detect_plan_signals(long_title, "")
+    assert not is_plan
+    assert any("long_title" in s for s in signals)
+
+
+def test_detect_plan_signals_keyword_plus_numbered_steps():
+    """Plan keyword in title + numbered steps in description → is_plan."""
+    title = "Implement and deploy the new auth service"
+    description = (
+        "1. Set up the database schema\n"
+        "2. Implement the API endpoints\n"
+        "3. Write integration tests\n"
+        "4. Deploy to staging\n"
+    )
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("plan_keyword" in s or "numbered_steps" in s for s in signals)
+
+
+def test_detect_plan_signals_bullet_cluster():
+    """5+ bullet points alone is one signal; combine with a keyword to cross threshold."""
+    title = "Set up and configure the monitoring stack"
+    description = (
+        "- Install Prometheus\n"
+        "- Configure node_exporter\n"
+        "- Set up Grafana\n"
+        "- Write alerting rules\n"
+        "- Test end-to-end\n"
+        "- Document the setup\n"
+    )
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("bullet_cluster" in s for s in signals)
+
+
+def test_detect_plan_signals_long_description():
+    """A long description alone (>300 words) is one signal; keyword brings it over."""
+    title = "Design architecture for the new pipeline"
+    description = " ".join(["word"] * 350)
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("long_description" in s for s in signals)
+    assert any("plan_keyword" in s for s in signals)
+
+
+def test_detect_plan_signals_conjunctive_verb_title():
+    """Two distinct verb clauses joined by 'and' is a signal; add numbered steps."""
+    title = "Implement the parser and add unit tests"
+    description = "1. Write parser\n2. Write tests\n3. Verify coverage\n"
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("conjunctive_verb_title" in s or "numbered_steps" in s for s in signals)
+
+
+def test_detect_plan_signals_child_task_exempt():
+    """A task that is already a child (has parent_task_id) gets no plan section."""
+    task = {
+        "id": "t_child",
+        "title": "Implement and deploy the full pipeline for everything",
+        "description": "1. step\n2. step\n3. step\n4. step\n",
+        "metadata": {
+            "relationships": {"parent_task_id": "t_parent", "relationship": "child"}
+        },
+    }
+    section = te._plan_detection_section(task)
+    assert section == ""
+
+
+def test_detect_plan_signals_task_with_existing_children_exempt():
+    """A task that already has child_task_ids is not prompted to decompose again."""
+    task = {
+        "id": "t_parent",
+        "title": "Build and deploy everything",
+        "metadata": {
+            "relationships": {
+                "child_task_ids": ["t1", "t2"],
+                "blocked_by_task_ids": ["t1", "t2"],
+            }
+        },
+    }
+    section = te._plan_detection_section(task)
+    assert section == ""
+
+
+def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
+    """build_task_prompt includes plan section when task looks like a plan."""
+    title = "Implement data pipeline and add monitoring"
+    description = (
+        "1. Set up ingestion\n"
+        "2. Transform data\n"
+        "3. Load to warehouse\n"
+        "4. Add Grafana dashboards\n"
+        "5. Write runbook\n"
+    )
+    task = {"id": "t1", "title": title, "description": description}
+    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    assert "Task Sizing and Plan Detection" in prompt
+    assert "add_child_tasks" in prompt or "children" in prompt
+
+
+def test_plan_detection_section_omitted_for_atomic_task():
+    """build_task_prompt omits plan section for an obviously atomic task."""
+    task = {"id": "t1", "title": "Fix the off-by-one in the tokenizer", "description": ""}
+    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    # Plan section should NOT be present for a simple task
+    assert "TASK-SIZING ALERT" not in prompt
+    # But the standard prompt sections must still be present
+    assert "mac-evidence.json" in prompt
+    assert "first principles" in prompt
+
+
+# ---------------------------------------------------------------------------
+# maybe_auto_decompose
+# ---------------------------------------------------------------------------
+
+
+def test_maybe_auto_decompose_no_manifest(tmp_path):
+    """Returns False quietly when no evidence manifest exists."""
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_no_plan_steps(tmp_path):
+    """Returns False when evidence manifest has no plan_steps key."""
+    manifest = {"schema": "mac.worker_evidence.v1", "status": "complete",
+                "evidence_type": "operator_result", "summary": "done"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_empty_plan_steps(tmp_path):
+    """Returns False when plan_steps is an empty list."""
+    manifest = {"schema": "mac.worker_evidence.v1", "status": "complete",
+                "evidence_type": "operator_result", "summary": "done", "plan_steps": []}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_child_task_not_decomposed(tmp_path):
+    """A child task is never further decomposed, even if it has plan_steps."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "done",
+        "plan_steps": [{"title": "Sub-step A"}, {"title": "Sub-step B"}],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {
+        "id": "t_child", "title": "something",
+        "metadata": {"relationships": {"parent_task_id": "t_parent"}},
+    }
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_posts_children_when_hub_present(tmp_path, monkeypatch):
+    """When plan_steps are present and hub env is set, child tasks are POSTed."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "This is a plan.",
+        "plan_steps": [
+            {"title": "Step A — implement ingestion", "description": "Build the source connector."},
+            {"title": "Step B — implement transform", "description": "Apply data transforms."},
+            {"title": "Step C — write tests"},
+        ],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_abc", "title": "Build the full pipeline", "project": "demo"}
+
+    # Capture the POST payload
+    captured = {}
+
+    def fake_post_children(task_id, children):
+        captured["task_id"] = task_id
+        captured["children"] = children
+        return {"parent_task_id": task_id, "children": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]}
+
+    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is True
+    assert captured["task_id"] == "task_abc"
+    assert len(captured["children"]) == 3
+    titles = [c["title"] for c in captured["children"]]
+    assert "Step A — implement ingestion" in titles
+    assert "Step B — implement transform" in titles
+    assert "Step C — write tests" in titles
+    # description is preserved when present
+    step_a = next(c for c in captured["children"] if "Step A" in c["title"])
+    assert step_a.get("description") == "Build the source connector."
+
+
+def test_maybe_auto_decompose_skips_steps_without_title(tmp_path, monkeypatch):
+    """Steps without a title are silently dropped; only titled steps are posted."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "plan",
+        "plan_steps": [
+            {"title": "Good step"},
+            {"description": "No title here"},  # dropped
+            {},                                  # dropped
+            {"title": "  "},                    # blank title → dropped
+            {"title": "Another good step"},
+        ],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_xyz", "title": "Plan task"}
+
+    captured = {}
+    monkeypatch.setattr(te, "_hub_post_child_tasks", lambda tid, ch: captured.update({"ch": ch}) or {"ok": True})
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is True
+    assert len(captured["ch"]) == 2
+    assert captured["ch"][0]["title"] == "Good step"
+    assert captured["ch"][1]["title"] == "Another good step"
+
+
+def test_maybe_auto_decompose_noop_when_hub_absent(tmp_path, monkeypatch):
+    """Returns False (and never raises) when hub env vars are absent."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "plan",
+        "plan_steps": [{"title": "Step A"}, {"title": "Step B"}],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_nohub", "title": "Plan task"}
+
+    # Remove hub env
+    monkeypatch.delenv("MAC_HUB_URL", raising=False)
+    monkeypatch.delenv("MAC_URL", raising=False)
+    monkeypatch.delenv("MAC_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is False
+
+
+def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
+    """When the agent writes plan_steps, main() calls maybe_auto_decompose and
+    emits executor.plan_decomposed telemetry."""
+    task = {"id": "t_plan", "title": "Implement and deploy the full pipeline", "project": "demo"}
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+
+    posts = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+
+    def plan_runner(argv, cwd, task_id, metadata):
+        # Agent writes evidence with plan_steps
+        (ws / "mac-evidence.json").write_text(json.dumps({
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Task is a plan; broke into children.",
+            "plan_steps": [
+                {"title": "Step 1 — implement"},
+                {"title": "Step 2 — deploy"},
+                {"title": "Step 3 — verify"},
+            ],
+        }))
+        return _FakeResult(0, stdout="Plan decomposed.\n")
+
+    captured_children = {}
+
+    def fake_post_children(task_id, children):
+        captured_children["task_id"] = task_id
+        captured_children["children"] = children
+        return {"ok": True}
+
+    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+
+    rc = te.main(runner=plan_runner)
+    assert rc == 0
+
+    # plan_decomposed telemetry should have been emitted
+    tel_names = {p[1]["name"] for p in posts if p[0] == "/observability/logs"}
+    assert "executor.plan_decomposed" in tel_names
+
+    # children were posted
+    assert captured_children.get("task_id") == "t_plan"
+    assert len(captured_children.get("children", [])) == 3
+
