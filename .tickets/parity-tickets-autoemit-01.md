@@ -1,6 +1,6 @@
 ---
 id: parity-tickets-autoemit-01
-status: open
+status: closed
 deps: []
 links: [parity-ready-http-01]
 created: 2026-06-09T00:00:00Z
@@ -8,7 +8,18 @@ type: feature
 priority: 2
 audit: mac-task-bd-parity
 discovered_via: parity_audit
+resolution: done
 ---
+
+## Done (2026-06-10)
+
+`src/mac/tickets_mirror.py` renders a wedow-compatible ticket from a mac task
+dict (reusing `beads_migrator._render_ticket` so the format never drifts) and
+writes `.tickets/<id>.md` into the repo's existing `.tickets/` dir (git root,
+else cwd; never creates one). `mac task create` and `mac task close` call it
+(close passes the reason as the Close Reason section); idempotent, and opt-out
+via `--no-ticket` / `MAC_NO_TICKET_MIRROR`.
+
 # Auto-emit the `.tickets/<id>.md` mirror on task create/close
 
 ## Why this exists

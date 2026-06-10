@@ -50,19 +50,22 @@ Criteria / Notes / Close Reason — a faithful superset of the bead fields.
 | Assignment (assignee/owner) | metadata + `.tickets` `assignee` | Present |
 | External refs | metadata + `.tickets` `external-ref` | Present |
 | Memories | `mac memory remember/list/forget` | Present (`list/forget` are `--db`-only) |
-| `.tickets` markdown mirror **auto-emitted** on create/close | only emitted by `migrate-beads`; not on `mac task create/close` | **Missing — roadmap** (`CLAUDE.md`) |
+| `.tickets` markdown mirror **auto-emitted** on create/close | `mac task create`/`close` write `.tickets/<id>.md` (`tickets_mirror.py`) | **Present** (parity-tickets-autoemit-01) |
 | `bd dolt push/pull` cross-machine sync | — | Removed by design (mac hub is the store) |
 | Two-way `bd update/close` writeback | — | Removed by design (`MAC_BEADS_BRIDGE_ENABLED` gated off) |
 
 ## Remaining gaps (actionable)
 
+Both gaps are now closed:
+
 1. ~~**`ready` / `search` / `stats` are SQLite-only.**~~ **DONE** —
    `GET /tasks/ready|search|stats` now serve these from the hub; the CLI uses
    them in hub mode and keeps the direct-SQL path under `--db`
    (`parity-ready-http-01`).
-2. **No `.tickets` auto-emit.** `bd` kept the JSONL mirror in sync; `mac task
-   create/close` doesn't write/update `.tickets/<id>.md`, so the git-trackable
-   mirror drifts from the ledger. → emit on create/close. (`parity-tickets-autoemit-01`)
+2. ~~**No `.tickets` auto-emit.**~~ **DONE** — `mac task create`/`close` now
+   write/update `.tickets/<id>.md` via `src/mac/tickets_mirror.py` (reusing the
+   migrator's renderer), idempotent and opt-out via `--no-ticket` /
+   `MAC_NO_TICKET_MIRROR` (`parity-tickets-autoemit-01`).
 
 ## Deliberately not parity (recorded so they aren't re-opened as "gaps")
 
@@ -73,7 +76,8 @@ Criteria / Notes / Close Reason — a faithful superset of the bead fields.
 ## Verdict
 
 Core issue-tracking parity is **achieved** (fields, dependencies, lifecycle,
-priority, sections, project-from-cwd for both create and read). The two real
-gaps are operational, not data-model: the read commands don't work over the
-hub, and the `.tickets` mirror isn't auto-emitted. Both are tracked as
-follow-ups; everything else either matches `bd` or was dropped on purpose.
+priority, sections, project-from-cwd for both create and read). The two
+operational gaps that remained — read commands not working over the hub, and the
+`.tickets` mirror not being auto-emitted — are now **both closed**
+(`parity-ready-http-01`, `parity-tickets-autoemit-01`). Everything else either
+matches `bd` or was dropped on purpose.
