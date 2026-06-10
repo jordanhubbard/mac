@@ -353,6 +353,28 @@ def _default_project_from_cwd() -> Optional[str]:
         return None
 
 
+def _effective_read_project(args: argparse.Namespace) -> Optional[str]:
+    """Project filter for read commands (list/ready/search), bd parity.
+
+    ``--all`` clears the filter (every project); ``--project NAME`` picks one;
+    otherwise default to the working directory's project. Returns None to mean
+    "every project".
+    """
+    if getattr(args, "all", False):
+        return None
+    proj = getattr(args, "project", None)
+    if proj is not None:
+        return proj or None
+    inferred = _default_project_from_cwd()
+    if inferred:
+        print(
+            "mac: scoping to project %r (use --all for every project, "
+            "--project NAME to choose)" % inferred,
+            file=sys.stderr,
+        )
+    return inferred
+
+
 def cmd_task_create(args: argparse.Namespace) -> None:
     cp = _plane(args)
     description = _read_text_arg(
@@ -397,7 +419,11 @@ def cmd_task_create(args: argparse.Namespace) -> None:
 
 def cmd_task_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
-    _print([task.to_dict() for task in cp.list_tasks(args.state)])
+    project = _effective_read_project(args)
+    tasks = [task.to_dict() for task in cp.list_tasks(args.state)]
+    if project is not None:
+        tasks = [t for t in tasks if t.get("project") == project]
+    _print(tasks)
 
 
 def cmd_task_show(args: argparse.Namespace) -> None:
@@ -410,15 +436,16 @@ def cmd_task_ready(args: argparse.Namespace) -> None:
     cp = _plane(args)
     from mac.models import TaskState
 
+    project = _effective_read_project(args)
+    where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
+    params: list = [TaskState.OPEN.value]
+    if project is not None:
+        where.append("project = ?")
+        params.append(project)
     rows = cp.store.query_all(
-        """
-        SELECT * FROM tasks
-        WHERE state = ?
-          AND owner_agent_id IS NULL
-          AND lease_id IS NULL
-        ORDER BY priority DESC, created_at
-        """,
-        (TaskState.OPEN.value,),
+        "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at"
+        % " AND ".join(where),
+        tuple(params),
     )
     out = []
     for row in rows:
@@ -451,15 +478,18 @@ def cmd_task_close(args: argparse.Namespace) -> None:
 
 def cmd_task_search(args: argparse.Namespace) -> None:
     cp = _plane(args)
+    project = _effective_read_project(args)
     like = "%" + args.query + "%"
+    where = ["(title LIKE ? OR description LIKE ?)"]
+    params: list = [like, like]
+    if project is not None:
+        where.append("project = ?")
+        params.append(project)
+    params.append(int(args.limit))
     rows = cp.store.query_all(
-        """
-        SELECT * FROM tasks
-        WHERE title LIKE ? OR description LIKE ?
-        ORDER BY priority DESC, created_at DESC
-        LIMIT ?
-        """,
-        (like, like, int(args.limit)),
+        "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at DESC LIMIT ?"
+        % " AND ".join(where),
+        tuple(params),
     )
     _print([cp._task_from_row(row).to_dict() for row in rows])
 
@@ -1962,6 +1992,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_tasks = task.add_parser("list")
     list_tasks.add_argument("--state")
+    list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
+    list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_list, list_tasks)
 
     show = task.add_parser("show")
@@ -1970,6 +2002,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ready = task.add_parser("ready", help="list open tasks ready to work (all deps completed, unclaimed)")
     ready.add_argument("--limit", type=int, default=0)
+    ready.add_argument("--project", help="filter to this project (default: the cwd's project)")
+    ready.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_ready, ready)
 
     claim = task.add_parser("claim", help="atomically claim a task for an agent")
@@ -1989,6 +2023,8 @@ def build_parser() -> argparse.ArgumentParser:
     search = task.add_parser("search", help="keyword search across task title and description")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=50)
+    search.add_argument("--project", help="filter to this project (default: the cwd's project)")
+    search.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_search, search)
 
     stats = task.add_parser("stats", help="count tasks by state")
