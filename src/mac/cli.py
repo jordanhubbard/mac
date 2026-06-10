@@ -123,6 +123,47 @@ def cmd_config_migrate_env_namespace(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_fleet_sync_token(args: argparse.Namespace) -> None:
+    """auth-token-sync-01: pull the hub's current bearer token into this client.
+
+    The hub accepts only the tokens in its own ~/.mac/mac.env; the client sends
+    MAC_API_TOKEN__<FLEET>. When they drift the hub returns 403 "unknown bearer
+    token". This re-syncs the client from the authoritative source (the hub host,
+    reached out-of-band over SSH).
+    """
+    from mac.fleet_creds import sync_token
+
+    _print(
+        sync_token(
+            args.fleet,
+            fleets_config_path=args.fleets_config,
+            env_path=args.env_file,
+        )
+    )
+
+
+def cmd_fleet_rotate_token(args: argparse.Namespace) -> None:
+    """auth-token-sync-01: graceful bearer-token rotation via MAC_API_TOKENS.
+
+    Default is a dry-run plan. --apply adds a new token alongside the old
+    (overlap window) and advertises it as the new primary; --prune --apply
+    drops the old tokens once every client has rolled over via sync-token.
+    """
+    from mac.fleet_creds import rotate_token
+
+    _print(
+        rotate_token(
+            args.fleet,
+            scopes=tuple(args.scope) if args.scope else ("admin",),
+            prune=args.prune,
+            do_apply=args.apply,
+            restart=args.restart,
+            fleets_config_path=args.fleets_config,
+            env_path=args.env_file,
+        )
+    )
+
+
 def cmd_tenant_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_tenant(
@@ -2118,6 +2159,72 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(Path.home() / ".mac" / ".env"),
     )
     _set(cmd_fleet_doctor_setup, fleet_doctor)
+
+    # auth-token-sync-01: recover/re-sync a client's bearer token from the hub.
+    fleet_sync_token = fleet.add_parser(
+        "sync-token",
+        help="pull the hub's current MAC_API_TOKEN into ~/.mac/.env as "
+        "MAC_API_TOKEN__<FLEET> (fixes 403 'unknown bearer token' drift)",
+    )
+    fleet_sync_token.add_argument(
+        "--fleet",
+        required=True,
+        help="fleet name to sync (resolves the hub's ssh target from fleets.yaml)",
+    )
+    fleet_sync_token.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
+    )
+    fleet_sync_token.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+        help="client env file to update (default ~/.mac/.env)",
+    )
+    _set(cmd_fleet_sync_token, fleet_sync_token)
+
+    # auth-token-sync-01: graceful rotation via the overlapping MAC_API_TOKENS map.
+    fleet_rotate_token = fleet.add_parser(
+        "rotate-token",
+        help="rotate the hub bearer token with an overlap window (dry-run unless --apply)",
+    )
+    fleet_rotate_token.add_argument(
+        "--fleet",
+        required=True,
+        help="fleet name to rotate",
+    )
+    fleet_rotate_token.add_argument(
+        "--scope",
+        action="append",
+        help="scope for the new token (repeatable; default admin)",
+    )
+    fleet_rotate_token.add_argument(
+        "--prune",
+        action="store_true",
+        help="end the overlap: drop all but the current token (run after every "
+        "client has synced to the new token)",
+    )
+    fleet_rotate_token.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually mutate the hub + this client (default: dry-run plan only)",
+    )
+    fleet_rotate_token.add_argument(
+        "--restart",
+        action="store_true",
+        help="with --apply, also run the hub restart command over SSH",
+    )
+    fleet_rotate_token.add_argument(
+        "--fleets-config",
+        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
+    )
+    fleet_rotate_token.add_argument(
+        "--env-file",
+        default=str(Path.home() / ".mac" / ".env"),
+        help="client env file to update (default ~/.mac/.env)",
+    )
+    _set(cmd_fleet_rotate_token, fleet_rotate_token)
 
     mood = sub.add_parser(
         "mood",
