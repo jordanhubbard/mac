@@ -40,9 +40,9 @@ Criteria / Notes / Close Reason — a faithful superset of the bead fields.
 | --- | --- | --- |
 | Project from the repo you file in | `create` defaults `--project` from cwd (git top-level / cwd basename) | **Present** (PR #124) |
 | Scope reads to current project | `list`/`ready`/`search` default to cwd project; `--all` / `--project` widen | **Present** (this PR) |
-| Ready queue (`bd ready --json`) | `mac task ready` (open + deps satisfied + unclaimed) | **Partial — `--db` only, not over the hub** |
-| Keyword search | `mac task search` | **Partial — `--db` only** |
-| Stats / counts | `mac task stats` | **Partial — `--db` only** |
+| Ready queue (`bd ready --json`) | `mac task ready` (open + deps satisfied + unclaimed) | **Present** — served over the hub (parity-ready-http-01) |
+| Keyword search | `mac task search` | **Present** — served over the hub |
+| Stats / counts | `mac task stats` | **Present** — served over the hub |
 | Dependencies / blockers | `--dependencies` on create; `.tickets` `deps:`/`links:`/`parent:` | Present |
 | Status lifecycle | TaskState transitions; `close --cancelled` | Present |
 | Priority | `--priority` (numeric) | Present |
@@ -56,10 +56,10 @@ Criteria / Notes / Close Reason — a faithful superset of the bead fields.
 
 ## Remaining gaps (actionable)
 
-1. **`ready` / `search` / `stats` are SQLite-only.** `bd ready --json` worked
-   against the canonical store from anywhere; the `mac task` equivalents refuse
-   in hub mode, so an operator pointed at the rocky hub can't run them. This is
-   the biggest live parity gap. → serve them over HTTP. (`parity-ready-http-01`)
+1. ~~**`ready` / `search` / `stats` are SQLite-only.**~~ **DONE** —
+   `GET /tasks/ready|search|stats` now serve these from the hub; the CLI uses
+   them in hub mode and keeps the direct-SQL path under `--db`
+   (`parity-ready-http-01`).
 2. **No `.tickets` auto-emit.** `bd` kept the JSONL mirror in sync; `mac task
    create/close` doesn't write/update `.tickets/<id>.md`, so the git-trackable
    mirror drifts from the ledger. → emit on create/close. (`parity-tickets-autoemit-01`)

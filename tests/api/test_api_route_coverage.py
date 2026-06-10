@@ -917,6 +917,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/memory/dreams/recall":
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
+        elif path_template == "/tasks/search":
+            kwargs["params"] = {"q": "route coverage"}
         return RequestCase(path, kwargs, expected)
 
     if method == "DELETE":

@@ -3069,6 +3069,94 @@ class ControlPlane:
             tasks = [task for task in tasks if self._task_tenant_id(task) == tenant_id]
         return tasks
 
+    def ready_tasks(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Task]:
+        """Open tasks with all dependencies completed and no owner/lease.
+
+        The dispatcher's readiness semantics (parity with ``bd ready``), served
+        so the CLI works in hub mode (parity-ready-http-01).
+        """
+        where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
+        params: list = [TaskState.OPEN.value]
+        if project is not None:
+            where.append("project = ?")
+            params.append(project)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at"
+            % " AND ".join(where),
+            tuple(params),
+        )
+        out: List[Task] = []
+        for row in rows:
+            task = self._task_from_row(row)
+            if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
+                continue
+            try:
+                ready = self._dependencies_satisfied(task)
+            except Exception:  # noqa: BLE001 - a missing dependency blocks readiness
+                ready = False
+            if ready:
+                out.append(task)
+            if limit and len(out) >= limit:
+                break
+        return out
+
+    def search_tasks(
+        self,
+        query: str,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Task]:
+        """Keyword search across title/description (parity with bd search)."""
+        like = "%" + (query or "") + "%"
+        where = ["(title LIKE ? OR description LIKE ?)"]
+        params: list = [like, like]
+        if project is not None:
+            where.append("project = ?")
+            params.append(project)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at DESC LIMIT ?"
+            % " AND ".join(where),
+            tuple(params + [int(limit)]),
+        )
+        tasks = [self._task_from_row(row) for row in rows]
+        if tenant_id is not None:
+            tasks = [t for t in tasks if self._task_tenant_id(t) == tenant_id]
+        return tasks
+
+    def task_stats(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Task counts by state (parity with bd stats)."""
+        if tenant_id is not None:
+            tasks = self.list_tasks(tenant_id=tenant_id)
+            if project is not None:
+                tasks = [t for t in tasks if t.project == project]
+            counts: Dict[str, int] = {}
+            for t in tasks:
+                counts[t.state] = counts.get(t.state, 0) + 1
+            return dict(sorted(counts.items()))
+        where = ""
+        params: list = []
+        if project is not None:
+            where = " WHERE project = ?"
+            params.append(project)
+        rows = self.store.query_all(
+            "SELECT state, COUNT(*) AS n FROM tasks%s GROUP BY state ORDER BY state" % where,
+            tuple(params),
+        )
+        return {row["state"]: int(row["n"]) for row in rows}
+
     def update_task(
         self,
         task_id: str,

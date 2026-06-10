@@ -1,6 +1,6 @@
 ---
 id: parity-ready-http-01
-status: open
+status: closed
 deps: []
 links: [parity-tickets-autoemit-01]
 created: 2026-06-09T00:00:00Z
@@ -8,7 +8,18 @@ type: feature
 priority: 2
 audit: mac-task-bd-parity
 discovered_via: parity_audit
+resolution: done
 ---
+
+## Done (2026-06-10)
+
+`GET /tasks/ready`, `/tasks/search`, `/tasks/stats` are served by the hub
+(registered before `/tasks/{task_id}` so the static paths aren't shadowed),
+backed by `ControlPlane.ready_tasks/search_tasks/task_stats`. `RemoteDispatch`
+gained matching methods; the CLI handlers now call them, so `mac task
+ready/search/stats` work in hub mode and keep the direct-SQL path under `--db`.
+The `_RemoteStore` refuse message no longer lists them.
+
 # Serve `mac task ready` / `search` / `stats` over the hub (not SQLite-only)
 
 ## Why this exists

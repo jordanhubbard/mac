@@ -67,8 +67,9 @@ The `mac` CLI is hub-aware. Resolution order (highest priority first):
 all of its functionality lives under `mac` now.
 
 A small set of commands still requires `--db` because they reach into
-SQLite directly: `task ready/search/stats`, `memory list/forget`,
-`observability prune`. Running these in hub mode emits a clear error.
+SQLite directly: `memory list/forget` and `observability prune`. Running
+these in hub mode emits a clear error. (`task ready/search/stats` are now
+served over the hub — parity-ready-http-01.)
 
 ## Session Completion
 
