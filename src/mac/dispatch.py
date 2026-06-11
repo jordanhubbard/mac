@@ -605,9 +605,24 @@ class RemoteDispatch:
     def list_agentbus_streams(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/agentbus/streams", **kw))
 
-    def read_agentbus_chunks(self, stream_id: str, **kw: Any) -> List[_Dictish]:
+    def read_agentbus_chunks(
+        self,
+        agent_id: str,
+        stream_id: str,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> List[_Dictish]:
+        # Match ControlPlane.read_agentbus_chunks(agent_id, stream_id, ...) and the
+        # GET /agentbus/streams/{stream_id}/chunks endpoint (agent_id is a query
+        # param). The old (stream_id, **kw) signature dropped agent_id and broke
+        # `mac agentbus read` in hub mode with a positional-arg TypeError.
         return _wrap_list(
-            self._get("/agentbus/streams/%s/chunks" % quote(stream_id, safe=""), **kw)
+            self._get(
+                "/agentbus/streams/%s/chunks" % quote(stream_id, safe=""),
+                agent_id=agent_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
         )
 
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
