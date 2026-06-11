@@ -127,6 +127,47 @@ the design. The only thing that would flip this decision is running a k8s
 cluster being off the table; it isn't (`jordanh-gke` is already a cluster), so
 GitHub-hosted runners' "no cluster to operate" advantage does not apply.
 
+## Evidence: a live multi-node dispatch experiment (2026-06-11)
+
+The flexible-dispatch claim was **tested, not just asserted**. A real 4-node
+Kubernetes cluster was stood up locally (`kind` on `colima`): one control-plane
+node (the "hub") + three worker nodes labeled to mimic the fleet's heterogeneity
+— `madmax` (`capability-gpu`), `bullwinkle` (`capability-image-gen`), `rocky`
+(`capability-ops`). Four Jobs were submitted with no manual placement:
+
+- `nodeSelector: capability-gpu` scheduled onto the `madmax` node;
+  `capability-image-gen` → `bullwinkle`; `capability-ops` → `rocky`. Every
+  capability-targeted Job landed on exactly its matching node.
+- A 6-completion / parallelism-6 Job with **no** selector spread **2 / 2 / 2**
+  across the three worker nodes on the scheduler's own.
+
+**Proven:** a control-plane + worker-node cluster does capability-aware,
+self-balancing Job dispatch across the fleet with zero per-host static config —
+the elastic-executor property this ADR depends on. (Method caveat: `kind` nodes
+are containers on one VM, so the *physical* distribution is simulated; the
+*scheduling logic* exercised is genuine, unmodified upstream Kubernetes.)
+
+**What it does NOT prove — and why that sharpens the decision.** The literal
+"every host simply becomes a node" does not hold:
+
+- **macOS hosts cannot be Linux-container worker nodes.** bullwinkle (darwin /
+  M4 Pro) has no kubelet running Linux pods, and its **Metal/MPS GPU is not a
+  schedulable k8s resource** at all.
+- **NVIDIA GPUs need device plugins.** madmax (RTX 6000 Ada) and natasha (GB10)
+  require drivers + the device plugin to expose GPUs as schedulable resources.
+- **Cross-network CNI.** Fleet hosts sit on different networks joined by
+  Tailscale; one cluster needs node + pod networking across them (e.g. k3s + an
+  overlay/tailnet CNI) — feasible, not "simple."
+- **MAC semantics are still ours to build.** k8s supplies the substrate; the
+  `claim → run → evidence → exit` executor and autoscaling off `GET /tasks/ready`
+  are not provided by k8s.
+
+Crucially, the hosts that *can't* be worker nodes (darwin/image-gen, GPU model
+servers) are exactly the ones this ADR assigns to the **persistent tier**. The
+experiment therefore confirms both the dispatch property *and* the two-tier
+split: Linux hosts → elastic executor nodes; darwin + GPU + long-lived-service
+hosts → persistent agents.
+
 ## Risks / non-goals
 
 - **Do not** dissolve personas/memory/long-lived services into ephemeral workers
