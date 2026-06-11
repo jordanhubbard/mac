@@ -213,9 +213,13 @@ dispositive fact — it cannot even exist on macOS, where `--gpus all` errors.)
   CPU worker. Only gap: **no container runtime today** (it runs the mac services
   as a bare-metal editable install), so containerd must be added.
 - **madmax** — **GPU worker node: ready.** Add the k8s NVIDIA device plugin and
-  pods can request `nvidia.com/gpu`. Caveat: one 48 GB GPU currently held by the
-  long-lived **vLLM brain** (a *Deployment*, not a Job) — so dedicate the GPU to
-  that service or share via GPU **time-slicing / MPS** for Jobs.
+  pods can request `nvidia.com/gpu`. The often-cited caveat — "one 48 GB GPU is
+  held by the long-lived **vLLM brain** (a *Deployment*, not a Job)" — turns out
+  to be **hollow**: that brain serves ≈0 traffic (see the routing-evidence
+  subsection below), so the GPU can simply be **dedicated to the executor tier**
+  rather than carefully shared via time-slicing / MPS. (If a local-LLM fallback
+  is wanted, keep a *right-sized* vLLM and GPU-share; just don't let a 0-traffic
+  service block the node.)
 - **natasha** — **GPU worker node: feasible, same mechanism**, with two
   operational caveats: **arm64** (a mixed-arch cluster — images/workloads must be
   built arm64) and a **bleeding-edge driver/kernel** (`6.17-nvidia` + driver 580;
@@ -230,6 +234,44 @@ two-tier split maps cleanly onto the hardware: **rocky → control-plane / CPU
 executor nodes; madmax + natasha → GPU nodes hosting a persistent model-server
 Deployment and/or elastic GPU Jobs; bullwinkle → off-cluster persistent
 native-macOS service.**
+
+### The "vLLM brain" serves ≈0 traffic — the GPU it holds is effectively idle (2026-06-11)
+
+A second probe checked whether the persistent service this ADR is most careful to
+protect — madmax's vLLM "LLM brain" — is actually load-bearing. It is not.
+
+Querying the live rocky hub's routing telemetry
+(`mac --fleet rocky observability list --name llm.route`), the last ~1000
+`llm.route` events (spanning 2026-06-08 → 2026-06-11):
+
+| backend provider | events |
+| --- | --- |
+| `nvidia` (cloud inference API, resolving `azure/anthropic/claude-sonnet-4-6`) | 994 |
+| empty / failed route | 6 |
+| **madmax / vLLM / its served model** | **0** |
+
+The cause is structural, not transient. madmax's vLLM *is* wired into the hub
+router — appended to `MAC_ROUTER_PROVIDERS` at priority 0 — but **only for the
+model `Qwen/Qwen3.6-27B-FP8`**. Every fleet agent's `gateway_model` (in
+`~/.mac/fleets.yaml`, including madmax's *own* agent) is
+`azure/anthropic/claude-sonnet-4-6`, which routes to the cloud `nvidia` provider.
+No caller ever requests the model madmax serves, so a 48 GB RTX 6000 Ada sits idle
+on the LLM path. (madmax was additionally tailscale-offline at probe time.)
+
+**Why this sharpens the decision.** The Decision and Risks sections treat "GPU /
+model servers stay persistent services; they are not jobs" as a hard constraint,
+and the madmax node-readiness note above flagged the vLLM Deployment as the reason
+to time-slice rather than dedicate the GPU. The evidence collapses that tension:
+the brain has **no traffic to protect**, so madmax's GPU is the *easiest*, not the
+hardest, to hand to the elastic executor tier — dedicate it outright. The
+persistent-services principle still holds in general (it's right for a brain that
+*is* serving); it just doesn't currently apply to *this* GPU. A concrete
+device-plugin + node-label draft for exactly this conversion lives at
+[`deploy/k8s/gpu-worker/`](../../deploy/k8s/gpu-worker/).
+
+(Method/caveat: the telemetry only captures hub-routed requests; a process hitting
+`madmax:8000` directly would not appear. Confirm with madmax's vLLM
+`/metrics request_success_total` before decommissioning the service.)
 
 ## Risks / non-goals
 
