@@ -637,13 +637,15 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     from tools.send_message_tool import _send_to_platform
     from gateway.config import load_gateway_config, Platform
 
-    # Optionally wrap the content with a header/footer so the user knows this
-    # is a cron delivery.  Wrapping is on by default; set cron.wrap_response: false
-    # in config.yaml for clean output.
-    wrap_response = True
+    # Optionally wrap the content with a header/footer identifying the cron job.
+    # Off by default: the boilerplate ("Cronjob Response: ... (job_id: ...)" +
+    # "To stop or manage this job ...") makes scheduled posts read as insincere,
+    # so cron output goes out as just the content. Set cron.wrap_response: true
+    # in config.yaml to re-enable the wrapper.
+    wrap_response = False
     try:
         user_cfg = load_config()
-        wrap_response = user_cfg.get("cron", {}).get("wrap_response", True)
+        wrap_response = user_cfg.get("cron", {}).get("wrap_response", False)
     except Exception:
         pass
 
