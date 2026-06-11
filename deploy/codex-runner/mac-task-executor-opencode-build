@@ -171,26 +171,37 @@ echo "PROJECT:          ${PROJECT:-<unset>}"
 echo "REPO_URL:         ${REPO_URL:-<none — opencode runs without working tree>}"
 echo "REPO_BRANCH:      ${REPO_BRANCH}"
 
-# Rewrite https://... to https://<user>:<token>@... for gitea/github.
+# Rewrite https://... to https://<user>:<token>@... for git hosting.
+# Auto-detects the git host and uses appropriate credentials.
 authed_url() {
     local u="$1"
-    case "$u" in
-        https://gitea.omv.*|https://gitea.a113.casa/*)
-            if [ -n "${GITEA_USER:-}" ] && [ -n "${GITEA_TOKEN:-}" ]; then
-                echo "${u/https:\/\//https:\/\/${GITEA_USER}:${GITEA_TOKEN}@}"
-            else
-                echo "$u"
-            fi
-            ;;
-        https://github.com/*)
-            if [ -n "${GH_TOKEN:-}" ]; then
-                echo "${u/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}"
-            else
-                echo "$u"
-            fi
-            ;;
-        *) echo "$u" ;;
-    esac
+    
+    # Extract hostname from URL
+    if [[ "$u" =~ ^https://([^/]+)/ ]]; then
+        local host="${BASH_REMATCH[1]}"
+        
+        case "$host" in
+            github.com)
+                # GitHub: use GH_TOKEN with x-access-token username
+                if [ -n "${GH_TOKEN:-}" ]; then
+                    echo "${u/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}"
+                else
+                    echo "$u"
+                fi
+                ;;
+            *)
+                # Any other HTTPS git host (Gitea, GitLab, etc.): use GITEA_USER + GITEA_TOKEN
+                if [ -n "${GITEA_USER:-}" ] && [ -n "${GITEA_TOKEN:-}" ]; then
+                    echo "${u/https:\/\//https:\/\/${GITEA_USER}:${GITEA_TOKEN}@}"
+                else
+                    echo "$u"
+                fi
+                ;;
+        esac
+    else
+        # Not an HTTPS URL we can handle (SSH, file://, etc.)
+        echo "$u"
+    fi
 }
 
 # ---------------------------------------------------------------------------
