@@ -1,0 +1,136 @@
+{
+  "slug": "wf-self-improvement",
+  "name": "Self-Improvement Workflow",
+  "description": "Autonomous workflow for Loom self-improvement tasks - no approval gates",
+  "workflow_type": "self-improvement",
+  "is_default": false,
+  "definition": {
+    "nodes": [
+      {
+        "node_key": "investigate",
+        "node_type": "task",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 60,
+        "instructions": "Investigate and understand the task:\n1. Read relevant code files\n2. Understand the problem or improvement area\n3. Research best practices and patterns\n4. Document findings and approach"
+      },
+      {
+        "node_key": "implement",
+        "node_type": "task",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 3,
+        "timeout_minutes": 120,
+        "instructions": "Implement the solution:\n1. Write or modify code according to plan\n2. Follow Go best practices\n3. Add/update tests\n4. Ensure code quality and maintainability\n5. Run tests to verify changes"
+      },
+      {
+        "node_key": "verify",
+        "node_type": "verify",
+        "role_required": "qa-engineer",
+        "persona_hint": "default/qa-engineer",
+        "max_attempts": 2,
+        "timeout_minutes": 30,
+        "instructions": "Verify the implementation:\n1. Run all tests (go test ./...)\n2. Check for linting issues (golangci-lint)\n3. Verify no regressions\n4. Approve if all tests pass"
+      },
+      {
+        "node_key": "review",
+        "node_type": "task",
+        "role_required": "code-reviewer",
+        "persona_hint": "default/code-reviewer",
+        "max_attempts": 1,
+        "timeout_minutes": 30,
+        "instructions": "Quick code review (optional - auto-approve if verify passed):\n1. Check code quality\n2. Verify best practices followed\n3. Suggest improvements if needed\n4. Auto-approve if QA verification passed"
+      },
+      {
+        "node_key": "commit",
+        "node_type": "commit",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 15,
+        "instructions": "Commit the changes:\n1. Stage modified files (git add)\n2. Create descriptive commit message\n3. Include Co-Authored-By: Loom <noreply@loom.dev>\n4. Commit changes\n5. DO NOT push to remote (human will review and push)"
+      }
+    ],
+    "edges": [
+      {
+        "from_node_key": "",
+        "to_node_key": "investigate",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "investigate",
+        "to_node_key": "implement",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "investigate",
+        "to_node_key": "",
+        "condition": "failure",
+        "priority": 100
+      },
+      {
+        "from_node_key": "implement",
+        "to_node_key": "verify",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "implement",
+        "to_node_key": "investigate",
+        "condition": "failure",
+        "priority": 50
+      },
+      {
+        "from_node_key": "verify",
+        "to_node_key": "review",
+        "condition": "approved",
+        "priority": 100
+      },
+      {
+        "from_node_key": "verify",
+        "to_node_key": "review",
+        "condition": "success",
+        "priority": 50
+      },
+      {
+        "from_node_key": "verify",
+        "to_node_key": "implement",
+        "condition": "rejected",
+        "priority": 100
+      },
+      {
+        "from_node_key": "verify",
+        "to_node_key": "implement",
+        "condition": "failure",
+        "priority": 50
+      },
+      {
+        "from_node_key": "review",
+        "to_node_key": "commit",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "review",
+        "to_node_key": "implement",
+        "condition": "failure",
+        "priority": 50
+      },
+      {
+        "from_node_key": "commit",
+        "to_node_key": "",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "commit",
+        "to_node_key": "implement",
+        "condition": "failure",
+        "priority": 100
+      }
+    ]
+  }
+}

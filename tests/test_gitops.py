@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List, Tuple
+from unittest import mock
+
+import pytest
+
+from mac.gitops import (
+    PullRequestResult,
+    _api_base_for,
+    _parse_owner_repo,
+    detect_host,
+    open_pull_request,
+)
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://github.com/foo/bar.git", "github"),
+        ("https://github.com/foo/bar", "github"),
+        ("https://gitea.omv.a113.casa/vpogu/ivan-plugin", "gitea"),
+        ("http://gitea.local:3000/owner/repo.git", "gitea"),
+    ],
+)
+def test_detect_host(url: str, expected: str) -> None:
+    assert detect_host(url) == expected
+
+
+def test_parse_owner_repo() -> None:
+    assert _parse_owner_repo("https://github.com/foo/bar.git") == ("foo", "bar")
+    assert _parse_owner_repo("https://gitea.omv.a113.casa/vpogu/ivan-plugin") == (
+        "vpogu",
+        "ivan-plugin",
+    )
+
+
+def test_api_base_for_github() -> None:
+    assert _api_base_for("github", "https://github.com/x/y") == "https://api.github.com"
+
+
+def test_api_base_for_gitea_preserves_scheme_host_port() -> None:
+    assert (
+        _api_base_for("gitea", "https://gitea.omv.a113.casa/x/y")
+        == "https://gitea.omv.a113.casa/api/v1"
+    )
+    assert (
+        _api_base_for("gitea", "http://gitea.local:3000/x/y")
+        == "http://gitea.local:3000/api/v1"
+    )
+
+
+class _FakeResponse:
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+
+def test_open_pull_request_github_happy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    captured: List[Tuple[str, Dict[str, Any]]] = []
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        method = req.get_method()
+        if method == "POST":
+            body = json.loads(req.data.decode("utf-8"))
+            captured.append((url, body))
+            return _FakeResponse(
+                {"number": 42, "html_url": "https://github.com/x/y/pull/42", "state": "open"}
+            )
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="feat/foo",
+            title="My PR",
+            body="body",
+        )
+
+    assert isinstance(result, PullRequestResult)
+    assert result.host == "github"
+    assert result.number == 42
+    assert result.url == "https://github.com/x/y/pull/42"
+    assert captured, "no POST captured"
+    url, body = captured[-1]
+    assert url == "https://api.github.com/repos/x/y/pulls"
+    assert body == {"title": "My PR", "body": "body", "head": "feat/foo", "base": "main"}
+
+
+def test_open_pull_request_gitea_happy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITEA_TOKEN", "abc")
+    captured: List[Tuple[str, Dict[str, Any]]] = []
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        method = req.get_method()
+        if method == "POST":
+            body = json.loads(req.data.decode("utf-8"))
+            captured.append((url, body))
+            return _FakeResponse(
+                {"number": 7, "html_url": "https://gitea.local/x/y/pulls/7", "state": "open"}
+            )
+        return _FakeResponse({"default_branch": "trunk"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://gitea.local/x/y",
+            head="mac/agent-1/task-abc",
+        )
+
+    assert result.host == "gitea"
+    url, body = captured[-1]
+    assert url == "https://gitea.local/api/v1/repos/x/y/pulls"
+    assert body["base"] == "trunk"
+    assert body["head"] == "mac/agent-1/task-abc"
+
+
+def test_open_pull_request_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="GH_TOKEN"):
+        open_pull_request("https://github.com/x/y", head="b")
+
+    monkeypatch.delenv("GITEA_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="GITEA_TOKEN"):
+        open_pull_request("https://gitea.local/x/y", head="b")

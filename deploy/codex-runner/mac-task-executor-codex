@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Operator-result stub executor invoked by the K8s Job pod.
+#
+# Builds a minimal mac.worker_evidence.v1 manifest and hands the
+# signing step off to `mac-evidence sign` (defined in
+# src/mac/evidence_cli.py). The bash file no longer reimplements the
+# canonical HMAC — see the matching unit tests in
+# tests/test_evidence_cli.py for the byte-for-byte invariant.
+set -euo pipefail
+
+MAC_TASK_ID="${MAC_TASK_ID:-}"
+MAC_LEASE_ID="${MAC_LEASE_ID:-}"
+MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
+MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
+MAC_TASK_TITLE="${MAC_TASK_TITLE:-}"
+MAC_URL="${MAC_URL:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+
+executed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "===== mac-task-executor-codex ====="
+echo "executed_at:      ${executed_at}"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_TASK_TITLE:   ${MAC_TASK_TITLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    echo "MAC_AGENT_ATTESTATION_KEY: <present, $(printf '%s' "${ATTESTATION_KEY}" | wc -c | tr -d ' ') chars>"
+else
+    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (manifest will NOT be signed; submit-for-review will reject)"
+fi
+echo
+echo "Tooling on PATH:"
+echo "  codex:    $(codex --version 2>/dev/null || echo '<unavailable>')"
+echo "  git:      $(git --version 2>/dev/null || echo '<unavailable>')"
+echo "  uv:       $(uv --version 2>/dev/null || echo '<unavailable>')"
+echo "  python:   $(python --version 2>/dev/null || echo '<unavailable>')"
+echo "  python3:  $(python3 --version 2>/dev/null || echo '<unavailable>')"
+# Resolve the signing CLI. Production K8s images install the mac wheel
+# so ``mac-evidence`` is on PATH; tests and dev shells may instead
+# import ``mac`` from a src checkout, in which case we fall back to
+# ``python -m mac.evidence_cli``. ``MAC_EVIDENCE_PYTHON`` lets the
+# caller pin a specific interpreter (the test fixture passes
+# .venv/bin/python via this env to dodge the system python).
+if command -v mac-evidence >/dev/null 2>&1; then
+    MAC_EVIDENCE_CMD=("mac-evidence")
+else
+    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-}"
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        MAC_EVIDENCE_PY="$(command -v python3 || command -v python || true)"
+    fi
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
+        exit 3
+    fi
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
+fi
+echo "  mac-evidence: ${MAC_EVIDENCE_CMD[*]}"
+echo
+
+# Export the values the inline python heredoc reads from os.environ.
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE
+export executed_at
+
+# Build the unsigned manifest. The signing step is shared with the host
+# worker via `mac-evidence sign`; do NOT inline HMAC here.
+tmp_path="${EVIDENCE_PATH}.tmp.$$"
+python3 - "${tmp_path}" <<'PYEOF'
+import json, os, sys
+
+task_id = os.environ.get("MAC_TASK_ID", "").strip()
+lease_id = os.environ.get("MAC_LEASE_ID", "").strip()
+agent_id = os.environ.get("MAC_AGENT_ID", "").strip() or "mac-task-runner"
+agent_role = os.environ.get("MAC_AGENT_ROLE", "").strip()
+task_title = os.environ.get("MAC_TASK_TITLE", "").strip()
+executed_at = os.environ.get("executed_at", "").strip()
+
+manifest = {
+    "schema": "mac.worker_evidence.v1",
+    "status": "complete",
+    "evidence_type": "operator_result",
+    "summary": (
+        "mac-task-executor-codex (PR3) executed for task=%s role=%s agent=%s at %s"
+        % (task_id or "<unknown>", agent_role or "<unset>", agent_id, executed_at)
+    ),
+    "result": "executor_completed",
+    "findings": [
+        {
+            "kind": "execution_log",
+            "task_id": task_id,
+            "lease_id": lease_id,
+            "agent_id": agent_id,
+            "agent_role": agent_role,
+            "task_title": task_title,
+            "executed_at": executed_at,
+            "executor": "mac-task-executor-codex",
+            "version": "pr3-operator-result-v1",
+        }
+    ],
+    "checks": [{"name": "executor_returncode", "status": "pass", "returncode": 0}],
+    "executed_at": executed_at,
+    "notes": (
+        "PR3: operator_result manifest. Signing handled by mac-evidence sign."
+    ),
+    # signed_by is filled in by mac-evidence sign.
+}
+
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+PYEOF
+
+if [ -n "${ATTESTATION_KEY}" ]; then
+    "${MAC_EVIDENCE_CMD[@]}" sign \
+        --manifest "${tmp_path}" \
+        --key-env MAC_AGENT_ATTESTATION_KEY \
+        --signed-by "${MAC_AGENT_ID}"
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    signed_state="yes"
+else
+    # No attestation key — leave the manifest unsigned so the submit-for-review
+    # path produces a deterministic "manifest_not_signed" rejection. Add the
+    # canonical problems marker so reviewers see the cause at a glance.
+    python3 - "${tmp_path}" "${EVIDENCE_PATH}" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+manifest["status"] = "incomplete"
+manifest["problems"] = [
+    "MAC_AGENT_ATTESTATION_KEY is unset; manifest is structurally valid "
+    "but unsigned. Configure MAC_RUNNER_ROLE_ATTESTATION_KEY_SECRETS on "
+    "the runner so the Job pod inherits the role agent's HMAC key."
+]
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+import os
+os.unlink(sys.argv[1])
+PYEOF
+    signed_state="no"
+fi
+
+echo "[codex-executor] wrote verification manifest to ${EVIDENCE_PATH} (signed=${signed_state})"
+echo "[codex-executor] done. job_executor.py will POST the evidence."
+exit 0

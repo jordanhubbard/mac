@@ -1,0 +1,682 @@
+"""Tests for the extracted autonomous task executor (loop-01).
+
+Covers the logic that used to be an untestable bash heredoc: prompt building,
+the fail-closed fallback, deterministic outcome classification, the telemetry
+path, and the memory feed (recall in / record out). The agent runner and the
+hub HTTP seam are injected, so nothing here spawns Hermes or hits a network.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from mac import task_executor as te
+
+
+class _FakeResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+# ---------------------------------------------------------------------------
+# Pure builders
+# ---------------------------------------------------------------------------
+
+
+def test_task_evidence_type_defaults_and_honors_contract():
+    assert te.task_evidence_type({}) == "operator_result"
+    assert te.task_evidence_type({"metadata": {"execution_contract": {"evidence_type": "repo_change"}}}) == "repo_change"
+    assert te.task_evidence_type({"metadata": {"execution_contract": {"evidence_type": "bogus"}}}) == "operator_result"
+
+
+def test_build_task_prompt_injects_recalled_lessons():
+    task = {"id": "t1", "title": "Do a thing", "project": "demo"}
+    base = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    assert "Lessons from prior runs" not in base
+    assert "verification.environment_delta" in base
+    assert "task-local .venv" in base
+    assert "shared Hermes/worker virtualenv" in base
+    with_lessons = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=["push before reporting", "run the contract tests"])
+    assert "Lessons from prior runs" in with_lessons
+    assert "push before reporting" in with_lessons
+    # The task file pointer is always last.
+    assert with_lessons.strip().endswith("/tmp/task.json")
+
+
+def test_build_task_prompt_demands_autonomy():
+    # The "should I proceed?" turn-ending failure mode is explicitly forbidden.
+    prompt = te.build_task_prompt({"id": "t1", "title": "x", "project": "p"}, Path("/tmp/task.json"))
+    assert "AUTONOMOUS" in prompt
+    assert "never ask the operator for confirmation" in prompt
+
+
+def test_repository_contract_section_no_repository_is_a_failure():
+    # No contract AND no checkout -> a missing contract is a genuine failure.
+    section = te.repository_contract_section({"metadata": {"origin": {}}})
+    assert "report this as a task contract failure" in section
+
+
+def test_repository_contract_section_onboarding_when_checkout_present():
+    # No contract but a repository_url is set -> this is an ONBOARDING task whose
+    # job is to author the contract; it must NOT be told to fail.
+    task = {"metadata": {"origin": {"type": "direct_task", "repository_url": "https://github.com/acme/widget.git"}}}
+    section = te.repository_contract_section(task)
+    assert "ONBOARDING" in section
+    assert "task contract failure" not in section
+    assert ".mac/project.yaml" in section
+    assert "$MAC_TASK_REPO_WORKTREE" in section
+    assert "do not push" in section.lower()
+
+
+def test_repository_contract_section_shows_existing_contract():
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "widget",
+        "bootstrap": {"command": "make bootstrap"},
+        "test": {"command": "make test"},
+    }
+    task = {"metadata": {"origin": {"repository_contract": contract}}}
+    section = te.repository_contract_section(task)
+    assert "make test" in section
+    assert "task contract failure" not in section
+
+
+def test_build_telemetry_record_shape():
+    rec = te.build_telemetry_record("started", task_id="t1", level="info", detail={"kind": "task"})
+    assert rec["name"] == "executor.started"
+    assert rec["layer"] == "executor"
+    assert rec["subject_type"] == "task" and rec["subject_id"] == "t1"
+    assert rec["detail"]["schema"] == "mac.executor_telemetry.v1"
+    assert rec["detail"]["kind"] == "task"
+
+
+def test_build_learning_record_shape():
+    task = {"id": "t1", "title": "Ship X", "project": "demo", "metadata": {"origin": {"repository_name": "demo-repo"}}}
+    outcome = {"evidence_type": "repo_change", "outcome": "success", "signals": {"pushed": True}, "error_signature": ""}
+    rec = te.build_learning_record(task, outcome)
+    assert rec["subject_type"] == "project" and rec["subject_id"] == "demo"
+    assert rec["record_type"] == "deployment_learning:demo"
+    assert rec["created_by"] == "mac-hermes-task-executor"
+    content = json.loads(rec["content"])
+    assert content["schema"] == "mac.deployment_learning.v1"
+    assert content["repository"] == "demo-repo"
+    assert content["outcome"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed fallback (the loop-01 invariant must survive the extraction)
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_writes_unverified_operator_result_no_synthetic_check(tmp_path):
+    task = {"id": "t1", "title": "x", "project": "demo"}
+    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="Mapped the milestones."), None)
+    manifest = json.loads((tmp_path / "mac-evidence.json").read_text())
+    assert manifest["evidence_type"] == "operator_result"
+    assert manifest["summary"] == "Mapped the milestones."
+    assert "checks" not in manifest  # no fabricated passing check
+
+
+def test_fallback_skips_on_failure_review_and_existing(tmp_path):
+    task = {"id": "t1"}
+    # non-zero exit → no fabrication
+    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(1, stdout="boom"), None)
+    assert not (tmp_path / "mac-evidence.json").exists()
+    # review context → finalizer owns the manifest
+    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="x"), {"review_id": "r"})
+    assert not (tmp_path / "mac-evidence.json").exists()
+    # existing manifest (finalizer already wrote) → don't overwrite
+    (tmp_path / "mac-evidence.json").write_text('{"kept": true}')
+    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="x"), None)
+    assert json.loads((tmp_path / "mac-evidence.json").read_text()) == {"kept": True}
+
+
+# ---------------------------------------------------------------------------
+# Outcome classification (drives the memory feed)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_outcome_success_and_failure(tmp_path):
+    task = {"id": "t1", "project": "demo"}
+    # success: pushed repo_change with passing tests
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "repo": {"pushed": True, "files_changed": ["a.py"]},
+        "tests": {"returncode": 0, "status": "pass"},
+        "checks": [{"name": "git_finalizer", "returncode": 0, "status": "pass"}],
+    }))
+    ok = te.classify_outcome(tmp_path, task, 0)
+    assert ok["outcome"] == "success"
+    assert ok["signals"]["pushed"] is True and ok["signals"]["tests"] == "pass"
+
+    # failure: tests failed
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "repo": {"pushed": True, "files_changed": ["a.py"]},
+        "tests": {"returncode": 1, "status": "fail"},
+        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+        "summary": "tests broke",
+    }))
+    bad = te.classify_outcome(tmp_path, task, 0)
+    assert bad["outcome"] == "failure"
+    assert bad["error_signature"]
+
+
+def test_classify_outcome_failure_when_no_evidence(tmp_path):
+    out = te.classify_outcome(tmp_path, {"id": "t1"}, 0)
+    assert out["outcome"] == "failure"
+
+
+def test_agent_timeout_default_and_override(monkeypatch):
+    monkeypatch.delenv("MAC_EXECUTOR_AGENT_TIMEOUT", raising=False)
+    assert te._agent_timeout() == 900.0
+    monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "120")
+    assert te._agent_timeout() == 120.0
+    monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "0")  # disable the bound
+    assert te._agent_timeout() is None
+
+
+def test_manifest_is_complete(tmp_path):
+    assert te._manifest_is_complete(tmp_path) is False
+    (tmp_path / "mac-evidence.json").write_text('{"status":"complete","evidence_type":"operator_result"}')
+    assert te._manifest_is_complete(tmp_path) is True
+    (tmp_path / "mac-evidence.json").write_text('{"status":"running"}')  # partial
+    assert te._manifest_is_complete(tmp_path) is False
+
+
+def test_main_salvages_evidence_when_agent_run_times_out(tmp_path, monkeypatch):
+    # loop-01 resilience: the agent wrote a valid deliverable, then a trailing
+    # turn hung and the run was bounded (rc=124). The deliverable must NOT be
+    # discarded — main() salvages it and reports success.
+    task = {"id": "t1", "title": "Plan X", "project": "demo", "metadata": {"publication_target": "test://x"}}
+    task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    posts = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+
+    def timed_out_runner(argv, cwd, task_id, metadata):
+        # agent produced a real deliverable before the trailing turn hung
+        (ws / "mac-evidence.json").write_text(json.dumps({
+            "schema": "mac.worker_evidence.v1", "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Produced a substantive plan with several distinct points.",
+        }))
+        return _FakeResult(124, stdout="...", stderr="agent run timed out")
+
+    rc = te.main(runner=timed_out_runner)
+    assert rc == 0, "valid deliverable should be salvaged despite the timeout"
+    names = {p[1]["name"] for p in posts if p[0] == "/observability/logs"}
+    assert "executor.evidence_salvaged" in names
+    # outcome recorded as success (memory feed)
+    mem = [p for p in posts if p[0] == "/memory"]
+    assert mem and json.loads(mem[0][1]["content"])["outcome"] == "success"
+
+
+def test_main_fails_when_timeout_and_no_evidence(tmp_path, monkeypatch):
+    task = {"id": "t1", "title": "Plan X", "project": "demo", "metadata": {"publication_target": "test://x"}}
+    task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"; ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setattr(te, "_hub_post", lambda *a, **k: True)
+    monkeypatch.setattr(te, "_hub_get", lambda *a, **k: [])
+    # timeout with NO deliverable written → honest failure, not salvaged
+    rc = te.main(runner=lambda *a: _FakeResult(124, stderr="agent run timed out"))
+    assert rc == 124
+
+
+# ---------------------------------------------------------------------------
+# Hub seam: telemetry + memory are best-effort and gated
+# ---------------------------------------------------------------------------
+
+
+def test_hub_post_noop_without_env(monkeypatch):
+    monkeypatch.delenv("MAC_HUB_URL", raising=False)
+    monkeypatch.delenv("MAC_URL", raising=False)
+    monkeypatch.delenv("MAC_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+    assert te.emit_telemetry("started", task_id="t1") is False
+    assert te.record_deployment_learning({"id": "t1", "project": "demo"}, {"outcome": "success"}) is False
+
+
+def test_recall_deployment_lessons_via_injected_get(monkeypatch):
+    captured = {}
+
+    def fake_get(path, *, timeout=5.0):
+        captured["path"] = path
+        return [{"content": "always push before reporting"}, {"summary": "run contract tests"}, {"nope": 1}]
+
+    monkeypatch.setattr(te, "_hub_get", fake_get)
+    lessons = te.recall_deployment_lessons({"title": "Ship X", "project": "demo"})
+    assert lessons == ["always push before reporting", "run contract tests"]
+    assert "/v1/memory/recall?" in captured["path"]
+    assert "project=demo" in captured["path"]
+
+
+def test_recall_falls_back_to_direct_memory_records(monkeypatch):
+    # Vector recall empty (no embeddings yet) → fall back to the project's
+    # deployment_learning records so the very next task still gets hindsight.
+    learning = json.dumps({
+        "schema": "mac.deployment_learning.v1",
+        "task_title": "Earlier task",
+        "evidence_type": "repo_change",
+        "outcome": "failure",
+        "error_signature": "check:git_finalizer rc=1",
+    })
+
+    def fake_get(path, *, timeout=5.0):
+        if path.startswith("/v1/memory/recall"):
+            return []  # vector tier not populated yet
+        return [
+            {"record_type": "deployment_learning:demo", "content": learning, "created_at": "2026-05-31T00:00:00Z"},
+            {"record_type": "other", "content": "ignored", "created_at": "2026-05-31T01:00:00Z"},
+        ]
+
+    monkeypatch.setattr(te, "_hub_get", fake_get)
+    lessons = te.recall_deployment_lessons({"title": "Next task", "project": "demo"})
+    assert lessons == ["[failure] Earlier task (repo_change) — failed: check:git_finalizer rc=1"]
+
+
+# ---------------------------------------------------------------------------
+# git finalizer against a real temp repo
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
+    # origin (bare) + worktree clone
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    # a feature branch with an uncommitted edit the finalizer should commit+push
+    _git(work, "checkout", "-b", "task/x")
+    (work / "feature.py").write_text("print('x')\n")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t1",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {"repository_contract": {"test": {"command": "true"}}},
+        },
+    }
+    te.run_deterministic_git_finalizer(ws, task)
+    manifest = json.loads((ws / "mac-evidence.json").read_text())
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["repo"]["pushed"] is True
+    assert "feature.py" in manifest["repo"]["files_changed"]
+    assert manifest["checks"][0]["status"] == "pass"  # pushed + `true` test passed
+
+
+# ---------------------------------------------------------------------------
+# main() end-to-end with injected runner + hub
+# ---------------------------------------------------------------------------
+
+
+def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
+    task = {"id": "t1", "title": "Plan the rollout", "project": "demo", "metadata": {"publication_target": "test://x"}}
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+
+    posts = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [{"content": "push before reporting"}])
+    # Inject a fake runner: assert it received the recalled lesson, return chatty output.
+    seen = {}
+
+    def fake_runner(argv, cwd, task_id, metadata):
+        seen["prompt"] = argv[argv.index("--query") + 1]
+        return _FakeResult(0, stdout="Produced the rollout plan and mapped the dependencies.\n")
+
+    rc = te.main(runner=fake_runner)
+    assert rc == 0
+    # recalled lesson reached the prompt
+    assert "push before reporting" in seen["prompt"]
+    # fallback wrote an unverified operator_result
+    manifest = json.loads((ws / "mac-evidence.json").read_text())
+    assert manifest["evidence_type"] == "operator_result"
+    # telemetry path fired (started + agent_completed + finalized)
+    telemetry = [p for p in posts if p[0] == "/observability/logs"]
+    names = {p[1]["name"] for p in telemetry}
+    assert {"executor.started", "executor.agent_completed", "executor.finalized"} <= names
+    # memory feed recorded a deployment lesson
+    memory = [p for p in posts if p[0] == "/memory"]
+    assert memory and memory[0][1]["record_type"] == "deployment_learning:demo"
+
+
+# ---------------------------------------------------------------------------
+# Task sizing — detect_plan_signals
+# ---------------------------------------------------------------------------
+
+
+def test_detect_plan_signals_atomic_task_no_signals():
+    """A tight, focused task title with no description produces no plan signals."""
+    is_plan, signals = te.detect_plan_signals("Fix null pointer in auth handler", "")
+    assert is_plan is False
+    assert signals == []
+
+
+def test_detect_plan_signals_keyword_in_title():
+    """A single plan keyword in the title contributes signal 1 only (below threshold)."""
+    is_plan, signals = te.detect_plan_signals("Build end-to-end test suite", "")
+    assert not is_plan  # only 1 signal: plan_keyword
+    assert any("plan_keyword" in s for s in signals)
+
+
+def test_detect_plan_signals_long_title():
+    """A very long title alone is one signal — still not enough."""
+    long_title = "A" * 125
+    is_plan, signals = te.detect_plan_signals(long_title, "")
+    assert not is_plan
+    assert any("long_title" in s for s in signals)
+
+
+def test_detect_plan_signals_keyword_plus_numbered_steps():
+    """Plan keyword in title + numbered steps in description → is_plan."""
+    title = "Implement and deploy the new auth service"
+    description = (
+        "1. Set up the database schema\n"
+        "2. Implement the API endpoints\n"
+        "3. Write integration tests\n"
+        "4. Deploy to staging\n"
+    )
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("plan_keyword" in s or "numbered_steps" in s for s in signals)
+
+
+def test_detect_plan_signals_bullet_cluster():
+    """5+ bullet points alone is one signal; combine with a keyword to cross threshold."""
+    title = "Set up and configure the monitoring stack"
+    description = (
+        "- Install Prometheus\n"
+        "- Configure node_exporter\n"
+        "- Set up Grafana\n"
+        "- Write alerting rules\n"
+        "- Test end-to-end\n"
+        "- Document the setup\n"
+    )
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("bullet_cluster" in s for s in signals)
+
+
+def test_detect_plan_signals_long_description():
+    """A long description alone (>300 words) is one signal; keyword brings it over."""
+    title = "Design architecture for the new pipeline"
+    description = " ".join(["word"] * 350)
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("long_description" in s for s in signals)
+    assert any("plan_keyword" in s for s in signals)
+
+
+def test_detect_plan_signals_conjunctive_verb_title():
+    """Two distinct verb clauses joined by 'and' is a signal; add numbered steps."""
+    title = "Implement the parser and add unit tests"
+    description = "1. Write parser\n2. Write tests\n3. Verify coverage\n"
+    is_plan, signals = te.detect_plan_signals(title, description)
+    assert is_plan is True
+    assert any("conjunctive_verb_title" in s or "numbered_steps" in s for s in signals)
+
+
+def test_detect_plan_signals_child_task_exempt():
+    """A task that is already a child (has parent_task_id) gets no plan section."""
+    task = {
+        "id": "t_child",
+        "title": "Implement and deploy the full pipeline for everything",
+        "description": "1. step\n2. step\n3. step\n4. step\n",
+        "metadata": {
+            "relationships": {"parent_task_id": "t_parent", "relationship": "child"}
+        },
+    }
+    section = te._plan_detection_section(task)
+    assert section == ""
+
+
+def test_detect_plan_signals_task_with_existing_children_exempt():
+    """A task that already has child_task_ids is not prompted to decompose again."""
+    task = {
+        "id": "t_parent",
+        "title": "Build and deploy everything",
+        "metadata": {
+            "relationships": {
+                "child_task_ids": ["t1", "t2"],
+                "blocked_by_task_ids": ["t1", "t2"],
+            }
+        },
+    }
+    section = te._plan_detection_section(task)
+    assert section == ""
+
+
+def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
+    """build_task_prompt includes plan section when task looks like a plan."""
+    title = "Implement data pipeline and add monitoring"
+    description = (
+        "1. Set up ingestion\n"
+        "2. Transform data\n"
+        "3. Load to warehouse\n"
+        "4. Add Grafana dashboards\n"
+        "5. Write runbook\n"
+    )
+    task = {"id": "t1", "title": title, "description": description}
+    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    assert "Task Sizing and Plan Detection" in prompt
+    assert "add_child_tasks" in prompt or "children" in prompt
+
+
+def test_plan_detection_section_omitted_for_atomic_task():
+    """build_task_prompt omits plan section for an obviously atomic task."""
+    task = {"id": "t1", "title": "Fix the off-by-one in the tokenizer", "description": ""}
+    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    # Plan section should NOT be present for a simple task
+    assert "TASK-SIZING ALERT" not in prompt
+    # But the standard prompt sections must still be present
+    assert "mac-evidence.json" in prompt
+    assert "first principles" in prompt
+
+
+# ---------------------------------------------------------------------------
+# maybe_auto_decompose
+# ---------------------------------------------------------------------------
+
+
+def test_maybe_auto_decompose_no_manifest(tmp_path):
+    """Returns False quietly when no evidence manifest exists."""
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_no_plan_steps(tmp_path):
+    """Returns False when evidence manifest has no plan_steps key."""
+    manifest = {"schema": "mac.worker_evidence.v1", "status": "complete",
+                "evidence_type": "operator_result", "summary": "done"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_empty_plan_steps(tmp_path):
+    """Returns False when plan_steps is an empty list."""
+    manifest = {"schema": "mac.worker_evidence.v1", "status": "complete",
+                "evidence_type": "operator_result", "summary": "done", "plan_steps": []}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "t1", "title": "something"}
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_child_task_not_decomposed(tmp_path):
+    """A child task is never further decomposed, even if it has plan_steps."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "done",
+        "plan_steps": [{"title": "Sub-step A"}, {"title": "Sub-step B"}],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {
+        "id": "t_child", "title": "something",
+        "metadata": {"relationships": {"parent_task_id": "t_parent"}},
+    }
+    assert te.maybe_auto_decompose(tmp_path, task) is False
+
+
+def test_maybe_auto_decompose_posts_children_when_hub_present(tmp_path, monkeypatch):
+    """When plan_steps are present and hub env is set, child tasks are POSTed."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "This is a plan.",
+        "plan_steps": [
+            {"title": "Step A — implement ingestion", "description": "Build the source connector."},
+            {"title": "Step B — implement transform", "description": "Apply data transforms."},
+            {"title": "Step C — write tests"},
+        ],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_abc", "title": "Build the full pipeline", "project": "demo"}
+
+    # Capture the POST payload
+    captured = {}
+
+    def fake_post_children(task_id, children):
+        captured["task_id"] = task_id
+        captured["children"] = children
+        return {"parent_task_id": task_id, "children": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]}
+
+    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is True
+    assert captured["task_id"] == "task_abc"
+    assert len(captured["children"]) == 3
+    titles = [c["title"] for c in captured["children"]]
+    assert "Step A — implement ingestion" in titles
+    assert "Step B — implement transform" in titles
+    assert "Step C — write tests" in titles
+    # description is preserved when present
+    step_a = next(c for c in captured["children"] if "Step A" in c["title"])
+    assert step_a.get("description") == "Build the source connector."
+
+
+def test_maybe_auto_decompose_skips_steps_without_title(tmp_path, monkeypatch):
+    """Steps without a title are silently dropped; only titled steps are posted."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "plan",
+        "plan_steps": [
+            {"title": "Good step"},
+            {"description": "No title here"},  # dropped
+            {},                                  # dropped
+            {"title": "  "},                    # blank title → dropped
+            {"title": "Another good step"},
+        ],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_xyz", "title": "Plan task"}
+
+    captured = {}
+    monkeypatch.setattr(te, "_hub_post_child_tasks", lambda tid, ch: captured.update({"ch": ch}) or {"ok": True})
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is True
+    assert len(captured["ch"]) == 2
+    assert captured["ch"][0]["title"] == "Good step"
+    assert captured["ch"][1]["title"] == "Another good step"
+
+
+def test_maybe_auto_decompose_noop_when_hub_absent(tmp_path, monkeypatch):
+    """Returns False (and never raises) when hub env vars are absent."""
+    manifest = {
+        "schema": "mac.worker_evidence.v1", "status": "complete",
+        "evidence_type": "operator_result", "summary": "plan",
+        "plan_steps": [{"title": "Step A"}, {"title": "Step B"}],
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    task = {"id": "task_nohub", "title": "Plan task"}
+
+    # Remove hub env
+    monkeypatch.delenv("MAC_HUB_URL", raising=False)
+    monkeypatch.delenv("MAC_URL", raising=False)
+    monkeypatch.delenv("MAC_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+
+    result = te.maybe_auto_decompose(tmp_path, task)
+    assert result is False
+
+
+def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
+    """When the agent writes plan_steps, main() calls maybe_auto_decompose and
+    emits executor.plan_decomposed telemetry."""
+    task = {"id": "t_plan", "title": "Implement and deploy the full pipeline", "project": "demo"}
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+
+    posts = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+
+    def plan_runner(argv, cwd, task_id, metadata):
+        # Agent writes evidence with plan_steps
+        (ws / "mac-evidence.json").write_text(json.dumps({
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Task is a plan; broke into children.",
+            "plan_steps": [
+                {"title": "Step 1 — implement"},
+                {"title": "Step 2 — deploy"},
+                {"title": "Step 3 — verify"},
+            ],
+        }))
+        return _FakeResult(0, stdout="Plan decomposed.\n")
+
+    captured_children = {}
+
+    def fake_post_children(task_id, children):
+        captured_children["task_id"] = task_id
+        captured_children["children"] = children
+        return {"ok": True}
+
+    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+
+    rc = te.main(runner=plan_runner)
+    assert rc == 0
+
+    # plan_decomposed telemetry should have been emitted
+    tel_names = {p[1]["name"] for p in posts if p[0] == "/observability/logs"}
+    assert "executor.plan_decomposed" in tel_names
+
+    # children were posted
+    assert captured_children.get("task_id") == "t_plan"
+    assert len(captured_children.get("children", [])) == 3
+

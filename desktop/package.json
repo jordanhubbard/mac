@@ -1,0 +1,68 @@
+{
+  "name": "mac-control-plane-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell for the MAC control plane dashboard.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js",
+    "package": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^42.3.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "dev.mac.controlplane",
+    "productName": "MAC Control Plane",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "README.md",
+      "profiles.example.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../src/mac/ui",
+        "to": "ui",
+        "filter": [
+          "index.html",
+          "app.js",
+          "dashboard_api.js",
+          "styles.css"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "slug": "wf-feature-default",
+  "name": "Feature Development Workflow",
+  "description": "Default workflow for new features and enhancements",
+  "workflow_type": "feature",
+  "is_default": true,
+  "definition": {
+    "nodes": [
+      {
+        "node_key": "pm_plan",
+        "node_type": "task",
+        "role_required": "product-manager",
+        "persona_hint": "default/product-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 120,
+        "instructions": "Create implementation plan:\n1. Break down feature into tasks\n2. Define acceptance criteria\n3. Estimate complexity and risk\n4. Create detailed specification"
+      },
+      {
+        "node_key": "pm_approve",
+        "node_type": "approval",
+        "role_required": "product-manager",
+        "persona_hint": "default/product-manager",
+        "max_attempts": 1,
+        "timeout_minutes": 60,
+        "instructions": "Review implementation plan:\n1. Verify completeness\n2. Assess feasibility\n3. Approve plan or request revisions"
+      },
+      {
+        "node_key": "implement",
+        "node_type": "task",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 3,
+        "timeout_minutes": 240,
+        "instructions": "Implement the feature:\n1. Write code according to specification\n2. Add tests\n3. Ensure code quality\n4. Create commit with changes"
+      },
+      {
+        "node_key": "commit_and_push",
+        "node_type": "commit",
+        "role_required": "engineering-manager",
+        "persona_hint": "default/engineering-manager",
+        "max_attempts": 2,
+        "timeout_minutes": 15,
+        "instructions": "Commit and push the implementation:\n1. Stage all changes\n2. Create descriptive commit message\n3. Push to remote repository"
+      },
+      {
+        "node_key": "qa_verify",
+        "node_type": "verify",
+        "role_required": "qa-engineer",
+        "persona_hint": "default/qa-engineer",
+        "max_attempts": 2,
+        "timeout_minutes": 60,
+        "instructions": "Verify the feature implementation:\n1. Test against acceptance criteria\n2. Perform regression testing\n3. Document any issues found\n4. Approve or reject with findings"
+      }
+    ],
+    "edges": [
+      {
+        "from_node_key": "",
+        "to_node_key": "pm_plan",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "pm_plan",
+        "to_node_key": "pm_approve",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "pm_approve",
+        "to_node_key": "implement",
+        "condition": "approved",
+        "priority": 100
+      },
+      {
+        "from_node_key": "pm_approve",
+        "to_node_key": "pm_plan",
+        "condition": "rejected",
+        "priority": 100
+      },
+      {
+        "from_node_key": "implement",
+        "to_node_key": "commit_and_push",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "implement",
+        "to_node_key": "pm_plan",
+        "condition": "failure",
+        "priority": 100
+      },
+      {
+        "from_node_key": "commit_and_push",
+        "to_node_key": "qa_verify",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "commit_and_push",
+        "to_node_key": "implement",
+        "condition": "failure",
+        "priority": 100
+      },
+      {
+        "from_node_key": "qa_verify",
+        "to_node_key": "",
+        "condition": "approved",
+        "priority": 100
+      },
+      {
+        "from_node_key": "qa_verify",
+        "to_node_key": "implement",
+        "condition": "rejected",
+        "priority": 100
+      }
+    ]
+  }
+}

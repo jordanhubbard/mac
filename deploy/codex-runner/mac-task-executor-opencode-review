@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Review-verdict executor that delegates the review to opencode's `review`
+# agent. Mirrors mac-task-executor-codex-review: builds a verdict manifest
+# (mac.worker_evidence.v1, evidence_type=review_verdict) and signs via
+# `mac-evidence sign`. NO inline HMAC.
+set -euo pipefail
+
+MAC_TASK_ID="${MAC_TASK_ID:-}"
+MAC_LEASE_ID="${MAC_LEASE_ID:-}"
+MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
+MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
+MAC_URL="${MAC_URL:-}"
+MAC_WORKER_TOKEN="${MAC_WORKER_TOKEN:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-opencode-runner}"
+EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+
+export HOME=/tmp/opencode-home
+export XDG_CONFIG_HOME="${HOME}/.config"
+export XDG_DATA_HOME="${HOME}/.local/share"
+export XDG_CACHE_HOME="${HOME}/.cache"
+export XDG_STATE_HOME="${HOME}/.local/state"
+mkdir -p "${HOME}/.local" "${XDG_CONFIG_HOME}/opencode" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
+# Source config is the ConfigMap mount at /etc/opencode, overridable for
+# tests via MAC_OPENCODE_CONFIG_PATH.
+OPENCODE_CONFIG_SRC="${MAC_OPENCODE_CONFIG_PATH:-/etc/opencode/opencode.json}"
+OPENCODE_CONFIG_DST="${XDG_CONFIG_HOME}/opencode/opencode.json"
+if [ -f "${OPENCODE_CONFIG_SRC}" ]; then
+    cp "${OPENCODE_CONFIG_SRC}" "${OPENCODE_CONFIG_DST}"
+else
+    echo "[opencode-review] WARNING: opencode config not found at ${OPENCODE_CONFIG_SRC}" >&2
+fi
+export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
+
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "===== mac-task-executor-opencode-review ====="
+echo "started_at:       ${started_at}"
+echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
+echo "MAC_LEASE_ID:     ${MAC_LEASE_ID:-<unset>}"
+echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
+echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
+echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "REVIEW_TARGET:    ${REVIEW_TARGET}"
+echo "XDG_CONFIG_HOME:  ${XDG_CONFIG_HOME}"
+echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
+if [ -n "${ATTESTATION_KEY}" ]; then
+    echo "MAC_AGENT_ATTESTATION_KEY: <present>"
+else
+    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (verdict will be unsigned)"
+fi
+echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
+
+if command -v mac-evidence >/dev/null 2>&1; then
+    MAC_EVIDENCE_CMD=("mac-evidence")
+else
+    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-$(command -v python3 || command -v python || true)}"
+    if [ -z "${MAC_EVIDENCE_PY}" ]; then
+        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
+        exit 3
+    fi
+    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
+fi
+
+PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET})"
+if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
+    task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
+        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
+    if [ -n "${task_json}" ]; then
+        PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+print("Review task: %s\n\n%s" % (d.get("title","") or "", d.get("description","") or ""))' || echo "${PROMPT}")"
+    fi
+fi
+
+opencode_stdout="$(mktemp)"
+set +e
+opencode run --agent review --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
+opencode_rc=$?
+set -e
+finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "[opencode-review] rc=${opencode_rc}"
+sed -n '1,40p' "${opencode_stdout}" || true
+
+tmp_path="${EVIDENCE_PATH}.tmp.$$"
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE REVIEW_TARGET
+export started_at finished_at opencode_rc opencode_stdout
+python3 - "${tmp_path}" <<'PYEOF'
+import hashlib
+import json
+import os
+import re
+import sys
+
+out_path = sys.argv[1]
+rc = int(os.environ.get("opencode_rc", "1"))
+try:
+    with open(os.environ["opencode_stdout"], "r", encoding="utf-8") as fh:
+        stdout = fh.read()
+except Exception:
+    stdout = ""
+task_id = os.environ.get("MAC_TASK_ID", "")
+review_target = os.environ.get("REVIEW_TARGET", "")
+
+
+# ---- JSONL event stream parser ----
+def assistant_text_from_event(evt):
+    if not isinstance(evt, dict):
+        return ""
+    role = str(evt.get("role") or "")
+    if role and role != "assistant":
+        return ""
+    content = evt.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(parts)
+    part = evt.get("part") if isinstance(evt.get("part"), dict) else {}
+    if isinstance(part.get("text"), str):
+        return part["text"]
+    if isinstance(part.get("content"), str):
+        return part["content"]
+    return ""
+
+
+def extract_final_review_json(event_stream):
+    texts = []
+    for line in event_stream.splitlines():
+        try:
+            evt = json.loads(line)
+        except Exception:
+            continue
+        text = assistant_text_from_event(evt)
+        if text:
+            texts.append(text)
+
+    for text in reversed(texts):
+        for block in reversed(list(fenced_json_blocks(text))):
+            try:
+                return json.loads(block)
+            except Exception:
+                continue
+    raise ValueError("review agent did not emit final fenced JSON verdict")
+
+
+def fenced_json_blocks(text):
+    marker = "```"
+    start = 0
+    while True:
+        open_at = text.find(marker, start)
+        if open_at < 0:
+            return
+        body_start = open_at + len(marker)
+        if text[body_start : body_start + 4].lower() == "json":
+            body_start += 4
+        if body_start < len(text) and text[body_start] == "\n":
+            body_start += 1
+        close_at = text.find(marker, body_start)
+        if close_at < 0:
+            return
+        yield text[body_start:close_at].strip()
+        start = close_at + len(marker)
+
+
+# ---- Parse verdict from event stream ----
+verdict = "rejected"
+summary = "review parser failed"
+feedback = ""
+findings = []
+try:
+    review_json = extract_final_review_json(stdout)
+    parsed_verdict = str(review_json.get("verdict") or "").strip().lower()
+    if parsed_verdict not in {"approved", "rejected"}:
+        raise ValueError("unsupported verdict: %s" % parsed_verdict)
+    verdict = parsed_verdict
+    summary = str(review_json.get("summary") or "")
+    feedback = str(review_json.get("feedback") or "")
+    parsed_findings = review_json.get("findings")
+    if isinstance(parsed_findings, list):
+        findings = parsed_findings
+except Exception as exc:
+    verdict = "rejected"
+    summary = "review parser failed"
+    feedback = "Review output could not be parsed as final verdict JSON: %s" % exc
+    findings = [{"severity": "blocking", "message": feedback}]
+
+# ---- Deterministic worktree digest ----
+# reviewed_evidence_id and executor_evidence_id are both REVIEW_TARGET today.
+# Keep both positions in the digest schema so future divergence does not
+# change the serialization format.
+digest_input = json.dumps([task_id, review_target, review_target], separators=(",", ":"))
+worktree_digest = "sha256:" + hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+
+status = "complete"
+result = "review_completed"
+returncode = 0
+checks = [{"name": "review_completed", "status": "pass", "returncode": 0}]
+
+# On infrastructure failure (manifest can't be written) we exit nonzero below.
+manifest = {
+    "schema": "mac.worker_evidence.v1",
+    "status": status,
+    "evidence_type": "review_verdict",
+    "executor": "mac-task-executor-opencode-review",
+    "verdict": verdict,
+    "reviewed_evidence_id": review_target,
+    "worktree_digest": worktree_digest,
+    "summary": summary or "opencode review agent ran for task=%s verdict=%s" % (task_id, verdict),
+    "feedback": feedback,
+    "findings": findings,
+    "result": result,
+    "returncode": returncode,
+    "started_at": os.environ.get("started_at", ""),
+    "finished_at": os.environ.get("finished_at", ""),
+    "executed_at": os.environ.get("finished_at", ""),
+    "checks": checks,
+    "notes": "opencode review executor; signing handled by mac-evidence sign.",
+}
+try:
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, sort_keys=True)
+except Exception as exc:
+    print("[opencode-review] FATAL: cannot write manifest: %s" % exc, file=sys.stderr)
+    sys.exit(5)
+PYEOF
+
+if [ -n "${ATTESTATION_KEY}" ]; then
+    "${MAC_EVIDENCE_CMD[@]}" sign \
+        --manifest "${tmp_path}" \
+        --key-env MAC_AGENT_ATTESTATION_KEY \
+        --signed-by "${MAC_AGENT_ID}"
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-review] manifest signed -> ${EVIDENCE_PATH}"
+else
+    mv "${tmp_path}" "${EVIDENCE_PATH}"
+    echo "[opencode-review] manifest unsigned -> ${EVIDENCE_PATH}"
+fi
+rm -f "${opencode_stdout}"
+exit 0

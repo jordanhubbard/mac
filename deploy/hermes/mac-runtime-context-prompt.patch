@@ -1,0 +1,63 @@
+diff --git a/agent/prompt_builder.py b/agent/prompt_builder.py
+index 9c36d20..b46e308 100644
+--- a/agent/prompt_builder.py
++++ b/agent/prompt_builder.py
+@@ -1338,6 +1338,38 @@ def load_soul_md() -> Optional[str]:
+         return None
+ 
+ 
++def _load_mac_runtime_context() -> str:
++    """Load MAC task/project runtime context from HERMES_HOME.
++
++    Fleet deployments write this file so Hermes sessions see MAC's
++    authoritative task/project/agent contract in the same prompt tier as
++    AGENTS.md and other operator instructions.
++    """
++    candidates = []
++    configured = os.getenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", "").strip()
++    if configured:
++        path = Path(configured).expanduser()
++        if not path.is_absolute():
++            path = get_hermes_home() / path
++        candidates.append(path)
++    default_path = get_hermes_home() / "mac-runtime-context.md"
++    if default_path not in candidates:
++        candidates.append(default_path)
++    for path in candidates:
++        if not path.exists() or not path.is_file():
++            continue
++        try:
++            content = path.read_text(encoding="utf-8").strip()
++            if not content:
++                continue
++            content = _scan_context_content(content, path.name)
++            result = "## MAC Task and Project Runtime\n\n" + content
++            return _truncate_content(result, path.name)
++        except Exception as e:
++            logger.debug("Could not read MAC runtime context from %s: %s", path, e)
++    return ""
++
++
+ def _load_hermes_md(cwd_path: Path) -> str:
+     """.hermes.md / HERMES.md — walk to git root."""
+     hermes_md_path = _find_hermes_md(cwd_path)
+@@ -1433,6 +1465,8 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
+       4. .cursorrules / .cursor/rules/*.mdc  (cwd only)
+ 
+     SOUL.md from HERMES_HOME is independent and always included when present.
++    MAC runtime context from HERMES_HOME is independent and always included
++    when present.
+     Each context source is capped at 20,000 chars.
+ 
+     When *skip_soul* is True, SOUL.md is not included here (it was already
+@@ -1454,6 +1488,10 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
+     if project_context:
+         sections.append(project_context)
+ 
++    mac_runtime_context = _load_mac_runtime_context()
++    if mac_runtime_context:
++        sections.append(mac_runtime_context)
++
+     # SOUL.md from HERMES_HOME only — skip when already loaded as identity
+     if not skip_soul:
+         soul_content = load_soul_md()

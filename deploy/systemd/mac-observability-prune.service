@@ -1,0 +1,31 @@
+[Unit]
+Description=mac observability_events daily prune
+Documentation=https://github.com/devuser/mac
+After=mac.service
+Requires=mac.service
+
+[Service]
+Type=oneshot
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+
+# Defaults; override in /etc/mac/observability-prune.env.
+Environment=MAC_PRUNE_LOG_DAYS=7
+Environment=MAC_PRUNE_KEEP_LAST=500000
+EnvironmentFile=-__MAC_HOME__/mac.env
+EnvironmentFile=-/etc/mac/observability-prune.env
+
+# Resolve the cutoff at run-time and call the mac CLI installed under the
+# user's ~/.mac/venv (per the deploy convention).
+ExecStart=/bin/bash -lc '\
+  set -euo pipefail; \
+  cutoff="$(date -u -d "${MAC_PRUNE_LOG_DAYS} days ago" +%%Y-%%m-%%dT%%H:%%M:%%SZ)"; \
+  echo "[observability-prune] cutoff=$cutoff keep_last=${MAC_PRUNE_KEEP_LAST}"; \
+  __MAC_HOME__/venv/bin/mac observability prune --older-than "$cutoff"; \
+  __MAC_HOME__/venv/bin/mac observability prune --keep-last "${MAC_PRUNE_KEEP_LAST}"'
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

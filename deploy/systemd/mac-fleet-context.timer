@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodic refresh of the live fleet view in each agent's runtime context
+Documentation=https://github.com/devuser/mac
+
+[Timer]
+# Refresh every 3 minutes so a session started at any time sees a recent view
+# of what teammates are doing. Cheap (one local snapshot + a file rewrite).
+OnBootSec=2min
+OnUnitActiveSec=3min
+Persistent=true
+Unit=mac-fleet-context.service
+
+[Install]
+WantedBy=timers.target

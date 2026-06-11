@@ -1,0 +1,35 @@
+[Unit]
+Description=mac Qdrant shared memory service
+Documentation=https://github.com/devuser/mac
+After=network-online.target
+Wants=network-online.target
+Before=mac.service
+
+[Service]
+Type=simple
+
+# Defaults are intentionally non-secret. Override in /etc/mac/qdrant.env.
+Environment=QDRANT_IMAGE=docker.io/qdrant/qdrant:latest
+Environment=QDRANT_CONTAINER_NAME=mac-qdrant
+Environment=QDRANT_BIND_ADDR=127.0.0.1
+Environment=QDRANT_PORT=6333
+Environment=QDRANT_DATA_DIR=/var/lib/mac/qdrant
+Environment=QDRANT_MEMORY_LIMIT=2g
+EnvironmentFile=-/etc/mac/qdrant.env
+
+ExecStartPre=/bin/bash -lc 'install -d -m 0750 "$QDRANT_DATA_DIR"'
+ExecStartPre=-/bin/bash -lc 'podman rm -f "$QDRANT_CONTAINER_NAME"'
+ExecStart=/bin/bash -lc 'exec podman run --rm --name "$QDRANT_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges --pids-limit=512 --memory="$QDRANT_MEMORY_LIMIT" -p "$QDRANT_BIND_ADDR:$QDRANT_PORT:6333" -v "$QDRANT_DATA_DIR:/qdrant/storage" "$QDRANT_IMAGE"'
+ExecStop=/bin/bash -lc 'podman stop -t 15 "$QDRANT_CONTAINER_NAME"'
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mac-qdrant
+
+[Install]
+WantedBy=multi-user.target

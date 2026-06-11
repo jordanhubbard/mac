@@ -1,0 +1,124 @@
+{
+  "slug": "wf-ui-default",
+  "name": "UI/Design Workflow",
+  "description": "Workflow for UI bugs and design improvements",
+  "workflow_type": "ui",
+  "is_default": true,
+  "definition": {
+    "nodes": [
+      {
+        "node_key": "designer_investigate",
+        "node_type": "task",
+        "role_required": "web-designer",
+        "persona_hint": "default/web-designer",
+        "max_attempts": 3,
+        "timeout_minutes": 60,
+        "instructions": "Investigate this UI issue:\n1. Review UI code (HTML, CSS, JavaScript)\n2. Identify visual or interaction problems\n3. Analyze root cause\n4. Propose design fix\n5. Create approval bead with findings"
+      },
+      {
+        "node_key": "pm_review",
+        "node_type": "approval",
+        "role_required": "product-manager",
+        "persona_hint": "default/product-manager",
+        "max_attempts": 1,
+        "timeout_minutes": 60,
+        "instructions": "Review the UI investigation:\n1. Assess user impact\n2. Verify proposed fix maintains design consistency\n3. Approve or reject with feedback"
+      },
+      {
+        "node_key": "designer_implement",
+        "node_type": "task",
+        "role_required": "web-designer",
+        "persona_hint": "default/web-designer",
+        "max_attempts": 3,
+        "timeout_minutes": 90,
+        "instructions": "Implement the UI fix:\n1. Apply changes to HTML/CSS/JavaScript\n2. Test across browsers if needed\n3. Ensure responsive design works\n4. Verify visual consistency"
+      },
+      {
+        "node_key": "commit_and_push",
+        "node_type": "commit",
+        "role_required": "web-designer",
+        "persona_hint": "default/web-designer",
+        "max_attempts": 2,
+        "timeout_minutes": 15,
+        "instructions": "Commit and push the UI changes:\n1. Stage all UI changes\n2. Create descriptive commit message\n3. Push to remote repository"
+      },
+      {
+        "node_key": "qa_verify",
+        "node_type": "verify",
+        "role_required": "qa-engineer",
+        "persona_hint": "default/qa-engineer",
+        "max_attempts": 2,
+        "timeout_minutes": 30,
+        "instructions": "Verify the UI fix:\n1. Test visual changes\n2. Verify responsive design\n3. Check browser compatibility\n4. Approve or reject with findings"
+      }
+    ],
+    "edges": [
+      {
+        "from_node_key": "",
+        "to_node_key": "designer_investigate",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "designer_investigate",
+        "to_node_key": "pm_review",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "designer_investigate",
+        "to_node_key": "",
+        "condition": "escalated",
+        "priority": 90
+      },
+      {
+        "from_node_key": "pm_review",
+        "to_node_key": "designer_implement",
+        "condition": "approved",
+        "priority": 100
+      },
+      {
+        "from_node_key": "pm_review",
+        "to_node_key": "designer_investigate",
+        "condition": "rejected",
+        "priority": 100
+      },
+      {
+        "from_node_key": "designer_implement",
+        "to_node_key": "commit_and_push",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "designer_implement",
+        "to_node_key": "designer_investigate",
+        "condition": "failure",
+        "priority": 100
+      },
+      {
+        "from_node_key": "commit_and_push",
+        "to_node_key": "qa_verify",
+        "condition": "success",
+        "priority": 100
+      },
+      {
+        "from_node_key": "commit_and_push",
+        "to_node_key": "designer_implement",
+        "condition": "failure",
+        "priority": 100
+      },
+      {
+        "from_node_key": "qa_verify",
+        "to_node_key": "",
+        "condition": "approved",
+        "priority": 100
+      },
+      {
+        "from_node_key": "qa_verify",
+        "to_node_key": "designer_implement",
+        "condition": "rejected",
+        "priority": 100
+      }
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+[Unit]
+Description=mac control plane (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mac
+Group=mac
+WorkingDirectory=/var/lib/mac
+EnvironmentFile=/etc/mac/mac.env
+# MAC_SECRET_KEY MUST be set in /etc/mac/mac.env. The service refuses to
+# start without it.
+# Optional: MAC_API_TOKEN or MAC_API_TOKENS for scoped bearer auth.
+# Optional: MAC_DB=/var/lib/mac/mac.db (default).
+ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
+    --host 127.0.0.1 --port 8000 --workers 1 --log-level info
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/mac
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryHigh=512M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

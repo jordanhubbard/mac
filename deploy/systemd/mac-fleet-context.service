@@ -1,0 +1,27 @@
+[Unit]
+Description=mac fleet-context — refresh this agent's live view of its teammates
+Documentation=https://github.com/devuser/mac
+After=mac.service
+Requires=mac.service
+
+[Service]
+Type=oneshot
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+EnvironmentFile=-__MAC_HOME__/mac.env
+
+# fleet-02 + mood-01: refresh the live "Fleet — your teammates" block AND the
+# agent's mood overlay in its runtime-context markdown, so each new hermes
+# session knows what teammates are doing and behaves in its current mood.
+# --agent excludes the caller from its own fleet view.
+#
+# Runs against local SQLite (mac.env sets $MAC_DB): the fleet snapshot isn't
+# wrapped for hub mode, so on the hub agent (local db == hub db) it sees the live
+# fleet. The mood overlay is fetched straight from the hub's HTTP API inside the
+# command, so a spoke still picks up a hub-set mood regardless of $MAC_DB.
+ExecStart=/bin/bash -lc '\
+  exec __MAC_HOME__/venv/bin/mac fleet refresh-context \
+    --agent "${MAC_AGENT_ID:-${MAC_WORKER_AGENT_ID:-}}"'
+
+StandardOutput=journal
+StandardError=journal

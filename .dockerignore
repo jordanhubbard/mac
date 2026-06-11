@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.beads/backup
+.beads/embeddeddolt
+*.db
+*.sqlite
+dist
+.git
+.github
+tests
+docs
+*.md
+!README.md

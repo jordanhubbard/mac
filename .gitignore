@@ -1,0 +1,16 @@
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+*.pyc
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+
+# Legacy beads / Dolt files (removed; ignore so a stray bd init doesn't track them again)
+.dolt/
+.beads/
+.beads-credential-key
+.claude/worktrees/

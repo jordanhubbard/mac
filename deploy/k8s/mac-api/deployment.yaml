@@ -1,0 +1,117 @@
+# mac-api — durable coordinator. Stateless once it points at CNPG.
+#
+# This Deployment runs N replicas with the same shared MAC_DATABASE_URL.
+# Every replica satisfies any request; there is no leader and no PVC.
+# Lease / claim / dispatch coordination already happens at the database
+# layer (partial unique index on leases, ON CONFLICT upserts, etc.) so
+# horizontal scaling does not require an application-level lock.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mac-api
+  namespace: mac
+  labels:
+    app.kubernetes.io/name: mac-api
+    app.kubernetes.io/component: control-plane
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mac-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mac-api
+        app.kubernetes.io/component: control-plane
+    spec:
+      # K8s Phase 3 mac-api is fully stateless — no PVCs, no host paths,
+      # no node affinity. Schedule wherever.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mac-api
+          # Replace with the image+digest your build pipeline produces;
+          # never deploy with `:latest` (mac-rollout policy rejects it
+          # for fleet rollouts, and the same hygiene applies to mac-api
+          # itself).
+          image: ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # All credentials come from the operator-supplied
+            # `mac-api-config` Secret. The Postgres cluster itself is
+            # not managed from this repo; bring your own and put the
+            # DSN here. See deploy/k8s/README.md.
+            - name: MAC_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mac-api-config
+                  key: MAC_DATABASE_URL
+            - name: MAC_PG_POOL_SIZE
+              value: "20"
+            - name: MAC_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mac-api-config
+                  key: MAC_SECRET_KEY
+            - name: MAC_API_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: mac-api-config
+                  key: MAC_API_TOKENS
+                  optional: true
+            - name: MAC_BIND_HOST
+              value: "0.0.0.0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: mac-api

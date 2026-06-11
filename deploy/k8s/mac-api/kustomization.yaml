@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mac
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  # The `mac-api-config` Secret is environment-specific — copy
+  # secret.example.yaml, fill in real values, apply out-of-band. It is
+  # not in this kustomization so `kubectl kustomize` produces a working
+  # base without secrets.

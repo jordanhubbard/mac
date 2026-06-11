@@ -1,0 +1,52 @@
+{
+  "directRemote": {
+    "displayName": "Production MAC",
+    "apiUrl": "https://mac.example.test",
+    "tokenEnv": "MAC_DESKTOP_API_TOKEN"
+  },
+  "sshHub": {
+    "displayName": "Hosta / dev",
+    "tokenEnv": "MAC_DESKTOP_API_TOKEN",
+    "ssh": {
+      "target": "dev@example.test",
+      "localPort": 18789,
+      "remoteHost": "127.0.0.1",
+      "remotePort": 8789,
+      "identityFile": "~/.ssh/id_ed25519",
+      "strictHostKeyChecking": true
+    },
+    "serviceTunnels": {
+      "qdrant": {
+        "remoteHost": "127.0.0.1",
+        "remotePort": 6333,
+        "localPort": 16333,
+        "path": "/dashboard"
+      },
+      "firecrawl": {
+        "remoteHost": "127.0.0.1",
+        "remotePort": 3002,
+        "localPort": 13002,
+        "path": "/"
+      }
+    }
+  },
+  "localDev": {
+    "displayName": "Local MAC",
+    "apiUrl": "http://127.0.0.1:8789",
+    "localServer": {
+      "command": [
+        "uv",
+        "run",
+        "uvicorn",
+        "mac.api:create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8789"
+      ],
+      "url": "http://127.0.0.1:8789",
+      "timeoutMs": 15000
+    }
+  }
+}

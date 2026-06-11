@@ -1,0 +1,5462 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import secrets
+import sqlite3
+import threading
+import time
+import urllib.parse
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, model_validator
+
+from mac.agentbus_control import (
+    DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_INPUT_SCHEMA,
+    DEBUG_TERMINAL_INPUT_TOPIC,
+    DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+    DEBUG_TERMINAL_OPEN_TOPIC,
+    DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+    DEBUG_TERMINAL_OUTPUT_SCHEMA,
+    DEBUG_TERMINAL_OUTPUT_TOPIC,
+    HERMES_CONFIG_APPLY_CONTENT_TYPE,
+    HERMES_CONFIG_APPLY_TOPIC,
+    debug_terminal_input_payload,
+    debug_terminal_open_payload,
+    hermes_config_apply_payload,
+    REPO_UPDATE_CONTENT_TYPE,
+    REPO_UPDATE_TOPIC,
+    repo_update_payload,
+)
+from mac.hermes_config_surface import (
+    build_hermes_config_surfaces,
+    fleet_hermes_payload,
+    payload_digest,
+    redacted_hermes_payload,
+    update_fleet_hermes_surface,
+)
+from mac.hermes_startup import build_hermes_startup_report
+from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
+from mac.services import ControlPlane
+from mac.store import SQLiteStore, StoreError, make_store_from_env
+
+_log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TokenPrincipal:
+    """Authenticated bearer principal.
+
+    ``scopes`` is the set of scope strings the token may use; ``"admin"``
+    implicitly grants every scope. ``tenant_id`` is the tenant binding; ``None``
+    means cross-tenant (admin-like) and any other value means the token may
+    only write resources scoped to that tenant. Reads currently ignore the
+    tenant binding — that surface returns full fleet state by design today.
+
+    mac-rreh / mac-kgi5 / mac-wcfy: ``agent_id`` binds the token to a
+    specific agent. When set, the token may only impersonate that agent
+    for actor-bearing actions (heartbeat, claim-next, evidence,
+    AgentBus publish, messages, command-audit). When unset, the
+    principal is unbound (admin/operator) and may assert any actor.
+    """
+
+    scopes: frozenset = field(default_factory=frozenset)
+    tenant_id: Optional[str] = None
+    agent_id: Optional[str] = None
+
+    @property
+    def is_admin(self) -> bool:
+        return "admin" in self.scopes
+
+    def has_scope(self, scope: str) -> bool:
+        # ``admin`` is the catch-all; ``write`` is the broad authoring
+        # bucket that historically covered everything not specifically
+        # carved out. New domain scopes (``roles``, ``workflow``) are
+        # *additive* — operators with pre-existing ``write`` tokens keep
+        # working without having to mint narrower tokens immediately.
+        if self.is_admin:
+            return True
+        if scope in self.scopes:
+            return True
+        if scope in {"roles", "workflow"} and "write" in self.scopes:
+            return True
+        return False
+
+    def assert_tenant(self, target_tenant_id: Optional[str]) -> None:
+        if self.is_admin or self.tenant_id is None:
+            return
+        if target_tenant_id is None or target_tenant_id != self.tenant_id:
+            raise AuthorizationError(
+                "token is bound to a tenant and cannot write to a different tenant"
+            )
+
+    def require_global_fleet(self) -> None:
+        """Refuse the call for tenant-bound, non-admin tokens.
+
+        Machines, agents, runtimes, environments, and rollouts are part of the
+        shared fleet today. A tenant-bound token has no business reaching them
+        until we extend the schema to be tenant-aware.
+        """
+        if self.is_admin or self.tenant_id is None:
+            return
+        raise AuthorizationError(
+            "token is bound to a tenant and cannot operate on global fleet resources"
+        )
+
+    def assert_actor(self, claimed_agent_id: str) -> None:
+        """Bind a request's actor field to the bearer principal.
+
+        mac-rreh / mac-kgi5 / mac-wcfy: callers pass actor identifiers
+        (``agent_id``, ``sender_agent_id``, ``accessor_agent_id``,
+        ``created_by``) in request bodies / URL paths. When the token
+        is bound to a specific agent, the claimed actor MUST match the
+        binding. Admin tokens may impersonate freely; unbound
+        operator-style tokens (no agent_id) are treated like admin
+        here. This is the principal/payload binding from the audit.
+        """
+        if self.is_admin or self.agent_id is None:
+            return
+        if not claimed_agent_id or claimed_agent_id != self.agent_id:
+            raise AuthorizationError(
+                "token is bound to agent %s and cannot act as %r"
+                % (self.agent_id, claimed_agent_id)
+            )
+
+
+AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
+
+
+def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -> TokenPrincipal:
+    if isinstance(value, TokenPrincipal):
+        return value
+    if isinstance(value, dict):
+        scopes = frozenset(str(s) for s in value.get("scopes", []))
+        tenant = value.get("tenant_id")
+        agent = value.get("agent_id")
+        return TokenPrincipal(scopes=scopes, tenant_id=tenant, agent_id=agent)
+    return TokenPrincipal(scopes=frozenset(str(s) for s in value))
+
+
+def _normalize_auth_tokens(
+    raw: Optional[AuthTokenMapping],
+) -> Dict[str, TokenPrincipal]:
+    if not raw:
+        return {}
+    return {str(token): _coerce_principal(value) for token, value in raw.items()}
+
+
+def _resolve_principal(
+    token: str, tokens: Mapping[str, TokenPrincipal]
+) -> Optional[TokenPrincipal]:
+    """Constant-time lookup over the registered tokens.
+
+    Iterates every registered token so timing does not leak which prefix
+    matched; ``hmac.compare_digest`` short-circuits in constant time within
+    each pair.
+
+    mac-glh0: also supports hashed registrations of the form
+    ``sha256:<hex>``. Hashes the candidate token with sha256 and
+    compares against the registered hash so a leaked env file with
+    only hashed values does not expose the live token.
+    """
+    import hashlib as _hashlib
+
+    candidate_bytes = token.encode("utf-8")
+    candidate_hash = "sha256:" + _hashlib.sha256(candidate_bytes).hexdigest()
+    candidate_hash_bytes = candidate_hash.encode("ascii")
+    matched: Optional[TokenPrincipal] = None
+    for registered, principal in tokens.items():
+        registered_bytes = registered.encode("utf-8")
+        if registered.startswith("sha256:") and len(registered) == 71:  # 7 + 64
+            if hmac.compare_digest(candidate_hash_bytes, registered_bytes):
+                matched = principal
+        else:
+            if hmac.compare_digest(candidate_bytes, registered_bytes):
+                matched = principal
+    return matched
+
+
+def _get_principal(request: Request) -> TokenPrincipal:
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        # No auth tokens configured — treat as admin to keep dev mode working.
+        return TokenPrincipal(scopes=frozenset({"admin"}))
+    return principal
+
+
+def _data(model: BaseModel) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(exclude_unset=True)
+    return model.dict(exclude_unset=True)
+
+
+AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS = 60.0
+AGENTBUS_MIN_EVENT_POLL_SECONDS = 0.25
+AGENTBUS_MAX_EVENT_POLL_SECONDS = 5.0
+DASHBOARD_TASK_HISTORY_LIMIT = 50
+DASHBOARD_TASK_EVIDENCE_LIMIT = 25
+DASHBOARD_TASK_REVIEW_LIMIT = 25
+DASHBOARD_TASK_PUBLICATION_LIMIT = 10
+DASHBOARD_MESSAGE_LIMIT = 200
+
+
+def _agentbus_clamp_timeout(value: float) -> float:
+    return min(AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS, max(0.0, float(value)))
+
+
+def _agentbus_clamp_poll_interval(value: float) -> float:
+    return min(
+        AGENTBUS_MAX_EVENT_POLL_SECONDS,
+        max(AGENTBUS_MIN_EVENT_POLL_SECONDS, float(value)),
+    )
+
+
+class TaskCreate(BaseModel):
+    title: str
+    description: str = ""
+    project: Optional[str] = None
+    priority: int = 0
+    required_capabilities: List[str] = Field(default_factory=list)
+    dependencies: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    max_attempts: int = 3
+    actor: str = "human"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_summary_to_description(cls, values: Any) -> Any:
+        # The Hermes plugin advertises `summary` as the task body field.
+        # Direct urllib callers (and LLMs blending schemas) may send `summary`
+        # instead of `description`. Map it defensively so the executor PROMPT
+        # is never silently empty.
+        if isinstance(values, dict):
+            summary = values.get("summary")
+            if summary and not values.get("description"):
+                values = dict(values)
+                values["description"] = summary
+        return values
+
+
+class RepositoryOnboard(BaseModel):
+    repository_url: str
+    project: Optional[str] = None
+    default_branch: Optional[str] = None
+    title: Optional[str] = None
+    priority: int = 0
+    required_capabilities: List[str] = Field(default_factory=list)
+    actor: str = "human"
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    project: Optional[str] = None
+    priority: Optional[int] = None
+    required_capabilities: Optional[List[str]] = None
+    dependencies: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    max_attempts: Optional[int] = None
+    actor: str = "human"
+
+
+class TaskChildCreate(BaseModel):
+    title: str
+    description: str = ""
+    project: Optional[str] = None
+    priority: Optional[int] = None
+    required_capabilities: Optional[List[str]] = None
+    dependencies: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    max_attempts: Optional[int] = None
+
+
+class TaskChildrenCreate(BaseModel):
+    children: List[TaskChildCreate]
+    actor: str = "human"
+
+
+class TaskDelete(BaseModel):
+    actor: str = "human"
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+    actor: str = "human"
+    project_id: Optional[str] = None
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+    actor: str = "human"
+
+
+class ProjectDelete(BaseModel):
+    actor: str = "human"
+
+
+class FleetCreate(BaseModel):
+    name: str
+    description: str = ""
+    status: str = "active"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+    agent_ids: List[str] = Field(default_factory=list)
+    fleet_id: Optional[str] = None
+    actor: str = "human"
+
+
+class FleetUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    tenant_id: Optional[str] = None
+    agent_ids: Optional[List[str]] = None
+    actor: str = "human"
+
+
+class FleetDelete(BaseModel):
+    actor: str = "human"
+
+
+class FleetAgentObserve(BaseModel):
+    agent_id: str
+    source: str = "mac-agent"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "mac-agent"
+
+
+class TenantRegister(BaseModel):
+    name: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+
+
+class UserRegister(BaseModel):
+    tenant_id: str
+    handle: str
+    display_name: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    user_id: Optional[str] = None
+
+
+class PersonaRegister(BaseModel):
+    tenant_id: str
+    name: str
+    soul_ref: str
+    memory_scope: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    persona_id: Optional[str] = None
+
+
+class HermesInstanceRegister(BaseModel):
+    tenant_id: str
+    name: str
+    persona_id: Optional[str] = None
+    home_ref: str = ""
+    status: str = "active"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    instance_id: Optional[str] = None
+
+
+class PlatformBindingRegister(BaseModel):
+    tenant_id: str
+    hermes_instance_id: str
+    platform: str
+    external_id: str
+    display_name: str = ""
+    scopes: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    binding_id: Optional[str] = None
+
+
+class InteractionTaskCreate(TaskCreate):
+    user_id: Optional[str] = None
+    platform_binding_id: Optional[str] = None
+    conversation_ref: Optional[str] = None
+    actor: str = "hermes"
+
+
+class HermesRuntimeProofCreate(BaseModel):
+    hermes_startup: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TransitionRequest(BaseModel):
+    target_state: str
+    actor: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceCreate(BaseModel):
+    kind: str
+    uri: str
+    summary: str
+    created_by: str
+    checksum: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MachineRegister(BaseModel):
+    hostname: str
+    labels: Dict[str, Any] = Field(default_factory=dict)
+    resources: Dict[str, Any] = Field(default_factory=dict)
+    trusted: bool = True
+    machine_id: Optional[str] = None
+    hardware: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRegister(BaseModel):
+    machine_id: str
+    name: str
+    capabilities: List[str] = Field(default_factory=list)
+    resources: Dict[str, Any] = Field(default_factory=dict)
+    agent_id: Optional[str] = None
+    hermes_instance_id: Optional[str] = None
+    fleet_id: Optional[str] = None
+    actor: str = "human"
+
+
+class AgentAttestationKeyVerify(BaseModel):
+    challenge: Dict[str, Any] = Field(default_factory=dict)
+    signature: str
+
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    resources: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+    health_status: Optional[str] = None
+    hermes_instance_id: Optional[str] = None
+    actor: str = "human"
+
+
+class AgentBulkUpdate(BaseModel):
+    agent_ids: List[str] = Field(default_factory=list)
+    status: Optional[str] = None
+    health_status: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    hermes_instance_id: Optional[str] = None
+    actor: str = "human"
+
+
+class RoleCreate(BaseModel):
+    slug: str
+    name: str
+    description: str
+    system_prompt: str
+    level: str
+    display_name: Optional[str] = None
+    reports_to: Optional[str] = None
+    specialties: List[str] = Field(default_factory=list)
+    default_capabilities: List[str] = Field(default_factory=list)
+    required_capabilities: List[str] = Field(default_factory=list)
+    hardware_requirements: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+    role_id: Optional[str] = None
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    level: Optional[str] = None
+    display_name: Optional[str] = None
+    reports_to: Optional[str] = None
+    specialties: Optional[List[str]] = None
+    default_capabilities: Optional[List[str]] = None
+    required_capabilities: Optional[List[str]] = None
+    hardware_requirements: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RoleAssign(BaseModel):
+    role_id_or_slug: str
+
+
+class RoleSeed(BaseModel):
+    replace: bool = False
+
+
+class ProvisioningRequestCreate(BaseModel):
+    reason: str
+    role_slug: Optional[str] = None
+    capabilities: List[str] = Field(default_factory=list)
+    hardware: Dict[str, Any] = Field(default_factory=dict)
+    task_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProvisioningRequestFulfill(BaseModel):
+    agent_id: str
+
+
+class ProvisioningRequestCancel(BaseModel):
+    reason: str = "operator-cancelled"
+
+
+class WorkflowCreate(BaseModel):
+    slug: str
+    name: str
+    description: str = ""
+    workflow_type: str
+    definition: Dict[str, Any]
+    created_by: str = "human"
+    tenant_id: Optional[str] = None
+    is_default: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    workflow_type: Optional[str] = None
+    definition: Optional[Dict[str, Any]] = None
+    is_default: Optional[bool] = None
+    enabled: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class WorkflowImportYaml(BaseModel):
+    yaml: str
+    tenant_id: Optional[str] = None
+    is_default: bool = False
+    created_by: str = "human"
+
+
+class WorkflowSeed(BaseModel):
+    pass
+
+
+class WorkflowStart(BaseModel):
+    started_by: str = "human"
+    input: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+    # wf-03: front-loaded approval decisions. Each key must reference an
+    # approval-typed node in the workflow definition; each value must be
+    # "approved" or "rejected". Validated server-side.
+    pre_decisions: Dict[str, str] = Field(default_factory=dict)
+
+
+class WorkflowPreview(BaseModel):
+    definition: Optional[Dict[str, Any]] = None
+    input: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+
+
+class WorkflowDraftCreate(BaseModel):
+    goal: str
+    created_by: str = "human"
+    tenant_id: Optional[str] = None
+    proposed_steps: List[Dict[str, Any]] = Field(default_factory=list)
+    questions: List[Dict[str, Any]] = Field(default_factory=list)
+    answers: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowDraftUpdate(BaseModel):
+    goal: Optional[str] = None
+    proposed_steps: Optional[List[Dict[str, Any]]] = None
+    questions: Optional[List[Dict[str, Any]]] = None
+    answers: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+    actor: str = "human"
+
+
+class WorkflowDraftApprove(BaseModel):
+    slug: str
+    name: str
+    workflow_type: str = "custom"
+    approved_by: str = "human"
+    is_default: bool = False
+
+
+class WorkflowCancel(BaseModel):
+    reason: str
+    actor: str = "human"
+
+
+class DashboardWorkflowPlanRequest(BaseModel):
+    goal: str
+    project: Optional[str] = None
+    prompt: str = ""
+    required_capabilities: List[str] = Field(default_factory=list)
+    max_tasks: int = 8
+    model: str = "*"
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardWorkflowPlanNode(BaseModel):
+    node_id: str
+    title: str
+    description: str = ""
+    required_capabilities: List[str] = Field(default_factory=list)
+    depends_on: List[str] = Field(default_factory=list)
+    priority: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardWorkflowPlanAccept(BaseModel):
+    goal: str
+    project: Optional[str] = None
+    plan_id: Optional[str] = None
+    nodes: List[DashboardWorkflowPlanNode]
+    actor: str = "human"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardHermesConfigUpdate(BaseModel):
+    runtime: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
+    remove_config: List[str] = Field(default_factory=list)
+    env: Dict[str, Any] = Field(default_factory=dict)
+    remove_env: List[str] = Field(default_factory=list)
+    plugins: Dict[str, Any] = Field(default_factory=dict)
+    skills: Dict[str, Any] = Field(default_factory=dict)
+    apply_local: bool = True
+    actor: str = "human"
+
+
+class DashboardHermesConfigApply(BaseModel):
+    sender_agent_id: Optional[str] = None
+    recipient_agent_ids: List[str] = Field(default_factory=list)
+    request_id: Optional[str] = None
+    actor: str = "human"
+
+
+class HeartbeatRequest(BaseModel):
+    status: Optional[str] = None
+    health_status: Optional[str] = None
+    resources: Optional[Dict[str, Any]] = None
+    running_digest: Optional[str] = None
+    actor: Optional[str] = None
+
+
+class LeaseRenewRequest(BaseModel):
+    agent_id: str
+    lease_seconds: int = 900
+
+
+class LeaseDelegateRequest(BaseModel):
+    # PR2c: the OWNER agent_id (caller) — must match lease.agent_id.
+    agent_id: str
+    # The role/worker agent to which lifecycle authorship is delegated.
+    to_agent_id: str
+
+
+class DispatchRequest(BaseModel):
+    lease_seconds: int = 900
+    limit: int = 100
+    stale_after_seconds: Optional[int] = None
+
+
+class AgentClaimNextRequest(BaseModel):
+    lease_seconds: int = 900
+    allowed_projects: List[str] = Field(default_factory=list)
+    required_metadata: Dict[str, Any] = Field(default_factory=dict)
+    require_canary: bool = False
+    dry_run: bool = False
+    capabilities: List[str] = Field(default_factory=list)
+
+
+class ServiceClaimsSyncRequest(BaseModel):
+    willing_ops: List[str] = Field(default_factory=list)
+    lease_seconds: int = 1800
+
+
+class CommandAuditCreate(BaseModel):
+    command_id: Optional[str] = None
+    phase: str
+    argv: List[str]
+    cwd: str
+    task_id: Optional[str] = None
+    lease_id: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[float] = None
+    returncode: Optional[int] = None
+    stdout_sha256: Optional[str] = None
+    stderr_sha256: Optional[str] = None
+    stdout_bytes: Optional[int] = None
+    stderr_bytes: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentInstalledPackagesUpdate(BaseModel):
+    installed_packages: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MessageCreate(BaseModel):
+    sender_agent_id: str
+    recipient_agent_id: Optional[str] = None
+    task_id: Optional[str] = None
+    message_type: str
+    payload: Dict[str, Any]
+
+
+class AgentBusOpen(BaseModel):
+    sender_agent_id: str
+    recipient_agent_id: str
+    task_id: Optional[str] = None
+    topic: str = "content"
+    content_type: str = "application/json"
+    headers: Dict[str, Any] = Field(default_factory=dict)
+    stream_id: Optional[str] = None
+
+
+class AgentBusAppend(BaseModel):
+    sender_agent_id: str
+    content_type: Optional[str] = None
+    payload: Any = None
+    payload_encoding: str = "json"
+    final: bool = False
+
+
+class AgentBusPublish(BaseModel):
+    sender_agent_id: str
+    recipient_agent_id: str
+    task_id: Optional[str] = None
+    topic: str = "content"
+    content_type: str = "application/json"
+    headers: Dict[str, Any] = Field(default_factory=dict)
+    payload: Any = None
+    payload_encoding: str = "json"
+
+
+class AgentBusRepoUpdate(BaseModel):
+    sender_agent_id: str
+    recipient_agent_ids: List[str] = Field(default_factory=list)
+    all_agents: bool = False
+    repo_path: Optional[str] = None
+    remote: str = "origin"
+    branch: str = "main"
+    restart: bool = True
+    request_id: Optional[str] = None
+
+
+class AgentBusArtifactPublish(BaseModel):
+    sender_agent_id: str
+    operation: str = "upsert"
+    recipient_agent_ids: List[str] = Field(default_factory=list)
+    all_agents: bool = False
+    artifact_id: Optional[str] = None
+    digest: Optional[str] = None
+    kind: str = "public-artifact"
+    uri: Optional[str] = None
+    public_url: Optional[str] = None
+    path: Optional[str] = None
+    publish_dir: Optional[str] = None
+    sbom_uri: Optional[str] = None
+    signers: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    task_id: Optional[str] = None
+    request_id: Optional[str] = None
+
+
+class DashboardTerminalOpen(BaseModel):
+    sender_agent_id: Optional[str] = None
+    shell: Optional[str] = None
+    cwd: Optional[str] = None
+    rows: int = 32
+    cols: int = 120
+    ttl_seconds: int = 900
+    request_id: Optional[str] = None
+
+
+class DashboardTerminalInput(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+    data: str = ""
+    data_b64: Optional[str] = None
+    close: bool = False
+
+
+class DashboardTerminalResize(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+    rows: int = 32
+    cols: int = 120
+
+
+class DashboardTerminalClose(BaseModel):
+    input_stream_id: str
+    sender_agent_id: Optional[str] = None
+
+
+class ObservabilityMetricCreate(BaseModel):
+    name: str
+    value: float
+    unit: str = ""
+    layer: str = "external"
+    source: str = "agent"
+    level: str = "info"
+    subject_type: Optional[str] = None
+    subject_id: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ObservabilityLogCreate(BaseModel):
+    name: str
+    level: str = "info"
+    layer: str = "external"
+    source: str = "agent"
+    subject_type: Optional[str] = None
+    subject_id: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class NotificationDelivery(BaseModel):
+    status: str = "delivered"
+
+
+class NotifierChannelConfig(BaseModel):
+    name: str
+    channel_type: str
+    enabled: bool = True
+    event_types: List[str] = Field(default_factory=list)
+    target: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class NotifierDeliveryRun(BaseModel):
+    limit: int = 50
+    notification_id: Optional[str] = None
+
+
+class ReviewRequest(BaseModel):
+    reviewer_agent_id: str
+    actor: str = "dispatcher"
+
+
+class ReviewClaim(BaseModel):
+    reviewer_agent_id: str
+    executor_evidence_id: Optional[str] = None
+    actor: str = "reviewer"
+
+
+class ReviewDecision(BaseModel):
+    status: str
+    reviewer_agent_id: str
+    reason: Optional[str] = None
+    evidence_id: Optional[str] = None
+
+
+class PublicationCreate(BaseModel):
+    task_id: str
+    target: str
+    created_by: str
+    evidence_id: Optional[str] = None
+
+
+class IntegrationFindingCreate(BaseModel):
+    source_kind: str
+    source_id: str
+    finding_type: str
+    title: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    severity: str = "info"
+    fingerprint: Optional[str] = None
+    notify: bool = False
+    channels: Optional[List[str]] = None
+    notification_body: Optional[str] = None
+
+
+class SecretCreate(BaseModel):
+    name: str
+    value: str
+    scopes: Dict[str, Any]
+    created_by: str
+
+
+class SecretAccessRequest(BaseModel):
+    accessor_agent_id: str
+    purpose: str
+    ttl_seconds: int = 300
+
+
+class SecretRevealRequest(BaseModel):
+    audit_id: str
+    accessor_agent_id: str
+
+
+class SecretRotate(BaseModel):
+    value: str
+    actor: str = "operator"
+
+
+class ArtifactRegister(BaseModel):
+    kind: str
+    digest: str
+    uri: str
+    created_by: str
+    sbom_uri: Optional[str] = None
+    signers: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MoodSet(BaseModel):
+    mode: str
+    set_by: Optional[str] = None
+    reason: Optional[str] = None
+    ttl_seconds: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MoodClear(BaseModel):
+    cleared_by: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class NapConfigure(BaseModel):
+    offset_minutes: Optional[int] = None
+    window_minutes: int = 15
+    enabled: bool = True
+    actor: Optional[str] = None
+
+
+class NapBegin(BaseModel):
+    actor: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class NapComplete(BaseModel):
+    summary_evidence_id: Optional[str] = None
+    detail: Optional[Dict[str, Any]] = None
+    actor: Optional[str] = None
+
+
+class NapFail(BaseModel):
+    reason: str
+    actor: Optional[str] = None
+
+
+class ConversationThreadTrack(BaseModel):
+    platform_binding_id: str
+    external_thread_id: str
+    summary: str = ""
+    latest_task_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VectorRefRecord(BaseModel):
+    memory_id: str
+    vector_db: str
+    collection: str
+    point_id: str
+    embedding_model: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "human"
+
+
+class EnvironmentRegister(BaseModel):
+    name: str
+    tenant_id: Optional[str] = None
+    channel: str = "fleet"
+    promotes_from: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "human"
+
+
+class DeploymentCreate(BaseModel):
+    artifact_id: str
+    actor: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeCreate(BaseModel):
+    name: str
+    manifest: Dict[str, Any]
+    created_by: str
+
+
+class RuntimeDeltaPropose(BaseModel):
+    task_id: str
+    agent_id: str
+    package_manager: str
+    commands: List[str] = Field(default_factory=list)
+    added_dependencies: List[Any] = Field(default_factory=list)
+    reason: str
+    project: Optional[str] = None
+    base_runtime_id: Optional[str] = None
+    base_runtime_digest: Optional[str] = None
+    lockfile_path: Optional[str] = None
+    lockfile_digest: Optional[str] = None
+    evidence_id: Optional[str] = None
+
+
+class RuntimeDeltaValidate(BaseModel):
+    actor: str = "operator"
+
+
+class RuntimeDeltaReject(BaseModel):
+    actor: str = "operator"
+    reason: str
+
+
+class RuntimeDeltaPromote(BaseModel):
+    actor: str = "operator"
+    runtime_name: Optional[str] = None
+
+
+class RuntimeRunCreate(BaseModel):
+    task_id: str
+    agent_id: str
+    environment_id: str
+
+
+class RuntimeRunComplete(BaseModel):
+    evidence_id: str
+    status: str = "completed"
+
+
+class ProjectImport(BaseModel):
+    source: str
+    external_id: str
+    title: str
+    description: Optional[str] = None
+    project: Optional[str] = None
+    priority: int = 0
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    required_capabilities: List[str] = Field(default_factory=list)
+    dependencies: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "bridge"
+
+
+class MemoryCreate(BaseModel):
+    task_id: Optional[str] = None
+    subject_type: str
+    subject_id: Optional[str] = None
+    record_type: str
+    content: str
+    evidence_id: Optional[str] = None
+    created_by: str
+
+
+class RolloutCreate(BaseModel):
+    version: str
+    strategy: str
+    target_percent: int
+    created_by: str
+    tenant_id: Optional[str] = None
+    channel: str = "fleet"
+    runtime_environment_id: Optional[str] = None
+    artifact_uri: Optional[str] = None
+    artifact_hash: Optional[str] = None
+    health_policy: Dict[str, Any] = Field(default_factory=dict)
+    required_eval_set_id: Optional[str] = None
+
+
+class EvalSetCreate(BaseModel):
+    name: str
+    scoring: str = "higher_is_better"
+    description: str = ""
+    baseline_score: Optional[float] = None
+    regression_threshold: float = 0.0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "human"
+
+
+class EvalSetBaselineUpdate(BaseModel):
+    baseline_score: float
+    actor: str = "human"
+
+
+class EvalRunRecord(BaseModel):
+    eval_set_id: str
+    target_kind: str
+    target_id: str
+    score: float
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    evidence_id: Optional[str] = None
+    created_by: str = "human"
+
+
+class RolloutAdvance(BaseModel):
+    action: str
+    actor: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RolloutRescue(BaseModel):
+    actor: str
+    reason: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RolloutArtifactVerify(BaseModel):
+    artifact_uri: str
+    artifact_hash: str
+    actor: str
+
+
+class RolloutHealthReport(BaseModel):
+    actor: str
+    checks: Dict[str, Any]
+
+
+def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
+    # Server-side hub is single-fleet, but honor the fleet-scoped form
+    # so a hub started from a multi-fleet ~/.mac/.env (e.g., via
+    # `source ~/.mac/.env`) picks the right token (mac-g55y).
+    from mac.fleet_env import resolve as _resolve_env
+
+    raw = _resolve_env("MAC_API_TOKENS")
+    if raw:
+        loaded = json.loads(raw)
+        return _normalize_auth_tokens(loaded)
+    single = _resolve_env("MAC_API_TOKEN")
+    if single is None:
+        return {}
+    single = single.strip()
+    if not single:
+        # Refuse silent-fail: an empty token would disable auth without intent.
+        raise ValueError(
+            "MAC_API_TOKEN is set but empty; unset it to leave the API open, or provide a non-empty token"
+        )
+    return {single: TokenPrincipal(scopes=frozenset({"admin"}))}
+
+
+def _required_scope(method: str, path: str) -> Optional[str]:
+    if path == "/health":
+        return None
+    if path == "/ui" or path.startswith("/ui/"):
+        return None
+    if path == "/v1" or path.startswith("/v1/"):
+        # In-mac model router (th-merge-02): LLM inference is an agent action, so
+        # the OpenAI front door requires the agent scope (admin inherits it),
+        # regardless of method. This keeps the router from being an open proxy
+        # when the API is bound to a network interface (e.g. the hub node).
+        return "agent"
+    if method == "GET":
+        return "read"
+    if path.startswith("/agents/") and (
+        path.endswith("/heartbeat") or path.endswith("/messages/deliver")
+        or path.endswith("/command-audit")
+    ):
+        return "agent"
+    if path.startswith("/agentbus"):
+        return "agent"
+    if path.startswith("/observability"):
+        return "agent"
+    if path.startswith("/dispatch"):
+        return "dispatch"
+    if path.startswith("/secrets") or path.startswith("/secret-audits"):
+        return "secret"
+    if (
+        path.startswith("/runtimes")
+        or path.startswith("/runtime-deltas")
+        or path.startswith("/environments")
+        or path.startswith("/rollouts")
+    ):
+        return "deploy"
+    if path.startswith("/roles") or path.endswith("/role"):
+        return "roles"
+    if path.startswith("/workflows"):
+        return "workflow"
+    if path.startswith("/provisioning"):
+        # Provisioning rows are operational signals; treat them as
+        # deploy-level (a future provisioner that polls + spawns agents
+        # is doing infra work, not user-facing writes).
+        return "deploy"
+    if path.startswith("/reviews/default"):
+        # The automated review tick is the closest thing the swarm has
+        # to an auto-merge button. Restrict to admin so an ordinary
+        # `write` token can't flush every reviewable task to
+        # COMPLETED on demand. mac-iez.
+        return "admin"
+    return "write"
+
+
+def _authorize_request(
+    method: str,
+    path: str,
+    authorization: Optional[str],
+    auth_tokens: Mapping[str, TokenPrincipal],
+) -> Optional[TokenPrincipal]:
+    required = _required_scope(method, path)
+    if required is None or not auth_tokens:
+        return None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthorizationError("missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+    principal = _resolve_principal(token, auth_tokens)
+    if principal is None:
+        raise AuthorizationError("unknown bearer token")
+    if not principal.has_scope(required):
+        raise AuthorizationError("token lacks required scope: %s" % required)
+    return principal
+
+
+def _should_record_http_observation(path: str) -> bool:
+    return not (
+        path == "/health"
+        or path.startswith("/ui/assets")
+        or path.startswith("/observability")
+    )
+
+
+def _safe_observation_source(value: Any, fallback: str = "router") -> str:
+    text = str(value or "").strip()
+    if (
+        text
+        and len(text) <= 128
+        and text[0].isalnum()
+        and all(ch.isalnum() or ch in "._-/: " for ch in text)
+    ):
+        return text.replace(" ", "_")
+    return fallback
+
+
+def _resolve_record_http_observations(flag: Optional[bool]) -> bool:
+    if flag is not None:
+        return flag
+    raw = os.environ.get("MAC_RECORD_HTTP_OBSERVATIONS", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+MAX_REGISTRATION_PAYLOAD_BYTES = 64 * 1024
+
+
+def _ensure_payload_bounded(value: Any, field: str) -> None:
+    """Cap registration-style metadata/labels/resources dicts.
+
+    The control plane stores these as JSON blobs in SQLite forever, so an
+    unbounded dict from a single client becomes permanent table bloat. 64 KB
+    after JSON encoding is well above any legitimate label/metadata payload
+    and well below the body-size limit that protects the HTTP layer.
+    """
+    if value is None:
+        return
+    try:
+        encoded = json.dumps(value, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("%s must be JSON serializable" % field) from exc
+    if len(encoded.encode("utf-8")) > MAX_REGISTRATION_PAYLOAD_BYTES:
+        raise ValidationError(
+            "%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES)
+        )
+
+
+MAX_TERMINAL_INPUT_BYTES = 16 * 1024
+MIN_TERMINAL_ROWS = 8
+MAX_TERMINAL_ROWS = 80
+MIN_TERMINAL_COLS = 40
+MAX_TERMINAL_COLS = 240
+MIN_TERMINAL_TTL_SECONDS = 30
+MAX_TERMINAL_TTL_SECONDS = 3600
+
+
+def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(maximum, max(minimum, parsed))
+
+
+def _new_terminal_session_id() -> str:
+    return "term_" + secrets.token_hex(12)
+
+
+def _validate_terminal_session_id(session_id: str) -> str:
+    value = str(session_id or "").strip()
+    if (
+        not value
+        or len(value) > 64
+        or not value[0].isalnum()
+        or not all(ch.isalnum() or ch in "._-" for ch in value)
+    ):
+        raise ValidationError("invalid terminal session_id: %s" % session_id)
+    return value
+
+
+def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
+    if body.data_b64 is not None:
+        try:
+            raw = base64.b64decode(body.data_b64.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise ValidationError("terminal input data_b64 is invalid") from exc
+        if len(raw) > MAX_TERMINAL_INPUT_BYTES:
+            raise ValidationError(
+                "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
+            )
+        return base64.b64encode(raw).decode("ascii")
+    raw = str(body.data or "").encode("utf-8")
+    if not raw:
+        return None
+    if len(raw) > MAX_TERMINAL_INPUT_BYTES:
+        raise ValidationError(
+            "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
+        )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _terminal_stream_for_session(
+    cp: ControlPlane,
+    *,
+    session_id: str,
+    stream_id: str,
+    expected_topic: str,
+    expected_content_type: str,
+    expected_schema: str,
+) -> Dict[str, Any]:
+    session = _validate_terminal_session_id(session_id)
+    stream = cp.get_agentbus_stream(stream_id).to_dict()
+    headers = stream.get("headers") if isinstance(stream.get("headers"), dict) else {}
+    content_type = str(stream.get("content_type") or "").split(";", 1)[0]
+    if (
+        stream.get("topic") != expected_topic
+        or content_type != expected_content_type
+        or headers.get("schema") != expected_schema
+        or headers.get("terminal_session_id") != session
+    ):
+        raise ValidationError("agentbus stream is not part of terminal session %s" % session)
+    return stream
+
+
+def _terminal_session_id_from_stream(stream: Mapping[str, Any]) -> str:
+    headers = stream.get("headers") if isinstance(stream.get("headers"), Mapping) else {}
+    return str(headers.get("terminal_session_id") or "")
+
+
+def _dashboard_terminal_sessions_from_streams(
+    streams: Iterable[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    sessions: Dict[str, Dict[str, Any]] = {}
+    for stream in streams:
+        session_id = _terminal_session_id_from_stream(stream)
+        if not session_id:
+            continue
+        topic = str(stream.get("topic") or "")
+        if topic not in {DEBUG_TERMINAL_INPUT_TOPIC, DEBUG_TERMINAL_OUTPUT_TOPIC}:
+            continue
+        record = sessions.setdefault(
+            session_id,
+            {
+                "schema": "mac.dashboard.terminal_session_summary.v1",
+                "session_id": session_id,
+                "agent_id": "",
+                "sender_agent_id": "",
+                "input_stream_id": "",
+                "output_stream_id": "",
+                "status": "unknown",
+                "created_at": "",
+                "updated_at": "",
+                "closed_at": None,
+                "input_stream": None,
+                "output_stream": None,
+            },
+        )
+        created_at = str(stream.get("created_at") or "")
+        updated_at = str(stream.get("updated_at") or created_at)
+        if created_at and (not record["created_at"] or created_at < record["created_at"]):
+            record["created_at"] = created_at
+        if updated_at and (not record["updated_at"] or updated_at > record["updated_at"]):
+            record["updated_at"] = updated_at
+        if topic == DEBUG_TERMINAL_INPUT_TOPIC:
+            record["input_stream"] = dict(stream)
+            record["input_stream_id"] = str(stream.get("id") or "")
+            record["agent_id"] = str(stream.get("recipient_agent_id") or record["agent_id"] or "")
+            record["sender_agent_id"] = str(stream.get("sender_agent_id") or record["sender_agent_id"] or "")
+        else:
+            record["output_stream"] = dict(stream)
+            record["output_stream_id"] = str(stream.get("id") or "")
+            record["agent_id"] = str(stream.get("sender_agent_id") or record["agent_id"] or "")
+            record["sender_agent_id"] = str(stream.get("recipient_agent_id") or record["sender_agent_id"] or "")
+            record["status"] = str(stream.get("status") or record["status"] or "unknown")
+            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
+        if record["status"] == "unknown":
+            record["status"] = str(stream.get("status") or "unknown")
+            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
+    return sorted(
+        sessions.values(),
+        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+
+
+def _dashboard_terminal_sessions(
+    cp: ControlPlane,
+    *,
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 120,
+) -> List[Dict[str, Any]]:
+    stream_limit = max(1, min(int(limit) * 4, 1000))
+    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(agent_id=agent_id, limit=stream_limit)]
+    sessions = _dashboard_terminal_sessions_from_streams(streams)
+    if status:
+        sessions = [item for item in sessions if str(item.get("status") or "") == status]
+    return sessions[: max(1, min(int(limit), 500))]
+
+
+TERMINAL_DASHBOARD_STATES = {"completed", "failed", "cancelled"}
+
+
+def _task_origin(task: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = task.get("metadata") or {}
+    origin = metadata.get("origin") if isinstance(metadata, dict) else None
+    return origin if isinstance(origin, dict) else {}
+
+
+def _state_counts(items: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _task_project_key(task: Any) -> str:
+    project = str(getattr(task, "project", "") or "").strip()
+    if project:
+        return project
+    metadata = getattr(task, "metadata", {}) or {}
+    if isinstance(metadata, dict):
+        for key in ("project", "repository", "repo"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        origin = metadata.get("origin")
+        if isinstance(origin, dict):
+            for key in ("project", "repository", "repo", "source"):
+                value = str(origin.get(key) or "").strip()
+                if value:
+                    return value
+    return "unassigned"
+
+
+def _project_summary_task(task: Any) -> Dict[str, Any]:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "state": task.state,
+        "priority": task.priority,
+        "owner_agent_id": task.owner_agent_id,
+        "required_capabilities": list(task.required_capabilities),
+        "dependencies": list(task.dependencies),
+        "updated_at": task.updated_at,
+    }
+
+
+def _dashboard_project_summaries(
+    tasks: List[Any],
+    agents: List[Any],
+    bridge_items: List[Dict[str, Any]],
+    beads_repositories: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    task_by_id = {task.id: task for task in tasks}
+    agents_by_id = {agent.id: agent for agent in agents}
+    projects: Dict[str, Dict[str, Any]] = {}
+
+    def bucket(project: str) -> Dict[str, Any]:
+        if project not in projects:
+            projects[project] = {
+                "project": project,
+                "task_count": 0,
+                "active_count": 0,
+                "ready_count": 0,
+                "blocked_count": 0,
+                "review_count": 0,
+                "completed_count": 0,
+                "state_counts": {},
+                "dependency_edge_count": 0,
+                "cross_project_dependency_count": 0,
+                "active_agent_ids": set(),
+                "active_agent_names": set(),
+                "required_capabilities": set(),
+                "frontier_tasks": [],
+                "waiting_tasks": [],
+                "active_tasks": [],
+                "cross_project_edges": [],
+                "bridge_item_count": 0,
+                "repository_count": 0,
+            }
+        return projects[project]
+
+    for task in tasks:
+        project = _task_project_key(task)
+        item = bucket(project)
+        item["task_count"] += 1
+        item["state_counts"][task.state] = item["state_counts"].get(task.state, 0) + 1
+        item["dependency_edge_count"] += len(task.dependencies)
+        for capability in task.required_capabilities:
+            item["required_capabilities"].add(str(capability))
+        if task.owner_agent_id:
+            item["active_agent_ids"].add(task.owner_agent_id)
+            agent = agents_by_id.get(task.owner_agent_id)
+            if agent is not None:
+                item["active_agent_names"].add(agent.name)
+        if task.state not in TERMINAL_DASHBOARD_STATES:
+            item["active_count"] += 1
+        if task.state in {"needs_review", "reviewing"}:
+            item["review_count"] += 1
+        if task.state == "completed":
+            item["completed_count"] += 1
+        missing_or_incomplete = []
+        for dependency_id in task.dependencies:
+            dependency = task_by_id.get(dependency_id)
+            if dependency is None or dependency.state != "completed":
+                missing_or_incomplete.append(dependency_id)
+            if dependency is not None and _task_project_key(dependency) != project:
+                item["cross_project_dependency_count"] += 1
+                if len(item["cross_project_edges"]) < 8:
+                    item["cross_project_edges"].append(
+                        {
+                            "from_project": _task_project_key(dependency),
+                            "from_task_id": dependency.id,
+                            "from_task_title": dependency.title,
+                            "to_task_id": task.id,
+                            "to_task_title": task.title,
+                        }
+                    )
+        if task.state == "open" and not missing_or_incomplete:
+            item["ready_count"] += 1
+            if len(item["frontier_tasks"]) < 10:
+                item["frontier_tasks"].append(_project_summary_task(task))
+        elif task.state in {"open", "blocked"} and missing_or_incomplete:
+            item["blocked_count"] += 1
+            if len(item["waiting_tasks"]) < 10:
+                blocked = _project_summary_task(task)
+                blocked["waiting_on"] = missing_or_incomplete[:8]
+                item["waiting_tasks"].append(blocked)
+        elif task.state in {"claimed", "running", "needs_review", "reviewing"}:
+            if len(item["active_tasks"]) < 10:
+                item["active_tasks"].append(_project_summary_task(task))
+
+    for bridge_item in bridge_items:
+        project = str(bridge_item.get("project") or bridge_item.get("source") or "unassigned")
+        bucket(project)["bridge_item_count"] += 1
+    for repo in beads_repositories:
+        project = str(repo.get("project") or repo.get("name") or repo.get("source") or "unassigned")
+        bucket(project)["repository_count"] += 1
+
+    summaries = []
+    for item in projects.values():
+        normalized = dict(item)
+        normalized["active_agent_ids"] = sorted(item["active_agent_ids"])
+        normalized["active_agent_names"] = sorted(item["active_agent_names"])
+        normalized["required_capabilities"] = sorted(item["required_capabilities"])
+        summaries.append(normalized)
+    return sorted(
+        summaries,
+        key=lambda item: (
+            -int(item["ready_count"]),
+            -int(item["active_count"]),
+            str(item["project"]),
+        ),
+    )
+
+
+def _dashboard_swarm_summary(
+    agents: List[Any],
+    tasks: List[Any],
+    machines_by_id: Dict[str, Any],
+) -> Dict[str, Any]:
+    active_project_by_agent: Dict[str, str] = {}
+    for task in tasks:
+        if task.owner_agent_id and task.state not in TERMINAL_DASHBOARD_STATES:
+            active_project_by_agent[task.owner_agent_id] = _task_project_key(task)
+
+    status_counts = Counter(agent.status for agent in agents)
+    health_counts = Counter(agent.health_status for agent in agents)
+    role_counts = Counter(str(agent.role_id or "unassigned") for agent in agents)
+    project_counts = Counter(active_project_by_agent.get(agent.id, "idle") for agent in agents)
+    capability_counts: Counter[str] = Counter()
+    machine_counts: Counter[str] = Counter()
+    for agent in agents:
+        for capability in agent.capabilities:
+            capability_counts[str(capability)] += 1
+        machine = machines_by_id.get(agent.machine_id)
+        machine_counts[machine.hostname if machine is not None else "missing-machine"] += 1
+
+    def rows(counter: Counter[str], limit: int = 40) -> List[Dict[str, Any]]:
+        return [
+            {"key": key, "count": count}
+            for key, count in counter.most_common(limit)
+        ]
+
+    return {
+        "agent_total": len(agents),
+        "status": rows(status_counts),
+        "health": rows(health_counts),
+        "role": rows(role_counts),
+        "project": rows(project_counts),
+        "capability": rows(capability_counts),
+        "machine": rows(machine_counts),
+    }
+
+
+def _dashboard_task(
+    cp: ControlPlane,
+    task_id: str,
+    *,
+    compact: bool = False,
+) -> Dict[str, Any]:
+    if compact:
+        detail = cp.task_detail(
+            task_id,
+            history_limit=DASHBOARD_TASK_HISTORY_LIMIT,
+            evidence_limit=DASHBOARD_TASK_EVIDENCE_LIMIT,
+            review_limit=DASHBOARD_TASK_REVIEW_LIMIT,
+            publication_limit=DASHBOARD_TASK_PUBLICATION_LIMIT,
+        )
+    else:
+        detail = cp.task_detail(task_id)
+    summary = cp.task_summary(task_id)
+    detail["summary"] = summary
+    if compact:
+        detail["history_limited_to"] = DASHBOARD_TASK_HISTORY_LIMIT
+        detail["evidence_limited_to"] = DASHBOARD_TASK_EVIDENCE_LIMIT
+        detail["reviews_limited_to"] = DASHBOARD_TASK_REVIEW_LIMIT
+        detail["publications_limited_to"] = DASHBOARD_TASK_PUBLICATION_LIMIT
+    return detail
+
+
+def _dashboard_session(principal: TokenPrincipal) -> Dict[str, Any]:
+    scopes = sorted(principal.scopes)
+    can_write = principal.has_scope("write")
+    return {
+        "scopes": scopes,
+        "tenant_id": principal.tenant_id,
+        "agent_id": principal.agent_id,
+        "is_admin": principal.is_admin,
+        "can_read": principal.has_scope("read"),
+        "can_write": can_write,
+        "mode": (
+            "admin"
+            if principal.is_admin
+            else "read-write"
+            if can_write
+            else "read-only"
+        ),
+    }
+
+
+def _dashboard_agent_base(
+    cp: ControlPlane,
+    agent: Any,
+    tasks: List[Any],
+    machines_by_id: Dict[str, Any],
+) -> Dict[str, Any]:
+    machine = machines_by_id.get(agent.machine_id)
+    active_tasks = [
+        task.to_dict()
+        for task in tasks
+        if task.owner_agent_id == agent.id and task.state not in TERMINAL_DASHBOARD_STATES
+    ]
+    reasons: List[str] = []
+    if machine is None:
+        reasons.append("missing machine")
+    elif not machine.trusted:
+        reasons.append("untrusted machine")
+    if agent.status not in {"idle", "busy"}:
+        reasons.append(agent.status)
+    if agent.health_status != "healthy":
+        reasons.append(agent.health_status)
+    capacity = cp._agent_capacity(agent)
+    active_lease_count = cp._agent_active_lease_count(agent.id)
+    if active_lease_count >= capacity:
+        reasons.append("at capacity")
+    return {
+        "agent": agent.to_dict(),
+        "machine": machine.to_dict() if machine is not None else None,
+        "active_tasks": active_tasks,
+        "active_projects": sorted({_task_project_key(task) for task in tasks if task.owner_agent_id == agent.id and task.state not in TERMINAL_DASHBOARD_STATES}),
+        "capacity": capacity,
+        "active_lease_count": active_lease_count,
+        "availability": {
+            "eligible": not reasons,
+            "reasons": reasons,
+        },
+    }
+
+
+def _dashboard_dispatch_reasons(
+    cp: ControlPlane,
+    agent: Any,
+    task: Any,
+    machine: Optional[Any],
+) -> List[str]:
+    reasons: List[str] = []
+    if agent.status not in {"idle", "busy"}:
+        reasons.append("agent status is %s" % agent.status)
+    if agent.health_status != "healthy":
+        reasons.append("agent health is %s" % agent.health_status)
+    if machine is None:
+        reasons.append("agent machine is missing")
+    elif not machine.trusted:
+        reasons.append("machine is not trusted")
+    if cp._agent_active_lease_count(agent.id) >= cp._agent_capacity(agent):
+        reasons.append("agent is at capacity")
+    if machine is not None and not cp._machine_allows_tenant(machine, cp._task_tenant_id(task)):
+        reasons.append("machine tenant policy blocks task")
+    if machine is not None and not cp._agent_resources_satisfy(agent, machine, task):
+        reasons.append("resources do not satisfy task")
+    required_runtime_digest = cp._task_required_runtime_digest(task)
+    if required_runtime_digest and agent.running_digest != required_runtime_digest:
+        reasons.append("runtime digest mismatch")
+    missing = sorted(set(task.required_capabilities) - set(agent.capabilities))
+    if missing:
+        reasons.append("missing capabilities: %s" % ", ".join(missing))
+    return reasons
+
+
+def _dashboard_dispatch_explain(
+    cp: ControlPlane,
+    tasks: Optional[List[Any]] = None,
+    agents: Optional[List[Any]] = None,
+    machines_by_id: Optional[Dict[str, Any]] = None,
+    candidate_limit: int = 60,
+) -> Dict[str, Any]:
+    tasks = tasks if tasks is not None else cp.list_tasks()
+    agents = agents if agents is not None else cp.list_agents()
+    machines_by_id = machines_by_id if machines_by_id is not None else {
+        machine.id: machine for machine in cp.list_machines()
+    }
+    open_tasks = [task for task in tasks if task.state == "open"]
+    explanations = []
+    for task in open_tasks:
+        candidates = []
+        eligible_count = 0
+        for agent in agents:
+            machine = machines_by_id.get(agent.machine_id)
+            eligible = cp._agent_available_for(agent, task)
+            if eligible:
+                eligible_count += 1
+            reasons = [] if eligible else _dashboard_dispatch_reasons(cp, agent, task, machine)
+            if not eligible and not reasons:
+                reasons.append("dispatch policy rejected pair")
+            candidates.append(
+                {
+                    "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "eligible": eligible,
+                    "reasons": reasons,
+                }
+            )
+        candidates.sort(key=lambda item: (not item["eligible"], item["agent_name"], item["agent_id"]))
+        limited_candidates = candidates[: max(1, int(candidate_limit))]
+        explanations.append(
+            {
+                "task": task.to_dict(),
+                "tenant_id": cp._task_tenant_id(task),
+                "candidates": limited_candidates,
+                "candidate_count": len(candidates),
+                "candidate_limit": max(1, int(candidate_limit)),
+                "candidate_truncated": len(candidates) > len(limited_candidates),
+                "eligible_agent_count": eligible_count,
+            }
+        )
+    return {"open_task_count": len(open_tasks), "tasks": explanations}
+
+
+def _dashboard_hermes_activity(
+    cp: ControlPlane,
+    instance_id: str,
+    tasks: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    context = cp.hermes_context(instance_id)
+    tasks = tasks if tasks is not None else cp.list_tasks()
+    interaction_tasks = [
+        task.to_dict()
+        for task in tasks
+        if _task_origin(task.to_dict()).get("hermes_instance_id") == instance_id
+    ]
+    return {"context": context, "interaction_tasks": interaction_tasks}
+
+
+def _dashboard_rollout_status(cp: ControlPlane, rollout_id: str) -> Dict[str, Any]:
+    rollout = cp.get_rollout(rollout_id)
+    runtime = (
+        cp.get_runtime(rollout.runtime_environment_id).to_dict()
+        if rollout.runtime_environment_id
+        else None
+    )
+    latest_eval = None
+    if rollout.required_eval_set_id is not None:
+        latest = cp.latest_eval_run(
+            rollout.required_eval_set_id,
+            "rollout_version",
+            rollout.version,
+        )
+        latest_eval = latest.to_dict() if latest is not None else None
+    return {
+        "rollout": rollout.to_dict(),
+        "runtime": runtime,
+        "events": cp.list_rollout_events(rollout_id),
+        "latest_eval_run": latest_eval,
+    }
+
+
+TOKENHUB_SESSION_TICKET_PURPOSE = "tokenhub-admin-session-v1"
+
+
+def _service_env_files() -> List[Path]:
+    home = Path.home()
+    mac_home = Path(os.environ.get("MAC_HOME") or home / ".mac").expanduser()
+    hermes_home = Path(os.environ.get("HERMES_HOME") or home / ".hermes").expanduser()
+    tokenhub_state = Path(os.environ.get("TOKENHUB_STATE_DIR") or home / ".tokenhub").expanduser()
+    fleet_name = os.environ.get("FLEET_NAME") or os.environ.get("MAC_FLEET_NAME") or "mac"
+    return [
+        mac_home / "mac.env",
+        hermes_home / ".env",
+        tokenhub_state / "env",
+        tokenhub_state / "service.env",
+        Path("/etc") / fleet_name / "qdrant.env",
+        Path("/etc") / fleet_name / "firecrawl-gateway.env",
+    ]
+
+
+def _strip_shell_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _read_env_file_value(path: Path, names: Iterable[str]) -> Optional[str]:
+    wanted = set(names)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        if key in wanted:
+            return _strip_shell_quotes(value)
+    return None
+
+
+def _lookup_config_value(
+    names: Iterable[str],
+    env_files: Optional[Iterable[Path]] = None,
+) -> Dict[str, Any]:
+    name_list = [str(name) for name in names]
+    for name in name_list:
+        value = os.environ.get(name)
+        if value:
+            return {"name": name, "value": value, "source": "env:%s" % name}
+    files = list(env_files or _service_env_files())
+    for path in files:
+        for name in name_list:
+            value = _read_env_file_value(path, [name])
+            if value:
+                return {
+                    "name": name,
+                    "value": value,
+                    "source": "file:%s:%s" % (path, name),
+                }
+    return {"name": name_list[0] if name_list else "", "value": "", "source": "not_configured"}
+
+
+def _redacted_secret_ref(value: str) -> str:
+    if not value:
+        return ""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    return "<redacted:%s:chars=%d>" % (digest, len(value))
+
+
+def _credential_ref(names: Iterable[str], env_files: Optional[Iterable[Path]] = None) -> Dict[str, Any]:
+    found = _lookup_config_value(names, env_files)
+    value = str(found.get("value") or "")
+    return {
+        "name": found.get("name") or "",
+        "source": found.get("source") or "not_configured",
+        "present": bool(value),
+        "redacted_value": _redacted_secret_ref(value),
+    }
+
+
+def _redact_service_url(raw: Optional[str]) -> str:
+    if not raw:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return "<invalid-url>"
+    if not parsed.netloc:
+        return raw
+    netloc = parsed.netloc
+    if "@" in netloc:
+        netloc = "redacted@%s" % netloc.rsplit("@", 1)[1]
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+
+
+def _join_service_url(base_url: str, suffix: str) -> str:
+    if not base_url:
+        return ""
+    return base_url.rstrip("/") + suffix
+
+
+def _service_status(
+    hermes_startup: Optional[Dict[str, Any]],
+    key: str,
+    fallback_url: str,
+) -> str:
+    if isinstance(hermes_startup, dict):
+        report = hermes_startup.get(key)
+        if isinstance(report, dict):
+            return str(report.get("status") or ("ready" if report.get("ready") else "unknown"))
+    return "configured" if fallback_url else "not_configured"
+
+
+def _dashboard_service_links(
+    hermes_startup: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    env_files = _service_env_files()
+    tokenhub_url = str(
+        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    qdrant_url = str(
+        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    firecrawl_url = str(
+        _lookup_config_value(("FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    tokenhub_admin = _credential_ref(("TOKENHUB_ADMIN_TOKEN",), env_files)
+    tokenhub_client = _credential_ref(
+        ("TOKENHUB_API_KEY", "TOKENHUB_AGENT_KEY", "OPENAI_API_KEY"),
+        env_files,
+    )
+    qdrant_key = _credential_ref(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files)
+    firecrawl_key = _credential_ref(("FIRECRAWL_API_KEY",), env_files)
+    tokenhub_sso_available = bool(tokenhub_url and tokenhub_admin["present"])
+    qdrant_navigate_available = bool(qdrant_url)
+    firecrawl_navigate_available = bool(firecrawl_url)
+    return [
+        {
+            "id": "tokenhub",
+            "name": "TokenHub",
+            "kind": "owned_ui",
+            "role": "LLM token vault and wildcard model router",
+            "status": _service_status(hermes_startup, "tokenhub", tokenhub_url),
+            "url": _redact_service_url(tokenhub_url),
+            "ui_url": _redact_service_url(tokenhub_url),
+            "health_url": _redact_service_url(_join_service_url(tokenhub_url, "/healthz")),
+            "auth": {
+                "type": "admin_session_cookie",
+                "credential_pass_through": tokenhub_sso_available,
+                "pass_through_url": (
+                    "/dashboard/service-links/tokenhub/sso" if tokenhub_sso_available else ""
+                ),
+                "notes": (
+                    "MAC creates a short-lived TokenHub session ticket"
+                    if tokenhub_sso_available
+                    else "TOKENHUB_ADMIN_TOKEN is required for pass-through"
+                ),
+            },
+            "credentials": [tokenhub_admin, tokenhub_client],
+        },
+        {
+            "id": "qdrant",
+            "name": "Qdrant",
+            "kind": "external_ui",
+            "role": "shared vector memory",
+            "status": _service_status(hermes_startup, "qdrant_level2", qdrant_url),
+            "url": _redact_service_url(qdrant_url),
+            "ui_url": _redact_service_url(_join_service_url(qdrant_url, "/dashboard")),
+            "health_url": _redact_service_url(_join_service_url(qdrant_url, "/healthz")),
+            "auth": {
+                "type": "api_key_or_none",
+                "credential_pass_through": qdrant_navigate_available,
+                "pass_through_url": (
+                    "/dashboard/service-links/qdrant/navigate"
+                    if qdrant_navigate_available else ""
+                ),
+                "notes": (
+                    "MAC injects the Qdrant API key into the dashboard redirect"
+                    if qdrant_key["present"]
+                    else "Qdrant is open (no API key configured)"
+                ),
+            },
+            "credentials": [qdrant_key],
+        },
+        {
+            "id": "firecrawl",
+            "name": "Firecrawl Gateway",
+            "kind": "owned_api",
+            "role": "Firecrawl-compatible web search API",
+            "status": "configured" if firecrawl_url else "not_configured",
+            "url": _redact_service_url(firecrawl_url),
+            "ui_url": _redact_service_url(firecrawl_url),
+            "health_url": _redact_service_url(_join_service_url(firecrawl_url, "/health")),
+            "auth": {
+                "type": "api_key_or_none",
+                "credential_pass_through": firecrawl_navigate_available,
+                "pass_through_url": (
+                    "/dashboard/service-links/firecrawl/navigate"
+                    if firecrawl_navigate_available else ""
+                ),
+                "notes": (
+                    "MAC Firecrawl gateway health page"
+                    if firecrawl_key["present"]
+                    else "Firecrawl gateway (no API key configured)"
+                ),
+            },
+            "credentials": [firecrawl_key],
+        },
+    ]
+
+
+def _tokenhub_session_ticket_url() -> str:
+    env_files = _service_env_files()
+    tokenhub_url = str(
+        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    admin = _lookup_config_value(("TOKENHUB_ADMIN_TOKEN",), env_files)
+    admin_token = str(admin.get("value") or "")
+    if not tokenhub_url:
+        raise ValidationError("TokenHub URL is not configured")
+    if not admin_token:
+        raise ValidationError("TokenHub admin token is not configured")
+    expires = int(time.time()) + 60
+    body = "%s:%d" % (TOKENHUB_SESSION_TICKET_PURPOSE, expires)
+    signature = hmac.new(
+        admin_token.encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    query = urllib.parse.urlencode(
+        {"expires": str(expires), "signature": signature, "redirect": "/"}
+    )
+    return "%s/admin/v1/session/claim?%s" % (tokenhub_url, query)
+
+
+def _qdrant_navigate_url() -> str:
+    env_files = _service_env_files()
+    qdrant_url = str(
+        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    if not qdrant_url:
+        raise ValidationError("Qdrant URL is not configured")
+    api_key = str(
+        _lookup_config_value(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files).get("value")
+        or ""
+    )
+    dashboard_url = "%s/dashboard" % qdrant_url
+    if api_key:
+        dashboard_url += "?%s" % urllib.parse.urlencode({"api_key": api_key})
+    return dashboard_url
+
+
+def _firecrawl_navigate_url() -> str:
+    env_files = _service_env_files()
+    firecrawl_url = str(
+        _lookup_config_value(("FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL"), env_files).get("value")
+        or ""
+    ).rstrip("/")
+    if not firecrawl_url:
+        raise ValidationError("Firecrawl URL is not configured")
+    return firecrawl_url
+
+
+def _dashboard_state(
+    cp: ControlPlane,
+    hermes_startup: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    tenants = [tenant.to_dict() for tenant in cp.list_tenants()]
+    users = [user.to_dict() for user in cp.list_users()]
+    personas = [persona.to_dict() for persona in cp.list_personas()]
+    hermes_instances = [instance.to_dict() for instance in cp.list_hermes_instances()]
+    bindings = [binding.to_dict() for binding in cp.list_platform_bindings()]
+    machines = cp.list_machines()
+    machines_by_id = {machine.id: machine for machine in machines}
+    agents = cp.list_agents()
+    fleets = [fleet.to_dict() for fleet in cp.list_fleets()]
+    tasks = cp.list_tasks()
+    task_dicts = [task.to_dict() for task in tasks]
+    dead_letters = [task.to_dict() for task in cp.list_dead_letters()]
+    rollouts = cp.list_rollouts()
+    roles = [role.to_dict() for role in cp.list_roles()]
+    provisioning_requests = [
+        request.to_dict()
+        for request in cp.provisioning.list_requests(limit=120)
+    ]
+    secrets = [secret.to_dict() for secret in cp.list_secrets()]
+    secret_audits = [audit.to_dict() for audit in cp.list_secret_audits()]
+    workflows = [workflow.to_dict() for workflow in cp.list_workflows()]
+    workflow_drafts = [draft.to_dict() for draft in cp.list_workflow_drafts(limit=120)]
+    workflow_runs = cp.workflow_runs_summary()
+    notifier_channels = [channel.to_dict() for channel in cp.list_notifier_channels()]
+    agentbus_streams = [
+        stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)
+    ]
+    terminal_sessions = _dashboard_terminal_sessions_from_streams(agentbus_streams)
+    artifacts = [artifact.to_dict() for artifact in cp.list_artifacts()]
+    bridge_items = [item.to_dict() for item in cp.list_project_items()]
+    # beads removed as a read/write source; the status view no longer lists
+    # beads repositories (kept as an empty list for dashboard shape stability).
+    beads_repositories: List[Dict[str, Any]] = []
+    memory_records = [
+        record.to_dict() for record in cp.search_memory()
+    ][-120:]
+    nap_schedules = [schedule.to_dict() for schedule in cp.list_nap_schedules()]
+    nap_runs = [run.to_dict() for run in cp.list_nap_runs()]
+    runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()]
+    runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
+    integration_findings = [
+        finding.to_dict() for finding in cp.list_integration_findings(limit=120)
+    ]
+    integration_observations = [
+        observation.to_dict()
+        for observation in cp.list_integration_observations(limit=120)
+    ]
+    task_details = [_dashboard_task(cp, task.id, compact=True) for task in tasks]
+    rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
+    project_summaries = cp.list_projects()
+    hermes_work_contexts = {
+        instance["id"]: cp.hermes_work_context(instance["id"], task_limit=40)
+        for instance in hermes_instances
+    }
+    hermes_runtime_proofs = {}
+    for instance in hermes_instances:
+        submitted = _latest_submitted_runtime_proof(instance)
+        hermes_runtime_proofs[instance["id"]] = submitted or cp.hermes_runtime_proof(
+            instance["id"],
+            hermes_startup=hermes_startup,
+        )
+    swarm_summary = _dashboard_swarm_summary(agents, tasks, machines_by_id)
+    return {
+        "overview": {
+            "counts": {
+                "tenants": len(tenants),
+                "users": len(users),
+                "personas": len(personas),
+                "hermes_instances": len(hermes_instances),
+                "platform_bindings": len(bindings),
+                "machines": len(machines),
+                "trusted_machines": sum(1 for machine in machines if machine.trusted),
+                "agents": len(agents),
+                "fleets": len(fleets),
+                "healthy_agents": sum(1 for agent in agents if agent.health_status == "healthy"),
+                "busy_agents": sum(1 for agent in agents if agent.status == "busy"),
+                "active_tasks": sum(
+                    1 for task in tasks if task.state not in TERMINAL_DASHBOARD_STATES
+                ),
+                "dead_letters": len(dead_letters),
+                "rollouts": len(rollouts),
+                "secrets": len(secrets),
+                "secret_audits": len(secret_audits),
+                "roles": len(roles),
+                "pending_provisioning_requests": sum(
+                    1 for request in provisioning_requests if request["status"] == "pending"
+                ),
+                "workflows": len(workflows),
+                "workflow_drafts": len(workflow_drafts),
+                "workflow_runs": workflow_runs.get("total", 0),
+                "notifier_channels": len(notifier_channels),
+                "agentbus_streams": len(agentbus_streams),
+                "terminal_sessions": len(terminal_sessions),
+                "artifacts": len(artifacts),
+                "beads_repositories": len(beads_repositories),
+                "projects": len(project_summaries),
+                "memory_records": len(memory_records),
+                "integration_findings": len(integration_findings),
+                "open_integration_findings": sum(
+                    1 for finding in integration_findings if finding["status"] == "open"
+                ),
+            },
+            "task_states": _state_counts(task_dicts, "state"),
+            "agent_statuses": _state_counts([agent.to_dict() for agent in agents], "status"),
+        },
+        "project_summaries": project_summaries,
+        "swarm_summary": swarm_summary,
+        "tenants": tenants,
+        "users": users,
+        "personas": personas,
+        "hermes_instances": hermes_instances,
+        "hermes_work_contexts": hermes_work_contexts,
+        "hermes_runtime_proofs": hermes_runtime_proofs,
+        "hermes_config_surfaces": build_hermes_config_surfaces(
+            fleets,
+            agents=[agent.to_dict() for agent in agents],
+            agentbus_streams=agentbus_streams,
+        ),
+        "platform_bindings": bindings,
+        "roles": roles,
+        "provisioning_requests": provisioning_requests,
+        "machines": [machine.to_dict() for machine in machines],
+        "fleets": fleets,
+        "agents": [
+            _dashboard_agent_base(cp, agent, tasks, machines_by_id)
+            for agent in agents
+        ],
+        "tasks": task_details,
+        "dead_letters": dead_letters,
+        "dispatch": _dashboard_dispatch_explain(cp, tasks, agents, machines_by_id),
+        "messages": [
+            message.to_dict()
+            for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
+        ],
+        "notifications": [
+            notification.to_dict() for notification in cp.list_notifications(limit=120)
+        ],
+        "notifier_channels": notifier_channels,
+        "workflows": workflows,
+        "workflow_drafts": workflow_drafts,
+        "workflow_runs": workflow_runs,
+        "agentbus_streams": agentbus_streams,
+        "terminal_sessions": terminal_sessions,
+        "artifacts": artifacts,
+        "bridge_items": bridge_items,
+        "beads_repositories": beads_repositories,
+        "memory_records": memory_records,
+        "nap_schedules": nap_schedules,
+        "nap_runs": nap_runs,
+        "integration_findings": integration_findings,
+        "integration_observations": integration_observations,
+        "service_links": _dashboard_service_links(hermes_startup),
+        "events": cp.list_events(limit=240),
+        "command_audit": [
+            record.to_dict() for record in cp.list_command_audit(limit=120)
+        ],
+        "secrets": secrets,
+        "secret_audits": secret_audits,
+        "runtimes": [runtime.to_dict() for runtime in cp.list_runtimes()],
+        "runtime_deltas": runtime_deltas,
+        "runtime_runs": runtime_runs,
+        "rollouts": rollout_statuses,
+        "eval_sets": [eval_set.to_dict() for eval_set in cp.list_eval_sets()],
+        "eval_runs": [run.to_dict() for run in cp.list_eval_runs()],
+        "observability": cp.observability_summary(),
+        "hermes_startup": hermes_startup,
+    }
+
+
+def _dashboard_response(
+    cp: ControlPlane,
+    principal: TokenPrincipal,
+    hermes_startup: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    model = _dashboard_state(cp, hermes_startup)
+    now = utcnow()
+    model["server_time"] = now
+    model["updated_at"] = now
+    model["session"] = _dashboard_session(principal)
+    return model
+
+
+def _workflow_plan_id(goal: str, project: Optional[str], nodes: List[Dict[str, Any]]) -> str:
+    digest = hashlib.sha256(
+        json.dumps(
+            {"goal": goal, "project": project, "nodes": nodes, "time": utcnow()},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return "plan_%s" % digest
+
+
+def _workflow_plan_string_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.replace("\n", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw = list(value)
+    else:
+        raw = [value]
+    out: List[str] = []
+    seen = set()
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _workflow_plan_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _workflow_plan_node_id(value: Any, index: int, used: set) -> str:
+    text = str(value or "").strip().lower()
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in text)
+    safe = safe.strip("_-") or "task_%d" % index
+    base = safe[:48]
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = ("%s_%d" % (base[:42], suffix)).strip("_")
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _normalize_dashboard_workflow_plan(
+    raw: Any,
+    request: Dict[str, Any],
+    *,
+    source: str = "model",
+) -> Dict[str, Any]:
+    if isinstance(raw, str):
+        raw = _extract_json_object(raw)
+    if not isinstance(raw, dict):
+        raise ValidationError("workflow planner returned a non-object response")
+    raw_nodes = raw.get("nodes") or raw.get("tasks") or raw.get("steps")
+    if not isinstance(raw_nodes, list):
+        raise ValidationError("workflow planner response must include nodes/tasks")
+    try:
+        max_tasks = int(request.get("max_tasks") or 8)
+    except (TypeError, ValueError):
+        max_tasks = 8
+    max_tasks = max(1, min(20, max_tasks))
+    used: set = set()
+    nodes: List[Dict[str, Any]] = []
+    for index, raw_node in enumerate(raw_nodes[:max_tasks], start=1):
+        if not isinstance(raw_node, dict):
+            continue
+        node_id = _workflow_plan_node_id(
+            raw_node.get("node_id") or raw_node.get("id") or raw_node.get("key"),
+            index,
+            used,
+        )
+        title = str(raw_node.get("title") or raw_node.get("name") or "").strip()
+        if not title:
+            title = "Task %d" % index
+        metadata = raw_node.get("metadata") if isinstance(raw_node.get("metadata"), dict) else {}
+        nodes.append(
+            {
+                "node_id": node_id,
+                "title": title[:240],
+                "description": str(raw_node.get("description") or raw_node.get("summary") or "").strip(),
+                "required_capabilities": _workflow_plan_string_list(
+                    raw_node.get("required_capabilities") or raw_node.get("capabilities")
+                ),
+                "depends_on": _workflow_plan_string_list(
+                    raw_node.get("depends_on") or raw_node.get("dependencies") or raw_node.get("parents")
+                ),
+                "priority": _workflow_plan_int(raw_node.get("priority"), _workflow_plan_int(request.get("priority"), 0)),
+                "metadata": metadata,
+            }
+        )
+    if not nodes:
+        raise ValidationError("workflow planner produced no task nodes")
+    _workflow_plan_topological_order(nodes, allow_external=False)
+    goal = str(raw.get("goal") or request.get("goal") or "").strip()
+    project = raw.get("project") if raw.get("project") is not None else request.get("project")
+    project = str(project).strip() if project is not None else None
+    if project == "":
+        project = None
+    plan_id = str(raw.get("plan_id") or _workflow_plan_id(goal, project, nodes))
+    return {
+        "schema": "mac.dashboard.workflow_plan.v1",
+        "plan_id": plan_id,
+        "goal": goal,
+        "project": project,
+        "source": source,
+        "nodes": nodes,
+        "created_at": utcnow(),
+    }
+
+
+def _workflow_plan_topological_order(
+    nodes: List[Dict[str, Any]],
+    *,
+    allow_external: bool,
+    cp: Optional[ControlPlane] = None,
+) -> List[Dict[str, Any]]:
+    by_id = {str(node.get("node_id")): node for node in nodes}
+    if len(by_id) != len(nodes):
+        raise ValidationError("workflow plan node ids must be unique")
+    for node in nodes:
+        title = str(node.get("title") or "").strip()
+        if not title:
+            raise ValidationError("workflow plan node title is required")
+        normalized_deps = []
+        for dep in _workflow_plan_string_list(node.get("depends_on")):
+            if dep not in by_id:
+                if not allow_external:
+                    raise ValidationError("workflow plan dependency %r does not reference a planned node" % dep)
+                if cp is not None:
+                    cp.get_task(dep)
+            normalized_deps.append(dep)
+        node["depends_on"] = normalized_deps
+
+    visiting: set = set()
+    visited: set = set()
+    ordered: List[Dict[str, Any]] = []
+
+    def visit(node_id: str) -> None:
+        if node_id in visited:
+            return
+        if node_id in visiting:
+            raise ValidationError("workflow plan contains a dependency cycle")
+        visiting.add(node_id)
+        node = by_id[node_id]
+        for dep in node.get("depends_on") or []:
+            if dep in by_id:
+                visit(dep)
+        visiting.remove(node_id)
+        visited.add(node_id)
+        ordered.append(node)
+
+    for node in nodes:
+        visit(str(node.get("node_id")))
+    return ordered
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end <= start:
+        raise ValidationError("workflow planner response did not contain JSON")
+    try:
+        parsed = json.loads(stripped[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValidationError("workflow planner response JSON is invalid: %s" % exc) from exc
+    if not isinstance(parsed, dict):
+        raise ValidationError("workflow planner JSON must be an object")
+    return parsed
+
+
+def _chat_completion_content(body: Any) -> str:
+    if not isinstance(body, dict):
+        raise ValidationError("workflow planner returned an invalid chat response")
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValidationError("workflow planner chat response had no choices")
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content") or first.get("text")
+    if isinstance(content, list):
+        content = "\n".join(
+            str(item.get("text") or item.get("content") or "")
+            for item in content
+            if isinstance(item, dict)
+        )
+    text = str(content or "").strip()
+    if not text:
+        raise ValidationError("workflow planner chat response was empty")
+    return text
+
+
+def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -> str:
+    project = str(request.get("project") or "").strip()
+    summaries = cp.list_projects()
+    project_summary = next((item for item in summaries if item.get("project") == project), None) if project else None
+    context = {
+        "goal": request.get("goal"),
+        "project": project or None,
+        "prompt": request.get("prompt") or "",
+        "required_capabilities": request.get("required_capabilities") or [],
+        "max_tasks": request.get("max_tasks") or 8,
+        "project_summary": project_summary,
+        "extra_context": request.get("context") or {},
+    }
+    return (
+        "Create a concrete MAC task plan for the requested work. "
+        "Return ONLY JSON with this shape: "
+        "{\"nodes\":[{\"node_id\":\"short_key\",\"title\":\"task title\","
+        "\"description\":\"implementation-grade instructions\","
+        "\"required_capabilities\":[\"python\"],\"depends_on\":[\"other_node_id\"],"
+        "\"priority\":0,\"metadata\":{}}]}. "
+        "Use depends_on only for earlier node_id values. Keep the plan small, executable, "
+        "and review-gate friendly.\n\nContext:\n%s" % json.dumps(context, sort_keys=True)
+    )
+
+
+def _dashboard_workflow_plan_from_router(
+    cp: ControlPlane,
+    request: Dict[str, Any],
+    *,
+    secret_resolver: Any,
+    route_observer: Any,
+) -> Dict[str, Any]:
+    from mac.router_app import build_proxy_from_env
+
+    proxy = build_proxy_from_env(secret_resolver=secret_resolver, route_observer=route_observer)
+    if proxy is None:
+        raise ValidationError("workflow planner requires configured MAC_ROUTER_PROVIDERS")
+    model = str(request.get("model") or "*").strip() or "*"
+    status, body = proxy.complete(
+        "/chat/completions",
+        {
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are MAC's workflow planner. Produce only strict JSON. "
+                        "Do not create tasks; only draft an editable plan."
+                    ),
+                },
+                {"role": "user", "content": _dashboard_workflow_plan_prompt(cp, request)},
+            ],
+            "_mac_context": {
+                "agent_id": "dashboard-workflow-planner",
+                "task_id": "",
+                "request_id": _workflow_plan_id(str(request.get("goal") or ""), request.get("project"), []),
+            },
+        },
+        route_context={"agent_id": "dashboard-workflow-planner"},
+    )
+    if int(status) >= 400:
+        raise ValidationError("workflow planner model request failed with HTTP %s" % status)
+    return _extract_json_object(_chat_completion_content(body))
+
+
+def _accept_dashboard_workflow_plan(cp: ControlPlane, request: Dict[str, Any]) -> Dict[str, Any]:
+    raw_nodes = request.get("nodes") or []
+    if not isinstance(raw_nodes, list) or not raw_nodes:
+        raise ValidationError("workflow plan accept requires at least one node")
+    nodes = [
+        {
+            "node_id": str(node.get("node_id") or "").strip(),
+            "title": str(node.get("title") or "").strip(),
+            "description": str(node.get("description") or ""),
+            "required_capabilities": _workflow_plan_string_list(node.get("required_capabilities")),
+            "depends_on": _workflow_plan_string_list(node.get("depends_on")),
+            "priority": _workflow_plan_int(node.get("priority"), 0),
+            "metadata": node.get("metadata") if isinstance(node.get("metadata"), dict) else {},
+        }
+        for node in raw_nodes
+        if isinstance(node, dict)
+    ]
+    ordered = _workflow_plan_topological_order(nodes, allow_external=True, cp=cp)
+    project = str(request.get("project") or "").strip() or None
+    plan_id = str(request.get("plan_id") or _workflow_plan_id(str(request.get("goal") or ""), project, nodes))
+    actor = str(request.get("actor") or "human")
+    root_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+    created_by_node: Dict[str, str] = {}
+    created_tasks = []
+    for index, node in enumerate(ordered, start=1):
+        dependency_ids = [
+            created_by_node.get(dep, dep)
+            for dep in _workflow_plan_string_list(node.get("depends_on"))
+        ]
+        metadata = dict(node.get("metadata") or {})
+        origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        origin.update(
+            {
+                "type": "dashboard_workflow_plan",
+                "plan_id": plan_id,
+                "node_id": node["node_id"],
+            }
+        )
+        metadata["origin"] = origin
+        workflow = dict(metadata.get("workflow") or {}) if isinstance(metadata.get("workflow"), dict) else {}
+        workflow.update(
+            {
+                "type": "planned_task_chain",
+                "plan_id": plan_id,
+                "node_id": node["node_id"],
+                "node_index": index,
+                "depends_on_nodes": _workflow_plan_string_list(node.get("depends_on")),
+                "goal": request.get("goal") or "",
+            }
+        )
+        metadata["workflow"] = workflow
+        if root_metadata:
+            metadata.setdefault("workflow_plan", root_metadata)
+        task = cp.create_task(
+            node["title"],
+            description=str(node.get("description") or ""),
+            project=project,
+            priority=_workflow_plan_int(node.get("priority"), 0),
+            required_capabilities=_workflow_plan_string_list(node.get("required_capabilities")),
+            dependencies=dependency_ids,
+            metadata=metadata,
+            actor=actor,
+        )
+        created_by_node[node["node_id"]] = task.id
+        created_tasks.append(task.to_dict())
+    return {
+        "schema": "mac.dashboard.workflow_plan_accept.v1",
+        "plan_id": plan_id,
+        "project": project,
+        "goal": request.get("goal") or "",
+        "node_task_ids": created_by_node,
+        "created": created_tasks,
+    }
+
+
+def _latest_submitted_runtime_proof(instance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    metadata = instance.get("metadata") if isinstance(instance.get("metadata"), dict) else {}
+    record = (
+        metadata.get("latest_runtime_proof")
+        if isinstance(metadata.get("latest_runtime_proof"), dict)
+        else {}
+    )
+    proof = record.get("proof") if isinstance(record.get("proof"), dict) else None
+    if not proof or proof.get("schema") != "mac.hermes_runtime_proof.v1":
+        return None
+    return json.loads(json.dumps(proof))
+
+
+def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
+    """Drive the control-plane tick on the hub's own clock (mac-selfdrive).
+
+    ``ControlPlane.tick()`` is the self-driving heartbeat: it expires stale
+    leases, reconciles service-role claims, unblocks dependency-ready tasks,
+    **advances the default review workflow (publishing/merging approved work to
+    main)**, and dispatches ready tasks. Nothing drove it periodically, so
+    approved tasks parked forever waiting for an external ``POST /dispatch/tick``
+    — the whole autonomous loop (commit -> review -> merge) stalled at the last
+    step. The hub now runs it on a daemon thread so no external clock is needed.
+
+    Gated by ``MAC_HUB_TICK_INTERVAL_SECONDS`` (seconds; >0 enables). Unset/0
+    means no thread, so the CLI, the test suite, and stateless mac-api replicas
+    don't each spawn a competing ticker; the deploy sets it on hub nodes.
+    """
+    try:
+        interval = float((os.environ.get("MAC_HUB_TICK_INTERVAL_SECONDS") or "0").strip())
+    except ValueError:
+        interval = 0.0
+    if interval <= 0:
+        return
+    try:
+        stale_after = int(float((os.environ.get("MAC_HUB_TICK_STALE_AFTER_SECONDS") or "300").strip()))
+    except ValueError:
+        stale_after = 300
+
+    def _loop() -> None:
+        # Sleep-first so app construction returns immediately and a process that
+        # never lives a full interval (e.g. a unit test) does no tick work.
+        while True:
+            time.sleep(interval)
+            try:
+                cp.tick(stale_after_seconds=stale_after)
+            except Exception:  # noqa: BLE001 - the self-driver must never crash the hub
+                logging.getLogger("mac.hub_tick").warning("hub tick failed", exc_info=True)
+
+    thread = threading.Thread(target=_loop, name="mac-hub-tick", daemon=True)
+    thread.start()
+    app.state.hub_tick_thread = thread
+
+
+def create_app(
+    db_path: Optional[str] = None,
+    control_plane: Optional[ControlPlane] = None,
+    auth_tokens: Optional[AuthTokenMapping] = None,
+    record_http_observations: Optional[bool] = None,
+) -> FastAPI:
+    # db_path is the explicit SQLite override (e.g. for tests). When it is
+    # None, fall through to make_store_from_env so MAC_DATABASE_URL can
+    # switch the API process to Postgres for the stateless mac-api topology.
+    if control_plane is not None:
+        cp = control_plane
+    elif db_path is not None:
+        cp = ControlPlane(SQLiteStore(db_path))
+    else:
+        cp = ControlPlane(make_store_from_env())
+    tokens: Dict[str, TokenPrincipal] = (
+        _normalize_auth_tokens(auth_tokens)
+        if auth_tokens is not None
+        else _load_auth_tokens_from_env()
+    )
+    # mac-853j: refuse to fail-open when the API is bound to a non-loopback
+    # interface. Deployments that explicitly want a no-auth dev mode can
+    # set MAC_API_ALLOW_OPEN=1, but the default for a 0.0.0.0 hub is
+    # fail-closed (the alternative was: any tenant on the network could
+    # reach /secrets/{id}/reveal).
+    if not tokens:
+        bind_host = (os.environ.get("MAC_BIND_HOST") or "").strip()
+        allow_open = (os.environ.get("MAC_API_ALLOW_OPEN") or "").strip().lower() in {"1", "true", "yes", "on"}
+        is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
+        if not is_loopback and not allow_open:
+            raise ValidationError(
+                "auth fail-open refused: MAC_BIND_HOST=%r is non-loopback and "
+                "no MAC_API_TOKEN/MAC_API_TOKENS is set; set MAC_API_ALLOW_OPEN=1 "
+                "to override or configure tokens (mac-853j)" % bind_host
+            )
+    record_http_obs = _resolve_record_http_observations(record_http_observations)
+    app = FastAPI(title="MAC Control Plane", version="0.1.0")
+    app.state.control_plane = cp
+    app.state.auth_tokens = tokens
+    # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
+    # reconcile -> lease expiry) so the autonomous loop needs no external clock.
+    _start_hub_tick_loop(app, cp)
+    # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
+    # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
+    # integration. Routing decisions now come from the in-mac router.
+    app.state.hermes_startup = build_hermes_startup_report()
+    if (
+        os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and not app.state.hermes_startup["ready"]
+    ):
+        raise ValidationError(
+            "Hermes startup readiness failed: %s"
+            % "; ".join(app.state.hermes_startup["warnings"])
+        )
+    ui_dir = Path(__file__).with_name("ui")
+    if ui_dir.exists():
+        app.mount("/ui/assets", StaticFiles(directory=str(ui_dir)), name="ui-assets")
+
+    @app.exception_handler(MACError)
+    async def handle_mac_error(request: Any, exc: MACError) -> JSONResponse:
+        if isinstance(exc, NotFoundError):
+            return JSONResponse(status_code=404, content={"detail": str(exc)})
+        if isinstance(exc, AuthorizationError):
+            return JSONResponse(status_code=403, content={"detail": str(exc)})
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    def _emit_http_observation(
+        request: Request, status_code: int, started: float, error_name: str
+    ) -> None:
+        if not record_http_obs or not _should_record_http_observation(request.url.path):
+            return
+        duration_ms = (time.monotonic() - started) * 1000.0
+        level = "error" if status_code >= 500 else "warning" if status_code >= 400 else "info"
+        detail = {
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": status_code,
+            "duration_ms": round(duration_ms, 3),
+        }
+        if error_name:
+            detail["error"] = error_name
+        try:
+            cp.record_metric(
+                "http.request.duration_ms",
+                duration_ms,
+                unit="ms",
+                layer="api",
+                source="http",
+                level=level,
+                detail=detail,
+            )
+        except (MACError, StoreError, sqlite3.Error):
+            _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
+
+    @app.middleware("http")
+    async def authenticate(request: Request, call_next: Any) -> Any:
+        started = time.monotonic()
+        status_code = 500
+        error_name = ""
+        try:
+            principal = _authorize_request(
+                request.method,
+                request.url.path,
+                request.headers.get("authorization"),
+                tokens,
+            )
+            request.state.principal = principal
+        except AuthorizationError as exc:
+            status_code = 403
+            error_name = exc.__class__.__name__
+            _emit_http_observation(request, status_code, started, error_name)
+            return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+        try:
+            response = await call_next(request)
+            status_code = int(getattr(response, "status_code", 500))
+            return response
+        except Exception as exc:
+            error_name = exc.__class__.__name__
+            raise
+        finally:
+            _emit_http_observation(request, status_code, started, error_name)
+
+    # th-merge-04: let model-provider keys be `secret:<name>`, resolved
+    # decrypt-at-use from the in-mac encrypted key store. Shared by the /v1
+    # router and the dashboard workflow planner so human UI planning does not
+    # need an agent-scope token or local upstream keys.
+    def _router_secret_resolver(name: str) -> Optional[str]:
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            return None
+        try:
+            return secrets.resolve_secret_value(name, purpose="router-upstream")
+        except Exception:  # noqa: BLE001 - a missing/disabled secret must not break routing
+            return None
+
+    def _router_route_observer(detail: Dict[str, Any]) -> None:
+        agent_id = str(detail.get("agent_id") or "").strip()
+        task_id = str(detail.get("task_id") or "").strip()
+        subject_type = "agent" if agent_id else "task" if task_id else None
+        subject_id = agent_id or task_id or None
+        source = _safe_observation_source(agent_id or "router")
+        try:
+            cp.record_log(
+                "llm.route",
+                level=(
+                    "error"
+                    if int(detail.get("status_code") or 0) >= 500
+                    else "warning"
+                    if int(detail.get("status_code") or 0) >= 400
+                    else "info"
+                ),
+                layer="router",
+                source=source,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
+            _log.warning("failed to record llm.route observation", exc_info=True)
+
+    @app.get("/health")
+    def health() -> Dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/startup/hermes")
+    def hermes_startup() -> Dict[str, Any]:
+        app.state.hermes_startup = build_hermes_startup_report()
+        return app.state.hermes_startup
+
+    @app.get("/ui", include_in_schema=False)
+    @app.get("/ui/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(ui_dir / "index.html")
+
+    @app.get("/dashboard/state")
+    def dashboard_state(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        app.state.hermes_startup = build_hermes_startup_report()
+        return _dashboard_response(cp, principal, app.state.hermes_startup)
+
+    @app.get("/dashboard/stream")
+    async def dashboard_stream(
+        request: Request,
+        timeout_seconds: float = Query(default=60.0),
+        poll_interval_seconds: float = Query(default=1.0),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> StreamingResponse:
+        def stream_event(event: str, cursor: int) -> str:
+            now = utcnow()
+            return json.dumps(
+                {
+                    "event": event,
+                    "server_time": now,
+                    "updated_at": now,
+                    "observability_sequence": cursor,
+                },
+                sort_keys=True,
+            ) + "\n"
+
+        async def iter_dashboard_states() -> Any:
+            latest = cp.list_observability(limit=1)
+            cursor = latest[0].sequence if latest else 0
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            yield stream_event("connected", cursor)
+            while True:
+                if await request.is_disconnected():
+                    break
+                observations = cp.list_observability(after_sequence=cursor, limit=100)
+                if observations:
+                    cursor = observations[-1].sequence
+                    yield stream_event("updated", cursor)
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if time.monotonic() >= deadline:
+                    yield stream_event("heartbeat", cursor)
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_dashboard_states(), media_type="application/x-ndjson")
+
+    @app.post("/dashboard/workflow-plan/preview")
+    def dashboard_workflow_plan_preview(
+        body: DashboardWorkflowPlanRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.context, "dashboard.workflow_plan.context")
+        data = _data(body)
+        planner = getattr(app.state, "workflow_plan_model", None)
+        if callable(planner):
+            raw = planner(data)
+            return _normalize_dashboard_workflow_plan(raw, data, source="injected")
+        raw = _dashboard_workflow_plan_from_router(
+            cp,
+            data,
+            secret_resolver=_router_secret_resolver,
+            route_observer=_router_route_observer,
+        )
+        return _normalize_dashboard_workflow_plan(raw, data, source="model")
+
+    @app.post("/dashboard/workflow-plan/accept")
+    def dashboard_workflow_plan_accept(
+        body: DashboardWorkflowPlanAccept,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.metadata, "dashboard.workflow_plan.metadata")
+        data = _data(body)
+        for index, node in enumerate(data.get("nodes") or [], start=1):
+            if isinstance(node, dict):
+                _ensure_payload_bounded(
+                    node.get("metadata") or {},
+                    "dashboard.workflow_plan.nodes.%d.metadata" % index,
+                )
+        return _accept_dashboard_workflow_plan(cp, data)
+
+    @app.get("/dashboard/service-links/tokenhub/sso", include_in_schema=False)
+    def tokenhub_sso(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> RedirectResponse:
+        if not principal.is_admin:
+            raise AuthorizationError("TokenHub pass-through requires an admin MAC token")
+        return RedirectResponse(_tokenhub_session_ticket_url(), status_code=303)
+
+    @app.get("/dashboard/service-links/{service_id}/navigate", include_in_schema=False)
+    def service_navigate(service_id: str) -> Dict[str, str]:
+        if service_id == "tokenhub":
+            return {"url": _tokenhub_session_ticket_url()}
+        if service_id == "qdrant":
+            return {"url": _qdrant_navigate_url()}
+        if service_id == "firecrawl":
+            return {"url": _firecrawl_navigate_url()}
+        raise NotFoundError("unknown service: %s" % service_id)
+
+    @app.get("/dashboard/agents/{agent_id}")
+    def dashboard_agent(agent_id: str) -> Dict[str, Any]:
+        agent = cp.get_agent(agent_id)
+        tasks = cp.list_tasks()
+        machines_by_id = {machine.id: machine for machine in cp.list_machines()}
+        model = _dashboard_agent_base(cp, agent, tasks, machines_by_id)
+        model["messages"] = [
+            message.to_dict()
+            for message in cp.list_messages(agent_id, limit=DASHBOARD_MESSAGE_LIMIT)
+        ]
+        model["dispatch"] = [
+            item
+            for item in _dashboard_dispatch_explain(cp, tasks, [agent], machines_by_id)["tasks"]
+            if item["eligible_agent_count"] or item["candidates"]
+        ]
+        return model
+
+    @app.get("/dashboard/tasks/{task_id}/timeline")
+    def dashboard_task_timeline(task_id: str) -> Dict[str, Any]:
+        return _dashboard_task(cp, task_id)
+
+    @app.get("/dashboard/dispatch/explain")
+    def dashboard_dispatch_explain() -> Dict[str, Any]:
+        return _dashboard_dispatch_explain(cp)
+
+    @app.get("/dashboard/hermes/{instance_id}/activity")
+    def dashboard_hermes_activity(instance_id: str) -> Dict[str, Any]:
+        return _dashboard_hermes_activity(cp, instance_id)
+
+    @app.put("/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface")
+    def dashboard_hermes_config_surface_update(
+        fleet_id_or_name: str,
+        body: DashboardHermesConfigUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        data = _data(body)
+        for key in ("runtime", "config", "env", "plugins", "skills"):
+            _ensure_payload_bounded(data.get(key) or {}, "dashboard.hermes_config.%s" % key)
+        fleet = cp.get_fleet(fleet_id_or_name).to_dict()
+        return update_fleet_hermes_surface(
+            fleet,
+            data,
+            apply_local=bool(data.get("apply_local", True)),
+        )
+
+    @app.post("/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply")
+    def dashboard_hermes_config_surface_apply(
+        fleet_id_or_name: str,
+        body: DashboardHermesConfigApply,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        fleet = cp.get_fleet(fleet_id_or_name).to_dict()
+        recipients = list(body.recipient_agent_ids or [])
+        if not recipients:
+            recipients = list(fleet.get("agent_ids") or [])
+        recipients = list(dict.fromkeys(str(item) for item in recipients if str(item)))
+        if not recipients:
+            raise ValidationError("Hermes config apply requires at least one fleet agent")
+        sender_agent_id = str(body.sender_agent_id or recipients[0])
+        cp.get_agent(sender_agent_id)
+        for recipient_id in recipients:
+            cp.get_agent(recipient_id)
+        payload = fleet_hermes_payload(fleet)
+        message = hermes_config_apply_payload(
+            payload=payload,
+            fleet_id=str(fleet.get("id") or ""),
+            fleet_name=str(fleet.get("name") or ""),
+            registry_path=os.environ.get("MAC_FLEETS_CONFIG") or os.environ.get("MAC_DEPLOY_FLEETS_CONFIG") or "",
+            request_id=body.request_id,
+        )
+        published = [
+            cp.publish_agentbus_content(
+                sender_agent_id=sender_agent_id,
+                recipient_agent_id=recipient_id,
+                content_type=HERMES_CONFIG_APPLY_CONTENT_TYPE,
+                topic=HERMES_CONFIG_APPLY_TOPIC,
+                payload=message,
+            )
+            for recipient_id in recipients
+        ]
+        return {
+            "schema": "mac.dashboard.hermes_config_apply.v1",
+            "count": len(published),
+            "fleet_id": fleet.get("id"),
+            "fleet_name": fleet.get("name"),
+            "sender_agent_id": sender_agent_id,
+            "recipient_agent_ids": recipients,
+            "payload_digest": payload_digest(payload),
+            "payload_redacted": redacted_hermes_payload(payload),
+            "streams": [item["stream"] for item in published],
+        }
+
+    @app.get("/dashboard/terminal-sessions")
+    def dashboard_terminal_sessions(
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = Query(default=120),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        query_agent_id = agent_id
+        if principal.agent_id and not principal.is_admin:
+            if query_agent_id and query_agent_id != principal.agent_id:
+                principal.assert_actor(query_agent_id)
+            query_agent_id = principal.agent_id
+        sessions = _dashboard_terminal_sessions(
+            cp,
+            agent_id=query_agent_id,
+            status=status,
+            limit=limit,
+        )
+        if principal.agent_id and not principal.is_admin:
+            sessions = [
+                item for item in sessions
+                if principal.agent_id in {item.get("agent_id"), item.get("sender_agent_id")}
+            ]
+        return {
+            "schema": "mac.dashboard.terminal_sessions.v1",
+            "terminal_sessions": sessions,
+        }
+
+    @app.post("/dashboard/agents/{agent_id}/terminal-sessions")
+    def dashboard_terminal_session_open(
+        agent_id: str,
+        body: DashboardTerminalOpen,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        agent = cp.get_agent(agent_id)
+        sender_agent_id = str(body.sender_agent_id or agent.id)
+        cp.get_agent(sender_agent_id)
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(agent.id)
+            principal.assert_actor(sender_agent_id)
+        session_id = _new_terminal_session_id()
+        input_stream_id = session_id + ".in"
+        output_stream_id = session_id + ".out"
+        rows = _clamp_int(body.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS, 32)
+        cols = _clamp_int(body.cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS, 120)
+        ttl_seconds = _clamp_int(
+            body.ttl_seconds,
+            MIN_TERMINAL_TTL_SECONDS,
+            MAX_TERMINAL_TTL_SECONDS,
+            900,
+        )
+        if body.shell and len(body.shell) > 512:
+            raise ValidationError("terminal shell exceeds 512-byte limit")
+        if body.cwd and len(body.cwd) > 4096:
+            raise ValidationError("terminal cwd exceeds 4096-byte limit")
+        base_headers = {
+            "terminal_session_id": session_id,
+            "request_id": body.request_id or "",
+        }
+        input_stream = cp.open_agentbus_stream(
+            sender_agent_id=sender_agent_id,
+            recipient_agent_id=agent.id,
+            content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            headers={**base_headers, "schema": DEBUG_TERMINAL_INPUT_SCHEMA},
+            stream_id=input_stream_id,
+        )
+        output_stream = cp.open_agentbus_stream(
+            sender_agent_id=agent.id,
+            recipient_agent_id=sender_agent_id,
+            content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+            headers={**base_headers, "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA},
+            stream_id=output_stream_id,
+        )
+        control = cp.publish_agentbus_content(
+            sender_agent_id=sender_agent_id,
+            recipient_agent_id=agent.id,
+            content_type=DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+            topic=DEBUG_TERMINAL_OPEN_TOPIC,
+            payload=debug_terminal_open_payload(
+                session_id=session_id,
+                input_stream_id=input_stream_id,
+                output_stream_id=output_stream_id,
+                sender_agent_id=sender_agent_id,
+                shell=body.shell,
+                cwd=body.cwd,
+                rows=rows,
+                cols=cols,
+                ttl_seconds=ttl_seconds,
+                request_id=body.request_id,
+            ),
+        )
+        return {
+            "schema": "mac.dashboard.terminal_session.v1",
+            "session_id": session_id,
+            "agent_id": agent.id,
+            "sender_agent_id": sender_agent_id,
+            "input_stream_id": input_stream_id,
+            "output_stream_id": output_stream_id,
+            "rows": rows,
+            "cols": cols,
+            "ttl_seconds": ttl_seconds,
+            "input_stream": input_stream.to_dict(),
+            "output_stream": output_stream.to_dict(),
+            "control_stream": control.get("stream"),
+        }
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/input")
+    def dashboard_terminal_session_input(
+        session_id: str,
+        body: DashboardTerminalInput,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal input sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        payload = debug_terminal_input_payload(
+            session_id=_validate_terminal_session_id(session_id),
+            data_b64=_terminal_input_data_b64(body),
+            close=bool(body.close),
+        )
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=payload,
+            final=bool(body.close),
+        )
+        return {"schema": "mac.dashboard.terminal_input.v1", "chunk": chunk.to_dict()}
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/resize")
+    def dashboard_terminal_session_resize(
+        session_id: str,
+        body: DashboardTerminalResize,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal resize sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        rows = _clamp_int(body.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS, 32)
+        cols = _clamp_int(body.cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS, 120)
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=debug_terminal_input_payload(
+                session_id=_validate_terminal_session_id(session_id),
+                rows=rows,
+                cols=cols,
+            ),
+        )
+        return {
+            "schema": "mac.dashboard.terminal_resize.v1",
+            "rows": rows,
+            "cols": cols,
+            "chunk": chunk.to_dict(),
+        }
+
+    @app.post("/dashboard/terminal-sessions/{session_id}/close")
+    def dashboard_terminal_session_close(
+        session_id: str,
+        body: DashboardTerminalClose,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=body.input_stream_id,
+            expected_topic=DEBUG_TERMINAL_INPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_INPUT_SCHEMA,
+        )
+        sender_agent_id = str(body.sender_agent_id or stream["sender_agent_id"])
+        if sender_agent_id != stream["sender_agent_id"]:
+            raise AuthorizationError("terminal close sender must match input stream sender")
+        if principal.agent_id and not principal.is_admin:
+            principal.assert_actor(sender_agent_id)
+        if stream.get("status") != "open":
+            return {
+                "schema": "mac.dashboard.terminal_close.v1",
+                "stream": stream,
+                "chunk": None,
+            }
+        chunk = cp.append_agentbus_chunk(
+            body.input_stream_id,
+            sender_agent_id=sender_agent_id,
+            payload=debug_terminal_input_payload(
+                session_id=_validate_terminal_session_id(session_id),
+                close=True,
+            ),
+            final=True,
+        )
+        return {
+            "schema": "mac.dashboard.terminal_close.v1",
+            "chunk": chunk.to_dict(),
+            "stream": cp.get_agentbus_stream(body.input_stream_id).to_dict(),
+        }
+
+    @app.get("/dashboard/terminal-sessions/{session_id}/events")
+    async def dashboard_terminal_session_events(
+        session_id: str,
+        request: Request,
+        output_stream_id: str,
+        after_sequence: int = Query(default=0),
+        timeout_seconds: float = Query(default=30.0),
+        poll_interval_seconds: float = Query(default=0.25),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> StreamingResponse:
+        principal.require_global_fleet()
+        stream = _terminal_stream_for_session(
+            cp,
+            session_id=session_id,
+            stream_id=output_stream_id,
+            expected_topic=DEBUG_TERMINAL_OUTPUT_TOPIC,
+            expected_content_type=DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
+            expected_schema=DEBUG_TERMINAL_OUTPUT_SCHEMA,
+        )
+        if principal.agent_id and not principal.is_admin:
+            allowed = {stream.get("sender_agent_id"), stream.get("recipient_agent_id")}
+            if principal.agent_id not in allowed:
+                raise AuthorizationError("token is not bound to this terminal stream")
+        accessor_agent_id = str(stream.get("recipient_agent_id") or stream.get("sender_agent_id") or "")
+
+        async def iter_events() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                if await request.is_disconnected():
+                    break
+                chunks = cp.read_agentbus_chunks(
+                    accessor_agent_id,
+                    output_stream_id,
+                    cursor,
+                    limit=100,
+                )
+                for chunk in chunks:
+                    cursor = chunk.sequence
+                    yield json.dumps(chunk.to_dict(), sort_keys=True) + "\n"
+                if chunks:
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if cp.get_agentbus_stream(output_stream_id).status != "open":
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
+
+    @app.get("/dashboard/rollouts/{rollout_id}/status")
+    def dashboard_rollout_status(rollout_id: str) -> Dict[str, Any]:
+        return _dashboard_rollout_status(cp, rollout_id)
+
+    @app.post("/tenants")
+    def register_tenant(
+        body: TenantRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Creating tenants is a cross-tenant operation; only admin/unbound
+        # principals can perform it.
+        principal.require_global_fleet()
+        return cp.register_tenant(**_data(body)).to_dict()
+
+    @app.get("/tenants")
+    def list_tenants() -> List[Dict[str, Any]]:
+        return [tenant.to_dict() for tenant in cp.list_tenants()]
+
+    @app.post("/users")
+    def register_user(
+        body: UserRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.register_user(**_data(body)).to_dict()
+
+    @app.get("/users")
+    def list_users(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [user.to_dict() for user in cp.list_users(tenant_id)]
+
+    @app.post("/personas")
+    def register_persona(
+        body: PersonaRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.register_persona(**_data(body)).to_dict()
+
+    @app.get("/personas")
+    def list_personas(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [persona.to_dict() for persona in cp.list_personas(tenant_id)]
+
+    @app.post("/hermes-instances")
+    def register_hermes_instance(
+        body: HermesInstanceRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.register_hermes_instance(**_data(body)).to_dict()
+
+    @app.get("/hermes-instances")
+    def list_hermes_instances(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [instance.to_dict() for instance in cp.list_hermes_instances(tenant_id)]
+
+    @app.get("/hermes-instances/{instance_id}/context")
+    def hermes_context(instance_id: str) -> Dict[str, Any]:
+        return cp.hermes_context(instance_id)
+
+    @app.get("/hermes-instances/{instance_id}/work-context")
+    def hermes_work_context(
+        instance_id: str,
+        include_completed: bool = Query(default=True),
+        task_limit: int = Query(default=100),
+    ) -> Dict[str, Any]:
+        return cp.hermes_work_context(
+            instance_id,
+            include_completed=include_completed,
+            task_limit=task_limit,
+        )
+
+    @app.get("/hermes-instances/{instance_id}/runtime-proof")
+    def hermes_runtime_proof(instance_id: str) -> Dict[str, Any]:
+        app.state.hermes_startup = build_hermes_startup_report()
+        return cp.hermes_runtime_proof(
+            instance_id,
+            hermes_startup=app.state.hermes_startup,
+        )
+
+    @app.post("/hermes-instances/{instance_id}/runtime-proof")
+    def hermes_runtime_proof_with_startup(
+        instance_id: str,
+        body: HermesRuntimeProofCreate,
+    ) -> Dict[str, Any]:
+        proof = cp.hermes_runtime_proof(
+            instance_id,
+            hermes_startup=body.hermes_startup,
+        )
+        cp.record_hermes_runtime_proof(instance_id, proof)
+        return proof
+
+    @app.post("/hermes-instances/{instance_id}/tasks")
+    def create_interaction_task(
+        instance_id: str,
+        body: InteractionTaskCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        instance = cp.get_hermes_instance(instance_id)
+        principal.assert_tenant(instance.tenant_id)
+        data = _data(body)
+        actor = data.pop("actor", "hermes")
+        return cp.create_interaction_task(instance_id, actor=actor, **data).to_dict()
+
+    @app.post("/platform-bindings")
+    def register_platform_binding(
+        body: PlatformBindingRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.register_platform_binding(**_data(body)).to_dict()
+
+    @app.get("/platform-bindings")
+    def list_platform_bindings(
+        tenant_id: Optional[str] = Query(default=None),
+        hermes_instance_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            binding.to_dict()
+            for binding in cp.list_platform_bindings(
+                tenant_id=tenant_id,
+                hermes_instance_id=hermes_instance_id,
+            )
+        ]
+
+    @app.post("/tasks")
+    def create_task(
+        body: TaskCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.metadata, "task.metadata")
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        metadata = dict(data.get("metadata") or {})
+        origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        existing_tenant = origin.get("tenant_id") or metadata.get("tenant_id")
+        if principal.tenant_id is not None and not principal.is_admin:
+            if existing_tenant is not None and existing_tenant != principal.tenant_id:
+                principal.assert_tenant(existing_tenant)
+            # Stamp the principal's tenant onto the task so downstream filters
+            # see it even when the caller forgot to set it explicitly.
+            origin["tenant_id"] = principal.tenant_id
+            metadata["origin"] = origin
+            data["metadata"] = metadata
+        return cp.create_task(actor=actor, **data).to_dict()
+
+    @app.post("/repositories/onboard")
+    def onboard_repository(
+        body: RepositoryOnboard,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Onboard a git repository: create the contract-backed onboarding task
+        (clone a worktree -> analyze -> author .mac/project.yaml). Returns the
+        created task."""
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        return cp.onboard_repository(actor=actor, **data).to_dict()
+
+    @app.get("/tasks")
+    def list_tasks(
+        state: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [task.to_dict() for task in cp.list_tasks(state, tenant_id)]
+
+    # parity-ready-http-01: serve ready/search/stats so the CLI works in hub
+    # mode (not just --db). Registered before /tasks/{task_id} so these static
+    # paths aren't captured by the path parameter.
+    @app.get("/tasks/ready")
+    def ready_tasks(
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [t.to_dict() for t in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)]
+
+    @app.get("/tasks/search")
+    def search_tasks(
+        q: str = Query(...),
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=50),
+    ) -> List[Dict[str, Any]]:
+        return [t.to_dict() for t in cp.search_tasks(q, project=project, tenant_id=tenant_id, limit=limit)]
+
+    @app.get("/tasks/stats")
+    def task_stats(
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+    ) -> Dict[str, int]:
+        return cp.task_stats(project=project, tenant_id=tenant_id)
+
+    @app.get("/tasks/{task_id}")
+    def get_task(task_id: str) -> Dict[str, Any]:
+        return cp.task_detail(task_id)
+
+    @app.put("/tasks/{task_id}")
+    def update_task(task_id: str, body: TaskUpdate) -> Dict[str, Any]:
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        if data.get("metadata") is not None:
+            _ensure_payload_bounded(data["metadata"], "task.metadata")
+        return cp.update_task(task_id, actor=actor, **data).to_dict()
+
+    @app.post("/tasks/{task_id}/children")
+    def add_child_tasks(task_id: str, body: TaskChildrenCreate) -> Dict[str, Any]:
+        data = _data(body)
+        for index, child in enumerate(data.get("children") or [], start=1):
+            if child.get("metadata") is not None:
+                _ensure_payload_bounded(child["metadata"], "task.children.%d.metadata" % index)
+        return cp.add_child_tasks(
+            task_id,
+            data.get("children") or [],
+            actor=data.get("actor", "human"),
+        )
+
+    @app.delete("/tasks/{task_id}")
+    def delete_task(
+        task_id: str,
+        force: bool = Query(default=False),
+        actor: str = Query(default="human"),
+    ) -> Dict[str, Any]:
+        cp.delete_task(task_id, force=force, actor=actor)
+        return {"deleted": task_id}
+
+    @app.get("/tasks/{task_id}/summary")
+    def task_summary(task_id: str) -> Dict[str, Any]:
+        return cp.task_summary(task_id)
+
+    @app.post("/fleets")
+    def create_fleet(
+        body: FleetCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.metadata, "fleet.metadata")
+        return cp.create_fleet(**_data(body)).to_dict()
+
+    @app.get("/fleets")
+    def list_fleets(
+        status: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [fleet.to_dict() for fleet in cp.list_fleets(status=status, tenant_id=tenant_id)]
+
+    @app.get("/fleets/{fleet_id_or_name}")
+    def get_fleet(fleet_id_or_name: str) -> Dict[str, Any]:
+        return cp.get_fleet(fleet_id_or_name).to_dict()
+
+    @app.put("/fleets/{fleet_id_or_name}")
+    def update_fleet(
+        fleet_id_or_name: str,
+        body: FleetUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        data = _data(body)
+        if data.get("metadata") is not None:
+            _ensure_payload_bounded(data["metadata"], "fleet.metadata")
+        return cp.update_fleet(fleet_id_or_name, **data).to_dict()
+
+    @app.post("/fleets/{fleet_id_or_name}/observed-agents")
+    def observe_fleet_agent(
+        fleet_id_or_name: str,
+        body: FleetAgentObserve,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.metadata, "fleet_observation.metadata")
+        return cp.observe_fleet_agent(fleet_id_or_name, **_data(body)).to_dict()
+
+    @app.delete("/fleets/{fleet_id_or_name}")
+    def delete_fleet(
+        fleet_id_or_name: str,
+        actor: str = Query(default="human"),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_fleet(fleet_id_or_name, actor=actor)
+        return {"deleted": fleet_id_or_name}
+
+    @app.get("/projects")
+    def list_projects() -> List[Dict[str, Any]]:
+        return cp.list_projects()
+
+    @app.post("/projects")
+    def create_project(
+        body: ProjectCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.metadata, "project.metadata")
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        metadata = dict(data.get("metadata") or {})
+        if principal.tenant_id is not None and not principal.is_admin:
+            origin_value = metadata.get("origin")
+            origin = dict(origin_value) if isinstance(origin_value, dict) else {}
+            origin["tenant_id"] = principal.tenant_id
+            metadata["origin"] = origin
+            data["metadata"] = metadata
+        return cp.create_project(actor=actor, **data).to_dict()
+
+    @app.get("/projects/{project}")
+    def get_project(project: str) -> Dict[str, Any]:
+        return cp.get_project(project)
+
+    @app.put("/projects/{project}")
+    def update_project(project: str, body: ProjectUpdate) -> Dict[str, Any]:
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        if data.get("metadata") is not None:
+            _ensure_payload_bounded(data["metadata"], "project.metadata")
+        return cp.update_project(project, actor=actor, **data).to_dict()
+
+    @app.delete("/projects/{project}")
+    def delete_project(
+        project: str,
+        force: bool = Query(default=False),
+        actor: str = Query(default="human"),
+    ) -> Dict[str, Any]:
+        cp.delete_project(project, force=force, actor=actor)
+        return {"deleted": project}
+
+    @app.post("/tasks/{task_id}/transition")
+    def transition_task(
+        task_id: str,
+        body: TransitionRequest,
+        background_tasks: BackgroundTasks,
+    ) -> Dict[str, Any]:
+        task = cp.transition_task(
+            task_id,
+            body.target_state,
+            body.actor,
+            body.detail,
+            drain_outbox=False,
+        )
+        background_tasks.add_task(
+            cp.drain_task_transition_outbox_best_effort,
+            task_id=task_id,
+            limit=20,
+        )
+        return task.to_dict()
+
+    @app.post("/tasks/{task_id}/claim")
+    def claim_task(
+        task_id: str,
+        agent_id: str,
+        background_tasks: BackgroundTasks,
+        lease_seconds: int = 900,
+    ) -> Dict[str, Any]:
+        task, lease = cp.claim_task(task_id, agent_id, lease_seconds, sync_beads=False)
+        background_tasks.add_task(
+            cp.sync_claim_side_effects,
+            task.id,
+            agent_id,
+            lease.id,
+            lease.expires_at,
+        )
+        return {"task": task.to_dict(), "lease": lease.to_dict()}
+
+    @app.post("/leases/{lease_id}/renew")
+    def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:
+        return cp.renew_lease(lease_id, body.agent_id, body.lease_seconds).to_dict()
+
+    @app.post("/leases/{lease_id}/delegate")
+    def delegate_lease(lease_id: str, body: LeaseDelegateRequest) -> Dict[str, Any]:
+        # PR2c (spec §6.3, Option B): the dispatcher holds the lease but
+        # the role agent spawned in the task Job authors start /
+        # submit_for_review / evidence. This endpoint records the
+        # delegation so those calls accept the delegate as a valid
+        # actor. Owner remains the sole renew/release authority.
+        return cp.delegate_lease(lease_id, body.agent_id, body.to_agent_id).to_dict()
+
+    @app.post("/tasks/{task_id}/start")
+    def start_task(
+        task_id: str,
+        agent_id: str,
+        background_tasks: BackgroundTasks,
+    ) -> Dict[str, Any]:
+        task = cp.start_task(task_id, agent_id, drain_outbox=False)
+        background_tasks.add_task(
+            cp.drain_task_transition_outbox_best_effort,
+            task_id=task_id,
+            limit=20,
+        )
+        return task.to_dict()
+
+    @app.post("/tasks/{task_id}/submit-for-review")
+    def submit_for_review(
+        task_id: str,
+        agent_id: str,
+        background_tasks: BackgroundTasks,
+        advance_default_workflow: bool = Query(default=False),
+    ) -> Dict[str, Any]:
+        task = cp.submit_for_review(task_id, agent_id, drain_outbox=False)
+        background_tasks.add_task(
+            cp.drain_task_transition_outbox_best_effort,
+            task_id=task_id,
+            limit=20,
+        )
+        if advance_default_workflow:
+            background_tasks.add_task(
+                cp.advance_default_review_workflow,
+                task_id,
+                actor=agent_id,
+            )
+        return task.to_dict()
+
+    @app.post("/tasks/{task_id}/evidence")
+    def add_evidence(
+        task_id: str,
+        body: EvidenceCreate,
+        background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-rreh: ``created_by`` arrived as opaque payload before; an
+        # agent token could mint evidence as any other agent and defeat
+        # the reviewer-independence check (which reads evidence.created_by
+        # downstream). Bind it to the principal.
+        principal.assert_actor(body.created_by)
+        evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
+        background_tasks.add_task(cp.sync_evidence_side_effects, evidence.id)
+        return evidence.to_dict()
+
+    @app.post("/machines")
+    def register_machine(
+        body: MachineRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.labels, "machine.labels")
+        _ensure_payload_bounded(body.resources, "machine.resources")
+        return cp.register_machine(**_data(body)).to_dict()
+
+    @app.get("/machines")
+    def list_machines() -> List[Dict[str, Any]]:
+        return [machine.to_dict() for machine in cp.list_machines()]
+
+    @app.post("/agents")
+    def register_agent(
+        body: AgentRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.resources, "agent.resources")
+        data = _data(body)
+        fleet_id = data.pop("fleet_id", None)
+        actor = str(data.get("actor") or "human")
+        agent = cp.register_agent(**data)
+        if fleet_id:
+            cp.observe_fleet_agent(
+                str(fleet_id),
+                agent.id,
+                source="agent-registration",
+                metadata={"registration_path": "/agents"},
+                actor=actor,
+            )
+        payload = agent.to_dict()
+        # First-registration only: surface the freshly-minted
+        # attestation key so the operator can deploy it to the worker.
+        # The key is never returned again — re-registrations get a
+        # response without ``attestation_key``. mac-ng2.
+        key = getattr(agent, "attestation_key", None)
+        if key:
+            payload["attestation_key"] = key
+        return payload
+
+    @app.post("/agents/{agent_id}/attestation-key/rotate")
+    def rotate_agent_attestation_key(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, str]:
+        principal.require_global_fleet()
+        return {
+            "agent_id": agent_id,
+            "attestation_key": cp.rotate_agent_attestation_key(agent_id),
+        }
+
+    @app.post("/agents/{agent_id}/attestation-key/verify")
+    def verify_agent_attestation_key(
+        agent_id: str,
+        body: AgentAttestationKeyVerify,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        _ensure_payload_bounded(body.challenge, "agent.attestation.challenge")
+        return {
+            "agent_id": agent_id,
+            "valid": cp.verify_agent_attestation_challenge(
+                agent_id,
+                body.challenge,
+                body.signature,
+            ),
+        }
+
+    @app.get("/agents")
+    def list_agents() -> List[Dict[str, Any]]:
+        return [agent.to_dict() for agent in cp.list_agents()]
+
+    @app.post("/agents/bulk")
+    def bulk_update_agents(
+        body: AgentBulkUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        if not body.agent_ids:
+            raise ValidationError("agent_ids is required")
+        data = _data(body)
+        agent_ids = [str(agent_id).strip() for agent_id in data.pop("agent_ids", [])]
+        if not data:
+            raise ValidationError("bulk update requires at least one update field")
+        updated = []
+        failed = []
+        for agent_id in agent_ids:
+            if not agent_id:
+                continue
+            try:
+                updated.append(cp.update_agent(agent_id, **data).to_dict())
+            except MACError as exc:
+                failed.append({"agent_id": agent_id, "error": str(exc)})
+        return {
+            "updated": updated,
+            "updated_count": len(updated),
+            "failed": failed,
+            "failed_count": len(failed),
+        }
+
+    @app.get("/agents/{agent_id}")
+    def get_agent(agent_id: str) -> Dict[str, Any]:
+        return cp.get_agent(agent_id).to_dict()
+
+    @app.put("/agents/{agent_id}")
+    def update_agent(
+        agent_id: str,
+        body: AgentUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        data = _data(body)
+        if data.get("resources") is not None:
+            _ensure_payload_bounded(data["resources"], "agent.resources")
+        return cp.update_agent(agent_id, **data).to_dict()
+
+    @app.post("/agents/{agent_id}/disable")
+    def disable_agent(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.disable_agent(agent_id).to_dict()
+
+    @app.delete("/agents/{agent_id}")
+    def delete_agent(
+        agent_id: str,
+        actor: str = Query(default="human"),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_agent(agent_id, actor=actor)
+        return {"deleted": agent_id}
+
+    # Agent roles (persona catalog) ---------------------------------
+
+    @app.post("/roles")
+    def create_role(
+        body: RoleCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.roles.create_role(**_data(body)).to_dict()
+
+    @app.get("/roles")
+    def list_roles(
+        tenant_id: Optional[str] = Query(default=None),
+        level: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            role.to_dict()
+            for role in cp.roles.list_roles(tenant_id=tenant_id, level=level)
+        ]
+
+    @app.get("/roles/{role_id_or_slug}")
+    def get_role(role_id_or_slug: str) -> Dict[str, Any]:
+        return cp.roles.get_role(role_id_or_slug).to_dict()
+
+    @app.put("/roles/{role_id}")
+    def update_role(
+        role_id: str,
+        body: RoleUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        role = cp.roles.get_role(role_id)
+        principal.assert_tenant(role.tenant_id)
+        return cp.roles.update_role(role_id, **_data(body)).to_dict()
+
+    @app.delete("/roles/{role_id}")
+    def delete_role(
+        role_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        role = cp.roles.get_role(role_id)
+        principal.assert_tenant(role.tenant_id)
+        cp.roles.delete_role(role_id)
+        return {"deleted": role_id}
+
+    @app.post("/roles/seed")
+    def seed_roles(
+        body: RoleSeed,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        # Global catalog seeding is admin-only (the dispatch in
+        # _required_scope already enforces this, but we double-check the
+        # principal isn't tenant-bound to avoid stamping global rows from a
+        # tenant token if scopes are ever relaxed).
+        principal.require_global_fleet()
+        return [role.to_dict() for role in cp.roles.seed_defaults(replace=body.replace)]
+
+    @app.post("/agents/{agent_id}/role")
+    def assign_role(
+        agent_id: str,
+        body: RoleAssign,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.roles.assign_role(agent_id, body.role_id_or_slug).to_dict()
+
+    @app.delete("/agents/{agent_id}/role")
+    def unassign_role(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.roles.unassign_role(agent_id).to_dict()
+
+    @app.get("/agents/{agent_id}/identity")
+    def get_agent_identity(agent_id: str) -> Dict[str, Any]:
+        return cp.agent_identity(agent_id)
+
+    # Agent provisioning hook --------------------------------------
+
+    @app.post("/provisioning/requests")
+    def create_provisioning_request(
+        body: ProvisioningRequestCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.provisioning.request_agent(**_data(body)).to_dict()
+
+    @app.get("/provisioning/requests")
+    def list_provisioning_requests(
+        status: Optional[str] = Query(default=None),
+        role_slug: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            request.to_dict()
+            for request in cp.provisioning.list_requests(
+                status=status,
+                role_slug=role_slug,
+                tenant_id=tenant_id,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/provisioning/requests/{request_id}")
+    def get_provisioning_request(request_id: str) -> Dict[str, Any]:
+        return cp.provisioning.get_request(request_id).to_dict()
+
+    @app.post("/provisioning/requests/{request_id}/fulfill")
+    def fulfill_provisioning_request(
+        request_id: str,
+        body: ProvisioningRequestFulfill,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.provisioning.fulfill_request(request_id, body.agent_id).to_dict()
+
+    @app.post("/provisioning/requests/{request_id}/cancel")
+    def cancel_provisioning_request(
+        request_id: str,
+        body: ProvisioningRequestCancel,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.provisioning.cancel_request(request_id, reason=body.reason).to_dict()
+
+    # Workflows (data-driven, definable) -----------------------------
+
+    @app.post("/workflows")
+    def create_workflow(
+        body: WorkflowCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.workflows.create_workflow(**_data(body)).to_dict()
+
+    @app.get("/workflows")
+    def list_workflows(
+        tenant_id: Optional[str] = Query(default=None),
+        workflow_type: Optional[str] = Query(default=None),
+        enabled: Optional[bool] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            wf.to_dict()
+            for wf in cp.workflows.list_workflows(
+                tenant_id=tenant_id,
+                workflow_type=workflow_type,
+                enabled=enabled,
+            )
+        ]
+
+    @app.post("/workflows/preview")
+    def preview_workflow_definition(
+        body: WorkflowPreview,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if body.tenant_id is not None:
+            principal.assert_tenant(body.tenant_id)
+        if body.definition is None:
+            raise ValidationError("workflow preview requires definition")
+        return cp.preview_workflow_definition(
+            body.definition,
+            tenant_id=body.tenant_id,
+            input=body.input,
+        )
+
+    @app.post("/workflows/drafts")
+    def create_workflow_draft(
+        body: WorkflowDraftCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.create_workflow_draft(**_data(body)).to_dict()
+
+    @app.get("/workflows/drafts")
+    def list_workflow_drafts(
+        tenant_id: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            draft.to_dict()
+            for draft in cp.list_workflow_drafts(
+                tenant_id=tenant_id,
+                status=status,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/workflows/drafts/{draft_id}")
+    def get_workflow_draft(draft_id: str) -> Dict[str, Any]:
+        return cp.get_workflow_draft(draft_id).to_dict()
+
+    @app.put("/workflows/drafts/{draft_id}")
+    def update_workflow_draft(
+        draft_id: str,
+        body: WorkflowDraftUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        draft = cp.get_workflow_draft(draft_id)
+        principal.assert_tenant(draft.tenant_id)
+        return cp.update_workflow_draft(draft_id, **_data(body)).to_dict()
+
+    @app.post("/workflows/drafts/{draft_id}/preview")
+    def preview_workflow_draft(
+        draft_id: str,
+        body: WorkflowPreview,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        draft = cp.get_workflow_draft(draft_id)
+        principal.assert_tenant(draft.tenant_id)
+        return cp.preview_workflow_draft(draft_id, input=body.input)
+
+    @app.post("/workflows/drafts/{draft_id}/approve")
+    def approve_workflow_draft(
+        draft_id: str,
+        body: WorkflowDraftApprove,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        draft = cp.get_workflow_draft(draft_id)
+        principal.assert_tenant(draft.tenant_id)
+        return cp.approve_workflow_draft(draft_id, **_data(body)).to_dict()
+
+    @app.get("/workflows/runs")
+    def list_workflow_runs(
+        state: Optional[str] = Query(default=None),
+        workflow_id: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            run.to_dict()
+            for run in cp.workflow_runtime.list_runs(
+                state=state, workflow_id=workflow_id, tenant_id=tenant_id, limit=limit
+            )
+        ]
+
+    @app.get("/workflows/{workflow_id_or_slug}")
+    def get_workflow(workflow_id_or_slug: str) -> Dict[str, Any]:
+        return cp.workflows.get_workflow(workflow_id_or_slug).to_dict()
+
+    @app.post("/workflows/{workflow_id_or_slug}/preview")
+    def preview_workflow(
+        workflow_id_or_slug: str,
+        body: WorkflowPreview,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if body.tenant_id is not None:
+            principal.assert_tenant(body.tenant_id)
+        return cp.preview_workflow(
+            workflow_id_or_slug,
+            tenant_id=body.tenant_id,
+            input=body.input,
+        )
+
+    @app.put("/workflows/{workflow_id}")
+    def update_workflow(
+        workflow_id: str,
+        body: WorkflowUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        wf = cp.workflows.get_workflow(workflow_id)
+        principal.assert_tenant(wf.tenant_id)
+        return cp.workflows.update_workflow(workflow_id, **_data(body)).to_dict()
+
+    @app.delete("/workflows/{workflow_id}")
+    def delete_workflow(
+        workflow_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        wf = cp.workflows.get_workflow(workflow_id)
+        principal.assert_tenant(wf.tenant_id)
+        cp.workflows.delete_workflow(workflow_id)
+        return {"deleted": workflow_id}
+
+    @app.post("/workflows/import-yaml")
+    def import_workflow_yaml(
+        body: WorkflowImportYaml,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.workflows.import_yaml(
+            body.yaml,
+            created_by=body.created_by,
+            tenant_id=body.tenant_id,
+            is_default=body.is_default,
+        ).to_dict()
+
+    @app.post("/workflows/seed")
+    def seed_workflows(
+        body: WorkflowSeed,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        principal.require_global_fleet()
+        return [wf.to_dict() for wf in cp.workflows.seed_defaults()]
+
+    @app.post("/workflows/{workflow_id_or_slug}/start")
+    def start_workflow_run(
+        workflow_id_or_slug: str,
+        body: WorkflowStart,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.workflow_runtime.start_run(
+            workflow_id_or_slug,
+            started_by=body.started_by,
+            input=body.input,
+            tenant_id=body.tenant_id,
+            pre_decisions=body.pre_decisions or None,
+        ).to_dict()
+
+    @app.get("/workflows/runs/{run_id}")
+    def get_workflow_run(run_id: str) -> Dict[str, Any]:
+        return cp.workflow_runtime.get_run(run_id).to_dict()
+
+    @app.post("/workflows/runs/{run_id}/cancel")
+    def cancel_workflow_run(
+        run_id: str,
+        body: WorkflowCancel,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_runtime.cancel_run(
+            run_id, reason=body.reason, actor=body.actor
+        ).to_dict()
+
+    @app.post("/workflows/runs/tick")
+    def tick_workflow_runs(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return [run.to_dict() for run in cp.workflow_runtime.tick()]
+
+    # wf-02: decisions inventory — enumerate every approval-node gate
+    # in a workflow (or a live run) so a human can preview all the
+    # input the system will need.
+    @app.get("/workflows/{workflow_id_or_slug}/decisions")
+    def workflow_decisions(
+        workflow_id_or_slug: str,
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_decisions(workflow_id_or_slug, tenant_id=tenant_id)
+
+    @app.get("/workflows/runs/{run_id}/decisions")
+    def workflow_run_decisions(
+        run_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.workflow_run_decisions(run_id)
+
+    @app.get("/fleet/build-distribution")
+    def fleet_build_distribution() -> Dict[str, Any]:
+        return cp.fleet_build_distribution()
+
+    # Mood — agent-self-reported emotional state
+    @app.put("/agents/{agent_id}/mood")
+    @app.post("/agents/{agent_id}/mood")
+    def set_mood(agent_id: str, body: MoodSet) -> Dict[str, Any]:
+        return cp.set_mood(agent_id, **_data(body)).to_dict()
+
+    @app.get("/agents/{agent_id}/mood")
+    def get_mood(agent_id: str) -> Optional[Dict[str, Any]]:
+        overlay = cp.get_current_mood(agent_id)
+        return overlay.to_dict() if overlay is not None else None
+
+    @app.delete("/agents/{agent_id}/mood")
+    def clear_mood(agent_id: str, body: MoodClear) -> Optional[Dict[str, Any]]:
+        cleared = cp.clear_mood(agent_id, **_data(body))
+        return cleared.to_dict() if cleared is not None else None
+
+    @app.get("/agents/{agent_id}/mood/history")
+    def list_mood_history(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return [overlay.to_dict() for overlay in cp.list_mood_history(agent_id, limit=limit)]
+
+    # Nap — daily memory-consolidation lifecycle
+    @app.put("/agents/{agent_id}/nap-schedule")
+    @app.post("/agents/{agent_id}/nap-schedule")
+    def configure_nap(agent_id: str, body: NapConfigure) -> Dict[str, Any]:
+        return cp.configure_nap(agent_id, **_data(body)).to_dict()
+
+    @app.get("/agents/{agent_id}/nap-schedule")
+    def get_nap_schedule(agent_id: str) -> Optional[Dict[str, Any]]:
+        schedule = cp.get_nap_schedule(agent_id)
+        return schedule.to_dict() if schedule is not None else None
+
+    @app.get("/agents/{agent_id}/nap-schedule/next")
+    def next_nap_window(agent_id: str) -> Optional[Dict[str, Any]]:
+        return cp.next_nap_window(agent_id)
+
+    @app.get("/nap-schedules")
+    def list_nap_schedules() -> List[Dict[str, Any]]:
+        return [schedule.to_dict() for schedule in cp.list_nap_schedules()]
+
+    @app.post("/agents/{agent_id}/nap-runs")
+    def begin_nap(agent_id: str, body: NapBegin) -> Dict[str, Any]:
+        return cp.begin_nap(agent_id, **_data(body)).to_dict()
+
+    @app.get("/nap-runs")
+    def list_nap_runs(agent_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [run.to_dict() for run in cp.list_nap_runs(agent_id)]
+
+    @app.get("/nap-runs/{run_id}")
+    def get_nap_run(run_id: str) -> Dict[str, Any]:
+        return cp.get_nap_run(run_id).to_dict()
+
+    @app.post("/nap-runs/{run_id}/complete")
+    def complete_nap(run_id: str, body: NapComplete) -> Dict[str, Any]:
+        return cp.complete_nap(run_id, **_data(body)).to_dict()
+
+    @app.post("/nap-runs/{run_id}/fail")
+    def fail_nap(run_id: str, body: NapFail) -> Dict[str, Any]:
+        return cp.fail_nap(run_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/heartbeat")
+    def heartbeat_agent(
+        agent_id: str,
+        body: HeartbeatRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-wcfy: heartbeat/claim-next/command-audit took agent_id
+        # from the URL with no check that the token represents that
+        # agent. Any agent-scoped token could heartbeat/claim/audit-log
+        # as a peer. Bind to principal.
+        principal.assert_actor(agent_id)
+        return cp.heartbeat_agent(agent_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/claim-next")
+    def claim_next_for_agent(
+        agent_id: str,
+        body: AgentClaimNextRequest,
+        background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Optional[Dict[str, Any]]:
+        principal.assert_actor(agent_id)  # mac-wcfy
+        assignment = cp.claim_next_for_agent(
+            agent_id,
+            lease_seconds=body.lease_seconds,
+            allowed_projects=body.allowed_projects,
+            required_metadata=body.required_metadata,
+            require_canary=body.require_canary,
+            dry_run=body.dry_run,
+            capabilities=body.capabilities,
+            sync_beads=False,
+        )
+        if assignment and not body.dry_run:
+            task = assignment["task"]
+            lease = assignment["lease"]
+            background_tasks.add_task(
+                cp.sync_claim_side_effects,
+                task["id"],
+                agent_id,
+                lease["id"],
+                lease["expires_at"],
+            )
+        return assignment
+
+    @app.post("/agents/{agent_id}/service-claims/sync")
+    def sync_agent_service_claims(
+        agent_id: str,
+        body: ServiceClaimsSyncRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # an agent syncs only its OWN service claims
+        return cp.sync_agent_service_claims(
+            agent_id, body.willing_ops, lease_seconds=body.lease_seconds
+        )
+
+    @app.get("/service-roles")
+    def list_service_roles() -> List[Dict[str, Any]]:
+        return [r.to_dict() for r in cp.service_roles.desired_services()]
+
+    @app.get("/service-claims")
+    def list_service_claims(op: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        role_id = None
+        if op:
+            try:
+                role_id = cp.service_roles.get_role_by_slug("media:%s" % op).id
+            except Exception:  # noqa: BLE001
+                return []
+        return [c.to_dict() for c in cp.service_roles.list_active_claims(role_id=role_id)]
+
+    @app.post("/agents/{agent_id}/command-audit")
+    def record_agent_command_audit(
+        agent_id: str,
+        body: CommandAuditCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # mac-wcfy
+        return cp.record_command_audit(agent_id=agent_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/installed-packages")
+    def update_agent_installed_packages(
+        agent_id: str,
+        body: AgentInstalledPackagesUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)  # an agent reports only its OWN footprint
+        return cp.update_agent_installed_packages(
+            agent_id, body.installed_packages, actor=agent_id
+        ).to_dict()
+
+    @app.get("/command-audit")
+    def list_command_audit(
+        agent_id: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        command_id: Optional[str] = Query(default=None),
+        phase: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        limit: int = Query(default=200),
+    ) -> List[Dict[str, Any]]:
+        return [
+            record.to_dict()
+            for record in cp.list_command_audit(
+                agent_id=agent_id,
+                task_id=task_id,
+                command_id=command_id,
+                phase=phase,
+                since=since,
+                until=until,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/agents/{agent_id}/command-audit")
+    def list_agent_command_audit(
+        agent_id: str,
+        task_id: Optional[str] = Query(default=None),
+        phase: Optional[str] = Query(default=None),
+        limit: int = Query(default=200),
+    ) -> List[Dict[str, Any]]:
+        return [
+            record.to_dict()
+            for record in cp.list_command_audit(
+                agent_id=agent_id,
+                task_id=task_id,
+                phase=phase,
+                limit=limit,
+            )
+        ]
+
+    @app.post("/dispatch/assign")
+    def dispatch_once(body: DispatchRequest) -> Optional[Dict[str, Any]]:
+        return cp.dispatch_once(body.lease_seconds)
+
+    @app.post("/dispatch/tick")
+    def dispatch_tick(body: DispatchRequest) -> Dict[str, Any]:
+        return cp.tick(body.lease_seconds, body.limit, body.stale_after_seconds)
+
+    @app.get("/dispatch/dead-letters")
+    def dead_letters(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [task.to_dict() for task in cp.list_dead_letters(tenant_id)]
+
+    @app.get("/events")
+    def list_events(
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        actor: Optional[str] = Query(default=None),
+        event_type: Optional[str] = Query(default=None),
+        event_type_prefix: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return cp.list_events(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            actor=actor,
+            event_type=event_type,
+            event_type_prefix=event_type_prefix,
+            since=since,
+            until=until,
+            limit=limit,
+        )
+
+    @app.post("/observability/metrics")
+    def record_observability_metric(body: ObservabilityMetricCreate) -> Dict[str, Any]:
+        return cp.record_metric(**_data(body)).to_dict()
+
+    @app.post("/observability/logs")
+    def record_observability_log(body: ObservabilityLogCreate) -> Dict[str, Any]:
+        # record_log returns None when the log name is a silenced high-volume
+        # idle-poll emitter (mem-04 dropped 1.83M/2.09M rows from these). That's
+        # an intentional drop, not an error — report it as filtered rather than
+        # calling .to_dict() on None, which 500'd on every silenced poll log.
+        event = cp.record_log(**_data(body))
+        return event.to_dict() if event is not None else {"filtered": True}
+
+    @app.get("/observability/metrics")
+    def list_observability_metrics(
+        layer: Optional[str] = Query(default=None),
+        name: Optional[str] = Query(default=None),
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        after_sequence: Optional[int] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            event.to_dict()
+            for event in cp.list_observability(
+                kind="metric",
+                layer=layer,
+                name=name,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                since=since,
+                until=until,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/observability/logs")
+    def list_observability_logs(
+        layer: Optional[str] = Query(default=None),
+        level: Optional[str] = Query(default=None),
+        name: Optional[str] = Query(default=None),
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        after_sequence: Optional[int] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            event.to_dict()
+            for event in cp.list_observability(
+                kind="log",
+                layer=layer,
+                level=level,
+                name=name,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                since=since,
+                until=until,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/observability")
+    def list_observability(
+        kind: Optional[str] = Query(default=None),
+        layer: Optional[str] = Query(default=None),
+        level: Optional[str] = Query(default=None),
+        name: Optional[str] = Query(default=None),
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        after_sequence: Optional[int] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            event.to_dict()
+            for event in cp.list_observability(
+                kind=kind,
+                layer=layer,
+                level=level,
+                name=name,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                since=since,
+                until=until,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/notifications")
+    def list_notifications(
+        status: Optional[str] = Query(default=None),
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            notification.to_dict()
+            for notification in cp.list_notifications(
+                status=status,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                limit=limit,
+            )
+        ]
+
+    @app.post("/integrations/findings")
+    def record_integration_finding_endpoint(
+        body: IntegrationFindingCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        finding = cp.record_integration_finding(
+            body.source_kind,
+            body.source_id,
+            body.finding_type,
+            body.title,
+            body.detail,
+            severity=body.severity,
+            fingerprint=body.fingerprint,
+            notify=body.notify,
+            channels=body.channels,
+            notification_body=body.notification_body,
+        )
+        return finding.to_dict()
+
+    @app.get("/integrations/findings")
+    def list_integration_findings(
+        source_kind: Optional[str] = Query(default=None),
+        source_id: Optional[str] = Query(default=None),
+        finding_type: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        severity: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            finding.to_dict()
+            for finding in cp.list_integration_findings(
+                source_kind=source_kind,
+                source_id=source_id,
+                finding_type=finding_type,
+                status=status,
+                severity=severity,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/integrations/observations")
+    def list_integration_observations(
+        source_kind: Optional[str] = Query(default=None),
+        source_id: Optional[str] = Query(default=None),
+        authority: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            observation.to_dict()
+            for observation in cp.list_integration_observations(
+                source_kind=source_kind,
+                source_id=source_id,
+                authority=authority,
+                status=status,
+                limit=limit,
+            )
+        ]
+
+    @app.post("/notifications/{notification_id}/delivered")
+    def mark_notification_delivered(
+        notification_id: str,
+        body: NotificationDelivery,
+    ) -> Dict[str, Any]:
+        return cp.mark_notification_delivered(notification_id, status=body.status).to_dict()
+
+    @app.post("/notifier/channels")
+    def configure_notifier_channel(
+        body: NotifierChannelConfig,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.configure_notifier_channel(**_data(body)).to_dict()
+
+    @app.get("/notifier/channels")
+    def list_notifier_channels(
+        enabled: Optional[bool] = Query(default=None),
+        channel_type: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            channel.to_dict()
+            for channel in cp.list_notifier_channels(
+                enabled=enabled,
+                channel_type=channel_type,
+            )
+        ]
+
+    @app.get("/notifier/channels/{channel_id_or_name}")
+    def get_notifier_channel(channel_id_or_name: str) -> Dict[str, Any]:
+        return cp.get_notifier_channel(channel_id_or_name).to_dict()
+
+    @app.delete("/notifier/channels/{channel_id_or_name}")
+    def delete_notifier_channel(
+        channel_id_or_name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_notifier_channel(channel_id_or_name)
+        return {"deleted": channel_id_or_name}
+
+    @app.post("/notifier/deliver")
+    def deliver_notifications(
+        body: NotifierDeliveryRun,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.deliver_pending_notifications(
+            limit=body.limit,
+            notification_id=body.notification_id,
+        )
+
+    @app.get("/observability/summary")
+    def observability_summary(limit: int = Query(default=80)) -> Dict[str, Any]:
+        return cp.observability_summary(limit)
+
+    @app.get("/observability/stream")
+    async def observability_stream(
+        request: Request,
+        after_sequence: int = Query(default=0),
+        timeout_seconds: float = Query(default=30.0),
+        poll_interval_seconds: float = Query(default=0.5),
+        kind: Optional[str] = Query(default=None),
+        layer: Optional[str] = Query(default=None),
+        level: Optional[str] = Query(default=None),
+    ) -> StreamingResponse:
+        cp.list_observability(
+            kind=kind,
+            layer=layer,
+            level=level,
+            after_sequence=max(0, int(after_sequence)),
+            limit=1,
+        )
+
+        async def iter_observations() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                # mac-ob1m: abort cleanly when the client has gone away
+                # so a slow-or-abandoned consumer doesn't keep issuing
+                # DB queries until deadline.
+                if await request.is_disconnected():
+                    break
+                observations = cp.list_observability(
+                    kind=kind,
+                    layer=layer,
+                    level=level,
+                    after_sequence=cursor,
+                    limit=100,
+                )
+                for observation in observations:
+                    cursor = observation.sequence
+                    yield json.dumps(observation.to_dict(), sort_keys=True) + "\n"
+                if observations:
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_observations(), media_type="application/x-ndjson")
+
+    @app.post("/messages")
+    def send_message(
+        body: MessageCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5: bind sender to the principal.
+        principal.assert_actor(body.sender_agent_id)
+        return cp.send_message(**_data(body)).to_dict()
+
+    @app.get("/messages")
+    def list_messages(
+        agent_id: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return [message.to_dict() for message in cp.list_messages(agent_id, limit=limit)]
+
+    @app.post("/agents/{agent_id}/messages/deliver")
+    def deliver_messages(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return [message.to_dict() for message in cp.deliver_messages(agent_id, limit)]
+
+    @app.post("/agentbus/streams")
+    def open_agentbus_stream(
+        body: AgentBusOpen,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
+        return cp.open_agentbus_stream(**_data(body)).to_dict()
+
+    @app.get("/agentbus/streams")
+    def list_agentbus_streams(
+        agent_id: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            stream.to_dict()
+            for stream in cp.list_agentbus_streams(agent_id=agent_id, status=status, limit=limit)
+        ]
+
+    @app.post("/agentbus/streams/{stream_id}/chunks")
+    def append_agentbus_chunk(
+        stream_id: str,
+        body: AgentBusAppend,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
+        return cp.append_agentbus_chunk(stream_id, **_data(body)).to_dict()
+
+    @app.get("/agentbus/streams/{stream_id}/chunks")
+    def read_agentbus_chunks(
+        stream_id: str,
+        agent_id: str,
+        after_sequence: int = Query(default=0),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            chunk.to_dict()
+            for chunk in cp.read_agentbus_chunks(agent_id, stream_id, after_sequence, limit)
+        ]
+
+    @app.post("/agentbus/streams/{stream_id}/close")
+    def close_agentbus_stream(
+        stream_id: str,
+        sender_agent_id: str,
+        status: str = "closed",
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(sender_agent_id)
+        return cp.close_agentbus_stream(stream_id, sender_agent_id, status).to_dict()
+
+    @app.post("/agentbus")
+    def publish_agentbus_content(
+        body: AgentBusPublish,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-kgi5
+        principal.assert_actor(body.sender_agent_id)
+        return cp.publish_agentbus_content(**_data(body))
+
+    @app.post("/agentbus/repo-update")
+    def publish_agentbus_repo_update(
+        body: AgentBusRepoUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-si4l: /agentbus/repo-update is a fleet-wide restart
+        # primitive. Require admin scope OR a sender that matches the
+        # principal's agent_id binding. Combined, this means a single
+        # compromised agent token can't broadcast restart=true to every
+        # peer; only an admin or the bound agent's own future-self can.
+        if not principal.is_admin:
+            principal.assert_actor(body.sender_agent_id)
+            if body.all_agents:
+                raise AuthorizationError(
+                    "fleet-wide repo-update (all_agents=true) requires admin scope"
+                )
+        recipients = list(body.recipient_agent_ids)
+        if body.all_agents:
+            recipients.extend(agent.id for agent in cp.list_agents())
+        recipients = list(dict.fromkeys(item for item in recipients if item))
+        if not recipients:
+            raise ValidationError("repo-update requires recipient_agent_ids or all_agents=true")
+        payload = repo_update_payload(
+            repo_path=body.repo_path,
+            remote=body.remote,
+            branch=body.branch,
+            restart=body.restart,
+            request_id=body.request_id,
+        )
+        published = [
+            cp.publish_agentbus_content(
+                sender_agent_id=body.sender_agent_id,
+                recipient_agent_id=recipient_id,
+                content_type=REPO_UPDATE_CONTENT_TYPE,
+                topic=REPO_UPDATE_TOPIC,
+                payload=payload,
+            )
+            for recipient_id in recipients
+        ]
+        return {
+            "schema": "mac.agentbus.repo_update_publish.v1",
+            "count": len(published),
+            "streams": [item["stream"] for item in published],
+        }
+
+    @app.post("/agentbus/artifact-publish")
+    def publish_agentbus_artifact(
+        body: AgentBusArtifactPublish,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.sender_agent_id)
+        return cp.publish_agentbus_artifact(**_data(body))
+
+    @app.get("/agentbus/streams/{stream_id}/events")
+    async def agentbus_stream_events(
+        stream_id: str,
+        request: Request,
+        agent_id: str,
+        after_sequence: int = Query(default=0),
+        timeout_seconds: float = Query(default=30.0),
+        poll_interval_seconds: float = Query(default=0.25),
+    ) -> StreamingResponse:
+        # Authorize before we start streaming so denials surface as proper HTTP
+        # errors rather than a half-open response.
+        cp.assert_agentbus_authorized(agent_id, stream_id)
+
+        async def iter_events() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                # mac-ob1m: stop polling when the client has disconnected.
+                if await request.is_disconnected():
+                    break
+                chunks = cp.read_agentbus_chunks(agent_id, stream_id, cursor, limit=100)
+                for chunk in chunks:
+                    cursor = chunk.sequence
+                    yield json.dumps(chunk.to_dict(), sort_keys=True) + "\n"
+                if chunks:
+                    if time.monotonic() >= deadline:
+                        break
+                    # Yield control between batches so we don't starve the event
+                    # loop while draining a backlog.
+                    await asyncio.sleep(0)
+                    continue
+                if cp.get_agentbus_stream(stream_id).status != "open":
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
+
+    @app.post("/tasks/{task_id}/reviews")
+    def request_review(task_id: str, body: ReviewRequest) -> Dict[str, Any]:
+        return cp.request_review(task_id, body.reviewer_agent_id, body.actor).to_dict()
+
+    @app.post("/reviews/{review_id}/claim")
+    def claim_review(
+        review_id: str,
+        body: ReviewClaim,
+        background_tasks: BackgroundTasks,
+    ) -> Dict[str, Any]:
+        claim = cp.claim_review(
+            review_id,
+            body.reviewer_agent_id,
+            executor_evidence_id=body.executor_evidence_id,
+            actor=body.actor,
+            sync_beads=False,
+        )
+        if claim.get("status") == "claimed":
+            task = claim.get("task") if isinstance(claim.get("task"), dict) else {}
+            background_tasks.add_task(
+                cp.sync_review_claim_side_effects,
+                str(task.get("id") or ""),
+                review_id,
+                body.reviewer_agent_id,
+            )
+        return claim
+
+    @app.post("/reviews/{review_id}/decision")
+    def submit_review(review_id: str, body: ReviewDecision) -> Dict[str, Any]:
+        return cp.submit_review(review_id, **_data(body)).to_dict()
+
+    @app.post("/reviews/default/tick")
+    def default_review_tick(
+        limit: int = Query(default=100),
+        actor: str = Query(default="operator"),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Admin scope is required by _required_scope. If the caller is
+        # tenant-bound (rare for admin tokens but supported), force the
+        # filter to their tenant so a misconfigured admin can't sweep
+        # across tenant boundaries (mac-dyk).
+        if principal.tenant_id is not None and tenant_id is None:
+            tenant_id = principal.tenant_id
+        if (
+            principal.tenant_id is not None
+            and tenant_id is not None
+            and tenant_id != principal.tenant_id
+        ):
+            principal.assert_tenant(tenant_id)
+        return cp.advance_default_review_workflows(
+            limit=limit, actor=actor, tenant_id=tenant_id
+        )
+
+    @app.post("/publications")
+    def publish(body: PublicationCreate) -> Dict[str, Any]:
+        return cp.publish_task(**_data(body)).to_dict()
+
+    def _assert_secret_tenant(principal: TokenPrincipal, secret_id: str) -> None:
+        # mac-01g0: every /secrets/* operation must be tenant-isolated.
+        # Derive the tenant set from the secret's scopes; refuse when
+        # the principal's tenant doesn't match. Admin / unbound tokens
+        # bypass the check.
+        if principal.is_admin or principal.tenant_id is None:
+            return
+        secret = cp.get_secret(secret_id)
+        scopes = secret.scopes if isinstance(secret.scopes, dict) else {}
+        tenant_ids = set(scopes.get("tenant_ids") or [])
+        if scopes.get("tenant_id"):
+            tenant_ids.add(str(scopes["tenant_id"]))
+        # An unscoped secret (no tenant) is "global" — tenant-bound
+        # tokens may not touch it.
+        if not tenant_ids or principal.tenant_id not in tenant_ids:
+            raise AuthorizationError(
+                "secret %s is not scoped to token tenant %s"
+                % (secret_id, principal.tenant_id)
+            )
+
+    # mac-xc8u: simple per-principal sliding-window rate limit for
+    # secret-reveal/access calls. A compromised token cannot enumerate
+    # every (secret_id, audit_id) pair at line rate. The window is in
+    # memory and per-process; multi-process deployments will need a
+    # shared store, but for the current single-process hub this is the
+    # right blast-radius reduction with no schema change.
+    secret_rate_state: Dict[str, list] = {}
+
+    def _enforce_secret_rate_limit(principal: TokenPrincipal, route: str) -> None:
+        import collections
+        max_calls = 30
+        window_seconds = 60
+        # admin tokens are operator-driven and unlikely to enumerate
+        if principal.is_admin:
+            return
+        key = "%s::%s::%s" % (principal.tenant_id or "-", principal.agent_id or "-", route)
+        bucket = secret_rate_state.setdefault(key, [])
+        now_t = time.monotonic()
+        cutoff = now_t - window_seconds
+        # prune
+        secret_rate_state[key] = [t for t in bucket if t >= cutoff]
+        if len(secret_rate_state[key]) >= max_calls:
+            raise AuthorizationError(
+                "secret %s rate limit exceeded for token: %d calls in %ds"
+                % (route, max_calls, window_seconds)
+            )
+        secret_rate_state[key].append(now_t)
+
+    @app.post("/secrets")
+    def create_secret(
+        body: SecretCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # mac-01g0: bind create_secret to the principal's tenant if any.
+        scopes = body.scopes if isinstance(body.scopes, dict) else {}
+        target_tenant = scopes.get("tenant_id")
+        if target_tenant is None and scopes.get("tenant_ids"):
+            tenants = list(scopes.get("tenant_ids") or [])
+            target_tenant = tenants[0] if tenants else None
+        if target_tenant is not None:
+            principal.assert_tenant(str(target_tenant))
+        return cp.create_secret(**_data(body)).to_dict()
+
+    @app.get("/secrets")
+    def list_secrets() -> List[Dict[str, Any]]:
+        return [secret.to_dict() for secret in cp.list_secrets()]
+
+    @app.post("/secrets/{secret_id}/access")
+    def request_secret(
+        secret_id: str,
+        body: SecretAccessRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _enforce_secret_rate_limit(principal, "access")  # mac-xc8u
+        # mac-k30g: accessor_agent_id was self-asserted in the body. A
+        # token bound to a specific agent must not be able to request
+        # secrets as a different agent.
+        principal.assert_actor(body.accessor_agent_id)
+        _assert_secret_tenant(principal, secret_id)
+        return cp.request_secret(
+            secret_id,
+            body.accessor_agent_id,
+            body.purpose,
+            body.ttl_seconds,
+        ).to_dict()
+
+    @app.post("/secrets/{secret_id}/reveal")
+    def reveal_secret(
+        secret_id: str,
+        body: SecretRevealRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _enforce_secret_rate_limit(principal, "reveal")  # mac-xc8u
+        # mac-k30g: same — reveal must be bound to the actor the token
+        # represents. With no agent_id binding the call still works
+        # (operator/admin), but a fleet token cannot impersonate a peer.
+        principal.assert_actor(body.accessor_agent_id)
+        _assert_secret_tenant(principal, secret_id)
+        return {
+            "secret_id": secret_id,
+            "value": cp.reveal_secret(secret_id, body.audit_id, body.accessor_agent_id),
+        }
+
+    @app.post("/secrets/{name}/resolve")
+    def resolve_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # th-merge-07: audited admin reveal-by-name for in-fleet consumers — the
+        # Slack fetcher reads slack.<agent>.* from mac's vault now that TokenHub is
+        # retired. Requires the `secret` scope (admin inherits it); decrypt-at-use
+        # and access-audited via SecretsService.resolve_secret_value. Distinct from
+        # the request/reveal handle flow (which is for per-agent scoped access).
+        _enforce_secret_rate_limit(principal, "resolve")  # mac-xc8u
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        accessor = getattr(principal, "agent_id", None) or "fleet-fetch"
+        value = secrets.resolve_secret_value(name, purpose="fleet-fetch", accessor=accessor)
+        if value is None:
+            raise NotFoundError("secret not found or disabled: %s" % name)
+        return {"name": name, "value": value}
+
+    @app.delete("/secrets/{name}")
+    def delete_secret(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Hard-delete a secret (scrub the value + remove the row). Requires the
+        # `secret` scope (admin inherits it; covered by _required_scope for
+        # /secrets*). Used to clean up stale/decommissioned secrets, e.g. a spoke's
+        # now-unused router key after key centralization.
+        secrets = getattr(cp, "secrets", None)
+        if secrets is None:
+            raise NotFoundError("secret store unavailable")
+        actor = getattr(principal, "agent_id", None) or "operator"
+        return cp.delete_secret(name, actor=actor)
+
+    @app.post("/secrets/{name}/rotate")
+    def rotate_secret(
+        name: str,
+        body: SecretRotate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Rotate a secret's value in place, audited as a rotation — vs the
+        # DELETE + re-POST dance an operator otherwise has to do (and which loses
+        # the secret's id/scopes). Requires the `secret` scope (admin inherits
+        # it; covered by _required_scope for /secrets*). Used to swap an upstream
+        # provider key in the hub vault, e.g. correcting a media key that was
+        # escrowed from the wrong source (nvidia-image vs the chat key).
+        actor = getattr(principal, "agent_id", None) or body.actor or "operator"
+        return cp.rotate_secret(name, body.value, actor).to_dict()
+
+    @app.get("/secret-audits")
+    def list_secret_audits(secret_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [audit.to_dict() for audit in cp.list_secret_audits(secret_id)]
+
+    @app.post("/artifacts")
+    def register_artifact(body: ArtifactRegister) -> Dict[str, Any]:
+        return cp.register_artifact(**_data(body)).to_dict()
+
+    @app.get("/artifacts")
+    def list_artifacts(kind: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [artifact.to_dict() for artifact in cp.list_artifacts(kind)]
+
+    @app.get("/artifacts/{artifact_id_or_digest}")
+    def get_artifact(artifact_id_or_digest: str) -> Dict[str, Any]:
+        return cp.get_artifact(artifact_id_or_digest).to_dict()
+
+    @app.delete("/artifacts/{artifact_id_or_digest}")
+    def delete_artifact(
+        artifact_id_or_digest: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        actor = getattr(principal, "agent_id", None) or "operator"
+        return cp.delete_artifact(artifact_id_or_digest, actor=actor)
+
+    @app.post("/conversation-threads")
+    def track_conversation(body: ConversationThreadTrack) -> Dict[str, Any]:
+        return cp.track_conversation(**_data(body)).to_dict()
+
+    @app.get("/conversation-threads")
+    def list_conversation_threads(
+        platform_binding_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [thread.to_dict() for thread in cp.list_conversation_threads(platform_binding_id)]
+
+    @app.get("/conversation-threads/{thread_id}")
+    def get_conversation_thread(thread_id: str) -> Dict[str, Any]:
+        return cp.get_conversation_thread(thread_id).to_dict()
+
+    @app.post("/vector-refs")
+    def record_vector_ref(body: VectorRefRecord) -> Dict[str, Any]:
+        return cp.record_vector_ref(**_data(body)).to_dict()
+
+    @app.get("/vector-refs")
+    def list_vector_refs(
+        memory_id: Optional[str] = Query(default=None),
+        vector_db: Optional[str] = Query(default=None),
+        collection: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            ref.to_dict()
+            for ref in cp.list_vector_refs(memory_id, vector_db, collection)
+        ]
+
+    @app.post("/environments")
+    def register_environment(
+        body: EnvironmentRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.register_environment(**_data(body)).to_dict()
+
+    @app.get("/environments")
+    def list_environments(
+        tenant_id: Optional[str] = Query(default=None),
+        channel: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [env.to_dict() for env in cp.list_environments(tenant_id, channel)]
+
+    @app.get("/environments/{env_id}")
+    def get_environment(env_id: str) -> Dict[str, Any]:
+        return cp.get_environment(env_id).to_dict()
+
+    @app.post("/environments/{env_id}/deploy")
+    def deploy_artifact(env_id: str, body: DeploymentCreate) -> Dict[str, Any]:
+        return cp.deploy_artifact(env_id, body.artifact_id, body.actor, body.metadata).to_dict()
+
+    @app.get("/environments/{env_id}/current")
+    def current_deployment(env_id: str) -> Optional[Dict[str, Any]]:
+        current = cp.current_deployment(env_id)
+        return current.to_dict() if current is not None else None
+
+    @app.get("/environments/{env_id}/deployments")
+    def list_deployments(env_id: str) -> List[Dict[str, Any]]:
+        return [d.to_dict() for d in cp.list_deployments(env_id)]
+
+    @app.post("/runtimes")
+    def create_runtime(
+        body: RuntimeCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.create_runtime(**_data(body)).to_dict()
+
+    @app.get("/runtimes")
+    def list_runtimes() -> List[Dict[str, Any]]:
+        return [runtime.to_dict() for runtime in cp.list_runtimes()]
+
+    @app.post("/runtime-deltas")
+    def propose_runtime_delta(
+        body: RuntimeDeltaPropose,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        principal.assert_actor(body.agent_id)
+        return cp.propose_runtime_delta(**_data(body)).to_dict()
+
+    @app.get("/runtime-deltas")
+    def list_runtime_deltas(
+        status: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return [
+            delta.to_dict()
+            for delta in cp.list_runtime_deltas(
+                status=status,
+                task_id=task_id,
+                project=project,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/runtime-deltas/{delta_id}")
+    def get_runtime_delta(delta_id: str) -> Dict[str, Any]:
+        return cp.get_runtime_delta(delta_id).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/validate")
+    def validate_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaValidate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.validate_runtime_delta(delta_id, body.actor).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/reject")
+    def reject_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaReject,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.reject_runtime_delta(delta_id, body.actor, body.reason).to_dict()
+
+    @app.post("/runtime-deltas/{delta_id}/promote")
+    def promote_runtime_delta(
+        delta_id: str,
+        body: RuntimeDeltaPromote,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.promote_runtime_delta(
+            delta_id,
+            body.actor,
+            runtime_name=body.runtime_name,
+        ).to_dict()
+
+    @app.post("/runtime-runs")
+    def create_runtime_run(body: RuntimeRunCreate) -> Dict[str, Any]:
+        return cp.create_runtime_run(**_data(body)).to_dict()
+
+    @app.post("/runtime-runs/{run_id}/complete")
+    def complete_runtime_run(run_id: str, body: RuntimeRunComplete) -> Dict[str, Any]:
+        return cp.complete_runtime_run(run_id, body.evidence_id, body.status).to_dict()
+
+    @app.post("/bridge/items")
+    def import_project_item(body: ProjectImport) -> Dict[str, Any]:
+        return cp.import_project_item(**_data(body)).to_dict()
+
+    @app.get("/bridge/items")
+    def list_project_items() -> List[Dict[str, Any]]:
+        return [item.to_dict() for item in cp.list_project_items()]
+
+    # beads is no longer a read/write source — the bridge register/poll/repair
+    # endpoints are removed. Detection + one-way conversion live behind the
+    # ticketing connector (`mac task detect-ticketing` / `convert-ticketing`).
+
+    @app.post("/memory")
+    def add_memory(body: MemoryCreate) -> Dict[str, Any]:
+        data = _data(body)
+        data.setdefault("evidence_id", None)
+        return cp.add_memory(**data).to_dict()
+
+    @app.get("/memory")
+    def search_memory(
+        task_id: Optional[str] = Query(default=None),
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
+
+    # mem-10: memory-tier health snapshot for operators + future alerter.
+    @app.get("/v1/memory/health")
+    def memory_health(
+        nap_interval_hours: float = Query(default=24.0, ge=0.1, le=720.0),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.memory_health(nap_interval_hours=nap_interval_hours)
+
+    # mem-09: vector-tier recall.
+    @app.get("/v1/memory/recall")
+    def recall_memory(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_memory(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            tenant_id=tenant_id,
+        )
+
+    @app.get("/v1/memory/dreams/recall")
+    def recall_dream_artifacts(
+        q: str = Query(..., min_length=1, description="free-form query text"),
+        tier: str = Query(default="medium"),
+        limit: int = Query(default=5, ge=1, le=100),
+        min_score: Optional[float] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
+        scope: Optional[str] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        min_confidence: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.recall_dream_artifacts(
+            q,
+            tier=tier,
+            limit=limit,
+            min_score=min_score,
+            project=project,
+            agent_id=agent_id,
+            scope=scope,
+            kind=kind,
+            min_confidence=min_confidence,
+            tenant_id=tenant_id,
+        )
+
+    @app.post("/eval-sets")
+    def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:
+        return cp.create_eval_set(**_data(body)).to_dict()
+
+    @app.get("/eval-sets")
+    def list_eval_sets() -> List[Dict[str, Any]]:
+        return [eval_set.to_dict() for eval_set in cp.list_eval_sets()]
+
+    @app.get("/eval-sets/{eval_set_id}")
+    def get_eval_set(eval_set_id: str) -> Dict[str, Any]:
+        return cp.get_eval_set(eval_set_id).to_dict()
+
+    @app.post("/eval-sets/{eval_set_id}/baseline")
+    def update_eval_set_baseline(eval_set_id: str, body: EvalSetBaselineUpdate) -> Dict[str, Any]:
+        return cp.update_eval_set_baseline(eval_set_id, body.baseline_score, body.actor).to_dict()
+
+    @app.get("/eval-sets/{eval_set_id}/events")
+    def list_eval_set_events(eval_set_id: str) -> List[Dict[str, Any]]:
+        return cp.list_eval_set_events(eval_set_id)
+
+    @app.post("/eval-runs")
+    def record_eval_run(body: EvalRunRecord) -> Dict[str, Any]:
+        data = _data(body)
+        eval_set_id = data.pop("eval_set_id")
+        return cp.record_eval_run(eval_set_id, **data).to_dict()
+
+    @app.get("/eval-runs")
+    def list_eval_runs(
+        eval_set_id: Optional[str] = Query(default=None),
+        target_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [run.to_dict() for run in cp.list_eval_runs(eval_set_id, target_id)]
+
+    @app.post("/rollouts")
+    def create_rollout(
+        body: RolloutCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_tenant(body.tenant_id)
+        return cp.create_rollout(**_data(body)).to_dict()
+
+    @app.get("/rollouts")
+    def list_rollouts(
+        tenant_id: Optional[str] = Query(default=None),
+        channel: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [rollout.to_dict() for rollout in cp.list_rollouts(tenant_id, channel)]
+
+    @app.post("/rollouts/{rollout_id}/advance")
+    def advance_rollout(rollout_id: str, body: RolloutAdvance) -> Dict[str, Any]:
+        return cp.advance_rollout(rollout_id, body.action, body.actor, body.detail).to_dict()
+
+    @app.post("/rollouts/{rollout_id}/artifact")
+    def verify_rollout_artifact(rollout_id: str, body: RolloutArtifactVerify) -> Dict[str, Any]:
+        return cp.verify_rollout_artifact(
+            rollout_id,
+            body.artifact_uri,
+            body.artifact_hash,
+            body.actor,
+        ).to_dict()
+
+    @app.post("/rollouts/{rollout_id}/health")
+    def evaluate_rollout_health(rollout_id: str, body: RolloutHealthReport) -> Dict[str, Any]:
+        return cp.evaluate_rollout_health(rollout_id, body.checks, body.actor)
+
+    @app.post("/rollouts/{rollout_id}/rescue")
+    def rescue_rollout(rollout_id: str, body: RolloutRescue) -> Dict[str, Any]:
+        rollout, task = cp.rescue_rollout(rollout_id, body.actor, body.reason, body.detail)
+        return {"rollout": rollout.to_dict(), "task": task.to_dict()}
+
+    # th-merge-02: optional in-mac OpenAI front door (provider router + recovering
+    # breaker). No-op unless MAC_ROUTER_BACKEND=inproc, so the standalone TokenHub
+    # path is unchanged by default.
+    try:
+        from mac.router_app import mount_router
+
+        # media-01 capability auto-routing: compose media bindings from LIVE
+        # agents that self-advertised resources["media_routes"] (e.g. a GPU agent
+        # announcing image.generate). Queried per request so a GPU agent coming
+        # up/down is picked up without a hub restart; a registry hiccup degrades
+        # to the static/config table (mount_media_router guards the call).
+        def _media_agent_table_provider() -> Dict[str, Any]:
+            from mac.media_routing import media_bindings_from_agents
+
+            return media_bindings_from_agents(agent.to_dict() for agent in cp.list_agents())
+
+        if mount_router(
+            app,
+            secret_resolver=_router_secret_resolver,
+            route_observer=_router_route_observer,
+            media_agent_table_provider=_media_agent_table_provider,
+        ):
+            _log.info("in-mac model router mounted (/v1/chat/completions, /v1/embeddings)")
+    except Exception as exc:  # noqa: BLE001 - the router must never block app startup
+        _log.warning("in-mac model router not mounted: %s", exc)
+
+    return app
+
+
+# Only build the default app when a secret key is present, so importing the
+# module (e.g. from tests) does not require MAC_SECRET_KEY. Run uvicorn with
+# `mac.api:create_app --factory` to be explicit, or set MAC_SECRET_KEY before
+# `mac.api:app`.
+if os.environ.get("MAC_SECRET_KEY"):
+    app = create_app()

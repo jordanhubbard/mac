@@ -1,0 +1,115 @@
+# Sample mac fleet configuration.
+#
+# This file is a checked-in schema/defaults sample only. Real fleet topology
+# lives outside Git in ~/.mac/fleets.yaml, keyed by hub node name. Do not put
+# bearer tokens or provider keys in YAML. Upstream LLM/search/embed provider
+# credentials live in mac's encrypted vault (SecretsService) on the hub node.
+
+sample: true
+fleet_name: example
+
+hub_agent: hub
+hub_url: http://hub.example.internal:8789
+control_port: 8789
+shared_services_manager_agent: hub
+
+defaults:
+  supervisor: auto
+  hermes:
+    slack_home_channel_name: ""
+    gateway_provider: custom
+    gateway_base_url: ""
+  worker:
+    mode: heartbeat
+    capabilities:
+      - ops
+      - python
+      - hermes
+      - review
+      - web_search
+      - web_extract
+      - web_crawl
+      - firecrawl
+    allowed_projects: ""
+    required_metadata: ""
+    require_canary: true
+  qdrant:
+    install: auto
+    required: true
+    url: ""
+    bind_addr: ""
+    port: 6333
+    data_dir: ""
+    image: docker.io/qdrant/qdrant:latest
+    memory_limit: 2g
+  firecrawl:
+    install: auto
+    required: true
+    url: ""
+    bind_addr: ""
+    port: 3002
+  webdav:
+    enabled: false
+    install: auto
+    # Required when enabled. The public artifact endpoint is HTTPS on this DNS
+    # name, typically terminated by Caddy/ACME on port 443.
+    dns_name: ""
+    # Optional override. When omitted, mac derives https://<dns_name><public_path>.
+    url: ""
+    # Hub principal address used for operator/deploy checks; not used as the
+    # public browser/WebDAV identity.
+    public_host: ""
+    bind_addr: "0.0.0.0"
+    port: 80
+    # Hub publish directory served by WebDAV/HTTP. Set this explicitly when
+    # spokes should learn a real hub path or a shared mount path for publish
+    # actions; blank defaults to each node's ~/.mac/public-artifacts.
+    root: ""
+    public_path: "/artifacts/"
+    max_upload_bytes: 536870912
+  network:
+    provider: none
+    install: auto
+    # hostname_prefix: optional string prepended to each agent name as the Tailscale hostname.
+    hostname_prefix: ""
+    tailscale:
+      auth_key_env: MAC_DEPLOY_TAILSCALE_AUTH_KEY
+    # Headscale is an advanced provider. To use it, set provider: headscale
+    # and explicitly configure the login server, enrollment-key source, DNS
+    # assumption, and health check.
+    headscale:
+      manage: false
+      login_server: ""
+      health_url: ""
+      preauth_key_source: env
+      preauth_key_env: MAC_DEPLOY_HEADSCALE_PREAUTHKEY
+      port: 8080
+      public_addr: ""
+      dns: magicdns
+      ip_prefix: "100.64.0.0/10"
+
+agents:
+  - name: hub
+    enabled: true
+    target: user@hub.example.internal
+    os: linux
+    control_bind_host: 0.0.0.0
+    hermes:
+      gateway_model: provider/family/hub-model
+    worker:
+      mode: loop
+      require_canary: false
+
+  - name: worker-linux
+    enabled: false
+    target: user@worker-linux.example.internal
+    os: linux
+    hermes:
+      gateway_model: provider/family/linux-worker-model
+
+  - name: worker-macos
+    enabled: false
+    target: user@worker-macos.example.internal
+    os: darwin
+    hermes:
+      gateway_model: provider/family/macos-worker-model
