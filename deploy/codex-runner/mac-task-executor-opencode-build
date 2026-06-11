@@ -175,7 +175,7 @@ echo "REPO_BRANCH:      ${REPO_BRANCH}"
 authed_url() {
     local u="$1"
     case "$u" in
-        https://gitea.omv.*)
+        https://gitea.omv.*|https://gitea.a113.casa/*)
             if [ -n "${GITEA_USER:-}" ] && [ -n "${GITEA_TOKEN:-}" ]; then
                 echo "${u/https:\/\//https:\/\/${GITEA_USER}:${GITEA_TOKEN}@}"
             else
