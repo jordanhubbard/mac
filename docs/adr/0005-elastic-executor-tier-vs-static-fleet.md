@@ -10,23 +10,33 @@
   every agent were a GitHub self-hosted runner (and any runner an agent), with
   agents registered/created dynamically rather than declared statically?*
 
-## TL;DR verdict
+## Recommendation (the short version)
 
-The proposal bundles two ideas; **separate them**:
+**Do not make agents GitHub runners.** Get the elasticity you want by adding an
+**ephemeral executor tier on k8s Jobs** — which this repo already has (autopilot
+/ `job-per-task`) — autoscaled off the MAC ledger's ready-queue, while keeping
+personas + shared services persistent. The MAC ledger stays the single dispatch
+brain.
+
+GitHub self-hosted runners are the **wrong substrate** for this fleet: they add a
+second control plane and identity/label registry that *duplicate* the ledger and
+its capability matching; they only fit the repo/CI subset of the work (the rest
+gets forced through awkward `repository_dispatch` RPC); and they put agentic code
+next to repo-write + secrets (GitHub's canonical self-hosted-runner footgun).
+GitHub's only sensible role is the **inverse** of the proposal — a GitHub CI
+event *creates a MAC task* (GitHub feeds the ledger; it does not replace it).
+
+Separating the two ideas in the question:
 
 | Idea | Verdict |
 | --- | --- |
-| **Elastic / dynamic registration** instead of static `fleets.yaml` | **Yes** — overdue. The static model is the source of most operational pain we keep hitting. |
-| **Agent ≡ GitHub runner (universally)** | **Half right.** True for the *executor* tier; **wrong** for the *persona/services* tier. |
+| Move off the static `fleets.yaml` to **dynamic/elastic** capacity | **Yes** — overdue; it's behind most of our operational pain. |
+| **Agent ≡ GitHub runner** | **No.** The executor tier *should* be stateless and elastic, but **k8s Jobs** are the right substrate here, not GitHub runners; and persona/services agents must stay **persistent** (soul/memory/Slack identity, the vLLM brain). |
 
-A GitHub runner is **stateless, fungible, short-lived**. A MAC agent, as built, is
-a **stateful persona** (soul, long-term memory, mood, Slack presence, self-driven
-behavior). Forcing every agent into the runner mold throws away the identity
-model the whole Hermes layer (ADR 0001) is built on. The right move is a
-**two-tier split**: keep a small persistent persona/services tier, and make the
-**executor tier elastic** (ephemeral workers that claim a ledger task, run in a
-clean checkout, emit evidence, and die) — with the **MAC task ledger remaining
-the single dispatch brain**.
+A GitHub runner is stateless, fungible, short-lived; a MAC agent (as built) is a
+stateful persona, and that model (ADR 0001) is worth keeping. The fix is a
+**two-tier split** — persistent personas/services + an elastic ephemeral-executor
+tier on k8s — **not** turning every agent into a runner.
 
 ## What is actually true today (ground truth)
 
@@ -83,35 +93,46 @@ elasticity — is what makes the universal equivalence wrong.
    project/capability — and scales the ephemeral worker pool to match. An
    executor's body is essentially `mac task claim → do work → mac task
    evidence/close`.
-4. **Projects → runner groups / labels, not "all projects on every runner."**
-   Capabilities become labels; per-project isolation becomes runner groups so a
-   worker only holds the secrets of the project it serves.
+4. **Per-project isolation, not "all projects on every worker."** Capabilities
+   become labels; each project gets its own isolation boundary (k8s namespace +
+   scoped service account / `MAC_API_TOKENS`) so a worker only holds the secrets
+   of the project it serves.
 
-## Substrate: GitHub runners vs. k8s Jobs
+## Substrate decision: k8s Jobs, not GitHub runners
 
-Both implement the same elastic-executor idea; they are **competing substrates**,
-not different architectures:
+Use **k8s Jobs** for the executor tier. Concretely, because:
 
-- **GitHub ARC / ephemeral runners** — buys GitHub's registration, labels, runner
-  groups, and the natural fit for repo/CI-shaped work (clean checkout + the
-  `pushed=true / pr_url` evidence contract we already enforce). Cost: self-hosted
-  runner **security** (agentic code + repo write + secrets is GitHub's canonical
-  footgun) and a tendency to drag GitHub's event scheduler into the picture.
-- **k8s Jobs (already partly built here)** — we own the scheduler and the
-  isolation; integrates with the existing autopilot/job-per-task work and
-  `jordanh-gke`. Cost: we build the labeling/identity ourselves.
+- **It already exists here** (autopilot, `docs/job-per-task-roles-spec.md`,
+  `jordanh-gke`) — extending it is the lowest-friction path to elasticity;
+  adopting GitHub ARC means standing up a new runner controller, registration-
+  token plumbing, and runner groups.
+- **We control isolation** (namespace / RBAC / network policy) — the right
+  posture for running agentic code, versus self-hosted runners sharing a host
+  with repo-write + secrets.
+- **No second scheduler or registry.** The MAC ledger + capabilities already are
+  the "runner registry + label matcher," and richer (deps, review, evidence). A
+  GitHub runner pool would duplicate that and tempt GitHub's event scheduler into
+  becoming a rival dispatcher.
 
-Recommendation: prefer **k8s Jobs** as the executor substrate where we already
-have it, and treat "register as a GitHub runner" as an *additional* on-ramp for
-genuinely repo/CI-shaped work, not the universal model. Keep the executor
-contract substrate-agnostic so either can drive it.
+**GitHub self-hosted runners are explicitly not adopted** as the agent or
+executor substrate. Their real advantages (registration, labels, runner groups)
+just duplicate the ledger; their event/workflow model fits only repo/CI work;
+and the security cost is real. GitHub's one legitimate role is an **inbound
+bridge**: a GitHub Actions event (push/PR/`workflow_dispatch`) calls the hub to
+*create* a MAC task, so external CI can feed the fleet without becoming it.
+
+We keep the executor contract simple (`claim → run → evidence → exit`) so it
+*could* run on a GitHub-hosted runner in a pinch — but that is a fallback, not
+the design. The only thing that would flip this decision is running a k8s
+cluster being off the table; it isn't (`jordanh-gke` is already a cluster), so
+GitHub-hosted runners' "no cluster to operate" advantage does not apply.
 
 ## Risks / non-goals
 
 - **Do not** dissolve personas/memory/long-lived services into ephemeral workers
   — that breaks ADR 0001's identity model and the brain/router.
 - **Secret blast radius:** a worker serving "all projects" can read all those
-  repos' secrets + TokenHub keys. Scope per project (runner groups / scoped
+  repos' secrets + TokenHub keys. Scope per project (k8s namespace + scoped
   `MAC_API_TOKENS`).
 - **Two-scheduler hazard:** if GitHub events *also* dispatch while the ledger
   dispatches, you get double-dispatch. One brain (the ledger).
