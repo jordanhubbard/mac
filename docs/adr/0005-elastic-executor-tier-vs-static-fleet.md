@@ -191,11 +191,45 @@ Established on an M4 Pro Mac (same class as bullwinkle):
    wall when the Electron build required the Mac's "Developer ID" / "Fleet
    Identity" signing identities) cannot run in a Linux container at all.
 
-Crucially, the hosts that *can't* be worker nodes (darwin/image-gen, GPU model
-servers) are exactly the ones this ADR assigns to the **persistent tier**. The
-experiment therefore confirms both the dispatch property *and* the two-tier
-split: Linux hosts → elastic executor nodes; darwin + GPU + long-lived-service
-hosts → persistent agents.
+### The Linux/NVIDIA hosts (rocky, madmax, natasha) *can* be nodes — container GPU is the supported path
+
+Read-only probes of the actual hosts:
+
+| Host | arch / kernel | GPU (driver) | docker / containerd / nvidia-ctk |
+| --- | --- | --- | --- |
+| **rocky** (do-host1) | x86_64 / 6.8 | none (CPU-only) | no / no / no |
+| **madmax** | x86_64 / 7.0 | RTX 6000 Ada 48 GB (595.71.05) | **yes / yes / yes** |
+| **natasha** | **aarch64** / 6.17-nvidia | GB10 Grace-Blackwell (580.159.03) | **yes / yes / yes** |
+
+Unlike the Mac, these are architecturally fine as k8s nodes, and the
+**container-GPU mechanism that's impossible on macOS is already installed** on
+both GPU hosts: driver + NVIDIA Container Toolkit (`nvidia-ctk`) + containerd.
+The toolkit is exactly what injects `/dev/nvidia*` + the driver into a container
+under `--gpus all`, and the k8s **NVIDIA device plugin** then exposes
+`nvidia.com/gpu` as a schedulable resource. (The toolkit's presence is the
+dispositive fact — it cannot even exist on macOS, where `--gpus all` errors.)
+
+- **rocky** — CPU-only Linux; the natural **control-plane ("hub") node** and/or a
+  CPU worker. Only gap: **no container runtime today** (it runs the mac services
+  as a bare-metal editable install), so containerd must be added.
+- **madmax** — **GPU worker node: ready.** Add the k8s NVIDIA device plugin and
+  pods can request `nvidia.com/gpu`. Caveat: one 48 GB GPU currently held by the
+  long-lived **vLLM brain** (a *Deployment*, not a Job) — so dedicate the GPU to
+  that service or share via GPU **time-slicing / MPS** for Jobs.
+- **natasha** — **GPU worker node: feasible, same mechanism**, with two
+  operational caveats: **arm64** (a mixed-arch cluster — images/workloads must be
+  built arm64) and a **bleeding-edge driver/kernel** (`6.17-nvidia` + driver 580;
+  GB10 drivers are tightly kernel-coupled — the per-kernel-module friction we've
+  seen). Architecturally normal; the work is keeping the driver matched to the
+  kernel.
+
+Crucially, the **only** host that genuinely *can't* be a worker node is the
+**darwin** one (bullwinkle). The GPU hosts *can* be nodes — but their long-lived
+model servers (madmax's vLLM brain) are **Deployments**, not Jobs. So the
+two-tier split maps cleanly onto the hardware: **rocky → control-plane / CPU
+executor nodes; madmax + natasha → GPU nodes hosting a persistent model-server
+Deployment and/or elastic GPU Jobs; bullwinkle → off-cluster persistent
+native-macOS service.**
 
 ## Risks / non-goals
 
