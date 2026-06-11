@@ -162,6 +162,35 @@ are containers on one VM, so the *physical* distribution is simulated; the
   `claim → run → evidence → exit` executor and autoscaling off `GET /tasks/ready`
   are not provided by k8s.
 
+### Why a macOS host can't be a worker node — even with Docker + "GPU pass-through"
+
+Established on an M4 Pro Mac (same class as bullwinkle):
+
+1. **macOS doesn't run Linux containers; it runs a Linux VM.** Host kernel is
+   `Darwin 25.5.0 arm64`, but a container on it reports `Linux 6.8.0 aarch64`
+   (Ubuntu): Docker Desktop / colima silently boot a **Linux VM** and run every
+   container inside it (Linux images need Linux-kernel namespaces/cgroups that
+   XNU/Darwin doesn't implement). A "k8s node on the Mac" is therefore the
+   *Linux VM*, not the Mac.
+2. **The Apple GPU is on-SoC + Metal-only — there is nothing to pass through.**
+   `system_profiler`: *Apple M4 Pro, Bus: Built-In, Metal 4* — reached only via
+   the **Metal** API in macOS userspace, not a discrete PCIe card. Linux
+   container GPU access (VFIO/IOMMU + the NVIDIA Container Toolkit) forwards a
+   *PCI device + its Linux kernel driver* into the container; on Apple Silicon
+   there is no PCIe GPU, no Linux driver for it, and Virtualization.framework
+   doesn't expose the GPU to the guest. Inside the container `/dev/dri` and
+   `/dev/nvidia*` don't exist, and `docker run --gpus all` fails outright
+   (`could not select device driver … [[gpu]]`).
+3. **The GPU is reachable only by a native macOS process calling Metal** — which
+   is by definition not a pod; a Linux Job can never touch Metal. (This is why
+   bullwinkle's SDXL/MPS image-gen runs as a native `~/gen` process.)
+4. **Making the Mac a node buys nothing and costs a VM layer:** you'd run Linux
+   pods in a VM on the Mac with no access to the one capability that makes it
+   special — and the genuinely macOS-only work that needs the host (Metal
+   compute; **code-signing / notarization / Xcode builds** — we hit this exact
+   wall when the Electron build required the Mac's "Developer ID" / "Fleet
+   Identity" signing identities) cannot run in a Linux container at all.
+
 Crucially, the hosts that *can't* be worker nodes (darwin/image-gen, GPU model
 servers) are exactly the ones this ADR assigns to the **persistent tier**. The
 experiment therefore confirms both the dispatch property *and* the two-tier
