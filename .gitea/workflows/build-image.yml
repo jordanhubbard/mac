@@ -11,7 +11,8 @@ on:
     # emit a push event, so cron picks up the freshly-synced default-branch
     # HEAD and the change-guard below ensures we only build a given commit
     # once. Keep this interval >= the repo's mirror sync interval.
-    - cron: "*/10 * * * *"
+    # Runs hourly at :00 (adjust based on your mirror sync frequency).
+    - cron: "0 * * * *"
   workflow_dispatch: {}
 
 env:
