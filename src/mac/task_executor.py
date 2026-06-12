@@ -35,6 +35,14 @@ All hub I/O is best-effort and gated on hub env (URL + token): absent those,
 the executor still runs and writes evidence — it just doesn't emit telemetry,
 recall, or record. The HTTP seam (:func:`_hub_post` / :func:`_hub_get`) and the
 agent runner are injectable so the logic is testable without a live hub.
+
+Optional OpenShell sandboxing (sandbox-01): the agent already runs ``--yolo``
+(Hermes' own approval prompts bypassed). When ``MAC_OPENSHELL_SANDBOX`` is set,
+:func:`_maybe_wrap_openshell` launches that invocation as a confined child of an
+OpenShell sandbox, which then enforces *all* guardrails (filesystem, syscall,
+and deny-by-default network egress) from a declarative policy. Default OFF —
+the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
+``docs/openshell-nemo-relay-integration.md``.
 """
 
 from __future__ import annotations
@@ -42,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -1058,6 +1067,102 @@ def _hermes_argv(prompt: str) -> List[str]:
     return [str(hermes_py), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
 
 
+# ---------------------------------------------------------------------------
+# OpenShell sandbox wrapping (sandbox-01)
+#
+# The agent already runs ``--yolo`` (Hermes' own permission/approval prompts are
+# bypassed). On its own that is unguarded. When OpenShell sandboxing is enabled
+# the (still ``--yolo``) Hermes invocation is launched as a *confined child* of
+# an OpenShell sandbox, which then becomes the SOLE guardrail authority:
+#   * Landlock  — filesystem confinement to declared paths
+#   * seccomp   — syscall filtering + privilege drop (never runs as root)
+#   * egress    — deny-by-default network proxy driven by a declarative policy
+# The policy YAML (MAC_OPENSHELL_POLICY) *is* the guardrail specification.
+#
+# Default OFF: with MAC_OPENSHELL_SANDBOX unset/false ``_maybe_wrap_openshell``
+# returns the argv unchanged, so the executor behaves exactly as before. The
+# wrap is a pure argv transform — it does not itself require OpenShell to be
+# installed; that is the deployer's responsibility (see
+# docs/openshell-nemo-relay-integration.md).
+#
+# Knobs (read at wrap time — nothing is frozen at import):
+#   MAC_OPENSHELL_SANDBOX          truthy -> enable wrapping
+#   MAC_OPENSHELL_BIN             openshell binary (default "openshell")
+#   MAC_OPENSHELL_POLICY          path to the policy YAML (the guardrail spec)
+#   MAC_OPENSHELL_SANDBOX_NAME    fixed sandbox name (debug; default: ephemeral)
+#   MAC_OPENSHELL_KEEP            truthy -> --keep (debug; default one-shot teardown)
+#   MAC_OPENSHELL_CREATE_ARGS     extra `sandbox create` args (shell-split), e.g.
+#                                 "--from my-image" or "--upload /src:/src" used to
+#                                 make the Hermes runtime + workspace available
+#                                 inside the sandbox
+#   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names forwarded via --env
+# ---------------------------------------------------------------------------
+
+# Forward the env the agent needs to reach the hub + model gateway from inside
+# the sandbox. (Network reachability is still gated by the OpenShell policy;
+# this only makes the values visible to the process.)
+_DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
+    "MAC_HUB_URL,MAC_URL,MAC_WORKER_TOKEN,MAC_TOKEN,MAC_API_TOKEN,"
+    "MAC_WORKER_AGENT_ID,MAC_WORKER_AGENT_NAME,MAC_AGENT_ID,"
+    "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY"
+)
+
+
+def _truthy(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _openshell_enabled() -> bool:
+    return _truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
+
+
+def _openshell_env_flags() -> List[str]:
+    """``--env NAME=VALUE`` flags for each *set* passthrough variable."""
+    names = os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
+    flags: List[str] = []
+    seen = set()
+    for raw in names.split(","):
+        name = raw.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        val = os.environ.get(name)
+        if val is None:
+            continue
+        flags += ["--env", "%s=%s" % (name, val)]
+    return flags
+
+
+def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
+    """Wrap *argv* to run inside an OpenShell sandbox, if enabled.
+
+    Pure and best-effort: returns *argv* unchanged when sandboxing is disabled.
+    The sandbox is one-shot (torn down when the agent process exits) unless
+    MAC_OPENSHELL_KEEP is set. ``--name`` is omitted by default so OpenShell
+    assigns a unique name per run; set MAC_OPENSHELL_SANDBOX_NAME only to debug
+    a single run. The original *argv* is always preserved verbatim after the
+    ``--`` separator.
+    """
+    if not _openshell_enabled():
+        return list(argv)
+    bin_ = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+    wrapped: List[str] = [bin_, "sandbox", "create", "--no-auto-providers"]
+    policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+    if policy:
+        wrapped += ["--policy", policy]
+    name = (os.environ.get("MAC_OPENSHELL_SANDBOX_NAME") or "").strip()
+    if name:
+        wrapped += ["--name", name]
+    if _truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
+        wrapped += ["--keep"]
+    wrapped += _openshell_env_flags()
+    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+    if extra:
+        wrapped += shlex.split(extra)
+    wrapped += ["--", *argv]
+    return wrapped
+
+
 def _agent_timeout() -> Optional[float]:
     """Bound a single agent run so a wedged TokenHub turn can't hang the loop
     forever. Default 900s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
@@ -1112,11 +1217,12 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         task_id=task_id,
         kind="review" if is_review else "task",
         recalled_lessons=len(lessons),
+        sandboxed=_openshell_enabled(),
     )
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     result = runner(
-        _hermes_argv(prompt),
+        _maybe_wrap_openshell(_hermes_argv(prompt)),
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout()},

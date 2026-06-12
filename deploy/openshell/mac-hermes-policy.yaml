@@ -1,0 +1,112 @@
+# OpenShell guardrail policy for the MAC / Hermes task executor.
+#
+# This file IS the guardrail specification. Because the agent runs `--yolo`
+# (Hermes' own approval prompts are bypassed), OpenShell is the sole authority
+# over what the agent may touch: filesystem (Landlock), syscalls (seccomp), and
+# network egress (deny-by-default L7 proxy). Anything not allowed here is
+# denied. Start tight; widen deliberately (each added rule is a guardrail hole).
+#
+# This is a TEMPLATE. Substitute the __PLACEHOLDER__ tokens for your fleet and
+# adjust the filesystem paths to match how the Hermes runtime is made available
+# inside the sandbox (a prebuilt image via `--from`, or `--upload`); see
+# docs/openshell-nemo-relay-integration.md. Apply with:
+#   MAC_OPENSHELL_POLICY=/path/to/this.yaml MAC_OPENSHELL_SANDBOX=1
+# (the executor passes it as `openshell sandbox create --policy ...`).
+
+version: 1
+
+filesystem_policy:
+  # include_workdir auto-adds the task git worktree (the executor's cwd) to the
+  # writable set — that is where the agent does its work and writes evidence.
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /proc
+    - /dev/urandom
+    - /var/log
+    # The vendored Hermes runtime + venv. Match these to your provisioning:
+    # if you bake an image, point at the in-image install path; if you upload,
+    # point at the upload target. The host default for a fleet agent is ~/.mac.
+    - /home/__AGENT_USER__/.mac/venv
+    - /home/__AGENT_USER__/.mac/src
+  read_write:
+    - /tmp
+    - /dev/null
+    # The agent's home cache/state (pip, git config, tool caches). Tighten to
+    # specific subpaths if you want a smaller writable surface.
+    - /home/__AGENT_USER__/.cache
+    - /home/__AGENT_USER__/.config
+
+landlock:
+  # best_effort: skip paths the kernel can't enforce and continue (emits a
+  # High-severity finding). Set to hard_requirement to FAIL the run if the
+  # kernel lacks Landlock (5.13+) or a path is unavailable — stricter, no
+  # silent loss of filesystem confinement. Recommended for production.
+  compatibility: best_effort
+
+process:
+  # Never root. The supervisor drops privileges to this identity.
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  # --- MAC control-plane hub: claim/close tasks, post evidence + telemetry ---
+  mac_hub:
+    name: mac-hub
+    endpoints:
+      - host: __MAC_HUB_HOST__      # e.g. 100.125.137.89
+        port: __MAC_HUB_PORT__      # e.g. 8789
+        # protocol: rest enables L7 inspection; omit for a raw TCP tunnel.
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+
+  # --- Model gateway: the agent's LLM calls. Scope to YOUR gateway host. ---
+  model_gateway:
+    name: model-gateway
+    endpoints:
+      - host: __MODEL_GATEWAY_HOST__   # e.g. your azure/anthropic gateway
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+
+  # --- Git over HTTPS for task results (push branches / read repos). ---
+  # If you push over SSH instead, model that as a raw TCP endpoint on port 22
+  # to your git host rather than this REST block.
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/bin/git }
+      - { path: /usr/lib/git-core/git-remote-https }
+      - { path: /usr/bin/curl }
+
+  # --- OPTIONAL: package installs during a task. Commented out by default —
+  # uncomment only if your tasks legitimately need to fetch dependencies, and
+  # prefer pinning to your internal mirror over the public index. ---
+  # python_packages:
+  #   name: python-packages
+  #   endpoints:
+  #     - { host: __PYPI_MIRROR_HOST__, port: 443, protocol: rest, enforcement: enforce, access: read-only }
+  #   binaries:
+  #     - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
