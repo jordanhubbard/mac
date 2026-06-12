@@ -311,6 +311,59 @@ PYEOF
     return 1
 }
 
+# Step A.5: ensure test command dependencies are installed.
+# If the detected command is not available, attempt to install it.
+gate_ensure_test_deps() {
+    local d="$1" cmd="$2"
+    cd "${d}"
+    
+    case "${cmd}" in
+        npm*test*)
+            # npm test requires npm install first
+            if [ -f "${d}/package.json" ] && [ ! -d "${d}/node_modules" ]; then
+                echo "[opencode-build] gate: installing npm dependencies..."
+                if npm install --silent 2>&1 | head -20; then
+                    echo "[opencode-build] gate: npm install succeeded"
+                else
+                    echo "[opencode-build] gate: npm install failed (continuing anyway)"
+                fi
+            fi
+            ;;
+        pytest*)
+            # pytest requires installation; check if available, install if not
+            if ! command -v pytest >/dev/null 2>&1; then
+                echo "[opencode-build] gate: pytest not found, installing..."
+                # Try pip install, then uv pip install as fallback
+                if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/requirements.txt" ] || [ -f "${d}/setup.py" ]; then
+                    if command -v uv >/dev/null 2>&1; then
+                        echo "[opencode-build] gate: using uv to install test dependencies..."
+                        uv pip install --system pytest 2>&1 | head -10 || \
+                        uv pip install pytest 2>&1 | head -10 || \
+                        pip3 install --break-system-packages pytest 2>&1 | head -10 || \
+                        pip3 install pytest 2>&1 | head -10 || true
+                    else
+                        echo "[opencode-build] gate: using pip to install pytest..."
+                        pip3 install --break-system-packages pytest 2>&1 | head -10 || \
+                        pip3 install pytest 2>&1 | head -10 || true
+                    fi
+                fi
+                # Verify it's now available
+                if command -v pytest >/dev/null 2>&1; then
+                    echo "[opencode-build] gate: pytest installed successfully"
+                else
+                    echo "[opencode-build] gate: WARNING - pytest still not available after install attempt"
+                fi
+            fi
+            ;;
+        make*test*)
+            # make test should work if make is installed (already in base image)
+            ;;
+        *uv*run*)
+            # uv run pytest handles its own dependency installation
+            ;;
+    esac
+}
+
 # Step B: run lint/format with an auto-fix attempt. Never blocks the gate.
 gate_run_lint() {
     local d="$1" out lint_rc
@@ -408,6 +461,9 @@ gate_run_tests() {
         echo "[opencode-build] gate: ${GATE_REASON}"
         return 0
     fi
+
+    # Ensure test dependencies are installed before running tests
+    gate_ensure_test_deps "${d}" "${GATE_TEST_COMMAND}"
 
     out="$(mktemp)"
     echo "[opencode-build] gate: running tests via '${GATE_TEST_COMMAND}'"
