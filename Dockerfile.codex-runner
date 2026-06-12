@@ -13,9 +13,10 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | \
-        UV_INSTALL_DIR=/usr/local/bin sh && \
-    chmod a+rx /usr/local/bin/uv* 2>/dev/null || true
+# Install uv (Python package manager) using the Docker-recommended method
+# See: https://docs.astral.sh/uv/guides/integration/docker/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN uv --version
 
 COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
 COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review
