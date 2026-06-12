@@ -264,8 +264,36 @@ _gate_tail_output() {
 # Step A: detect the test command. Echoes the command on stdout, or nothing
 # if it cannot be determined. Detection precedence mirrors the directive in
 # AGENTS.md.
+#
+# Improvement: pre-scan for actual test files to avoid mis-detecting polyglot
+# repos (e.g., TypeScript projects with pyproject.toml for Python tooling).
 gate_detect_test_command() {
     local d="$1"
+    
+    # Pre-scan: detect what kind of test files exist (stronger signal than config)
+    # This prevents mis-detecting TypeScript/React projects as Python projects
+    # when they have pyproject.toml for tooling (ruff, black, mypy).
+    # maxdepth=3 balances coverage vs performance (avoids deep node_modules scans).
+    local has_js_tests=0
+    
+    # Check for JavaScript/TypeScript test files
+    # Common patterns: *.test.{js,jsx,ts,tsx}, *.spec.{js,jsx,ts,tsx}, __tests__/
+    # Use timeout to prevent hanging on pathological repos (filesystem issues, loops).
+    if timeout 2s find "${d}" -maxdepth 3 -type f \( \
+            -name "*.test.js" -o -name "*.test.jsx" -o \
+            -name "*.test.ts" -o -name "*.test.tsx" -o \
+            -name "*.spec.js" -o -name "*.spec.jsx" -o \
+            -name "*.spec.ts" -o -name "*.spec.tsx" \
+        \) -print -quit 2>/dev/null | grep -q .; then
+        has_js_tests=1
+    # Check for __tests__/ directory, but verify it contains test files
+    elif [ -d "${d}/__tests__" ] && \
+         timeout 2s find "${d}/__tests__" -maxdepth 2 -type f \( \
+            -name "*.test.*" -o -name "*.spec.*" \
+         \) -print -quit 2>/dev/null | grep -q .; then
+        has_js_tests=1
+    fi
+    
     # 1. Node: package.json with a `test` script.
     if [ -f "${d}/package.json" ]; then
         if python3 - "${d}/package.json" <<'PYEOF' 2>/dev/null
@@ -281,14 +309,39 @@ PYEOF
         then
             echo "npm test"
             return 0
+        elif [ "${has_js_tests}" -eq 1 ]; then
+            # package.json exists, JS/TS test files found, but no test script!
+            # This is a misconfigured JS project, not a Python project.
+            # Returning empty will trigger "not_detected" and block with helpful message.
+            echo "[opencode-build] gate: WARNING - found JS/TS test files but no 'test' script in package.json" >&2
+            echo "[opencode-build] gate:          Add '\"test\": \"jest\"' (or vitest/mocha) to package.json scripts" >&2
+            return 1
         fi
     fi
+    
     # 2. Python: pyproject/pytest.ini/setup.cfg/setup.py -> pytest.
-    if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/pytest.ini" ] \
-        || [ -f "${d}/setup.cfg" ] || [ -f "${d}/setup.py" ]; then
+    # BUT: if we detected JS/TS test files, be cautious about pyproject.toml
+    # (it might be for Python tooling like ruff/black in a JS project).
+    if [ -f "${d}/pytest.ini" ]; then
+        # pytest.ini is a strong signal for pytest - always trust it
         echo "pytest"
         return 0
     fi
+    
+    if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/setup.cfg" ] || [ -f "${d}/setup.py" ]; then
+        # If we found JS/TS test files, skip pytest detection
+        # (pyproject.toml is likely for Python tooling, not pytest)
+        if [ "${has_js_tests}" -eq 1 ]; then
+            echo "[opencode-build] gate: WARNING - found JS/TS test files and pyproject.toml; skipping pytest" >&2
+            echo "[opencode-build] gate:          If this is a Python project, create pytest.ini to force pytest detection" >&2
+            # Continue to next detection method instead of assuming pytest
+        else
+            # No JS tests detected, pyproject.toml likely means pytest
+            echo "pytest"
+            return 0
+        fi
+    fi
+    
     # 3. Make: Makefile with a `test` target.
     if [ -f "${d}/Makefile" ]; then
         if grep -Eq '^test:' "${d}/Makefile" 2>/dev/null; then
@@ -296,6 +349,7 @@ PYEOF
             return 0
         fi
     fi
+    
     # 4. README/CONTRIBUTING: scan for an explicit test command.
     local doc cmd
     for doc in README.md CONTRIBUTING.md; do
@@ -307,6 +361,7 @@ PYEOF
             fi
         fi
     done
+    
     # Could not detect.
     return 1
 }
