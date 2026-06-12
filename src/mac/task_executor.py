@@ -1103,6 +1103,10 @@ def _hermes_argv(prompt: str) -> List[str]:
 #                                 make the Hermes runtime + workspace available
 #                                 inside the sandbox
 #   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names forwarded via --env
+#   MAC_ALLOW_UNSANDBOXED_YOLO    truthy (default "1") -> allow --yolo with no
+#                                 sandbox (current fleet, logs a warning). Set
+#                                 "0" to fail closed: refuse unguarded YOLO so
+#                                 --yolo is only ever used inside the sandbox.
 # ---------------------------------------------------------------------------
 
 # Forward the env the agent needs to reach the hub + model gateway from inside
@@ -1211,6 +1215,63 @@ def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
     return wrapped
 
 
+def _force_child_yolo_env() -> None:
+    """Make the agent subprocess inherit HERMES_YOLO_MODE=1.
+
+    Hermes freezes its YOLO/approval bypass from HERMES_YOLO_MODE at *import*
+    time (tools/approval.py: ``_YOLO_MODE_FROZEN``). The ``--yolo`` CLI flag sets
+    that env only AFTER Hermes has already imported approval.py, so the freeze
+    can capture False and ``--yolo`` silently FAILS to bypass approval — the
+    agent still prompts. Setting the env here, in the executor, before the child
+    is spawned (the child inherits ``os.environ``) guarantees it is present at
+    the child's process start, before any import, so the freeze captures True
+    and approval is genuinely bypassed. This is the executor-side fix for the
+    import-order freeze; ``approvals.mode=off`` in the deployed config.yaml is
+    the config-side lever that covers the gateway too.
+    """
+    os.environ["HERMES_YOLO_MODE"] = "1"
+
+
+def _agent_invocation(prompt: str) -> List[str]:
+    """Build the agent argv, atomically coupling --yolo to sandbox enforcement.
+
+    Invariant: --yolo (which disables Hermes' own approval — see sandbox-01) is
+    only used when the run is confined by OpenShell, so we never launch an
+    *unguarded* YOLO agent.
+
+      * sandbox enabled  -> wrap in OpenShell AND keep --yolo (sandboxed YOLO).
+        ``_maybe_wrap_openshell`` raises if no policy resolves (fail closed), so
+        a misconfigured sandbox can never degrade to unguarded YOLO.
+      * sandbox disabled -> running --yolo is unguarded. Permitted ONLY via the
+        ``MAC_ALLOW_UNSANDBOXED_YOLO`` escape hatch (default "1" to preserve the
+        current live fleet), with a loud warning. Set it to "0" to fail closed
+        once OpenShell is the enforcement layer.
+
+    The escape hatch defaults to allow so deploying this change does not break a
+    fleet that isn't running OpenShell yet; flip it off (or enable the sandbox)
+    to enforce the invariant.
+    """
+    argv = _hermes_argv(prompt)  # includes --yolo
+    if _openshell_enabled():
+        _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
+        return _maybe_wrap_openshell(argv)
+    if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", "1")):
+        _force_child_yolo_env()
+        sys.stderr.write(
+            "[executor] WARNING: launching a --yolo agent WITHOUT an OpenShell "
+            "sandbox (MAC_OPENSHELL_SANDBOX unset) — Hermes approval is disabled "
+            "and there is no sandbox confinement. Enable MAC_OPENSHELL_SANDBOX=1 "
+            "(with a policy), or set MAC_ALLOW_UNSANDBOXED_YOLO=0 to fail closed.\n"
+        )
+        return argv
+    raise RuntimeError(
+        "refusing to launch a --yolo agent without an OpenShell sandbox: "
+        "MAC_OPENSHELL_SANDBOX is unset and MAC_ALLOW_UNSANDBOXED_YOLO is disabled. "
+        "Set MAC_OPENSHELL_SANDBOX=1 with a policy to enforce silently, or "
+        "MAC_ALLOW_UNSANDBOXED_YOLO=1 to explicitly allow unsandboxed YOLO."
+    )
+
+
 def _agent_timeout() -> Optional[float]:
     """Bound a single agent run so a wedged TokenHub turn can't hang the loop
     forever. Default 900s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
@@ -1300,7 +1361,7 @@ def _run_executor(
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     result = runner(
-        _maybe_wrap_openshell(_hermes_argv(prompt)),
+        _agent_invocation(prompt),
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout()},

@@ -12,6 +12,7 @@ own image-default profile.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,8 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_KEEP",
     "MAC_OPENSHELL_CREATE_ARGS",
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
+    "MAC_ALLOW_UNSANDBOXED_YOLO",
+    "HERMES_YOLO_MODE",
 ]
 
 
@@ -195,3 +198,74 @@ def test_env_passthrough_default_list_used(monkeypatch):
     monkeypatch.setenv("MAC_HUB_URL", "http://hub:8789")
     out = te._maybe_wrap_openshell(_ARGV)
     assert "MAC_HUB_URL=http://hub:8789" in out
+
+
+# ---------------------------------------------------------------------------
+# _agent_invocation: atomic --yolo <-> sandbox coupling
+# ---------------------------------------------------------------------------
+
+
+def test_agent_invocation_sandbox_wraps_and_keeps_yolo(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    out = te._agent_invocation("do the thing")
+    assert out[:4] == ["openshell", "sandbox", "create", "--no-auto-providers"]
+    assert "--policy" in out                  # enforced default policy
+    assert "--yolo" in out                     # YOLO kept, but now sandboxed
+    assert out.index("--") < out.index("--yolo")
+
+
+def test_agent_invocation_unsandboxed_allowed_by_default(monkeypatch):
+    # hatch unset -> default allow (current fleet), unwrapped, --yolo present
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    out = te._agent_invocation("do the thing")
+    assert "openshell" not in out[0]
+    assert out[0].endswith("python")
+    assert "--yolo" in out
+
+
+def test_agent_invocation_unsandboxed_explicit_allow(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    out = te._agent_invocation("do the thing")
+    assert out[:1] != ["openshell"]
+    assert "--yolo" in out
+
+
+def test_agent_invocation_unsandboxed_fail_closed(monkeypatch):
+    # hatch off + no sandbox -> refuse to launch unguarded YOLO
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
+    with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
+        te._agent_invocation("do the thing")
+
+
+def test_agent_invocation_sandbox_overrides_failclosed_hatch(monkeypatch):
+    # sandbox on -> safe regardless of the hatch value (no raise)
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
+    out = te._agent_invocation("do the thing")
+    assert out[0] == "openshell"
+    assert "--yolo" in out
+
+
+# --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---
+
+
+def test_agent_invocation_sets_child_yolo_env_when_sandboxed(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") == "1"
+
+
+def test_agent_invocation_sets_child_yolo_env_when_unsandboxed_allowed(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") == "1"
+
+
+def test_agent_invocation_failclosed_does_not_set_yolo_env(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
+    with pytest.raises(RuntimeError):
+        te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") is None
