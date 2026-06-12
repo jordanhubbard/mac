@@ -301,3 +301,115 @@ def test_task_executor_main_calls_create_agent_scope(tmp_path, monkeypatch):
     te.main(runner=_fake_runner)
 
     assert task_id in scopes_opened
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — relay_tool_context / relay_llm_context
+# ---------------------------------------------------------------------------
+
+
+def _fake_nr_with_scopes():
+    """Fake nemo_relay recording every scope.scope(name, type, data) call."""
+    fake = MagicMock()
+    fake.ScopeType.Agent = "AGENT"
+    fake.ScopeType.Tool = "TOOL"
+    fake.ScopeType.Llm = "LLM"
+    opened = []
+
+    @contextmanager
+    def _scope(name, scope_type, *, data=None, **kw):
+        opened.append((name, scope_type, data))
+        yield MagicMock()
+
+    fake.scope.scope = _scope
+    fake._opened = opened
+    return fake
+
+
+def _activate(monkeypatch, fake):
+    monkeypatch.setenv("MAC_RELAY_OBSERVABILITY", "1")
+    monkeypatch.setattr(ro, "_NEMO_RELAY_AVAILABLE", True)
+    monkeypatch.setattr(ro, "_nemo_relay", fake)
+    monkeypatch.setattr(ro, "_flush_subscribers", MagicMock())
+
+
+def test_relay_tool_context_noop_when_disabled():
+    ran = []
+    with ro.relay_tool_context("terminal", {"command": "ls"}):
+        ran.append(True)
+    assert ran == [True]
+
+
+def test_relay_llm_context_noop_when_disabled():
+    ran = []
+    with ro.relay_llm_context("claude", "anthropic", tokens=10):
+        ran.append(True)
+    assert ran == [True]
+
+
+def test_relay_tool_context_does_not_suppress_body_error_when_disabled():
+    with pytest.raises(ValueError, match="boom"):
+        with ro.relay_tool_context("terminal"):
+            raise ValueError("boom")
+
+
+def test_relay_tool_context_opens_tool_scope(monkeypatch):
+    fake = _fake_nr_with_scopes()
+    _activate(monkeypatch, fake)
+    with ro.relay_tool_context("terminal", {"command": "ls", "client": object()}):
+        pass
+    assert len(fake._opened) == 1
+    name, stype, data = fake._opened[0]
+    assert name.startswith("mac.tool.terminal")
+    assert stype == "TOOL"
+    assert data["tool_name"] == "terminal"
+    assert data["command"] == "ls"
+    assert "client" not in data  # non-scalar dropped by _sanitize_attrs
+
+
+def test_relay_llm_context_opens_llm_scope(monkeypatch):
+    fake = _fake_nr_with_scopes()
+    _activate(monkeypatch, fake)
+    with ro.relay_llm_context("claude-3-5-sonnet", "anthropic", tokens=1200):
+        pass
+    assert len(fake._opened) == 1
+    name, stype, data = fake._opened[0]
+    assert stype == "LLM"
+    assert data == {"model": "claude-3-5-sonnet", "provider": "anthropic", "request_tokens": 1200}
+
+
+def test_relay_tool_context_propagates_body_error_when_active(monkeypatch):
+    fake = _fake_nr_with_scopes()
+    _activate(monkeypatch, fake)
+    with pytest.raises(ValueError, match="kaboom"):
+        with ro.relay_tool_context("terminal"):
+            raise ValueError("kaboom")
+    assert len(fake._opened) == 1  # scope opened (and exited) despite the error
+
+
+def test_relay_context_survives_scope_enter_failure(monkeypatch):
+    """If scope.scope().__enter__ throws, the body still runs (unscoped)."""
+    fake = MagicMock()
+    fake.ScopeType.Tool = "TOOL"
+
+    @contextmanager
+    def _boom(*a, **kw):
+        raise RuntimeError("relay internal")
+        yield  # pragma: no cover
+
+    fake.scope.scope = _boom
+    _activate(monkeypatch, fake)
+    ran = []
+    with ro.relay_tool_context("terminal"):
+        ran.append(True)
+    assert ran == [True]
+
+
+def test_sanitize_attrs_keeps_scalars_drops_objects():
+    out = ro._sanitize_attrs({
+        "s": "x", "i": 1, "f": 1.5, "b": True, "n": None,
+        "list_ok": [1, "a", None],
+        "list_bad": [object()],
+        "obj": object(),
+    })
+    assert out == {"s": "x", "i": 1, "f": 1.5, "b": True, "n": None, "list_ok": [1, "a", None]}
