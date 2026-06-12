@@ -1215,6 +1215,23 @@ def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
     return wrapped
 
 
+def _force_child_yolo_env() -> None:
+    """Make the agent subprocess inherit HERMES_YOLO_MODE=1.
+
+    Hermes freezes its YOLO/approval bypass from HERMES_YOLO_MODE at *import*
+    time (tools/approval.py: ``_YOLO_MODE_FROZEN``). The ``--yolo`` CLI flag sets
+    that env only AFTER Hermes has already imported approval.py, so the freeze
+    can capture False and ``--yolo`` silently FAILS to bypass approval — the
+    agent still prompts. Setting the env here, in the executor, before the child
+    is spawned (the child inherits ``os.environ``) guarantees it is present at
+    the child's process start, before any import, so the freeze captures True
+    and approval is genuinely bypassed. This is the executor-side fix for the
+    import-order freeze; ``approvals.mode=off`` in the deployed config.yaml is
+    the config-side lever that covers the gateway too.
+    """
+    os.environ["HERMES_YOLO_MODE"] = "1"
+
+
 def _agent_invocation(prompt: str) -> List[str]:
     """Build the agent argv, atomically coupling --yolo to sandbox enforcement.
 
@@ -1236,8 +1253,10 @@ def _agent_invocation(prompt: str) -> List[str]:
     """
     argv = _hermes_argv(prompt)  # includes --yolo
     if _openshell_enabled():
+        _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
         return _maybe_wrap_openshell(argv)
     if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", "1")):
+        _force_child_yolo_env()
         sys.stderr.write(
             "[executor] WARNING: launching a --yolo agent WITHOUT an OpenShell "
             "sandbox (MAC_OPENSHELL_SANDBOX unset) — Hermes approval is disabled "

@@ -12,6 +12,7 @@ own image-default profile.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,7 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_CREATE_ARGS",
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
+    "HERMES_YOLO_MODE",
 ]
 
 
@@ -244,3 +246,26 @@ def test_agent_invocation_sandbox_overrides_failclosed_hatch(monkeypatch):
     out = te._agent_invocation("do the thing")
     assert out[0] == "openshell"
     assert "--yolo" in out
+
+
+# --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---
+
+
+def test_agent_invocation_sets_child_yolo_env_when_sandboxed(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") == "1"
+
+
+def test_agent_invocation_sets_child_yolo_env_when_unsandboxed_allowed(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") == "1"
+
+
+def test_agent_invocation_failclosed_does_not_set_yolo_env(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
+    with pytest.raises(RuntimeError):
+        te._agent_invocation("x")
+    assert os.environ.get("HERMES_YOLO_MODE") is None
