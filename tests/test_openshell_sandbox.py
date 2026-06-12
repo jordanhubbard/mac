@@ -1,12 +1,18 @@
 """Tests for OpenShell sandbox wrapping in the task executor (sandbox-01).
 
-The wrap is a pure argv transform gated by MAC_OPENSHELL_SANDBOX. These tests
-pin the default-OFF guarantee (zero behavior change) and the exact `openshell
-sandbox create ... -- <argv>` construction so the seam can't drift silently.
+The wrap is gated by MAC_OPENSHELL_SANDBOX. These tests pin the default-OFF
+guarantee (zero behavior change), the policy-resolution order, and the exact
+`openshell sandbox create ... -- <argv>` construction so the seam can't drift.
 They never spawn OpenShell.
+
+A policy is ALWAYS passed when enabled (explicit -> deployed -> bundled
+fail-closed default), so enabling can never silently fall back to OpenShell's
+own image-default profile.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -26,11 +32,19 @@ _OPENSHELL_ENVS = [
 
 
 @pytest.fixture(autouse=True)
-def _clean_openshell_env(monkeypatch):
-    """Start every test from a known-empty OpenShell config."""
+def _clean(monkeypatch, tmp_path):
+    """Empty OpenShell config + isolated HOME so ~/.mac/openshell-policy.yaml
+    (an operator-deployed policy) can't leak in from the dev machine and make
+    resolution non-deterministic."""
     for name in _OPENSHELL_ENVS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     yield
+
+
+def _policy_of(out):
+    """Return the value passed after --policy, or None."""
+    return out[out.index("--policy") + 1] if "--policy" in out else None
 
 
 # ---------------------------------------------------------------------------
@@ -60,29 +74,64 @@ def test_enabled_default_off():
 
 
 def test_disabled_returns_equal_argv():
-    out = te._maybe_wrap_openshell(_ARGV)
-    assert out == _ARGV
+    assert te._maybe_wrap_openshell(_ARGV) == _ARGV
 
 
 def test_disabled_returns_a_copy():
-    """Returns a distinct list so callers can't mutate module state."""
-    out = te._maybe_wrap_openshell(_ARGV)
-    assert out is not _ARGV
+    assert te._maybe_wrap_openshell(_ARGV) is not _ARGV
 
 
 # ---------------------------------------------------------------------------
-# enabled -> wrapped construction
+# enabled -> a policy is ALWAYS passed (no silent image-default fallback)
 # ---------------------------------------------------------------------------
 
 
-def test_enabled_minimal_no_policy(monkeypatch):
+def test_enabled_falls_back_to_bundled_policy(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     out = te._maybe_wrap_openshell(_ARGV)
     assert out[:4] == ["openshell", "sandbox", "create", "--no-auto-providers"]
-    assert "--policy" not in out
+    # --policy is always present, resolving to the bundled fail-closed default
+    assert _policy_of(out) == str(te._bundled_default_policy())
     # original argv preserved verbatim after the separator
     sep = out.index("--")
     assert out[sep + 1 :] == _ARGV
+
+
+def test_bundled_default_policy_exists():
+    """The fail-closed default must ship in the package (it's the fallback)."""
+    assert te._bundled_default_policy().is_file()
+
+
+def test_explicit_policy_used(monkeypatch, tmp_path):
+    p = tmp_path / "my-policy.yaml"
+    p.write_text("version: 1\n")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(p))
+    out = te._maybe_wrap_openshell(_ARGV)
+    assert _policy_of(out) == str(p)
+
+
+def test_missing_explicit_policy_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(tmp_path / "nope.yaml"))
+    with pytest.raises(FileNotFoundError):
+        te._maybe_wrap_openshell(_ARGV)
+
+
+def test_deployed_policy_preferred_over_bundled(monkeypatch, tmp_path):
+    """~/.mac/openshell-policy.yaml wins when no explicit policy is set."""
+    mac_dir = tmp_path / ".mac"
+    mac_dir.mkdir()
+    deployed = mac_dir / "openshell-policy.yaml"
+    deployed.write_text("version: 1\n")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")  # HOME already == tmp_path
+    out = te._maybe_wrap_openshell(_ARGV)
+    assert _policy_of(out) == str(deployed)
+
+
+# ---------------------------------------------------------------------------
+# flag construction
+# ---------------------------------------------------------------------------
 
 
 def test_separator_appears_once_and_before_argv(monkeypatch):
@@ -91,14 +140,6 @@ def test_separator_appears_once_and_before_argv(monkeypatch):
     out = te._maybe_wrap_openshell(_ARGV)
     assert out.count("--") == 1
     assert out.index("--") < out.index(_ARGV[0])
-
-
-def test_policy_flag(monkeypatch):
-    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setenv("MAC_OPENSHELL_POLICY", "/etc/mac/policy.yaml")
-    out = te._maybe_wrap_openshell(_ARGV)
-    assert "--policy" in out
-    assert out[out.index("--policy") + 1] == "/etc/mac/policy.yaml"
 
 
 def test_bin_override(monkeypatch):
@@ -128,7 +169,6 @@ def test_create_args_shell_split(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from img --upload /a:/b")
     out = te._maybe_wrap_openshell(_ARGV)
-    # tokens are split and land before the separator
     for tok in ("--from", "img", "--upload", "/a:/b"):
         assert tok in out
         assert out.index(tok) < out.index("--")
@@ -146,7 +186,6 @@ def test_env_passthrough_only_set_vars(monkeypatch):
     monkeypatch.delenv("BAR", raising=False)
     out = te._maybe_wrap_openshell(_ARGV)
     assert "--env" in out
-    # FOO forwarded exactly once (dedup), BAR (unset) skipped
     assert out.count("FOO=fooval") == 1
     assert not any(tok.startswith("BAR=") for tok in out)
 
