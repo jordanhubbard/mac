@@ -49,6 +49,8 @@ from mac.hermes_config_surface import (
 )
 from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
+from mac.relay_observability import create_agent_scope as _relay_agent_scope
+from mac.relay_observability import flush as _relay_flush
 from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
 
@@ -2781,15 +2783,29 @@ def create_app(
             error_name = exc.__class__.__name__
             _emit_http_observation(request, status_code, started, error_name)
             return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+        # NeMo Relay: open an Agent scope per HTTP request when relay is active.
+        # The session_id is taken from the X-Session-Id header when present, or
+        # generated from the request path + method so every request maps to a
+        # stable, unique scope name.  No-op when relay is absent or disabled.
+        relay_session_id = (
+            request.headers.get("x-session-id")
+            or request.headers.get("x-mac-session-id")
+            or "http.%s.%s" % (request.method.lower(), request.url.path.replace("/", ".").strip("."))
+        )
         try:
-            response = await call_next(request)
-            status_code = int(getattr(response, "status_code", 500))
-            return response
-        except Exception as exc:
-            error_name = exc.__class__.__name__
-            raise
+            with _relay_agent_scope(relay_session_id):
+                try:
+                    response = await call_next(request)
+                    status_code = int(getattr(response, "status_code", 500))
+                    return response
+                except Exception as exc:
+                    error_name = exc.__class__.__name__
+                    raise
+                finally:
+                    _emit_http_observation(request, status_code, started, error_name)
         finally:
-            _emit_http_observation(request, status_code, started, error_name)
+            _relay_flush()
 
     # th-merge-04: let model-provider keys be `secret:<name>`, resolved
     # decrypt-at-use from the in-mac encrypted key store. Shared by the /v1

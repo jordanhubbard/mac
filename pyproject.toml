@@ -52,6 +52,9 @@ postgres = [
 k8s = [
     "kubernetes>=30.1,<33",
 ]
+relay = [
+    "nemo-relay==0.3.0",
+]
 # Platform deps the in-process Hermes gateway needs (hu-03), measured from the
 # deployed Hermes venv. Provider-specific backends (anthropic, firecrawl-py,
 # exa-py, ...) stay lazy via the vendored tools/lazy_deps.py, not here.
