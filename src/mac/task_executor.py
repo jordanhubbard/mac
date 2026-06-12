@@ -1088,7 +1088,12 @@ def _hermes_argv(prompt: str) -> List[str]:
 # Knobs (read at wrap time — nothing is frozen at import):
 #   MAC_OPENSHELL_SANDBOX          truthy -> enable wrapping
 #   MAC_OPENSHELL_BIN             openshell binary (default "openshell")
-#   MAC_OPENSHELL_POLICY          path to the policy YAML (the guardrail spec)
+#   MAC_OPENSHELL_POLICY          explicit policy YAML path (the guardrail spec).
+#                                 When unset, the wrap resolves a policy in this
+#                                 order and ALWAYS passes one (never the OpenShell
+#                                 image default): explicit -> ~/.mac/openshell-
+#                                 policy.yaml -> bundled fail-closed default
+#                                 (src/mac/openshell/default-policy.yaml).
 #   MAC_OPENSHELL_SANDBOX_NAME    fixed sandbox name (debug; default: ephemeral)
 #   MAC_OPENSHELL_KEEP            truthy -> --keep (debug; default one-shot teardown)
 #   MAC_OPENSHELL_CREATE_ARGS     extra `sandbox create` args (shell-split), e.g.
@@ -1133,10 +1138,50 @@ def _openshell_env_flags() -> List[str]:
     return flags
 
 
+def _bundled_default_policy() -> Path:
+    """Path to the fail-closed OpenShell policy bundled in this package."""
+    return Path(__file__).resolve().parent / "openshell" / "default-policy.yaml"
+
+
+def _resolve_openshell_policy() -> str:
+    """Resolve the policy passed to ``openshell sandbox create``.
+
+    Resolution order (first hit wins):
+      1. ``MAC_OPENSHELL_POLICY`` (explicit) — must exist, else raise.
+      2. ``~/.mac/openshell-policy.yaml`` — the operator-filled fleet policy.
+      3. the package's bundled fail-closed default (``openshell/default-policy.yaml``).
+
+    A policy is *always* returned (or we raise) — the wrap never omits
+    ``--policy``, so enabling sandboxing can never silently fall back to
+    OpenShell's own image-default profile. The bundled default denies all
+    network egress, so an unconfigured deployment fails closed (tasks can't
+    reach the hub/gateway) rather than running under an unknown profile.
+    """
+    explicit = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+    if explicit:
+        if not Path(explicit).is_file():
+            raise FileNotFoundError("MAC_OPENSHELL_POLICY=%r but no such file" % explicit)
+        return explicit
+    deployed = Path.home() / ".mac" / "openshell-policy.yaml"
+    if deployed.is_file():
+        return str(deployed)
+    bundled = _bundled_default_policy()
+    if bundled.is_file():
+        return str(bundled)
+    raise FileNotFoundError(
+        "OpenShell sandboxing is enabled but no policy could be resolved "
+        "(set MAC_OPENSHELL_POLICY, install %s, or ship %s). Refusing to run "
+        "without an explicit policy." % (deployed, bundled)
+    )
+
+
 def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
     """Wrap *argv* to run inside an OpenShell sandbox, if enabled.
 
-    Pure and best-effort: returns *argv* unchanged when sandboxing is disabled.
+    Returns *argv* unchanged when sandboxing is disabled. When enabled, a policy
+    is ALWAYS passed via :func:`_resolve_openshell_policy` (explicit ->
+    deployed -> bundled fail-closed default), so OpenShell can never silently
+    apply its image-default profile; if no policy can be resolved this raises.
     The sandbox is one-shot (torn down when the agent process exits) unless
     MAC_OPENSHELL_KEEP is set. ``--name`` is omitted by default so OpenShell
     assigns a unique name per run; set MAC_OPENSHELL_SANDBOX_NAME only to debug
@@ -1147,9 +1192,10 @@ def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
         return list(argv)
     bin_ = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
     wrapped: List[str] = [bin_, "sandbox", "create", "--no-auto-providers"]
-    policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
-    if policy:
-        wrapped += ["--policy", policy]
+    # Always pass one of OUR policies — never omit --policy, which would let
+    # OpenShell silently apply its own image-default profile. Resolves
+    # explicit -> deployed -> bundled fail-closed default, or raises.
+    wrapped += ["--policy", _resolve_openshell_policy()]
     name = (os.environ.get("MAC_OPENSHELL_SANDBOX_NAME") or "").strip()
     if name:
         wrapped += ["--name", name]
