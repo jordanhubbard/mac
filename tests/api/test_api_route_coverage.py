@@ -1416,6 +1416,12 @@ edges:
             "actor": "operator",
             "reason": "route coverage rescue",
         },
+        # paused=False keeps the shared coverage project claimable for other cases.
+        ("POST", "/projects/{project}/dispatch"): {
+            "paused": False,
+            "actor": "operator",
+        },
+        ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {
         ("POST", "/tasks/{task_id}/claim"): {
