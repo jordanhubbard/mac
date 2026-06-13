@@ -410,6 +410,14 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         label="--metadata",
         default={},
     )
+    if getattr(args, "no_dispatch", False):
+        # Stage the task: the loop-mode fleet won't auto-claim it (and it's
+        # hidden from `task ready`) until an operator starts it explicitly.
+        metadata["no_dispatch"] = True
+    if getattr(args, "no_decompose", False):
+        # Handoff / plan-note guard: the executor will not auto-decompose this
+        # task into child tasks (add_child_tasks refuses with no_decompose).
+        metadata["no_decompose"] = True
     # bd parity: when --project is omitted, tag the task with the working
     # directory's project (git repo name, else cwd basename). Pass an explicit
     # --project (including --project '' for none) to override.
@@ -493,6 +501,9 @@ def cmd_project_list(args: argparse.Namespace) -> None:
 
 
 def cmd_project_create(args: argparse.Namespace) -> None:
+    # New projects default to dispatch-PAUSED so a freshly-onboarded backlog
+    # does not auto-claim before an operator activates the project. Pass
+    # --active to opt straight into autonomous dispatch.
     _print(
         _plane(args).create_project(
             args.name,
@@ -501,8 +512,17 @@ def cmd_project_create(args: argparse.Namespace) -> None:
             status=args.status,
             actor=args.actor,
             project_id=args.project_id,
+            dispatch_paused=args.dispatch_paused,
         )
     )
+
+
+def cmd_project_pause(args: argparse.Namespace) -> None:
+    _print(_plane(args).set_project_dispatch(args.project, paused=True, actor=args.actor))
+
+
+def cmd_project_activate(args: argparse.Namespace) -> None:
+    _print(_plane(args).set_project_dispatch(args.project, paused=False, actor=args.actor))
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
@@ -511,6 +531,10 @@ def cmd_project_show(args: argparse.Namespace) -> None:
 
 def cmd_task_start(args: argparse.Namespace) -> None:
     _print(_plane(args).start_task(args.task_id, args.agent_id))
+
+
+def cmd_task_release(args: argparse.Namespace) -> None:
+    _print(_plane(args).release_task(args.task_id, actor=args.actor))
 
 
 def cmd_task_submit(args: argparse.Namespace) -> None:
@@ -558,6 +582,64 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
 
 def cmd_agent_list(args: argparse.Namespace) -> None:
     _print([agent.to_dict() for agent in _plane(args).list_agents()])
+
+
+def cmd_agent_delete(args: argparse.Namespace) -> None:
+    """Hard-delete an agent record (mood/nap/events/messages); task history is
+    task-keyed and preserved. Refused while the agent holds an active lease."""
+    _plane(args).delete_agent(args.agent_id, actor=args.actor or "human")
+    _print({"deleted": args.agent_id})
+
+
+def cmd_agent_migrate(args: argparse.Namespace) -> None:
+    """Move an agent (soul + memory) to a new host. Dry-run by default; pass
+    --execute to run the backup -> retarget -> deploy -> restore -> verify
+    playbook. The agent NAME is preserved, so its hub-stored persona / memories
+    / mood follow ``agent_<name>`` automatically."""
+    import shutil
+    import time
+
+    import yaml
+
+    from mac import agent_migrate as am
+    from mac.hermes_config_surface import registry_path
+
+    reg_path = registry_path()
+    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
+    fleets = registry.get("fleets") or {}
+    fleet = args.fleet or next(
+        (f for f, d in fleets.items()
+         if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))),
+        None,
+    )
+    if not fleet or fleet not in fleets:
+        raise SystemExit("agent %r not found in any fleet in %s" % (args.name, reg_path))
+    agents = fleets[fleet].get("agents") or []
+    cur = next((a for a in agents if (a or {}).get("name") == args.name), None)
+    if cur is None:
+        raise SystemExit("agent %r not in fleet %r" % (args.name, fleet))
+    src = args.from_target or cur.get("target")
+    if not src:
+        raise SystemExit("no source target for %r; pass --from" % args.name)
+
+    steps = am.migration_plan(
+        args.name,
+        src_target=src,
+        dst_target=args.to_target,
+        fleet=fleet,
+        keep_source=args.keep_source,
+        retire_source_agent=args.retire_source_agent,
+    )
+    if not args.execute:
+        print(am.render_plan(args.name, steps))
+        return
+    # --execute: retarget fleets.yaml (backup first), then run the playbook.
+    backup = "%s.bak.%d" % (reg_path, int(time.time()))
+    shutil.copy2(reg_path, backup)
+    am.retarget_fleet_agent(registry, fleet, args.name, target=args.to_target, os=args.to_os)
+    reg_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, args.to_target, reg_path, backup))
+    _print(am.execute_migration(args.name, steps))
 
 
 def cmd_agent_hardware(args: argparse.Namespace) -> None:
@@ -1976,6 +2058,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--actor", default="human")
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                         help="don't write the .tickets/<id>.md mirror for this task")
+    create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
+                        help="stage the task: the loop-mode fleet won't auto-claim it "
+                             "(and it's hidden from `task ready`) until started explicitly")
+    create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
+                        help="handoff/plan-note guard: the executor will not auto-decompose "
+                             "this task into child tasks")
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser("list")
@@ -2026,6 +2114,13 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("task_id")
     start.add_argument("agent_id")
     _set(cmd_task_start, start)
+
+    release = task.add_parser(
+        "release", help="clear a --no-dispatch hold so the task can auto-dispatch"
+    )
+    release.add_argument("task_id")
+    release.add_argument("--actor", default="human")
+    _set(cmd_task_release, release)
 
     submit = task.add_parser("submit-review")
     submit.add_argument("task_id")
@@ -2096,7 +2191,33 @@ def build_parser() -> argparse.ArgumentParser:
     project_create.add_argument("--status", default="active")
     project_create.add_argument("--actor", default="human")
     project_create.add_argument("--project-id")
+    project_dispatch = project_create.add_mutually_exclusive_group()
+    project_dispatch.add_argument(
+        "--paused",
+        dest="dispatch_paused",
+        action="store_true",
+        default=True,
+        help="stage the project: its tickets will not auto-dispatch until activated (default)",
+    )
+    project_dispatch.add_argument(
+        "--active",
+        dest="dispatch_paused",
+        action="store_false",
+        help="open the project to autonomous dispatch immediately",
+    )
     _set(cmd_project_create, project_create)
+    project_pause = project.add_parser(
+        "pause", help="hold a project's tickets from autonomous dispatch"
+    )
+    project_pause.add_argument("project")
+    project_pause.add_argument("--actor", default="human")
+    _set(cmd_project_pause, project_pause)
+    project_activate = project.add_parser(
+        "activate", help="open a project to autonomous dispatch"
+    )
+    project_activate.add_argument("project")
+    project_activate.add_argument("--actor", default="human")
+    _set(cmd_project_activate, project_activate)
     project_list = project.add_parser("list")
     _set(cmd_project_list, project_list)
     project_show = project.add_parser("show")
@@ -2140,6 +2261,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="runtime_environments.digest declaring which build this agent is running",
     )
     _set(cmd_agent_heartbeat, heartbeat)
+
+    agent_delete = agent.add_parser(
+        "delete",
+        help="hard-delete an agent record (removes mood/nap/events/messages; task history is kept)",
+    )
+    agent_delete.add_argument("agent_id")
+    agent_delete.add_argument("--actor", default="human")
+    _set(cmd_agent_delete, agent_delete)
+
+    agent_migrate = agent.add_parser(
+        "migrate",
+        help="move an agent (soul + memory) to a new host; dry-run unless --execute",
+    )
+    agent_migrate.add_argument("name")
+    agent_migrate.add_argument("--to", dest="to_target", required=True, help="destination user@host")
+    agent_migrate.add_argument("--from", dest="from_target", help="source user@host (default: current fleets.yaml target)")
+    agent_migrate.add_argument("--to-os", default="linux")
+    agent_migrate.add_argument("--fleet", help="fleet name (default: auto-resolve from fleets.yaml)")
+    agent_migrate.add_argument("--execute", action="store_true", help="run it (default: print the plan)")
+    agent_migrate.add_argument("--keep-source", action="store_true", help="don't decommission the source host")
+    agent_migrate.add_argument("--retire-source-agent", help="agent_id to `mac agent delete` after migration")
+    _set(cmd_agent_migrate, agent_migrate)
 
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
         dest="fleet_command", required=True

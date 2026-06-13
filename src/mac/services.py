@@ -258,6 +258,33 @@ def _truthy_env(name: str, default: str = "") -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read a positive integer config knob, falling back to *default*.
+
+    Empty / unparseable / below-*minimum* values fall back to the default so a
+    misconfigured env var can never DISABLE a safety cap (only widen/narrow it
+    within sane bounds).
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+# Decomposition guardrails (T1 — bound runaway auto-decompose). Enforced
+# server-side in ControlPlane.add_child_tasks so NEITHER decomposition path
+# (the executor prompt that tells the agent to POST /children, nor the
+# declarative maybe_auto_decompose manifest path) can exceed them regardless of
+# agent behavior. Both are overridable via env for operators who need wider
+# trees, but never below the floor of 1.
+DEFAULT_MAX_CHILD_TASKS_PER_PARENT = 10
+DEFAULT_MAX_DECOMPOSE_DEPTH = 2
+
+
 def _beads_cli() -> str:
     configured = os.environ.get("MAC_BEADS_CLI", "").strip()
     if configured:
@@ -3096,6 +3123,10 @@ class ControlPlane:
             task = self._task_from_row(row)
             if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
                 continue
+            if self._task_dispatch_held(task):
+                continue  # staged / do-not-dispatch — not claimable until released
+            if self._project_dispatch_paused(task.project):
+                continue  # project not yet activated for autonomous dispatch
             try:
                 ready = self._dependencies_satisfied(task)
             except Exception:  # noqa: BLE001 - a missing dependency blocks readiness
@@ -3265,6 +3296,44 @@ class ControlPlane:
         )
         return updated
 
+    def release_task(self, task_id: str, *, actor: str = "human") -> Task:
+        """Clear a per-task dispatch hold (``no_dispatch``), un-staging it.
+
+        The inverse of ``mac task create --no-dispatch``: once released the
+        task becomes eligible for autonomous claim and re-appears in the ready
+        queue (subject to dependencies, capability match, and any project-level
+        pause). No-op if the task is not held.
+        """
+        task = self.get_task(task_id)
+        md = ensure_json_object(task.metadata)
+        if not md.pop("no_dispatch", None):
+            return task
+        return self.update_task(task_id, metadata=md, actor=actor)
+
+    def _task_decompose_depth(self, task: Task, *, _max_walk: int = 64) -> int:
+        """Count ancestors above *task* via the parent_task_id chain.
+
+        0 = a root task (no parent). Cycle- and runaway-safe: the walk is
+        bounded and de-dups visited ids. Used to enforce the decomposition
+        depth cap so a deep chain of child-of-child tasks can't recurse forever.
+        """
+        depth = 0
+        current = task
+        seen: set = set()
+        for _ in range(_max_walk):
+            meta = ensure_json_object(current.metadata)
+            relationships = ensure_json_object(meta.get("relationships"))
+            parent_id = relationships.get("parent_task_id") or meta.get("parent_task_id")
+            if not parent_id or parent_id in seen:
+                break
+            seen.add(parent_id)
+            try:
+                current = self.get_task(str(parent_id))
+            except NotFoundError:
+                break
+            depth += 1
+        return depth
+
     def add_child_tasks(
         self,
         task_id: str,
@@ -3282,9 +3351,44 @@ class ControlPlane:
             raise ValidationError(
                 "child tasks can only be added to open, blocked, claimed, or running tasks"
             )
+
+        # --- Decomposition guardrails (T1) -----------------------------------
+        # Server-side backstop against the runaway auto-decompose that hit the
+        # live fleet. Refuse to decompose handoff/plan-note tasks, refuse beyond
+        # the depth cap, and bound the cumulative child count per parent.
+        parent_metadata = ensure_json_object(parent.metadata)
+        if parent_metadata.get("no_decompose"):
+            raise ValidationError(
+                "task %s is marked no_decompose (handoff/plan note) — refusing to "
+                "create child tasks; execute or stage it directly" % parent.id
+            )
+        max_depth = _int_env("MAC_MAX_DECOMPOSE_DEPTH", DEFAULT_MAX_DECOMPOSE_DEPTH)
+        depth = self._task_decompose_depth(parent)
+        if depth >= max_depth:
+            raise ValidationError(
+                "decomposition depth limit reached: task %s is at depth %d (max %d) "
+                "— execute it directly instead of decomposing further"
+                % (parent.id, depth, max_depth)
+            )
+
         specs = [ensure_json_object(spec) for spec in children]
         if not specs:
             raise ValidationError("at least one child task is required")
+
+        max_children = _int_env(
+            "MAC_MAX_CHILD_TASKS_PER_PARENT", DEFAULT_MAX_CHILD_TASKS_PER_PARENT
+        )
+        existing_children = _metadata_string_list(
+            ensure_json_object(parent_metadata.get("relationships")).get("child_task_ids")
+        )
+        projected = len(existing_children) + len(specs)
+        if projected > max_children:
+            raise ValidationError(
+                "child task limit exceeded for %s: %d existing + %d requested = %d "
+                "(max %d) — split into a smaller plan or raise "
+                "MAC_MAX_CHILD_TASKS_PER_PARENT"
+                % (parent.id, len(existing_children), len(specs), projected, max_children)
+            )
 
         prepared: List[JsonDict] = []
         for index, spec in enumerate(specs, start=1):
@@ -3531,6 +3635,7 @@ class ControlPlane:
         status: str = "active",
         actor: str = "human",
         project_id: Optional[str] = None,
+        dispatch_paused: Optional[bool] = None,
     ) -> ProjectRecord:
         project_name = str(name or "").strip()
         if not project_name:
@@ -3542,6 +3647,8 @@ class ControlPlane:
         project_metadata = ensure_json_object(metadata)
         if actor:
             project_metadata.setdefault("created_by", actor)
+        if dispatch_paused is not None:
+            project_metadata["dispatch_paused"] = bool(dispatch_paused)
         if existing is not None:
             return self._project_record_from_row(existing)
         now = utcnow()
@@ -3725,6 +3832,26 @@ class ControlPlane:
             metadata={"previous_name": project.name, "actor": actor},
         )
         return self.get_project_record(new_name)
+
+    def set_project_dispatch(
+        self,
+        name_or_id: str,
+        *,
+        paused: bool,
+        actor: str = "human",
+    ) -> ProjectRecord:
+        """Pause or resume autonomous dispatch for an entire project.
+
+        Persists ``metadata.dispatch_paused`` on the project record. When
+        paused, the project's open tickets are hidden from the ready queue and
+        rejected by autonomous claim (reason ``project_dispatch_paused``);
+        operators can still start them explicitly. This is the project-level
+        onboarding gate that complements the per-task ``no_dispatch`` hold.
+        """
+        project = self.get_project_record(name_or_id)
+        md = ensure_json_object(project.metadata)
+        md["dispatch_paused"] = bool(paused)
+        return self.update_project(project.id, metadata=md, actor=actor)
 
     def delete_project(self, name_or_id: str, *, force: bool = False, actor: str = "human") -> None:
         project = self.get_project_record(name_or_id)
@@ -12706,7 +12833,45 @@ class ControlPlane:
             ),
         }
 
+    def _task_dispatch_held(self, task: Task) -> bool:
+        """True when a task is explicitly held from autonomous dispatch (staged).
+
+        Set via metadata ``no_dispatch: true`` (e.g. ``mac task create
+        --no-dispatch``) so a backlog — a freshly-onboarded project's tickets,
+        or operator handoff notes — can be filed WITHOUT the loop-mode fleet
+        auto-claiming it. The hold only blocks autonomous claim and hides the
+        task from the ready queue; an operator can still start it explicitly
+        (``mac task claim`` / ``mac task start``). This is the first-class
+        replacement for abusing a sentinel ``required_capabilities`` value.
+        """
+        return bool(ensure_json_object(task.metadata).get("no_dispatch"))
+
+    def _project_dispatch_paused(self, project: Optional[str]) -> bool:
+        """True when the task's project is explicitly dispatch-PAUSED.
+
+        Per-project onboarding gate: a newly-created project can be staged
+        (``mac project create`` defaults to paused; ``mac project activate``
+        releases it) so its tickets don't auto-dispatch until the operator
+        turns the project on. IMPLICIT projects (no ``projects`` row — the case
+        for the live fleet's default project) are never paused, so existing
+        autonomous behavior is unchanged. Only projects with a record carrying
+        ``metadata.dispatch_paused`` are held.
+        """
+        if not project:
+            return False
+        try:
+            rec = self.get_project_record(project)
+        except NotFoundError:
+            return False
+        except Exception:  # noqa: BLE001 — never let a lookup error block dispatch
+            return False
+        return bool(ensure_json_object(rec.metadata).get("dispatch_paused"))
+
     def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
+        if self._task_dispatch_held(task):
+            return False, "dispatch_held"
+        if self._project_dispatch_paused(task.project):
+            return False, "project_dispatch_paused"
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"

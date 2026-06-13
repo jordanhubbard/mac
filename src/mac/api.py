@@ -298,6 +298,16 @@ class ProjectCreate(BaseModel):
     status: str = "active"
     actor: str = "human"
     project_id: Optional[str] = None
+    dispatch_paused: Optional[bool] = None
+
+
+class ProjectDispatch(BaseModel):
+    paused: bool
+    actor: str = "human"
+
+
+class TaskRelease(BaseModel):
+    actor: str = "human"
 
 
 class ProjectUpdate(BaseModel):
@@ -3615,6 +3625,12 @@ def create_app(
             data["metadata"] = metadata
         return cp.create_project(actor=actor, **data).to_dict()
 
+    @app.post("/projects/{project}/dispatch")
+    def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:
+        return cp.set_project_dispatch(
+            project, paused=body.paused, actor=body.actor
+        ).to_dict()
+
     @app.get("/projects/{project}")
     def get_project(project: str) -> Dict[str, Any]:
         return cp.get_project(project)
@@ -3699,6 +3715,10 @@ def create_app(
             limit=20,
         )
         return task.to_dict()
+
+    @app.post("/tasks/{task_id}/release")
+    def release_task(task_id: str, body: TaskRelease = TaskRelease()) -> Dict[str, Any]:
+        return cp.release_task(task_id, actor=body.actor).to_dict()
 
     @app.post("/tasks/{task_id}/submit-for-review")
     def submit_for_review(
