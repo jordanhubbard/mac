@@ -370,6 +370,19 @@ def register_worker(
     return agent
 
 
+# Declarative manifest of pip dependencies every agent must have to function,
+# as (name + version) specifiers. Reconciled at agent-lifecycle startup via
+# MacWorker.reconcile_runtime_deps() with a version-aware probe+install, so a
+# fresh or stale node converges to the right versions on demand WITHOUT waiting
+# for a redeploy. Add fleet-wide runtime deps here; keep them pinned.
+REQUIRED_RUNTIME_PIP: List[str] = [
+    # NeMo Relay observability seam (src/mac/relay_observability.py). Present on
+    # every agent so MAC_RELAY_OBSERVABILITY=1 actually activates rather than
+    # silently no-opping on a missing import.
+    "nemo-relay==0.3.0",
+]
+
+
 class MacWorker:
     """Small worker harness for mac-owned tasks.
 
@@ -449,6 +462,11 @@ class MacWorker:
         prior_handlers = self._install_signal_handlers()
         results: List[WorkerRunResult] = []
         iterations = 0
+        # Lifecycle self-update: in daemon mode (no max_iterations), probe+install
+        # the declared runtime deps before serving so the agent converges to the
+        # required versions on (re)start. Skipped for bounded test runs.
+        if max_iterations is None:
+            self._reconcile_runtime_deps_best_effort()
         try:
             while not self._stop and (max_iterations is None or iterations < max_iterations):
                 iterations += 1
@@ -2746,15 +2764,54 @@ class MacWorker:
             return ("@" + parts[1]).lower() if len(parts) >= 2 else spec.lower()
         return spec.split("@", 1)[0].lower()
 
-    def _pip_installed(self, py: str) -> set:
+    def _pip_installed(self, py: str) -> Dict[str, str]:
+        """Map of installed pip package name -> version (normalized names).
+
+        ``pip list --format=json`` already carries the version; we keep it so the
+        probe can compare name+version tuples instead of presence-only.
+        """
         try:
             out = subprocess.run(
                 [py, "-m", "pip", "list", "--format=json"],
                 capture_output=True, text=True, timeout=120, check=False,
             ).stdout
-            return {str(p.get("name", "")).lower().replace("_", "-") for p in json.loads(out or "[]")}
+            return {
+                str(p.get("name", "")).lower().replace("_", "-"): str(p.get("version", ""))
+                for p in json.loads(out or "[]")
+            }
         except Exception:
-            return set()
+            return {}
+
+    @classmethod
+    def _pip_spec_satisfied(cls, spec: str, installed: Dict[str, str]) -> bool:
+        """True when *spec* (name + optional version constraint) is already met.
+
+        ``installed`` is name->version (see :meth:`_pip_installed`). The probe is
+        version-aware: a present-but-out-of-range package is NOT satisfied, so it
+        gets reinstalled/upgraded to match. Uses ``packaging`` for correct PEP 440
+        comparison when available, with a conservative fallback (exact ``==``
+        match, else presence) so a missing ``packaging`` can never wrongly skip an
+        install of something absent.
+        """
+        name = cls._pip_base_name(spec)
+        have = installed.get(name)
+        if have is None:
+            return False  # absent -> must install
+        try:
+            from packaging.requirements import Requirement
+
+            req = Requirement(spec)
+            if not req.specifier:
+                return True  # no version pin -> presence is enough
+            return req.specifier.contains(have, prereleases=True)
+        except Exception:
+            # Fallback without packaging: honor an exact "==" pin, else accept
+            # presence (can't reason about ranges safely).
+            marker = "=="
+            if marker in spec:
+                want = spec.split(marker, 1)[1].strip().split(",")[0].strip()
+                return have == want
+            return True
 
     def _npm_installed(self, prefix: str) -> set:
         try:
@@ -2836,7 +2893,11 @@ class MacWorker:
             return {"ok": True, "skipped": "no specs"}
         py = self._agent_venv_python()
         installed = self._pip_installed(py)
-        pending = [s for s in specs if self._pip_base_name(s) not in installed]
+        # Version-aware probe: install/upgrade only the (name, version) tuples
+        # that are missing OR present at an unsatisfying version. pip moves a
+        # present-but-wrong version to satisfy the constraint (no --upgrade, so
+        # we don't churn transitive deps).
+        pending = [s for s in specs if not self._pip_spec_satisfied(s, installed)]
         if not pending:
             self._update_footprint("pip", specs, index_url=index_url)
             return {"ok": True, "skipped": "already satisfied", "specs": specs}
@@ -2871,6 +2932,42 @@ class MacWorker:
         finally:
             lock.close()
         return result
+
+    def reconcile_runtime_deps(self, specs: Optional[List[str]] = None) -> JsonDict:
+        """Probe + install the agent's declared runtime deps (idempotent).
+
+        Version-aware via :meth:`ensure_pip`: installs/upgrades only the
+        (name, version) tuples that are missing or unsatisfied, and is a fast
+        no-op when everything already matches. Invoked at lifecycle startup so a
+        fresh or stale agent self-converges to the required dependency versions
+        on demand — no redeploy needed. ``specs`` defaults to
+        :data:`REQUIRED_RUNTIME_PIP`.
+        """
+        specs = list(REQUIRED_RUNTIME_PIP) if specs is None else list(specs)
+        if not specs:
+            return {"ok": True, "skipped": "no runtime deps"}
+        return self.ensure_pip(specs, reason="runtime-deps reconcile")
+
+    def _reconcile_runtime_deps_best_effort(self) -> None:
+        """Run :meth:`reconcile_runtime_deps` without ever breaking the loop.
+
+        Gated by ``MAC_AGENT_RECONCILE_RUNTIME_DEPS`` (default on); set to a
+        falsey value to skip (e.g. air-gapped hosts that provision deps out of
+        band).
+        """
+        if os.environ.get("MAC_AGENT_RECONCILE_RUNTIME_DEPS", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return
+        try:
+            result = self.reconcile_runtime_deps()
+            self._observe_log(
+                "worker.runtime_deps.reconciled",
+                level="debug",
+                detail={k: result.get(k) for k in ("ok", "skipped", "specs") if k in result},
+            )
+        except Exception as exc:  # noqa: BLE001 - dep reconcile must never crash the loop
+            self._observe_log(
+                "worker.runtime_deps.error", level="warning", detail={"error": str(exc)}
+            )
 
     def _maybe_sync_service_claims(self) -> None:
         # media-01: claim/renew the media service-roles this host is willing to

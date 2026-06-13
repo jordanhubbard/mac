@@ -3971,13 +3971,16 @@ install_github_review_key
 install_or_validate_shared_services
 write_hermes_memory_topology
 
-log "installing mac Python package (with vendored Hermes runtime + gateway extra)"
+log "installing mac Python package (with vendored Hermes runtime + gateway + relay extras)"
 "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
 # ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
 # runtime (src/mac/_hermes) runs in-process from this one venv — no separate
 # hermes-agent venv needed. The gateway service execs mac-hermes-gateway.
-"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway]" >/dev/null
+# The relay extra ships nemo-relay so the gateway has the observability seam at
+# deploy time (the worker also reconciles REQUIRED_RUNTIME_PIP at lifecycle
+# start, so a stale node self-upgrades on demand — see mac/worker.py).
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay]" >/dev/null
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
