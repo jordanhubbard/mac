@@ -3096,6 +3096,8 @@ class ControlPlane:
             task = self._task_from_row(row)
             if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
                 continue
+            if self._task_dispatch_held(task):
+                continue  # staged / do-not-dispatch — not claimable until released
             try:
                 ready = self._dependencies_satisfied(task)
             except Exception:  # noqa: BLE001 - a missing dependency blocks readiness
@@ -12706,7 +12708,22 @@ class ControlPlane:
             ),
         }
 
+    def _task_dispatch_held(self, task: Task) -> bool:
+        """True when a task is explicitly held from autonomous dispatch (staged).
+
+        Set via metadata ``no_dispatch: true`` (e.g. ``mac task create
+        --no-dispatch``) so a backlog — a freshly-onboarded project's tickets,
+        or operator handoff notes — can be filed WITHOUT the loop-mode fleet
+        auto-claiming it. The hold only blocks autonomous claim and hides the
+        task from the ready queue; an operator can still start it explicitly
+        (``mac task claim`` / ``mac task start``). This is the first-class
+        replacement for abusing a sentinel ``required_capabilities`` value.
+        """
+        return bool(ensure_json_object(task.metadata).get("no_dispatch"))
+
     def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
+        if self._task_dispatch_held(task):
+            return False, "dispatch_held"
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"

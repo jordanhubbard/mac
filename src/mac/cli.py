@@ -410,6 +410,10 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         label="--metadata",
         default={},
     )
+    if getattr(args, "no_dispatch", False):
+        # Stage the task: the loop-mode fleet won't auto-claim it (and it's
+        # hidden from `task ready`) until an operator starts it explicitly.
+        metadata["no_dispatch"] = True
     # bd parity: when --project is omitted, tag the task with the working
     # directory's project (git repo name, else cwd basename). Pass an explicit
     # --project (including --project '' for none) to override.
@@ -1976,6 +1980,9 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--actor", default="human")
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                         help="don't write the .tickets/<id>.md mirror for this task")
+    create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
+                        help="stage the task: the loop-mode fleet won't auto-claim it "
+                             "(and it's hidden from `task ready`) until started explicitly")
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser("list")
