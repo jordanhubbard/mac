@@ -477,6 +477,13 @@ class RemoteDispatch:
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 
+    def delete_agent(self, agent_id: str, *, actor: str = "human") -> _Dictish:
+        # DELETE /agents/{id} removes the agent + its agent-scoped ephemera
+        # (mood/nap/events/messages) and records an agent.deleted audit event;
+        # task history is task-keyed and preserved. Refused if it holds a lease.
+        path = "/agents/%s?actor=%s" % (quote(agent_id, safe=""), quote(actor, safe=""))
+        return _Dictish(self._delete(path))
+
     def heartbeat_agent(self, agent_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post("/agents/%s/heartbeat" % quote(agent_id, safe=""), _drop_none(kw))

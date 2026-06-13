@@ -560,6 +560,64 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
     _print([agent.to_dict() for agent in _plane(args).list_agents()])
 
 
+def cmd_agent_delete(args: argparse.Namespace) -> None:
+    """Hard-delete an agent record (mood/nap/events/messages); task history is
+    task-keyed and preserved. Refused while the agent holds an active lease."""
+    _plane(args).delete_agent(args.agent_id, actor=args.actor or "human")
+    _print({"deleted": args.agent_id})
+
+
+def cmd_agent_migrate(args: argparse.Namespace) -> None:
+    """Move an agent (soul + memory) to a new host. Dry-run by default; pass
+    --execute to run the backup -> retarget -> deploy -> restore -> verify
+    playbook. The agent NAME is preserved, so its hub-stored persona / memories
+    / mood follow ``agent_<name>`` automatically."""
+    import shutil
+    import time
+
+    import yaml
+
+    from mac import agent_migrate as am
+    from mac.hermes_config_surface import registry_path
+
+    reg_path = registry_path()
+    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
+    fleets = registry.get("fleets") or {}
+    fleet = args.fleet or next(
+        (f for f, d in fleets.items()
+         if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))),
+        None,
+    )
+    if not fleet or fleet not in fleets:
+        raise SystemExit("agent %r not found in any fleet in %s" % (args.name, reg_path))
+    agents = fleets[fleet].get("agents") or []
+    cur = next((a for a in agents if (a or {}).get("name") == args.name), None)
+    if cur is None:
+        raise SystemExit("agent %r not in fleet %r" % (args.name, fleet))
+    src = args.from_target or cur.get("target")
+    if not src:
+        raise SystemExit("no source target for %r; pass --from" % args.name)
+
+    steps = am.migration_plan(
+        args.name,
+        src_target=src,
+        dst_target=args.to_target,
+        fleet=fleet,
+        keep_source=args.keep_source,
+        retire_source_agent=args.retire_source_agent,
+    )
+    if not args.execute:
+        print(am.render_plan(args.name, steps))
+        return
+    # --execute: retarget fleets.yaml (backup first), then run the playbook.
+    backup = "%s.bak.%d" % (reg_path, int(time.time()))
+    shutil.copy2(reg_path, backup)
+    am.retarget_fleet_agent(registry, fleet, args.name, target=args.to_target, os=args.to_os)
+    reg_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, args.to_target, reg_path, backup))
+    _print(am.execute_migration(args.name, steps))
+
+
 def cmd_agent_hardware(args: argparse.Namespace) -> None:
     """Fleet hardware inventory from self-reported resources["hardware"], with the
     hub-derived gen capability (can this agent host media generation, and is it
@@ -2140,6 +2198,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="runtime_environments.digest declaring which build this agent is running",
     )
     _set(cmd_agent_heartbeat, heartbeat)
+
+    agent_delete = agent.add_parser(
+        "delete",
+        help="hard-delete an agent record (removes mood/nap/events/messages; task history is kept)",
+    )
+    agent_delete.add_argument("agent_id")
+    agent_delete.add_argument("--actor", default="human")
+    _set(cmd_agent_delete, agent_delete)
+
+    agent_migrate = agent.add_parser(
+        "migrate",
+        help="move an agent (soul + memory) to a new host; dry-run unless --execute",
+    )
+    agent_migrate.add_argument("name")
+    agent_migrate.add_argument("--to", dest="to_target", required=True, help="destination user@host")
+    agent_migrate.add_argument("--from", dest="from_target", help="source user@host (default: current fleets.yaml target)")
+    agent_migrate.add_argument("--to-os", default="linux")
+    agent_migrate.add_argument("--fleet", help="fleet name (default: auto-resolve from fleets.yaml)")
+    agent_migrate.add_argument("--execute", action="store_true", help="run it (default: print the plan)")
+    agent_migrate.add_argument("--keep-source", action="store_true", help="don't decommission the source host")
+    agent_migrate.add_argument("--retire-source-agent", help="agent_id to `mac agent delete` after migration")
+    _set(cmd_agent_migrate, agent_migrate)
 
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
         dest="fleet_command", required=True
