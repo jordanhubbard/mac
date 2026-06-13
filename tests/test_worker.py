@@ -2134,7 +2134,7 @@ def test_mac_worker_self_install_pip_audits_and_reports_footprint(tmp_path: Path
         attestation_key=cp._agent_attestation_key(agent.id),
     )
     monkeypatch.setenv("MAC_HOME", str(tmp_path / "machome"))
-    monkeypatch.setattr(worker, "_pip_installed", lambda py: set())
+    monkeypatch.setattr(worker, "_pip_installed", lambda py: {})
 
     calls: Dict[str, Any] = {}
 
@@ -2158,8 +2158,9 @@ def test_mac_worker_self_install_pip_audits_and_reports_footprint(tmp_path: Path
     footprint = cp.get_agent(agent.id).installed_packages
     assert any(e["name"] == "diffusers" for e in footprint["pip"])
 
-    # idempotency: report it as already installed -> no subprocess invocation
-    monkeypatch.setattr(worker, "_pip_installed", lambda py: {"diffusers"})
+    # idempotency: report it as already installed at the pinned version -> no
+    # subprocess invocation (version-aware probe sees it satisfied).
+    monkeypatch.setattr(worker, "_pip_installed", lambda py: {"diffusers": "0.31"})
     calls.clear()
     again = worker.ensure_pip(["diffusers==0.31"], reason="again")
     assert again.get("skipped") == "already satisfied"
