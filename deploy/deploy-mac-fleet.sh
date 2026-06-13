@@ -4936,7 +4936,12 @@ SuccessExitStatus=75
 KillMode=mixed
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 \$MAINPID
-TimeoutStopSec=120
+# Must exceed the gateway's restart_drain_timeout so systemd doesn't SIGKILL it
+# mid-drain. Mirrors hermes_cli/gateway.py: max(60, restart_drain_timeout) + 30
+# (=210 for the default drain of 180). A too-low value triggers the gateway's
+# "Stale systemd unit detected" startup warning. Bump if restart_drain_timeout
+# is raised above 180.
+TimeoutStopSec=210
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
