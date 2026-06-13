@@ -176,6 +176,22 @@ def test_build_mac_env_advertises_enabled_webdav_publish_service(tmp_path):
     assert env["MAC_WEBDAV_MAX_UPLOAD_BYTES"] == "1024"
 
 
+def test_build_mac_env_defaults_relay_observability_on(tmp_path):
+    """New nodes come up relay-active by default (nemo-relay ships via the
+    deploy's relay extra + worker reconcile)."""
+    cfg = deploy_env_config(tmp_path)
+    env = build_mac_env({}, cfg, environ={})
+    assert env["MAC_RELAY_OBSERVABILITY"] == "1"
+
+
+def test_build_mac_env_preserves_explicit_relay_opt_out(tmp_path):
+    """An operator's explicit MAC_RELAY_OBSERVABILITY=0 survives redeploys
+    (setdefault, not overwrite)."""
+    cfg = deploy_env_config(tmp_path)
+    env = build_mac_env({"MAC_RELAY_OBSERVABILITY": "0"}, cfg, environ={})
+    assert env["MAC_RELAY_OBSERVABILITY"] == "0"
+
+
 def test_deploy_env_import_is_dependency_light():
     # Regression: deploy-mac-fleet.sh runs `python -m mac.deploy_env write-mac-env`
     # on the bootstrap python BEFORE the deploy venv exists, so importing
