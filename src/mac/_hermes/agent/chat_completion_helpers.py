@@ -39,6 +39,35 @@ from utils import base_url_host_matches, base_url_hostname
 logger = logging.getLogger(__name__)
 
 
+def _relay_llm_ctx(agent: Any, api_kwargs: dict):
+    """Return a relay_llm_context manager, or a no-op if relay unavailable.
+
+    Extracts model/provider/token information from the agent and api_kwargs,
+    ensuring only JSON-serialisable scalars reach the relay attributes.
+    Imported lazily so there is zero overhead when MAC_RELAY_OBSERVABILITY is off.
+    """
+    try:
+        from mac.relay_observability import relay_llm_context
+        model: str = str(getattr(agent, "model", "") or "")
+        provider: str = str(getattr(agent, "provider", "") or "")
+        # Rough token estimate from api_kwargs messages (char/4 heuristic)
+        tokens: Optional[int] = None
+        msgs = api_kwargs.get("messages")
+        if isinstance(msgs, list):
+            try:
+                total_chars = sum(
+                    len(str(m.get("content") or "")) for m in msgs
+                    if isinstance(m, dict)
+                )
+                tokens = total_chars // 4
+            except Exception:
+                pass
+        return relay_llm_context(model, provider, tokens=tokens)
+    except Exception:
+        import contextlib
+        return contextlib.nullcontext()
+
+
 def _ra():
     """Lazy ``run_agent`` reference.
 
@@ -183,51 +212,52 @@ def interruptible_api_call(agent, api_kwargs: dict):
 
     def _call():
         try:
-            if agent.api_mode == "codex_responses":
-                request_client = _set_request_client(
-                    agent._create_request_openai_client(
-                        reason="codex_stream_request",
-                        api_kwargs=api_kwargs,
+            with _relay_llm_ctx(agent, api_kwargs):
+                if agent.api_mode == "codex_responses":
+                    request_client = _set_request_client(
+                        agent._create_request_openai_client(
+                            reason="codex_stream_request",
+                            api_kwargs=api_kwargs,
+                        )
                     )
-                )
-                result["response"] = agent._run_codex_stream(
-                    api_kwargs,
-                    client=request_client,
-                    on_first_delta=getattr(agent, "_codex_on_first_delta", None),
-                )
-            elif agent.api_mode == "anthropic_messages":
-                result["response"] = agent._anthropic_messages_create(api_kwargs)
-            elif agent.api_mode == "bedrock_converse":
-                # Bedrock uses boto3 directly — no OpenAI client needed.
-                # normalize_converse_response produces an OpenAI-compatible
-                # SimpleNamespace so the rest of the agent loop can treat
-                # bedrock responses like chat_completions responses.
-                from agent.bedrock_adapter import (
-                    _get_bedrock_runtime_client,
-                    invalidate_runtime_client,
-                    is_stale_connection_error,
-                    normalize_converse_response,
-                )
-                region = api_kwargs.pop("__bedrock_region__", "us-east-1")
-                api_kwargs.pop("__bedrock_converse__", None)
-                client = _get_bedrock_runtime_client(region)
-                try:
-                    raw_response = client.converse(**api_kwargs)
-                except Exception as _bedrock_exc:
-                    # Evict the cached client on stale-connection failures
-                    # so the outer retry loop builds a fresh client/pool.
-                    if is_stale_connection_error(_bedrock_exc):
-                        invalidate_runtime_client(region)
-                    raise
-                result["response"] = normalize_converse_response(raw_response)
-            else:
-                request_client = _set_request_client(
-                    agent._create_request_openai_client(
-                        reason="chat_completion_request",
-                        api_kwargs=api_kwargs,
+                    result["response"] = agent._run_codex_stream(
+                        api_kwargs,
+                        client=request_client,
+                        on_first_delta=getattr(agent, "_codex_on_first_delta", None),
                     )
-                )
-                result["response"] = request_client.chat.completions.create(**api_kwargs)
+                elif agent.api_mode == "anthropic_messages":
+                    result["response"] = agent._anthropic_messages_create(api_kwargs)
+                elif agent.api_mode == "bedrock_converse":
+                    # Bedrock uses boto3 directly — no OpenAI client needed.
+                    # normalize_converse_response produces an OpenAI-compatible
+                    # SimpleNamespace so the rest of the agent loop can treat
+                    # bedrock responses like chat_completions responses.
+                    from agent.bedrock_adapter import (
+                        _get_bedrock_runtime_client,
+                        invalidate_runtime_client,
+                        is_stale_connection_error,
+                        normalize_converse_response,
+                    )
+                    region = api_kwargs.pop("__bedrock_region__", "us-east-1")
+                    api_kwargs.pop("__bedrock_converse__", None)
+                    client = _get_bedrock_runtime_client(region)
+                    try:
+                        raw_response = client.converse(**api_kwargs)
+                    except Exception as _bedrock_exc:
+                        # Evict the cached client on stale-connection failures
+                        # so the outer retry loop builds a fresh client/pool.
+                        if is_stale_connection_error(_bedrock_exc):
+                            invalidate_runtime_client(region)
+                        raise
+                    result["response"] = normalize_converse_response(raw_response)
+                else:
+                    request_client = _set_request_client(
+                        agent._create_request_openai_client(
+                            reason="chat_completion_request",
+                            api_kwargs=api_kwargs,
+                        )
+                    )
+                    result["response"] = request_client.chat.completions.create(**api_kwargs)
         except Exception as e:
             result["error"] = e
         finally:
@@ -2058,9 +2088,11 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                 try:
                     if agent.api_mode == "anthropic_messages":
                         agent._try_refresh_anthropic_client_credentials()
-                        result["response"] = _call_anthropic()
+                        with _relay_llm_ctx(agent, api_kwargs):
+                            result["response"] = _call_anthropic()
                     else:
-                        result["response"] = _call_chat_completions()
+                        with _relay_llm_ctx(agent, api_kwargs):
+                            result["response"] = _call_chat_completions()
                     return  # success
                 except Exception as e:
                     _is_timeout = isinstance(
