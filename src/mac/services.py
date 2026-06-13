@@ -258,6 +258,33 @@ def _truthy_env(name: str, default: str = "") -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read a positive integer config knob, falling back to *default*.
+
+    Empty / unparseable / below-*minimum* values fall back to the default so a
+    misconfigured env var can never DISABLE a safety cap (only widen/narrow it
+    within sane bounds).
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+# Decomposition guardrails (T1 — bound runaway auto-decompose). Enforced
+# server-side in ControlPlane.add_child_tasks so NEITHER decomposition path
+# (the executor prompt that tells the agent to POST /children, nor the
+# declarative maybe_auto_decompose manifest path) can exceed them regardless of
+# agent behavior. Both are overridable via env for operators who need wider
+# trees, but never below the floor of 1.
+DEFAULT_MAX_CHILD_TASKS_PER_PARENT = 10
+DEFAULT_MAX_DECOMPOSE_DEPTH = 2
+
+
 def _beads_cli() -> str:
     configured = os.environ.get("MAC_BEADS_CLI", "").strip()
     if configured:
@@ -3283,6 +3310,30 @@ class ControlPlane:
             return task
         return self.update_task(task_id, metadata=md, actor=actor)
 
+    def _task_decompose_depth(self, task: Task, *, _max_walk: int = 64) -> int:
+        """Count ancestors above *task* via the parent_task_id chain.
+
+        0 = a root task (no parent). Cycle- and runaway-safe: the walk is
+        bounded and de-dups visited ids. Used to enforce the decomposition
+        depth cap so a deep chain of child-of-child tasks can't recurse forever.
+        """
+        depth = 0
+        current = task
+        seen: set = set()
+        for _ in range(_max_walk):
+            meta = ensure_json_object(current.metadata)
+            relationships = ensure_json_object(meta.get("relationships"))
+            parent_id = relationships.get("parent_task_id") or meta.get("parent_task_id")
+            if not parent_id or parent_id in seen:
+                break
+            seen.add(parent_id)
+            try:
+                current = self.get_task(str(parent_id))
+            except NotFoundError:
+                break
+            depth += 1
+        return depth
+
     def add_child_tasks(
         self,
         task_id: str,
@@ -3300,9 +3351,44 @@ class ControlPlane:
             raise ValidationError(
                 "child tasks can only be added to open, blocked, claimed, or running tasks"
             )
+
+        # --- Decomposition guardrails (T1) -----------------------------------
+        # Server-side backstop against the runaway auto-decompose that hit the
+        # live fleet. Refuse to decompose handoff/plan-note tasks, refuse beyond
+        # the depth cap, and bound the cumulative child count per parent.
+        parent_metadata = ensure_json_object(parent.metadata)
+        if parent_metadata.get("no_decompose"):
+            raise ValidationError(
+                "task %s is marked no_decompose (handoff/plan note) — refusing to "
+                "create child tasks; execute or stage it directly" % parent.id
+            )
+        max_depth = _int_env("MAC_MAX_DECOMPOSE_DEPTH", DEFAULT_MAX_DECOMPOSE_DEPTH)
+        depth = self._task_decompose_depth(parent)
+        if depth >= max_depth:
+            raise ValidationError(
+                "decomposition depth limit reached: task %s is at depth %d (max %d) "
+                "— execute it directly instead of decomposing further"
+                % (parent.id, depth, max_depth)
+            )
+
         specs = [ensure_json_object(spec) for spec in children]
         if not specs:
             raise ValidationError("at least one child task is required")
+
+        max_children = _int_env(
+            "MAC_MAX_CHILD_TASKS_PER_PARENT", DEFAULT_MAX_CHILD_TASKS_PER_PARENT
+        )
+        existing_children = _metadata_string_list(
+            ensure_json_object(parent_metadata.get("relationships")).get("child_task_ids")
+        )
+        projected = len(existing_children) + len(specs)
+        if projected > max_children:
+            raise ValidationError(
+                "child task limit exceeded for %s: %d existing + %d requested = %d "
+                "(max %d) — split into a smaller plan or raise "
+                "MAC_MAX_CHILD_TASKS_PER_PARENT"
+                % (parent.id, len(existing_children), len(specs), projected, max_children)
+            )
 
         prepared: List[JsonDict] = []
         for index, spec in enumerate(specs, start=1):

@@ -414,6 +414,10 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Stage the task: the loop-mode fleet won't auto-claim it (and it's
         # hidden from `task ready`) until an operator starts it explicitly.
         metadata["no_dispatch"] = True
+    if getattr(args, "no_decompose", False):
+        # Handoff / plan-note guard: the executor will not auto-decompose this
+        # task into child tasks (add_child_tasks refuses with no_decompose).
+        metadata["no_decompose"] = True
     # bd parity: when --project is omitted, tag the task with the working
     # directory's project (git repo name, else cwd basename). Pass an explicit
     # --project (including --project '' for none) to override.
@@ -1999,6 +2003,9 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
                         help="stage the task: the loop-mode fleet won't auto-claim it "
                              "(and it's hidden from `task ready`) until started explicitly")
+    create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
+                        help="handoff/plan-note guard: the executor will not auto-decompose "
+                             "this task into child tasks")
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser("list")
