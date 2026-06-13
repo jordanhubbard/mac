@@ -324,6 +324,14 @@ class RemoteDispatch:
             )
         )
 
+    def release_task(self, task_id: str, *, actor: Optional[str] = None) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/release" % quote(task_id, safe=""),
+                _drop_none({"actor": actor}),
+            )
+        )
+
     def add_evidence(
         self,
         task_id: str,
@@ -361,6 +369,7 @@ class RemoteDispatch:
         status: Optional[str] = None,
         actor: Optional[str] = None,
         project_id: Optional[str] = None,
+        dispatch_paused: Optional[bool] = None,
     ) -> _Dictish:
         body = _drop_none(
             {
@@ -370,9 +379,25 @@ class RemoteDispatch:
                 "status": status,
                 "actor": actor,
                 "project_id": project_id,
+                "dispatch_paused": dispatch_paused,
             }
         )
         return _Dictish(self._post("/projects", body))
+
+    def set_project_dispatch(
+        self,
+        name_or_id: str,
+        *,
+        paused: bool,
+        actor: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none({"paused": bool(paused), "actor": actor})
+        return _Dictish(
+            self._post(
+                "/projects/%s/dispatch" % quote(name_or_id, safe=""),
+                body,
+            )
+        )
 
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))

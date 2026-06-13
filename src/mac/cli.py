@@ -410,6 +410,14 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         label="--metadata",
         default={},
     )
+    if getattr(args, "no_dispatch", False):
+        # Stage the task: the loop-mode fleet won't auto-claim it (and it's
+        # hidden from `task ready`) until an operator starts it explicitly.
+        metadata["no_dispatch"] = True
+    if getattr(args, "no_decompose", False):
+        # Handoff / plan-note guard: the executor will not auto-decompose this
+        # task into child tasks (add_child_tasks refuses with no_decompose).
+        metadata["no_decompose"] = True
     # bd parity: when --project is omitted, tag the task with the working
     # directory's project (git repo name, else cwd basename). Pass an explicit
     # --project (including --project '' for none) to override.
@@ -493,6 +501,9 @@ def cmd_project_list(args: argparse.Namespace) -> None:
 
 
 def cmd_project_create(args: argparse.Namespace) -> None:
+    # New projects default to dispatch-PAUSED so a freshly-onboarded backlog
+    # does not auto-claim before an operator activates the project. Pass
+    # --active to opt straight into autonomous dispatch.
     _print(
         _plane(args).create_project(
             args.name,
@@ -501,8 +512,17 @@ def cmd_project_create(args: argparse.Namespace) -> None:
             status=args.status,
             actor=args.actor,
             project_id=args.project_id,
+            dispatch_paused=args.dispatch_paused,
         )
     )
+
+
+def cmd_project_pause(args: argparse.Namespace) -> None:
+    _print(_plane(args).set_project_dispatch(args.project, paused=True, actor=args.actor))
+
+
+def cmd_project_activate(args: argparse.Namespace) -> None:
+    _print(_plane(args).set_project_dispatch(args.project, paused=False, actor=args.actor))
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
@@ -511,6 +531,10 @@ def cmd_project_show(args: argparse.Namespace) -> None:
 
 def cmd_task_start(args: argparse.Namespace) -> None:
     _print(_plane(args).start_task(args.task_id, args.agent_id))
+
+
+def cmd_task_release(args: argparse.Namespace) -> None:
+    _print(_plane(args).release_task(args.task_id, actor=args.actor))
 
 
 def cmd_task_submit(args: argparse.Namespace) -> None:
@@ -2034,6 +2058,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--actor", default="human")
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                         help="don't write the .tickets/<id>.md mirror for this task")
+    create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
+                        help="stage the task: the loop-mode fleet won't auto-claim it "
+                             "(and it's hidden from `task ready`) until started explicitly")
+    create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
+                        help="handoff/plan-note guard: the executor will not auto-decompose "
+                             "this task into child tasks")
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser("list")
@@ -2084,6 +2114,13 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("task_id")
     start.add_argument("agent_id")
     _set(cmd_task_start, start)
+
+    release = task.add_parser(
+        "release", help="clear a --no-dispatch hold so the task can auto-dispatch"
+    )
+    release.add_argument("task_id")
+    release.add_argument("--actor", default="human")
+    _set(cmd_task_release, release)
 
     submit = task.add_parser("submit-review")
     submit.add_argument("task_id")
@@ -2154,7 +2191,33 @@ def build_parser() -> argparse.ArgumentParser:
     project_create.add_argument("--status", default="active")
     project_create.add_argument("--actor", default="human")
     project_create.add_argument("--project-id")
+    project_dispatch = project_create.add_mutually_exclusive_group()
+    project_dispatch.add_argument(
+        "--paused",
+        dest="dispatch_paused",
+        action="store_true",
+        default=True,
+        help="stage the project: its tickets will not auto-dispatch until activated (default)",
+    )
+    project_dispatch.add_argument(
+        "--active",
+        dest="dispatch_paused",
+        action="store_false",
+        help="open the project to autonomous dispatch immediately",
+    )
     _set(cmd_project_create, project_create)
+    project_pause = project.add_parser(
+        "pause", help="hold a project's tickets from autonomous dispatch"
+    )
+    project_pause.add_argument("project")
+    project_pause.add_argument("--actor", default="human")
+    _set(cmd_project_pause, project_pause)
+    project_activate = project.add_parser(
+        "activate", help="open a project to autonomous dispatch"
+    )
+    project_activate.add_argument("project")
+    project_activate.add_argument("--actor", default="human")
+    _set(cmd_project_activate, project_activate)
     project_list = project.add_parser("list")
     _set(cmd_project_list, project_list)
     project_show = project.add_parser("show")

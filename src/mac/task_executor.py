@@ -304,6 +304,11 @@ def _plan_detection_section(task: Dict[str, Any]) -> str:
     child task, we skip — the agent should just execute, not re-decompose.
     """
     metadata = task.get("metadata") if isinstance(task, dict) else {}
+    # Handoff / plan-note guard: an operator can mark a task no_decompose
+    # (`mac task create --no-decompose`) so the executor won't suggest breaking
+    # it up — and the hub refuses the children call as a backstop.
+    if isinstance(metadata, dict) and metadata.get("no_decompose"):
+        return ""
     relationships = metadata.get("relationships") if isinstance(metadata, dict) else {}
     if isinstance(relationships, dict):
         # Already a child task or already has children — don't recurse
@@ -408,8 +413,10 @@ def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
     if not isinstance(plan_steps, list) or not plan_steps:
         return False
 
-    # Don't decompose child tasks further
+    # Don't decompose child tasks further, or tasks flagged no_decompose.
     metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if isinstance(metadata, dict) and metadata.get("no_decompose"):
+        return False
     relationships = metadata.get("relationships") if isinstance(metadata, dict) else {}
     if isinstance(relationships, dict) and relationships.get("parent_task_id"):
         return False
