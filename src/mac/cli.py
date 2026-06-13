@@ -690,6 +690,63 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def _soul_snapshot_setup(args):
+    """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    cfg = _yaml.safe_load(Path(args.fleets_config).expanduser().read_text(encoding="utf-8")) or {}
+    fleet_name = args.fleet or next(iter((cfg.get("fleets") or {})), None)
+    if not fleet_name:
+        raise SystemExit("no fleet found; pass --fleet")
+    agents = _ss.load_fleet_agents(cfg, fleet_name)
+    return fleet_name, agents, _ss.SSHTransport()
+
+
+def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
+    """Phase 1 fleet snapshot: pull each agent's editable soul text into a local tree."""
+    from datetime import datetime, timezone
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    fleet_name, agents, transport = _soul_snapshot_setup(args)
+    dest = Path(args.into).expanduser()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    manifest = _ss.pull_snapshot(agents, dest, transport, fleet=fleet_name, pulled_at=stamp)
+    (dest / "manifest.yaml").write_text(_yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    summary = {
+        "fleet": fleet_name, "into": str(dest), "pulled_at": stamp,
+        "agents": {n: {f: m.get("present") for f, m in a["files"].items()}
+                   for n, a in manifest["agents"].items()},
+    }
+    _print(summary)
+
+
+def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
+    """Phase 1 fleet snapshot: diff edited soul tree vs live, back up + write changes."""
+    from datetime import datetime, timezone
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    src = Path(getattr(args, "from_dir")).expanduser()
+    manifest = _yaml.safe_load((src / "manifest.yaml").read_text(encoding="utf-8"))
+    transport = _ss.SSHTransport()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    res = _ss.plan_and_push(
+        src, manifest, transport, stamp=stamp,
+        dry_run=args.dry_run, only_agents=(args.agent or None),
+    )
+    _print({
+        "dry_run": res.dry_run,
+        "changes": [
+            {"agent": c.agent, "file": c.relpath, "status": c.status,
+             "applied": c.applied, "backup": c.backup_path}
+            for c in res.changes
+        ],
+        "to_apply": [f"{c.agent}/{c.relpath}" for c in res.to_apply],
+    })
+
+
 def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """GET the agent's current mood overlay straight from the hub HTTP API.
 
@@ -2300,6 +2357,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_snap.add_argument("--agent", help="exclude this agent id (the caller) from the snapshot")
     _set(cmd_fleet_snapshot, fleet_snap)
+
+    # Phase 1 fleet snapshot: pull/edit/push the editable agent soul text layer.
+    fleet_soul_pull = fleet.add_parser(
+        "soul-pull",
+        help="pull each agent's editable soul text (SOUL/USER/MEMORY.md) into a local tree",
+    )
+    fleet_soul_pull.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
+    fleet_soul_pull.add_argument("--into", required=True, help="destination directory for the snapshot")
+    fleet_soul_pull.add_argument(
+        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+    )
+    _set(cmd_fleet_soul_pull, fleet_soul_pull)
+
+    fleet_soul_push = fleet.add_parser(
+        "soul-push",
+        help="diff an edited soul snapshot vs live and write changes (backup-before-replace)",
+    )
+    fleet_soul_push.add_argument("--from", dest="from_dir", required=True, help="snapshot directory")
+    fleet_soul_push.add_argument(
+        "--dry-run", action="store_true", help="show the plan; write nothing (default off)"
+    )
+    fleet_soul_push.add_argument(
+        "--agent", action="append", help="limit to this agent (repeatable)"
+    )
+    _set(cmd_fleet_soul_push, fleet_soul_push)
 
     fleet_refresh = fleet.add_parser(
         "refresh-context",

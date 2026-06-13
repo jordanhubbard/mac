@@ -1,0 +1,128 @@
+"""Tests for Phase 1 soul snapshot (pull/edit/push of the agent soul text layer)."""
+
+from __future__ import annotations
+
+import pytest
+import yaml
+
+from mac import soul_snapshot as fs
+
+
+class FakeTransport:
+    """In-memory transport: {target: {relpath: content}}."""
+
+    def __init__(self, store):
+        self.store = store
+        self.backups = []
+        self.writes = []
+
+    def read_text(self, target, relpath):
+        return self.store.get(target, {}).get(relpath)
+
+    def backup(self, target, relpath, *, stamp):
+        if relpath in self.store.get(target, {}):
+            bp = "%s.bak.%s" % (relpath, stamp)
+            self.backups.append((target, relpath, bp))
+            return bp
+        return None
+
+    def write_text(self, target, relpath, content):
+        self.store.setdefault(target, {})[relpath] = content
+        self.writes.append((target, relpath))
+
+
+def _agents():
+    return [("natasha", "u@sparky"), ("rocky", "u@do1")]
+
+
+# -- roster -----------------------------------------------------------------
+
+
+def test_load_fleet_agents():
+    cfg = {"fleets": {"rocky": {"agents": [
+        {"name": "rocky", "target": "u@do1", "os": "linux"},
+        {"name": "natasha", "target": "u@sparky"},
+        {"name": "", "target": "skip"},
+    ]}}}
+    assert fs.load_fleet_agents(cfg, "rocky") == [("rocky", "u@do1"), ("natasha", "u@sparky")]
+    with pytest.raises(KeyError):
+        fs.load_fleet_agents(cfg, "ghost")
+
+
+# -- pull -------------------------------------------------------------------
+
+
+def test_pull_writes_tree_manifest_and_sha(tmp_path):
+    t = FakeTransport({
+        "u@sparky": {"USER.md": "I am Natasha", "MEMORY.md": "notes"},  # no SOUL.md
+        "u@do1": {"SOUL.md": "rocky soul"},
+    })
+    manifest = fs.pull_snapshot(_agents(), tmp_path, t, fleet="rocky", pulled_at="T0")
+    assert (tmp_path / "agents/natasha/soul/USER.md").read_text() == "I am Natasha"
+    assert (tmp_path / "agents/rocky/soul/SOUL.md").read_text() == "rocky soul"
+    nm = manifest["agents"]["natasha"]
+    assert nm["target"] == "u@sparky"
+    assert nm["files"]["USER.md"]["present"] is True
+    assert nm["files"]["USER.md"]["sha256"] == fs._sha256("I am Natasha")
+    assert nm["files"]["SOUL.md"] == {"present": False}
+    assert manifest["schema"] == fs.SNAPSHOT_SCHEMA and manifest["fleet"] == "rocky"
+
+
+# -- push: diff / dry-run / apply -------------------------------------------
+
+
+def _pulled(tmp_path, store):
+    t = FakeTransport(store)
+    manifest = fs.pull_snapshot(_agents(), tmp_path, t, fleet="rocky", pulled_at="T0")
+    (tmp_path / "manifest.yaml").write_text(yaml.safe_dump(manifest))
+    return manifest
+
+
+def test_push_dry_run_detects_change_and_writes_nothing(tmp_path):
+    store = {"u@sparky": {"USER.md": "old"}, "u@do1": {"SOUL.md": "rsoul"}}
+    manifest = _pulled(tmp_path, store)
+    (tmp_path / "agents/natasha/soul/USER.md").write_text("NEW natasha")
+    t = FakeTransport(store)
+    res = fs.plan_and_push(tmp_path, manifest, t, stamp="S1", dry_run=True)
+    by = {(c.agent, c.relpath): c for c in res.changes}
+    assert by[("natasha", "USER.md")].status == "changed"
+    assert by[("rocky", "SOUL.md")].status == "unchanged"
+    assert t.writes == [] and t.backups == []
+    assert store["u@sparky"]["USER.md"] == "old"
+
+
+def test_push_apply_backs_up_and_writes_only_changed(tmp_path):
+    store = {"u@sparky": {"USER.md": "old"}, "u@do1": {"SOUL.md": "rsoul"}}
+    manifest = _pulled(tmp_path, store)
+    (tmp_path / "agents/natasha/soul/USER.md").write_text("NEW natasha")
+    t = FakeTransport(store)
+    res = fs.plan_and_push(tmp_path, manifest, t, stamp="S1", dry_run=False)
+    assert store["u@sparky"]["USER.md"] == "NEW natasha"
+    assert ("u@sparky", "USER.md", "USER.md.bak.S1") in t.backups
+    assert t.writes == [("u@sparky", "USER.md")]
+    applied = [c for c in res.changes if c.applied]
+    assert len(applied) == 1 and applied[0].agent == "natasha"
+
+
+def test_push_new_file_when_absent_remote(tmp_path):
+    store = {"u@sparky": {"USER.md": "x"}, "u@do1": {}}
+    src = {"u@sparky": {"USER.md": "x"}, "u@do1": {"SOUL.md": "fresh"}}
+    manifest = _pulled(tmp_path, src)
+    t = FakeTransport(store)
+    res = fs.plan_and_push(tmp_path, manifest, t, stamp="S1", dry_run=False)
+    by = {(c.agent, c.relpath): c for c in res.changes}
+    assert by[("rocky", "SOUL.md")].status == "new"
+    assert store["u@do1"]["SOUL.md"] == "fresh"
+    assert by[("rocky", "SOUL.md")].backup_path is None
+
+
+def test_push_only_agents_scopes(tmp_path):
+    store = {"u@sparky": {"USER.md": "old"}, "u@do1": {"SOUL.md": "rsoul"}}
+    manifest = _pulled(tmp_path, store)
+    (tmp_path / "agents/natasha/soul/USER.md").write_text("NEW")
+    (tmp_path / "agents/rocky/soul/SOUL.md").write_text("NEWROCKY")
+    t = FakeTransport(store)
+    res = fs.plan_and_push(tmp_path, manifest, t, stamp="S1", dry_run=False, only_agents=["natasha"])
+    assert store["u@sparky"]["USER.md"] == "NEW"
+    assert store["u@do1"]["SOUL.md"] == "rsoul"
+    assert all(c.agent == "natasha" for c in res.changes)
