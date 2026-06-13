@@ -3098,6 +3098,8 @@ class ControlPlane:
                 continue
             if self._task_dispatch_held(task):
                 continue  # staged / do-not-dispatch — not claimable until released
+            if self._project_dispatch_paused(task.project):
+                continue  # project not yet activated for autonomous dispatch
             try:
                 ready = self._dependencies_satisfied(task)
             except Exception:  # noqa: BLE001 - a missing dependency blocks readiness
@@ -3266,6 +3268,20 @@ class ControlPlane:
             detail,
         )
         return updated
+
+    def release_task(self, task_id: str, *, actor: str = "human") -> Task:
+        """Clear a per-task dispatch hold (``no_dispatch``), un-staging it.
+
+        The inverse of ``mac task create --no-dispatch``: once released the
+        task becomes eligible for autonomous claim and re-appears in the ready
+        queue (subject to dependencies, capability match, and any project-level
+        pause). No-op if the task is not held.
+        """
+        task = self.get_task(task_id)
+        md = ensure_json_object(task.metadata)
+        if not md.pop("no_dispatch", None):
+            return task
+        return self.update_task(task_id, metadata=md, actor=actor)
 
     def add_child_tasks(
         self,
@@ -3533,6 +3549,7 @@ class ControlPlane:
         status: str = "active",
         actor: str = "human",
         project_id: Optional[str] = None,
+        dispatch_paused: Optional[bool] = None,
     ) -> ProjectRecord:
         project_name = str(name or "").strip()
         if not project_name:
@@ -3544,6 +3561,8 @@ class ControlPlane:
         project_metadata = ensure_json_object(metadata)
         if actor:
             project_metadata.setdefault("created_by", actor)
+        if dispatch_paused is not None:
+            project_metadata["dispatch_paused"] = bool(dispatch_paused)
         if existing is not None:
             return self._project_record_from_row(existing)
         now = utcnow()
@@ -3727,6 +3746,26 @@ class ControlPlane:
             metadata={"previous_name": project.name, "actor": actor},
         )
         return self.get_project_record(new_name)
+
+    def set_project_dispatch(
+        self,
+        name_or_id: str,
+        *,
+        paused: bool,
+        actor: str = "human",
+    ) -> ProjectRecord:
+        """Pause or resume autonomous dispatch for an entire project.
+
+        Persists ``metadata.dispatch_paused`` on the project record. When
+        paused, the project's open tickets are hidden from the ready queue and
+        rejected by autonomous claim (reason ``project_dispatch_paused``);
+        operators can still start them explicitly. This is the project-level
+        onboarding gate that complements the per-task ``no_dispatch`` hold.
+        """
+        project = self.get_project_record(name_or_id)
+        md = ensure_json_object(project.metadata)
+        md["dispatch_paused"] = bool(paused)
+        return self.update_project(project.id, metadata=md, actor=actor)
 
     def delete_project(self, name_or_id: str, *, force: bool = False, actor: str = "human") -> None:
         project = self.get_project_record(name_or_id)
@@ -12721,9 +12760,32 @@ class ControlPlane:
         """
         return bool(ensure_json_object(task.metadata).get("no_dispatch"))
 
+    def _project_dispatch_paused(self, project: Optional[str]) -> bool:
+        """True when the task's project is explicitly dispatch-PAUSED.
+
+        Per-project onboarding gate: a newly-created project can be staged
+        (``mac project create`` defaults to paused; ``mac project activate``
+        releases it) so its tickets don't auto-dispatch until the operator
+        turns the project on. IMPLICIT projects (no ``projects`` row — the case
+        for the live fleet's default project) are never paused, so existing
+        autonomous behavior is unchanged. Only projects with a record carrying
+        ``metadata.dispatch_paused`` are held.
+        """
+        if not project:
+            return False
+        try:
+            rec = self.get_project_record(project)
+        except NotFoundError:
+            return False
+        except Exception:  # noqa: BLE001 — never let a lookup error block dispatch
+            return False
+        return bool(ensure_json_object(rec.metadata).get("dispatch_paused"))
+
     def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
         if self._task_dispatch_held(task):
             return False, "dispatch_held"
+        if self._project_dispatch_paused(task.project):
+            return False, "project_dispatch_paused"
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"
