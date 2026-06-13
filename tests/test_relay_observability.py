@@ -152,6 +152,68 @@ def test_create_agent_scope_opens_relay_scope_when_available(monkeypatch):
     assert data.get("session_id") == "my-session"
 
 
+def test_create_agent_scope_survives_scope_teardown_error(monkeypatch):
+    """Regression (hub 500 incident): a relay scope whose __exit__ RAISES must
+    not yield twice / raise 'generator didn't stop'. The old
+    `try: with ...: yield / except: yield` double-yielded on teardown error and
+    500-ed every authenticated request once relay was active on the hub."""
+    fake_nr = MagicMock()
+    fake_nr.ScopeType = MagicMock()
+    fake_nr.ScopeType.Agent = "AGENT"
+
+    class _BadScope:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            raise RuntimeError("relay teardown boom")
+
+    fake_nr.scope.scope = lambda *a, **k: _BadScope()
+    monkeypatch.setenv("MAC_RELAY_OBSERVABILITY", "1")
+    monkeypatch.setattr(ro, "_NEMO_RELAY_AVAILABLE", True)
+    monkeypatch.setattr(ro, "_nemo_relay", fake_nr)
+    monkeypatch.setattr(ro, "_flush_subscribers", MagicMock())
+
+    ran = []
+    with ro.create_agent_scope("sess"):  # must NOT raise
+        ran.append(True)
+    assert ran == [True]  # body ran exactly once; teardown error swallowed
+
+
+def test_create_agent_scope_open_failure_runs_unscoped(monkeypatch):
+    """If opening the relay scope raises, the body still runs (once, unscoped)."""
+    fake_nr = MagicMock()
+    fake_nr.ScopeType = MagicMock()
+    fake_nr.ScopeType.Agent = "AGENT"
+
+    def _boom(*a, **k):
+        raise RuntimeError("cannot open scope")
+
+    fake_nr.scope.scope = _boom
+    monkeypatch.setenv("MAC_RELAY_OBSERVABILITY", "1")
+    monkeypatch.setattr(ro, "_NEMO_RELAY_AVAILABLE", True)
+    monkeypatch.setattr(ro, "_nemo_relay", fake_nr)
+    monkeypatch.setattr(ro, "_flush_subscribers", MagicMock())
+
+    ran = []
+    with ro.create_agent_scope("sess"):
+        ran.append(True)
+    assert ran == [True]
+
+
+def test_create_agent_scope_body_exception_propagates_when_available(monkeypatch):
+    """A body exception still propagates (never suppressed) with a live scope."""
+    fake_nr = _make_fake_nemo_relay()
+    monkeypatch.setenv("MAC_RELAY_OBSERVABILITY", "1")
+    monkeypatch.setattr(ro, "_NEMO_RELAY_AVAILABLE", True)
+    monkeypatch.setattr(ro, "_nemo_relay", fake_nr)
+    monkeypatch.setattr(ro, "_flush_subscribers", MagicMock())
+
+    with pytest.raises(ValueError):
+        with ro.create_agent_scope("sess"):
+            raise ValueError("body boom")
+
+
 def test_create_agent_scope_name_truncated_at_128_chars(monkeypatch):
     fake_nr = _make_fake_nemo_relay()
     monkeypatch.setenv("MAC_RELAY_OBSERVABILITY", "1")

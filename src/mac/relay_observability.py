@@ -92,11 +92,27 @@ def create_agent_scope(session_id: str) -> Generator[None, None, None]:
     if hermes_home_override:
         scope_data["hermes_home_override"] = hermes_home_override
 
+    # Open the scope by hand (mirrors _scoped) so this generator yields EXACTLY
+    # ONCE on every path. The previous `try: with ...: yield / except: yield`
+    # double-yielded when the scope's __exit__ raised — contextmanager then hit
+    # "RuntimeError: generator didn't stop", 500-ing every authenticated request
+    # once relay was active on the hub. Opening failure -> run unscoped; teardown
+    # failure -> swallowed; body exceptions propagate (and reach __exit__).
+    cm = None
     try:
-        with nr.scope.scope(scope_name, nr.ScopeType.Agent, data=scope_data):
-            yield
-    except Exception:  # noqa: BLE001 — observability must never break a task run
+        cm = nr.scope.scope(scope_name, nr.ScopeType.Agent, data=scope_data)
+        cm.__enter__()
+    except Exception:  # noqa: BLE001 — relay-internal failure: run unscoped
+        cm = None
         yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            cm.__exit__(*sys.exc_info())
+        except Exception:  # noqa: BLE001 — observability must never break a task run
+            pass
 
 
 # ---------------------------------------------------------------------------
