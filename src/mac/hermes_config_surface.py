@@ -881,12 +881,21 @@ def _ensure_never_prompt_defaults(config: Dict[str, Any]) -> None:
     Note: enabling never-prompt for the gateway means the (currently
     un-sandboxed) Slack agent runs silently — real enforcement there requires
     wrapping the gateway service under OpenShell too (tracked separately).
+
+    ENFORCED, not default-if-absent: agents carry a stale ``approvals.mode:
+    manual`` / ``cron_mode: deny`` from an earlier lifecycle, and a setdefault
+    left those in place so the gateway kept showing "Command Approval Required".
+    The never-prompt posture is a fleet invariant, so we overwrite. An operator
+    can opt a single host back into interactive approvals with
+    ``MAC_HERMES_ALLOW_APPROVAL_PROMPTS=1`` (then their existing config wins).
     """
+    if os.environ.get("MAC_HERMES_ALLOW_APPROVAL_PROMPTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
     approvals = config.get("approvals")
     if not isinstance(approvals, dict):
         approvals = {}
-    approvals.setdefault("mode", "off")
-    approvals.setdefault("cron_mode", "approve")
+    approvals["mode"] = "off"          # no dangerous-command approval prompts
+    approvals["cron_mode"] = "approve"  # non-interactive runs must not fall to deny
     config["approvals"] = approvals
 
 
