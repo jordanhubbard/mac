@@ -502,6 +502,9 @@ class RemoteDispatch:
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 
+    def list_personas(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/personas"))
+
     def delete_agent(self, agent_id: str, *, actor: str = "human") -> _Dictish:
         # DELETE /agents/{id} removes the agent + its agent-scoped ephemera
         # (mood/nap/events/messages) and records an agent.deleted audit event;

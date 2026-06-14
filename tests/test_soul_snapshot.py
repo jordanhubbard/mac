@@ -104,6 +104,57 @@ def test_pull_memory_checksum_opt_in(tmp_path):
     assert manifest["agents"]["natasha"]["memory"]["state.db"]["sha256"] == fs._sha256("blob")
 
 
+# -- hub persona + mood capture (Phase 3) -----------------------------------
+
+
+class FakeHub:
+    def __init__(self, personas, moods):
+        self._personas = personas        # list of dicts
+        self._moods = moods              # {agent_id: mood dict or None}
+
+    def list_personas(self):
+        return self._personas
+
+    def get_current_mood(self, agent_id):
+        return self._moods.get(agent_id)
+
+
+def test_persona_for_matches_name_conventions():
+    personas = [{"name": "persona_natasha"}, {"name": "rocky"}]
+    assert fs._persona_for(personas, "natasha")["name"] == "persona_natasha"
+    assert fs._persona_for(personas, "rocky")["name"] == "rocky"
+    assert fs._persona_for(personas, "ghost") is None
+
+
+def test_capture_hub_state_writes_persona_and_mood(tmp_path):
+    hub = FakeHub(
+        personas=[{"name": "persona_natasha", "soul_ref": "s", "metadata": {"x": 1}}],
+        moods={"agent_natasha": {"label": "focused", "intensity": 3}, "agent_rocky": None},
+    )
+    out = fs.capture_hub_state(hub, [("natasha", "agent_natasha"), ("rocky", "agent_rocky")],
+                               tmp_path, pulled_at="T0")
+    import yaml
+    persona = yaml.safe_load((tmp_path / "agents/natasha/persona.yaml").read_text())
+    assert persona["name"] == "persona_natasha"
+    mood = yaml.safe_load((tmp_path / "agents/natasha/mood.yaml").read_text())
+    assert mood["label"] == "focused"
+    assert out["agents"]["natasha"]["persona"]["present"] is True
+    assert out["agents"]["natasha"]["mood"]["present"] is True
+    # rocky: no persona match, no mood -> referenced absent, no files
+    assert out["agents"]["rocky"]["persona"]["present"] is False
+    assert out["agents"]["rocky"]["mood"]["present"] is False
+    assert not (tmp_path / "agents/rocky/mood.yaml").exists()
+
+
+def test_capture_hub_state_survives_hub_errors(tmp_path):
+    class BoomHub:
+        def list_personas(self): raise RuntimeError("hub down")
+        def get_current_mood(self, a): raise RuntimeError("hub down")
+    out = fs.capture_hub_state(BoomHub(), [("natasha", "agent_natasha")], tmp_path, pulled_at="T0")
+    assert out["agents"]["natasha"]["persona"]["present"] is False
+    assert out["agents"]["natasha"]["mood"]["present"] is False
+
+
 # -- push: diff / dry-run / apply -------------------------------------------
 
 
