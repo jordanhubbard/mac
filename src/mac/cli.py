@@ -712,12 +712,21 @@ def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
     fleet_name, agents, transport = _soul_snapshot_setup(args)
     dest = Path(args.into).expanduser()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    manifest = _ss.pull_snapshot(agents, dest, transport, fleet=fleet_name, pulled_at=stamp)
+    manifest = _ss.pull_snapshot(
+        agents, dest, transport, fleet=fleet_name, pulled_at=stamp,
+        memory_checksum=getattr(args, "memory_checksum", False),
+    )
     (dest / "manifest.yaml").write_text(_yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
     summary = {
         "fleet": fleet_name, "into": str(dest), "pulled_at": stamp,
-        "agents": {n: {f: m.get("present") for f, m in a["files"].items()}
-                   for n, a in manifest["agents"].items()},
+        "agents": {
+            n: {
+                "soul": {f: m.get("present") for f, m in a["files"].items()},
+                "memory_refs": {f: m.get("bytes") for f, m in a.get("memory", {}).items()
+                                if m.get("present")},
+            }
+            for n, a in manifest["agents"].items()
+        },
     }
     _print(summary)
 
@@ -2367,6 +2376,10 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_pull.add_argument("--into", required=True, help="destination directory for the snapshot")
     fleet_soul_pull.add_argument(
         "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+    )
+    fleet_soul_pull.add_argument(
+        "--memory-checksum", action="store_true",
+        help="also sha256 the binary memory blobs (reads them remotely; slower)",
     )
     _set(cmd_fleet_soul_pull, fleet_soul_pull)
 

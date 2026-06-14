@@ -30,6 +30,15 @@ class FakeTransport:
         self.store.setdefault(target, {})[relpath] = content
         self.writes.append((target, relpath))
 
+    def stat(self, target, relpath, *, checksum=False):
+        content = self.store.get(target, {}).get(relpath)
+        if content is None:
+            return None
+        meta = {"present": True, "bytes": len(content.encode("utf-8")), "mtime": 1234567890}
+        if checksum:
+            meta["sha256"] = fs._sha256(content)
+        return meta
+
 
 def _agents():
     return [("natasha", "u@sparky"), ("rocky", "u@do1")]
@@ -66,6 +75,33 @@ def test_pull_writes_tree_manifest_and_sha(tmp_path):
     assert nm["files"]["USER.md"]["sha256"] == fs._sha256("I am Natasha")
     assert nm["files"]["SOUL.md"] == {"present": False}
     assert manifest["schema"] == fs.SNAPSHOT_SCHEMA and manifest["fleet"] == "rocky"
+
+
+# -- memory references (Phase 2) --------------------------------------------
+
+
+def test_pull_captures_memory_refs_not_content(tmp_path):
+    t = FakeTransport({
+        "u@sparky": {"USER.md": "n", "state.db": "x" * 5000, "memory_store.db": "y" * 99},
+        "u@do1": {"SOUL.md": "r"},
+    })
+    manifest = fs.pull_snapshot(_agents(), tmp_path, t, fleet="rocky", pulled_at="T0")
+    mem = manifest["agents"]["natasha"]["memory"]
+    assert mem["state.db"]["present"] is True
+    assert mem["state.db"]["bytes"] == 5000
+    assert "mtime" in mem["state.db"]
+    assert "sha256" not in mem["state.db"]
+    assert mem["memory_store.db"]["bytes"] == 99
+    assert manifest["agents"]["rocky"]["memory"]["state.db"] == {"present": False}
+    assert not (tmp_path / "agents/natasha/soul/state.db").exists()
+    assert not (tmp_path / "agents/natasha/memory").exists()
+
+
+def test_pull_memory_checksum_opt_in(tmp_path):
+    t = FakeTransport({"u@sparky": {"state.db": "blob"}, "u@do1": {}})
+    manifest = fs.pull_snapshot(_agents(), tmp_path, t, fleet="rocky", pulled_at="T0",
+                                memory_checksum=True)
+    assert manifest["agents"]["natasha"]["memory"]["state.db"]["sha256"] == fs._sha256("blob")
 
 
 # -- push: diff / dry-run / apply -------------------------------------------

@@ -26,10 +26,15 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 # The editable text layer. Relative to each agent's Hermes home (~/.hermes).
 SOUL_FILES: Tuple[str, ...] = ("SOUL.md", "USER.md", "MEMORY.md")
+
+# Phase 2: the binary memory layer — NOT editable, captured as references
+# (agent, date, size, optional sha256) in the manifest, never inlined. Content
+# is only transferred on explicit opt-in (these can be gigabytes).
+MEMORY_FILES: Tuple[str, ...] = ("state.db", "memory_store.db")
 
 SNAPSHOT_SCHEMA = "mac.soul_snapshot.v1"
 
@@ -54,6 +59,11 @@ class Transport(Protocol):
 
     def backup(self, target: str, relpath: str, *, stamp: str) -> Optional[str]:
         """Copy the current file aside; return the backup path, or None if absent."""
+
+    def stat(self, target: str, relpath: str, *, checksum: bool = False) -> Optional[Dict[str, Any]]:
+        """Return {bytes, mtime[, sha256]} for a file WITHOUT transferring it, or
+        None if absent. ``checksum`` adds sha256 (reads the file; can be slow on
+        large blobs)."""
 
 
 class SSHTransport:
@@ -106,6 +116,27 @@ class SSHTransport:
         if proc.returncode != 0:
             raise RuntimeError("write %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
 
+    def stat(self, target: str, relpath: str, *, checksum: bool = False) -> Optional[Dict[str, Any]]:
+        path = self._remote(relpath)
+        # Emit size+mtime on one line (instant), sha256 on the next (opt-in; it
+        # reads the whole file). Direct commands — no nested echo "$(...)" whose
+        # quoting gets mangled over ssh.
+        sha = (" sha256sum %s | cut -d' ' -f1;" % path) if checksum else ""
+        cmd = 'if [ -f %s ]; then stat -c "%%s %%Y" %s;%s else exit 7; fi' % (path, path, sha)
+        proc = subprocess.run([*self._ssh, target, cmd], capture_output=True, text=True)
+        if proc.returncode == 7:
+            return None
+        if proc.returncode != 0:
+            raise RuntimeError("stat %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
+        parts = proc.stdout.split()  # "<size> <mtime>[ <sha>]" across 1-2 lines
+        meta: Dict[str, Any] = {"present": True}
+        if len(parts) >= 2 and parts[0].isdigit():
+            meta["bytes"] = int(parts[0])
+            meta["mtime"] = int(parts[1])
+        if checksum and len(parts) >= 3:
+            meta["sha256"] = parts[2]
+        return meta
+
 
 # ---------------------------------------------------------------------------
 # Fleet roster
@@ -140,19 +171,27 @@ def pull_snapshot(
     fleet: str,
     pulled_at: str,
     soul_files: Sequence[str] = SOUL_FILES,
+    memory_files: Sequence[str] = MEMORY_FILES,
+    memory_checksum: bool = False,
 ) -> dict:
     """Pull SOUL_FILES from each agent into ``dest_dir`` and return the manifest.
 
     Writes ``<dest>/agents/<name>/soul/<file>`` for present files and a
     ``<dest>/manifest.yaml``. ``pulled_at`` is supplied by the caller.
+
+    Also records the binary memory layer (MEMORY_FILES) as **references** under
+    each agent's ``memory`` key — {present, bytes, mtime[, sha256]} — WITHOUT
+    transferring the (potentially gigabyte) content. ``memory_checksum`` adds a
+    sha256 (reads the remote blob; slower).
     """
     dest_dir = Path(dest_dir)
     manifest: dict = {
         "schema": SNAPSHOT_SCHEMA,
-        "layer": "soul",
+        "layer": "soul+memory-refs",
         "fleet": fleet,
         "pulled_at": pulled_at,
         "soul_files": list(soul_files),
+        "memory_files": list(memory_files),
         "agents": {},
     }
     for name, target in agents:
@@ -170,7 +209,14 @@ def pull_snapshot(
                 "sha256": _sha256(content),
                 "bytes": len(content.encode("utf-8")),
             }
-        manifest["agents"][name] = {"target": target, "files": files_meta}
+        # Binary memory: reference-only (metadata), never inlined.
+        memory_meta: Dict[str, dict] = {}
+        for rel in memory_files:
+            meta = transport.stat(target, rel, checksum=memory_checksum)
+            memory_meta[rel] = meta if meta is not None else {"present": False}
+        manifest["agents"][name] = {
+            "target": target, "files": files_meta, "memory": memory_meta,
+        }
     return manifest
 
 
