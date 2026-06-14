@@ -1891,6 +1891,33 @@ def cmd_rollout_health(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
+    """Render the OpenShell guardrail policy from the operator template + fleet
+    values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
+    of executor sandbox enforcement (flipping it on additionally needs the
+    Hermes-runtime sandbox image)."""
+    from mac import openshell_policy as _op
+
+    template = Path(args.template).expanduser().read_text(encoding="utf-8")
+    rendered = _op.render_policy(
+        template,
+        agent_user=args.agent_user,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
+        model_gateway_host=getattr(args, "model_gateway_host", None),
+        shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
+        image_runtime=getattr(args, "image_runtime", None),
+    )
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered, encoding="utf-8")
+        dest.chmod(0o600)
+        _print({"wrote": str(dest), "bytes": len(rendered)})
+    else:
+        sys.stdout.write(rendered)
+
+
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=func)
 
@@ -3375,6 +3402,30 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run_list.add_argument("--eval-set", dest="eval_set")
     eval_run_list.add_argument("--target-id")
     _set(cmd_eval_run_list, eval_run_list)
+
+    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    osh_render = openshell.add_parser(
+        "render-policy",
+        help="render the OpenShell guardrail policy from the operator template for this fleet",
+    )
+    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host")
+    osh_render.add_argument("--hub-host", required=True, help="MAC hub host the sandbox egresses to")
+    osh_render.add_argument("--hub-port", type=int, default=8789)
+    osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
+    osh_render.add_argument(
+        "--image-runtime",
+        help="in-image runtime path (e.g. /opt/mac-venv) when the sandbox runs a "
+        "prebuilt --from image instead of a host-uploaded runtime; caches -> /tmp",
+    )
+    osh_render.add_argument("--qdrant-port", type=int, default=6333)
+    osh_render.add_argument("--firecrawl-port", type=int, default=3002)
+    osh_render.add_argument(
+        "--template",
+        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
+        help="operator policy template path",
+    )
+    osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
+    _set(cmd_openshell_render_policy, osh_render)
 
     return parser
 

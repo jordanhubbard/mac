@@ -979,6 +979,38 @@ echo "remote reconciliation succeeded for $agent"
 REMOTE
 }
 
+# Optional, opt-in: run the OpenShell sandbox-enforcement bootstrap on the node
+# after a successful deploy (the source sync already placed the script + the
+# multi-arch Containerfile under $MAC_HOME/src/mac/deploy/openshell). Default OFF
+# so existing deploys are unchanged. Enable with MAC_DEPLOY_OPENSHELL=1; pass
+# flags via MAC_DEPLOY_OPENSHELL_ARGS (e.g. "--enable" then, once a real task
+# validates, "--enable --fail-closed"). Default (no args) sets everything up but
+# does NOT flip enforcement. Non-fatal: a failure logs a warning, never aborts
+# the deploy (the bootstrap is idempotent and re-runnable by hand).
+run_openshell_bootstrap() {
+  local agent="$1" target="$2" ssh_parts=() ssh_args=() ssh_target last_index
+  case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  echo "==> ${agent}: OpenShell bootstrap (MAC_DEPLOY_OPENSHELL=1, args='${MAC_DEPLOY_OPENSHELL_ARGS:-}')"
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "${MAC_DEPLOY_OPENSHELL_ARGS:-}") bash -s" <<'REMOTE'
+set -euo pipefail
+mac_home="${MAC_HOME:-$HOME/.mac}"
+bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
+[ -x "$bs" ] || { echo "OpenShell bootstrap not found/executable at $bs" >&2; exit 1; }
+exec "$bs" $MAC_DEPLOY_OPENSHELL_ARGS
+REMOTE
+  then
+    echo "==> ${agent}: WARNING: OpenShell bootstrap exited non-zero (non-fatal; re-run $mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh by hand)" >&2
+  fi
+}
+
 deploy_host() {
   local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 <<<"$spec"
@@ -5436,6 +5468,7 @@ REMOTE
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
     reconcile_remote_deploy "$agent" "$target"
   fi
+  run_openshell_bootstrap "$agent" "$target"
 }
 
 hub_target() {
