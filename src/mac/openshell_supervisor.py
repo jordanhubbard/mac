@@ -17,24 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
-from mac.openshell_service import DEFAULT_REQUIRED_AGENT_NAMES
-
-
-def _truthy(value: Optional[str]) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _base_agent_name(agent_id: str) -> str:
-    value = str(agent_id or "").strip().lower()
-    if value.startswith("agent_"):
-        value = value[len("agent_") :]
-    return value.split(".", 1)[0]
-
-
-def openshell_required(agent_id: str) -> bool:
-    if "MAC_OPENSHELL_REQUIRED" in os.environ:
-        return _truthy(os.environ.get("MAC_OPENSHELL_REQUIRED"))
-    return _base_agent_name(agent_id) in DEFAULT_REQUIRED_AGENT_NAMES
+from mac.openshell_runtime import base_agent_name, openshell_required_for_identity
 
 
 def build_supervisor_argv(
@@ -62,7 +45,7 @@ def build_supervisor_argv(
         "--policy",
         policy_path,
         "--name",
-        sandbox_name or "mac-%s" % _base_agent_name(agent_id),
+        sandbox_name or "mac-%s" % base_agent_name(agent_id),
     ]
     if keep:
         argv.append("--keep")
@@ -80,7 +63,7 @@ def default_policy_path(agent_id: str) -> Path:
     explicit = os.environ.get("MAC_OPENSHELL_POLICY")
     if explicit:
         return Path(explicit).expanduser()
-    return Path.home() / ".mac" / "openshell" / ("%s-policy.yaml" % _base_agent_name(agent_id))
+    return Path.home() / ".mac" / "openshell" / ("%s-policy.yaml" % base_agent_name(agent_id))
 
 
 def default_child_argv() -> List[str]:
@@ -109,7 +92,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not child:
         child = default_child_argv()
 
-    required = openshell_required(args.agent_id)
+    required = openshell_required_for_identity(
+        agent_id=args.agent_id,
+        explicit=os.environ.get("MAC_OPENSHELL_REQUIRED")
+        if "MAC_OPENSHELL_REQUIRED" in os.environ
+        else None,
+    )
     policy = Path(args.policy).expanduser() if args.policy else default_policy_path(args.agent_id)
     openshell = shutil.which(args.openshell_bin) or (
         args.openshell_bin if Path(args.openshell_bin).exists() else None

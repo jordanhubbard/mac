@@ -24,9 +24,10 @@ from mac.models import (
     utcnow,
 )
 from mac.openshell_policy import render_policy as render_template_policy
-
-
-DEFAULT_REQUIRED_AGENT_NAMES = frozenset({"rocky", "bullwinkle", "natasha"})
+from mac.openshell_runtime import (
+    DEFAULT_REQUIRED_AGENT_NAMES as DEFAULT_REQUIRED_AGENT_NAMES,
+    openshell_required_for_identity,
+)
 
 
 def policy_checksum(policy_text: str) -> str:
@@ -479,12 +480,11 @@ class OpenShellService:
         else:
             name = str(getattr(agent, "name", "") or agent_id)
             resources = ensure_json_object(getattr(agent, "resources", {}) or {})
-        raw = resources.get("openshell_required")
-        if raw is not None:
-            return bool(raw)
-        host = resources.get("hostname") or resources.get("host") or ""
-        names = {agent_id, name, str(host)}
-        return any(self._base_name(item) in DEFAULT_REQUIRED_AGENT_NAMES for item in names)
+        return openshell_required_for_identity(
+            agent_id=agent_id,
+            agent_name=name,
+            resources=resources,
+        )
 
     def file_fallback_policy(self) -> Optional[Path]:
         explicit = os.environ.get("MAC_OPENSHELL_POLICY")
@@ -510,12 +510,6 @@ class OpenShellService:
             raise ValidationError("OpenShell policy text is required")
         parse_policy_metadata(text)
         return text
-
-    def _base_name(self, value: Any) -> str:
-        text = str(value or "").strip().lower()
-        if text.startswith("agent_"):
-            text = text[len("agent_") :]
-        return text.split(".", 1)[0]
 
     def _policy_from_row(self, row: Any) -> OpenShellPolicy:
         return OpenShellPolicy(
