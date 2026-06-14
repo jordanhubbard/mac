@@ -256,12 +256,13 @@ def _make_fake_bin(
     # Fake cargo: `test` fails rc=127 until .mac-provisioned exists. The
     # provisioning agent fallback is what creates that marker, so a green
     # run proves the fallback ran AND the gate re-judged the real command.
+    _cargo_ok = json.dumps("test result: ok. 3 passed\\n")  # extracted: no backslash inside an f-string expression (py3.11 compat, requires-python >=3.11)
     _write_exec(
         bindir / "cargo",
         "#!/usr/bin/env bash\n"
         'if [ "$1" = "test" ]; then\n'
         '  if [ -f .mac-provisioned ]; then\n'
-        f'    printf "%s" {json.dumps("test result: ok. 3 passed\\n")}\n'
+        f'    printf "%s" {_cargo_ok}\n'
         '    exit 0\n'
         '  fi\n'
         '  echo "error: linker cc not found" >&2\n'
