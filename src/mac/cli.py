@@ -690,6 +690,32 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
+    """Render the OpenShell guardrail policy from the operator template + fleet
+    values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
+    of executor sandbox enforcement (flipping it on additionally needs the
+    Hermes-runtime sandbox image)."""
+    from mac import openshell_policy as _op
+
+    template = Path(args.template).expanduser().read_text(encoding="utf-8")
+    rendered = _op.render_policy(
+        template,
+        agent_user=args.agent_user,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
+        model_gateway_host=getattr(args, "model_gateway_host", None),
+        shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
+    )
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered, encoding="utf-8")
+        dest.chmod(0o600)
+        _print({"wrote": str(dest), "bytes": len(rendered)})
+    else:
+        sys.stdout.write(rendered)
+
+
 def _soul_snapshot_setup(args):
     """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
     import yaml as _yaml
@@ -2289,6 +2315,25 @@ def build_parser() -> argparse.ArgumentParser:
     project_show = project.add_parser("show")
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
+
+    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    osh_render = openshell.add_parser(
+        "render-policy",
+        help="render the OpenShell guardrail policy from the operator template for this fleet",
+    )
+    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host (e.g. jkh)")
+    osh_render.add_argument("--hub-host", required=True, help="MAC hub host (e.g. 100.125.137.89)")
+    osh_render.add_argument("--hub-port", type=int, default=8789)
+    osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
+    osh_render.add_argument("--qdrant-port", type=int, default=6333)
+    osh_render.add_argument("--firecrawl-port", type=int, default=3002)
+    osh_render.add_argument(
+        "--template",
+        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
+        help="operator policy template path",
+    )
+    osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
+    _set(cmd_openshell_render_policy, osh_render)
 
     machine = sub.add_parser("machine", help="machine registry commands").add_subparsers(dest="machine_command", required=True)
     machine_register = machine.add_parser("register")
