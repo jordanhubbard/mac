@@ -27,27 +27,40 @@ filesystem_policy:
     - /sbin
     - /etc
     - /proc
-    - /dev/urandom
     - /var/log
-    # The vendored Hermes runtime + venv. Match these to your provisioning:
-    # if you bake an image, point at the in-image install path; if you upload,
-    # point at the upload target. The host default for a fleet agent is ~/.mac.
-    - /home/__AGENT_USER__/.mac/venv
-    - /home/__AGENT_USER__/.mac/src
+    # The vendored Hermes runtime + venv. The renderer fills these from the
+    # provisioning mode: host paths (~/.mac/venv, ~/.mac/src) by default, or the
+    # in-image install path (e.g. /opt/mac-venv) when rendered with image_runtime.
+    - __RUNTIME_VENV__
+    - __RUNTIME_SRC__
   read_write:
     - /tmp
-    - /dev/null
-    # The agent's home cache/state (pip, git config, tool caches). Tighten to
-    # specific subpaths if you want a smaller writable surface.
-    - /home/__AGENT_USER__/.cache
-    - /home/__AGENT_USER__/.config
+    # /dev as a directory (not the /dev/null leaf): under hard_requirement on
+    # Landlock ABI >= 3 (kernel 6.x) a device FILE given a directory access
+    # right (ReadDir) is rejected as "incompatible directory-only access-rights".
+    # The directory satisfies ReadDir and covers /dev/null + /dev/urandom.
+    - /dev
+    # The agent's home cache/state (pip, git config, tool caches). Host mode ->
+    # ~/.cache + ~/.config; image mode -> /tmp (the image bakes no per-user home,
+    # and these would otherwise be nonexistent leaves that break hard_requirement,
+    # which rejects a ReadDir right on a path it can't classify as a directory).
+    - __CACHE_DIR__
+    - __CONFIG_DIR__
 
 landlock:
-  # hard_requirement: FAIL the run if the kernel lacks Landlock (5.13+) or a
-  # declared path is unenforceable, rather than silently losing filesystem
-  # confinement. Drop to best_effort only for dev on kernels without Landlock
-  # (it skips unenforceable paths and emits a High-severity finding instead).
-  compatibility: hard_requirement
+  # best_effort — REQUIRED here, not a relaxation: this policy declares
+  # network_policies, and OpenShell's egress proxy adds a directory ReadDir
+  # access-right on its own (non-directory) proxy path. Under hard_requirement,
+  # Landlock ABI >= 3 (kernel 6.x) rejects that as "incompatible directory-only
+  # access-rights" and the sandbox fails to start. best_effort skips ONLY that
+  # one incompatible internal rule and still fully enforces every declared path
+  # (validated: writes to read-only paths and reads of non-granted paths are
+  # denied) plus deny-by-default network egress (the L7 proxy, independent of
+  # Landlock). The one guarantee best_effort drops — aborting on a kernel with
+  # NO Landlock at all — is recovered by the executor's _kernel_has_landlock()
+  # precheck, which fails closed before launching. The deny-all bundled default
+  # (no proxy) keeps hard_requirement.
+  compatibility: best_effort
 
 process:
   # Never root. The supervisor drops privileges to this identity.
@@ -66,7 +79,7 @@ network_policies:
         enforcement: enforce
         access: full
     binaries:
-      - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+      - { path: __RUNTIME_PY__ }
 
   # --- Model gateway: the agent's LLM calls. Scope to YOUR gateway host. ---
   model_gateway:
@@ -78,7 +91,7 @@ network_policies:
         enforcement: enforce
         access: full
     binaries:
-      - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+      - { path: __RUNTIME_PY__ }
 
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22

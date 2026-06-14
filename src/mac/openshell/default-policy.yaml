@@ -34,10 +34,14 @@ filesystem_policy:
     - /sbin
     - /etc
     - /proc
-    - /dev/urandom
   read_write:
     - /tmp
-    - /dev/null
+    # /dev as a directory (not individual device leaves): under hard_requirement
+    # on Landlock ABI >= 3 (kernel 6.x), a device FILE given a directory access
+    # right (ReadDir) is rejected as "incompatible directory-only access-rights".
+    # The /dev directory satisfies ReadDir and covers /dev/null + /dev/urandom;
+    # a rootless container's /dev is a minimal safe set (null/zero/urandom/tty).
+    - /dev
 
 landlock:
   # Fail closed: abort if the kernel lacks Landlock (5.13+) or a declared path

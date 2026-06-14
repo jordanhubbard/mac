@@ -29,6 +29,9 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_KEEP",
     "MAC_OPENSHELL_CREATE_ARGS",
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
+    "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
+    "MAC_OPENSHELL_HOST_ALIAS",
+    "MAC_HERMES_PYTHON",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
     "HERMES_YOLO_MODE",
 ]
@@ -42,6 +45,9 @@ def _clean(monkeypatch, tmp_path):
     for name in _OPENSHELL_ENVS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Construction tests run on non-Landlock hosts (Mac/CI); bypass the kernel
+    # precheck so they exercise the wrap. The precheck has its own tests below.
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     yield
 
 
@@ -246,6 +252,73 @@ def test_agent_invocation_sandbox_overrides_failclosed_hatch(monkeypatch):
     out = te._agent_invocation("do the thing")
     assert out[0] == "openshell"
     assert "--yolo" in out
+
+
+# ---------------------------------------------------------------------------
+# image-mode runtime path + URL rewriting + Landlock precheck
+# ---------------------------------------------------------------------------
+
+
+def test_hermes_argv_uses_image_python_override(monkeypatch):
+    monkeypatch.setenv("MAC_HERMES_PYTHON", "/opt/mac-venv/bin/python")
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    argv = te._hermes_argv("do it")
+    assert argv[0] == "/opt/mac-venv/bin/python"
+    assert argv[1:4] == ["-m", "hermes_cli.main", "chat"]
+    # image runtime: no host vendored PYTHONPATH injected
+    assert "/.mac/src/" not in os.environ.get("PYTHONPATH", "")
+
+
+def test_hermes_argv_host_default_injects_pythonpath(monkeypatch):
+    monkeypatch.delenv("MAC_HERMES_PYTHON", raising=False)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    argv = te._hermes_argv("do it")
+    assert argv[0].endswith("/.mac/venv/bin/python")
+    assert "/.mac/src/mac/src/mac/_hermes" in os.environ["PYTHONPATH"]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "0.0.0.0", "::1"])
+def test_rewrite_host_local_url(host):
+    alias = "host.openshell.internal"
+    src = "http://%s:8789/v1/" % ("[::1]" if host == "::1" else host)
+    assert te._rewrite_host_local_url(src, alias) == "http://host.openshell.internal:8789/v1/"
+
+
+def test_rewrite_leaves_nonloopback_and_nonurls():
+    alias = "host.openshell.internal"
+    assert te._rewrite_host_local_url("http://100.64.0.1:8789", alias) == "http://100.64.0.1:8789"
+    assert te._rewrite_host_local_url("secret-token-127.0.0.1", alias) == "secret-token-127.0.0.1"
+
+
+def test_env_flags_rewrite_loopback_urls(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "MAC_HUB_URL,MAC_WORKER_TOKEN")
+    monkeypatch.setenv("MAC_HUB_URL", "http://127.0.0.1:8789")
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "tok-127.0.0.1-abc")  # not a URL -> untouched
+    flags = te._openshell_env_flags()
+    assert "MAC_HUB_URL=http://host.openshell.internal:8789" in flags
+    assert "MAC_WORKER_TOKEN=tok-127.0.0.1-abc" in flags
+
+
+def test_host_alias_override(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_HOST_ALIAS", "10.0.0.1")
+    assert te._rewrite_host_local_url("http://127.0.0.1:8789", te._openshell_host_alias()) == "http://10.0.0.1:8789"
+
+
+def test_landlock_precheck_fail_closed(monkeypatch):
+    # sandbox on, kernel lacks Landlock, override absent -> refuse (fail closed)
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
+    monkeypatch.setattr(te, "_kernel_has_landlock", lambda: False)
+    with pytest.raises(RuntimeError, match="does not expose .*Landlock"):
+        te._maybe_wrap_openshell(_ARGV)
+
+
+def test_landlock_precheck_passes_when_present(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
+    monkeypatch.setattr(te, "_kernel_has_landlock", lambda: True)
+    out = te._maybe_wrap_openshell(_ARGV)
+    assert out[:3] == ["openshell", "sandbox", "create"]
 
 
 # --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---

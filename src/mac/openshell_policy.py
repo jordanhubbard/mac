@@ -30,6 +30,7 @@ def render_policy(
     hub_port: int,
     model_gateway_host: Optional[str] = None,
     shared_services: Optional[Dict[str, int]] = None,
+    image_runtime: Optional[str] = None,
 ) -> str:
     """Fill the operator policy template for one fleet.
 
@@ -40,14 +41,38 @@ def render_policy(
     - ``shared_services`` -> {name: port} egress blocks appended to
       network_policies (e.g. {"qdrant": 6333, "firecrawl": 3002}), all on
       ``hub_host`` (the fleet's shared-services manager).
+    - ``image_runtime`` -> when set (e.g. ``/opt/mac-venv``), the runtime/caches
+      resolve to the in-image install paths instead of the host ``~/.mac`` —
+      use this when the sandbox runs a prebuilt image via ``--from`` rather than
+      a host-uploaded runtime. In image mode caches live under ``/tmp`` (the
+      image bakes no per-user home).
 
     Raises ``ValueError`` if any ``__PLACEHOLDER__`` remains unresolved.
     """
     if not agent_user or not hub_host or not hub_port:
         raise ValueError("agent_user, hub_host and hub_port are required")
+    if image_runtime:
+        runtime_venv = image_runtime.rstrip("/")
+        runtime_src = runtime_venv
+        # No per-user home in the image; caches land under /tmp (already in the
+        # writable set, so these resolve to existing, Landlock-classifiable dirs
+        # rather than nonexistent leaves that would break hard_requirement).
+        cache_dir = config_dir = "/tmp"
+    else:
+        base = "/home/%s/.mac" % agent_user
+        runtime_venv = base + "/venv"
+        runtime_src = base + "/src"
+        cache_dir = "/home/%s/.cache" % agent_user
+        config_dir = "/home/%s/.config" % agent_user
+    runtime_py = runtime_venv + "/bin/python"
     text = template_text
     subs = {
         "__AGENT_USER__": agent_user,
+        "__CACHE_DIR__": cache_dir,
+        "__CONFIG_DIR__": config_dir,
+        "__RUNTIME_VENV__": runtime_venv,
+        "__RUNTIME_SRC__": runtime_src,
+        "__RUNTIME_PY__": runtime_py,
         "__MAC_HUB_HOST__": hub_host,
         "__MAC_HUB_PORT__": str(hub_port),
         "__MODEL_GATEWAY_HOST__": str(model_gateway_host or hub_host),
@@ -55,7 +80,7 @@ def render_policy(
     for token, value in subs.items():
         text = text.replace(token, value)
 
-    blocks = _shared_service_blocks(shared_services or {}, hub_host, agent_user)
+    blocks = _shared_service_blocks(shared_services or {}, hub_host, runtime_py)
     if blocks:
         text = text.rstrip() + "\n" + blocks + "\n"
 
@@ -69,11 +94,13 @@ def render_policy(
     return text
 
 
-def _shared_service_blocks(services: Dict[str, int], host: str, agent_user: str) -> str:
+def _shared_service_blocks(services: Dict[str, int], host: str, py: str) -> str:
     """YAML network_policies blocks for the fleet's shared services (Qdrant,
-    Firecrawl, …), appended under the template's existing network_policies."""
+    Firecrawl, …), appended under the template's existing network_policies.
+
+    ``py`` is the runtime python binary allowed to make the egress (host or
+    in-image path), matching the filesystem policy's runtime location."""
     lines: List[str] = []
-    py = "/home/%s/.mac/venv/bin/python" % agent_user
     for name in sorted(services):
         port = int(services[name])
         lines += [
