@@ -1069,11 +1069,22 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
 
 
 def _hermes_argv(prompt: str) -> List[str]:
-    """The agent invocation. Sets PYTHONPATH for the vendored Hermes runtime."""
-    hermes_py = Path.home() / ".mac" / "venv" / "bin" / "python"
-    hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
-    os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
-    return [str(hermes_py), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
+    """The agent invocation.
+
+    Host mode: the vendored Hermes runtime under ``~/.mac`` — set PYTHONPATH so
+    ``hermes_cli`` resolves. Sandbox image mode: ``MAC_HERMES_PYTHON`` points at
+    the in-image interpreter (e.g. ``/opt/mac-venv/bin/python``) whose
+    site-packages already contain ``hermes_cli``, so no host PYTHONPATH is
+    injected — and the host path would not exist inside the sandbox anyway.
+    """
+    override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    if override:
+        hermes_py = override
+    else:
+        hermes_py = str(Path.home() / ".mac" / "venv" / "bin" / "python")
+        hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
+        os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
+    return [hermes_py, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
 
 
 # ---------------------------------------------------------------------------
@@ -1151,9 +1162,38 @@ def _openshell_required_for_local_agent() -> bool:
     return base in {"rocky", "bullwinkle", "natasha"}
 
 
+_OPENSHELL_HOST_ALIAS_DEFAULT = "host.openshell.internal"
+_HOST_LOCAL_HOSTS = ("127.0.0.1", "localhost", "0.0.0.0", "[::1]", "::1")
+
+
+def _openshell_host_alias() -> str:
+    """The in-sandbox alias for the host (OpenShell injects this hosts entry).
+    A forwarded ``http://127.0.0.1:8789`` is unreachable from inside the sandbox
+    (that loopback is the sandbox's own); rewrite it to this alias."""
+    return (os.environ.get("MAC_OPENSHELL_HOST_ALIAS") or "").strip() or _OPENSHELL_HOST_ALIAS_DEFAULT
+
+
+def _rewrite_host_local_url(value: str, alias: str) -> str:
+    """Rewrite a URL whose host is the machine's loopback to the sandbox host
+    alias, so forwarded service URLs (MAC_HUB_URL, gateway base) resolve from
+    inside the sandbox. Only touches values that look like URLs (contain '://')
+    and only the authority's loopback host — tokens/other values pass through."""
+    if not value or "://" not in value:
+        return value
+    out = value
+    for h in _HOST_LOCAL_HOSTS:
+        out = out.replace("://%s" % h, "://%s" % alias).replace("@%s" % h, "@%s" % alias)
+    return out
+
+
 def _openshell_env_flags() -> List[str]:
-    """``--env NAME=VALUE`` flags for each *set* passthrough variable."""
+    """``--env NAME=VALUE`` flags for each *set* passthrough variable.
+
+    URL-valued vars have a host loopback rewritten to the sandbox host alias
+    (see :func:`_rewrite_host_local_url`) so a forwarded ``http://127.0.0.1:PORT``
+    hub/gateway URL is reachable from inside the sandbox."""
     names = os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
+    alias = _openshell_host_alias()
     flags: List[str] = []
     seen = set()
     for raw in names.split(","):
@@ -1164,8 +1204,26 @@ def _openshell_env_flags() -> List[str]:
         val = os.environ.get(name)
         if val is None:
             continue
+        val = _rewrite_host_local_url(val, alias)
         flags += ["--env", "%s=%s" % (name, val)]
     return flags
+
+
+def _kernel_has_landlock() -> bool:
+    """True if the running kernel exposes Landlock (the LSM is listed).
+
+    The operator policy uses ``landlock: best_effort`` because OpenShell's egress
+    proxy is incompatible with ``hard_requirement`` on current kernels (it adds a
+    directory ReadDir right on its own non-directory proxy path, which Landlock
+    ABI >= 3 rejects). best_effort still fully enforces on a Landlock-capable
+    kernel, but would silently run UNCONFINED on a kernel without Landlock — so
+    the executor performs this precheck to recover the fail-closed guarantee.
+    """
+    try:
+        lsm = Path("/sys/kernel/security/lsm").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "landlock" in (lsm or "").split(",")
 
 
 def _bundled_default_policy() -> Path:
@@ -1220,6 +1278,18 @@ def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
     """
     if not _openshell_enabled():
         return list(argv)
+    # Fail closed if the kernel can't enforce Landlock: the operator policy is
+    # best_effort (forced by OpenShell's proxy/hard_requirement incompatibility),
+    # which would otherwise run UNCONFINED on a Landlock-less kernel. Override
+    # only for a deliberate, audited exception.
+    if not _kernel_has_landlock() and not _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")):
+        raise RuntimeError(
+            "OpenShell sandboxing is enabled but the kernel does not expose "
+            "Landlock (/sys/kernel/security/lsm has no 'landlock'); the policy's "
+            "filesystem confinement (best_effort) would not be enforced. Refusing "
+            "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
+            "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."
+        )
     bin_ = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
     wrapped: List[str] = [bin_, "sandbox", "create", "--no-auto-providers"]
     # Always pass one of OUR policies — never omit --policy, which would let

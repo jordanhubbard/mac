@@ -91,5 +91,46 @@ def test_real_operator_template_renders(tmp_path):
     assert doc["network_policies"]["mac_hub"]["endpoints"][0]["port"] == 8789
     assert doc["network_policies"]["qdrant"]["endpoints"][0]["port"] == 6333
     assert doc["network_policies"]["firecrawl"]["endpoints"][0]["host"] == "100.125.137.89"
-    assert doc["landlock"]["compatibility"] == "hard_requirement"
+    # operator policy is best_effort (OpenShell egress-proxy incompatibility with
+    # hard_requirement); the executor's Landlock precheck recovers fail-closed.
+    assert doc["landlock"]["compatibility"] == "best_effort"
     assert "/home/jkh/.mac/venv" in out  # agent_user substituted in active config
+
+
+def _real_template():
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    return (repo / "deploy" / "openshell" / "mac-hermes-policy.yaml").read_text(encoding="utf-8")
+
+
+def test_dev_is_directory_not_leaf_under_hard_requirement():
+    # /dev device-FILE leaves (/dev/null, /dev/urandom) given a directory access
+    # right are rejected under hard_requirement on Landlock ABI >= 3; the policy
+    # must list the /dev DIRECTORY instead (in either provisioning mode).
+    for kwargs in ({}, {"image_runtime": "/opt/mac-venv"}):
+        out = op.render_policy(_real_template(), agent_user="jkh", hub_host="h",
+                               hub_port=8789, **kwargs)
+        doc = yaml.safe_load(out)
+        fp = doc["filesystem_policy"]
+        assert "/dev" in fp["read_write"]
+        assert "/dev/null" not in fp["read_write"]
+        assert "/dev/urandom" not in fp["read_only"]
+
+
+def test_image_runtime_uses_in_image_paths_and_tmp_caches():
+    out = op.render_policy(_real_template(), agent_user="jkh", hub_host="100.64.0.1",
+                           hub_port=8789, image_runtime="/opt/mac-venv",
+                           shared_services={"qdrant": 6333})
+    assert "__" not in "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("#"))
+    doc = yaml.safe_load(out)
+    fp = doc["filesystem_policy"]
+    assert "/opt/mac-venv" in fp["read_only"]
+    assert not any("/.mac/venv" in p for p in fp["read_only"])  # not the host runtime
+    # caches resolve to /tmp (already writable) — NOT nonexistent /tmp/.cache
+    # leaves, which would break hard_requirement (ReadDir on an unclassifiable path)
+    assert "/tmp" in fp["read_write"]
+    assert not any(p.endswith("/.cache") or p.endswith("/.config") for p in fp["read_write"])
+    # network binaries reference the in-image python, not the host path
+    py = doc["network_policies"]["mac_hub"]["binaries"][0]["path"]
+    assert py == "/opt/mac-venv/bin/python"
+    assert doc["network_policies"]["qdrant"]["binaries"][0]["path"] == "/opt/mac-venv/bin/python"

@@ -705,6 +705,7 @@ def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
         hub_port=args.hub_port,
         model_gateway_host=getattr(args, "model_gateway_host", None),
         shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
+        image_runtime=getattr(args, "image_runtime", None),
     )
     if args.into:
         dest = Path(args.into).expanduser()
@@ -2558,6 +2559,11 @@ def build_parser() -> argparse.ArgumentParser:
     osh_render.add_argument("--hub-host", required=True, help="MAC hub host (e.g. 100.125.137.89)")
     osh_render.add_argument("--hub-port", type=int, default=8789)
     osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
+    osh_render.add_argument(
+        "--image-runtime",
+        help="in-image runtime path (e.g. /opt/mac-venv) when the sandbox runs a "
+        "prebuilt --from image instead of a host-uploaded runtime; caches -> /tmp",
+    )
     osh_render.add_argument("--qdrant-port", type=int, default=6333)
     osh_render.add_argument("--firecrawl-port", type=int, default=3002)
     osh_render.add_argument(
