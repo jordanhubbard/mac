@@ -95,6 +95,13 @@ def _resolve_body_for(tool: ToolSpec, args: dict) -> dict:
         args.setdefault("hermes_instance_id", hermes_instance_id())
     elif tool.name == "mac_cancel_task":
         args["target_state"] = "cancelled"
+    elif tool.name == "mac_pending_notifications":
+        # Scope to undelivered task notifications via the endpoint's query filters.
+        args.setdefault("status", "pending")
+        args.setdefault("subject_type", "task")
+    elif tool.name == "mac_ack_notification":
+        # Be explicit rather than relying on the server-side default.
+        args.setdefault("status", "delivered")
     return args
 
 

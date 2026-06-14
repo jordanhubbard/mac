@@ -3855,6 +3855,48 @@ def test_operator_notifications_track_task_lifecycle(cp):
     assert delivered.delivered_at is not None
 
 
+def test_mark_notification_delivered_refuses_terminal_flip(cp):
+    """A late/duplicate ack must not overwrite a terminal status (masking guard)."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("guard task", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+
+    pending = cp.list_notifications(status="pending")
+    assert pending, "expected at least one pending notification"
+    target = pending[0].id
+
+    # Simulate the drain marking it skipped (no delivery target resolved).
+    skipped = cp.mark_notification_delivered(target, status="skipped")
+    assert skipped.status == "skipped"
+
+    # A subsequent 'delivered' ack must be refused, not masked.
+    with pytest.raises(TransitionError):
+        cp.mark_notification_delivered(target, status="delivered")
+
+    # State is unchanged after the refused transition.
+    assert cp.get_notification(target).status == "skipped"
+
+
+def test_mark_notification_delivered_is_idempotent_for_same_status(cp):
+    """Re-acking an already-delivered notification is a no-op, not an error."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("idempotent task", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+
+    pending = cp.list_notifications(status="pending")
+    assert pending
+    target = pending[0].id
+
+    first = cp.mark_notification_delivered(target)
+    assert first.status == "delivered"
+    first_delivered_at = first.delivered_at
+
+    # Same-status re-ack returns the row without raising or bumping delivered_at.
+    second = cp.mark_notification_delivered(target)
+    assert second.status == "delivered"
+    assert second.delivered_at == first_delivered_at
+
+
 def test_task_notifier_delivers_task_progress_to_configured_slack_home_channel(cp):
     tenant = cp.register_tenant("ops")
     persona = cp.register_persona(

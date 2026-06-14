@@ -4606,7 +4606,15 @@ class ControlPlane:
         status_value = str(status or "delivered").strip().lower()
         if status_value not in {"delivered", "failed", "skipped"}:
             raise ValidationError("unsupported delivered notification status: %s" % status)
-        self.get_notification(notification_id)
+        current = self.get_notification(notification_id)
+        # Refuse overwriting a terminal status so a late/duplicate ack cannot mask a real non-delivery; same-status is an idempotent no-op.
+        if current.status in {"delivered", "failed", "skipped"}:
+            if current.status == status_value:
+                return current
+            raise TransitionError(
+                "notification %s already %s; refusing to set %s"
+                % (notification_id, current.status, status_value)
+            )
         now = utcnow()
         self.store.execute(
             """

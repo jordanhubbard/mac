@@ -87,7 +87,7 @@ mac-openshell-supervisor = "mac.openshell_supervisor:main"
 mac-openshell-collector = "mac.openshell_collector:main"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "plugin"]
 pythonpath = ["src"]
 markers = [
     "api: FastAPI HTTP endpoint tests (tests/api/)",

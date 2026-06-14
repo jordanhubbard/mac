@@ -14,3 +14,5 @@ provides_tools:
   - mac_task_summary
   - mac_cancel_task
   - mac_work_brief
+  - mac_pending_notifications
+  - mac_ack_notification
