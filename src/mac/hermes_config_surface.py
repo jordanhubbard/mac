@@ -899,6 +899,43 @@ def _ensure_never_prompt_defaults(config: Dict[str, Any]) -> None:
     config["approvals"] = approvals
 
 
+def _promote_slack_accounts_tokens(config: Dict[str, Any], home: Path) -> None:
+    """Promote Slack tokens from ~/.hermes/slack_accounts.json into config['env'].
+
+    An agent provisioned via a multi-workspace ``slack_accounts.json`` (e.g. one
+    migrated from another host) carries its bot/app tokens there, NOT in the
+    config.yaml ``env:`` block — and the gateway enables the Slack platform off
+    the env tokens, so without this it comes up "No messaging platforms enabled"
+    (the bullwinkle case). Promote the first account's xoxb/xapp pair so a
+    redeploy keeps Slack working. setdefault: an explicit env token wins, and
+    slack_accounts.json still drives the actual multi-workspace connections.
+    """
+    env = config.get("env") if isinstance(config.get("env"), dict) else {}
+    if env.get("SLACK_BOT_TOKEN") and env.get("SLACK_APP_TOKEN"):
+        return  # already enabled via explicit env tokens
+    accts = home / "slack_accounts.json"
+    if not accts.exists():
+        return
+    try:
+        data = json.loads(accts.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — malformed accounts file: leave config as-is
+        return
+    accounts = data if isinstance(data, list) else (data.get("accounts") or data.get("agents") or [])
+    for acct in accounts:
+        if not isinstance(acct, dict):
+            continue
+        bot = str(acct.get("bot_token") or "")
+        app = str(acct.get("app_token") or "")
+        if bot.startswith("xoxb") and app.startswith("xapp"):
+            env.setdefault("SLACK_BOT_TOKEN", bot)
+            env.setdefault("SLACK_APP_TOKEN", app)
+            user = str(acct.get("user_token") or "")
+            if user:
+                env.setdefault("SLACK_USER_TOKEN", user)
+            config["env"] = env
+            return
+
+
 def apply_hermes_surface_payload(
     payload: Mapping[str, Any],
     *,
@@ -922,6 +959,7 @@ def apply_hermes_surface_payload(
         if isinstance(hermes.get(section), dict) and hermes[section]:
             config[section] = hermes[section]
     _ensure_never_prompt_defaults(config)
+    _promote_slack_accounts_tokens(config, home)
     _atomic_yaml_write(config_path, config, mode=0o600)
     _write_env(env_path, hermes.get("env") if isinstance(hermes.get("env"), dict) else {})
     return {
