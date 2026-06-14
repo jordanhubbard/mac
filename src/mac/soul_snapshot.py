@@ -221,6 +221,87 @@ def pull_snapshot(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 — hub-stored persona + mood
+# ---------------------------------------------------------------------------
+
+
+def _persona_for(personas: Sequence[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    """Match the agent's persona by name (exact, or the ``persona_<name>``/
+    ``<name>`` convention) from a list_personas() result."""
+    want = {name.lower(), ("persona_%s" % name).lower(), name.lower().replace("persona_", "")}
+    for p in personas:
+        pn = str((p or {}).get("name") or "").lower()
+        if pn in want or pn.replace("persona_", "") == name.lower():
+            return p
+    return None
+
+
+def capture_hub_state(
+    hub: Any,
+    agents: Sequence[Tuple[str, str]],
+    dest_dir: Path,
+    *,
+    pulled_at: str,
+) -> dict:
+    """Capture each agent's HUB-stored persona + current mood into the snapshot.
+
+    ``hub`` exposes ``list_personas()`` and ``get_current_mood(agent_id)`` (the
+    RemoteDispatch surface; tests inject a fake). ``agents`` is [(name,
+    agent_id)]. Writes ``agents/<name>/persona.yaml`` and ``mood.yaml`` (text,
+    editable) and returns the manifest section. Best-effort per field — a hub
+    error for one agent doesn't abort the others.
+    """
+    dest_dir = Path(dest_dir)
+    try:
+        personas = [_as_plain(p) for p in (hub.list_personas() or [])]
+    except Exception:  # noqa: BLE001 — persona list is best-effort
+        personas = []
+    out: Dict[str, dict] = {"pulled_at": pulled_at, "agents": {}}
+    for name, agent_id in agents:
+        agent_dir = dest_dir / "agents" / name
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        section: Dict[str, Any] = {"agent_id": agent_id}
+        persona = _persona_for(personas, name)
+        if persona is not None:
+            (agent_dir / "persona.yaml").write_text(_yaml_dump(persona), encoding="utf-8")
+            section["persona"] = {"present": True, "name": persona.get("name")}
+        else:
+            section["persona"] = {"present": False}
+        try:
+            mood = _as_plain(hub.get_current_mood(agent_id)) or None
+        except Exception:  # noqa: BLE001 — mood is best-effort
+            mood = None
+        if mood:
+            (agent_dir / "mood.yaml").write_text(_yaml_dump(mood), encoding="utf-8")
+            section["mood"] = {"present": True}
+        else:
+            section["mood"] = {"present": False}
+        out["agents"][name] = section
+    return out
+
+
+def _as_plain(obj: Any) -> Any:
+    """Normalize a hub client result to a plain dict. RemoteDispatch returns
+    _Dictish wrappers (have ``to_dict``); a fake/LocalDispatch returns dicts.
+    ``dict(_Dictish)`` does NOT unwrap, so match on ``to_dict`` first."""
+    if obj is None:
+        return None
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if isinstance(obj, dict):
+        return obj
+    try:
+        return dict(obj)
+    except Exception:  # noqa: BLE001
+        return obj
+
+
+def _yaml_dump(obj: Any) -> str:
+    import yaml  # local import keeps the module import light for the SSH path
+    return yaml.safe_dump(obj, sort_keys=False, default_flow_style=False)
+
+
+# ---------------------------------------------------------------------------
 # Push (diff -> backup -> write)
 # ---------------------------------------------------------------------------
 

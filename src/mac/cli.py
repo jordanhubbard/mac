@@ -742,6 +742,20 @@ def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
         agents, dest, transport, fleet=fleet_name, pulled_at=stamp,
         memory_checksum=getattr(args, "memory_checksum", False),
     )
+    # Phase 3: also capture hub-stored persona + mood (resolve agent ids by name).
+    if getattr(args, "with_hub", False):
+        hub = _plane(args)
+        by_name = {}
+        try:
+            for a in hub.list_agents():
+                ad = a.to_dict() if hasattr(a, "to_dict") else dict(a)
+                if ad.get("name"):
+                    by_name[ad["name"]] = ad.get("id")
+        except Exception as exc:  # noqa: BLE001
+            print("mac: hub agent list failed (%s); skipping persona/mood" % exc, file=sys.stderr)
+        ids = [(n, by_name.get(n) or "agent_%s" % n) for n, _t in agents]
+        hub_section = _ss.capture_hub_state(hub, ids, dest, pulled_at=stamp)
+        manifest["hub"] = hub_section
     (dest / "manifest.yaml").write_text(_yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
     summary = {
         "fleet": fleet_name, "into": str(dest), "pulled_at": stamp,
@@ -754,6 +768,9 @@ def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
             for n, a in manifest["agents"].items()
         },
     }
+    if "hub" in manifest:
+        summary["hub"] = {n: {"persona": s["persona"].get("present"), "mood": s["mood"].get("present")}
+                          for n, s in manifest["hub"]["agents"].items()}
     _print(summary)
 
 
@@ -2465,6 +2482,10 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_pull.add_argument(
         "--memory-checksum", action="store_true",
         help="also sha256 the binary memory blobs (reads them remotely; slower)",
+    )
+    fleet_soul_pull.add_argument(
+        "--with-hub", action="store_true",
+        help="also capture hub-stored persona + current mood per agent (needs hub access)",
     )
     _set(cmd_fleet_soul_pull, fleet_soul_pull)
 
