@@ -60,6 +60,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mac import relay_observability
+from mac.openshell_runtime import (
+    openshell_required_for_local_agent as _openshell_required_for_local_agent,
+    truthy as _truthy,
+)
 
 # ---------------------------------------------------------------------------
 # Small utilities (ported verbatim from the deploy heredoc)
@@ -1133,33 +1137,18 @@ def _hermes_argv(prompt: str) -> List[str]:
 _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "MAC_HUB_URL,MAC_URL,MAC_WORKER_TOKEN,MAC_TOKEN,MAC_API_TOKEN,"
     "MAC_WORKER_AGENT_ID,MAC_WORKER_AGENT_NAME,MAC_AGENT_ID,"
-    "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY"
+    "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY,"
+    # Model-gateway base_url + api_key live in the agent's ~/.hermes/.env, which
+    # is NOT in the sandbox image; the gateway requires auth. Forward them so the
+    # sandboxed hermes can authenticate (the *_BASE_URL values have their host
+    # loopback rewritten to the sandbox host alias by _openshell_env_flags).
+    "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
+    "OPENAI_BASE_URL,OPENAI_API_KEY"
 )
-
-
-def _truthy(value: Optional[str]) -> bool:
-    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _openshell_enabled() -> bool:
     return _truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
-
-
-def _openshell_required_for_local_agent() -> bool:
-    explicit = os.environ.get("MAC_OPENSHELL_REQUIRED")
-    if explicit is not None:
-        return _truthy(explicit)
-    name = (
-        os.environ.get("MAC_AGENT_ID")
-        or os.environ.get("MAC_WORKER_AGENT_ID")
-        or os.environ.get("MAC_WORKER_AGENT_NAME")
-        or os.uname().nodename
-    )
-    base = str(name or "").strip().lower()
-    if base.startswith("agent_"):
-        base = base[len("agent_") :]
-    base = base.split(".", 1)[0]
-    return base in {"rocky", "bullwinkle", "natasha"}
 
 
 _OPENSHELL_HOST_ALIAS_DEFAULT = "host.openshell.internal"
@@ -1263,25 +1252,43 @@ def _resolve_openshell_policy() -> str:
     )
 
 
-def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
-    """Wrap *argv* to run inside an OpenShell sandbox, if enabled.
+# OpenShell sandboxes are container copies with NO bind-mount, so the task git
+# worktree must be UPLOADED in and the agent's results DOWNLOADED back out — a
+# plain ``create -- argv`` would run the agent against an empty /sandbox and lose
+# its edits + evidence on teardown. The run is therefore a lifecycle:
+#   create (--upload workspace, run agent in it, KEEP) -> download -> delete.
+# ``include_workdir`` in the policy only grants Landlock access to the path; it
+# does not copy files. /sandbox is OpenShell's writable workspace root (uploads
+# and downloads must live under it).
+_SANDBOX_WORKDIR = "/sandbox"
 
-    Returns *argv* unchanged when sandboxing is disabled. When enabled, a policy
-    is ALWAYS passed via :func:`_resolve_openshell_policy` (explicit ->
-    deployed -> bundled fail-closed default), so OpenShell can never silently
-    apply its image-default profile; if no policy can be resolved this raises.
-    The sandbox is one-shot (torn down when the agent process exits) unless
-    MAC_OPENSHELL_KEEP is set. ``--name`` is omitted by default so OpenShell
-    assigns a unique name per run; set MAC_OPENSHELL_SANDBOX_NAME only to debug
-    a single run. The original *argv* is always preserved verbatim after the
-    ``--`` separator.
-    """
-    if not _openshell_enabled():
-        return list(argv)
-    # Fail closed if the kernel can't enforce Landlock: the operator policy is
-    # best_effort (forced by OpenShell's proxy/hard_requirement incompatibility),
-    # which would otherwise run UNCONFINED on a Landlock-less kernel. Override
-    # only for a deliberate, audited exception.
+
+def _openshell_bin() -> str:
+    return (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+
+
+def _sandbox_name() -> str:
+    """A unique name for the kept sandbox so the download + delete steps can
+    target it. Overridable via MAC_OPENSHELL_SANDBOX_NAME (debug a single run)."""
+    explicit = (os.environ.get("MAC_OPENSHELL_SANDBOX_NAME") or "").strip()
+    if explicit:
+        return explicit
+    import uuid
+
+    return "mac-task-" + uuid.uuid4().hex[:12]
+
+
+def _workspace_basename(workspace: Path) -> str:
+    """OpenShell's ``upload <dir> /sandbox`` nests the dir under its basename
+    (-> /sandbox/<basename>); that is where the agent runs and what we download."""
+    return os.path.basename(str(workspace).rstrip("/")) or "workspace"
+
+
+def _ensure_landlock_or_fail() -> None:
+    """Fail closed if the kernel can't enforce Landlock: the operator policy is
+    best_effort (forced by OpenShell's proxy/hard_requirement incompatibility),
+    which would otherwise run UNCONFINED on a Landlock-less kernel. Override only
+    for a deliberate, audited exception."""
     if not _kernel_has_landlock() and not _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")):
         raise RuntimeError(
             "OpenShell sandboxing is enabled but the kernel does not expose "
@@ -1290,23 +1297,88 @@ def _maybe_wrap_openshell(argv: List[str]) -> List[str]:
             "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
             "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."
         )
-    bin_ = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
-    wrapped: List[str] = [bin_, "sandbox", "create", "--no-auto-providers"]
-    # Always pass one of OUR policies — never omit --policy, which would let
-    # OpenShell silently apply its own image-default profile. Resolves
-    # explicit -> deployed -> bundled fail-closed default, or raises.
-    wrapped += ["--policy", _resolve_openshell_policy()]
-    name = (os.environ.get("MAC_OPENSHELL_SANDBOX_NAME") or "").strip()
-    if name:
-        wrapped += ["--name", name]
-    if _truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
-        wrapped += ["--keep"]
-    wrapped += _openshell_env_flags()
+
+
+def _build_sandbox_create_argv(
+    name: str, workspace: Path, basename: str, agent_argv: List[str]
+) -> List[str]:
+    """``openshell sandbox create`` argv that uploads the task workspace, runs the
+    agent inside it, and KEEPS the sandbox so results can be downloaded.
+
+    A policy is ALWAYS passed (explicit -> deployed -> bundled fail-closed
+    default) so OpenShell can never silently apply its own image-default profile.
+    The host workspace is uploaded to /sandbox (landing at /sandbox/<basename>);
+    the agent runs there with $MAC_TASK_WORKSPACE/$MAC_TASK_FILE repointed at the
+    in-sandbox paths (the host paths don't exist inside the sandbox), so its
+    evidence manifest is written where ``download`` later fetches it. The agent
+    argv is shell-quoted (shlex.join) into the cd-wrapper — the prompt is task
+    text and must never be able to break out of the command.
+    """
+    sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
+    argv += ["--policy", _resolve_openshell_policy(), "--name", name]
+    argv += _openshell_env_flags()
+    argv += [
+        "--env", "MAC_TASK_WORKSPACE=%s" % sub,
+        "--env", "MAC_TASK_FILE=%s/task.json" % sub,
+    ]
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
-        wrapped += shlex.split(extra)
-    wrapped += ["--", *argv]
-    return wrapped
+        argv += shlex.split(extra)
+    argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
+    inner = "cd %s && exec %s" % (shlex.quote(sub), shlex.join(agent_argv))
+    argv += ["--", "bash", "-lc", inner]
+    return argv
+
+
+def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
+    """Run an openshell lifecycle step (download/delete) out-of-band of the
+    audited agent run. Best-effort: returns (ok, message), never raises."""
+    try:
+        proc = subprocess.run(
+            [_openshell_bin(), "sandbox", *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return proc.returncode == 0, (proc.stderr or proc.stdout or "").strip()
+    except Exception as exc:  # noqa: BLE001 - teardown must never mask the run
+        return False, str(exc)
+
+
+def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
+    """Sync the agent's edits (+ the evidence manifest) from the kept sandbox
+    back into the host workspace. Best-effort: a failure is logged, not fatal —
+    completeness is still judged by the evidence manifest on the host."""
+    sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    ok, msg = _sandbox_step(["download", name, sub, str(workspace)], timeout=300.0)
+    if not ok:
+        sys.stderr.write("[executor] WARNING: sandbox download failed: %s\n" % msg)
+    return ok
+
+
+def _sandbox_delete(name: str) -> None:
+    ok, msg = _sandbox_step(["delete", name], timeout=120.0)
+    if not ok:
+        sys.stderr.write("[executor] WARNING: sandbox delete failed (possible leak): %s\n" % msg)
+
+
+def _run_sandboxed(
+    runner: Callable[..., Any], agent_argv: List[str], workspace: Path, audit_id: Any, opts: dict
+) -> Any:
+    """Run the agent through the OpenShell sandbox lifecycle: create (upload the
+    workspace + run the agent, keep) -> download results -> delete. The agent
+    runs confined; teardown ALWAYS happens (finally), even on failure."""
+    _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
+    _ensure_landlock_or_fail()
+    name = _sandbox_name()
+    basename = _workspace_basename(workspace)
+    create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
+    try:
+        result = runner(create_argv, workspace, audit_id, opts)
+        _sandbox_download(name, basename, workspace)
+        return result
+    finally:
+        if not _truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
+            _sandbox_delete(name)
 
 
 def _force_child_yolo_env() -> None:
@@ -1326,29 +1398,15 @@ def _force_child_yolo_env() -> None:
     os.environ["HERMES_YOLO_MODE"] = "1"
 
 
-def _agent_invocation(prompt: str) -> List[str]:
-    """Build the agent argv, atomically coupling --yolo to sandbox enforcement.
+def _unsandboxed_agent_argv(prompt: str) -> List[str]:
+    """The agent argv for an UNSANDBOXED run, gated by the yolo escape hatch.
 
-    Invariant: --yolo (which disables Hermes' own approval — see sandbox-01) is
-    only used when the run is confined by OpenShell, so we never launch an
-    *unguarded* YOLO agent.
-
-      * sandbox enabled  -> wrap in OpenShell AND keep --yolo (sandboxed YOLO).
-        ``_maybe_wrap_openshell`` raises if no policy resolves (fail closed), so
-        a misconfigured sandbox can never degrade to unguarded YOLO.
-      * sandbox disabled -> running --yolo is unguarded. Permitted ONLY via the
-        ``MAC_ALLOW_UNSANDBOXED_YOLO`` escape hatch (default "1" to preserve the
-        current live fleet), with a loud warning. Set it to "0" to fail closed
-        once OpenShell is the enforcement layer.
-
-    The escape hatch defaults to allow so deploying this change does not break a
-    fleet that isn't running OpenShell yet; flip it off (or enable the sandbox)
-    to enforce the invariant.
+    --yolo disables Hermes' own approval (sandbox-01); running it unsandboxed is
+    unguarded, permitted ONLY via ``MAC_ALLOW_UNSANDBOXED_YOLO`` (default "1" to
+    preserve the current live fleet; "0" fails closed). Raises when fail-closed.
+    The sandboxed path does not go through here — see :func:`_invoke_agent`.
     """
     argv = _hermes_argv(prompt)  # includes --yolo
-    if _openshell_enabled():
-        _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
-        return _maybe_wrap_openshell(argv)
     default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
     if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", default_unsandboxed)):
         _force_child_yolo_env()
@@ -1365,6 +1423,23 @@ def _agent_invocation(prompt: str) -> List[str]:
         "Set MAC_OPENSHELL_SANDBOX=1 with a policy to enforce silently, or "
         "MAC_ALLOW_UNSANDBOXED_YOLO=1 to explicitly allow unsandboxed YOLO."
     )
+
+
+def _invoke_agent(
+    runner: Callable[..., Any], prompt: str, workspace: Path, audit_id: Any, opts: dict
+) -> Any:
+    """Run the agent for one task, atomically coupling --yolo to enforcement.
+
+    Invariant: --yolo (Hermes' own approval bypass) is only used when the run is
+    confined by OpenShell, so we never launch an *unguarded* YOLO agent.
+      * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
+        agent confined, download results, delete). Fails closed if no policy
+        resolves or the kernel can't enforce Landlock.
+      * sandbox disabled -> direct run, gated by MAC_ALLOW_UNSANDBOXED_YOLO.
+    Returns the runner's result (carries .returncode)."""
+    if _openshell_enabled():
+        return _run_sandboxed(runner, _hermes_argv(prompt), workspace, audit_id, opts)
+    return runner(_unsandboxed_agent_argv(prompt), workspace, audit_id, opts)
 
 
 def _agent_timeout() -> Optional[float]:
@@ -1455,8 +1530,9 @@ def _run_executor(
     )
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
-    result = runner(
-        _agent_invocation(prompt),
+    result = _invoke_agent(
+        runner,
+        prompt,
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
         {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout()},
