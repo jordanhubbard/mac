@@ -1335,6 +1335,11 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert state["runtime_deltas"][0]["status"] == "proposed"
     assert "observability" in state
     assert state["observability"]["counts"]["events"] >= 1
+    assert "openshell_policies" in state
+    assert "openshell_policy_versions" in state
+    assert "openshell_agent_statuses" in state
+    assert state["openshell_agent_statuses"][0]["agent_id"] == agent["id"]
+    assert state["openshell_agent_statuses"][0]["effective"]["fail_closed"] is False
     assert "events" in state
     event_subjects = {event["subject_type"] for event in state["events"]}
     assert {"task", "agent", "project", "fleet"} <= event_subjects

@@ -112,6 +112,7 @@ from mac.agentbus_control import (
     ARTIFACT_PUBLISH_TOPIC,
     artifact_publish_payload,
 )
+from mac.action_event_service import ActionEventService
 from mac.agentbus_service import AgentBusService
 from mac.beads_bridge_service import BeadsBridgeService
 from mac.deploy_service import DeployService
@@ -122,6 +123,7 @@ from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.observability_service import ObservabilityService
+from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.service_role_service import ServiceRoleService
 from mac.review_service import ReviewService
@@ -669,7 +671,12 @@ class ControlPlane:
         self._beads_heartbeat_poll_lock = threading.Lock()
         self._task_outbox_drain_lock = threading.Lock()
         self.identity = IdentityService(self.store)
-        self.observability = ObservabilityService(self.store)
+        self.action_events = ActionEventService(self.store)
+        self.observability = ObservabilityService(
+            self.store,
+            action_event_recorder=self.action_events.project_observability,
+        )
+        self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
         self.agentbus = AgentBusService(self.store, self.observability)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
@@ -4002,6 +4009,7 @@ class ControlPlane:
         "environment",
         "conversation_thread",
         "vector_ref",
+        "action_event",
         "agent",
         "project",
         "fleet",
@@ -4093,6 +4101,95 @@ class ControlPlane:
 
     def observability_summary(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.observability.summary(*args, **kwargs)
+
+    # OpenShell policies / action events --------------------------------
+
+    def create_openshell_policy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.create_policy(*args, **kwargs)
+
+    def list_openshell_policies(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.list_policies(*args, **kwargs)
+
+    def get_openshell_policy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.get_policy(*args, **kwargs)
+
+    def update_openshell_policy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.update_policy(*args, **kwargs)
+
+    def delete_openshell_policy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.delete_policy(*args, **kwargs)
+
+    def render_openshell_policy(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.openshell.render_policy(*args, **kwargs)
+
+    def list_openshell_policy_versions(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.versions(*args, **kwargs)
+
+    def assign_openshell_policy(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.assign_policy(*args, **kwargs)
+
+    def list_openshell_policy_assignments(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.list_assignments(*args, **kwargs)
+
+    def report_openshell_status(self, *args: Any, **kwargs: Any) -> Any:
+        return self.openshell.report_agent_status(*args, **kwargs)
+
+    def get_openshell_status(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.openshell.agent_status(*args, **kwargs)
+
+    def record_action_event(self, *args: Any, **kwargs: Any) -> Any:
+        return self.action_events.record_action_event(*args, **kwargs)
+
+    def list_action_events(self, *args: Any, **kwargs: Any) -> Any:
+        return self.action_events.list_action_events(*args, **kwargs)
+
+    def export_action_events_otlp(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.action_events.export_otlp(*args, **kwargs)
+
+    def summarize_actions_to_memory(
+        self,
+        *,
+        agent_id: Optional[str] = None,
+        since: Optional[str] = None,
+        created_by: str = "mac",
+        write: bool = True,
+    ) -> JsonDict:
+        summary = self.action_events.summarize(agent_id=agent_id, since=since)
+        content = json_dumps(summary)
+        memory = None
+        if write and summary["event_count"]:
+            subject_type = "agent" if agent_id else "project"
+            subject_id = agent_id or "mac"
+            memory = self.memory.add_memory(
+                None,
+                subject_type,
+                subject_id,
+                "action_summary",
+                content,
+                None,
+                created_by,
+            )
+            self.action_events.record_action_event(
+                actor=created_by,
+                action_type="memory",
+                action_name="summarize_actions",
+                subject_type=subject_type,
+                subject_id=subject_id,
+                agent_id=agent_id,
+                outcome="success",
+                severity="info",
+                attributes={
+                    "schema": "mac.action_summary_memory.v1",
+                    "memory_id": memory.id,
+                    "event_count": summary["event_count"],
+                },
+                redaction_state="summary",
+            )
+        return {
+            "schema": "mac.memory.summarize_actions.v1",
+            "summary": summary,
+            "memory": memory.to_dict() if memory else None,
+        }
 
     # Integration authority ledger -------------------------------------
 
@@ -4670,6 +4767,27 @@ class ControlPlane:
                     json_dumps(detail),
                     now,
                 ),
+            )
+            self.action_events.project_command_audit(
+                conn,
+                audit_id=audit_id,
+                command_id=cid,
+                agent_id=agent_id,
+                phase=phase_value,
+                argv=argv_list,
+                cwd=cwd_value,
+                task_id=task_id,
+                lease_id=lease_id,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=duration_ms,
+                returncode=returncode,
+                stdout_sha256=stdout_sha256,
+                stderr_sha256=stderr_sha256,
+                stdout_bytes=stdout_bytes,
+                stderr_bytes=stderr_bytes,
+                metadata=detail,
+                timestamp=now,
             )
             conn.execute("DELETE FROM command_audit WHERE created_at < ?", (cutoff,))
             self.observability.insert_observation(

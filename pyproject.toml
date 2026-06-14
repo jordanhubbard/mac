@@ -83,6 +83,8 @@ mac-webdav-server = "mac.webdav_server:main"
 # HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
 mac-evidence = "mac.evidence_cli:main"
 mac-hermes-gateway = "mac.hermes_gateway:main"
+mac-openshell-supervisor = "mac.openshell_supervisor:main"
+mac-openshell-collector = "mac.openshell_collector:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

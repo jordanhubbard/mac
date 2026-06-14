@@ -47,6 +47,11 @@ EXPECTED_TABLES = [
     "operator_notifications",
     "notifier_channels",
     "command_audit",
+    "action_events",
+    "openshell_policies",
+    "openshell_policy_versions",
+    "openshell_policy_assignments",
+    "openshell_agent_status",
     "agent_lifecycle_events",
     "agent_events",
     "mood_overlays",
@@ -102,7 +107,7 @@ def test_each_table_is_created(schema_sql: str, table: str) -> None:
 
 
 def test_expected_table_count_matches_sqlite() -> None:
-    assert len(EXPECTED_TABLES) == 59, (
+    assert len(EXPECTED_TABLES) == 64, (
         "When a table is added to SQLiteStore._initialize, update both "
         "EXPECTED_TABLES here and src/mac/data/postgres/schema.sql."
     )

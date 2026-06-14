@@ -713,6 +713,79 @@ class CommandAuditCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class OpenShellPolicyCreate(BaseModel):
+    name: str
+    policy_text: str
+    description: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "human"
+    policy_id: Optional[str] = None
+
+
+class OpenShellPolicyUpdate(BaseModel):
+    name: Optional[str] = None
+    policy_text: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    updated_by: str = "human"
+
+
+class OpenShellPolicyRender(BaseModel):
+    agent_user: Optional[str] = None
+    hub_host: Optional[str] = None
+    hub_port: Optional[int] = None
+    model_gateway_host: Optional[str] = None
+    shared_services: Dict[str, int] = Field(default_factory=dict)
+
+
+class OpenShellPolicyAssign(BaseModel):
+    target_type: str = "agent"
+    target_id: str
+    created_by: str = "human"
+
+
+class OpenShellStatusReport(BaseModel):
+    status: str
+    required: Optional[bool] = None
+    active: bool = True
+    sandbox_id: Optional[str] = None
+    policy_id: Optional[str] = None
+    policy_version: Optional[int] = None
+    checksum: Optional[str] = None
+    supervisor_pid: Optional[int] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionEventCreate(BaseModel):
+    event_id: Optional[str] = None
+    timestamp: Optional[str] = None
+    agent_id: Optional[str] = None
+    hermes_instance_id: Optional[str] = None
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    sandbox_id: Optional[str] = None
+    actor: str = "mac"
+    action_type: str
+    action_name: str
+    subject_type: Optional[str] = None
+    subject_id: Optional[str] = None
+    outcome: str = "unknown"
+    severity: str = "info"
+    policy_id: Optional[str] = None
+    policy_version: Optional[int] = None
+    command_id: Optional[str] = None
+    parent_event_id: Optional[str] = None
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+    redaction_state: str = "redacted"
+
+
+class MemorySummarizeActions(BaseModel):
+    agent_id: Optional[str] = None
+    since: Optional[str] = None
+    created_by: str = "mac"
+    write: bool = True
+
+
 class AgentInstalledPackagesUpdate(BaseModel):
     installed_packages: Dict[str, Any] = Field(default_factory=dict)
 
@@ -2145,6 +2218,27 @@ def _dashboard_state(
         observation.to_dict()
         for observation in cp.list_integration_observations(limit=120)
     ]
+    openshell_policies = [
+        policy.to_dict()
+        for policy in cp.list_openshell_policies(include_deleted=True)
+    ]
+    openshell_assignments = [
+        assignment.to_dict()
+        for assignment in cp.list_openshell_policy_assignments(active_only=False)
+    ]
+    openshell_policy_versions = [
+        version.to_dict()
+        for policy in openshell_policies
+        for version in cp.list_openshell_policy_versions(policy["id"])
+    ]
+    openshell_agent_statuses = [
+        cp.get_openshell_status(agent.id)
+        for agent in agents
+    ]
+    action_events = [
+        event.to_dict()
+        for event in cp.list_action_events(limit=240)
+    ]
     task_details = [_dashboard_task(cp, task.id, compact=True) for task in tasks]
     rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
@@ -2199,6 +2293,8 @@ def _dashboard_state(
                 "open_integration_findings": sum(
                     1 for finding in integration_findings if finding["status"] == "open"
                 ),
+                "openshell_policies": len(openshell_policies),
+                "action_events": len(action_events),
             },
             "task_states": _state_counts(task_dicts, "state"),
             "agent_statuses": _state_counts([agent.to_dict() for agent in agents], "status"),
@@ -2249,6 +2345,11 @@ def _dashboard_state(
         "nap_runs": nap_runs,
         "integration_findings": integration_findings,
         "integration_observations": integration_observations,
+        "openshell_policies": openshell_policies,
+        "openshell_policy_assignments": openshell_assignments,
+        "openshell_policy_versions": openshell_policy_versions,
+        "openshell_agent_statuses": openshell_agent_statuses,
+        "action_events": action_events,
         "service_links": _dashboard_service_links(hermes_startup),
         "events": cp.list_events(limit=240),
         "command_audit": [
@@ -4395,6 +4496,193 @@ def create_app(
         principal.assert_actor(agent_id)  # mac-wcfy
         return cp.record_command_audit(agent_id=agent_id, **_data(body)).to_dict()
 
+    @app.post("/openshell/policies")
+    def create_openshell_policy(
+        body: OpenShellPolicyCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.create_openshell_policy(**_data(body)).to_dict()
+
+    @app.get("/openshell/policies")
+    def list_openshell_policies(
+        include_deleted: bool = Query(default=False),
+    ) -> List[Dict[str, Any]]:
+        return [
+            policy.to_dict()
+            for policy in cp.list_openshell_policies(include_deleted=include_deleted)
+        ]
+
+    @app.get("/openshell/policies/{policy_id}")
+    def get_openshell_policy(policy_id: str) -> Dict[str, Any]:
+        return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict()
+
+    @app.put("/openshell/policies/{policy_id}")
+    def update_openshell_policy(
+        policy_id: str,
+        body: OpenShellPolicyUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.update_openshell_policy(policy_id, **_data(body)).to_dict()
+
+    @app.delete("/openshell/policies/{policy_id}")
+    def delete_openshell_policy(
+        policy_id: str,
+        actor: str = Query(default="human"),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.delete_openshell_policy(policy_id, actor=actor).to_dict()
+
+    @app.get("/openshell/policies/{policy_id}/versions")
+    def list_openshell_policy_versions(policy_id: str) -> List[Dict[str, Any]]:
+        return [
+            version.to_dict()
+            for version in cp.list_openshell_policy_versions(policy_id)
+        ]
+
+    @app.post("/openshell/policies/{policy_id}/render")
+    def render_openshell_policy(
+        policy_id: str,
+        body: OpenShellPolicyRender,
+    ) -> Dict[str, Any]:
+        return cp.render_openshell_policy(policy_id, **_data(body))
+
+    @app.get("/openshell/policies/{policy_id}/assignments")
+    def list_openshell_policy_assignments(policy_id: str) -> List[Dict[str, Any]]:
+        return [
+            assignment.to_dict()
+            for assignment in cp.list_openshell_policy_assignments(policy_id=policy_id)
+        ]
+
+    @app.post("/openshell/policies/{policy_id}/assignments")
+    def assign_openshell_policy(
+        policy_id: str,
+        body: OpenShellPolicyAssign,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.assign_openshell_policy(policy_id, **_data(body)).to_dict()
+
+    @app.get("/agents/{agent_id}/openshell/status")
+    def get_agent_openshell_status(agent_id: str) -> Dict[str, Any]:
+        return cp.get_openshell_status(agent_id)
+
+    @app.post("/agents/{agent_id}/openshell/status")
+    def report_agent_openshell_status(
+        agent_id: str,
+        body: OpenShellStatusReport,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)
+        return cp.report_openshell_status(agent_id, **_data(body)).to_dict()
+
+    @app.post("/action-events")
+    def record_action_event(body: ActionEventCreate) -> Dict[str, Any]:
+        return cp.record_action_event(**_data(body)).to_dict()
+
+    @app.get("/action-events")
+    def list_action_events(
+        agent_id: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        session_id: Optional[str] = Query(default=None),
+        sandbox_id: Optional[str] = Query(default=None),
+        policy_id: Optional[str] = Query(default=None),
+        action_type: Optional[str] = Query(default=None),
+        outcome: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+    ) -> List[Dict[str, Any]]:
+        return [
+            event.to_dict()
+            for event in cp.list_action_events(
+                agent_id=agent_id,
+                task_id=task_id,
+                session_id=session_id,
+                sandbox_id=sandbox_id,
+                policy_id=policy_id,
+                action_type=action_type,
+                outcome=outcome,
+                since=since,
+                until=until,
+                limit=limit,
+            )
+        ]
+
+    @app.get("/action-events/export/otlp")
+    def export_action_events_otlp(
+        agent_id: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        session_id: Optional[str] = Query(default=None),
+        sandbox_id: Optional[str] = Query(default=None),
+        policy_id: Optional[str] = Query(default=None),
+        action_type: Optional[str] = Query(default=None),
+        outcome: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        until: Optional[str] = Query(default=None),
+        limit: int = Query(default=1000),
+    ) -> Dict[str, Any]:
+        return cp.export_action_events_otlp(
+            agent_id=agent_id,
+            task_id=task_id,
+            session_id=session_id,
+            sandbox_id=sandbox_id,
+            policy_id=policy_id,
+            action_type=action_type,
+            outcome=outcome,
+            since=since,
+            until=until,
+            limit=limit,
+        )
+
+    @app.get("/action-events/stream")
+    async def action_events_stream(
+        request: Request,
+        agent_id: Optional[str] = Query(default=None),
+        task_id: Optional[str] = Query(default=None),
+        session_id: Optional[str] = Query(default=None),
+        sandbox_id: Optional[str] = Query(default=None),
+        policy_id: Optional[str] = Query(default=None),
+        action_type: Optional[str] = Query(default=None),
+        outcome: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        timeout_seconds: float = Query(default=60.0),
+        poll_interval_seconds: float = Query(default=1.0),
+    ) -> StreamingResponse:
+        async def iter_events() -> Any:
+            cursor = since
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                if await request.is_disconnected():
+                    break
+                events = cp.list_action_events(
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    session_id=session_id,
+                    sandbox_id=sandbox_id,
+                    policy_id=policy_id,
+                    action_type=action_type,
+                    outcome=outcome,
+                    since=cursor,
+                    limit=100,
+                )
+                if events:
+                    for event in reversed(events):
+                        yield json.dumps(event.to_dict(), sort_keys=True) + "\n"
+                        cursor = event.timestamp
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                    continue
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
+
     @app.post("/agents/{agent_id}/installed-packages")
     def update_agent_installed_packages(
         agent_id: str,
@@ -5327,6 +5615,10 @@ def create_app(
         data = _data(body)
         data.setdefault("evidence_id", None)
         return cp.add_memory(**data).to_dict()
+
+    @app.post("/memory/summarize-actions")
+    def memory_summarize_actions(body: MemorySummarizeActions) -> Dict[str, Any]:
+        return cp.summarize_actions_to_memory(**_data(body))
 
     @app.get("/memory")
     def search_memory(

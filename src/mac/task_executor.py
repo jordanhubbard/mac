@@ -1134,6 +1134,23 @@ def _openshell_enabled() -> bool:
     return _truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
 
 
+def _openshell_required_for_local_agent() -> bool:
+    explicit = os.environ.get("MAC_OPENSHELL_REQUIRED")
+    if explicit is not None:
+        return _truthy(explicit)
+    name = (
+        os.environ.get("MAC_AGENT_ID")
+        or os.environ.get("MAC_WORKER_AGENT_ID")
+        or os.environ.get("MAC_WORKER_AGENT_NAME")
+        or os.uname().nodename
+    )
+    base = str(name or "").strip().lower()
+    if base.startswith("agent_"):
+        base = base[len("agent_") :]
+    base = base.split(".", 1)[0]
+    return base in {"rocky", "bullwinkle", "natasha"}
+
+
 def _openshell_env_flags() -> List[str]:
     """``--env NAME=VALUE`` flags for each *set* passthrough variable."""
     names = os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
@@ -1262,7 +1279,8 @@ def _agent_invocation(prompt: str) -> List[str]:
     if _openshell_enabled():
         _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
         return _maybe_wrap_openshell(argv)
-    if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", "1")):
+    default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
+    if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", default_unsandboxed)):
         _force_child_yolo_env()
         sys.stderr.write(
             "[executor] WARNING: launching a --yolo agent WITHOUT an OpenShell "

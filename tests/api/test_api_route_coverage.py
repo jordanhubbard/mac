@@ -335,6 +335,66 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
 
+    policy_text = """
+version: 1
+network_policies:
+  mac_hub:
+    name: mac-hub
+    endpoints:
+      - host: 127.0.0.1
+        port: 8789
+        protocol: rest
+"""
+    openshell_policy = _ok(
+        client.post(
+            "/openshell/policies",
+            json={
+                "name": "route-policy",
+                "description": "route coverage OpenShell policy",
+                "policy_text": policy_text,
+                "created_by": "operator",
+            },
+        )
+    )
+    ctx["openshell_policy_id"] = openshell_policy["id"]
+    _ok(
+        client.post(
+            "/openshell/policies/%s/assignments" % openshell_policy["id"],
+            json={"target_type": "agent", "target_id": default_agent["id"], "created_by": "operator"},
+        )
+    )
+    _ok(
+        client.post(
+            "/agents/%s/openshell/status" % default_agent["id"],
+            json={
+                "status": "active",
+                "sandbox_id": "sandbox-route",
+                "policy_id": openshell_policy["id"],
+                "policy_version": openshell_policy["version"],
+                "checksum": openshell_policy["checksum"],
+                "detail": {"route": True},
+            },
+        )
+    )
+    _ok(
+        client.post(
+            "/action-events",
+            json={
+                "agent_id": default_agent["id"],
+                "sandbox_id": "sandbox-route",
+                "actor": default_agent["id"],
+                "action_type": "openshell.network",
+                "action_name": "connect",
+                "subject_type": "agent",
+                "subject_id": default_agent["id"],
+                "outcome": "allowed",
+                "policy_id": openshell_policy["id"],
+                "policy_version": openshell_policy["version"],
+                "attributes": {"host": "127.0.0.1"},
+            },
+        )
+    )
+
     fleet = _ok(
         client.post(
             "/fleets",
@@ -862,6 +922,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "lease_id": ctx["lease_id"],
         "name": ctx["secret_name"],
         "notification_id": ctx["notification_id"],
+        "policy_id": ctx["openshell_policy_id"],
         "project": ctx["project_name"],
         "request_id": ctx["request_id"],
         "review_id": ctx["review_id"],
@@ -911,6 +972,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             }
         elif path_template == "/observability/stream":
             kwargs["params"] = {"after_sequence": 0, "timeout_seconds": 0, "poll_interval_seconds": 0.25}
+        elif path_template == "/action-events/stream":
+            kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/dashboard/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/v1/memory/recall":
@@ -1198,6 +1261,40 @@ edges:
             "task_id": ctx["task_id"],
             "returncode": 0,
         },
+        ("POST", "/openshell/policies"): {
+            "name": "route-policy-case",
+            "description": "case OpenShell policy",
+            "policy_text": "version: 1\nnetwork_policies: {}\n",
+            "created_by": "operator",
+        },
+        ("PUT", "/openshell/policies/{policy_id}"): {
+            "description": "updated route OpenShell policy",
+            "metadata": {"route_case": True},
+            "updated_by": "operator",
+        },
+        ("POST", "/openshell/policies/{policy_id}/render"): {},
+        ("POST", "/openshell/policies/{policy_id}/assignments"): {
+            "target_type": "agent",
+            "target_id": ctx["agent_id"],
+            "created_by": "operator",
+        },
+        ("POST", "/agents/{agent_id}/openshell/status"): {
+            "status": "active",
+            "sandbox_id": "sandbox-route-case",
+            "policy_id": ctx["openshell_policy_id"],
+            "policy_version": 1,
+            "detail": {"route_case": True},
+        },
+        ("POST", "/action-events"): {
+            "agent_id": ctx["agent_id"],
+            "actor": ctx["agent_id"],
+            "action_type": "route.coverage",
+            "action_name": "case",
+            "subject_type": "agent",
+            "subject_id": ctx["agent_id"],
+            "outcome": "success",
+            "attributes": {"route_case": True},
+        },
         ("POST", "/agents/{agent_id}/installed-packages"): {
             "installed_packages": {"python": {"version": "3.11"}}
         },
@@ -1218,6 +1315,11 @@ edges:
             "layer": "test",
             "source": "route-coverage",
             "detail": {"ok": True},
+        },
+        ("POST", "/memory/summarize-actions"): {
+            "agent_id": ctx["agent_id"],
+            "created_by": "operator",
+            "write": False,
         },
         ("POST", "/integrations/findings"): {
             "source_kind": "repository",
