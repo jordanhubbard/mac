@@ -654,6 +654,8 @@ _activate_node_for() {
     fi
 
     # Source nvm into this shell. shellcheck disable=SC1091
+    # nvm requires TMPDIR; the pod may not set it — default to /tmp.
+    export TMPDIR="${TMPDIR:-/tmp}"
     . "${NVM_DIR}/nvm.sh" --no-use 2>/dev/null || true
 
     echo "[opencode-build] gate: project requires Node ${want} — activating via nvm..."
