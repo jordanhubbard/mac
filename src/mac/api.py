@@ -1237,11 +1237,14 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if path.startswith("/agents/") and (
         path.endswith("/heartbeat") or path.endswith("/messages/deliver")
         or path.endswith("/command-audit")
+        or path.endswith("/openshell/status")
     ):
         return "agent"
     if path.startswith("/agentbus"):
         return "agent"
     if path.startswith("/observability"):
+        return "agent"
+    if path.startswith("/action-events"):
         return "agent"
     if path.startswith("/dispatch"):
         return "dispatch"
@@ -4579,7 +4582,14 @@ def create_app(
         return cp.report_openshell_status(agent_id, **_data(body)).to_dict()
 
     @app.post("/action-events")
-    def record_action_event(body: ActionEventCreate) -> Dict[str, Any]:
+    def record_action_event(
+        body: ActionEventCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if principal.agent_id is not None:
+            if not body.agent_id:
+                raise AuthorizationError("agent-scoped action events must include agent_id")
+            principal.assert_actor(body.agent_id)
         return cp.record_action_event(**_data(body)).to_dict()
 
     @app.get("/action-events")
