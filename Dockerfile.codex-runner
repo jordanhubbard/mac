@@ -4,14 +4,28 @@ FROM ${MAC_BASE_IMAGE}
 USER root
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        git ca-certificates curl nodejs npm && \
+    apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm && \
     npm install -g @openai/codex && \
     npm install -g opencode-ai && \
     npm cache clean --force && \
-    apt-get purge -y npm && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
+
+# The image is a BOOTSTRAP, not a per-project toolchain. It ships baseline
+# Node + nvm (Node version switching), uv (Python interpreter + venv
+# provisioning), and opencode (agent fallback). The pre-push gate
+# (mac-task-executor-opencode-build) resolves and provisions each project's
+# DECLARED toolchain at test time so the verdict reflects the code, not the
+# image's defaults. Do not hardcode a project's Node/Python version here.
+
+# Install nvm so the gate can switch to whatever Node version a project
+# declares (.nvmrc, .node-version, engines.node, or CI workflow).
+# nvm must be owned by the runtime user (mac) and sourced per-shell.
+ENV NVM_DIR=/var/lib/mac/.nvm
+RUN mkdir -p "${NVM_DIR}" && \
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | \
+        NVM_DIR="${NVM_DIR}" PROFILE=/dev/null bash && \
+    chown -R mac:mac "${NVM_DIR}"
 
 # Install uv (Python package manager) using the Docker-recommended method
 # See: https://docs.astral.sh/uv/guides/integration/docker/
