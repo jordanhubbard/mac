@@ -690,6 +690,32 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
+    """Render the OpenShell guardrail policy from the operator template + fleet
+    values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
+    of executor sandbox enforcement (flipping it on additionally needs the
+    Hermes-runtime sandbox image)."""
+    from mac import openshell_policy as _op
+
+    template = Path(args.template).expanduser().read_text(encoding="utf-8")
+    rendered = _op.render_policy(
+        template,
+        agent_user=args.agent_user,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
+        model_gateway_host=getattr(args, "model_gateway_host", None),
+        shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
+    )
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered, encoding="utf-8")
+        dest.chmod(0o600)
+        _print({"wrote": str(dest), "bytes": len(rendered)})
+    else:
+        sys.stdout.write(rendered)
+
+
 def _soul_snapshot_setup(args):
     """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
     import yaml as _yaml
@@ -754,6 +780,46 @@ def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
         ],
         "to_apply": [f"{c.agent}/{c.relpath}" for c in res.to_apply],
     })
+
+
+def cmd_fleet_memory_export(args: argparse.Namespace) -> None:
+    """Phase 2b: export the fleet's Qdrant vector memory to greppable JSONL for
+    vetting (find stale facts that wouldn't surface from the soul text)."""
+    import json as _json
+    from mac import memory_vetting as _mv
+
+    client = _mv.QdrantClient(args.qdrant_url)
+    collections = _csv(args.collections) if args.collections else list(_mv.DEFAULT_COLLECTIONS)
+    records = _mv.export_memory_records(client.scroll, collections, agent_id=args.agent or None)
+    if args.search:
+        records = _mv.search_records(records, args.search)
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.write_text("\n".join(_json.dumps(r, default=str) for r in records) + "\n", encoding="utf-8")
+        _print({"qdrant": args.qdrant_url, "collections": collections, "records": len(records),
+                "into": str(dest), "search": args.search})
+    else:
+        for r in records:
+            sys.stdout.write(_json.dumps(r, default=str) + "\n")
+
+
+def cmd_fleet_memory_prune(args: argparse.Namespace) -> None:
+    """Phase 2b: delete vetted Qdrant point ids from a collection (destructive;
+    operator-vetted). Ids come from --id (repeatable) or a JSONL export via
+    --from-jsonl (uses each record's id)."""
+    import json as _json
+    from mac import memory_vetting as _mv
+
+    ids: List[Any] = list(args.id or [])
+    if args.from_jsonl:
+        for line in Path(args.from_jsonl).expanduser().read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rec = _json.loads(line)
+                if rec.get("id") is not None:
+                    ids.append(rec["id"])
+    client = _mv.QdrantClient(args.qdrant_url)
+    _print(_mv.prune_points(client.delete, args.collection, ids))
 
 
 def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2290,6 +2356,25 @@ def build_parser() -> argparse.ArgumentParser:
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
 
+    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    osh_render = openshell.add_parser(
+        "render-policy",
+        help="render the OpenShell guardrail policy from the operator template for this fleet",
+    )
+    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host (e.g. jkh)")
+    osh_render.add_argument("--hub-host", required=True, help="MAC hub host (e.g. 100.125.137.89)")
+    osh_render.add_argument("--hub-port", type=int, default=8789)
+    osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
+    osh_render.add_argument("--qdrant-port", type=int, default=6333)
+    osh_render.add_argument("--firecrawl-port", type=int, default=3002)
+    osh_render.add_argument(
+        "--template",
+        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
+        help="operator policy template path",
+    )
+    osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
+    _set(cmd_openshell_render_policy, osh_render)
+
     machine = sub.add_parser("machine", help="machine registry commands").add_subparsers(dest="machine_command", required=True)
     machine_register = machine.add_parser("register")
     machine_register.add_argument("hostname")
@@ -2395,6 +2480,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent", action="append", help="limit to this agent (repeatable)"
     )
     _set(cmd_fleet_soul_push, fleet_soul_push)
+
+    # Phase 2b: export/vet the fleet's Qdrant vector memory.
+    fleet_mem_export = fleet.add_parser(
+        "memory-export",
+        help="export Qdrant vector memory to greppable JSONL for vetting",
+    )
+    fleet_mem_export.add_argument("--qdrant-url", required=True, help="e.g. http://100.125.137.89:6333")
+    fleet_mem_export.add_argument("--agent", help="filter to this agent_id")
+    fleet_mem_export.add_argument("--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)")
+    fleet_mem_export.add_argument("--search", help="case-insensitive substring filter (e.g. a stale name)")
+    fleet_mem_export.add_argument("--into", help="write JSONL here (default: stdout)")
+    _set(cmd_fleet_memory_export, fleet_mem_export)
+
+    fleet_mem_prune = fleet.add_parser(
+        "memory-prune",
+        help="DELETE vetted Qdrant point ids from a collection (destructive)",
+    )
+    fleet_mem_prune.add_argument("--qdrant-url", required=True)
+    fleet_mem_prune.add_argument("--collection", required=True)
+    fleet_mem_prune.add_argument("--id", action="append", help="point id to delete (repeatable)")
+    fleet_mem_prune.add_argument("--from-jsonl", help="delete the ids in this memory-export JSONL")
+    _set(cmd_fleet_memory_prune, fleet_mem_prune)
 
     fleet_refresh = fleet.add_parser(
         "refresh-context",
