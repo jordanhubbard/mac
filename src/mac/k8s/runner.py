@@ -332,7 +332,7 @@ def _build_executor_pod_template(
                     "env": container_env,
                     "resources": {
                         "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "2", "memory": "2Gi"},
+                        "limits": {"cpu": "2", "memory": "6Gi"},
                     },
                     "securityContext": {
                         "allowPrivilegeEscalation": False,

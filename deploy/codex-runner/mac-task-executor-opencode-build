@@ -656,15 +656,31 @@ _activate_node_for() {
     # Source nvm into this shell. shellcheck disable=SC1091
     # nvm requires TMPDIR; the pod may not set it — default to /tmp.
     export TMPDIR="${TMPDIR:-/tmp}"
+    # nvm declares `local TMPDIR` inside nvm_install_node_version, which shadows
+    # our export and is left unset when the tarball download cache misses. Under
+    # `set -u` that triggers "unbound variable". Temporarily disable nounset
+    # around all nvm invocations so nvm's own unset locals don't crash the gate.
+    set +u
     . "${NVM_DIR}/nvm.sh" --no-use 2>/dev/null || true
+    set -u
 
     echo "[opencode-build] gate: project requires Node ${want} — activating via nvm..."
-    if nvm install "${want}" 2>&1 | tail -3; then
+    # Run nvm install in the CURRENT shell (not a subshell via pipe) so that
+    # nvm's side-effects (PATH updates, alias writes) persist. Capture output
+    # to a temp file and tail it for readability.
+    set +u
+    local _nvm_log
+    _nvm_log="$(mktemp)"
+    if nvm install "${want}" >"${_nvm_log}" 2>&1; then
         nvm use "${want}" >/dev/null 2>&1 || true
+        tail -3 "${_nvm_log}"
         echo "[opencode-build] gate: node now $(node --version 2>/dev/null)"
     else
+        tail -5 "${_nvm_log}"
         echo "[opencode-build] gate: nvm install ${want} failed — falling back to system Node" >&2
     fi
+    rm -f "${_nvm_log}"
+    set -u
 }
 
 
