@@ -480,11 +480,13 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE (a task branch). Work entirely there.",
             "This is READ-ONLY with respect to the remote: do NOT push or open a pull request. You MAY write local analysis files in the checkout (notably .mac/project.yaml).",
             "",
+            "Start from the repo's own self-description. Read these files first if they exist and treat them as authoritative for intent, not just for code: README.md (what it is / how to build), AGENTS.md (instructions for AI agents working here), and PLAN.md (roadmap / planned work). Fold what they say into the deliverables below; do not contradict them without explaining why.",
+            "",
             "Deliverables — report all of these in your evidence (evidence_type=investigation):",
-            "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points).",
-            "  2. How to build it and run its tests, inferred from the repo's own manifests/CI — not guessed.",
+            "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points), grounded in README.md/AGENTS.md/PLAN.md where present.",
+            "  2. How to build it and run its tests, inferred from the repo's own manifests/CI and README — not guessed.",
             "  3. An authored repository contract written to .mac/project.yaml using schema mac.repository_contract.v1 (keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required). Include its full content in the evidence.",
-            "  4. A prioritized backlog of 5-10 concrete next steps, improvements, or risks you observe.",
+            "  4. A prioritized backlog of 5-10 concrete next steps, improvements, or risks you observe. If PLAN.md exists, reconcile your backlog against it (what is already planned vs. newly surfaced).",
         ]
     )
 

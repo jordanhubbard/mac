@@ -74,3 +74,11 @@ def test_onboard_repository_description_directs_contract_authoring(cp):
     assert ".mac/project.yaml" in task.description
     assert "$MAC_TASK_REPO_WORKTREE" in task.description
     assert "do NOT push" in task.description
+
+
+def test_onboard_repository_description_reads_repo_self_description(cp):
+    # Sane-defaults onboarding must point the worker at the repo's own
+    # self-describing files, not just guess from code.
+    task = cp.onboard_repository("https://github.com/o/widget.git")
+    for self_doc in ("README.md", "AGENTS.md", "PLAN.md"):
+        assert self_doc in task.description
