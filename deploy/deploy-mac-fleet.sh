@@ -1715,6 +1715,28 @@ install_hub_tunnel_pubkey() {
   fi
 }
 
+# gketun-02: a spoke reaches the hub control plane (127.0.0.1:18789) and the
+# hub-managed shared services (Qdrant 127.0.0.1:16333, Firecrawl 127.0.0.1:13002)
+# ONLY through the hub's reverse SSH tunnel (hub runs `ssh -R 18789:...:8789 ...`).
+# The hub's tunnel program (startretries=1000) keeps retrying and connects within
+# seconds once this spoke authorizes the hub key (install_hub_tunnel_pubkey above).
+# Wait for the tunnel here so the strict shared-services validation that follows
+# does not race tunnel establishment (which otherwise fails the whole deploy on a
+# redeploy where allow-degraded is off).
+wait_for_hub_reverse_tunnel() {
+  [ -n "$HUB_TUNNEL_PUBKEY" ] || return 0
+  local i
+  for i in $(seq 1 24); do
+    if curl -fsS --max-time 3 "http://127.0.0.1:18789/health" >/dev/null 2>&1; then
+      log "hub reverse tunnel established (127.0.0.1:18789 reachable after $(( (i - 1) * 5 ))s)"
+      return 0
+    fi
+    sleep 5
+  done
+  log "WARNING: hub reverse tunnel still unreachable after 120s (127.0.0.1:18789); shared-services validation may fail"
+  return 0
+}
+
 install_github_review_key() {
   [ -n "$GITHUB_REVIEW_KEY_B64" ] || return 0
   local ssh_dir="$HOME/.ssh"
@@ -3994,10 +4016,22 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
 normalize_hermes_redaction_env
 
 reload_mac_env
-if [ "$WORKER_MODE" = "loop" ]; then
+# gketun-02: the hub (shared-services manager) owns the reverse-tunnel keypair it
+# uses to dial spokes, so it generates that key (ensure_hub_tunnel_key). Every
+# spoke must AUTHORIZE the hub's pubkey (install_hub_tunnel_pubkey) so the hub's
+# `ssh -R` reverse tunnel can connect. This was previously gated on
+# WORKER_MODE=loop, which sent loop-mode spokes down the ensure_hub_tunnel_key
+# branch and SKIPPED authorizing the hub key — leaving the reverse tunnel
+# permanently unauthenticated (no shared services, no agent registration). Decide
+# by role (hub vs spoke), not by loop-vs-heartbeat mode.
+if [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; then
   ensure_hub_tunnel_key
 else
+  if [ "$WORKER_MODE" = "loop" ]; then
+    ensure_hub_tunnel_key
+  fi
   install_hub_tunnel_pubkey
+  wait_for_hub_reverse_tunnel
 fi
 install_github_review_key
 install_or_validate_shared_services
