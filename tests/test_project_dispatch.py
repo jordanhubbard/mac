@@ -69,6 +69,22 @@ def test_paused_project_rejected_by_claim_policy(cp):
     assert (ok, reason) == (False, "project_dispatch_paused")
 
 
+def test_dispatch_once_does_not_claim_paused_project(cp):
+    # Regression: the server-push dispatcher (dispatch_once) bypassed the
+    # project-pause gate and auto-claimed a paused project's tickets. It must
+    # claim the live project's ticket and leave the paused one staged.
+    machine = cp.register_machine("worker-host", resources={"cpu": 4, "memory_gb": 8})
+    cp.register_agent(machine.id, "worker", capabilities=[])
+    cp.create_project("paused-proj", dispatch_paused=True)
+    cp.create_project("live-proj", dispatch_paused=False)
+    staged = cp.create_task("staged ticket", project="paused-proj")  # considered first
+    live = cp.create_task("live ticket", project="live-proj")
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == live.id
+    assert cp.get_task(staged.id).state == "open"
+
+
 def test_set_project_dispatch_round_trip(cp):
     cp.create_project("p")
     task = cp.create_task("ticket", project="p")

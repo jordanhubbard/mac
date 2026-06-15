@@ -7561,6 +7561,14 @@ class ControlPlane:
         agents = self._available_agents()
         unmatched: List[Task] = []
         for task in tasks:
+            # Autonomous-dispatch gates: a per-task no_dispatch hold or a
+            # project-level pause must keep the push dispatcher from auto-
+            # claiming, exactly as they keep tasks out of ready_tasks() and the
+            # worker-pull claim policy. claim_task() deliberately does NOT
+            # enforce these (operators may still claim/start a staged task
+            # explicitly), so the gate has to live on every autonomous path.
+            if self._task_dispatch_held(task) or self._project_dispatch_paused(task.project):
+                continue
             matched = False
             for agent in agents:
                 if not self._agent_available_for(agent, task):

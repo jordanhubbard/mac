@@ -26,6 +26,11 @@ def _normal(cp):
     return cp.create_task("normal work")
 
 
+def _worker(cp, capabilities=None):
+    machine = cp.register_machine("worker-host", resources={"cpu": 4, "memory_gb": 8})
+    return cp.register_agent(machine.id, "worker", capabilities=capabilities or [])
+
+
 def test_dispatch_held_flag(cp):
     assert cp._task_dispatch_held(_held(cp)) is True
     assert cp._task_dispatch_held(_normal(cp)) is False
@@ -61,3 +66,24 @@ def test_held_check_precedes_project_and_capability_gates(cp):
         held, {"allowed_projects": ["other"], "capabilities": []}
     )
     assert (ok, reason) == (False, "dispatch_held")
+
+
+def test_dispatch_once_does_not_claim_held_task(cp):
+    # Regression: the server-push dispatcher (dispatch_once) used to claim
+    # straight from the open queue without the no_dispatch gate, so a staged
+    # ticket got auto-claimed anyway. With only a held task open, it must
+    # claim nothing and leave the task staged.
+    _worker(cp)
+    held = _held(cp)
+    assert cp.dispatch_once() is None
+    assert cp.get_task(held.id).state == "open"
+
+
+def test_dispatch_once_claims_normal_skips_held(cp):
+    _worker(cp)
+    held = _held(cp)  # created first, so considered before `normal`
+    normal = _normal(cp)
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == normal.id
+    assert cp.get_task(held.id).state == "open"

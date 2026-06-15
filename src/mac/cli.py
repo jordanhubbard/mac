@@ -78,7 +78,20 @@ def _read_json_arg(
 def _print(value: Any) -> None:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
-    print(json.dumps(value, indent=2, sort_keys=True))
+
+    def _to_serializable(obj: Any) -> Any:
+        # Hub-mode handlers return _Dictish wrappers; a top-level one is
+        # unwrapped above, but list/nested results (e.g. `project list` ->
+        # list[_Dictish]) reach json.dumps un-unwrapped. Unwrap anything that
+        # exposes the .to_dict() contract here so every command serializes.
+        to_dict = getattr(obj, "to_dict", None)
+        if callable(to_dict):
+            return to_dict()
+        raise TypeError(
+            "Object of type %s is not JSON serializable" % type(obj).__name__
+        )
+
+    print(json.dumps(value, indent=2, sort_keys=True, default=_to_serializable))
 
 
 def _plane(args: argparse.Namespace) -> Any:
