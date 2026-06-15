@@ -41,6 +41,23 @@ def test_mac_cli_init_creates_db(tmp_path):
     assert result["status"] == "initialized"
 
 
+def test_print_serializes_list_of_dictish():
+    # Regression: hub-mode list commands (e.g. `mac project list`) return
+    # list[_Dictish]; _print only unwrapped a single top-level to_dict object,
+    # so a list crashed with "Object of type _Dictish is not JSON serializable".
+    from mac.cli import _print
+    from mac.dispatch import _Dictish
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        _print([_Dictish({"project": "ova"}), _Dictish({"project": "widget"})])
+    finally:
+        sys.stdout = old
+    assert json.loads(out.getvalue()) == [{"project": "ova"}, {"project": "widget"}]
+
+
 # ---------------------------------------------------------------------------
 # tenant
 # ---------------------------------------------------------------------------
