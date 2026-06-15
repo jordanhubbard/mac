@@ -1965,6 +1965,7 @@ class ControlPlane:
                     "cross_project_edges": [],
                     "bridge_item_count": 0,
                     "repository_count": 0,
+                    "repository_url": "",
                     "description": "",
                     "status": "derived",
                     "metadata": {},
@@ -1982,6 +1983,8 @@ class ControlPlane:
             metadata = record.get("metadata")
             item["metadata"] = metadata if isinstance(metadata, dict) else {}
             item["project_id"] = record.get("id")
+            if isinstance(metadata, dict) and metadata.get("repository_url"):
+                item["repository_url"] = str(metadata.get("repository_url"))
 
         for task in tasks:
             project = self._hermes_task_project_key(task)
@@ -2964,6 +2967,12 @@ class ControlPlane:
             # verification gate expects an investigation write-up, not a push.
             "evidence_type": "investigation",
         }
+        # Register a first-class project record so onboard and create converge:
+        # the repo URL becomes durable project state (surfaced by `project
+        # list`/`show`), not just task metadata. Idempotent by project name.
+        self._ensure_onboarded_project_record(
+            project, url, default_branch=default_branch, actor=actor
+        )
         resolved_title = (
             title or "Onboard %s: analyze, summarize, and author the repository contract" % repo_name
         ).strip()
@@ -2976,6 +2985,51 @@ class ControlPlane:
             metadata=metadata,
             actor=actor,
         )
+
+    def _ensure_onboarded_project_record(
+        self,
+        project: str,
+        repository_url: str,
+        *,
+        default_branch: Optional[str] = None,
+        actor: str = "human",
+    ) -> ProjectRecord:
+        """Create or augment the ``projects`` record for an onboarded repo.
+
+        New records carry ``repository_url`` (+ optional ``default_branch``) in
+        metadata and are left ACTIVE on purpose: onboarding creates a single
+        read-only analysis task that must dispatch so the repo gets analyzed.
+        (``create``'s default-paused staging is the different case of seeding a
+        backlog of work tickets.) For a pre-existing record we only *fill in* a
+        missing repository_url/default_branch and never touch its dispatch
+        state, so re-onboarding is idempotent and operator intent is preserved.
+        """
+        branch = str(default_branch).strip() if default_branch else None
+        try:
+            existing = self.get_project_record(project)
+        except NotFoundError:
+            existing = None
+        if existing is None:
+            metadata: JsonDict = {"repository_url": repository_url, "onboarding": True}
+            if branch:
+                metadata["default_branch"] = branch
+            return self.create_project(
+                project,
+                metadata=metadata,
+                actor=actor,
+                dispatch_paused=False,
+            )
+        md = ensure_json_object(existing.metadata)
+        changed = False
+        if not md.get("repository_url"):
+            md["repository_url"] = repository_url
+            changed = True
+        if branch and not md.get("default_branch"):
+            md["default_branch"] = branch
+            changed = True
+        if not changed:
+            return existing
+        return self.update_project(existing.id, metadata=md, actor=actor)
 
     def _normalize_task_execution_contract(
         self,
@@ -3642,6 +3696,17 @@ class ControlPlane:
         project_name = str(name or "").strip()
         if not project_name:
             raise ValidationError("project name is required")
+        if _ONBOARDING_REMOTE_URL_RE.match(project_name):
+            # A git URL is not a project name. Storing it as one produces a
+            # junk project (name == URL, no repo linkage, nothing cloned).
+            # Point the caller at the URL-only onboarding path instead.
+            raise ValidationError(
+                "project name looks like a git URL (%r); to register a project "
+                "from a repository URL use `mac project onboard %s` "
+                "(POST /repositories/onboard), which clones the repo and reads "
+                "its README/AGENTS/PLAN to build the project."
+                % (project_name, project_name)
+            )
         existing = self.store.query_one(
             "SELECT * FROM projects WHERE name = ?",
             (project_name,),
