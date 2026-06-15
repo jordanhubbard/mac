@@ -298,10 +298,17 @@ def _build_executor_pod_template(
     container_volume_mounts: List[JsonDict] = [
         {"name": "task-tmp", "mountPath": "/tmp"},
         {"name": "task-workspace", "mountPath": "/var/lib/mac/workspaces"},
+        # nvm writes Node binaries to versions/ and download cache to .cache/
+        # inside NVM_DIR. The root filesystem is read-only, so these two
+        # subdirectories need writable emptyDir overlays.
+        {"name": "nvm-versions", "mountPath": "/var/lib/mac/.nvm/versions"},
+        {"name": "nvm-cache", "mountPath": "/var/lib/mac/.nvm/.cache"},
     ]
     pod_volumes: List[JsonDict] = [
         {"name": "task-tmp", "emptyDir": {}},
         {"name": "task-workspace", "emptyDir": {"sizeLimit": "5Gi"}},
+        {"name": "nvm-versions", "emptyDir": {"sizeLimit": "2Gi"}},
+        {"name": "nvm-cache", "emptyDir": {"sizeLimit": "1Gi"}},
     ]
     if opencode_cm:
         container_volume_mounts.append(
