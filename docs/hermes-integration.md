@@ -27,7 +27,7 @@ Hermes should register its durable identity on startup:
 ```python
 from mac.hermes_adapter import HermesMacAdapter, MacApiClient, PlatformBindingSpec
 
-adapter = HermesMacAdapter(MacApiClient("http://127.0.0.1:8000"))
+adapter = HermesMacAdapter(MacApiClient("http://127.0.0.1:8789"))
 registration = adapter.register_identity(
     tenant_name="personal",
     persona_name="AssistantOne",

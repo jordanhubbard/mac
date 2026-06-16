@@ -229,7 +229,7 @@ export MAC_SECRET_KEY="$(openssl rand -base64 32)"
 
 uv run mac --db mac.db init
 MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
-uv run mac-hermes --url http://127.0.0.1:8000 --help
+uv run mac-hermes --url http://127.0.0.1:8789 --help
 ```
 
 For standalone local work, pass `--db path/to/file.db`. `MAC_DB` is server
@@ -718,7 +718,7 @@ mac --db mac.db agentbus read bus_... agent_recipient
 Hermes-facing API adapter:
 
 ```bash
-mac-hermes --url http://127.0.0.1:8000 register \
+mac-hermes --url http://127.0.0.1:8789 register \
   --tenant personal \
   --persona AssistantOne \
   --instance assistant-one \
@@ -726,15 +726,15 @@ mac-hermes --url http://127.0.0.1:8000 register \
   --memory-scope hermes://personal/assistant-one/memory \
   --binding slack:T123/C456:#ops
 
-mac-hermes --url http://127.0.0.1:8000 task hermes_... \
+mac-hermes --url http://127.0.0.1:8789 task hermes_... \
   "Investigate deployment failure" \
   --summary "The Slack deployment thread reports a failed publish step." \
   --platform-binding-id binding_... \
   --conversation-ref slack://T123/C456/1712345678.000100 \
   --required-capabilities ops
 
-mac-hermes --url http://127.0.0.1:8000 reply task_...
-mac-hermes --url http://127.0.0.1:8000 writeback hermes_... task_...
+mac-hermes --url http://127.0.0.1:8789 reply task_...
+mac-hermes --url http://127.0.0.1:8789 writeback hermes_... task_...
 ```
 
 Fleet deployment reads generic defaults from `deploy/fleet/config.yaml` and

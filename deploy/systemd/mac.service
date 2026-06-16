@@ -13,8 +13,11 @@ EnvironmentFile=/etc/mac/mac.env
 # start without it.
 # Optional: MAC_API_TOKEN or MAC_API_TOKENS for scoped bearer auth.
 # Required unless MAC_DATABASE_URL is set: MAC_DB=/var/lib/mac/mac.db.
+# Optional: MAC_PORT=8789 (default). Hub agents typically bind 0.0.0.0;
+#   worker agents typically bind 127.0.0.1. Set MAC_BIND_HOST accordingly.
+# Optional: MAC_BIND_HOST=127.0.0.1 (default for workers; hubs use 0.0.0.0).
 ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
-    --host 127.0.0.1 --port 8000 --workers 1 --log-level info
+    --host ${MAC_BIND_HOST:-127.0.0.1} --port ${MAC_PORT:-8789} --workers 1 --log-level info
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20

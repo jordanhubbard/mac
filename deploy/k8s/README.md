@@ -233,7 +233,7 @@ kubectl -n mac logs -l app.kubernetes.io/name=mac-k8s-orchestrator -f
 
 ## Health
 
-`mac-api` exposes `GET /health` on `:8000`. The Deployment uses it for
+`mac-api` exposes `GET /health` on `:8789`. The Deployment uses it for
 both `readinessProbe` and `livenessProbe`. The Service publishes on
-`:80` -> `:8000` inside the cluster (no Ingress is included; add one
+`:80` -> `:8789` inside the cluster (no Ingress is included; add one
 according to your cluster's ingress controller).
