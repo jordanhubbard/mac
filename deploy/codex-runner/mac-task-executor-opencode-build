@@ -235,6 +235,12 @@ GATE_TEST_SUGGESTION=""
 GATE_VERDICT="not_run"          # pass | fail
 GATE_REASON=""
 
+# Node toolchain actually used for the gate run (recorded in evidence). Empty
+# when the repo declares no Node version or nvm is unavailable — in which case
+# the gate runs under the image's system Node, exactly as before.
+GATE_NODE_VERSION=""            # e.g. 20.11.1 (active `node --version`, no v)
+GATE_NODE_SOURCE=""             # .nvmrc | .node-version | engines.node | ci-workflow
+
 # Truncate a captured output string to its last N lines (default 200) and
 # prefix a marker when truncation occurred. Reads from $1 (a file path).
 _gate_tail_output() {
@@ -298,6 +304,97 @@ PYEOF
     done
     # Could not detect.
     return 1
+}
+
+# Validate a Node version token before it is interpolated into the shell that
+# runs `nvm install/use`. .nvmrc / .node-version / engines.node are
+# repo-controlled (semi-trusted), so accept ONLY a bare semver (e.g. 20,
+# 20.11, 20.11.1) or an `lts/<name>` alias; echo nothing for anything else so
+# the caller falls back to system Node. This keeps shell metacharacters out of
+# the `nvm` command line.
+_validate_node_version() {
+    case "$1" in
+        lts/*)
+            printf '%s' "$1" | grep -E '^lts/[A-Za-z0-9._-]+$' || true ;;
+        *)
+            printf '%s' "$1" | grep -E '^[0-9]+(\.[0-9]+){0,2}$' || true ;;
+    esac
+}
+
+# Resolve the Node version a JS project declares, in precedence order:
+#   1. .nvmrc   2. .node-version   3. package.json engines.node
+#   4. node-version: in any .github/.gitea workflow
+# Echoes a validated bare version (or lts/* alias) or nothing. Sets
+# GATE_NODE_SOURCE to the file that supplied it.
+_resolve_node_version() {
+    local d="$1" v=""
+    if [ -f "${d}/.nvmrc" ]; then
+        v="$(tr -d ' \t\r' < "${d}/.nvmrc" 2>/dev/null | head -1)"; v="${v#v}"
+        v="$(_validate_node_version "${v}")"
+        if [ -n "${v}" ]; then GATE_NODE_SOURCE=".nvmrc"; printf '%s' "${v}"; return 0; fi
+    fi
+    if [ -f "${d}/.node-version" ]; then
+        v="$(tr -d ' \t\r' < "${d}/.node-version" 2>/dev/null | head -1)"; v="${v#v}"
+        v="$(_validate_node_version "${v}")"
+        if [ -n "${v}" ]; then GATE_NODE_SOURCE=".node-version"; printf '%s' "${v}"; return 0; fi
+    fi
+    if [ -f "${d}/package.json" ]; then
+        v="$(python3 - "${d}/package.json" <<'PYEOF' 2>/dev/null
+import json, re, sys
+try:
+    pkg = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    sys.exit(0)
+spec = ((pkg.get("engines") or {}).get("node") or "").strip()
+# Pull the first bare version token, dropping range operators (>=, ^, ~, x).
+m = re.search(r"[0-9]+(?:\.[0-9]+){0,2}", spec)
+if m:
+    print(m.group(0))
+PYEOF
+)"
+        v="$(_validate_node_version "${v}")"
+        if [ -n "${v}" ]; then GATE_NODE_SOURCE="engines.node"; printf '%s' "${v}"; return 0; fi
+    fi
+    local wf
+    for wf in "${d}"/.github/workflows/*.yml "${d}"/.github/workflows/*.yaml \
+              "${d}"/.gitea/workflows/*.yml "${d}"/.gitea/workflows/*.yaml; do
+        [ -f "${wf}" ] || continue
+        v="$(grep -Eio 'node-version:[[:space:]]*["'\'']?[0-9]+(\.[0-9]+){0,2}' "${wf}" 2>/dev/null \
+             | head -1 | grep -Eo '[0-9]+(\.[0-9]+){0,2}' | head -1)"
+        v="$(_validate_node_version "${v}")"
+        if [ -n "${v}" ]; then GATE_NODE_SOURCE="ci-workflow"; printf '%s' "${v}"; return 0; fi
+    done
+    return 0
+}
+
+# Activate the project's declared Node version via nvm so the gate tests run
+# under the toolchain the repo asks for, not the image's baseline. No-ops
+# (keeping system Node) when the repo is not a Node project, declares no
+# version, or nvm is unavailable — so behavior off-cluster is unchanged.
+gate_select_node() {
+    local d="$1" want active
+    [ -f "${d}/package.json" ] || return 0
+    want="$(_resolve_node_version "${d}")"
+    if [ -z "${want}" ]; then
+        GATE_NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || true)"
+        echo "[opencode-build] node: no declared version; using system ${GATE_NODE_VERSION:-unknown}"
+        return 0
+    fi
+    if [ -z "${NVM_DIR:-}" ] || [ ! -s "${NVM_DIR}/nvm.sh" ]; then
+        GATE_NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || true)"
+        echo "[opencode-build] node: ${want} declared (${GATE_NODE_SOURCE}) but nvm unavailable; using system ${GATE_NODE_VERSION:-unknown}"
+        return 0
+    fi
+    # nvm is a sourced shell function, not a binary; install/use can return
+    # nonzero, so don't let it trip `set -e`.
+    set +e
+    # shellcheck disable=SC1091
+    . "${NVM_DIR}/nvm.sh"
+    nvm install "${want}" >/dev/null 2>&1
+    nvm use "${want}" >/dev/null 2>&1
+    set -e
+    GATE_NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || true)"
+    echo "[opencode-build] node: requested ${want} (${GATE_NODE_SOURCE}) -> active ${GATE_NODE_VERSION:-unknown}"
 }
 
 # Step B: run lint/format with an auto-fix attempt. Never blocks the gate.
@@ -568,6 +665,10 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         # tree so lint/tests run against the agent's actual changes, then run
         # lint (non-blocking, with auto-fix) followed by the hard test gate.
         git checkout -q "${WORK_REF}" 2>/dev/null || git checkout -q "${TASK_BRANCH}" 2>/dev/null || true
+        # Select the project's declared Node version (nvm) before lint+tests so
+        # both run under the toolchain the repo asks for. Runs in this shell so
+        # the `nvm use` persists across both gate steps.
+        gate_select_node "${WORKDIR}"
         gate_run_lint "${WORKDIR}"
         gate_run_tests "${WORKDIR}"
 
@@ -649,6 +750,7 @@ export GATE_LINT_COMMAND GATE_LINT_STATUS GATE_LINT_AUTOFIXED GATE_LINT_OUTPUT
 export GATE_TEST_COMMAND GATE_TEST_STATUS GATE_TEST_RC GATE_TEST_OUTPUT
 export GATE_TEST_DURATION_S GATE_TEST_FAILING GATE_TEST_SUGGESTION
 export GATE_VERDICT GATE_REASON
+export GATE_NODE_VERSION GATE_NODE_SOURCE
 
 # If we had a working tree but produced no pushed+MR'd change, force a
 # non-zero effective return code. job_executor.py keys submit-for-review
@@ -923,6 +1025,9 @@ manifest = {
             "status": "pass" if tests_passed else "fail",
             "test_command": os.environ.get("GATE_TEST_COMMAND", ""),
             "test_status": gate_test_status,
+            # Node toolchain the tests actually ran under (empty => system Node).
+            "node_version": os.environ.get("GATE_NODE_VERSION", ""),
+            "node_version_source": os.environ.get("GATE_NODE_SOURCE", ""),
         },
         {
             "name": "lint_format",

@@ -13,6 +13,17 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
+# Install nvm so the pre-push gate can switch to a project's DECLARED Node
+# version (.nvmrc / .node-version / engines.node / CI) at test time. The system
+# Node installed above stays as the baseline used when a repo declares nothing
+# or nvm is unavailable. nvm is owned by the runtime user (mac) and sourced
+# per-shell by the gate (mac-task-executor-opencode-build).
+ENV NVM_DIR=/var/lib/mac/.nvm
+RUN mkdir -p "${NVM_DIR}" && \
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | \
+        NVM_DIR="${NVM_DIR}" PROFILE=/dev/null bash && \
+    chown -R mac:mac "${NVM_DIR}"
+
 RUN curl -LsSf https://astral.sh/uv/install.sh | \
         UV_INSTALL_DIR=/usr/local/bin sh && \
     chmod a+rx /usr/local/bin/uv* 2>/dev/null || true

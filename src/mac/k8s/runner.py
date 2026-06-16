@@ -298,10 +298,19 @@ def _build_executor_pod_template(
     container_volume_mounts: List[JsonDict] = [
         {"name": "task-tmp", "mountPath": "/tmp"},
         {"name": "task-workspace", "mountPath": "/var/lib/mac/workspaces"},
+        # The pre-push gate uses nvm to install a project's declared Node
+        # version; nvm writes binaries to versions/ and a download cache to
+        # .cache/ inside NVM_DIR (/var/lib/mac/.nvm). readOnlyRootFilesystem
+        # blocks those writes, so overlay exactly those two subdirectories
+        # with writable emptyDirs (without relaxing the read-only root).
+        {"name": "nvm-versions", "mountPath": "/var/lib/mac/.nvm/versions"},
+        {"name": "nvm-cache", "mountPath": "/var/lib/mac/.nvm/.cache"},
     ]
     pod_volumes: List[JsonDict] = [
         {"name": "task-tmp", "emptyDir": {}},
         {"name": "task-workspace", "emptyDir": {"sizeLimit": "5Gi"}},
+        {"name": "nvm-versions", "emptyDir": {"sizeLimit": "2Gi"}},
+        {"name": "nvm-cache", "emptyDir": {"sizeLimit": "1Gi"}},
     ]
     if opencode_cm:
         container_volume_mounts.append(
