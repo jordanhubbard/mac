@@ -1,12 +1,13 @@
 ---
 name: setup-mac-fleet
-description: Use when a user asks to set up, bootstrap, deploy, or configure a new mac agent fleet. Runs the first-time setup wizard, writes a home-scoped multi-fleet registry, and keeps fleet-specific data out of Git.
+description: Use when a user asks to set up, bootstrap, deploy, or configure mac agents or a fleet — including how to deploy onto bare-metal, virtual-machine, or containerized agents. Runs the first-time setup wizard, writes a home-scoped multi-fleet registry, selects the right supervisor (systemd / launchd / supervisord) and SSH transport (direct / Tailscale / Headscale / bastion ProxyJump) per host type, and keeps fleet-specific data out of Git.
 ---
 
 # Setup Mac Fleet
 
 Use this skill when the user asks to set up or deploy a new mac fleet and
-`~/.mac/fleets.yaml` or `~/.mac/.env` is missing.
+`~/.mac/fleets.yaml` or `~/.mac/.env` is missing, or asks how to deploy an
+agent onto a specific host type (bare metal, VM, or container).
 
 ## Rules
 
@@ -19,6 +20,9 @@ Use this skill when the user asks to set up or deploy a new mac fleet and
   deploy. Do not put them in fleet YAML or any committed file.
 - Keep committed fleet examples generic. Personal fleets must live only in the
   home-scoped fleet registry.
+- The host type is not its own deploy command — it is a combination of `OS`,
+  `supervisor`, and SSH transport. Pick those (or let `auto` detect), then use
+  the same deploy commands below.
 
 ## Workflow
 
@@ -74,6 +78,104 @@ Use this skill when the user asks to set up or deploy a new mac fleet and
 5. If asked to inspect or edit the fleet later, edit
    `~/.mac/fleets.yaml`, not `deploy/fleet/config.yaml`.
 
+## Agent host types
+
+The system runs the same mac agent (vendored Hermes runtime + control-plane /
+worker) on three host types. `deploy/deploy-mac-fleet.sh` is the single deploy
+path for all three; what changes per host is **OS**, **supervisor**, and **SSH
+transport**. The wizard records these per node (`OS`, `supervisor`, `target`,
+and the fleet's `ssh_jump` / network provider). Re-deploy any node with:
+
+```bash
+make deploy HUB=<node>           # or: bash setup.sh --hub <node>
+```
+
+**Mechanism shared by all host types.** The operator's local checkout HEAD is
+the deployed revision (`git -C <repo> rev-parse HEAD` → `MAC_DEPLOY_GIT_REV`):
+the script ships a release archive over SSH (and/or clones
+`MAC_DEPLOY_GIT_URL@<branch>` then checks out that rev on the node), installs
+into `~/.mac/venv` + `~/.mac/src`, writes env/topology, and (re)starts services
+under the node's supervisor. Existing source + venv are backed up under
+`~/.mac/backups/` first, so a bad deploy is recoverable. → Run the deploy from
+the checkout whose origin is the fork that host runs and whose HEAD is the rev
+you intend to ship; deploying a stale HEAD rolls the node *backward*.
+
+**Supervisor** (`--supervisor`, wizard "supervisor", or `auto`). Auto-detect
+in `deploy-mac-fleet.sh`:
+- `OS=darwin` → **launchd**
+- Linux with `systemctl` and `/run/systemd/system` → **systemd**
+- otherwise (e.g. inside a container) → **supervisord**
+  (`/etc/supervisor/conf.d` or `/etc/supervisord.d`)
+
+**Hub reachability.** Mesh-joined hosts (Tailscale/Headscale) use the hub's
+mesh URL directly. A spoke that cannot reach the hub directly (e.g. an
+in-cluster pod) instead registers through a hub-managed **reverse tunnel**
+(`http://127.0.0.1:<port>`); the deploy log says either "using tailscale hub
+URL …; skipping reverse tunnel" or "restarted mac-agent with tunnel now
+available".
+
+### Bare-metal agents
+
+- A physical host with a full init system.
+- **OS:** `linux` (or `darwin` for a Mac). **Supervisor:** `systemd` on Linux,
+  `launchd` on macOS — or `auto`.
+- **Transport:** direct SSH (`target user@host[:port]`), normally on a
+  Tailscale/Headscale mesh so the agent reaches the hub at its mesh IP.
+- **Deploy:** `make deploy HUB=<node>`; first hub on a fresh box:
+  `bash setup.sh --new-hub <node> --target user@host`.
+- *Example:* the `mac` fleet hub `rocky` (`jkh@do-host1`) — Linux, systemd,
+  Tailscale hub URL `http://<tailscale-ip>:8789`.
+
+### Virtual-machine agents
+
+- A cloud or local VM. To the deploy tooling this is **identical to bare
+  metal** — a host with an OS and an init system reached over SSH. There is no
+  VM-specific branch; treat a VM as a bare-metal host of the same OS.
+- **OS / supervisor:** `linux`+`systemd` or `darwin`+`launchd` (or `auto`).
+- **Transport:** direct SSH or Tailscale/Headscale mesh.
+- **Deploy:** same commands as bare metal.
+- *Example:* `mac` fleet workers `natasha` / `bullwinkle` — Linux VMs/hosts under
+  systemd, joined to the fleet mesh and reached by SSH.
+
+### Containerized agents
+
+An agent inside a container/pod with **no init system**. Two supported models:
+
+1. **SSH-into-pod + supervisord** (operate the pod like a host). The pod runs
+   `sshd`; the deploy reaches it over SSH and supervises the agent with
+   **supervisord**. In-cluster pods (in-cluster DNS such as
+   `*.svc.cluster.local`) are reached via a **bastion ProxyJump** declared
+   fleet-wide in `~/.mac/fleets.yaml`:
+
+   ```yaml
+   ssh_jump: "user@bastion.example:2222"
+   ```
+
+   `deploy-mac-fleet.sh` applies `-o ProxyJump=<jump>` automatically (no
+   `~/.ssh/config` edits), and the deploy prints
+   `==> ssh: operator->node via -o ProxyJump=…`. Spokes register to the hub
+   through the reverse tunnel rather than a mesh IP.
+   - **OS:** `linux`. **Supervisor:** `supervisord` (`auto` selects it when
+     systemd is absent).
+   - **Deploy:** the same `make deploy HUB=<node>`; the fleet's `ssh_jump`
+     routes it through the bastion.
+   - *Example:* the `jordanh-gke` fleet — GKE pods (`jordanh-hub`,
+     `jordanh-worker1/2`) under supervisord, reached via the bastion ProxyJump,
+     workers registering through the reverse tunnel.
+
+2. **K8s-native, image-based** (`deploy/k8s/`). A stateless `mac-api`
+   Deployment plus a `mac-runner` orchestrator that creates one Job per task,
+   backed by an externally-managed Postgres (`MAC_DATABASE_URL`). Here the unit
+   of deploy is a **container image**, not an SSH push:
+
+   ```bash
+   scripts/build-and-push-image.sh --registry <registry>   # build + push
+   kubectl apply -k deploy/k8s/mac-api                      # and mac-runner
+   ```
+
+   or sync via ArgoCD from a platform-config repo. Use this for
+   horizontally-scaled, no-SSH clusters. See `deploy/k8s/README.md`.
+
 ## Validation
 
 Before deploy, run:
@@ -84,4 +186,12 @@ bash -n deploy/install-qdrant-service.sh
 bash -n deploy/install-tailscale.sh
 bash -n deploy/install-headscale.sh
 uv run pytest tests/test_deploy_agent_configs.py tests/test_hermes_startup.py
+```
+
+When touching the K8s-native (image-based container) path, also validate the
+manifests render:
+
+```bash
+kubectl kustomize deploy/k8s/mac-api >/dev/null
+kubectl kustomize deploy/k8s/mac-runner >/dev/null
 ```
