@@ -22,6 +22,21 @@ def pytest_collection_modifyitems(items: list) -> None:
             item.add_marker(pytest.mark.ui)
 
 
+@pytest.fixture(autouse=True)
+def _no_ticket_mirror(monkeypatch):
+    """Stop any test that drives `mac task create/close` from auto-emitting real
+    `.tickets/<id>.md` files into the working repo.
+
+    `tickets_mirror.emit()` targets the git repo root's `.tickets/` dir, so a
+    CLI-driven test (e.g. tests/test_dispatch.py's hub create/close cases) would
+    otherwise litter version control with throwaway mirrors like `task_xyz.md`
+    / `task_remote_1.md`. Suite-wide so it covers every test dir, not just
+    tests/cli/. Dedicated emit tests opt back in by deleting this var and
+    pointing `tickets_dir` at a tmp directory.
+    """
+    monkeypatch.setenv("MAC_NO_TICKET_MIRROR", "1")
+
+
 # ----------------------------------------------------------------------
 # Live-Postgres fixtures (K8s Phase 3.6).
 #
