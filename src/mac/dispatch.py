@@ -402,6 +402,30 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    def onboard_repository(
+        self,
+        repository_url: str,
+        *,
+        project: Optional[str] = None,
+        default_branch: Optional[str] = None,
+        title: Optional[str] = None,
+        priority: int = 0,
+        required_capabilities: Optional[List[str]] = None,
+        actor: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "repository_url": repository_url,
+                "project": project,
+                "default_branch": default_branch,
+                "title": title,
+                "priority": priority,
+                "required_capabilities": required_capabilities,
+                "actor": actor,
+            }
+        )
+        return _Dictish(self._post("/repositories/onboard", body))
+
     # -- Workflow decisions (wf-02) -----------------------------------------
 
     def workflow_decisions(

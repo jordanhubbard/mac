@@ -530,6 +530,26 @@ def cmd_project_create(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_project_onboard(args: argparse.Namespace) -> None:
+    # URL-only registration: derive the project name from the repo, clone a
+    # read-only worktree, and create one onboarding task that instructs a
+    # worker to read the repo's own README.md / AGENTS.md / PLAN.md (+ manifests)
+    # and author the .mac/project.yaml contract. Everything except the URL
+    # defaults — this is the "sane-defaults, just give me a repo URL" path.
+    capabilities = list(_csv(args.required_capabilities)) or None
+    _print(
+        _plane(args).onboard_repository(
+            args.repository_url,
+            project=args.project,
+            default_branch=args.default_branch,
+            title=args.title,
+            priority=args.priority,
+            required_capabilities=capabilities,
+            actor=args.actor,
+        ).to_dict()
+    )
+
+
 def cmd_project_pause(args: argparse.Namespace) -> None:
     _print(_plane(args).set_project_dispatch(args.project, paused=True, actor=args.actor))
 
@@ -2545,6 +2565,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="open the project to autonomous dispatch immediately",
     )
     _set(cmd_project_create, project_create)
+    project_onboard = project.add_parser(
+        "onboard",
+        help="register a project from just a git repo URL: clone a read-only "
+        "worktree and task a worker to read the repo's own README/AGENTS/PLAN "
+        "(+ manifests) and author the .mac/project.yaml contract",
+    )
+    project_onboard.add_argument(
+        "repository_url",
+        metavar="repo-url",
+        help="https://, git@, ssh:// or git:// remote (e.g. https://github.com/org/repo.git)",
+    )
+    project_onboard.add_argument(
+        "--project",
+        help="project name to file the onboarding task under (default: derived from the repo URL)",
+    )
+    project_onboard.add_argument(
+        "--default-branch",
+        help="branch to clone for analysis (default: the remote's default branch)",
+    )
+    project_onboard.add_argument("--title", help="override the onboarding task title")
+    project_onboard.add_argument("--priority", type=int, default=0)
+    project_onboard.add_argument(
+        "--required-capabilities",
+        help="comma-separated capabilities required to claim the onboarding task",
+    )
+    project_onboard.add_argument("--actor", default="human")
+    _set(cmd_project_onboard, project_onboard)
     project_pause = project.add_parser(
         "pause", help="hold a project's tickets from autonomous dispatch"
     )

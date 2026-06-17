@@ -1,0 +1,69 @@
+# NVIDIA k8s device plugin — exposes GPUs as the schedulable resource
+# `nvidia.com/gpu` so MAC executor Jobs can request them.
+#
+# Prerequisite (already true on hostb + hostc, per ADR 0005): the host has
+# the NVIDIA driver + NVIDIA Container Toolkit (`nvidia-ctk`) + containerd, and
+# containerd's default (or `nvidia`) runtime injects the driver into containers.
+# This DaemonSet does NOT install drivers — it only advertises the GPUs that the
+# toolkit makes visible. It is the one mechanism that *cannot* exist on a macOS
+# host (see ADR 0005), which is why hostd is excluded.
+#
+# It lands ONLY on nodes explicitly labeled `mac.fleet/capability-gpu=true`
+# (see label-gpu-node.sh / README), so a stray CPU node never tries to run it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: nvidia-device-plugin
+    app.kubernetes.io/component: gpu-worker
+    app.kubernetes.io/managed-by: mac
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nvidia-device-plugin
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nvidia-device-plugin
+        app.kubernetes.io/component: gpu-worker
+    spec:
+      # The plugin must come up before GPU workloads can schedule.
+      priorityClassName: system-node-critical
+      # Only run on fleet hosts we've opted in as GPU worker nodes.
+      nodeSelector:
+        mac.fleet/capability-gpu: "true"
+      tolerations:
+        # The standard taint the NVIDIA device plugin tolerates.
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        # The optional MAC "dedicate this node to GPU work" taint (see README) —
+        # the plugin itself must still schedule there.
+        - key: mac.fleet/gpu-only
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: nvidia-device-plugin
+          # Pin a digest in production (mirror the image-pinning convention used
+          # by mac-api / mac-runner deployment.yaml).
+          image: nvcr.io/nvidia/k8s-device-plugin:v0.17.1
+          imagePullPolicy: IfNotPresent
+          env:
+            # Fail loudly if the node can't actually see a GPU, rather than
+            # silently advertising zero and masking a driver/toolkit problem.
+            - name: FAIL_ON_INIT_ERROR
+              value: "true"
+          securityContext:
+            # The plugin needs raw access to the driver / device files.
+            privileged: true
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
