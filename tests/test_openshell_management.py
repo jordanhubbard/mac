@@ -17,8 +17,12 @@ network_policies:
 
 
 def _agent(cp: ControlPlane):
+    # openshell_required is data-driven from the agent's own resources (no
+    # hardcoded name allowlist), so the agent record must carry the flag.
     machine = cp.register_machine("rocky", resources={"openshell_required": True})
-    return cp.register_agent(machine.id, "rocky", capabilities=["python"])
+    return cp.register_agent(
+        machine.id, "rocky", capabilities=["python"], resources={"openshell_required": True}
+    )
 
 
 def test_openshell_policy_crud_versions_assignment_and_status():
