@@ -20,8 +20,22 @@ package realizes ADR 0006 (Phase 0 + Phase-1 core):
 
 from __future__ import annotations
 
+from .capabilities import (
+    MAC_EXTENSIONS,
+    acp_manifest,
+    mac_agent_capabilities,
+    mac_client_capabilities,
+    mac_meta,
+)
 from .client import ACPClient, PermissionHandler, UpdateHandler
 from .executor import ACPExecutor, ACPRunResult
+from .permission import (
+    PermissionDecision,
+    PermissionMode,
+    evaluate_permission,
+    load_openshell_policy,
+    permission_mode,
+)
 from .peer import DEFERRED, Peer, PendingRequest, RemoteError, stdio_peer
 from .server import (
     ACPAgentServer,
@@ -61,6 +75,16 @@ from .protocol import (
 
 __all__ = [
     "PROTOCOL_VERSION",
+    "MAC_EXTENSIONS",
+    "acp_manifest",
+    "mac_agent_capabilities",
+    "mac_client_capabilities",
+    "mac_meta",
+    "PermissionDecision",
+    "PermissionMode",
+    "evaluate_permission",
+    "load_openshell_policy",
+    "permission_mode",
     "Method",
     "SessionUpdateKind",
     "StopReason",

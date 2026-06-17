@@ -59,7 +59,13 @@ class ACPClient:
         client_info: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._peer = peer
-        self._client_capabilities = client_capabilities or ClientCapabilities()
+        # Default to mac's full capability set (incl. _meta extensions) so a
+        # driven agent sees what mac is; an explicit override still wins.
+        if client_capabilities is None:
+            from .capabilities import mac_client_capabilities
+
+            client_capabilities = mac_client_capabilities()
+        self._client_capabilities = client_capabilities
         self._client_info = client_info or {
             "name": "mac",
             "title": "MAC hub",

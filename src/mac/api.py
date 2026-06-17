@@ -1224,6 +1224,10 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
 def _required_scope(method: str, path: str) -> Optional[str]:
     if path == "/health":
         return None
+    if path == "/.well-known/acp":
+        # ACP discovery manifest (ADR 0006, Phase 3): a public well-known doc,
+        # like /health. No secrets; just mac's capability advertisement.
+        return None
     if path == "/ui" or path.startswith("/ui/"):
         return None
     if path == "/v1" or path.startswith("/v1/"):
@@ -2962,6 +2966,16 @@ def create_app(
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/.well-known/acp")
+    def acp_manifest_route() -> Dict[str, Any]:
+        # ADR 0006 Phase 3: the well-known ACP discovery manifest. Unauthenticated
+        # (see _required_scope); advertises protocolVersion, mac's agent
+        # capabilities, and the mac-specific _meta extensions. Dependency-light:
+        # no principal, no control-plane access — pure capability advertisement.
+        from mac.acp.capabilities import acp_manifest
+
+        return acp_manifest()
 
     @app.get("/startup/hermes")
     def hermes_startup() -> Dict[str, Any]:

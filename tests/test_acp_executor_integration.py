@@ -142,6 +142,149 @@ def test_permission_handler_cancels_when_no_options(monkeypatch):
     assert decision.outcome == PermissionOutcome.CANCELLED
 
 
+# -- Phase 3: permission handler consults the policy evaluator ---------------
+
+
+_LOCKDOWN_POLICY = {"network_policies": {}, "filesystem_policy": {"read_write": []}}
+
+
+def test_permission_handler_denies_network_under_lockdown_policy(monkeypatch):
+    """Unsandboxed + lockdown policy + a network tool_call -> deny (reject option),
+    and the recorded action-event carries the deny reason."""
+    posted = []
+    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: False)
+    monkeypatch.setattr(task_executor, "_acp_permission_handler", task_executor._acp_permission_handler)
+    # inject the lockdown policy via the loader
+    monkeypatch.setattr("mac.acp.permission.load_openshell_policy", lambda *a, **k: _LOCKDOWN_POLICY)
+    monkeypatch.setenv("MAC_ACP_PERMISSION_MODE", "policy")
+
+    handler = task_executor._acp_permission_handler("task_lock")
+    params = RequestPermissionParams(
+        session_id="s1",
+        tool_call={"kind": "fetch", "title": "fetch url", "toolCallId": "tc1"},
+        options=[
+            PermissionOption(option_id="reject", name="Reject", kind="reject_once"),
+            PermissionOption(option_id="allow", name="Allow", kind="allow_once"),
+        ],
+    )
+    decision = handler(params)
+    # denied -> picks the reject option
+    assert decision.outcome == PermissionOutcome.SELECTED
+    assert decision.option_id == "reject"
+    assert posted and posted[0]["outcome"] == "denied"
+    assert posted[0]["attributes"]["permission_reason"] == "policy-network-lockdown"
+    assert posted[0]["attributes"]["allowed"] is False
+
+
+def test_permission_handler_allows_when_sandboxed(monkeypatch):
+    """Sandboxed run short-circuits to allow ('sandbox-enforced'); the policy is
+    never even loaded."""
+    posted = []
+    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: True)
+
+    def _boom(*a, **k):  # pragma: no cover - asserts it is never invoked
+        raise AssertionError("policy must not be loaded when sandboxed")
+
+    monkeypatch.setattr("mac.acp.permission.load_openshell_policy", _boom)
+
+    handler = task_executor._acp_permission_handler("task_box")
+    params = RequestPermissionParams(
+        session_id="s1",
+        tool_call={"kind": "execute", "title": "run shell", "toolCallId": "tc2"},
+        options=[
+            PermissionOption(option_id="reject", name="Reject", kind="reject_once"),
+            PermissionOption(option_id="allow", name="Allow", kind="allow_once"),
+        ],
+    )
+    decision = handler(params)
+    assert decision.outcome == PermissionOutcome.SELECTED
+    assert decision.option_id == "allow"
+    assert posted[0]["outcome"] == "allowed"
+    assert posted[0]["attributes"]["permission_reason"] == "sandbox-enforced"
+
+
+# -- Phase 3: AgentBus mirror lifecycle --------------------------------------
+
+
+def test_invoke_acp_agent_mirrors_session_updates_to_agentbus(monkeypatch, tmp_path):
+    """The mirror opens a stream, appends one chunk per session/update, and closes
+    it — alongside (not instead of) the /action-events posts."""
+    posts = []  # (path, payload) for _hub_post
+    json_posts = []  # (path, payload) for _hub_post_json
+
+    def _post(path, payload, **k):
+        posts.append((path, payload))
+        return True
+
+    def _post_json(path, payload, **k):
+        json_posts.append((path, payload))
+        # the open returns the created stream with its server-assigned id
+        return {"id": "bus_acp_1", "status": "open"}
+
+    monkeypatch.setattr(task_executor, "_hub_post", _post)
+    monkeypatch.setattr(task_executor, "_hub_post_json", _post_json)
+    monkeypatch.setattr(task_executor, "local_agent_id", lambda: "agent_test")
+
+    class _FakeExecutor:
+        _argv = ["fake-acp-agent"]
+
+        def run(self, prompt, *, on_update, on_permission, timeout=None):
+            on_update({"sessionId": "s1", "update": {
+                "sessionUpdate": SessionUpdateKind.AGENT_MESSAGE_CHUNK,
+                "content": text_block("hi"),
+            }})
+            on_update({"sessionId": "s1", "update": {"sessionUpdate": SessionUpdateKind.TOOL_CALL}})
+            return types.SimpleNamespace(stop_reason=StopReason.END_TURN)
+
+    result = task_executor._invoke_acp_agent(
+        "go", tmp_path, "task_mirror", {"timeout": None}, executor=_FakeExecutor()
+    )
+    assert result.returncode == 0
+
+    # opened exactly one stream
+    opens = [p for (path, p) in json_posts if path == "/agentbus/streams"]
+    assert len(opens) == 1
+    assert opens[0]["sender_agent_id"] == "agent_test"
+    assert opens[0]["recipient_agent_id"] == "agent_test"  # self-stream
+    assert opens[0]["content_type"] == "application/vnd.mac.acp.update+json"
+
+    # one chunk appended per session/update
+    chunks = [(path, p) for (path, p) in posts if path == "/agentbus/streams/bus_acp_1/chunks"]
+    assert len(chunks) == 2
+    assert chunks[0][1]["payload"]["sessionId"] == "s1"
+
+    # stream closed exactly once
+    closes = [path for (path, p) in posts if path.startswith("/agentbus/streams/bus_acp_1/close")]
+    assert len(closes) == 1
+    assert "sender_agent_id=agent_test" in closes[0]
+    assert "status=closed" in closes[0]
+
+
+def test_invoke_acp_agent_mirror_is_inert_when_open_fails(monkeypatch, tmp_path):
+    """If the stream open fails (no hub / error), append + close are skipped and
+    the run still succeeds — the mirror is best-effort."""
+    posts = []
+    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posts.append((path, payload)) or True)
+    monkeypatch.setattr(task_executor, "_hub_post_json", lambda *a, **k: None)  # open fails
+    monkeypatch.setattr(task_executor, "local_agent_id", lambda: "agent_test")
+
+    class _FakeExecutor:
+        _argv = ["fake"]
+
+        def run(self, prompt, *, on_update, on_permission, timeout=None):
+            on_update({"sessionId": "s1", "update": {"sessionUpdate": SessionUpdateKind.TOOL_CALL}})
+            return types.SimpleNamespace(stop_reason=StopReason.END_TURN)
+
+    result = task_executor._invoke_acp_agent("go", tmp_path, "t", {}, executor=_FakeExecutor())
+    assert result.returncode == 0
+    # no chunk/close posts when the stream never opened
+    assert not [path for (path, p) in posts if "/chunks" in path or "/close" in path]
+    # /action-events still flowed
+    assert [path for (path, p) in posts if path == "/action-events"]
+
+
 def test_acpexecutor_is_the_real_seam_type():
     # guard: the integration imports the real adapter, not a shim
     assert ACPExecutor.__module__ == "mac.acp.executor"

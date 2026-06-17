@@ -337,39 +337,55 @@ class ClientCapabilities:
     ``fs`` advertises filesystem read/write helpers; ``terminal`` advertises
     terminal support. Both default off -- mac drives agents but does not yet
     offer these client-side helpers in Phase 0/1.
+
+    ``meta`` carries the optional ACP ``_meta`` vendor-extension object (Phase
+    3); it is omitted from the wire form when unset, so the baseline shape is
+    unchanged. Keys there are additive and ignorable by other implementations.
     """
 
     fs_read_text_file: bool = False
     fs_write_text_file: bool = False
     terminal: bool = False
+    meta: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "fs": {
                 "readTextFile": self.fs_read_text_file,
                 "writeTextFile": self.fs_write_text_file,
             },
             "terminal": self.terminal,
         }
+        if self.meta:
+            out["_meta"] = self.meta
+        return out
 
     @classmethod
     def from_dict(cls, raw: Optional[Mapping[str, Any]]) -> "ClientCapabilities":
         raw = raw or {}
         fs = raw.get("fs") or {}
+        meta = raw.get("_meta")
         return cls(
             fs_read_text_file=bool(fs.get("readTextFile", False)),
             fs_write_text_file=bool(fs.get("writeTextFile", False)),
             terminal=bool(raw.get("terminal", False)),
+            meta=dict(meta) if isinstance(meta, Mapping) else None,
         )
 
 
 @dataclass
 class AgentCapabilities:
-    """Capabilities an agent advertises in the ``initialize`` result."""
+    """Capabilities an agent advertises in the ``initialize`` result.
+
+    ``meta`` carries the optional ACP ``_meta`` vendor-extension object (Phase
+    3); it is omitted from the wire form when unset, so the baseline shape is
+    unchanged. Keys there are additive and ignorable by other implementations.
+    """
 
     load_session: bool = False
     prompt_capabilities: Dict[str, Any] = field(default_factory=dict)
     mcp_capabilities: Dict[str, Any] = field(default_factory=dict)
+    meta: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"loadSession": self.load_session}
@@ -377,15 +393,19 @@ class AgentCapabilities:
             out["promptCapabilities"] = self.prompt_capabilities
         if self.mcp_capabilities:
             out["mcpCapabilities"] = self.mcp_capabilities
+        if self.meta:
+            out["_meta"] = self.meta
         return out
 
     @classmethod
     def from_dict(cls, raw: Optional[Mapping[str, Any]]) -> "AgentCapabilities":
         raw = raw or {}
+        meta = raw.get("_meta")
         return cls(
             load_session=bool(raw.get("loadSession", False)),
             prompt_capabilities=dict(raw.get("promptCapabilities") or {}),
             mcp_capabilities=dict(raw.get("mcpCapabilities") or {}),
+            meta=dict(meta) if isinstance(meta, Mapping) else None,
         )
 
 
