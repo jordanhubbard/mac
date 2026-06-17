@@ -12,13 +12,25 @@ package realizes ADR 0006 (Phase 0 + Phase-1 core):
 * :mod:`mac.acp.executor` -- :class:`ACPExecutor`, the standalone adapter the
   task executor will sit behind under ``MAC_EXECUTOR_BACKEND=acp`` (integration
   is a deliberate Phase-1 follow-up; not wired here).
+* :mod:`mac.acp.server` -- :class:`ACPAgentServer`, the agent/server side that
+  lets an external ACP client drive a mac agent. A prompt turn is handed to a
+  :class:`PromptBackend` (the seam mac's task/tool execution will plug into; the
+  production backend is the Phase-2 follow-up).
 """
 
 from __future__ import annotations
 
 from .client import ACPClient, PermissionHandler, UpdateHandler
 from .executor import ACPExecutor, ACPRunResult
-from .peer import Peer, PendingRequest, RemoteError, stdio_peer
+from .peer import DEFERRED, Peer, PendingRequest, RemoteError, stdio_peer
+from .server import (
+    ACPAgentServer,
+    EchoBackend,
+    PromptBackend,
+    PromptBackendFn,
+    PromptTurn,
+    serve_stdio,
+)
 from .protocol import (
     PROTOCOL_VERSION,
     AgentCapabilities,
@@ -76,9 +88,16 @@ __all__ = [
     "PendingRequest",
     "RemoteError",
     "stdio_peer",
+    "DEFERRED",
     "ACPClient",
     "UpdateHandler",
     "PermissionHandler",
     "ACPExecutor",
     "ACPRunResult",
+    "ACPAgentServer",
+    "PromptTurn",
+    "PromptBackend",
+    "PromptBackendFn",
+    "EchoBackend",
+    "serve_stdio",
 ]
