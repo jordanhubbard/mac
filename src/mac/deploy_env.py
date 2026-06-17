@@ -639,6 +639,12 @@ def build_mac_env(
         # mac-selfdrive: hub drives its own tick (dispatch->review->merge->reconcile)
         # on this interval (seconds) so the autonomous loop needs no external clock.
         ("MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS", "MAC_HUB_TICK_INTERVAL_SECONDS"),
+        # OpenShell sandbox requirement, data-driven from the agent's resources
+        # (no hardcoded agent list). The deploy orchestrator derives this from the
+        # agent's DB resources["openshell_required"]; it lands in mac.env and the
+        # executor reads it via openshell_required_for_local_agent. The worker
+        # also refreshes it from its live agent record at registration.
+        ("MAC_DEPLOY_OPENSHELL_REQUIRED", "MAC_OPENSHELL_REQUIRED"),
     ):
         _v = (env.get(_src) or "").strip()
         if _v:
