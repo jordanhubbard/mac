@@ -32,6 +32,26 @@ else
 fi
 export INFERENCE_HUB_API_KEY="${INFERENCE_HUB_API_KEY:-}"
 
+# Resolve the review agent's configured model/provider for evidence.
+OPENCODE_MODEL=""
+if [ -f "${OPENCODE_CONFIG_DST}" ]; then
+    OPENCODE_MODEL="$(python3 - "${OPENCODE_CONFIG_DST}" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except Exception:
+    sys.exit(0)
+agent = (cfg.get("agent") or {}).get("review") or {}
+model = agent.get("model") or cfg.get("model") or ""
+print(model)
+PYEOF
+)"
+fi
+if [ -z "${OPENCODE_MODEL}" ]; then
+    OPENCODE_MODEL="${MAC_LLM_MODEL:-${MAC_AGENT_LLM_MODEL:-}}"
+fi
+
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "===== mac-task-executor-opencode-review ====="
@@ -43,6 +63,7 @@ echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
 echo "MAC_URL:          ${MAC_URL:-<unset>}"
 echo "REVIEW_TARGET:    ${REVIEW_TARGET}"
 echo "XDG_CONFIG_HOME:  ${XDG_CONFIG_HOME}"
+echo "opencode model:   ${OPENCODE_MODEL:-<unset>}"
 echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
 if [ -n "${ATTESTATION_KEY}" ]; then
     echo "MAC_AGENT_ATTESTATION_KEY: <present>"
@@ -84,7 +105,7 @@ sed -n '1,40p' "${opencode_stdout}" || true
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE REVIEW_TARGET
-export started_at finished_at opencode_rc opencode_stdout
+export started_at finished_at opencode_rc opencode_stdout OPENCODE_MODEL
 python3 - "${tmp_path}" <<'PYEOF'
 import hashlib
 import json
@@ -214,6 +235,13 @@ manifest = {
     "findings": findings,
     "result": result,
     "returncode": returncode,
+    "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
+    "llm_model": os.environ.get("OPENCODE_MODEL", ""),
+    "llm": {
+        "tool": "opencode",
+        "agent": "review",
+        "model": os.environ.get("OPENCODE_MODEL", ""),
+    },
     "started_at": os.environ.get("started_at", ""),
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),

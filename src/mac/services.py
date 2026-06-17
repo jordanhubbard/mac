@@ -126,7 +126,7 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.service_role_service import ServiceRoleService
-from mac.review_service import ReviewService
+from mac.review_service import ReviewService, cross_llm_review_problems
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
@@ -13824,6 +13824,13 @@ class ControlPlane:
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
                 problems.append("verdict %s requires worktree_digest sha256" % evidence.id)
+                continue
+            llm_problems = cross_llm_review_problems(executor_manifest, manifest)
+            if llm_problems:
+                problems.extend(
+                    "verdict %s %s" % (evidence.id, problem)
+                    for problem in llm_problems
+                )
                 continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)

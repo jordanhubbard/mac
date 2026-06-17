@@ -16,6 +16,7 @@ MAC_URL="${MAC_URL:-}"
 ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
 REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-codex-runner}"
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+LLM_MODEL="${MAC_LLM_MODEL:-${MAC_AGENT_LLM_MODEL:-${CODEX_MODEL:-${OPENAI_MODEL:-${MODEL:-}}}}}"
 
 executed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -27,6 +28,7 @@ echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
 echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
 echo "MAC_URL:          ${MAC_URL:-<unset>}"
 echo "REVIEW_TARGET:    ${REVIEW_TARGET}"
+echo "LLM_MODEL:        ${LLM_MODEL:-<unset>}"
 echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
 if [ -n "${ATTESTATION_KEY}" ]; then
     echo "MAC_AGENT_ATTESTATION_KEY: <present, $(printf '%s' "${ATTESTATION_KEY}" | wc -c | tr -d ' ') chars>"
@@ -51,7 +53,7 @@ echo
 
 # Export the values the inline python heredoc reads from os.environ.
 export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE
-export executed_at REVIEW_TARGET
+export executed_at REVIEW_TARGET LLM_MODEL
 
 tmp_path="${EVIDENCE_PATH}.tmp.$$"
 python3 - "${tmp_path}" <<'PYEOF'
@@ -79,6 +81,12 @@ manifest = {
         "task=%s review_target=%s at %s" % (task_id, review_target, executed_at)
     ),
     "result": "review_completed_no_findings",
+    "llm_model": os.environ.get("LLM_MODEL", ""),
+    "llm": {
+        "tool": "codex",
+        "agent": "review",
+        "model": os.environ.get("LLM_MODEL", ""),
+    },
     "checks": [{"name": "review_completed", "status": "pass", "returncode": 0}],
     "executed_at": executed_at,
     "notes": "PR3: review_verdict manifest. Signing handled by mac-evidence sign.",

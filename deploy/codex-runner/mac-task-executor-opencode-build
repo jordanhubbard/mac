@@ -46,6 +46,9 @@ print(model)
 PYEOF
 )"
 fi
+if [ -z "${OPENCODE_MODEL}" ]; then
+    OPENCODE_MODEL="${MAC_LLM_MODEL:-${MAC_AGENT_LLM_MODEL:-}}"
+fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -1402,6 +1405,12 @@ manifest = {
     "returncode": rc,
     "original_opencode_rc": original_rc,
     "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
+    "llm_model": os.environ.get("OPENCODE_MODEL", ""),
+    "llm": {
+        "tool": "opencode",
+        "agent": "build",
+        "model": os.environ.get("OPENCODE_MODEL", ""),
+    },
     "gate_blocked": os.environ.get("GATE_BLOCKED", "false") == "true",
     "gate_verdict": gate_verdict,
     "started_at": os.environ.get("started_at", ""),
