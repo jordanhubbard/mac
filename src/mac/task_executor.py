@@ -59,6 +59,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from mac import relay_observability
 from mac.openshell_runtime import openshell_required_for_local_agent as _openshell_required_for_local_agent
 
 # ---------------------------------------------------------------------------
@@ -1478,6 +1479,36 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
     is_review = isinstance(review_context, dict)
     task_id = task.get("id") if isinstance(task, dict) else None
 
+    # NeMo Relay: open an Agent scope for this executor run (no-op when
+    # relay is absent or MAC_RELAY_OBSERVABILITY != '1').
+    session_id = str(task_id or "unknown")
+    with relay_observability.create_agent_scope(session_id):
+        try:
+            rc = _run_executor(
+                runner=runner,
+                task=task,
+                task_file=task_file,
+                task_workspace=task_workspace,
+                task_id=task_id,
+                review_context=review_context,
+                is_review=is_review,
+            )
+        finally:
+            relay_observability.flush()
+    return rc
+
+
+def _run_executor(
+    *,
+    runner: Callable[..., Any],
+    task: Any,
+    task_file: Path,
+    task_workspace: Path,
+    task_id: Any,
+    review_context: Any,
+    is_review: bool,
+) -> int:
+    """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
     if is_review:
         prompt = build_review_prompt(task, task_workspace, review_context)

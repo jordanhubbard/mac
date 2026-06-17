@@ -1,0 +1,63 @@
+# OpenShell FAIL-CLOSED default policy for the MAC Hermes GATEWAY service.
+#
+# Used when MAC_OPENSHELL_GATEWAY is enabled but no gateway policy is configured
+# (no MAC_OPENSHELL_GATEWAY_POLICY and no ~/.mac/openshell-gateway-policy.yaml).
+# Like the executor default it guarantees the gateway never silently runs under
+# OpenShell's own image-default profile.
+#
+# It is a LOCKDOWN: filesystem-confined, never root, Landlock REQUIRED, and ALL
+# network egress DENIED. Under it the gateway cannot reach Slack/Discord/Teams,
+# the model gateway, or the hub — so an unconfigured deployment FAILS CLOSED
+# (the gateway can't connect) rather than running unconfined.
+#
+# The gateway legitimately needs broad chat-platform egress, so you MUST provide
+# a real policy to run it sandboxed: copy this file, uncomment + fill the
+# network_policies for your platforms + hub + model gateway + agent home paths,
+# and install it at ~/.mac/openshell-gateway-policy.yaml (or point
+# MAC_OPENSHELL_GATEWAY_POLICY at it).
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: hard_requirement
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Empty => deny-by-default with nothing allowed == ALL egress denied (lockdown).
+# A real gateway policy replaces this with, e.g.:
+#
+# network_policies:
+#   slack:
+#     name: slack
+#     endpoints:
+#       - { host: slack.com,        port: 443, protocol: rest, enforcement: enforce, access: full }
+#       - { host: api.slack.com,    port: 443, protocol: rest, enforcement: enforce, access: full }
+#       - { host: wss-primary.slack.com, port: 443, protocol: websocket, enforcement: enforce, access: full }
+#     binaries:
+#       - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+#   model_gateway:
+#     name: model-gateway
+#     endpoints:
+#       - { host: __MODEL_GATEWAY_HOST__, port: 443, protocol: rest, enforcement: enforce, access: full }
+#   mac_hub:
+#     name: mac-hub
+#     endpoints:
+#       - { host: __MAC_HUB_HOST__, port: __MAC_HUB_PORT__, protocol: rest, enforcement: enforce, access: full }
+network_policies: {}

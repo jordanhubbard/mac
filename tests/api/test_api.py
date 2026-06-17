@@ -487,6 +487,86 @@ def test_dashboard_state_exposes_session_scope_capabilities():
     assert admin["session"]["is_admin"] is True
 
 
+def test_agent_scoped_tokens_can_report_only_their_openshell_telemetry():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("openshell-host")
+    agent = cp.register_agent(machine.id, "openshell-agent")
+    other = cp.register_agent(machine.id, "other-agent")
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
+                "admin-token": ["admin"],
+            },
+        )
+    )
+
+    own_status = client.post(
+        "/agents/%s/openshell/status" % agent.id,
+        headers={"Authorization": "Bearer agent-token"},
+        json={"status": "active", "sandbox_id": "sandbox-own"},
+    )
+    assert own_status.status_code == 200, own_status.text
+
+    spoofed_status = client.post(
+        "/agents/%s/openshell/status" % other.id,
+        headers={"Authorization": "Bearer agent-token"},
+        json={"status": "active", "sandbox_id": "sandbox-other"},
+    )
+    assert spoofed_status.status_code == 403
+
+    own_event = client.post(
+        "/action-events",
+        headers={"Authorization": "Bearer agent-token"},
+        json={
+            "agent_id": agent.id,
+            "actor": agent.id,
+            "action_type": "openshell.network",
+            "action_name": "connect",
+            "subject_type": "agent",
+            "subject_id": agent.id,
+            "outcome": "allowed",
+        },
+    )
+    assert own_event.status_code == 200, own_event.text
+
+    missing_agent = client.post(
+        "/action-events",
+        headers={"Authorization": "Bearer agent-token"},
+        json={
+            "actor": agent.id,
+            "action_type": "openshell.network",
+            "action_name": "connect",
+        },
+    )
+    assert missing_agent.status_code == 403
+
+    spoofed_event = client.post(
+        "/action-events",
+        headers={"Authorization": "Bearer agent-token"},
+        json={
+            "agent_id": other.id,
+            "actor": other.id,
+            "action_type": "openshell.network",
+            "action_name": "connect",
+        },
+    )
+    assert spoofed_event.status_code == 403
+
+    admin_event = client.post(
+        "/action-events",
+        headers={"Authorization": "Bearer admin-token"},
+        json={
+            "agent_id": other.id,
+            "actor": "operator",
+            "action_type": "openshell.policy",
+            "action_name": "decision",
+        },
+    )
+    assert admin_event.status_code == 200, admin_event.text
+
+
 def test_auth_tokens_support_hashed_at_rest_form():
     """mac-glh0: operators can configure tokens as ``sha256:<hex>``
     digests of the live token so a leaked env file doesn't expose the
@@ -1335,6 +1415,11 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert state["runtime_deltas"][0]["status"] == "proposed"
     assert "observability" in state
     assert state["observability"]["counts"]["events"] >= 1
+    assert "openshell_policies" in state
+    assert "openshell_policy_versions" in state
+    assert "openshell_agent_statuses" in state
+    assert state["openshell_agent_statuses"][0]["agent_id"] == agent["id"]
+    assert state["openshell_agent_statuses"][0]["effective"]["fail_closed"] is False
     assert "events" in state
     event_subjects = {event["subject_type"] for event in state["events"]}
     assert {"task", "agent", "project", "fleet"} <= event_subjects

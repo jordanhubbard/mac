@@ -723,6 +723,227 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def cmd_openshell_policy_create(args: argparse.Namespace) -> None:
+    policy_text = _read_text_arg(args.policy_text, args.policy_file, label="policy")
+    _print(
+        _plane(args).create_openshell_policy(
+            args.name,
+            policy_text,
+            description=args.description or "",
+            metadata=_read_json_arg(args.metadata, args.metadata_file, label="metadata", default={}),
+            created_by=args.created_by,
+            policy_id=args.policy_id,
+        )
+    )
+
+
+def cmd_openshell_policy_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            policy.to_dict() if hasattr(policy, "to_dict") else policy
+            for policy in _plane(args).list_openshell_policies(
+                include_deleted=args.include_deleted
+            )
+        ]
+    )
+
+
+def cmd_openshell_policy_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_openshell_policy(args.policy, include_deleted=True))
+
+
+def cmd_openshell_policy_update(args: argparse.Namespace) -> None:
+    policy_text = _read_text_arg(args.policy_text, args.policy_file, label="policy", default="")
+    metadata = None
+    if args.metadata is not None or args.metadata_file is not None:
+        metadata = _read_json_arg(args.metadata, args.metadata_file, label="metadata", default={})
+    _print(
+        _plane(args).update_openshell_policy(
+            args.policy,
+            name=args.name,
+            description=args.description,
+            policy_text=policy_text or None,
+            metadata=metadata,
+            updated_by=args.updated_by,
+        )
+    )
+
+
+def cmd_openshell_policy_delete(args: argparse.Namespace) -> None:
+    _print(_plane(args).delete_openshell_policy(args.policy, actor=args.actor))
+
+
+def cmd_openshell_policy_render(args: argparse.Namespace) -> None:
+    shared = _read_json_arg(args.shared_services, args.shared_services_file, label="shared_services", default={})
+    rendered = _plane(args).render_openshell_policy(
+        args.policy,
+        agent_user=args.agent_user,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
+        model_gateway_host=args.model_gateway_host,
+        shared_services=shared,
+    )
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered["policy_text"], encoding="utf-8")
+        dest.chmod(0o600)
+        _print({**rendered, "wrote": str(dest), "policy_text": ""})
+    else:
+        _print(rendered)
+
+
+def cmd_openshell_policy_assign(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).assign_openshell_policy(
+            args.policy,
+            target_type=args.target_type,
+            target_id=args.target_id,
+            created_by=args.created_by,
+        )
+    )
+
+
+def cmd_openshell_policy_versions(args: argparse.Namespace) -> None:
+    _print(
+        [
+            version.to_dict() if hasattr(version, "to_dict") else version
+            for version in _plane(args).list_openshell_policy_versions(args.policy)
+        ]
+    )
+
+
+def cmd_openshell_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_openshell_status(args.agent))
+
+
+def cmd_openshell_policy_deploy_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_openshell_status(args.agent))
+
+
+def _soul_snapshot_setup(args):
+    """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    cfg = _yaml.safe_load(Path(args.fleets_config).expanduser().read_text(encoding="utf-8")) or {}
+    fleet_name = args.fleet or next(iter((cfg.get("fleets") or {})), None)
+    if not fleet_name:
+        raise SystemExit("no fleet found; pass --fleet")
+    agents = _ss.load_fleet_agents(cfg, fleet_name)
+    return fleet_name, agents, _ss.SSHTransport()
+
+
+def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
+    """Phase 1 fleet snapshot: pull each agent's editable soul text into a local tree."""
+    from datetime import datetime, timezone
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    fleet_name, agents, transport = _soul_snapshot_setup(args)
+    dest = Path(args.into).expanduser()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    manifest = _ss.pull_snapshot(
+        agents, dest, transport, fleet=fleet_name, pulled_at=stamp,
+        memory_checksum=getattr(args, "memory_checksum", False),
+    )
+    # Phase 3: also capture hub-stored persona + mood (resolve agent ids by name).
+    if getattr(args, "with_hub", False):
+        hub = _plane(args)
+        by_name = {}
+        try:
+            for a in hub.list_agents():
+                ad = a.to_dict() if hasattr(a, "to_dict") else dict(a)
+                if ad.get("name"):
+                    by_name[ad["name"]] = ad.get("id")
+        except Exception as exc:  # noqa: BLE001
+            print("mac: hub agent list failed (%s); skipping persona/mood" % exc, file=sys.stderr)
+        ids = [(n, by_name.get(n) or "agent_%s" % n) for n, _t in agents]
+        hub_section = _ss.capture_hub_state(hub, ids, dest, pulled_at=stamp)
+        manifest["hub"] = hub_section
+    (dest / "manifest.yaml").write_text(_yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    summary = {
+        "fleet": fleet_name, "into": str(dest), "pulled_at": stamp,
+        "agents": {
+            n: {
+                "soul": {f: m.get("present") for f, m in a["files"].items()},
+                "memory_refs": {f: m.get("bytes") for f, m in a.get("memory", {}).items()
+                                if m.get("present")},
+            }
+            for n, a in manifest["agents"].items()
+        },
+    }
+    if "hub" in manifest:
+        summary["hub"] = {n: {"persona": s["persona"].get("present"), "mood": s["mood"].get("present")}
+                          for n, s in manifest["hub"]["agents"].items()}
+    _print(summary)
+
+
+def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
+    """Phase 1 fleet snapshot: diff edited soul tree vs live, back up + write changes."""
+    from datetime import datetime, timezone
+    import yaml as _yaml
+    from mac import soul_snapshot as _ss
+
+    src = Path(getattr(args, "from_dir")).expanduser()
+    manifest = _yaml.safe_load((src / "manifest.yaml").read_text(encoding="utf-8"))
+    transport = _ss.SSHTransport()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    res = _ss.plan_and_push(
+        src, manifest, transport, stamp=stamp,
+        dry_run=args.dry_run, only_agents=(args.agent or None),
+    )
+    _print({
+        "dry_run": res.dry_run,
+        "changes": [
+            {"agent": c.agent, "file": c.relpath, "status": c.status,
+             "applied": c.applied, "backup": c.backup_path}
+            for c in res.changes
+        ],
+        "to_apply": [f"{c.agent}/{c.relpath}" for c in res.to_apply],
+    })
+
+
+def cmd_fleet_memory_export(args: argparse.Namespace) -> None:
+    """Phase 2b: export the fleet's Qdrant vector memory to greppable JSONL for
+    vetting (find stale facts that wouldn't surface from the soul text)."""
+    import json as _json
+    from mac import memory_vetting as _mv
+
+    client = _mv.QdrantClient(args.qdrant_url)
+    collections = _csv(args.collections) if args.collections else list(_mv.DEFAULT_COLLECTIONS)
+    records = _mv.export_memory_records(client.scroll, collections, agent_id=args.agent or None)
+    if args.search:
+        records = _mv.search_records(records, args.search)
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.write_text("\n".join(_json.dumps(r, default=str) for r in records) + "\n", encoding="utf-8")
+        _print({"qdrant": args.qdrant_url, "collections": collections, "records": len(records),
+                "into": str(dest), "search": args.search})
+    else:
+        for r in records:
+            sys.stdout.write(_json.dumps(r, default=str) + "\n")
+
+
+def cmd_fleet_memory_prune(args: argparse.Namespace) -> None:
+    """Phase 2b: delete vetted Qdrant point ids from a collection (destructive;
+    operator-vetted). Ids come from --id (repeatable) or a JSONL export via
+    --from-jsonl (uses each record's id)."""
+    import json as _json
+    from mac import memory_vetting as _mv
+
+    ids: List[Any] = list(args.id or [])
+    if args.from_jsonl:
+        for line in Path(args.from_jsonl).expanduser().read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rec = _json.loads(line)
+                if rec.get("id") is not None:
+                    ids.append(rec["id"])
+    client = _mv.QdrantClient(args.qdrant_url)
+    _print(_mv.prune_points(client.delete, args.collection, ids))
+
+
 def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """GET the agent's current mood overlay straight from the hub HTTP API.
 
@@ -1767,6 +1988,73 @@ def cmd_events_list(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_action_events_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            event.to_dict() if hasattr(event, "to_dict") else event
+            for event in _plane(args).list_action_events(
+                agent_id=args.agent_id,
+                task_id=args.task_id,
+                session_id=args.session_id,
+                sandbox_id=args.sandbox_id,
+                policy_id=args.policy_id,
+                action_type=args.action_type,
+                outcome=args.outcome,
+                since=args.since,
+                until=args.until,
+                limit=args.limit,
+            )
+        ]
+    )
+
+
+def cmd_action_events_stream(args: argparse.Namespace) -> None:
+    import time as _time
+
+    cursor = args.since
+    deadline = None if args.follow else _time.monotonic() + max(0.0, float(args.timeout))
+    while True:
+        events = list(
+            _plane(args).list_action_events(
+                agent_id=args.agent_id,
+                task_id=args.task_id,
+                session_id=args.session_id,
+                sandbox_id=args.sandbox_id,
+                policy_id=args.policy_id,
+                action_type=args.action_type,
+                outcome=args.outcome,
+                since=cursor,
+                limit=args.limit,
+            )
+        )
+        if events:
+            for event in reversed(events):
+                payload = event.to_dict() if hasattr(event, "to_dict") else event
+                print(json.dumps(payload, sort_keys=True))
+                cursor = payload.get("timestamp")
+            sys.stdout.flush()
+        if not args.follow and (deadline is None or _time.monotonic() >= deadline):
+            break
+        _time.sleep(max(0.25, float(args.interval)))
+
+
+def cmd_action_events_export_otlp(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).export_action_events_otlp(
+            agent_id=args.agent_id,
+            task_id=args.task_id,
+            session_id=args.session_id,
+            sandbox_id=args.sandbox_id,
+            policy_id=args.policy_id,
+            action_type=args.action_type,
+            outcome=args.outcome,
+            since=args.since,
+            until=args.until,
+            limit=args.limit,
+        )
+    )
+
+
 def cmd_command_audit_list(args: argparse.Namespace) -> None:
     _print(
         [
@@ -1810,6 +2098,17 @@ def cmd_observability_prune(args: argparse.Namespace) -> None:
         keep_last=args.keep_last,
     )
     _print({"removed": removed})
+
+
+def cmd_memory_summarize_actions(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).summarize_actions_to_memory(
+            agent_id=args.agent,
+            since=args.since,
+            created_by=args.created_by,
+            write=not args.dry_run,
+        )
+    )
 
 
 def cmd_workflow_decisions(args: argparse.Namespace) -> None:
@@ -2387,6 +2686,61 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_snap.add_argument("--agent", help="exclude this agent id (the caller) from the snapshot")
     _set(cmd_fleet_snapshot, fleet_snap)
+
+    # Phase 1 fleet snapshot: pull/edit/push the editable agent soul text layer.
+    fleet_soul_pull = fleet.add_parser(
+        "soul-pull",
+        help="pull each agent's editable soul text (SOUL/USER/MEMORY.md) into a local tree",
+    )
+    fleet_soul_pull.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
+    fleet_soul_pull.add_argument("--into", required=True, help="destination directory for the snapshot")
+    fleet_soul_pull.add_argument(
+        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+    )
+    fleet_soul_pull.add_argument(
+        "--memory-checksum", action="store_true",
+        help="also sha256 the binary memory blobs (reads them remotely; slower)",
+    )
+    fleet_soul_pull.add_argument(
+        "--with-hub", action="store_true",
+        help="also capture hub-stored persona + current mood per agent (needs hub access)",
+    )
+    _set(cmd_fleet_soul_pull, fleet_soul_pull)
+
+    fleet_soul_push = fleet.add_parser(
+        "soul-push",
+        help="diff an edited soul snapshot vs live and write changes (backup-before-replace)",
+    )
+    fleet_soul_push.add_argument("--from", dest="from_dir", required=True, help="snapshot directory")
+    fleet_soul_push.add_argument(
+        "--dry-run", action="store_true", help="show the plan; write nothing (default off)"
+    )
+    fleet_soul_push.add_argument(
+        "--agent", action="append", help="limit to this agent (repeatable)"
+    )
+    _set(cmd_fleet_soul_push, fleet_soul_push)
+
+    # Phase 2b: export/vet the fleet's Qdrant vector memory.
+    fleet_mem_export = fleet.add_parser(
+        "memory-export",
+        help="export Qdrant vector memory to greppable JSONL for vetting",
+    )
+    fleet_mem_export.add_argument("--qdrant-url", required=True, help="e.g. http://10.0.0.1:6333")
+    fleet_mem_export.add_argument("--agent", help="filter to this agent_id")
+    fleet_mem_export.add_argument("--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)")
+    fleet_mem_export.add_argument("--search", help="case-insensitive substring filter (e.g. a stale name)")
+    fleet_mem_export.add_argument("--into", help="write JSONL here (default: stdout)")
+    _set(cmd_fleet_memory_export, fleet_mem_export)
+
+    fleet_mem_prune = fleet.add_parser(
+        "memory-prune",
+        help="DELETE vetted Qdrant point ids from a collection (destructive)",
+    )
+    fleet_mem_prune.add_argument("--qdrant-url", required=True)
+    fleet_mem_prune.add_argument("--collection", required=True)
+    fleet_mem_prune.add_argument("--id", action="append", help="point id to delete (repeatable)")
+    fleet_mem_prune.add_argument("--from-jsonl", help="delete the ids in this memory-export JSONL")
+    _set(cmd_fleet_memory_prune, fleet_mem_prune)
 
     fleet_refresh = fleet.add_parser(
         "refresh-context",
@@ -3080,6 +3434,20 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget.add_argument("--project", default="default")
     _set(cmd_memory_forget, memory_forget)
 
+    memory_summarize_actions = memory.add_parser(
+        "summarize-actions",
+        help="write a bounded memory record from action ledger summaries",
+    )
+    memory_summarize_actions.add_argument("--agent")
+    memory_summarize_actions.add_argument("--since")
+    memory_summarize_actions.add_argument("--created-by", default="mac")
+    memory_summarize_actions.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="return the summary without writing memory",
+    )
+    _set(cmd_memory_summarize_actions, memory_summarize_actions)
+
     # mem-07: embed a memory_record into Qdrant + record the vector_ref.
     memory_embed = memory.add_parser(
         "embed",
@@ -3264,6 +3632,60 @@ def build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--until", help="ISO timestamp upper bound (inclusive)")
     events_list.add_argument("--limit", type=int, default=100)
     _set(cmd_events_list, events_list)
+
+    action_events = sub.add_parser(
+        "action-events",
+        help="canonical MAC action event ledger",
+    ).add_subparsers(dest="action_events_command", required=True)
+    action_events_list = action_events.add_parser("list")
+    action_events_list.add_argument("--agent-id")
+    action_events_list.add_argument("--task-id")
+    action_events_list.add_argument("--session-id")
+    action_events_list.add_argument("--sandbox-id")
+    action_events_list.add_argument("--policy-id")
+    action_events_list.add_argument("--action-type")
+    action_events_list.add_argument(
+        "--outcome",
+        choices=("unknown", "started", "success", "failure", "denied", "allowed", "skipped"),
+    )
+    action_events_list.add_argument("--since")
+    action_events_list.add_argument("--until")
+    action_events_list.add_argument("--limit", type=int, default=100)
+    _set(cmd_action_events_list, action_events_list)
+
+    action_events_stream = action_events.add_parser("stream")
+    action_events_stream.add_argument("--agent-id")
+    action_events_stream.add_argument("--task-id")
+    action_events_stream.add_argument("--session-id")
+    action_events_stream.add_argument("--sandbox-id")
+    action_events_stream.add_argument("--policy-id")
+    action_events_stream.add_argument("--action-type")
+    action_events_stream.add_argument(
+        "--outcome",
+        choices=("unknown", "started", "success", "failure", "denied", "allowed", "skipped"),
+    )
+    action_events_stream.add_argument("--since")
+    action_events_stream.add_argument("--limit", type=int, default=100)
+    action_events_stream.add_argument("--timeout", type=float, default=0.0)
+    action_events_stream.add_argument("--interval", type=float, default=1.0)
+    action_events_stream.add_argument("--follow", action="store_true")
+    _set(cmd_action_events_stream, action_events_stream)
+
+    action_events_export = action_events.add_parser("export-otlp")
+    action_events_export.add_argument("--agent-id")
+    action_events_export.add_argument("--task-id")
+    action_events_export.add_argument("--session-id")
+    action_events_export.add_argument("--sandbox-id")
+    action_events_export.add_argument("--policy-id")
+    action_events_export.add_argument("--action-type")
+    action_events_export.add_argument(
+        "--outcome",
+        choices=("unknown", "started", "success", "failure", "denied", "allowed", "skipped"),
+    )
+    action_events_export.add_argument("--since")
+    action_events_export.add_argument("--until")
+    action_events_export.add_argument("--limit", type=int, default=1000)
+    _set(cmd_action_events_export_otlp, action_events_export)
 
     command_audit = sub.add_parser(
         "command-audit", help="short-retention per-agent command log"
@@ -3486,6 +3908,74 @@ def build_parser() -> argparse.ArgumentParser:
     )
     osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
     _set(cmd_openshell_render_policy, osh_render)
+
+    osh_policy = openshell.add_parser("policy", help="MAC-managed OpenShell policies").add_subparsers(
+        dest="openshell_policy_command", required=True
+    )
+    osh_policy_create = osh_policy.add_parser("create")
+    osh_policy_create.add_argument("name")
+    osh_policy_create.add_argument("--policy-text")
+    osh_policy_create.add_argument("--policy-file", help="read policy YAML from file path or '-'")
+    osh_policy_create.add_argument("--description", default="")
+    osh_policy_create.add_argument("--metadata")
+    osh_policy_create.add_argument("--metadata-file")
+    osh_policy_create.add_argument("--created-by", default="human")
+    osh_policy_create.add_argument("--policy-id")
+    _set(cmd_openshell_policy_create, osh_policy_create)
+
+    osh_policy_list = osh_policy.add_parser("list")
+    osh_policy_list.add_argument("--include-deleted", action="store_true")
+    _set(cmd_openshell_policy_list, osh_policy_list)
+
+    osh_policy_show = osh_policy.add_parser("show")
+    osh_policy_show.add_argument("policy")
+    _set(cmd_openshell_policy_show, osh_policy_show)
+
+    osh_policy_update = osh_policy.add_parser("update")
+    osh_policy_update.add_argument("policy")
+    osh_policy_update.add_argument("--name")
+    osh_policy_update.add_argument("--description")
+    osh_policy_update.add_argument("--policy-text")
+    osh_policy_update.add_argument("--policy-file")
+    osh_policy_update.add_argument("--metadata")
+    osh_policy_update.add_argument("--metadata-file")
+    osh_policy_update.add_argument("--updated-by", default="human")
+    _set(cmd_openshell_policy_update, osh_policy_update)
+
+    osh_policy_delete = osh_policy.add_parser("delete")
+    osh_policy_delete.add_argument("policy")
+    osh_policy_delete.add_argument("--actor", default="human")
+    _set(cmd_openshell_policy_delete, osh_policy_delete)
+
+    osh_policy_render = osh_policy.add_parser("render")
+    osh_policy_render.add_argument("policy")
+    osh_policy_render.add_argument("--agent-user")
+    osh_policy_render.add_argument("--hub-host")
+    osh_policy_render.add_argument("--hub-port", type=int)
+    osh_policy_render.add_argument("--model-gateway-host")
+    osh_policy_render.add_argument("--shared-services")
+    osh_policy_render.add_argument("--shared-services-file")
+    osh_policy_render.add_argument("--into")
+    _set(cmd_openshell_policy_render, osh_policy_render)
+
+    osh_policy_assign = osh_policy.add_parser("assign")
+    osh_policy_assign.add_argument("policy")
+    osh_policy_assign.add_argument("target_id")
+    osh_policy_assign.add_argument("--target-type", default="agent", choices=("agent", "fleet", "host"))
+    osh_policy_assign.add_argument("--created-by", default="human")
+    _set(cmd_openshell_policy_assign, osh_policy_assign)
+
+    osh_policy_versions = osh_policy.add_parser("versions")
+    osh_policy_versions.add_argument("policy")
+    _set(cmd_openshell_policy_versions, osh_policy_versions)
+
+    osh_policy_deploy_status = osh_policy.add_parser("deploy-status")
+    osh_policy_deploy_status.add_argument("--agent", required=True)
+    _set(cmd_openshell_policy_deploy_status, osh_policy_deploy_status)
+
+    osh_status = openshell.add_parser("status")
+    osh_status.add_argument("--agent", required=True)
+    _set(cmd_openshell_status, osh_status)
 
     return parser
 

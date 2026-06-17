@@ -389,6 +389,85 @@ interface CommandAuditRecord extends ApiRecord {
   created_at: string;
 }
 
+interface ActionEventRecord extends ApiRecord {
+  event_id: string;
+  timestamp: string;
+  agent_id?: string | null;
+  task_id?: string | null;
+  session_id?: string | null;
+  sandbox_id?: string | null;
+  actor: string;
+  action_type: string;
+  action_name: string;
+  subject_type?: string | null;
+  subject_id?: string | null;
+  outcome: string;
+  severity: string;
+  policy_id?: string | null;
+  policy_version?: number | null;
+  command_id?: string | null;
+  attributes?: JsonObject;
+  redaction_state: string;
+}
+
+interface OpenShellPolicyRecord extends ApiRecord {
+  name: string;
+  description?: string;
+  policy_text?: string;
+  version: number;
+  checksum: string;
+  active: boolean;
+  created_by?: string;
+  updated_by?: string;
+  updated_at: string;
+  parsed_metadata?: JsonObject;
+}
+
+interface OpenShellPolicyVersionRecord extends ApiRecord {
+  policy_id: string;
+  version: number;
+  checksum: string;
+  created_by: string;
+  created_at: string;
+}
+
+interface OpenShellAssignmentRecord extends ApiRecord {
+  policy_id: string;
+  policy_version: number;
+  target_type: string;
+  target_id: string;
+  active: boolean;
+}
+
+interface OpenShellDeployedStatus {
+  agent_id: string;
+  status: string;
+  required: boolean;
+  active: boolean;
+  sandbox_id?: string | null;
+  policy_id?: string | null;
+  policy_version?: number | null;
+  checksum?: string | null;
+  supervisor_pid?: number | null;
+  detail?: JsonObject;
+  reported_at: string;
+}
+
+interface OpenShellAgentStatusRecord {
+  schema: string;
+  agent_id: string;
+  agent_name?: string | null;
+  required: boolean;
+  assignment?: OpenShellAssignmentRecord | null;
+  policy?: OpenShellPolicyRecord | null;
+  deployed_status?: OpenShellDeployedStatus | null;
+  effective: {
+    assigned: boolean;
+    deployed: boolean;
+    fail_closed: boolean;
+  };
+}
+
 interface OperatorNotification extends ApiRecord {
   event_type: string;
   subject_type?: string | null;
@@ -527,6 +606,11 @@ interface DashboardData {
   service_links: ServiceLinkRecord[];
   events: AuditEvent[];
   command_audit: CommandAuditRecord[];
+  action_events: ActionEventRecord[];
+  openshell_policies: OpenShellPolicyRecord[];
+  openshell_policy_assignments: OpenShellAssignmentRecord[];
+  openshell_policy_versions: OpenShellPolicyVersionRecord[];
+  openshell_agent_statuses: OpenShellAgentStatusRecord[];
   secrets: ApiRecord[];
   secret_audits: ApiRecord[];
   runtimes: ApiRecord[];
@@ -927,6 +1011,7 @@ const AUDIT_SUBJECT_TYPES = [
   "environment",
   "conversation_thread",
   "vector_ref",
+  "action_event",
 ];
 const OBSERVABILITY_LEVELS = ["", "debug", "info", "warning", "error", "critical"];
 const AGENT_PAGE_SIZE = 50;
@@ -4013,6 +4098,7 @@ function renderSecrets(): string {
 
 function renderObservability(): string {
   const data = mustData();
+  const writable = canWrite(data);
   const observability = data.observability || {
     counts: {},
     levels: {},
@@ -4023,6 +4109,11 @@ function renderObservability(): string {
   const counts = observability.counts || {};
   const auditEvents = filterAuditEvents(data.events || []);
   const commandAudit = filterCommandAudit(data.command_audit || []);
+  const actionEvents = filterActionEvents(data.action_events || []);
+  const openshellPolicies = data.openshell_policies || [];
+  const openshellAssignments = data.openshell_policy_assignments || [];
+  const openshellVersions = data.openshell_policy_versions || [];
+  const openshellStatuses = data.openshell_agent_statuses || [];
   const notifications = data.notifications || [];
   const integrationFindings = data.integration_findings || [];
   const openIntegrationFindings = integrationFindings.filter((item) => item.status === "open");
@@ -4039,6 +4130,9 @@ function renderObservability(): string {
       ${metric("Errors", counts.errors || 0, "error observations")}
       ${metric("Notifications", notifications.length, `${pendingNotifications} pending`)}
       ${metric("Integration Findings", integrationFindings.length, `${openIntegrationFindings.length} open`)}
+      ${metric("OpenShell", openshellPolicies.length, `${openshellAssignments.filter((item) => item.active).length} assignment(s)`)}
+      ${metric("OpenShell Agents", openshellStatuses.filter((item) => item.effective?.deployed).length, `${openshellStatuses.filter((item) => item.effective?.fail_closed).length} fail closed`)}
+      ${metric("Action Events", actionEvents.length, "normalized ledger rows")}
       ${metric("Stream", state.observabilityStreamStatus, `${state.observabilityLive.length} live item(s)`)}
     </section>
     ${auditFilterToolbar(data)}
@@ -4084,6 +4178,40 @@ function renderObservability(): string {
       </div>
       <div class="observability-feed">
         ${auditEvents.length ? auditEvents.slice(0, 120).map(auditEventRecord).join("") : `<div class="empty-state">No matching audit events</div>`}
+      </div>
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>OpenShell Admin</h2>
+        ${chip(`${openshellPolicies.length}`, openshellPolicies.length ? "info" : "warn")}
+      </div>
+      ${openshellPolicyAdminPanel(data, openshellPolicies, writable)}
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>OpenShell Policies</h2>
+        ${chip(`${openshellPolicies.length}`, openshellPolicies.length ? "info" : "warn")}
+      </div>
+      <div class="observability-feed">
+        ${openshellPolicies.length
+          ? openshellPolicies.slice(0, 80).map((item) => openshellPolicyRecord(item, openshellAssignments, openshellVersions)).join("")
+          : `<div class="empty-state">No OpenShell policies</div>`}
+      </div>
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>OpenShell Status</h2>
+        ${chip(`${openshellStatuses.length}`, openshellStatuses.length ? "info" : "warn")}
+      </div>
+      ${openshellStatusPanel(data, openshellPolicies, openshellStatuses, writable)}
+    </section>
+    <section class="surface">
+      <div class="surface-heading">
+        <h2>Action Events</h2>
+        ${chip(`${actionEvents.length}`, actionEvents.length ? "info" : "warn")}
+      </div>
+      <div class="observability-feed">
+        ${actionEvents.length ? actionEvents.slice(0, 120).map(actionEventRecord).join("") : `<div class="empty-state">No action events</div>`}
       </div>
     </section>
     <section class="surface">
@@ -4173,6 +4301,20 @@ function filterCommandAudit(records: CommandAuditRecord[]): CommandAuditRecord[]
   });
 }
 
+function filterActionEvents(records: ActionEventRecord[]): ActionEventRecord[] {
+  return records.filter((item) => {
+    if (state.auditAgentId && item.agent_id !== state.auditAgentId) return false;
+    if (state.auditTaskId && item.task_id !== state.auditTaskId) return false;
+    if (state.auditSubjectType && item.subject_type !== state.auditSubjectType) return false;
+    if (state.auditSubjectId && item.subject_id !== state.auditSubjectId.trim()) return false;
+    if (state.auditEventPrefix && !`${item.action_type}.${item.action_name}`.startsWith(state.auditEventPrefix.trim())) return false;
+    if (state.auditActor && item.actor !== state.auditActor.trim()) return false;
+    if (state.auditSince && item.timestamp < state.auditSince.trim()) return false;
+    if (state.auditUntil && item.timestamp > state.auditUntil.trim()) return false;
+    return true;
+  });
+}
+
 function filterObservability(events: ObservabilityEvent[]): ObservabilityEvent[] {
   return events.filter((item) => {
     if (state.auditLayer && item.layer !== state.auditLayer.trim()) return false;
@@ -4202,6 +4344,192 @@ function observationReferences(item: ObservabilityEvent, value: string): boolean
   if (!needle) return true;
   if (item.subject_id === needle || item.source === needle) return true;
   return JSON.stringify(item.detail || {}).includes(needle);
+}
+
+function openshellPolicyAdminPanel(data: DashboardData, policies: OpenShellPolicyRecord[], writable: boolean): string {
+  const disabled = disabledAttr(!writable);
+  const activePolicies = policies.filter((item) => item.active);
+  const policyOptions = `<option value="">Select policy</option>${activePolicies.map((item) => option(item.id, `${item.name} v${item.version}`, "")).join("")}`;
+  const agentOptions = data.agents.map((item) => `<option value="${escapeHtml(item.agent.id)}">${escapeHtml(item.agent.name)}</option>`).join("");
+  return `
+    <div class="split">
+      <details class="action-drawer" open>
+        <summary>
+          <span>Create Policy</span>
+          <span class="muted small">MAC-managed policy text wins over file fallback when assigned</span>
+        </summary>
+        <form class="action-form aligned-form" data-action="openshellPolicyCreate">
+          <label>Name <input name="name" required ${disabled}></label>
+          <label>Description <input name="description" ${disabled}></label>
+          <label>Created by <input name="created_by" value="human" ${disabled}></label>
+          <label>Metadata JSON <textarea class="json-editor" name="metadata" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>{}</textarea></label>
+          <label>Policy YAML <textarea class="json-editor tall" name="policy_text" required spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(defaultOpenShellPolicyText())}</textarea></label>
+          <button type="submit" ${disabled}>Create Policy</button>
+        </form>
+      </details>
+      <div class="record-list">
+        <form class="action-form aligned-form" data-action="openshellPolicyAssign">
+          <h3>Assign Policy</h3>
+          <label>Policy <select name="policy_id" required ${disabled}>${policyOptions}</select></label>
+          <label>Target Type ${select("target_type", ["agent", "fleet", "host"], "agent", !writable)}</label>
+          <label>Target ID <input name="target_id" list="openshellAgentIds" required ${disabled}></label>
+          <label>Created by <input name="created_by" value="human" ${disabled}></label>
+          <button type="submit" ${disabled}>Assign</button>
+        </form>
+        <form class="action-form aligned-form" data-action="openshellStatusReport">
+          <h3>Report Deploy Status</h3>
+          <label>Agent ${agentSelect("agent_id", data.agents, "", !writable)}</label>
+          <label>Status ${select("status", ["active", "starting", "inactive", "degraded", "failed", "unknown"], "active", !writable)}</label>
+          <label>Required <select name="required_mode" ${disabled}>${option("", "Auto", "")}${option("true", "Required", "")}${option("false", "Optional", "")}</select></label>
+          <label>Sandbox ID <input name="sandbox_id" ${disabled}></label>
+          <label>Policy <select name="policy_id" ${disabled}>${policyOptions}</select></label>
+          <label>Policy Version <input name="policy_version" type="number" min="1" ${disabled}></label>
+          <label>Checksum <input name="checksum" ${disabled}></label>
+          <label>Supervisor PID <input name="supervisor_pid" type="number" min="1" ${disabled}></label>
+          <label class="checkbox-row"><input name="active" type="checkbox" checked ${disabled}> Active</label>
+          <label>Detail JSON <textarea class="json-editor" name="detail" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>{}</textarea></label>
+          <button type="submit" ${disabled}>Report Status</button>
+        </form>
+      </div>
+    </div>
+    <datalist id="openshellAgentIds">${agentOptions}</datalist>
+  `;
+}
+
+function openshellStatusPanel(
+  data: DashboardData,
+  policies: OpenShellPolicyRecord[],
+  statuses: OpenShellAgentStatusRecord[],
+  writable: boolean,
+): string {
+  const byAgent = new Map(statuses.map((item) => [item.agent_id, item]));
+  const rows = data.agents.map((item) => {
+    const status = byAgent.get(item.agent.id);
+    return openshellStatusRecord(item, status, policies, writable);
+  });
+  return `<div class="observability-feed">${rows.length ? rows.join("") : `<div class="empty-state">No agents</div>`}</div>`;
+}
+
+function openshellStatusRecord(
+  item: AgentItem,
+  status: OpenShellAgentStatusRecord | undefined,
+  policies: OpenShellPolicyRecord[],
+  writable: boolean,
+): string {
+  const agent = item.agent;
+  const deployed = status?.deployed_status || null;
+  const assignment = status?.assignment || null;
+  const policy = status?.policy || (assignment ? policies.find((candidate) => candidate.id === assignment.policy_id) : null);
+  const deployedStatus = deployed?.status || "unknown";
+  const failClosed = !!status?.effective?.fail_closed;
+  const tone = failClosed ? "bad" : deployedStatus === "active" ? "good" : status?.required ? "warn" : "info";
+  const disabled = disabledAttr(!writable);
+  return `
+    <article class="feed-item">
+      <div>
+        <strong>${escapeHtml(agent.name)}</strong>
+        <p class="muted small">${escapeHtml(policy?.name || "no assigned policy")} · ${escapeHtml(deployed?.sandbox_id || "no sandbox")}</p>
+        <p class="muted small mono">${escapeHtml(agent.id)}</p>
+      </div>
+      <div class="chip-row">
+        ${chip(deployedStatus, tone)}
+        ${chip(status?.required ? "required" : "optional", status?.required ? "warn" : "info")}
+        ${assignment ? chip(`assigned v${assignment.policy_version}`, "info") : chip("unassigned", "warn")}
+        ${failClosed ? chip("fail closed", "bad") : ""}
+      </div>
+      <form class="inline-form" data-action="openshellPolicyAssign">
+        <input type="hidden" name="target_type" value="agent">
+        <input type="hidden" name="target_id" value="${escapeHtml(agent.id)}">
+        <input type="hidden" name="created_by" value="human">
+        <select name="policy_id" ${disabled}>
+          <option value="">Assign policy</option>
+          ${policies.filter((candidate) => candidate.active).map((candidate) => option(candidate.id, `${candidate.name} v${candidate.version}`, assignment?.policy_id || "")).join("")}
+        </select>
+        <button type="submit" ${disabled}>Assign</button>
+      </form>
+    </article>
+  `;
+}
+
+function openshellPolicyRecord(
+  item: OpenShellPolicyRecord,
+  assignments: OpenShellAssignmentRecord[],
+  versions: OpenShellPolicyVersionRecord[],
+): string {
+  const activeAssignments = assignments.filter((assignment) => assignment.policy_id === item.id && assignment.active);
+  const policyVersions = versions.filter((version) => version.policy_id === item.id);
+  const rawNetworks = item.parsed_metadata?.network_policy_names;
+  const networks = Array.isArray(rawNetworks) ? (rawNetworks as string[]) : [];
+  const disabled = disabledAttr(!canWrite(mustData()));
+  return `
+    <article class="feed-item">
+      <div>
+        <strong>${escapeHtml(item.name)}</strong>
+        <p class="muted small">v${item.version} · ${escapeHtml(formatAge(item.updated_at))} · ${escapeHtml(item.description || "no description")}</p>
+        <p class="muted small mono">${escapeHtml(item.checksum.slice(0, 24))}</p>
+      </div>
+      <div class="chip-row">
+        ${chip(item.active ? "active" : "deleted", item.active ? "good" : "bad")}
+        ${chip(`${activeAssignments.length} assigned`, activeAssignments.length ? "info" : "warn")}
+        ${chip(`${policyVersions.length || 1} version(s)`, "info")}
+        ${networks.slice(0, 3).map((name) => chip(name, "info")).join("")}
+      </div>
+      <details class="action-drawer">
+        <summary>
+          <span>Edit Policy</span>
+          <span class="muted small">${escapeHtml(activeAssignments.map((assignment) => `${assignment.target_type}:${assignment.target_id}`).join(", ") || "no active assignments")}</span>
+        </summary>
+        <form class="action-form aligned-form" data-action="openshellPolicyUpdate" data-policy-id="${escapeHtml(item.id)}">
+          <label>Name <input name="name" value="${escapeHtml(item.name)}" required ${disabled}></label>
+          <label>Description <input name="description" value="${escapeHtml(item.description || "")}" ${disabled}></label>
+          <label>Updated by <input name="updated_by" value="${escapeHtml(item.updated_by || "human")}" ${disabled}></label>
+          <label>Metadata JSON <textarea class="json-editor" name="metadata" spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(jsonValue(item.parsed_metadata || {}))}</textarea></label>
+          <label>Policy YAML <textarea class="json-editor tall" name="policy_text" required spellcheck="false" autocomplete="off" autocapitalize="off" ${disabled}>${escapeHtml(item.policy_text || "")}</textarea></label>
+          <button type="submit" ${disabled}>Save Policy</button>
+        </form>
+        <div class="timeline-strip">
+          ${policyVersions.length
+            ? policyVersions.map((version) => timelineItem(`v${version.version}`, version.created_by, version.created_at)).join("")
+            : timelineItem(`v${item.version}`, item.updated_by || "human", item.updated_at)}
+        </div>
+        <form class="inline-form danger-action" data-action="openshellPolicyDelete" data-policy-id="${escapeHtml(item.id)}">
+          <input name="actor" value="human" ${disabled}>
+          <button type="submit" ${disabled}>Delete Policy</button>
+        </form>
+      </details>
+    </article>
+  `;
+}
+
+function defaultOpenShellPolicyText(): string {
+  return [
+    "version: 1",
+    "network_policies:",
+    "  mac_hub:",
+    "    name: mac-hub",
+    "    endpoints:",
+    "      - host: 127.0.0.1",
+    "        port: 8789",
+    "        protocol: rest",
+  ].join("\n");
+}
+
+function actionEventRecord(item: ActionEventRecord): string {
+  const subject = [item.subject_type, item.subject_id].filter(Boolean).join(":") || item.event_id;
+  return `
+    <article class="feed-item">
+      <div>
+        <strong>${escapeHtml(item.action_type)}.${escapeHtml(item.action_name)}</strong>
+        <p class="muted small">${escapeHtml(subject)} · ${escapeHtml(item.actor)} · ${escapeHtml(formatAge(item.timestamp))}</p>
+        <p class="muted small mono">${escapeHtml(item.event_id)}</p>
+      </div>
+      <div class="chip-row">
+        ${chip(item.outcome, item.outcome === "denied" || item.outcome === "failure" ? "bad" : item.outcome === "allowed" || item.outcome === "success" ? "good" : "info")}
+        ${chip(item.severity, item.severity === "critical" || item.severity === "error" ? "bad" : item.severity === "warning" ? "warn" : "info")}
+        ${item.sandbox_id ? chip("sandbox", "info") : ""}
+      </div>
+    </article>
+  `;
 }
 
 function llmRouteEvents(data: DashboardData): ObservabilityEvent[] {
@@ -7665,6 +7993,52 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       body.capabilities = String(values.capabilities).split(",").map((item) => item.trim()).filter(Boolean);
     }
     return postJSON("/agents/bulk", body);
+  }
+  if (action === "openshellPolicyCreate") {
+    return postJSON("/openshell/policies", {
+      name: requiredString(values.name),
+      description: String(values.description || ""),
+      policy_text: requiredString(values.policy_text),
+      metadata: parseJsonObject(values.metadata),
+      created_by: requiredString(values.created_by || "human"),
+    });
+  }
+  if (action === "openshellPolicyUpdate") {
+    return putJSON(`/openshell/policies/${encodeURIComponent(requiredDataset(form, "policyId"))}`, {
+      name: requiredString(values.name),
+      description: String(values.description || ""),
+      policy_text: requiredString(values.policy_text),
+      metadata: parseJsonObject(values.metadata),
+      updated_by: requiredString(values.updated_by || "human"),
+    });
+  }
+  if (action === "openshellPolicyDelete") {
+    return deleteJSON(`/openshell/policies/${encodeURIComponent(requiredDataset(form, "policyId"))}?actor=${encodeURIComponent(requiredString(values.actor || "human"))}`);
+  }
+  if (action === "openshellPolicyAssign") {
+    return postJSON(`/openshell/policies/${encodeURIComponent(requiredString(values.policy_id))}/assignments`, {
+      target_type: requiredString(values.target_type),
+      target_id: requiredString(values.target_id),
+      created_by: requiredString(values.created_by || "human"),
+    });
+  }
+  if (action === "openshellStatusReport") {
+    const body: JsonObject = {
+      status: requiredString(values.status),
+      active: boolValue(values.active) === "true",
+      sandbox_id: emptyToNull(values.sandbox_id),
+      policy_id: emptyToNull(values.policy_id),
+      checksum: emptyToNull(values.checksum),
+      detail: parseJsonObject(values.detail),
+    };
+    const requiredMode = String(values.required_mode || "").trim();
+    if (requiredMode === "true") body.required = true;
+    if (requiredMode === "false") body.required = false;
+    const policyVersion = optionalNumber(values.policy_version);
+    if (policyVersion !== null) body.policy_version = policyVersion;
+    const supervisorPid = optionalNumber(values.supervisor_pid);
+    if (supervisorPid !== null) body.supervisor_pid = supervisorPid;
+    return postJSON(`/agents/${encodeURIComponent(requiredString(values.agent_id))}/openshell/status`, body);
   }
   if (action === "roleSeed") {
     return postJSON("/roles/seed", {

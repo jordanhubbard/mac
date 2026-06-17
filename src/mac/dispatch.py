@@ -526,6 +526,9 @@ class RemoteDispatch:
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 
+    def list_personas(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/personas"))
+
     def delete_agent(self, agent_id: str, *, actor: str = "human") -> _Dictish:
         # DELETE /agents/{id} removes the agent + its agent-scoped ephemera
         # (mood/nap/events/messages) and records an agent.deleted audit event;
@@ -1088,6 +1091,91 @@ class RemoteDispatch:
 
     def list_observability(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/observability", **kw))
+
+    def create_openshell_policy(self, *args: Any, **kw: Any) -> _Dictish:
+        name = args[0] if args else kw.pop("name")
+        policy_text = args[1] if len(args) > 1 else kw.pop("policy_text")
+        return _Dictish(
+            self._post(
+                "/openshell/policies",
+                _drop_none({"name": name, "policy_text": policy_text, **kw}),
+            )
+        )
+
+    def list_openshell_policies(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/openshell/policies", **kw))
+
+    def get_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._get("/openshell/policies/%s" % quote(policy_id, safe=""), **kw)
+        )
+
+    def update_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/openshell/policies/%s" % quote(policy_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def delete_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
+        actor = kw.get("actor")
+        path = "/openshell/policies/%s" % quote(policy_id, safe="")
+        if actor:
+            path += _query({"actor": actor})
+        return _Dictish(self._delete(path))
+
+    def render_openshell_policy(self, policy_id: str, **kw: Any) -> Dict[str, Any]:
+        return self._post(
+            "/openshell/policies/%s/render" % quote(policy_id, safe=""),
+            _drop_none(kw),
+        )
+
+    def list_openshell_policy_versions(self, policy_id: str) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/openshell/policies/%s/versions" % quote(policy_id, safe=""))
+        )
+
+    def assign_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/openshell/policies/%s/assignments" % quote(policy_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def list_openshell_policy_assignments(self, **kw: Any) -> List[_Dictish]:
+        policy_id = kw.pop("policy_id", None)
+        if policy_id:
+            return _wrap_list(
+                self._get(
+                    "/openshell/policies/%s/assignments" % quote(policy_id, safe="")
+                )
+            )
+        raise DispatchError("listing all OpenShell assignments is local-only for now")
+
+    def get_openshell_status(self, agent_id: str) -> Dict[str, Any]:
+        return self._get("/agents/%s/openshell/status" % quote(agent_id, safe=""))
+
+    def report_openshell_status(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/openshell/status" % quote(agent_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def record_action_event(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/action-events", _drop_none(kw)))
+
+    def list_action_events(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/action-events", **kw))
+
+    def export_action_events_otlp(self, **kw: Any) -> Dict[str, Any]:
+        return self._get("/action-events/export/otlp", **kw)
+
+    def summarize_actions_to_memory(self, **kw: Any) -> Dict[str, Any]:
+        return self._post("/memory/summarize-actions", _drop_none(kw))
 
     def prune_observability(
         self,

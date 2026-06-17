@@ -107,6 +107,33 @@ TOOLS: tuple[ToolSpec, ...] = (
             "optional `task_limit` integer (default 100)."
         ),
     ),
+    ToolSpec(
+        name="mac_pending_notifications",
+        method="GET",
+        path="/notifications",
+        description=(
+            "List undelivered task notifications (status=pending, "
+            "subject_type=task) that this Hermes instance still needs to "
+            "announce. mac's database is the source of truth for what has "
+            "already been delivered, so call this to learn which task "
+            "updates are new instead of tracking state locally. Returns a "
+            "list of notification records; deliver each, then call "
+            "mac_ack_notification with its id so it is not returned again. "
+            "Optional `limit` integer (default 100)."
+        ),
+    ),
+    ToolSpec(
+        name="mac_ack_notification",
+        method="POST",
+        path="/notifications/{notification_id}/delivered",
+        description=(
+            "Mark one task notification as delivered after you have "
+            "successfully announced it. Idempotent — safe to call more than "
+            "once. Pass `notification_id`. This flips the notification's "
+            "status from pending to delivered in mac so it stops coming back "
+            "from mac_pending_notifications."
+        ),
+    ),
 )
 
 TOOLS_BY_NAME: dict[str, ToolSpec] = {tool.name: tool for tool in TOOLS}

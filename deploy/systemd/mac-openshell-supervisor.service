@@ -1,0 +1,32 @@
+[Unit]
+Description=mac OpenShell supervisor (agent runtime parent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mac
+Group=mac
+WorkingDirectory=/home/mac
+EnvironmentFile=/etc/mac/mac.env
+# Required Linux agents should set MAC_OPENSHELL_REQUIRED=1.
+# The supervisor fails closed when OpenShell or the assigned policy is absent.
+ExecStart=/usr/local/bin/mac-openshell-supervisor \
+    --agent-id ${MAC_AGENT_ID} \
+    --policy /home/mac/.mac/openshell/${MAC_AGENT_ID}-policy.yaml \
+    -- mac-hermes-gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/home/mac /var/lib/mac
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
     OBSERVABILITY_KINDS,
@@ -68,8 +68,13 @@ class ObservabilityService:
     # output) can otherwise pump GB into one SQLite table.
     MAX_DETAIL_BYTES = 64 * 1024
 
-    def __init__(self, store: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        action_event_recorder: Optional[Callable[[Any, ObservabilityEvent], Any]] = None,
+    ) -> None:
         self.store = store
+        self._action_event_recorder = action_event_recorder
 
     # Public API ---------------------------------------------------------
 
@@ -375,7 +380,7 @@ class ObservabilityService:
         if sequence_row is None:
             raise RuntimeError("INSERT ... RETURNING sequence yielded no row")
         sequence_value = sequence_row[0] if not hasattr(sequence_row, "keys") else sequence_row["sequence"]
-        return ObservabilityEvent(
+        event = ObservabilityEvent(
             int(sequence_value),
             obs_id,
             kind_value,
@@ -390,6 +395,9 @@ class ObservabilityService:
             json_loads(detail_json, {}),
             when,
         )
+        if self._action_event_recorder is not None:
+            self._action_event_recorder(conn, event)
+        return event
 
     # Validation helpers -------------------------------------------------
 

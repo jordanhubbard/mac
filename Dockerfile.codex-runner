@@ -3,13 +3,16 @@ FROM ${MAC_BASE_IMAGE}
 
 USER root
 
+# npm is kept (NOT purged) on purpose: the pre-push gate
+# (mac-task-executor-opencode-build) provisions a project's JS dependencies at
+# test time via `_npm_install_in` (`npm install`), so npm must remain available
+# at gate runtime — not just at image-build time for the global installs below.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git ca-certificates curl nodejs npm && \
     npm install -g @openai/codex && \
     npm install -g opencode-ai && \
     npm cache clean --force && \
-    apt-get purge -y npm && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 

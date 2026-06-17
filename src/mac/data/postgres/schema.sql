@@ -457,6 +457,107 @@ CREATE INDEX IF NOT EXISTS idx_command_audit_agent_created ON command_audit (age
 CREATE INDEX IF NOT EXISTS idx_command_audit_task_created ON command_audit (task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_command_audit_command ON command_audit (command_id, created_at);
 
+CREATE TABLE IF NOT EXISTS action_events (
+    event_id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    agent_id TEXT,
+    hermes_instance_id TEXT,
+    task_id TEXT,
+    session_id TEXT,
+    sandbox_id TEXT,
+    actor TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    action_name TEXT NOT NULL,
+    subject_type TEXT,
+    subject_id TEXT,
+    outcome TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    policy_id TEXT,
+    policy_version INTEGER,
+    command_id TEXT,
+    parent_event_id TEXT,
+    attributes TEXT NOT NULL,
+    redaction_state TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_action_events_timestamp
+    ON action_events (timestamp, event_id);
+CREATE INDEX IF NOT EXISTS idx_action_events_agent_timestamp
+    ON action_events (agent_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_action_events_task_timestamp
+    ON action_events (task_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_action_events_session_timestamp
+    ON action_events (session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_action_events_sandbox_timestamp
+    ON action_events (sandbox_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_action_events_policy_timestamp
+    ON action_events (policy_id, policy_version, timestamp);
+CREATE INDEX IF NOT EXISTS idx_action_events_type_outcome
+    ON action_events (action_type, outcome, timestamp);
+
+CREATE TABLE IF NOT EXISTS openshell_policies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    policy_text TEXT NOT NULL,
+    parsed_metadata TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    checksum TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_openshell_policies_active_name
+    ON openshell_policies (active, name);
+
+CREATE TABLE IF NOT EXISTS openshell_policy_versions (
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES openshell_policies(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    policy_text TEXT NOT NULL,
+    parsed_metadata TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(policy_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_openshell_policy_versions_policy
+    ON openshell_policy_versions (policy_id, version);
+
+CREATE TABLE IF NOT EXISTS openshell_policy_assignments (
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES openshell_policies(id) ON DELETE CASCADE,
+    policy_version INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_openshell_policy_assignments_target
+    ON openshell_policy_assignments (target_type, target_id, active);
+CREATE INDEX IF NOT EXISTS idx_openshell_policy_assignments_policy
+    ON openshell_policy_assignments (policy_id, active);
+
+CREATE TABLE IF NOT EXISTS openshell_agent_status (
+    agent_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    required INTEGER NOT NULL,
+    active INTEGER NOT NULL,
+    sandbox_id TEXT,
+    policy_id TEXT,
+    policy_version INTEGER,
+    checksum TEXT,
+    supervisor_pid INTEGER,
+    detail TEXT NOT NULL,
+    reported_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_openshell_agent_status_status
+    ON openshell_agent_status (status, reported_at);
+
 CREATE TABLE IF NOT EXISTS agent_lifecycle_events (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -1082,6 +1183,36 @@ CREATE OR REPLACE VIEW events AS
         )::text AS detail,
         created_at
     FROM command_audit
+    UNION ALL
+    SELECT
+        event_id AS id,
+        COALESCE(NULLIF(subject_type, ''), 'action_event') AS subject_type,
+        COALESCE(subject_id, event_id) AS subject_id,
+        'action.' || action_type || '.' || action_name AS event_type,
+        actor,
+        jsonb_build_object(
+            'schema', 'mac.action_event.v1',
+            'agent_id', agent_id,
+            'hermes_instance_id', hermes_instance_id,
+            'task_id', task_id,
+            'session_id', session_id,
+            'sandbox_id', sandbox_id,
+            'action_type', action_type,
+            'action_name', action_name,
+            'outcome', outcome,
+            'severity', severity,
+            'policy_id', policy_id,
+            'policy_version', policy_version,
+            'command_id', command_id,
+            'parent_event_id', parent_event_id,
+            'redaction_state', redaction_state,
+            'attributes',
+                CASE WHEN attributes IS NULL OR attributes = ''
+                     THEN '{}'::jsonb
+                     ELSE attributes::jsonb END
+        )::text AS detail,
+        timestamp AS created_at
+    FROM action_events
     UNION ALL
     SELECT
         id,

@@ -120,6 +120,21 @@ _SCHEMAS: dict[str, dict] = {
             "task_limit": dict(_INTEGER, description="Cap the task list. Default 100."),
         },
     },
+    "mac_pending_notifications": {
+        "type": "object",
+        "properties": {
+            "limit": dict(_INTEGER, description="Cap the notification list. Default 100."),
+        },
+    },
+    "mac_ack_notification": {
+        "type": "object",
+        "properties": {
+            "notification_id": dict(
+                _NON_EMPTY_STRING, description="The mac notification id to mark delivered."
+            ),
+        },
+        "required": ["notification_id"],
+    },
 }
 
 

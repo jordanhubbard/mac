@@ -1,0 +1,27 @@
+[Unit]
+Description=mac OpenShell event collector
+After=mac-openshell-supervisor.service
+Wants=mac-openshell-supervisor.service
+
+[Service]
+Type=simple
+User=mac
+Group=mac
+WorkingDirectory=/home/mac
+EnvironmentFile=/etc/mac/mac.env
+# Point MAC_OPENSHELL_EVENTS_FILE at the active sandbox's JSON/OCSF event stream.
+ExecStart=/usr/local/bin/mac-openshell-collector \
+    --events-file ${MAC_OPENSHELL_EVENTS_FILE} \
+    --follow
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/home/mac /var/lib/mac
+
+[Install]
+WantedBy=multi-user.target

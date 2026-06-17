@@ -863,6 +863,79 @@ def _apply_patch_to_hermes_mapping(hermes: Dict[str, Any], patch: Mapping[str, A
             skills["platform_disabled"] = normalized
 
 
+def _ensure_never_prompt_defaults(config: Dict[str, Any]) -> None:
+    """Bake the fleet's never-prompt approval posture into config (sandbox-01).
+
+    Hermes must never block on an approval prompt: the OpenShell sandbox is the
+    enforcement layer, and the legacy gateway prompts went to an open channel
+    where anyone could approve (no real security). Default-if-absent, so an
+    explicit operator ``approvals`` config still wins.
+
+      * ``approvals.mode = off``          -> no dangerous-command approval
+                                             prompts (executor + gateway both
+                                             read this; immune to the
+                                             ``HERMES_YOLO_MODE`` import freeze)
+      * ``approvals.cron_mode = approve`` -> non-interactive runs don't fall to
+                                             the default ``deny``
+
+    Note: enabling never-prompt for the gateway means the (currently
+    un-sandboxed) Slack agent runs silently — real enforcement there requires
+    wrapping the gateway service under OpenShell too (tracked separately).
+
+    ENFORCED, not default-if-absent: agents carry a stale ``approvals.mode:
+    manual`` / ``cron_mode: deny`` from an earlier lifecycle, and a setdefault
+    left those in place so the gateway kept showing "Command Approval Required".
+    The never-prompt posture is a fleet invariant, so we overwrite. An operator
+    can opt a single host back into interactive approvals with
+    ``MAC_HERMES_ALLOW_APPROVAL_PROMPTS=1`` (then their existing config wins).
+    """
+    if os.environ.get("MAC_HERMES_ALLOW_APPROVAL_PROMPTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    approvals = config.get("approvals")
+    if not isinstance(approvals, dict):
+        approvals = {}
+    approvals["mode"] = "off"          # no dangerous-command approval prompts
+    approvals["cron_mode"] = "approve"  # non-interactive runs must not fall to deny
+    config["approvals"] = approvals
+
+
+def _promote_slack_accounts_tokens(config: Dict[str, Any], home: Path) -> None:
+    """Promote Slack tokens from ~/.hermes/slack_accounts.json into config['env'].
+
+    An agent provisioned via a multi-workspace ``slack_accounts.json`` (e.g. one
+    migrated from another host) carries its bot/app tokens there, NOT in the
+    config.yaml ``env:`` block — and the gateway enables the Slack platform off
+    the env tokens, so without this it comes up "No messaging platforms enabled"
+    (the hostd case). Promote the first account's xoxb/xapp pair so a
+    redeploy keeps Slack working. setdefault: an explicit env token wins, and
+    slack_accounts.json still drives the actual multi-workspace connections.
+    """
+    env = config.get("env") if isinstance(config.get("env"), dict) else {}
+    if env.get("SLACK_BOT_TOKEN") and env.get("SLACK_APP_TOKEN"):
+        return  # already enabled via explicit env tokens
+    accts = home / "slack_accounts.json"
+    if not accts.exists():
+        return
+    try:
+        data = json.loads(accts.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — malformed accounts file: leave config as-is
+        return
+    accounts = data if isinstance(data, list) else (data.get("accounts") or data.get("agents") or [])
+    for acct in accounts:
+        if not isinstance(acct, dict):
+            continue
+        bot = str(acct.get("bot_token") or "")
+        app = str(acct.get("app_token") or "")
+        if bot.startswith("xoxb") and app.startswith("xapp"):
+            env.setdefault("SLACK_BOT_TOKEN", bot)
+            env.setdefault("SLACK_APP_TOKEN", app)
+            user = str(acct.get("user_token") or "")
+            if user:
+                env.setdefault("SLACK_USER_TOKEN", user)
+            config["env"] = env
+            return
+
+
 def apply_hermes_surface_payload(
     payload: Mapping[str, Any],
     *,
@@ -885,6 +958,8 @@ def apply_hermes_surface_payload(
     for section in ("plugins", "skills"):
         if isinstance(hermes.get(section), dict) and hermes[section]:
             config[section] = hermes[section]
+    _ensure_never_prompt_defaults(config)
+    _promote_slack_accounts_tokens(config, home)
     _atomic_yaml_write(config_path, config, mode=0o600)
     _write_env(env_path, hermes.get("env") if isinstance(hermes.get("env"), dict) else {})
     return {

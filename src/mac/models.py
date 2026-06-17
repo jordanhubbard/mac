@@ -264,6 +264,16 @@ class AgentBusStreamStatus(StrEnum):
 OBSERVABILITY_KINDS = {"metric", "log"}
 OBSERVABILITY_LEVELS = {"debug", "info", "warning", "error", "critical"}
 
+ACTION_EVENT_OUTCOMES = {
+    "unknown",
+    "started",
+    "success",
+    "failure",
+    "denied",
+    "allowed",
+    "skipped",
+}
+
 
 class SecretAuditResult(StrEnum):
     GRANTED = "granted"
@@ -963,6 +973,102 @@ class CommandAuditRecord:
     stderr_bytes: Optional[int]
     metadata: JsonDict
     created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class OpenShellPolicy:
+    id: str
+    name: str
+    description: str
+    policy_text: str
+    parsed_metadata: JsonDict
+    version: int
+    checksum: str
+    created_by: str
+    updated_by: str
+    active: bool
+    created_at: str
+    updated_at: str
+    deleted_at: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class OpenShellPolicyVersion:
+    id: str
+    policy_id: str
+    version: int
+    policy_text: str
+    parsed_metadata: JsonDict
+    checksum: str
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class OpenShellPolicyAssignment:
+    id: str
+    policy_id: str
+    policy_version: int
+    target_type: str
+    target_id: str
+    active: bool
+    created_by: str
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class OpenShellStatus:
+    agent_id: str
+    status: str
+    required: bool
+    active: bool
+    sandbox_id: Optional[str]
+    policy_id: Optional[str]
+    policy_version: Optional[int]
+    checksum: Optional[str]
+    supervisor_pid: Optional[int]
+    detail: JsonDict
+    reported_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class ActionEvent:
+    event_id: str
+    timestamp: str
+    agent_id: Optional[str]
+    hermes_instance_id: Optional[str]
+    task_id: Optional[str]
+    session_id: Optional[str]
+    sandbox_id: Optional[str]
+    actor: str
+    action_type: str
+    action_name: str
+    subject_type: Optional[str]
+    subject_id: Optional[str]
+    outcome: str
+    severity: str
+    policy_id: Optional[str]
+    policy_version: Optional[int]
+    command_id: Optional[str]
+    parent_event_id: Optional[str]
+    attributes: JsonDict
+    redaction_state: str
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
