@@ -4300,6 +4300,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 os.environ["MAC_ATTESTATION_KEY"] = attestation_key
                 if attestation_env_path is not None:
                     _write_env_value(attestation_env_path, "MAC_ATTESTATION_KEY", attestation_key)
+            # Data-driven OpenShell sandbox requirement: project the agent's
+            # runtime resources["openshell_required"] (owned by the hub) into the
+            # env the executor inherits, so a redeploy isn't needed to honor an
+            # operator's DB change. A pre-set MAC_OPENSHELL_REQUIRED wins; an
+            # unset resource is a no-op. Replaces the old hardcoded agent list.
+            from mac.openshell_runtime import apply_openshell_requirement
+
+            apply_openshell_requirement(registered.get("resources"), os.environ)
         if not agent_id:
             raise MacApiError("--agent-id or --register is required")
         if args.install_pip or args.install_npm:
