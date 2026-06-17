@@ -1072,7 +1072,7 @@ def test_resolve_node_version_finds_root_project_github_workflow(
     wf.mkdir(parents=True)
     (wf / "ci.yml").write_text("jobs:\n  build:\n    steps:\n      - uses: setup-node\n        with:\n          node-version: 20\n")
     result = _run_helper(
-        ["_resolve_node_version"],
+        ["_validate_node_version", "_resolve_node_version"],
         f'_resolve_node_version "{proj}"',
         cwd=tmp_path,
     )
@@ -1096,7 +1096,7 @@ def test_resolve_node_version_finds_subdir_project_repo_root_workflow(
     proj = repo / "dashboard"
     proj.mkdir()
     result = _run_helper(
-        ["_resolve_node_version"],
+        ["_validate_node_version", "_resolve_node_version"],
         f'_resolve_node_version "{proj}"',
         cwd=tmp_path,
     )
