@@ -6,7 +6,7 @@ LOCAL_BIN ?= $(HOME)/.local/bin
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: require-python install-hooks setup deploy test test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
+.PHONY: require-python install-hooks setup deploy test coverage test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 
 require-python:
 	@if [ -z "$(PYTHON)" ]; then \
@@ -31,7 +31,12 @@ deploy: require-python
 	$(PYTHON) setup.py $(if $(HUB),--hub $(HUB),) $(ARGS)
 
 test:
-	uv run --extra dev pytest -q
+	uv run --extra dev coverage run -m pytest -q
+	uv run --extra dev coverage report
+
+coverage:
+	uv run --extra dev coverage run -m pytest
+	uv run --extra dev coverage report
 
 test-api:
 	uv run --extra dev pytest -q -m api tests/
