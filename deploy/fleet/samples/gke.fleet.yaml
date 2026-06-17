@@ -1,0 +1,107 @@
+# GKE / k8s-pods-behind-a-bastion CSP sample. Copy to
+# ~/.mac/specs/<fleet>.fleet.yaml, customize the <placeholders>, then run
+# setup-fleet.py --spec.
+#
+# This is a checked-in, de-personalized SAMPLE only (sample: true). It captures
+# the SHAPE of running a mac fleet as Kubernetes pods reachable only through a
+# bastion/jump host; it is NOT a real fleet. A real fleet's topology lives
+# OUTSIDE Git in ~/.mac/specs/<fleet>.fleet.yaml (and the registry it generates,
+# ~/.mac/fleets.yaml). Never check a named/personal fleet back into this repo —
+# add a new <csp>.fleet.yaml sample instead (see ./README.md).
+#
+# Quick start (from a copy under ~/.mac/specs/):
+#   scripts/setup-fleet.py --init-from gke --name <fleet>   # copy this sample
+#   $EDITOR ~/.mac/specs/<fleet>.fleet.yaml                  # fill <placeholders>
+#   <UPSTREAM_API_KEY_ENV>=<key> python3 scripts/setup-fleet.py \
+#       --spec ~/.mac/specs/<fleet>.fleet.yaml --force
+#   make deploy HUB=gke-hub ARGS="gke-hub gke-worker-1 gke-worker-2"
+#
+# The pods are reachable only via a bastion, so ssh_jump/ssh_strict are recorded
+# fleet-wide and the stock deploy injects -o ProxyJump for every operator->node
+# hop (the in-cluster hub->spoke tunnels stay jump-free).
+sample: true
+schema: mac.fleet_setup.v1
+
+fleet_name: example-gke
+# Hub agent name == fleet registry key (deploy --hub / mac --fleet both select by
+# key). The role-based name `gke-hub` keeps this sample free of operator/user
+# identity; the agent runs on the in-cluster hub pod resolved by cluster DNS.
+hub: gke-hub
+hub_url: http://<hub-pod>.<namespace>.svc.cluster.local:8789
+control_port: 8789
+supervisor: supervisord
+
+# Operator -> node bastion. GKE pods resolve only inside the cluster, so every
+# ssh/scp ProxyJumps through the bastion; host keys are ephemeral per pod.
+ssh_jump: <bastion-user>@<bastion-host>:<port>
+ssh_strict_host_key_checking: false
+
+defaults:
+  hermes:
+    gateway_provider: custom
+    gateway_base_url: ""
+    # Materialized model: never blank (a blank model is how a fleet silently
+    # fell through to a tiny default). resolve_gateway_model enforces this too.
+    gateway_model: <provider>/<model>
+  worker:
+    mode: loop
+    require_canary: false
+
+# In-cluster DNS only; no overlay network. The hub is reached over the stock
+# hub->spoke reverse tunnels rather than tailscale/headscale.
+network:
+  provider: none
+
+# The hub is the shared-services manager and has no degraded path: qdrant and
+# firecrawl are mandatory (the deploy hardcodes QDRANT_REQUIRE/FIRECRAWL_REQUIRE
+# =1), so the hub installs both via docker. Bind + URL are loopback so the hub's
+# own deploy-time validation hits 127.0.0.1 and the reverse tunnel's hub
+# endpoint (-R 127.0.0.1:16333:127.0.0.1:6333) forwards to them; network=none
+# spokes auto-rewrite their URLs to the tunnel-forwarded 127.0.0.1:16333/13002.
+qdrant:
+  install: auto
+  bind_addr: "127.0.0.1"
+  url: http://127.0.0.1:6333
+firecrawl:
+  install: auto
+  bind_addr: "127.0.0.1"
+  url: http://127.0.0.1:3002
+
+router:
+  backend: inproc
+  # One upstream LLM provider. In-cluster pods often can't reach a tailscale-
+  # internal vLLM, so a hosted provider is typical here. The deploy escrows the
+  # upstream key into the hub vault; the hub-only router resolves key=secret:...
+  # from there. SPOKES route through the hub and carry no upstream key.
+  providers:
+    - id: <provider>
+      key_env: <UPSTREAM_API_KEY_ENV>
+  default_model: <provider>/<model>
+
+agents:
+  - name: gke-hub
+    target: <bastion-user>@<hub-pod>.<namespace>.svc.cluster.local
+    os: linux
+    supervisor: supervisord
+    control_bind_host: "0.0.0.0"
+    worker:
+      mode: loop
+
+  - name: gke-worker-1
+    target: <bastion-user>@<worker-1-pod>.<namespace>.svc.cluster.local
+    os: linux
+    supervisor: supervisord
+    worker:
+      mode: loop
+
+  - name: gke-worker-2
+    target: <bastion-user>@<worker-2-pod>.<namespace>.svc.cluster.local
+    os: linux
+    supervisor: supervisord
+    worker:
+      mode: loop
+
+deploy_agents:
+  - gke-hub
+  - gke-worker-1
+  - gke-worker-2

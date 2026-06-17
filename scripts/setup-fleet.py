@@ -267,6 +267,70 @@ def write_generated_files(
     return 0
 
 
+SAMPLES_DIR = ROOT / "deploy" / "fleet" / "samples"
+
+
+def _sample_description(path: Path) -> str:
+    """First non-shebang header-comment line of a sample, as a short blurb."""
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line.startswith("#"):
+                break
+            text = line.lstrip("#").strip()
+            if text:
+                return text
+    except OSError:
+        pass
+    return ""
+
+
+def _available_samples() -> List[Path]:
+    if not SAMPLES_DIR.is_dir():
+        return []
+    return sorted(SAMPLES_DIR.glob("*.fleet.yaml"))
+
+
+def list_samples() -> int:
+    samples = _available_samples()
+    if not samples:
+        print("No fleet samples found under %s" % SAMPLES_DIR, file=sys.stderr)
+        return 1
+    print("Available fleet samples (deploy/fleet/samples):")
+    width = max(len(p.name[: -len(".fleet.yaml")]) for p in samples)
+    for path in samples:
+        name = path.name[: -len(".fleet.yaml")]
+        desc = _sample_description(path)
+        if desc:
+            print("  %-*s  %s" % (width, name, desc))
+        else:
+            print("  %s" % name)
+    print("")
+    print("Copy one with: scripts/setup-fleet.py --init-from <name> [--name <fleet>]")
+    return 0
+
+
+def init_from_sample(name: str, fleet: str, *, force: bool, specs_dir: Path) -> int:
+    src = SAMPLES_DIR / ("%s.fleet.yaml" % name)
+    if not src.is_file():
+        available = ", ".join(p.name[: -len(".fleet.yaml")] for p in _available_samples()) or "(none)"
+        print("No sample named %r under %s. Available: %s" % (name, SAMPLES_DIR, available), file=sys.stderr)
+        return 2
+    fleet_name = (fleet or name).strip()
+    dest = specs_dir.expanduser() / ("%s.fleet.yaml" % fleet_name)
+    if dest.exists() and not force:
+        print("Refusing to overwrite %s without --force." % dest, file=sys.stderr)
+        return 2
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest)
+    print("Copied %s -> %s" % (src, dest))
+    print("")
+    print("Next:")
+    print("  1. Edit %s and fill in the <placeholders>." % dest)
+    print("  2. Re-run with: scripts/setup-fleet.py --spec %s --force" % dest)
+    return 0
+
+
 def _default_worker_capabilities() -> List[str]:
     return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
 
@@ -814,6 +878,26 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--deploy-plan-file", default="", help="Write a setup deployment plan JSON file.")
     parser.add_argument("--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup.")
     parser.add_argument(
+        "--list-samples",
+        action="store_true",
+        help="List the available per-CSP fleet samples (deploy/fleet/samples) and exit.",
+    )
+    parser.add_argument(
+        "--init-from",
+        metavar="SAMPLE",
+        help="Copy deploy/fleet/samples/<SAMPLE>.fleet.yaml to ~/.mac/specs/<fleet>.fleet.yaml, then exit.",
+    )
+    parser.add_argument(
+        "--name",
+        default="",
+        help="Fleet/spec name for --init-from (defaults to the sample name).",
+    )
+    parser.add_argument(
+        "--specs-dir",
+        default=str(Path.home() / ".mac" / "specs"),
+        help="Directory --init-from copies samples into.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate --spec and print the redacted setup plan.",
@@ -854,6 +938,16 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--webdav-root", default="", help="Hub/shared artifact publish directory for --new-hub.")
     parser.add_argument("--webdav-public-path", default="/artifacts/", help="WebDAV public path prefix for --new-hub.")
     args = parser.parse_args(argv)
+
+    if args.list_samples:
+        return list_samples()
+    if args.init_from:
+        return init_from_sample(
+            args.init_from,
+            args.name,
+            force=args.force,
+            specs_dir=Path(args.specs_dir),
+        )
 
     fleets_config = Path(args.fleets_config).expanduser()
     env_file = Path(args.env_file).expanduser()

@@ -159,9 +159,14 @@ An agent inside a container/pod with **no init system**. Two supported models:
      systemd is absent).
    - **Deploy:** the same `make deploy HUB=<node>`; the fleet's `ssh_jump`
      routes it through the bastion.
-   - *Example:* the `jordanh-gke` fleet — GKE pods (`jordanh-hub`,
-     `jordanh-worker1/2`) under supervisord, reached via the bastion ProxyJump,
-     workers registering through the reverse tunnel.
+   - *Worked example:* the generic GKE sample `deploy/fleet/samples/gke.fleet.yaml`
+     — hub pod `gke-hub` + workers `gke-worker-1/2` under supervisord, reached
+     via the bastion ProxyJump, workers registering through the reverse tunnel.
+     Copy it with `scripts/setup-fleet.py --init-from gke --name <fleet>`, fill
+     in the `<placeholders>`, then `--spec ~/.mac/specs/<fleet>.fleet.yaml`. The
+     same `mac.fleet_setup.v1` schema covers EKS/AKS/OKE; see
+     `deploy/fleet/samples/README.md`. (Real, named fleets live outside git in
+     `~/.mac/specs/` — never check one in.)
 
 2. **K8s-native, image-based** (`deploy/k8s/`). A stateless `mac-api`
    Deployment plus a `mac-runner` orchestrator that creates one Job per task,

@@ -138,6 +138,23 @@ LLM-driven setup should prefer a spec file over the interactive wizard. The
 setup spec is validated before files are written, and the doctor output lists
 missing env vars and next commands in machine-readable JSON.
 
+Rather than hand-writing a spec, start from a generic, per-CSP sample. The repo
+ships de-personalized samples under `deploy/fleet/samples/` (GKE is the worked
+example); a real, named fleet spec lives **outside git** in
+`~/.mac/specs/<fleet>.fleet.yaml`, created at install time by copying and
+customizing a sample. Never check a named fleet into the repo.
+
+```bash
+scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
+scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
+$EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
+make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
+```
+
+See `deploy/fleet/samples/README.md` for the per-CSP convention and the knobs
+that differ per cloud (bastion/ProxyJump, network provider, in-cluster vs
+public DNS, supervisor).
+
 Example `fleet-setup.yaml`:
 
 ```yaml
