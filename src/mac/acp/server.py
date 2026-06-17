@@ -374,7 +374,13 @@ class ACPAgentServer:
     ) -> None:
         self._peer = peer
         self._backend = _as_backend(backend)
-        self._agent_capabilities = agent_capabilities or AgentCapabilities()
+        # Advertise mac's full agent capability set (incl. _meta extensions) by
+        # default; an explicit override still wins.
+        if agent_capabilities is None:
+            from .capabilities import mac_agent_capabilities
+
+            agent_capabilities = mac_agent_capabilities()
+        self._agent_capabilities = agent_capabilities
         self._agent_info = agent_info or {
             "name": "mac",
             "title": "MAC agent",

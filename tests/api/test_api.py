@@ -31,6 +31,26 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     assert thread is not None and thread.daemon is True and thread.is_alive()
 
 
+def test_well_known_acp_manifest_is_public_and_advertises_mac_extensions(monkeypatch):
+    # ADR 0006 Phase 3: the discovery manifest is unauthenticated even when the
+    # hub is token-protected, and carries protocolVersion + mac's _meta extensions.
+    monkeypatch.setenv("MAC_API_TOKEN", "secret-token")
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    resp = client.get("/.well-known/acp")  # no Authorization header
+    assert resp.status_code == 200
+    manifest = resp.json()
+    assert manifest["protocolVersion"] == 1
+    assert isinstance(manifest["protocolVersion"], int)
+    assert manifest["_meta"]["mac"] == {
+        "sandbox": True,
+        "decomposition": True,
+        "evidence": True,
+    }
+    assert manifest["agentCapabilities"]["loadSession"] is False
+    assert manifest["agentCapabilities"]["_meta"]["mac"]["evidence"] is True
+
+
 def test_post_tasks_accepts_summary_alias_for_description():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 
