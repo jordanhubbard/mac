@@ -11,4 +11,11 @@ unset "${!QDRANT_@}"
 unset "${!SLACK_@}"
 unset "${!TOKENHUB_@}"
 
-PATH=".venv/bin:${PATH}" exec .venv/bin/python -m pytest "$@"
+export PATH=".venv/bin:${PATH}"
+
+if [ "$#" -eq 0 ]; then
+    .venv/bin/python -m coverage run -m pytest
+    exec .venv/bin/python -m coverage report
+fi
+
+exec .venv/bin/python -m pytest "$@"
