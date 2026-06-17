@@ -1044,6 +1044,18 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "repository_url": "https://github.com/example/route-coverage.git",
             "required_capabilities": ["python"],
         },
+        ("POST", "/a2a"): {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": "msg-route-coverage",
+                    "parts": [{"kind": "text", "text": "route coverage a2a task"}],
+                }
+            },
+        },
         ("POST", "/tasks/{task_id}/children"): {
             "children": [{"title": "child route task", "required_capabilities": ["python"]}]
         },
