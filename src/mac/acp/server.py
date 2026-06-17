@@ -35,6 +35,7 @@ Spec notes (verified against ``agentclientprotocol.com/protocol/v1/*``):
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 import threading
 from typing import Any, Callable, Dict, List, Optional, Protocol, Union, runtime_checkable
@@ -544,7 +545,7 @@ class ACPAgentServer:
 
 
 def serve_stdio(
-    backend: Union[PromptBackend, PromptBackendFn],
+    backend: Optional[Union[PromptBackend, PromptBackendFn]] = None,
     *,
     stdin: Any = None,
     stdout: Any = None,
@@ -557,10 +558,24 @@ def serve_stdio(
     thread, pumping inbound frames, until stdin reaches EOF (the client closed
     the connection).
 
+    ``backend`` defaults to the production
+    :class:`~mac.acp.backend.MacAgentBackend` when ``MAC_ACP_BACKEND_CMD`` is set
+    (an agent command is configured), else to :class:`EchoBackend` so the
+    no-config standalone case stays a harmless smoke test. Pass an explicit
+    backend to override the choice.
+
     ``stdin`` / ``stdout`` default to the process's binary stdio buffers; they
     are injectable for testing. Extra ``server_kwargs`` are forwarded to
     :class:`ACPAgentServer`.
     """
+
+    if backend is None:
+        if os.environ.get("MAC_ACP_BACKEND_CMD"):
+            from .backend import MacAgentBackend
+
+            backend = MacAgentBackend()
+        else:
+            backend = EchoBackend()
 
     in_stream = stdin if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin)
     out_stream = (
@@ -594,13 +609,14 @@ def serve_stdio(
 def main(argv: Optional[List[str]] = None) -> int:
     """Entrypoint for ``python -m mac.acp.server``.
 
-    Runs the server over stdio with the minimal :class:`EchoBackend`. This is a
-    smoke-test entrypoint only -- the production backend that binds to mac's
-    task/tool surface is the Phase-2 follow-up. The default backend echoes the
-    prompt text back as a single agent message and ends the turn.
+    Runs the server over stdio, letting :func:`serve_stdio` pick the backend:
+    the production :class:`~mac.acp.backend.MacAgentBackend` when
+    ``MAC_ACP_BACKEND_CMD`` is set (a real mac agent runs each turn), else the
+    minimal :class:`EchoBackend` smoke-test backend (echoes the prompt text back
+    as a single agent message and ends the turn).
     """
 
-    serve_stdio(EchoBackend())
+    serve_stdio()
     return 0
 
 

@@ -27,6 +27,7 @@ from .capabilities import (
     mac_client_capabilities,
     mac_meta,
 )
+from .backend import MacAgentBackend
 from .client import ACPClient, PermissionHandler, UpdateHandler
 from .executor import ACPExecutor, ACPRunResult
 from .permission import (
@@ -123,5 +124,6 @@ __all__ = [
     "PromptBackend",
     "PromptBackendFn",
     "EchoBackend",
+    "MacAgentBackend",
     "serve_stdio",
 ]
