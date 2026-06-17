@@ -41,6 +41,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9.0",
+    "coverage[toml]>=7.6,<8.0",
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
     "kubernetes>=30.1,<33",
@@ -90,6 +91,20 @@ markers = [
     "ui: UI asset-serving and dashboard tests (tests/ui/)",
     "postgres: live-Postgres tests; need MAC_TEST_PG_URL pointing at a writable test DB",
 ]
+
+[tool.coverage.run]
+source = ["src/mac"]
+omit = [
+    # Pinned upstream snapshot; keep mac-owned adapters covered here, but do
+    # not count vendored Hermes internals against this repository's threshold.
+    "src/mac/_hermes/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+precision = 2
+show_missing = true
+skip_covered = true
 
 [tool.hatch.build.targets.wheel]
 # packages already sweeps in all of src/mac, including the src/mac/ui static

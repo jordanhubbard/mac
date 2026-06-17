@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -1224,6 +1224,21 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
 def _required_scope(method: str, path: str) -> Optional[str]:
     if path == "/health":
         return None
+    if path == "/.well-known/acp":
+        # ACP discovery manifest (ADR 0006, Phase 3): a public well-known doc,
+        # like /health. No secrets; just mac's capability advertisement.
+        return None
+    if path in ("/.well-known/agent-card.json", "/.well-known/agent.json"):
+        # A2A AgentCard discovery (Phase 4, agent<->agent axis): an
+        # unauthenticated well-known doc, like /.well-known/acp. Identity +
+        # capabilities + skills only; no secrets. The canonical path is
+        # agent-card.json (A2A v0.3+); agent.json is the legacy alias.
+        return None
+    if path == "/a2a":
+        # A2A JSON-RPC endpoint (Phase 4): inbound delegation is an agent
+        # action, so it requires the agent scope (admin inherits it), the same
+        # bar as /v1 inference and the /acp/ws runtime seam.
+        return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
     if path == "/v1" or path.startswith("/v1/"):
@@ -1293,6 +1308,64 @@ def _authorize_request(
     if not principal.has_scope(required):
         raise AuthorizationError("token lacks required scope: %s" % required)
     return principal
+
+
+def _authorize_acp_websocket(
+    websocket: "WebSocket", auth_tokens: Mapping[str, TokenPrincipal]
+) -> "tuple[Optional[TokenPrincipal], Optional[str]]":
+    """Resolve the principal for an ACP WebSocket handshake.
+
+    The HTTP auth middleware only runs for ``http`` scope, so the ``/acp/ws``
+    route authenticates here instead. Returns ``(principal, accepted_subprotocol)``:
+
+    * ``principal`` is ``None`` when no token is supplied or it does not match a
+      registered token (or lacks the required ``agent`` scope). The caller
+      rejects the socket *only when tokens are configured* -- when no tokens are
+      set (dev mode), ``_authorize_request`` also returns ``None`` and the
+      request is treated as admin, so we keep WS consistent with that.
+    * ``accepted_subprotocol`` is ``"Authorization"`` when the token arrived via
+      the ``Authorization`` subprotocol (the server must echo the chosen
+      subprotocol back on accept), else ``None``.
+
+    ACP runtime work requires the ``agent`` scope (same as ``/v1`` inference and
+    the ``/agentbus`` / ``/action-events`` agent channels in
+    :func:`_required_scope`).
+    """
+
+    required = "agent"
+    token = ""
+    accepted_subprotocol: Optional[str] = None
+
+    # 1) ?token= query param.
+    raw_token = websocket.query_params.get("token") if hasattr(websocket, "query_params") else None
+    if raw_token:
+        token = str(raw_token).strip()
+
+    # 2) Authorization WebSocket subprotocol: clients offer
+    #    ["Authorization", "<bearer>"] (browsers can't set headers on a WS
+    #    handshake). Accept either a bare token as the second value or a
+    #    "Bearer <token>" form.
+    if not token:
+        offered = []
+        header = websocket.headers.get("sec-websocket-protocol") if hasattr(websocket, "headers") else None
+        if header:
+            offered = [p.strip() for p in header.split(",") if p.strip()]
+        if offered and offered[0] == "Authorization" and len(offered) > 1:
+            candidate = offered[1].strip()
+            if candidate.lower().startswith("bearer "):
+                candidate = candidate[len("bearer "):].strip()
+            token = candidate
+            accepted_subprotocol = "Authorization"
+
+    if not token:
+        return None, accepted_subprotocol
+
+    principal = _resolve_principal(token, auth_tokens)
+    if principal is None:
+        return None, accepted_subprotocol
+    if not principal.has_scope(required):
+        return None, accepted_subprotocol
+    return principal, accepted_subprotocol
 
 
 def _should_record_http_observation(path: str) -> bool:
@@ -2962,6 +3035,109 @@ def create_app(
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/.well-known/acp")
+    def acp_manifest_route() -> Dict[str, Any]:
+        # ADR 0006 Phase 3: the well-known ACP discovery manifest. Unauthenticated
+        # (see _required_scope); advertises protocolVersion, mac's agent
+        # capabilities, and the mac-specific _meta extensions. Dependency-light:
+        # no principal, no control-plane access — pure capability advertisement.
+        from mac.acp.capabilities import acp_manifest
+
+        return acp_manifest()
+
+    def _a2a_base_url(request: Request) -> str:
+        # The externally-visible origin the caller used to reach mac, so the
+        # AgentCard advertises a ``url`` a client can actually address. Honor a
+        # reverse-proxy's forwarded host/proto when present (the hub may sit
+        # behind one); fall back to the request's own base URL.
+        forwarded_host = request.headers.get("x-forwarded-host")
+        forwarded_proto = request.headers.get("x-forwarded-proto")
+        if forwarded_host:
+            scheme = (forwarded_proto or request.url.scheme or "https").split(",")[0].strip()
+            host = forwarded_host.split(",")[0].strip()
+            return "%s://%s" % (scheme, host)
+        return str(request.base_url).rstrip("/")
+
+    @app.get("/.well-known/agent-card.json")
+    @app.get("/.well-known/agent.json")
+    def a2a_agent_card_route(request: Request) -> Dict[str, Any]:
+        # A2A AgentCard discovery (Phase 4): the unauthenticated "business card"
+        # an external A2A agent fetches to learn mac's identity, A2A endpoint,
+        # capabilities, and skills. Pure data; the canonical path is
+        # agent-card.json (A2A v0.3+), agent.json is a legacy alias. No
+        # control-plane access.
+        from mac.a2a.card import agent_card
+
+        return agent_card(_a2a_base_url(request))
+
+    @app.post("/a2a")
+    async def a2a_rpc_route(request: Request) -> JSONResponse:
+        # A2A JSON-RPC 2.0 endpoint (Phase 4): an external agent delegates work
+        # here (message/send -> mac task; tasks/get; tasks/cancel). Requires the
+        # agent scope (see _required_scope). Builds the A2AService from the
+        # app's control plane, mirroring how other routes use ``cp``.
+        from mac.a2a.protocol import (
+            ERROR_INVALID_REQUEST,
+            ERROR_PARSE,
+            rpc_error,
+        )
+        from mac.a2a.service import A2AService
+
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001 - malformed body is a JSON-RPC parse error
+            return JSONResponse(content=rpc_error(None, ERROR_PARSE, "invalid JSON body"))
+        if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0" or "method" not in payload:
+            rpc_id = payload.get("id") if isinstance(payload, dict) else None
+            return JSONResponse(
+                content=rpc_error(
+                    rpc_id, ERROR_INVALID_REQUEST, "not a valid JSON-RPC 2.0 request"
+                )
+            )
+        service = A2AService(cp)
+        result = service.handle_rpc(
+            str(payload.get("method")), payload.get("params"), payload.get("id")
+        )
+        return JSONResponse(content=result)
+
+    @app.websocket("/acp/ws")
+    async def acp_websocket(websocket: WebSocket) -> None:
+        # ADR 0006 Phase 2 remote transport: an external ACP client drives a mac
+        # agent over WebSocket, reusing the same ACPAgentServer/Peer the stdio
+        # path uses. The HTTP auth middleware does not run for websocket scope,
+        # so we validate the bearer token here, before accepting the socket.
+        #
+        # Token sources (first match wins):
+        #   * ``?token=<bearer>`` query param, or
+        #   * an ``Authorization`` WebSocket subprotocol: clients offer
+        #     ``["Authorization", "<bearer>"]`` (the bearer rides as the second
+        #     subprotocol value, since browsers can't set Authorization headers
+        #     on a WS handshake). We echo ``Authorization`` back as the accepted
+        #     subprotocol.
+        principal, accepted_subprotocol = _authorize_acp_websocket(websocket, tokens)
+        if principal is None and tokens:
+            # tokens configured but no valid principal -> reject (1008 policy).
+            await websocket.close(code=1008)
+            return
+
+        # Backend selection mirrors serve_stdio: the production MacAgentBackend
+        # when an agent command is configured, else the harmless EchoBackend.
+        from mac.acp.server import EchoBackend
+
+        if os.environ.get("MAC_ACP_BACKEND_CMD"):
+            from mac.acp.backend import MacAgentBackend
+
+            backend: Any = MacAgentBackend()
+        else:
+            backend = EchoBackend()
+
+        from mac.acp.ws import serve_acp_websocket
+
+        accept_kwargs = (
+            {"subprotocol": accepted_subprotocol} if accepted_subprotocol else None
+        )
+        await serve_acp_websocket(websocket, backend, accept_kwargs=accept_kwargs)
 
     @app.get("/startup/hermes")
     def hermes_startup() -> Dict[str, Any]:

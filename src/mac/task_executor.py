@@ -54,6 +54,7 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,6 +157,32 @@ def _hub_post(path: str, payload: Dict[str, Any], *, timeout: float = 5.0) -> bo
         return True
     except Exception:
         return False
+
+
+def _hub_post_json(path: str, payload: Dict[str, Any], *, timeout: float = 5.0) -> Optional[Any]:
+    """POST JSON and return the parsed response body (or None on any failure).
+
+    Like :func:`_hub_post` but surfaces the response so callers that need a
+    server-assigned id (e.g. an opened AgentBus stream) can read it. Best-effort:
+    returns None when hub env is absent or the call/parse fails."""
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return None
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + path,
+        data=data,
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        raw = urllib.request.urlopen(request, timeout=timeout).read()  # noqa: S310 (operator-configured URL)
+    except Exception:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
 
 
 def _hub_get(path: str, *, timeout: float = 5.0) -> Optional[Any]:
@@ -1422,6 +1449,219 @@ def _unsandboxed_agent_argv(prompt: str) -> List[str]:
     )
 
 
+def _executor_backend() -> str:
+    """Which agent runtime drives a task: ``hermes`` (default) or ``acp``.
+
+    ACP (ADR 0006) is opt-in via ``MAC_EXECUTOR_BACKEND=acp`` so Hermes stays the
+    default until parity; the external agent command is ``MAC_ACP_AGENT_CMD``."""
+    return (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower()
+
+
+def _acp_agent_argv() -> List[str]:
+    """The external ACP agent command (shell-split). Required for backend=acp."""
+    import shlex
+
+    return shlex.split((os.environ.get("MAC_ACP_AGENT_CMD") or "").strip())
+
+
+def _acp_update_action_event(audit_id: Any, session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Map one ACP ``session/update`` notification to a mac action-event record."""
+    inner = params.get("update") or {}
+    return {
+        "task_id": audit_id,
+        "session_id": session_id or params.get("sessionId"),
+        "actor": "mac-acp",
+        "action_type": "acp.session_update",
+        "action_name": str(inner.get("sessionUpdate") or "update"),
+        "outcome": "unknown",
+        "severity": "info",
+        "attributes": {"acp_update": inner},
+    }
+
+
+def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
+    """ACP ``session/request_permission`` handler (Phase 3).
+
+    Evaluates each request through :func:`mac.acp.permission.evaluate_permission`
+    instead of blanket auto-approving. The OpenShell *kernel sandbox* remains the
+    real gate — when sandboxed the decision short-circuits to allow ("sandbox-
+    enforced") and the ACP prompt is advisory. Unsandboxed, the decision consults
+    the parsed OpenShell *policy* (network lockdown denies egress; an empty
+    read_write set denies writes); with no policy it defaults to allow (Phase-1
+    parity), flippable to deny via ``MAC_ACP_PERMISSION_MODE=deny``.
+
+    On *allow* it selects the first ``allow``-kind option the agent offered (else
+    the first option); on *deny* it selects a ``reject``-kind option if one is
+    offered, else returns a CANCELLED outcome. Every decision + its reason is
+    recorded to ``/action-events`` (``attributes.permission_reason``)."""
+    from mac.acp.permission import evaluate_permission, load_openshell_policy
+    from mac.acp.protocol import PermissionOutcome, RequestPermissionResult
+
+    sandboxed = _openshell_enabled()
+    # Load the policy only when it can actually change the decision (unsandboxed
+    # under policy mode). Best-effort: a missing/unreadable policy -> None.
+    policy = None if sandboxed else load_openshell_policy()
+
+    def _handler(params: Any) -> Any:
+        options = list(getattr(params, "options", None) or [])
+        tool_call = getattr(params, "tool_call", {}) or {}
+        decision = evaluate_permission(tool_call, policy=policy, sandboxed=sandboxed)
+
+        if decision.allow:
+            chosen = next((o for o in options if str(o.kind or "").startswith("allow")), None)
+            chosen = chosen or (options[0] if options else None)
+        else:
+            # Prefer an explicit reject option when the agent offered one.
+            chosen = next((o for o in options if str(o.kind or "").startswith("reject")), None)
+
+        _hub_post(
+            "/action-events",
+            {
+                "task_id": audit_id,
+                "session_id": getattr(params, "session_id", None),
+                "actor": "mac-acp",
+                "action_type": "acp.permission",
+                "action_name": str(tool_call.get("title") or tool_call.get("toolCallId") or "tool_call"),
+                "outcome": "allowed" if decision.allow else "denied",
+                "severity": "info",
+                "attributes": {
+                    "tool_call": tool_call,
+                    "permission_reason": decision.reason,
+                    "allowed": decision.allow,
+                },
+            },
+        )
+        if chosen is not None:
+            return RequestPermissionResult(outcome=PermissionOutcome.SELECTED, option_id=chosen.option_id)
+        return RequestPermissionResult(outcome=PermissionOutcome.CANCELLED)
+
+    return _handler
+
+
+#: AgentBus content_type for a mirrored ACP session/update chunk.
+_ACP_AGENTBUS_CONTENT_TYPE = "application/vnd.mac.acp.update+json"
+#: AgentBus topic for the mirrored ACP update stream.
+_ACP_AGENTBUS_TOPIC = "acp.session_update"
+
+
+class _AcpAgentBusMirror:
+    """Best-effort mirror of an ACP ``session/update`` stream onto AgentBus.
+
+    Lifecycle (all via :func:`_hub_post`, so failures never raise):
+
+      * :meth:`open`   -> ``POST /agentbus/streams`` once at run start. mac is
+        both sender and recipient (a self-stream: the worker agent is the only
+        party, and AgentBus requires a concrete recipient), so the worker's own
+        ``local_agent_id`` is used for both ends.
+      * :meth:`append` -> ``POST /agentbus/streams/{id}/chunks`` per update.
+      * :meth:`close`  -> ``POST /agentbus/streams/{id}/close`` at run end.
+
+    If the open fails (no hub env, AgentBus error, unknown agent) the mirror is
+    inert: :attr:`stream_id` stays ``None`` and append/close are no-ops, so the
+    /action-events path is unaffected."""
+
+    def __init__(self, audit_id: Any) -> None:
+        self._agent_id = local_agent_id()
+        self._audit_id = audit_id
+        self.stream_id: Optional[str] = None
+
+    def open(self) -> None:
+        payload: Dict[str, Any] = {
+            "sender_agent_id": self._agent_id,
+            "recipient_agent_id": self._agent_id,
+            "topic": _ACP_AGENTBUS_TOPIC,
+            "content_type": _ACP_AGENTBUS_CONTENT_TYPE,
+            "headers": {"schema": "mac.acp.session_update.v1", "task_id": self._audit_id},
+        }
+        if self._audit_id:
+            payload["task_id"] = str(self._audit_id)
+        resp = _hub_post_json("/agentbus/streams", payload)
+        if isinstance(resp, dict):
+            sid = resp.get("id")
+            if isinstance(sid, str) and sid:
+                self.stream_id = sid
+
+    def append(self, session_id: str, params: Dict[str, Any]) -> None:
+        if not self.stream_id:
+            return
+        _hub_post(
+            "/agentbus/streams/%s/chunks" % self.stream_id,
+            {
+                "sender_agent_id": self._agent_id,
+                "content_type": _ACP_AGENTBUS_CONTENT_TYPE,
+                "payload": {"sessionId": session_id, "update": params.get("update") or {}},
+            },
+        )
+
+    def close(self, status: str = "closed") -> None:
+        if not self.stream_id:
+            return
+        # The close handler takes sender_agent_id + status as query params.
+        _hub_post(
+            "/agentbus/streams/%s/close?sender_agent_id=%s&status=%s"
+            % (self.stream_id, urllib.parse.quote(self._agent_id), urllib.parse.quote(status)),
+            {},
+        )
+
+
+def _invoke_acp_agent(
+    prompt: str, workspace: Path, audit_id: Any, opts: dict, *, executor: Any = None
+) -> "subprocess.CompletedProcess":
+    """Drive an external ACP agent (ADR 0006) for one task turn.
+
+    Streams every ``session/update`` to the hub's ``/action-events`` ledger and
+    bridges ``session/request_permission`` through :func:`_acp_permission_handler`.
+    Returns a :class:`subprocess.CompletedProcess` so the downstream
+    finalizer/evidence flow is unchanged — the deterministic git finalizer
+    remains the real proof of work regardless of which agent produced it."""
+    from mac.acp import ACPExecutor
+    from mac.acp.protocol import ContentBlockType, SessionUpdateKind, StopReason
+
+    if executor is None:
+        argv = _acp_agent_argv()
+        if not argv:
+            return subprocess.CompletedProcess(
+                ["acp"], 1, "", "MAC_EXECUTOR_BACKEND=acp but MAC_ACP_AGENT_CMD is unset"
+            )
+        executor = ACPExecutor(argv, cwd=str(workspace))
+
+    text_chunks: List[str] = []
+    # AgentBus mirror (ADR 0006 Phase 3): mirror the session/update stream onto an
+    # AgentBus chunk stream alongside the /action-events ledger. Best-effort and
+    # failure-tolerant — if the open fails we simply skip the chunk posts. Only
+    # runs under backend=acp, so the Hermes path takes on no extra latency.
+    mirror = _AcpAgentBusMirror(audit_id)
+    mirror.open()
+
+    def _on_update(params: Dict[str, Any]) -> None:
+        inner = params.get("update") or {}
+        if inner.get("sessionUpdate") in (
+            SessionUpdateKind.AGENT_MESSAGE_CHUNK,
+            SessionUpdateKind.AGENT_THOUGHT_CHUNK,
+        ):
+            content = inner.get("content") or {}
+            if isinstance(content, dict) and content.get("type") == ContentBlockType.TEXT:
+                text_chunks.append(str(content.get("text") or ""))
+        _hub_post("/action-events", _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params))
+        mirror.append(str(params.get("sessionId") or ""), params)
+
+    argv_label = list(getattr(executor, "_argv", ["acp"]))
+    try:
+        run = executor.run(
+            prompt,
+            on_update=_on_update,
+            on_permission=_acp_permission_handler(audit_id),
+            timeout=opts.get("timeout"),
+        )
+    except Exception as exc:  # noqa: BLE001 - a backend failure must finalize, not crash the loop
+        mirror.close(status="errored")
+        return subprocess.CompletedProcess(argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc)
+    mirror.close()
+    rc = 0 if run.stop_reason == StopReason.END_TURN else 1
+    stderr = "" if rc == 0 else "ACP agent stopped with reason: %s" % run.stop_reason
+    return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
+
+
 def _invoke_agent(
     runner: Callable[..., Any], prompt: str, workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -1429,11 +1669,15 @@ def _invoke_agent(
 
     Invariant: --yolo (Hermes' own approval bypass) is only used when the run is
     confined by OpenShell, so we never launch an *unguarded* YOLO agent.
+      * backend=acp      -> drive an external ACP agent (ADR 0006); confinement
+        is the OpenShell sandbox + the permission bridge.
       * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
       * sandbox disabled -> direct run, gated by MAC_ALLOW_UNSANDBOXED_YOLO.
     Returns the runner's result (carries .returncode)."""
+    if _executor_backend() == "acp":
+        return _invoke_acp_agent(prompt, workspace, audit_id, opts)
     if _openshell_enabled():
         return _run_sandboxed(runner, _hermes_argv(prompt), workspace, audit_id, opts)
     return runner(_unsandboxed_agent_argv(prompt), workspace, audit_id, opts)
