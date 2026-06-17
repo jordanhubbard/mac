@@ -38,6 +38,7 @@ from .permission import (
     permission_mode,
 )
 from .peer import DEFERRED, Peer, PendingRequest, RemoteError, stdio_peer
+from .ws_client import ACPWebSocketClient, connect_acp_websocket
 from .server import (
     ACPAgentServer,
     EchoBackend,
@@ -119,6 +120,8 @@ __all__ = [
     "PermissionHandler",
     "ACPExecutor",
     "ACPRunResult",
+    "connect_acp_websocket",
+    "ACPWebSocketClient",
     "ACPAgentServer",
     "PromptTurn",
     "PromptBackend",
