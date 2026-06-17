@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -1297,6 +1297,64 @@ def _authorize_request(
     if not principal.has_scope(required):
         raise AuthorizationError("token lacks required scope: %s" % required)
     return principal
+
+
+def _authorize_acp_websocket(
+    websocket: "WebSocket", auth_tokens: Mapping[str, TokenPrincipal]
+) -> "tuple[Optional[TokenPrincipal], Optional[str]]":
+    """Resolve the principal for an ACP WebSocket handshake.
+
+    The HTTP auth middleware only runs for ``http`` scope, so the ``/acp/ws``
+    route authenticates here instead. Returns ``(principal, accepted_subprotocol)``:
+
+    * ``principal`` is ``None`` when no token is supplied or it does not match a
+      registered token (or lacks the required ``agent`` scope). The caller
+      rejects the socket *only when tokens are configured* -- when no tokens are
+      set (dev mode), ``_authorize_request`` also returns ``None`` and the
+      request is treated as admin, so we keep WS consistent with that.
+    * ``accepted_subprotocol`` is ``"Authorization"`` when the token arrived via
+      the ``Authorization`` subprotocol (the server must echo the chosen
+      subprotocol back on accept), else ``None``.
+
+    ACP runtime work requires the ``agent`` scope (same as ``/v1`` inference and
+    the ``/agentbus`` / ``/action-events`` agent channels in
+    :func:`_required_scope`).
+    """
+
+    required = "agent"
+    token = ""
+    accepted_subprotocol: Optional[str] = None
+
+    # 1) ?token= query param.
+    raw_token = websocket.query_params.get("token") if hasattr(websocket, "query_params") else None
+    if raw_token:
+        token = str(raw_token).strip()
+
+    # 2) Authorization WebSocket subprotocol: clients offer
+    #    ["Authorization", "<bearer>"] (browsers can't set headers on a WS
+    #    handshake). Accept either a bare token as the second value or a
+    #    "Bearer <token>" form.
+    if not token:
+        offered = []
+        header = websocket.headers.get("sec-websocket-protocol") if hasattr(websocket, "headers") else None
+        if header:
+            offered = [p.strip() for p in header.split(",") if p.strip()]
+        if offered and offered[0] == "Authorization" and len(offered) > 1:
+            candidate = offered[1].strip()
+            if candidate.lower().startswith("bearer "):
+                candidate = candidate[len("bearer "):].strip()
+            token = candidate
+            accepted_subprotocol = "Authorization"
+
+    if not token:
+        return None, accepted_subprotocol
+
+    principal = _resolve_principal(token, auth_tokens)
+    if principal is None:
+        return None, accepted_subprotocol
+    if not principal.has_scope(required):
+        return None, accepted_subprotocol
+    return principal, accepted_subprotocol
 
 
 def _should_record_http_observation(path: str) -> bool:
@@ -2976,6 +3034,44 @@ def create_app(
         from mac.acp.capabilities import acp_manifest
 
         return acp_manifest()
+
+    @app.websocket("/acp/ws")
+    async def acp_websocket(websocket: WebSocket) -> None:
+        # ADR 0006 Phase 2 remote transport: an external ACP client drives a mac
+        # agent over WebSocket, reusing the same ACPAgentServer/Peer the stdio
+        # path uses. The HTTP auth middleware does not run for websocket scope,
+        # so we validate the bearer token here, before accepting the socket.
+        #
+        # Token sources (first match wins):
+        #   * ``?token=<bearer>`` query param, or
+        #   * an ``Authorization`` WebSocket subprotocol: clients offer
+        #     ``["Authorization", "<bearer>"]`` (the bearer rides as the second
+        #     subprotocol value, since browsers can't set Authorization headers
+        #     on a WS handshake). We echo ``Authorization`` back as the accepted
+        #     subprotocol.
+        principal, accepted_subprotocol = _authorize_acp_websocket(websocket, tokens)
+        if principal is None and tokens:
+            # tokens configured but no valid principal -> reject (1008 policy).
+            await websocket.close(code=1008)
+            return
+
+        # Backend selection mirrors serve_stdio: the production MacAgentBackend
+        # when an agent command is configured, else the harmless EchoBackend.
+        from mac.acp.server import EchoBackend
+
+        if os.environ.get("MAC_ACP_BACKEND_CMD"):
+            from mac.acp.backend import MacAgentBackend
+
+            backend: Any = MacAgentBackend()
+        else:
+            backend = EchoBackend()
+
+        from mac.acp.ws import serve_acp_websocket
+
+        accept_kwargs = (
+            {"subprotocol": accepted_subprotocol} if accepted_subprotocol else None
+        )
+        await serve_acp_websocket(websocket, backend, accept_kwargs=accept_kwargs)
 
     @app.get("/startup/hermes")
     def hermes_startup() -> Dict[str, Any]:
