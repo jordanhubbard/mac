@@ -56,11 +56,17 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from .peer import Peer
 from .server import ACPAgentServer, PromptBackend, PromptBackendFn
 
+# The outbound (client-side) WS transport lives in :mod:`mac.acp.ws_client`; it
+# is re-exported here so ``mac.acp.ws`` is the single import surface for both
+# directions of the WebSocket transport. Its ``websocket`` import is guarded, so
+# this re-export never hard-fails when ``websocket-client`` is absent.
+from .ws_client import ACPWebSocketClient, connect_acp_websocket
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from starlette.websockets import WebSocket
 
 
-__all__ = ["serve_acp_websocket"]
+__all__ = ["serve_acp_websocket", "connect_acp_websocket", "ACPWebSocketClient"]
 
 
 def _load_websocket_types() -> Any:
