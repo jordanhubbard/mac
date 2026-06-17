@@ -221,13 +221,23 @@ and write completed operational context back to MAC.
 After the local quickstart makes sense, deploy a hub. The fleet registry is
 home-scoped at `~/.mac/fleets.yaml`; it is not checked into the repository.
 
-For an LLM-driven setup, write a `mac.fleet_setup.v1` YAML spec and run:
+For an LLM-driven setup, start from a generic, per-CSP sample instead of writing
+a `mac.fleet_setup.v1` spec from scratch. The repo ships de-personalized samples
+under `deploy/fleet/samples/` (GKE is the worked example); your real, named fleet
+spec lives outside git in `~/.mac/specs/<fleet>.fleet.yaml`:
 
 ```bash
-mac fleet validate --spec fleet-setup.yaml
-mac fleet doctor --spec fleet-setup.yaml
-make setup ARGS="--spec fleet-setup.yaml --force"
+scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
+scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
+$EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
+
+mac fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml
+mac fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml
+make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
 ```
+
+See `deploy/fleet/samples/README.md` for the per-CSP convention. Never check a
+named fleet into the repo.
 
 The doctor report is JSON and calls out missing provider env vars, bad targets,
 sample-config mistakes, and the exact next commands.
