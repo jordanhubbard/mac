@@ -34,7 +34,26 @@ from .protocol import (
 )
 
 
-__all__ = ["Peer", "PendingRequest", "RemoteError", "stdio_peer"]
+__all__ = ["Peer", "PendingRequest", "RemoteError", "stdio_peer", "DEFERRED"]
+
+
+class _Deferred:
+    """Sentinel a request handler returns to defer its response.
+
+    A synchronous handler normally returns its result, which the peer writes back
+    immediately. Returning :data:`DEFERRED` instead tells the peer the handler
+    will send the response later -- via :meth:`Peer.respond_result` /
+    :meth:`Peer.respond_error` with the request id -- so a long-running handler
+    can hand off to a worker thread without blocking the inbound pump loop (which
+    must stay free to deliver responses/notifications arriving *during* the work).
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "DEFERRED"
+
+
+#: Singleton sentinel; see :class:`_Deferred`.
+DEFERRED = _Deferred()
 
 
 SendFn = Callable[[bytes], None]
@@ -46,6 +65,11 @@ RequestHandler = Callable[[Optional[Dict[str, Any]]], Any]
 #: A notification handler consumes inbound ``params``; its return value (if any)
 #: is ignored, since notifications have no response.
 NotificationHandler = Callable[[Optional[Dict[str, Any]]], None]
+
+#: A raw request handler receives the full request (so it can read the ``id``)
+#: and returns a result, raises for an error, or returns :data:`DEFERRED` to
+#: send the response itself later.
+RawRequestHandler = Callable[["JSONRPCRequest"], Any]
 
 
 class RemoteError(Exception):
@@ -103,6 +127,7 @@ class Peer:
         self._id_counter = itertools.count(1)
         self._pending: Dict[Union[str, int], PendingRequest] = {}
         self._request_handlers: Dict[str, RequestHandler] = {}
+        self._raw_request_handlers: Dict[str, RawRequestHandler] = {}
         self._notification_handlers: Dict[str, NotificationHandler] = {}
         self._inbox = bytearray()
         self._lock = threading.Lock()
@@ -110,9 +135,28 @@ class Peer:
     # -- handler registration ------------------------------------------------
 
     def on_request(self, method: str, handler: RequestHandler) -> None:
-        """Register a handler for inbound requests with the given ``method``."""
+        """Register a handler for inbound requests with the given ``method``.
+
+        The handler receives the request ``params`` and returns the result (or
+        raises to produce a JSON-RPC error). To defer the response to a worker
+        thread, register via :meth:`on_request_raw` instead, or return
+        :data:`DEFERRED` and arrange to call :meth:`respond_result` /
+        :meth:`respond_error` -- but only :meth:`on_request_raw` hands you the
+        request id needed to do so.
+        """
 
         self._request_handlers[method] = handler
+
+    def on_request_raw(self, method: str, handler: "RawRequestHandler") -> None:
+        """Register a handler that receives the full :class:`JSONRPCRequest`.
+
+        Unlike :meth:`on_request`, the handler sees the request ``id`` (and may
+        return :data:`DEFERRED` to suppress the auto-written response and reply
+        later via :meth:`respond_result` / :meth:`respond_error`). This is the
+        seam a server uses to run long work off the pump thread.
+        """
+
+        self._raw_request_handlers[method] = handler
 
     def on_notification(self, method: str, handler: NotificationHandler) -> None:
         """Register a handler for inbound notifications with ``method``."""
@@ -137,6 +181,23 @@ class Peer:
         """Send a notification (fire-and-forget, no response correlation)."""
 
         self._write(JSONRPCNotification(method=method, params=params))
+
+    def respond_result(self, request_id: Union[str, int], result: Any) -> None:
+        """Send a success response for a previously-deferred inbound request.
+
+        Used together with a handler that returns :data:`DEFERRED`: the handler
+        captures ``request.id`` (or its params), does work off the pump thread,
+        then calls this to deliver the result.
+        """
+
+        self._write(JSONRPCResponse(id=request_id, result=result))
+
+    def respond_error(
+        self, request_id: Union[str, int], error: JSONRPCError
+    ) -> None:
+        """Send an error response for a previously-deferred inbound request."""
+
+        self._write(JSONRPCResponse(id=request_id, error=error))
 
     def _write(self, message: Any) -> None:
         line = json_dumps(message.to_dict()) + "\n"
@@ -192,8 +253,9 @@ class Peer:
             pending._fulfill(response)
 
     def _handle_request(self, request: JSONRPCRequest) -> None:
+        raw_handler = self._raw_request_handlers.get(request.method)
         handler = self._request_handlers.get(request.method)
-        if handler is None:
+        if raw_handler is None and handler is None:
             self._write(
                 JSONRPCResponse(
                     id=request.id,
@@ -205,7 +267,11 @@ class Peer:
             )
             return
         try:
-            result = handler(request.params)
+            if raw_handler is not None:
+                result = raw_handler(request)
+            else:
+                assert handler is not None
+                result = handler(request.params)
         except RemoteError as exc:  # handler chose to surface a wire error
             self._write(JSONRPCResponse(id=request.id, error=exc.error))
             return
@@ -216,6 +282,10 @@ class Peer:
                     error=JSONRPCError(code=ERROR_INTERNAL, message=str(exc)),
                 )
             )
+            return
+        if result is DEFERRED:
+            # The handler will deliver the response later via respond_result /
+            # respond_error; do not auto-write one now.
             return
         self._write(JSONRPCResponse(id=request.id, result=result))
 

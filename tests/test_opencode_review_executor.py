@@ -31,7 +31,17 @@ def _run_review(tmp_path: Path, event_text: str):
         "exit 0\n",
     )
     cfg = tmp_path / "opencode.json"
-    cfg.write_text("{}", encoding="utf-8")
+    cfg.write_text(
+        json.dumps(
+            {
+                "model": "inference-hub/default-review-model",
+                "agent": {
+                    "review": {"model": "inference-hub/reviewer-model"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     evidence = tmp_path / "evidence.json"
     env = os.environ.copy()
     env.update(
@@ -62,6 +72,8 @@ def test_opencode_review_rejected_event_stream(tmp_path: Path) -> None:
     assert manifest["status"] == "complete"
     assert manifest["returncode"] == 0
     assert manifest["feedback"] == "Fix the contract test"
+    assert manifest["llm_model"] == "inference-hub/reviewer-model"
+    assert manifest["llm"]["model"] == "inference-hub/reviewer-model"
     assert manifest["worktree_digest"].startswith("sha256:")
 
 
@@ -78,4 +90,5 @@ def test_opencode_review_approved_event_stream(tmp_path: Path) -> None:
     assert manifest["status"] == "complete"
     assert manifest["returncode"] == 0
     assert manifest["result"] == "review_completed"
+    assert manifest["llm_model"] == "inference-hub/reviewer-model"
     assert manifest["worktree_digest"].startswith("sha256:")

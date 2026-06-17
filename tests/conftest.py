@@ -97,6 +97,7 @@ def submit_review_verdict(
     feedback: str = "",
     summary: str = "",
     findings: Optional[list] = None,
+    reviewer_llm_model: str = "test-reviewer-llm",
 ) -> str:
     """Produce the reviewer's signed verdict evidence (mac-jqb).
 
@@ -123,6 +124,12 @@ def submit_review_verdict(
         "repo": repo,
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("0" * 64),
+        "llm_model": reviewer_llm_model,
+        "llm": {
+            "tool": "test",
+            "agent": "review",
+            "model": reviewer_llm_model,
+        },
     }
     if feedback:
         manifest["feedback"] = feedback

@@ -43,6 +43,71 @@ def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
 
 
+def manifest_llm_model(manifest: Any) -> str:
+    """Return the canonical model identity recorded in evidence metadata.
+
+    ``llm.model`` is the canonical field. ``llm_model`` is accepted for
+    simple shell-generated manifests, and ``opencode_model`` preserves the
+    existing executor field while the fleet rolls forward.
+    """
+    if not isinstance(manifest, dict):
+        return ""
+    llm = manifest.get("llm")
+    if isinstance(llm, dict):
+        model = str(llm.get("model") or "").strip()
+        if model:
+            return model
+    for key in ("llm_model", "opencode_model", "gateway_model"):
+        model = str(manifest.get(key) or "").strip()
+        if model:
+            return model
+    return ""
+
+
+def normalize_llm_model(model: str) -> str:
+    return " ".join(str(model or "").strip().lower().split())
+
+
+def manifest_requires_cross_llm_review(manifest: Any) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
+    if evidence_type == "review_verdict":
+        return False
+    executor = str(manifest.get("executor") or "").strip()
+    if executor.startswith("mac-task-executor-"):
+        return True
+    if manifest.get("agent_generated") is True:
+        return True
+    if manifest.get("requires_cross_llm_review") is True:
+        return True
+    return bool(manifest_llm_model(manifest))
+
+
+def cross_llm_review_problems(executor_manifest: Any, verdict_manifest: Any) -> List[str]:
+    if not manifest_requires_cross_llm_review(executor_manifest):
+        return []
+    executor_model = manifest_llm_model(executor_manifest)
+    reviewer_model = manifest_llm_model(verdict_manifest)
+    problems: List[str] = []
+    if not executor_model:
+        problems.append(
+            "executor evidence from an agent runner requires llm.model or llm_model"
+        )
+    if not reviewer_model:
+        problems.append(
+            "review_verdict evidence requires reviewer llm.model or llm_model"
+        )
+    if executor_model and reviewer_model and (
+        normalize_llm_model(executor_model) == normalize_llm_model(reviewer_model)
+    ):
+        problems.append(
+            "reviewer LLM must differ from executor LLM (both %s)"
+            % executor_model
+        )
+    return problems
+
+
 class ReviewService:
     def __init__(
         self,
@@ -196,6 +261,18 @@ class ReviewService:
                     raise ValidationError(
                         "review approval requires signed review_verdict evidence: %s"
                         % ("; ".join(problems) if problems else "no verdict found")
+                    )
+                executor_evidence = self._get_evidence(executor_evidence_id_from_manifest)
+                executor_manifest = (
+                    executor_evidence.metadata.get("verification")
+                    if isinstance(executor_evidence.metadata, dict)
+                    else None
+                )
+                llm_problems = cross_llm_review_problems(executor_manifest, manifest)
+                if llm_problems:
+                    raise ValidationError(
+                        "review approval requires a different reviewer LLM: %s"
+                        % "; ".join(llm_problems)
                     )
         rejected_feedback = None
         if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:

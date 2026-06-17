@@ -5896,6 +5896,151 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
         )
 
 
+def _signed_agent_executor_manifest(cp, agent_id, llm_model):
+    from mac.services import sign_verification_manifest
+
+    manifest = verified_repo_metadata()["verification"]
+    manifest["executor"] = "mac-task-executor-opencode-build"
+    manifest["llm_model"] = llm_model
+    manifest["llm"] = {
+        "tool": "opencode",
+        "agent": "build",
+        "model": llm_model,
+    }
+    manifest["signed_by"] = agent_id
+    manifest["signature"] = sign_verification_manifest(
+        cp._agent_attestation_key(agent_id),
+        manifest,
+    )
+    return manifest
+
+
+def test_submit_review_requires_different_llm_for_agent_executor(cp):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata={
+            "returncode": 0,
+            "verification": _signed_agent_executor_manifest(
+                cp,
+                worker.id,
+                "inference-hub/anthropic/claude-sonnet",
+            ),
+        },
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        reviewer_llm_model="inference-hub/anthropic/claude-sonnet",
+    )
+
+    with pytest.raises(ValidationError, match="reviewer LLM must differ"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=verdict_id,
+        )
+
+
+def test_submit_review_accepts_different_llm_for_agent_executor(cp):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata={
+            "returncode": 0,
+            "verification": _signed_agent_executor_manifest(
+                cp,
+                worker.id,
+                "inference-hub/anthropic/claude-sonnet",
+            ),
+        },
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        reviewer_llm_model="inference-hub/openai/gpt-5",
+    )
+
+    result = cp.submit_review(
+        review.id,
+        ReviewStatus.APPROVED.value,
+        reviewer.id,
+        evidence_id=verdict_id,
+    )
+    assert result.status == ReviewStatus.APPROVED.value
+
+
+def test_cross_llm_review_helper_contracts():
+    from mac.review_service import (
+        cross_llm_review_problems,
+        manifest_llm_model,
+        manifest_requires_cross_llm_review,
+    )
+
+    assert manifest_llm_model({"llm": {"model": " Model A "}}) == "Model A"
+    assert manifest_llm_model({"llm_model": "model-b"}) == "model-b"
+    assert manifest_llm_model({"opencode_model": "model-c"}) == "model-c"
+    assert manifest_llm_model({"gateway_model": "model-d"}) == "model-d"
+    assert manifest_llm_model(None) == ""
+
+    assert manifest_requires_cross_llm_review(
+        {"executor": "mac-task-executor-opencode-build"}
+    )
+    assert manifest_requires_cross_llm_review({"agent_generated": True})
+    assert manifest_requires_cross_llm_review({"requires_cross_llm_review": True})
+    assert not manifest_requires_cross_llm_review(
+        {"evidence_type": "review_verdict", "llm_model": "reviewer"}
+    )
+    assert not manifest_requires_cross_llm_review(None)
+
+    assert cross_llm_review_problems(None, {"llm_model": "reviewer"}) == []
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build"},
+        {"llm_model": "reviewer"},
+    ) == ["executor evidence from an agent runner requires llm.model or llm_model"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "builder"},
+        {},
+    ) == ["review_verdict evidence requires reviewer llm.model or llm_model"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
+        {"llm_model": " model x "},
+    ) == ["reviewer LLM must differ from executor LLM (both Model X)"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
+        {"llm_model": "Model Y"},
+    ) == []
+
+
 def test_register_artifact_recomputes_local_digest_and_rejects_mismatch(cp, tmp_path):
     """mac-0a8o: an artifact with a local file URI must have its digest
     recomputed from the file contents. A caller-supplied digest that

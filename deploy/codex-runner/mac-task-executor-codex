@@ -16,6 +16,7 @@ MAC_TASK_TITLE="${MAC_TASK_TITLE:-}"
 MAC_URL="${MAC_URL:-}"
 ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
+LLM_MODEL="${MAC_LLM_MODEL:-${MAC_AGENT_LLM_MODEL:-${CODEX_MODEL:-${OPENAI_MODEL:-${MODEL:-}}}}}"
 
 executed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -27,6 +28,7 @@ echo "MAC_AGENT_ID:     ${MAC_AGENT_ID:-<unset>}"
 echo "MAC_AGENT_ROLE:   ${MAC_AGENT_ROLE:-<unset>}"
 echo "MAC_TASK_TITLE:   ${MAC_TASK_TITLE:-<unset>}"
 echo "MAC_URL:          ${MAC_URL:-<unset>}"
+echo "LLM_MODEL:        ${LLM_MODEL:-<unset>}"
 echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
 if [ -n "${ATTESTATION_KEY}" ]; then
     echo "MAC_AGENT_ATTESTATION_KEY: <present, $(printf '%s' "${ATTESTATION_KEY}" | wc -c | tr -d ' ') chars>"
@@ -63,7 +65,7 @@ echo "  mac-evidence: ${MAC_EVIDENCE_CMD[*]}"
 echo
 
 # Export the values the inline python heredoc reads from os.environ.
-export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE
+export MAC_TASK_ID MAC_LEASE_ID MAC_AGENT_ID MAC_AGENT_ROLE MAC_TASK_TITLE LLM_MODEL
 export executed_at
 
 # Build the unsigned manifest. The signing step is shared with the host
@@ -88,6 +90,12 @@ manifest = {
         % (task_id or "<unknown>", agent_role or "<unset>", agent_id, executed_at)
     ),
     "result": "executor_completed",
+    "llm_model": os.environ.get("LLM_MODEL", ""),
+    "llm": {
+        "tool": "codex",
+        "agent": "build",
+        "model": os.environ.get("LLM_MODEL", ""),
+    },
     "findings": [
         {
             "kind": "execution_log",
