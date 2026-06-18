@@ -752,6 +752,7 @@ class RemoteDispatch:
         remote: str = "origin",
         branch: str = "main",
         restart: bool = True,
+        restart_services: Optional[List[str]] = None,
         request_id: Optional[str] = None,
     ) -> _Dictish:
         return _Dictish(
@@ -766,6 +767,9 @@ class RemoteDispatch:
                         "remote": remote,
                         "branch": branch,
                         "restart": restart,
+                        "restart_services": list(restart_services or [])
+                        if restart_services
+                        else None,
                         "request_id": request_id,
                     }
                 ),

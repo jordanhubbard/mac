@@ -151,12 +151,18 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
         worker["id"],
         "--request-id",
         "refresh-targeted",
+        "--restart-service",
+        "mac.service",
     )
 
     assert rc == 0
     assert targeted["schema"] == "mac.agentbus.repo_update_publish.v1"
     assert targeted["count"] == 1
     assert targeted["streams"][0]["recipient_agent_id"] == worker["id"]
+
+    rc, chunks = _run(tmp_path, "agentbus", "read", targeted["streams"][0]["id"], worker["id"])
+    assert rc == 0
+    assert chunks[0]["payload"]["restart_services"] == ["mac.service"]
 
 
 # ---------------------------------------------------------------------------

@@ -737,6 +737,7 @@ def cmd_fleet_refresh_source(args: argparse.Namespace) -> None:
             remote=args.remote,
             branch=args.branch,
             restart=not args.no_restart,
+            restart_services=list(args.restart_service or []),
             request_id=args.request_id,
         )
     )
@@ -1358,6 +1359,7 @@ def cmd_agentbus_repo_update(args: argparse.Namespace) -> None:
             remote=args.remote,
             branch=args.branch,
             restart=not args.no_restart,
+            restart_services=list(args.restart_service or []),
             request_id=args.request_id,
         )
     )
@@ -2782,6 +2784,14 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_refresh.add_argument("--branch", default="main")
     fleet_refresh.add_argument("--request-id")
     fleet_refresh.add_argument("--no-restart", action="store_true")
+    fleet_refresh.add_argument(
+        "--restart-service",
+        action="append",
+        help=(
+            "systemd service to restart on hosts where it is installed after a "
+            "successful source update; repeatable"
+        ),
+    )
     _set(cmd_fleet_refresh_source, fleet_refresh)
 
     # fleet-02: live group awareness for the team.
@@ -3235,6 +3245,7 @@ def build_parser() -> argparse.ArgumentParser:
     bus_repo_update.add_argument("--branch", default="main")
     bus_repo_update.add_argument("--request-id")
     bus_repo_update.add_argument("--no-restart", action="store_true")
+    bus_repo_update.add_argument("--restart-service", action="append")
     _set(cmd_agentbus_repo_update, bus_repo_update)
 
     bus_artifact_publish = agentbus.add_parser("artifact-publish")

@@ -7993,6 +7993,7 @@ class ControlPlane:
         remote: str = "origin",
         branch: str = "main",
         restart: bool = True,
+        restart_services: Optional[List[str]] = None,
         request_id: Optional[str] = None,
     ) -> JsonDict:
         recipients = list(recipient_agent_ids or [])
@@ -8006,6 +8007,7 @@ class ControlPlane:
             remote=remote,
             branch=branch,
             restart=restart,
+            restart_services=list(restart_services or []),
             request_id=request_id,
         )
         published = [

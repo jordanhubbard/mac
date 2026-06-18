@@ -55,6 +55,7 @@ Executor = Callable[[JsonDict, Path], "WorkerExecution"]
 CommandAuditSink = Callable[[JsonDict], None]
 StatusUpdateSink = Callable[[JsonDict], JsonDict]
 SAFE_GIT_REF_RE = r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$"
+SAFE_SYSTEMD_SERVICE_RE = r"^[A-Za-z0-9][A-Za-z0-9_.@:\-]{0,126}\.service$"
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # mac-raud: validate git remote URLs supplied by upstream evidence
@@ -1155,6 +1156,9 @@ class MacWorker:
                 processed.append(stream_id)
                 self._save_agentbus_control_state(processed)
                 self._publish_repo_update_result(stream, result)
+                service_result = self._run_repo_update_service_restarts(result)
+                if service_result:
+                    self._publish_repo_update_result(stream, service_result)
                 if result.get("restart_requested"):
                     return result
                 continue
@@ -1782,6 +1786,16 @@ class MacWorker:
         remote = str(request.get("remote") or "origin").strip()
         branch = str(request.get("branch") or "").strip()
         restart = bool(request.get("restart", True))
+        try:
+            restart_services = _normalize_restart_services(request.get("restart_services"))
+        except ValueError as exc:
+            return self._repo_update_result(
+                stream_id,
+                "error",
+                str(exc),
+                request,
+                repo_path=str(repo),
+            )
         if not _safe_git_ref(remote):
             return self._repo_update_result(
                 stream_id,
@@ -1858,10 +1872,17 @@ class MacWorker:
         after = _run_git(repo, ["rev-parse", "HEAD"])
         after_sha = after.stdout.strip() if after.returncode == 0 else ""
         updated = bool(before_sha and after_sha and before_sha != after_sha)
+        summary = "repo already current"
+        if updated:
+            summary = "repo updated"
+            if restart:
+                summary += "; restart requested"
+            if restart_services:
+                summary += "; service restart requested"
         return self._repo_update_result(
             stream_id,
             "updated" if updated else "no_update",
-            "repo updated; restart requested" if updated and restart else "repo already current",
+            summary,
             request,
             repo_path=str(repo),
             before_sha=before_sha,
@@ -1869,6 +1890,32 @@ class MacWorker:
             stdout=pulled.stdout,
             stderr=pulled.stderr,
             restart_requested=updated and restart,
+            service_restart_requested=updated and bool(restart_services),
+            restart_services=restart_services if updated and restart_services else [],
+        )
+
+    def _run_repo_update_service_restarts(self, result: JsonDict) -> Optional[JsonDict]:
+        if not result.get("service_restart_requested"):
+            return None
+        services = _normalize_restart_services(result.get("restart_services"))
+        if not services:
+            return None
+        service_results = [_restart_systemd_service(service) for service in services]
+        failures = [item for item in service_results if item.get("status") == "error"]
+        status = "service_restart_error" if failures else "service_restarted"
+        summary = (
+            "one or more service restarts failed"
+            if failures
+            else "requested services restarted or skipped where absent"
+        )
+        return self._repo_update_result(
+            str(result.get("stream_id") or ""),
+            status,
+            summary,
+            {"request_id": result.get("request_id")},
+            repo_path=result.get("repo_path"),
+            after_sha=result.get("after_sha"),
+            service_restarts=service_results,
         )
 
     def _repo_update_result(
@@ -1899,23 +1946,29 @@ class MacWorker:
         sender = str(stream.get("sender_agent_id") or "")
         if not sender:
             return
-        try:
-            self.client.post(
-                "/agentbus",
-                {
-                    "sender_agent_id": self.agent_id,
-                    "recipient_agent_id": sender,
-                    "content_type": REPO_UPDATE_RESULT_CONTENT_TYPE,
-                    "topic": REPO_UPDATE_RESULT_TOPIC,
-                    "payload": result,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
-            self._observe_log(
-                "worker.agentbus.repo_update_result_failed",
-                level="warning",
-                detail={"stream_id": stream.get("id"), "error": str(exc)},
-            )
+        last_error = ""
+        for attempt in range(5):
+            try:
+                self.client.post(
+                    "/agentbus",
+                    {
+                        "sender_agent_id": self.agent_id,
+                        "recipient_agent_id": sender,
+                        "content_type": REPO_UPDATE_RESULT_CONTENT_TYPE,
+                        "topic": REPO_UPDATE_RESULT_TOPIC,
+                        "payload": result,
+                    },
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
+                last_error = str(exc)
+                if attempt < 4:
+                    time.sleep(0.5)
+        self._observe_log(
+            "worker.agentbus.repo_update_result_failed",
+            level="warning",
+            detail={"stream_id": stream.get("id"), "error": last_error},
+        )
 
     def _load_agentbus_control_state(self) -> List[str]:
         try:
@@ -3466,6 +3519,22 @@ def _safe_git_ref(value: str) -> bool:
     return bool(value and not value.startswith("-") and re.match(SAFE_GIT_REF_RE, value))
 
 
+def _normalize_restart_services(value: Any) -> List[str]:
+    if value is None or value == "":
+        return []
+    raw_items = value if isinstance(value, list) else [value]
+    services: List[str] = []
+    for raw in raw_items:
+        service = str(raw or "").strip()
+        if not service:
+            continue
+        if service.startswith("-") or not re.match(SAFE_SYSTEMD_SERVICE_RE, service):
+            raise ValueError("invalid systemd service name: %s" % service)
+        if service not in services:
+            services.append(service)
+    return services
+
+
 def _bounded_int(value: Any, minimum: int, maximum: int, default: int) -> int:
     try:
         parsed = int(value)
@@ -3765,6 +3834,96 @@ def _run_git(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
         timeout=timeout,
         check=False,
     )
+
+
+def _truncate_process_text(value: str, limit: int = 4000) -> str:
+    return str(value or "")[:limit]
+
+
+def _self_worker_service_names() -> set[str]:
+    names = {"mac-agent.service"}
+    configured = str(os.environ.get("MAC_AGENT_SERVICE_NAME") or "").strip()
+    if configured:
+        names.add(configured)
+    fleet = str(os.environ.get("FLEET_NAME") or os.environ.get("MAC_FLEET_NAME") or "").strip()
+    if fleet:
+        names.add("%s-agent.service" % fleet)
+    return names
+
+
+def _restart_systemd_service(service: str) -> JsonDict:
+    try:
+        _normalize_restart_services([service])
+    except ValueError as exc:
+        return {"service": service, "status": "error", "error": str(exc)}
+    if service in _self_worker_service_names():
+        return {
+            "service": service,
+            "status": "skipped",
+            "reason": "worker service restart is handled by the repo-update restart flag",
+        }
+    if not shutil.which("systemctl"):
+        return {"service": service, "status": "skipped", "reason": "systemctl not found"}
+    try:
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_SERVICE_TIMEOUT", "30"))
+    except ValueError:
+        timeout = 30.0
+
+    try:
+        show = subprocess.run(
+            ["systemctl", "show", service, "--property=LoadState", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - service restarts are reported, not raised.
+        return {
+            "service": service,
+            "status": "skipped",
+            "reason": "could not inspect service",
+            "error": str(exc),
+        }
+    load_state = show.stdout.strip()
+    if show.returncode != 0:
+        return {
+            "service": service,
+            "status": "skipped",
+            "reason": "could not inspect service",
+            "returncode": show.returncode,
+            "stdout": _truncate_process_text(show.stdout),
+            "stderr": _truncate_process_text(show.stderr),
+        }
+    if load_state in {"", "not-found"}:
+        return {
+            "service": service,
+            "status": "skipped",
+            "reason": "service not installed",
+            "load_state": load_state or "unknown",
+        }
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        argv = ["systemctl", "restart", service]
+    else:
+        argv = ["sudo", "-n", "systemctl", "restart", service]
+    try:
+        restarted = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - report failure in the result payload.
+        return {"service": service, "status": "error", "command": argv, "error": str(exc)}
+    return {
+        "service": service,
+        "status": "restarted" if restarted.returncode == 0 else "error",
+        "command": argv,
+        "returncode": restarted.returncode,
+        "stdout": _truncate_process_text(restarted.stdout),
+        "stderr": _truncate_process_text(restarted.stderr),
+    }
 
 
 def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:

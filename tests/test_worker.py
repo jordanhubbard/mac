@@ -1808,6 +1808,77 @@ def test_mac_worker_repo_update_noops_without_restart_when_current(tmp_path: Pat
     assert chunks[0].payload["restart_requested"] is False
 
 
+def test_mac_worker_repo_update_restarts_requested_services_after_result(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    sender_machine = cp.register_machine("sender-host")
+    sender = cp.register_agent(sender_machine.id, "sender")
+    agent = register_worker_fixture(cp)
+    seed, work = _git_fixture(tmp_path)
+    expected = _commit_fixture_update(seed, "two\n")
+    restarted: list[str] = []
+
+    def fake_restart(service: str):
+        restarted.append(service)
+        return {"service": service, "status": "restarted", "returncode": 0}
+
+    monkeypatch.setattr("mac.worker._restart_systemd_service", fake_restart)
+    cp.publish_agentbus_content(
+        sender.id,
+        recipient_agent_id=agent.id,
+        content_type=REPO_UPDATE_CONTENT_TYPE,
+        topic=REPO_UPDATE_TOPIC,
+        payload={
+            "schema": REPO_UPDATE_SCHEMA,
+            "remote": "origin",
+            "branch": "main",
+            "restart": False,
+            "restart_services": ["mac.service"],
+            "request_id": "req-service",
+        },
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+        self_update_repo=work,
+    )
+    result = worker.run_once()
+
+    assert result.status == "no_task"
+    assert _git(work, "rev-parse", "HEAD") == expected
+    assert restarted == ["mac.service"]
+
+    payloads = []
+    for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed"):
+        if stream.topic == REPO_UPDATE_RESULT_TOPIC:
+            payloads.extend(chunk.payload for chunk in cp.read_agentbus_chunks(sender.id, stream.id))
+    by_status = {payload["status"]: payload for payload in payloads}
+    assert by_status["updated"]["service_restart_requested"] is True
+    assert by_status["updated"]["restart_services"] == ["mac.service"]
+    assert by_status["service_restarted"]["service_restarts"] == [
+        {"service": "mac.service", "status": "restarted", "returncode": 0}
+    ]
+
+
+def test_repo_update_service_restart_skips_current_worker_service(monkeypatch):
+    from mac.worker import _restart_systemd_service
+
+    monkeypatch.setenv("MAC_AGENT_SERVICE_NAME", "mac-agent.service")
+
+    result = _restart_systemd_service("mac-agent.service")
+
+    assert result == {
+        "service": "mac-agent.service",
+        "status": "skipped",
+        "reason": "worker service restart is handled by the repo-update restart flag",
+    }
+
+
 def test_mac_worker_declares_running_digest_on_first_heartbeat(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

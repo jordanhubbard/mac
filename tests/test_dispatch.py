@@ -472,6 +472,7 @@ def test_remote_dispatch_repo_update_hits_hub_endpoint():
         remote="origin",
         branch="main",
         restart=True,
+        restart_services=["mac.service"],
         request_id="refresh-1",
     )
 
@@ -491,6 +492,7 @@ def test_remote_dispatch_repo_update_hits_hub_endpoint():
         "remote": "origin",
         "branch": "main",
         "restart": True,
+        "restart_services": ["mac.service"],
         "request_id": "refresh-1",
     }
 
@@ -788,6 +790,8 @@ def test_remote_dispatch_fleet_refresh_source_via_cli_uses_hub(monkeypatch):
                 "agent_hub",
                 "--request-id",
                 "refresh-1",
+                "--restart-service",
+                "mac.service",
             ]
         )
     finally:
@@ -805,6 +809,7 @@ def test_remote_dispatch_fleet_refresh_source_via_cli_uses_hub(monkeypatch):
     assert payload["remote"] == "origin"
     assert payload["branch"] == "main"
     assert payload["restart"] is True
+    assert payload["restart_services"] == ["mac.service"]
     assert payload["request_id"] == "refresh-1"
 
 

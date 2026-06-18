@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 JsonDict = Dict[str, Any]
 
@@ -43,6 +43,7 @@ def repo_update_payload(
     remote: str = "origin",
     branch: str = "main",
     restart: bool = True,
+    restart_services: Optional[List[str]] = None,
     request_id: Optional[str] = None,
 ) -> JsonDict:
     payload: JsonDict = {
@@ -53,6 +54,8 @@ def repo_update_payload(
     }
     if repo_path:
         payload["repo_path"] = repo_path
+    if restart_services:
+        payload["restart_services"] = list(restart_services)
     if request_id:
         payload["request_id"] = request_id
     return payload

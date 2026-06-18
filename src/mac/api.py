@@ -855,6 +855,7 @@ class AgentBusRepoUpdate(BaseModel):
     remote: str = "origin"
     branch: str = "main"
     restart: bool = True
+    restart_services: List[str] = Field(default_factory=list)
     request_id: Optional[str] = None
 
 
@@ -5420,6 +5421,7 @@ def create_app(
             remote=body.remote,
             branch=body.branch,
             restart=body.restart,
+            restart_services=body.restart_services,
             request_id=body.request_id,
         )
 
