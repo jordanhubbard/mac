@@ -98,7 +98,7 @@ issue rather than blocking the migration on it.
   autonomous-merge blocker; not a sync problem)
 - `mac-ykkc` (P0): reviewer review-claim retry storm (also blocks
   autonomous merge; bridge-off doesn't fix it)
-- `mac-zpku` (P0): bullwinkle macOS push auth (resolved on inspection;
+- `mac-zpku` (P0): worker-1 macOS push auth (resolved on inspection;
   deploy key is installed and `ssh -T git@github.com` works; v2
   failure was Hermes choosing not to push, not auth)
 - Schema cleanup (not yet filed): drop `acc_metadata.beads_*` and

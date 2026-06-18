@@ -5,9 +5,9 @@ vector writer (mem-07), nap consolidator (mem-08), recall API (mem-09),
 and health check (mem-10) build against. Amend by PR; the schema lives
 in code in `src/mac/models.py`.
 
-**Audit context:** the 2026-05-28 review of rocky's `mac.db` (3.1GB,
+**Audit context:** the 2026-05-28 review of the hub's `mac.db` (3.1GB,
 2.09M observability events) found that the Qdrant container was running
-on `100.125.137.89:6333` with **zero collections** and `vector_refs` had
+on `<mesh-ip>:6333` with **zero collections** and `vector_refs` had
 **zero rows**. The medium-term and long-term memory tiers documented in
 the design existed only as table stubs; no writer, no reader, no schema
 contract. This document closes that gap.

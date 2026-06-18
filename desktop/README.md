@@ -80,7 +80,7 @@ should be selected from the target dropdown.
 
 The packaged UI also exposes `Fleet hub` and `Bearer token` controls in the
 top bar. Token values from `~/.mac/.env` stay in Electron main; the renderer
-only receives token-source labels such as `Hub token (ROCKY)` or `Manual
+only receives token-source labels such as `Hub token (HUB)` or `Manual
 bearer token`.
 
 ## Profile Shape
@@ -89,7 +89,7 @@ Profiles are plain JSON:
 
 ```json
 {
-  "displayName": "Rocky / horde",
+  "displayName": "hub / horde",
   "tokenEnv": "MAC_DESKTOP_API_TOKEN",
   "ssh": {
     "target": "horde@example.test",
