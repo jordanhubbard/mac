@@ -317,13 +317,13 @@ def cmd_task_detect_beads(args: argparse.Namespace) -> None:
 
 def cmd_task_detect_ticketing(args: argparse.Namespace) -> None:
     """Connector-aware detection: which ticketing sources a repo has + whether a
-    one-way conversion to native .tickets/ should be offered."""
+    one-way ledger import should be offered."""
     _print(_plane(args).detect_ticketing(args.repo_path))
 
 
 def cmd_task_convert_ticketing(args: argparse.Namespace) -> None:
     """Run the one-way conversion of a detected foreign source (e.g. beads) into
-    native .tickets/ + the ledger (what hermes invokes once the user agrees)."""
+    MAC ledger tasks plus optional local compatibility files."""
     _print(
         _plane(args).convert_ticketing_source(
             args.repo_path, project=args.project, actor=args.actor, dry_run=args.dry_run
@@ -2520,7 +2520,7 @@ def build_parser() -> argparse.ArgumentParser:
     # uses to ask the user; convert-ticketing runs the one-way import.
     detect_ticketing = task.add_parser(
         "detect-ticketing",
-        help="detect ticketing sources in a repo (.tickets native / .beads foreign) "
+        help="detect ticketing sources in a repo (.tickets local mirror / .beads foreign) "
         "and whether a one-way conversion should be offered (read-only)",
     )
     detect_ticketing.add_argument("repo_path")
@@ -2528,8 +2528,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     convert_ticketing = task.add_parser(
         "convert-ticketing",
-        help="one-way convert a detected foreign source (e.g. beads) into native "
-        ".tickets/ + the ledger (run after the user agrees)",
+        help="one-way convert a detected foreign source (e.g. beads) into MAC "
+        "ledger tasks plus optional local compatibility files (run after the user agrees)",
     )
     convert_ticketing.add_argument("repo_path")
     convert_ticketing.add_argument("--project", required=True)

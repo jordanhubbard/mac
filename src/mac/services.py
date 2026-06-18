@@ -7559,14 +7559,16 @@ class ControlPlane:
 
     # -- Ticketing connectors (meta-tickets) --------------------------------
     # beads is no longer a read/write source; it's an import-only connector.
-    # The native source is .tickets/ + this ledger. detect/convert route
-    # through mac.ticketing so any future ticketing system plugs in the same way.
+    # The native source is the MAC task ledger; .tickets/ is an optional local
+    # compatibility mirror. detect/convert route through mac.ticketing so any
+    # future ticketing system plugs in the same way.
 
     def detect_ticketing(self, repo_path: str) -> JsonDict:
         """Report which ticketing sources a repo has + whether a one-way
-        conversion should be offered (foreign source present, no native
-        .tickets/). Read-only. Emits a ``ticketing.conversion_available``
-        observation the hub's hermes agent can surface to the user."""
+        ledger import should be offered (foreign source present, no local
+        .tickets/ compatibility mirror). Read-only. Emits a
+        ``ticketing.conversion_available`` observation the hub's hermes agent
+        can surface to the user."""
         from pathlib import Path as _Path
         from mac.ticketing import detect_ticketing as _detect
 
@@ -7584,8 +7586,9 @@ class ControlPlane:
                     "conversion_from": detection.conversion_from,
                     "message": detection.message,
                     "prompt": (
-                        "Repo %s has a '%s' ticket source but no native .tickets/. "
-                        "Convert it one-way into .tickets (mac task ledger)?"
+                        "Repo %s has a '%s' ticket source but no local .tickets "
+                        "compatibility mirror. Import it one-way into the MAC "
+                        "task ledger?"
                         % (repo_path, detection.conversion_from)
                     ),
                 },
@@ -7601,8 +7604,9 @@ class ControlPlane:
         dry_run: bool = False,
     ) -> JsonDict:
         """Run the one-way conversion of a detected foreign source (e.g. beads)
-        into native .tickets/ + the ledger. Hermes calls this only after the
-        user agrees. Never writes back to the foreign source."""
+        into MAC ledger tasks plus optional local compatibility files. Hermes
+        calls this only after the user agrees. Never writes back to the foreign
+        source."""
         from pathlib import Path as _Path
         from mac.ticketing import detect_ticketing as _detect, connector_for
 

@@ -156,10 +156,10 @@ def _session_capability_contract(
         {
             "name": "ticket_mirror",
             "kind": "filesystem",
-            "required": True,
-            "command": "ls .tickets",
+            "required": False,
+            "command": "test -d .tickets",
             "cwd": str(workspace_path),
-            "purpose": "Read project tickets directly from .tickets/<id>.md (wedow-compatible markdown + YAML frontmatter; canonical text for each issue).",
+            "purpose": "Read optional local .tickets/<id>.md migration mirrors when present. The MAC task ledger is the canonical issue source.",
         },
         {
             "name": "mac_task_cli",
@@ -225,7 +225,6 @@ def _session_capability_contract(
         )
     direct_session_workflow = [
         "cd %s" % workspace_path,
-        "ls .tickets",
         "mac task ready --limit 10",
         "mac task stats",
         "mac-hermes runtime-proof %s" % hermes_instance_id,
@@ -269,7 +268,7 @@ def _session_capability_contract(
         "direct_session_workflow": direct_session_workflow,
         "rules": [
             "Treat MAC fleets, agents, tasks, and projects as first-class operational objects.",
-            "Read issue text from .tickets/<id>.md (wedow-compatible markdown). The MAC hub task ledger is the canonical execution store; .tickets/ is the git-trackable mirror.",
+            "Use the MAC hub task ledger as the canonical issue source. Treat .tickets/ as optional ignored migration compatibility state when present.",
             "Use `mac task` / `mac memory` for issue lifecycle. `bd` remains available for compatibility but `bd dolt push` is disabled.",
             "Use hgmac for agent CRUD and operational agent state, not ad hoc database edits.",
             "Record command audit phases for shell work that changes or verifies task state.",

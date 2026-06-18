@@ -1,15 +1,16 @@
-"""Auto-emit the ``.tickets/<id>.md`` mirror on task create/close.
+"""Optional local ``.tickets/<id>.md`` mirror emission.
 
 parity-tickets-autoemit-01: `bd` kept its git-distributed mirror in sync with
 every change; `mac task create/close` historically only wrote `.tickets/` during
-`migrate-beads`, so the git-trackable mirror drifted from the ledger. This module
+`migrate-beads`, so optional local mirrors drifted from the ledger. This module
 renders a wedow-compatible ticket from a mac task dict — reusing the migrator's
 renderer so the format never drifts — and writes it into the repo's existing
 `.tickets/` directory.
 
 Emits only when a `.tickets/` dir already exists (git repo root, else cwd); it
 never creates one. Opt out per-call (`--no-ticket`) or globally via
-`MAC_NO_TICKET_MIRROR`.
+`MAC_NO_TICKET_MIRROR`. The MAC task ledger remains canonical; `.tickets/` is
+ignored local operational state in this repo.
 """
 from __future__ import annotations
 

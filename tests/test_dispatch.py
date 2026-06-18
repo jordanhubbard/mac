@@ -306,6 +306,24 @@ def test_remote_dispatch_read_endpoints_hit_correct_paths():
     assert all("tenant_id" not in u for u in gets)
 
 
+def test_remote_dispatch_secret_access_uses_api_body_shape():
+    """`mac secret access` in hub mode must use SecretAccessRequest's field names."""
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(response_for={("POST", "/secrets/github.token/access"): {"granted": True}})
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    assert disp.request_secret("github.token", "agent_rocky", "git-clone").to_dict() == {
+        "granted": True
+    }
+
+    method, url, body, token = fake.calls[-1]
+    assert method == "POST"
+    assert url == "http://hub:8789/secrets/github.token/access"
+    assert token == "tok"
+    assert body == {"accessor_agent_id": "agent_rocky", "purpose": "git-clone"}
+
+
 def test_remote_dispatch_read_agentbus_chunks_passes_agent_id():
     """`mac agentbus read` in hub mode — regression for the (stream_id, **kw)
     signature that dropped agent_id and raised a positional-arg TypeError."""

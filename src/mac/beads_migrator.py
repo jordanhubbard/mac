@@ -5,10 +5,9 @@ Detects whether a repository is managed by Beads and converts its
 wedow-ticket-compatible markdown mirror under ``.tickets/<id>.md``.
 
 The hub task ledger is the canonical store; the ``.tickets/`` files
-are a git-trackable, human-readable mirror — they let humans and IDEs
-follow ID references without re-syncing a SQLite cache, and let third
-parties (e.g. https://github.com/wedow/ticket.git) operate on the same
-files when MAC is offline.
+are local compatibility artifacts for one-way migrations. This repo
+ignores them so task state does not accumulate as untracked source-tree
+ledger files during normal MAC operation.
 
 The migrator is idempotent: re-running on a repo with already-migrated
 issues skips them by matching ``task.metadata.original_beads_id``.

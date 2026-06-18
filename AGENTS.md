@@ -1,9 +1,10 @@
 # Agent Instructions
 
-Issues live as one markdown file per ticket under `.tickets/<id>.md`
-(wedow/ticket-compatible YAML frontmatter + markdown body). The MAC
-hub task ledger (`mac task`) is the canonical execution store;
-`.tickets/` is the git-trackable mirror.
+Issues live in the MAC hub task ledger (`mac task`), which is the
+canonical execution store. `.tickets/` is ignored local operational
+state for migration/compatibility workflows only; do not rely on it as
+a checked-in source of truth and do not create or commit `.tickets/`
+files during normal work.
 
 The legacy beads (`bd`) integration is shut off — dolt sync is
 disabled, the beads bridge is gated off by default
@@ -14,8 +15,6 @@ repo. Do not run `bd`.
 
 ```bash
 # Read issues
-ls .tickets/                                 # all issues
-cat .tickets/mac-y7ha.md                     # one issue (the file IS authoritative for text)
 mac task ready --limit 10                    # ledger view: open + no unfinished deps + unclaimed
 mac task stats                               # counts by state
 mac task search <keyword>                    # title/description match

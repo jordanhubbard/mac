@@ -14,12 +14,13 @@ The model
 ---------
 * :class:`MetaTicket` — the system-agnostic ticket the rest of MAC consumes.
 * :class:`TicketingConnector` — a pluggable source. Two kinds:
-    - **canonical** (``is_writeback=False``, ``is_canonical=True``): the native
-      store. For MAC that's ``.tickets/<id>.md`` + the ``mac task`` ledger.
+    - **canonical** (``is_writeback=False``, ``is_canonical=True``): MAC's
+      native hub ledger exposed through ``mac task``. A ``.tickets/`` directory,
+      when present, is only a local compatibility mirror.
     - **import-only** (``is_writeback=False``, ``is_canonical=False``): a
       *one-way* importer, e.g. beads. It can *detect* and *convert* a foreign
-      source into native tickets but is **never** read or written as a live
-      source afterwards.
+      source into MAC tasks and optional local compatibility files, but is
+      **never** read or written as a live source afterwards.
     - **writeback** (``is_writeback=True``): a connector that also mirrors MAC
       lifecycle events back into an external system (e.g. a future Jira/GitHub
       connector). The lifecycle hooks (``on_task_*``) exist for these; the
@@ -31,9 +32,10 @@ point of "remove beads as a read/write source, keep one-way conversion."
 Detection / conversion flow
 ---------------------------
 :func:`detect_ticketing` reports which sources are present and, crucially, sets
-``needs_conversion`` when a repo has a foreign source (``.beads``) but no native
-``.tickets``. The hub surfaces that to the user through hermes, which asks
-whether to run the one-way conversion (:meth:`TicketingConnector.convert`).
+``needs_conversion`` when a repo has a foreign source (``.beads``) but no local
+``.tickets`` compatibility mirror. The hub surfaces that to the user through
+hermes, which asks whether to run the one-way import into the MAC ledger
+(:meth:`TicketingConnector.convert`).
 """
 
 from __future__ import annotations
@@ -169,17 +171,18 @@ class TicketingConnector(abc.ABC):
 
 
 # ---------------------------------------------------------------------------
-# Native connector — .tickets/ + the mac task ledger (canonical)
+# Native connector — optional .tickets/ compatibility mirror + canonical mac task ledger
 # ---------------------------------------------------------------------------
 
 _TICKETS_DIR = ".tickets"
 
 
 class NativeTicketingConnector(TicketingConnector):
-    """MAC's own source: ``.tickets/<id>.md`` mirror + the ``mac task`` ledger.
+    """MAC's local compatibility mirror plus the canonical ``mac task`` ledger.
 
-    Canonical, so no writeback is needed — the ledger *is* the store. The
-    lifecycle hooks stay no-ops."""
+    The connector name stays ``native`` for API compatibility, but the ledger is
+    the store. ``.tickets/`` is ignored local operational state in this repo.
+    The lifecycle hooks stay no-ops."""
 
     name = "native"
     is_canonical = True
@@ -333,9 +336,10 @@ def detect_ticketing(repo_path: Path) -> TicketingDetection:
     """Detect which ticketing sources a repo has and whether a one-way
     conversion should be offered.
 
-    The rule the user asked for: if there is **no** native ``.tickets/`` but a
-    foreign source (``.beads``) **is** present, flag ``needs_conversion`` so the
-    hub's hermes agent can ask the user whether to convert."""
+    The rule the user asked for: if there is **no** local ``.tickets/``
+    compatibility mirror but a foreign source (``.beads``) **is** present, flag
+    ``needs_conversion`` so the hub's hermes agent can ask the user whether to
+    import it into the MAC ledger."""
     repo_path = Path(repo_path).expanduser()
     reports = [c.detect(repo_path) for c in available_connectors()]
     by_name = {r.connector: r for r in reports}
@@ -352,11 +356,12 @@ def detect_ticketing(repo_path: Path) -> TicketingDetection:
 
     if needs_conversion:
         message = (
-            "%s has a '%s' source but no native .tickets/. Offer the user a "
-            "one-way conversion to .tickets (mac task ledger)." % (repo_path, conversion_from)
+            "%s has a '%s' source but no local .tickets compatibility mirror. "
+            "Offer a one-way import into the MAC task ledger; compatibility "
+            "files may be emitted for migration workflows." % (repo_path, conversion_from)
         )
     elif native_present:
-        message = "Native .tickets/ present; no conversion needed."
+        message = "Local .tickets compatibility mirror present; no conversion needed."
     else:
         message = "No ticketing source detected."
 

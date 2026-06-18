@@ -852,7 +852,7 @@ class RemoteDispatch:
         return _Dictish(
             self._post(
                 "/secrets/%s/access" % quote(secret, safe=""),
-                {"agent_id": agent_id, "purpose": purpose},
+                {"accessor_agent_id": agent_id, "purpose": purpose},
             )
         )
 

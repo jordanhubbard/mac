@@ -33,11 +33,11 @@ def test_detect_beads_without_tickets_flags_conversion(tmp_path):
     d = ticketing.detect_ticketing(tmp_path)
     assert d.needs_conversion is True
     assert d.conversion_from == "beads"
-    assert "one-way conversion" in d.message
+    assert "one-way import" in d.message
 
 
 def test_detect_tickets_present_suppresses_conversion(tmp_path):
-    # Foreign source present, but native tickets already exist → no conversion.
+    # Foreign source present, but a local compatibility mirror already exists -> no conversion.
     _beads_repo(tmp_path, [{"id": "b-1", "title": "Fix X", "status": "open"}])
     (tmp_path / ".tickets").mkdir()
     (tmp_path / ".tickets" / "mac-1.md").write_text(
