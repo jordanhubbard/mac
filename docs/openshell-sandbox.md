@@ -77,14 +77,14 @@ $EDITOR /etc/mac/openshell-policy.yaml      # fill in __PLACEHOLDER__ tokens
 export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml
 export MAC_OPENSHELL_REQUIRED=1
 export MAC_ALLOW_UNSANDBOXED_YOLO=0
-mac-openshell-supervisor --agent-id agent_hosta --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
+mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
 ```
 
 ### Environment knobs
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MAC_OPENSHELL_REQUIRED` | hosta/hostd/hostc required | fail closed when OpenShell/policy is unavailable |
+| `MAC_OPENSHELL_REQUIRED` | hub/worker-1/worker-2 required | fail closed when OpenShell/policy is unavailable |
 | `MAC_OPENSHELL_BIN` | `openshell` | path to the `openshell` binary |
 | `MAC_OPENSHELL_POLICY` | _(resolved)_ | explicit policy path; MAC-managed materialized policy should be set here |
 | `MAC_OPENSHELL_EVENTS_FILE` | _(none)_ | JSONL/OCSF event stream for `mac-openshell-collector` |
@@ -107,7 +107,7 @@ mac-openshell-supervisor --agent-id agent_hosta --policy "$MAC_OPENSHELL_POLICY"
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-3. Start `mac-openshell-supervisor` on hosta, hostd, and hostc. Confirm
+3. Start `mac-openshell-supervisor` on the hub, worker-1, and worker-2. Confirm
    the gateway, task executor, finalizers, and Hermes sessions inherit the same
    sandbox id.
 4. Trigger an off-policy filesystem or network attempt. Confirm the denial

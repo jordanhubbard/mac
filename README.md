@@ -77,7 +77,7 @@ The identity framework reflects that split:
 - `tenant`: an organization or isolated user deployment.
 - `user`: a human identity inside a tenant.
 - `persona`: a named Hermes personality with a `soul_ref` and `memory_scope`.
-- `hermes_instance`: a running or durable Hermes identity such as Hosta.
+- `hermes_instance`: a running or durable Hermes identity such as `hub`.
 - `platform_binding`: a Slack workspace/channel, Telegram chat, or similar binding.
 - interaction task: a durable task created from a Hermes conversation with origin metadata, not copied private memory.
 
@@ -158,7 +158,7 @@ Key route groups:
 
 For Beads-backed repository work, the production path is:
 
-1. Hosta's hub polls registered Beads repositories and treats `bd ready --json`
+1. The hub polls registered Beads repositories and treats `bd ready --json`
    as canonical when it is available.
 2. Each ready Bead becomes one durable mac task with repository contract,
    execution contract, origin metadata, and Beads provenance.

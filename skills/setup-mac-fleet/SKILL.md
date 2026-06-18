@@ -123,7 +123,7 @@ available".
   Tailscale/Headscale mesh so the agent reaches the hub at its mesh IP.
 - **Deploy:** `make deploy HUB=<node>`; first hub on a fresh box:
   `bash setup.sh --new-hub <node> --target user@host`.
-- *Example:* the `mac` fleet hub `rocky` (`jkh@do-host1`) — Linux, systemd,
+- *Example:* a fleet hub `<hub-node>` (`<user>@<host>`) — Linux, systemd,
   Tailscale hub URL `http://<tailscale-ip>:8789`.
 
 ### Virtual-machine agents
@@ -134,7 +134,7 @@ available".
 - **OS / supervisor:** `linux`+`systemd` or `darwin`+`launchd` (or `auto`).
 - **Transport:** direct SSH or Tailscale/Headscale mesh.
 - **Deploy:** same commands as bare metal.
-- *Example:* `mac` fleet workers `natasha` / `bullwinkle` — Linux VMs/hosts under
+- *Example:* fleet workers `worker-1` / `worker-2` — Linux VMs/hosts under
   systemd, joined to the fleet mesh and reached by SSH.
 
 ### Containerized agents

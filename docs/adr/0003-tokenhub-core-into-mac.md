@@ -114,9 +114,9 @@ Two clarifications from building this out:
 
 ### Validated (2026-05-31)
 
-A **wrap-TokenHub canary** on `hostc` is live: its gateway is cut over to its
+A **wrap-TokenHub canary** on a `worker-1` is live: its gateway is cut over to its
 local in-mac router (recovering breaker + fail-fast + streaming passthrough),
-which forwards through TokenHub using hostc's own key. Streaming chat verified
+which forwards through TokenHub using the worker's own key. Streaming chat verified
 end-to-end (real SSE deltas, `"*"`→`azure/anthropic/claude-sonnet-4-6`); rest of the
 fleet untouched. This proved the router code carries live agent traffic before
 any upstream credential is moved into the vault.

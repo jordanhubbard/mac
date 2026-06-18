@@ -2,10 +2,10 @@
 
 - Status: **Proposed**
 - Date: 2026-06-11
-- Decision owner: Dev User
+- Decision owner: <user>
 - Context: the fleet is configured statically in `~/.mac/fleets.yaml` — named
-  agents pinned to hosts (hosta→node1, hostc→hoste, hostd→hostf,
-  hostb→hostb), each deployed by `deploy/deploy-mac-fleet.sh` as a long-lived
+  agents pinned to hosts (hub→node1, gpu-worker-2→node2, mac-worker→node3,
+  gpu-worker-1→node4), each deployed by `deploy/deploy-mac-fleet.sh` as a long-lived
   editable install + systemd/launchd services. The question raised: *what if
   every agent were a GitHub self-hosted runner (and any runner an agent), with
   agents registered/created dynamically rather than declared statically?*
@@ -54,8 +54,8 @@ tier on k8s — **not** turning every agent into a runner.
   "repo evidence requires pushed=true / pr_url"), multi-attempt with
   `deployment_learning`s, and hardware gating (GPU). GitHub's job scheduler has
   almost none of this.
-- **Heterogeneous, partly long-lived hardware.** hostb (RTX 6000 Ada) serves
-  vLLM as the fleet's LLM brain; hostd (M4 Pro) does local image-gen; the
+- **Heterogeneous, partly long-lived hardware.** gpu-worker-1 (RTX 6000 Ada) serves
+  vLLM as the fleet's LLM brain; mac-worker (M4 Pro) does local image-gen; the
   in-mac router/media-routing fan work to these. These are **services**, not jobs.
 - **The static model's cost, observed directly.** This is where our recurring
   pain comes from: manual SSH deploys; bearer-token **drift** (a 403 that needed
@@ -65,7 +65,7 @@ tier on k8s — **not** turning every agent into a runner.
   `/home/dev/.mac/src/c26`.
 - **The repo already leans dynamic.** `docs/k8s-native-rewrite-plan.md`,
   `docs/job-per-task-roles-spec.md`, the `mac autopilot` k8s wiring, and the
-  `devuser-gke` fleet are all "task → ephemeral pod." So we are *already* moving
+  `<user>-gke` fleet are all "task → ephemeral pod." So we are *already* moving
   off static; the open question is the substrate, not the direction.
 
 ## The fulcrum
@@ -103,7 +103,7 @@ elasticity — is what makes the universal equivalence wrong.
 Use **k8s Jobs** for the executor tier. Concretely, because:
 
 - **It already exists here** (autopilot, `docs/job-per-task-roles-spec.md`,
-  `devuser-gke`) — extending it is the lowest-friction path to elasticity;
+  `<user>-gke`) — extending it is the lowest-friction path to elasticity;
   adopting GitHub ARC means standing up a new runner controller, registration-
   token plumbing, and runner groups.
 - **We control isolation** (namespace / RBAC / network policy) — the right
@@ -124,7 +124,7 @@ bridge**: a GitHub Actions event (push/PR/`workflow_dispatch`) calls the hub to
 We keep the executor contract simple (`claim → run → evidence → exit`) so it
 *could* run on a GitHub-hosted runner in a pinch — but that is a fallback, not
 the design. The only thing that would flip this decision is running a k8s
-cluster being off the table; it isn't (`devuser-gke` is already a cluster), so
+cluster being off the table; it isn't (`<user>-gke` is already a cluster), so
 GitHub-hosted runners' "no cluster to operate" advantage does not apply.
 
 ## Evidence: a live multi-node dispatch experiment (2026-06-11)
@@ -132,11 +132,11 @@ GitHub-hosted runners' "no cluster to operate" advantage does not apply.
 The flexible-dispatch claim was **tested, not just asserted**. A real 4-node
 Kubernetes cluster was stood up locally (`kind` on `colima`): one control-plane
 node (the "hub") + three worker nodes labeled to mimic the fleet's heterogeneity
-— `hostb` (`capability-gpu`), `hostd` (`capability-image-gen`), `hosta`
+— `gpu-worker-1` (`capability-gpu`), `mac-worker` (`capability-image-gen`), `hub`
 (`capability-ops`). Four Jobs were submitted with no manual placement:
 
-- `nodeSelector: capability-gpu` scheduled onto the `hostb` node;
-  `capability-image-gen` → `hostd`; `capability-ops` → `hosta`. Every
+- `nodeSelector: capability-gpu` scheduled onto the `gpu-worker-1` node;
+  `capability-image-gen` → `mac-worker`; `capability-ops` → `hub`. Every
   capability-targeted Job landed on exactly its matching node.
 - A 6-completion / parallelism-6 Job with **no** selector spread **2 / 2 / 2**
   across the three worker nodes on the scheduler's own.
@@ -150,10 +150,10 @@ are containers on one VM, so the *physical* distribution is simulated; the
 **What it does NOT prove — and why that sharpens the decision.** The literal
 "every host simply becomes a node" does not hold:
 
-- **macOS hosts cannot be Linux-container worker nodes.** hostd (darwin /
+- **macOS hosts cannot be Linux-container worker nodes.** mac-worker (darwin /
   M4 Pro) has no kubelet running Linux pods, and its **Metal/MPS GPU is not a
   schedulable k8s resource** at all.
-- **NVIDIA GPUs need device plugins.** hostb (RTX 6000 Ada) and hostc (GB10)
+- **NVIDIA GPUs need device plugins.** gpu-worker-1 (RTX 6000 Ada) and gpu-worker-2 (GB10)
   require drivers + the device plugin to expose GPUs as schedulable resources.
 - **Cross-network CNI.** Fleet hosts sit on different networks joined by
   Tailscale; one cluster needs node + pod networking across them (e.g. k3s + an
@@ -164,7 +164,7 @@ are containers on one VM, so the *physical* distribution is simulated; the
 
 ### Why a macOS host can't be a worker node — even with Docker + "GPU pass-through"
 
-Established on an M4 Pro Mac (same class as hostd):
+Established on an M4 Pro Mac (same class as mac-worker):
 
 1. **macOS doesn't run Linux containers; it runs a Linux VM.** Host kernel is
    `Darwin 25.5.0 arm64`, but a container on it reports `Linux 6.8.0 aarch64`
@@ -183,7 +183,7 @@ Established on an M4 Pro Mac (same class as hostd):
    (`could not select device driver … [[gpu]]`).
 3. **The GPU is reachable only by a native macOS process calling Metal** — which
    is by definition not a pod; a Linux Job can never touch Metal. (This is why
-   hostd's SDXL/MPS image-gen runs as a native `~/gen` process.)
+   mac-worker's SDXL/MPS image-gen runs as a native `~/gen` process.)
 4. **Making the Mac a node buys nothing and costs a VM layer:** you'd run Linux
    pods in a VM on the Mac with no access to the one capability that makes it
    special — and the genuinely macOS-only work that needs the host (Metal
@@ -191,15 +191,15 @@ Established on an M4 Pro Mac (same class as hostd):
    wall when the Electron build required the Mac's "Developer ID" / "Fleet
    Identity" signing identities) cannot run in a Linux container at all.
 
-### The Linux/NVIDIA hosts (hosta, hostb, hostc) *can* be nodes — container GPU is the supported path
+### The Linux/NVIDIA hosts (hub, gpu-worker-1, gpu-worker-2) *can* be nodes — container GPU is the supported path
 
 Read-only probes of the actual hosts:
 
 | Host | arch / kernel | GPU (driver) | docker / containerd / nvidia-ctk |
 | --- | --- | --- | --- |
-| **hosta** (node1) | x86_64 / 6.8 | none (CPU-only) | no / no / no |
-| **hostb** | x86_64 / 7.0 | RTX 6000 Ada 48 GB (595.71.05) | **yes / yes / yes** |
-| **hostc** | **aarch64** / 6.17-nvidia | GB10 Grace-Blackwell (580.159.03) | **yes / yes / yes** |
+| **hub** (node1) | x86_64 / 6.8 | none (CPU-only) | no / no / no |
+| **gpu-worker-1** | x86_64 / 7.0 | RTX 6000 Ada 48 GB (595.71.05) | **yes / yes / yes** |
+| **gpu-worker-2** | **aarch64** / 6.17-nvidia | GB10 Grace-Blackwell (580.159.03) | **yes / yes / yes** |
 
 Unlike the Mac, these are architecturally fine as k8s nodes, and the
 **container-GPU mechanism that's impossible on macOS is already installed** on
@@ -209,10 +209,10 @@ under `--gpus all`, and the k8s **NVIDIA device plugin** then exposes
 `nvidia.com/gpu` as a schedulable resource. (The toolkit's presence is the
 dispositive fact — it cannot even exist on macOS, where `--gpus all` errors.)
 
-- **hosta** — CPU-only Linux; the natural **control-plane ("hub") node** and/or a
+- **hub** — CPU-only Linux; the natural **control-plane ("hub") node** and/or a
   CPU worker. Only gap: **no container runtime today** (it runs the mac services
   as a bare-metal editable install), so containerd must be added.
-- **hostb** — **GPU worker node: ready.** Add the k8s NVIDIA device plugin and
+- **gpu-worker-1** — **GPU worker node: ready.** Add the k8s NVIDIA device plugin and
   pods can request `nvidia.com/gpu`. The often-cited caveat — "one 48 GB GPU is
   held by the long-lived **vLLM brain** (a *Deployment*, not a Job)" — turns out
   to be **hollow**: that brain serves ≈0 traffic (see the routing-evidence
@@ -220,7 +220,7 @@ dispositive fact — it cannot even exist on macOS, where `--gpus all` errors.)
   rather than carefully shared via time-slicing / MPS. (If a local-LLM fallback
   is wanted, keep a *right-sized* vLLM and GPU-share; just don't let a 0-traffic
   service block the node.)
-- **hostc** — **GPU worker node: feasible, same mechanism**, with two
+- **gpu-worker-2** — **GPU worker node: feasible, same mechanism**, with two
   operational caveats: **arm64** (a mixed-arch cluster — images/workloads must be
   built arm64) and a **bleeding-edge driver/kernel** (`6.17-nvidia` + driver 580;
   GB10 drivers are tightly kernel-coupled — the per-kernel-module friction we've
@@ -228,41 +228,41 @@ dispositive fact — it cannot even exist on macOS, where `--gpus all` errors.)
   kernel.
 
 Crucially, the **only** host that genuinely *can't* be a worker node is the
-**darwin** one (hostd). The GPU hosts *can* be nodes — but their long-lived
-model servers (hostb's vLLM brain) are **Deployments**, not Jobs. So the
-two-tier split maps cleanly onto the hardware: **hosta → control-plane / CPU
-executor nodes; hostb + hostc → GPU nodes hosting a persistent model-server
-Deployment and/or elastic GPU Jobs; hostd → off-cluster persistent
+**darwin** one (mac-worker). The GPU hosts *can* be nodes — but their long-lived
+model servers (gpu-worker-1's vLLM brain) are **Deployments**, not Jobs. So the
+two-tier split maps cleanly onto the hardware: **hub → control-plane / CPU
+executor nodes; gpu-worker-1 + gpu-worker-2 → GPU nodes hosting a persistent model-server
+Deployment and/or elastic GPU Jobs; mac-worker → off-cluster persistent
 native-macOS service.**
 
 ### The "vLLM brain" serves ≈0 traffic — the GPU it holds is effectively idle (2026-06-11)
 
 A second probe checked whether the persistent service this ADR is most careful to
-protect — hostb's vLLM "LLM brain" — is actually load-bearing. It is not.
+protect — gpu-worker-1's vLLM "LLM brain" — is actually load-bearing. It is not.
 
-Querying the live hosta hub's routing telemetry
-(`mac --fleet hosta observability list --name llm.route`), the last ~1000
+Querying the live hub's routing telemetry
+(`mac --fleet <hub-node> observability list --name llm.route`), the last ~1000
 `llm.route` events (spanning 2026-06-08 → 2026-06-11):
 
 | backend provider | events |
 | --- | --- |
 | `nvidia` (cloud inference API, resolving `azure/anthropic/claude-sonnet-4-6`) | 994 |
 | empty / failed route | 6 |
-| **hostb / vLLM / its served model** | **0** |
+| **gpu-worker-1 / vLLM / its served model** | **0** |
 
-The cause is structural, not transient. hostb's vLLM *is* wired into the hub
+The cause is structural, not transient. gpu-worker-1's vLLM *is* wired into the hub
 router — appended to `MAC_ROUTER_PROVIDERS` at priority 0 — but **only for the
 model `Qwen/Qwen3.6-27B-FP8`**. Every fleet agent's `gateway_model` (in
-`~/.mac/fleets.yaml`, including hostb's *own* agent) is
+`~/.mac/fleets.yaml`, including gpu-worker-1's *own* agent) is
 `azure/anthropic/claude-sonnet-4-6`, which routes to the cloud `nvidia` provider.
-No caller ever requests the model hostb serves, so a 48 GB RTX 6000 Ada sits idle
-on the LLM path. (hostb was additionally tailscale-offline at probe time.)
+No caller ever requests the model gpu-worker-1 serves, so a 48 GB RTX 6000 Ada sits idle
+on the LLM path. (gpu-worker-1 was additionally tailscale-offline at probe time.)
 
 **Why this sharpens the decision.** The Decision and Risks sections treat "GPU /
 model servers stay persistent services; they are not jobs" as a hard constraint,
-and the hostb node-readiness note above flagged the vLLM Deployment as the reason
+and the gpu-worker-1 node-readiness note above flagged the vLLM Deployment as the reason
 to time-slice rather than dedicate the GPU. The evidence collapses that tension:
-the brain has **no traffic to protect**, so hostb's GPU is the *easiest*, not the
+the brain has **no traffic to protect**, so gpu-worker-1's GPU is the *easiest*, not the
 hardest, to hand to the elastic executor tier — dedicate it outright. The
 persistent-services principle still holds in general (it's right for a brain that
 *is* serving); it just doesn't currently apply to *this* GPU. A concrete
@@ -270,7 +270,7 @@ device-plugin + node-label draft for exactly this conversion lives at
 [`deploy/k8s/gpu-worker/`](../../deploy/k8s/gpu-worker/).
 
 (Method/caveat: the telemetry only captures hub-routed requests; a process hitting
-`hostb:8000` directly would not appear. Confirm with hostb's vLLM
+`gpu-worker-1:8000` directly would not appear. Confirm with gpu-worker-1's vLLM
 `/metrics request_success_total` before decommissioning the service.)
 
 ## Risks / non-goals

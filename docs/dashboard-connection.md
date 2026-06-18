@@ -41,13 +41,13 @@ contextBridge.exposeInMainWorld("macDashboard", {
     return {
       mode: "electron-managed",
       apiBaseUrl: "http://127.0.0.1:18789",
-      displayName: "Hosta / dev",
-      targetId: "fleet:hosta"
+      displayName: "hub / dev",
+      targetId: "fleet:hub"
     };
   },
   async targets() {
     return [
-      { id: "fleet:hosta", label: "mac / hosta", mode: "fleet-direct" },
+      { id: "fleet:hub", label: "mac / hub", mode: "fleet-direct" },
       { id: "testing-url", label: "Testing URL", mode: "testing-url" }
     ];
   },
