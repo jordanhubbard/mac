@@ -52,7 +52,7 @@ Think of MAC as a project office for AI workers:
 - Tenant: an isolated organization or personal deployment.
 - User: a human identity inside a tenant.
 - Persona: a Hermes personality and memory scope.
-- Hermes instance: a running named Hermes identity, such as Rocky.
+- Hermes instance: a running named Hermes identity, such as `worker-1`.
 - Platform binding: a Slack channel, Telegram chat, Discord channel, or similar
   place where Hermes talks to humans.
 - Fleet: a set of MAC machines and agents managed together.

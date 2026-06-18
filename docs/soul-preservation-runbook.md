@@ -106,8 +106,8 @@ produces no duplicate persona / instance / binding rows and that the
 
 - **`hermes_instances.last_seen_at` is registration freshness, not worker
   liveness.** It advances when the Hermes identity re-registers. Use the
-  `agents.last_seen_at`, lease, and heartbeat records to decide whether Rocky,
-  Natasha, Bullwinkle, or another worker process is alive and claim-capable.
+  `agents.last_seen_at`, lease, and heartbeat records to decide whether `hub`,
+  `worker-1`, `worker-2`, or another worker process is alive and claim-capable.
 - **`memory_scope` URI unreachable.** `mac` does not validate that the URI
   resolves — that's Hermes's responsibility. A broken URI manifests as a
   Hermes startup failure, not a `mac` error.

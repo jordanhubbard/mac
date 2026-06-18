@@ -42,7 +42,7 @@ files.** Reachable subtrees, with file counts:
 
 ### Runtime trace result (validates the static manifest)
 
-A real oneshot (`hermes -z` under `python -v`) on rocky confirmed:
+A real oneshot (`hermes -z` under `python -v`) on the hub confirmed:
 - **`plugins/` loads 273 files at runtime** (vs 20 statically — dynamic
   loading). It is essential; omitting it would break the vendor.
 - `hermes_cli` (87), `agent` (78), `gateway` (27), `tools` (15), `providers`

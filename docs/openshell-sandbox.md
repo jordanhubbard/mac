@@ -84,7 +84,7 @@ mac-openshell-supervisor --agent-id agent_rocky --policy "$MAC_OPENSHELL_POLICY"
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MAC_OPENSHELL_REQUIRED` | rocky/bullwinkle/natasha required | fail closed when OpenShell/policy is unavailable |
+| `MAC_OPENSHELL_REQUIRED` | hub/worker-1/worker-2 required | fail closed when OpenShell/policy is unavailable |
 | `MAC_OPENSHELL_BIN` | `openshell` | path to the `openshell` binary |
 | `MAC_OPENSHELL_POLICY` | _(resolved)_ | explicit policy path; MAC-managed materialized policy should be set here |
 | `MAC_OPENSHELL_EVENTS_FILE` | _(none)_ | JSONL/OCSF event stream for `mac-openshell-collector` |
@@ -107,7 +107,7 @@ mac-openshell-supervisor --agent-id agent_rocky --policy "$MAC_OPENSHELL_POLICY"
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-3. Start `mac-openshell-supervisor` on rocky, bullwinkle, and natasha. Confirm
+3. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
    the gateway, task executor, finalizers, and Hermes sessions inherit the same
    sandbox id.
 4. Trigger an off-policy filesystem or network attempt. Confirm the denial
