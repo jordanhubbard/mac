@@ -400,7 +400,7 @@ def _run_build(
     *,
     bindir: Path,
     manifest_path: Path,
-    task_id: str = "task_demo",
+    task_id: str = "",
     agent_id: str = "mac-worker-python-coder-opencode",
     opencode_config_path: Optional[Path] = None,
     extra_env: Optional[Dict[str, str]] = None,
@@ -410,6 +410,11 @@ def _run_build(
     for key in list(env):
         if key.startswith(("MAC_", "INFERENCE_HUB_", "GITEA_", "GH_")):
             env.pop(key, None)
+    # Unique per call by default so the executor's per-task /tmp state
+    # (/tmp/mac-task-venv-${MAC_TASK_ID} and the cloned working tree) is isolated
+    # per test — a shared id collided with leftover state in full-suite runs.
+    if not task_id:
+        task_id = "task_%s" % uuid.uuid4().hex[:12]
     env["PATH"] = "%s%s%s" % (bindir, os.pathsep, env.get("PATH", ""))
     env.update(
         {
@@ -427,13 +432,19 @@ def _run_build(
         env["MAC_OPENCODE_CONFIG_PATH"] = str(opencode_config_path)
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(
-        ["bash", str(BUILD_SCRIPT)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    try:
+        return subprocess.run(
+            ["bash", str(BUILD_SCRIPT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    finally:
+        # Best-effort: drop the per-task /tmp dirs the executor created so they
+        # can't leak into another test or accumulate across runs.
+        shutil.rmtree("/tmp/mac-task-venv-%s" % task_id, ignore_errors=True)
+        shutil.rmtree("/tmp/work-%s" % task_id, ignore_errors=True)
 
 
 def _findings_by_kind(manifest: dict) -> Dict[str, dict]:
