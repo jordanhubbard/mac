@@ -7,11 +7,6 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
-from mac.agentbus_control import (
-    REPO_UPDATE_CONTENT_TYPE,
-    REPO_UPDATE_TOPIC,
-    repo_update_payload,
-)
 from mac.migration import import_jsonl, migrate_acc_sqlite
 from mac.models import MACError
 from mac.services import ControlPlane
@@ -718,6 +713,35 @@ def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
 
+def _sender_agent_id(args: argparse.Namespace) -> str:
+    sender = (
+        getattr(args, "sender_agent_id", None)
+        or os.environ.get("MAC_AGENT_ID")
+        or os.environ.get("MAC_WORKER_AGENT_ID")
+    )
+    if not sender:
+        raise MACError(
+            "admin/control sender agent id is required; pass --sender-agent-id or set MAC_AGENT_ID"
+        )
+    return sender
+
+
+def cmd_fleet_refresh_source(args: argparse.Namespace) -> None:
+    recipients = list(args.agent_id or [])
+    _print(
+        _plane(args).publish_agentbus_repo_update(
+            sender_agent_id=_sender_agent_id(args),
+            recipient_agent_ids=recipients,
+            all_agents=not recipients,
+            repo_path=args.repo_path,
+            remote=args.remote,
+            branch=args.branch,
+            restart=not args.no_restart,
+            request_id=args.request_id,
+        )
+    )
+
+
 def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     """fleet-02: the team roster + what each agent is doing now."""
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
@@ -1323,35 +1347,19 @@ def cmd_agentbus_publish(args: argparse.Namespace) -> None:
 
 
 def cmd_agentbus_repo_update(args: argparse.Namespace) -> None:
-    cp = _plane(args)
-    recipients = list(args.recipient_agent_id or [])
-    if args.all_agents:
-        recipients.extend(agent.id for agent in cp.list_agents())
-    recipients = list(dict.fromkeys(item for item in recipients if item))
-    if not recipients:
+    if not args.recipient_agent_id and not args.all_agents:
         raise MACError("repo-update requires --recipient-agent-id or --all-agents")
-    payload = repo_update_payload(
-        repo_path=args.repo_path,
-        remote=args.remote,
-        branch=args.branch,
-        restart=not args.no_restart,
-        request_id=args.request_id,
-    )
     _print(
-        {
-            "schema": "mac.agentbus.repo_update_publish.v1",
-            "count": len(recipients),
-            "streams": [
-                cp.publish_agentbus_content(
-                    sender_agent_id=args.sender_agent_id,
-                    recipient_agent_id=recipient_id,
-                    content_type=REPO_UPDATE_CONTENT_TYPE,
-                    payload=payload,
-                    topic=REPO_UPDATE_TOPIC,
-                )["stream"]
-                for recipient_id in recipients
-            ],
-        }
+        _plane(args).publish_agentbus_repo_update(
+            sender_agent_id=args.sender_agent_id,
+            recipient_agent_ids=args.recipient_agent_id,
+            all_agents=args.all_agents,
+            repo_path=args.repo_path,
+            remote=args.remote,
+            branch=args.branch,
+            restart=not args.no_restart,
+            request_id=args.request_id,
+        )
     )
 
 
@@ -2751,6 +2759,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    fleet_refresh = fleet.add_parser(
+        "refresh-source",
+        aliases=["refresh"],
+        help=(
+            "ask fleet agents to pull their self-update repo and restart "
+            "themselves if HEAD changes"
+        ),
+    )
+    fleet_refresh.add_argument(
+        "--sender-agent-id",
+        help="registered admin/control agent id to send the message as; defaults to MAC_AGENT_ID",
+    )
+    fleet_refresh.add_argument(
+        "--agent-id",
+        action="append",
+        help="target one agent id; repeatable. Default targets every agent.",
+    )
+    fleet_refresh.add_argument("--repo-path")
+    fleet_refresh.add_argument("--remote", default="origin")
+    fleet_refresh.add_argument("--branch", default="main")
+    fleet_refresh.add_argument("--request-id")
+    fleet_refresh.add_argument("--no-restart", action="store_true")
+    _set(cmd_fleet_refresh_source, fleet_refresh)
 
     # fleet-02: live group awareness for the team.
     fleet_snap = fleet.add_parser(

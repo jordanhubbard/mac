@@ -36,9 +36,6 @@ from mac.agentbus_control import (
     debug_terminal_input_payload,
     debug_terminal_open_payload,
     hermes_config_apply_payload,
-    REPO_UPDATE_CONTENT_TYPE,
-    REPO_UPDATE_TOPIC,
-    repo_update_payload,
 )
 from mac.hermes_config_surface import (
     build_hermes_config_surfaces,
@@ -5401,45 +5398,30 @@ def create_app(
         body: AgentBusRepoUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        # mac-si4l: /agentbus/repo-update is a fleet-wide restart
-        # primitive. Require admin scope OR a sender that matches the
-        # principal's agent_id binding. Combined, this means a single
-        # compromised agent token can't broadcast restart=true to every
-        # peer; only an admin or the bound agent's own future-self can.
+        # mac-si4l: /agentbus/repo-update is a restart primitive. Require
+        # admin scope for any peer/fleet fanout; a non-admin agent token can
+        # only request a repo-update stream addressed to its own future self.
         if not principal.is_admin:
             principal.assert_actor(body.sender_agent_id)
             if body.all_agents:
                 raise AuthorizationError(
                     "fleet-wide repo-update (all_agents=true) requires admin scope"
                 )
-        recipients = list(body.recipient_agent_ids)
-        if body.all_agents:
-            recipients.extend(agent.id for agent in cp.list_agents())
-        recipients = list(dict.fromkeys(item for item in recipients if item))
-        if not recipients:
-            raise ValidationError("repo-update requires recipient_agent_ids or all_agents=true")
-        payload = repo_update_payload(
+            recipients = set(body.recipient_agent_ids)
+            if recipients != {body.sender_agent_id}:
+                raise AuthorizationError(
+                    "repo-update to peer agents requires admin scope"
+                )
+        return cp.publish_agentbus_repo_update(
+            sender_agent_id=body.sender_agent_id,
+            recipient_agent_ids=body.recipient_agent_ids,
+            all_agents=body.all_agents,
             repo_path=body.repo_path,
             remote=body.remote,
             branch=body.branch,
             restart=body.restart,
             request_id=body.request_id,
         )
-        published = [
-            cp.publish_agentbus_content(
-                sender_agent_id=body.sender_agent_id,
-                recipient_agent_id=recipient_id,
-                content_type=REPO_UPDATE_CONTENT_TYPE,
-                topic=REPO_UPDATE_TOPIC,
-                payload=payload,
-            )
-            for recipient_id in recipients
-        ]
-        return {
-            "schema": "mac.agentbus.repo_update_publish.v1",
-            "count": len(published),
-            "streams": [item["stream"] for item in published],
-        }
 
     @app.post("/agentbus/artifact-publish")
     def publish_agentbus_artifact(

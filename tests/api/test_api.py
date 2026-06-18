@@ -783,7 +783,7 @@ def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("h")
     agent_a = cp.register_agent(machine.id, "a", capabilities=["ops"])
-    cp.register_agent(machine.id, "b", capabilities=["ops"])  # peer to be spammed
+    agent_b = cp.register_agent(machine.id, "b", capabilities=["ops"])  # peer to be spammed
     client = TestClient(
         create_app(
             control_plane=cp,
@@ -804,6 +804,31 @@ def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
         },
     )
     assert blocked.status_code == 403, blocked.text
+    # Explicitly enumerating peers is the same privileged operation as
+    # all_agents=True; a compromised agent token must not bypass the admin gate.
+    blocked = client.post(
+        "/agentbus/repo-update",
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "sender_agent_id": agent_a.id,
+            "recipient_agent_ids": [agent_a.id, agent_b.id],
+            "restart": True,
+        },
+    )
+    assert blocked.status_code == 403, blocked.text
+    # Self-directed update remains available to the bound agent token.
+    ok = client.post(
+        "/agentbus/repo-update",
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "sender_agent_id": agent_a.id,
+            "recipient_agent_ids": [agent_a.id],
+            "restart": True,
+            "request_id": "self-update",
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["count"] == 1
     # Admin can fan out
     ok = client.post(
         "/agentbus/repo-update",
@@ -815,6 +840,13 @@ def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
         },
     )
     assert ok.status_code == 200
+    published = ok.json()
+    assert published["schema"] == "mac.agentbus.repo_update_publish.v1"
+    assert published["count"] == 2
+    assert {stream["recipient_agent_id"] for stream in published["streams"]} == {
+        agent_a.id,
+        agent_b.id,
+    }
 
 
 def test_evidence_created_by_bound_to_principal():

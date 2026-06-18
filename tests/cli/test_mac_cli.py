@@ -110,6 +110,55 @@ def test_mac_cli_agent_register_and_list(tmp_path):
     assert any(a["id"] == agent["id"] for a in agents)
 
 
+def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
+    rc, machine = _run(tmp_path, "machine", "register", "refresh-host")
+    assert rc == 0
+    rc, sender = _run(tmp_path, "agent", "register", machine["id"], "hub")
+    assert rc == 0
+    rc, worker = _run(tmp_path, "agent", "register", machine["id"], "worker")
+    assert rc == 0
+
+    rc, published = _run(
+        tmp_path,
+        "fleet",
+        "refresh-source",
+        "--sender-agent-id",
+        sender["id"],
+        "--remote",
+        "origin",
+        "--branch",
+        "main",
+        "--request-id",
+        "refresh-local",
+    )
+
+    assert rc == 0
+    assert published["schema"] == "mac.agentbus.repo_update_publish.v1"
+    assert published["count"] == 2
+    assert len(published["streams"]) == 2
+    assert {stream["recipient_agent_id"] for stream in published["streams"]} == {
+        sender["id"],
+        worker["id"],
+    }
+
+    rc, targeted = _run(
+        tmp_path,
+        "fleet",
+        "refresh-source",
+        "--sender-agent-id",
+        sender["id"],
+        "--agent-id",
+        worker["id"],
+        "--request-id",
+        "refresh-targeted",
+    )
+
+    assert rc == 0
+    assert targeted["schema"] == "mac.agentbus.repo_update_publish.v1"
+    assert targeted["count"] == 1
+    assert targeted["streams"][0]["recipient_agent_id"] == worker["id"]
+
+
 # ---------------------------------------------------------------------------
 # task
 # ---------------------------------------------------------------------------

@@ -19,6 +19,11 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from mac.agentbus_control import (
+    REPO_UPDATE_CONTENT_TYPE,
+    REPO_UPDATE_TOPIC,
+    repo_update_payload,
+)
 from mac.models import (
     Agent,
     AgentProvisioningRequest,
@@ -7977,6 +7982,47 @@ class ControlPlane:
 
     def publish_agentbus_content(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.publish(*args, **kwargs)
+
+    def publish_agentbus_repo_update(
+        self,
+        sender_agent_id: str,
+        recipient_agent_ids: Optional[List[str]] = None,
+        *,
+        all_agents: bool = False,
+        repo_path: Optional[str] = None,
+        remote: str = "origin",
+        branch: str = "main",
+        restart: bool = True,
+        request_id: Optional[str] = None,
+    ) -> JsonDict:
+        recipients = list(recipient_agent_ids or [])
+        if all_agents:
+            recipients.extend(agent.id for agent in self.list_agents())
+        recipients = list(dict.fromkeys(item for item in recipients if item))
+        if not recipients:
+            raise ValidationError("repo-update requires recipient_agent_ids or all_agents=true")
+        payload = repo_update_payload(
+            repo_path=repo_path,
+            remote=remote,
+            branch=branch,
+            restart=restart,
+            request_id=request_id,
+        )
+        published = [
+            self.publish_agentbus_content(
+                sender_agent_id=sender_agent_id,
+                recipient_agent_id=recipient_id,
+                content_type=REPO_UPDATE_CONTENT_TYPE,
+                topic=REPO_UPDATE_TOPIC,
+                payload=payload,
+            )
+            for recipient_id in recipients
+        ]
+        return {
+            "schema": "mac.agentbus.repo_update_publish.v1",
+            "count": len(published),
+            "streams": [item["stream"] for item in published],
+        }
 
     def publish_agentbus_artifact(
         self,
