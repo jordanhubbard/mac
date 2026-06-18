@@ -1482,6 +1482,33 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert agent_detail["availability"]["eligible"] is True
 
 
+def test_fastapi_adds_memory_without_optional_task_or_evidence():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    created = client.post(
+        "/memory",
+        json={
+            "subject_type": "agent",
+            "subject_id": "agent_natasha",
+            "record_type": "verification:central_memory",
+            "content": "memory write without optional task/evidence",
+            "created_by": "operator",
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    record = created.json()
+    assert record["task_id"] is None
+    assert record["evidence_id"] is None
+    assert record["subject_id"] == "agent_natasha"
+
+    found = client.get(
+        "/memory",
+        params={"subject_type": "agent", "subject_id": "agent_natasha"},
+    ).json()
+    assert [item["id"] for item in found] == [record["id"]]
+
+
 def test_dashboard_state_caps_high_volume_task_and_message_data():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))

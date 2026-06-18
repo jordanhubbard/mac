@@ -5799,6 +5799,7 @@ def create_app(
     @app.post("/memory")
     def add_memory(body: MemoryCreate) -> Dict[str, Any]:
         data = _data(body)
+        data.setdefault("task_id", None)
         data.setdefault("evidence_id", None)
         return cp.add_memory(**data).to_dict()
 
