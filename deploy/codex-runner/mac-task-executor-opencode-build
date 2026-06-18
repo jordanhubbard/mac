@@ -166,11 +166,11 @@ echo "REPO_BRANCH:      ${REPO_BRANCH}"
 # Rewrite https://... to https://<user>:<token>@... for git hosting. Auto-detects the git host and uses appropriate credentials.
 authed_url() {
     local u="$1"
-    
+
     # Extract hostname from URL
     if [[ "$u" =~ ^https://([^/]+)/ ]]; then
         local host="${BASH_REMATCH[1]}"
-        
+
         case "$host" in
             github.com)
                 # GitHub: use GH_TOKEN with x-access-token username
