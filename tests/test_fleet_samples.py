@@ -145,3 +145,22 @@ def test_init_from_copies_sample_to_specs_dir(tmp_path):
         check=False,
     )
     assert again.returncode == 2, again.stdout
+
+
+def test_tickets_mirror_is_not_tracked():
+    """The .tickets/<id>.md mirror is LOCAL operational state (the `mac task`
+    hub ledger is canonical). It must not be checked into the repo — a generic
+    product tree shouldn't carry one operator's task history. The auto-emit
+    still writes the local mirror; .gitignore keeps it out of git."""
+    out = subprocess.run(
+        ["git", "ls-files", ".tickets"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    tracked = [line for line in out.stdout.splitlines() if line.strip()]
+    assert not tracked, (
+        "operational task-ledger mirrors are tracked in git: %s — .tickets/ is "
+        "local-only (gitignored); the hub ledger is canonical" % tracked[:5]
+    )

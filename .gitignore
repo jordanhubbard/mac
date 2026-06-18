@@ -18,3 +18,6 @@ dist/
 .beads/
 .beads-credential-key
 .claude/worktrees/
+
+# Operational task-ledger mirror (mac task is canonical; mirror is local-only).
+.tickets/
