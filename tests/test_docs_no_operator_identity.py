@@ -49,10 +49,13 @@ _TOKENS = [
     "devuser",
     "agentuser",
 ]
-# Word-boundary, case-insensitive. `do-host` is matched specially below because
-# the hyphen is not a word character (so a trailing \b would behave oddly).
+# Boundaries are alphanumeric-only (NOT \b), so an underscore counts as a
+# separator: this catches `agent_rocky` / `hermes_hosta` forms that a `\b`
+# regex misses because `_` is a word character. `do-host` is matched with the
+# same left boundary (the hyphen already terminates it on the right).
 IDENTITY = re.compile(
-    r"\b(?:" + "|".join(re.escape(t) for t in _TOKENS) + r")\b" r"|\bdo-host",
+    r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(t) for t in _TOKENS) + r")(?![A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9])do-host",
     re.IGNORECASE,
 )
 
