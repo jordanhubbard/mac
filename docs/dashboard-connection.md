@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld("macDashboard", {
     return {
       mode: "electron-managed",
       apiBaseUrl: "http://127.0.0.1:18789",
-      displayName: "hub / dev",
+      displayName: "hub / bastion",
       targetId: "fleet:hub"
     };
   },

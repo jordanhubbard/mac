@@ -28,7 +28,7 @@ def capture(monkeypatch):
         if method == "GET" and (path == "/tasks" or path.startswith("/tasks?")):
             return [
                 {"id": "task_aaa", "state": "open", "title": "embed API", "owner_agent_id": None},
-                {"id": "task_bbb", "state": "running", "title": "vector math", "owner_agent_id": "hosta"},
+                {"id": "task_bbb", "state": "running", "title": "vector math", "owner_agent_id": "rocky"},
             ]
         if "/claim" in path:
             return {"task": {"state": "claimed"}, "lease": {"id": "lease_1"}}
@@ -43,26 +43,26 @@ def capture(monkeypatch):
 
 
 def test_create_posts_title_and_actor(capture, monkeypatch):
-    monkeypatch.setenv("MAC_AGENT_ID", "hosta")
+    monkeypatch.setenv("MAC_AGENT_ID", "rocky")
     out = json.loads(fleet_tool._handle_tasks(
         {"action": "create", "title": "Add embedding API", "description": "for dreaming", "priority": 2}))
     method, path, payload = capture[-1]
     assert (method, path) == ("POST", "/tasks")
-    assert payload == {"title": "Add embedding API", "description": "for dreaming", "priority": 2, "actor": "hosta"}
+    assert payload == {"title": "Add embedding API", "description": "for dreaming", "priority": 2, "actor": "rocky"}
     assert out["success"] and out["task_id"] == "task_new"
 
 
 def test_claim_passes_agent_id_as_query(capture, monkeypatch):
-    monkeypatch.setenv("MAC_AGENT_ID", "hostc")
+    monkeypatch.setenv("MAC_AGENT_ID", "natasha")
     out = json.loads(fleet_tool._handle_tasks({"action": "claim", "task_id": "task_aaa"}))
     method, path, _ = capture[-1]
     assert method == "POST"
-    assert path == "/tasks/task_aaa/claim?agent_id=hostc"
-    assert out["owner"] == "hostc" and out["state"] == "claimed"
+    assert path == "/tasks/task_aaa/claim?agent_id=natasha"
+    assert out["owner"] == "natasha" and out["state"] == "claimed"
 
 
 def test_close_completed_vs_cancelled(capture, monkeypatch):
-    monkeypatch.setenv("MAC_AGENT_ID", "hosta")
+    monkeypatch.setenv("MAC_AGENT_ID", "rocky")
     json.loads(fleet_tool._handle_tasks({"action": "close", "task_id": "task_bbb", "reason": "done"}))
     _, path, payload = capture[-1]
     assert path == "/tasks/task_bbb/transition"
@@ -76,7 +76,7 @@ def test_close_completed_vs_cancelled(capture, monkeypatch):
 def test_list_renders_shared_backlog(capture):
     out = fleet_tool._handle_tasks({"action": "list"})
     assert capture[-1][:2] == ("GET", "/tasks")
-    assert "task_aaa" in out and "[open]" in out and "owner: hosta" in out
+    assert "task_aaa" in out and "[open]" in out and "owner: rocky" in out
 
 
 def test_list_state_filter_is_query(capture):

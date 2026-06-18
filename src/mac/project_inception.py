@@ -58,7 +58,7 @@ def run_c26_project_inception_proof(
         hermes.id,
         "slack",
         "T-C26/C-DEMO",
-        display_name="#teamchannel",
+        display_name="#rockyandfriends",
     )
     agents = _register_c26_agents(cp, hermes.id)
     notifier = cp.configure_notifier_channel(

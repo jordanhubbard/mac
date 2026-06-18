@@ -202,10 +202,10 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
             "/personas",
             json={
                 "tenant_id": tenant["id"],
-                "name": "Hosta",
-                "soul_ref": "hermes://route/hosta/SOUL.md",
-                "memory_scope": "hermes://route/hosta/memory",
-                "metadata": {"role_slugs": ["hosta", "qa"]},
+                "name": "Rocky",
+                "soul_ref": "hermes://route/rocky/SOUL.md",
+                "memory_scope": "hermes://route/rocky/memory",
+                "metadata": {"role_slugs": ["rocky", "qa"]},
             },
         )
     )
@@ -215,9 +215,9 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
             "/hermes-instances",
             json={
                 "tenant_id": tenant["id"],
-                "name": "hosta-route",
+                "name": "rocky-route",
                 "persona_id": persona["id"],
-                "home_ref": "hermes://route/hosta",
+                "home_ref": "hermes://route/rocky",
             },
         )
     )
@@ -276,13 +276,13 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
         )
 
     default_agent = agent(
-        "hosta-route",
+        "rocky-route",
         ["python", "deploy", "ops", "qa", "review"],
         hermes_instance_id=hermes["id"],
     )
     ctx["agent_id"] = default_agent["id"]
     ctx["agent_attestation_key"] = default_agent["attestation_key"]
-    reviewer = agent("hostc-route", ["review", "qa"])
+    reviewer = agent("natasha-route", ["review", "qa"])
     ctx["reviewer_agent_id"] = reviewer["id"]
     ctx["reviewer_attestation_key"] = reviewer["attestation_key"]
     ctx["terminal_session_id"] = "term_route_case"
@@ -310,7 +310,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
         },
         stream_id=ctx["terminal_output_stream_id"],
     )
-    ctx["delegate_agent_id"] = agent("hostd-route", ["python"])["id"]
+    ctx["delegate_agent_id"] = agent("bullwinkle-route", ["python"])["id"]
     ctx["delete_agent_id"] = agent("delete-route-agent", ["python"])["id"]
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
     ctx["bulk_agent_id"] = agent("bulk-route-agent", ["python"])["id"]

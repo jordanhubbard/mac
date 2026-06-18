@@ -906,7 +906,7 @@ def _promote_slack_accounts_tokens(config: Dict[str, Any], home: Path) -> None:
     migrated from another host) carries its bot/app tokens there, NOT in the
     config.yaml ``env:`` block — and the gateway enables the Slack platform off
     the env tokens, so without this it comes up "No messaging platforms enabled"
-    (the hostd case). Promote the first account's xoxb/xapp pair so a
+    (the bullwinkle case). Promote the first account's xoxb/xapp pair so a
     redeploy keeps Slack working. setdefault: an explicit env token wins, and
     slack_accounts.json still drives the actual multi-workspace connections.
     """

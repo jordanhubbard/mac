@@ -176,7 +176,7 @@ adapter.import_project_item(
     priority=10,
     dependencies=["task_parent"],
 )
-adapter.register_beads_repository("nanolang", "/Users/<user>/Src/nanolang", project="repo-beads-nanolang")
+adapter.register_beads_repository("nanolang", "/Users/jordanh/Src/nanolang", project="repo-beads-nanolang")
 adapter.list_beads_repositories()
 adapter.poll_beads_repositories(repository="nanolang", force=True)
 ```
@@ -189,7 +189,7 @@ mac-hermes project-detail repo-beads-nanolang
 mac-hermes project-items
 mac-hermes import-project-item repo-beads-nanolang nanolang-42 "Update parser dependency" --project repo-beads-nanolang --priority 10 --dependencies task_parent
 mac-hermes beads-repositories
-mac-hermes register-beads-repository nanolang /Users/<user>/Src/nanolang --project repo-beads-nanolang
+mac-hermes register-beads-repository nanolang /Users/jordanh/Src/nanolang --project repo-beads-nanolang
 mac-hermes poll-beads-repositories --repository nanolang --force
 ```
 

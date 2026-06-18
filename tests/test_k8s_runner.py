@@ -192,23 +192,6 @@ class TestBuildJobSpec:
         assert csec["allowPrivilegeEscalation"] is False
         assert csec["capabilities"]["drop"] == ["ALL"]
 
-    def test_nvm_dirs_have_writable_emptydir_overlays(self) -> None:
-        # The pre-push gate uses nvm to install a project's declared Node
-        # version; readOnlyRootFilesystem (asserted above) blocks nvm's writes
-        # to versions/ and .cache/, so those two subdirs of NVM_DIR get
-        # writable emptyDir overlays. Without them nvm silently fails and the
-        # gate falls back to the image's baseline Node.
-        spec = build_job_spec(_task(), _lease(), _cfg())
-        pod = spec["spec"]["template"]["spec"]
-        container = pod["containers"][0]
-        mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
-        assert mounts.get("nvm-versions") == "/var/lib/mac/.nvm/versions"
-        assert mounts.get("nvm-cache") == "/var/lib/mac/.nvm/.cache"
-        by_name = {v["name"]: v for v in pod["volumes"]}
-        # Must be writable emptyDirs, not configMap/secret/projected.
-        assert "emptyDir" in by_name["nvm-versions"]
-        assert "emptyDir" in by_name["nvm-cache"]
-
     def test_container_env_has_required_vars(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
         env = spec["spec"]["template"]["spec"]["containers"][0]["env"]

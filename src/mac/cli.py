@@ -723,6 +723,33 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
+    """Render the OpenShell guardrail policy from the operator template + fleet
+    values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
+    of executor sandbox enforcement (flipping it on additionally needs the
+    Hermes-runtime sandbox image)."""
+    from mac import openshell_policy as _op
+
+    template = Path(args.template).expanduser().read_text(encoding="utf-8")
+    rendered = _op.render_policy(
+        template,
+        agent_user=args.agent_user,
+        hub_host=args.hub_host,
+        hub_port=args.hub_port,
+        model_gateway_host=getattr(args, "model_gateway_host", None),
+        shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
+        image_runtime=getattr(args, "image_runtime", None),
+    )
+    if args.into:
+        dest = Path(args.into).expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rendered, encoding="utf-8")
+        dest.chmod(0o600)
+        _print({"wrote": str(dest), "bytes": len(rendered)})
+    else:
+        sys.stdout.write(rendered)
+
+
 def cmd_openshell_policy_create(args: argparse.Namespace) -> None:
     policy_text = _read_text_arg(args.policy_text, args.policy_file, label="policy")
     _print(
@@ -2223,33 +2250,6 @@ def cmd_rollout_health(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
-    """Render the OpenShell guardrail policy from the operator template + fleet
-    values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
-    of executor sandbox enforcement (flipping it on additionally needs the
-    Hermes-runtime sandbox image)."""
-    from mac import openshell_policy as _op
-
-    template = Path(args.template).expanduser().read_text(encoding="utf-8")
-    rendered = _op.render_policy(
-        template,
-        agent_user=args.agent_user,
-        hub_host=args.hub_host,
-        hub_port=args.hub_port,
-        model_gateway_host=getattr(args, "model_gateway_host", None),
-        shared_services={"qdrant": args.qdrant_port, "firecrawl": args.firecrawl_port},
-        image_runtime=getattr(args, "image_runtime", None),
-    )
-    if args.into:
-        dest = Path(args.into).expanduser()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(rendered, encoding="utf-8")
-        dest.chmod(0o600)
-        _print({"wrote": str(dest), "bytes": len(rendered)})
-    else:
-        sys.stdout.write(rendered)
-
-
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=func)
 
@@ -2300,7 +2300,7 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_env.add_argument(
         "--fleet",
         required=True,
-        help="fleet name to scope credentials under (e.g. hosta, devuser-hub)",
+        help="fleet name to scope credentials under (e.g. rocky, jordanh-hub)",
     )
     migrate_env.add_argument(
         "--env-file",
@@ -2610,6 +2610,98 @@ def build_parser() -> argparse.ArgumentParser:
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
 
+    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    osh_render = openshell.add_parser(
+        "render-policy",
+        help="render the OpenShell guardrail policy from the operator template for this fleet",
+    )
+    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host (e.g. jkh)")
+    osh_render.add_argument("--hub-host", required=True, help="MAC hub host (e.g. 100.125.137.89)")
+    osh_render.add_argument("--hub-port", type=int, default=8789)
+    osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
+    osh_render.add_argument(
+        "--image-runtime",
+        help="in-image runtime path (e.g. /opt/mac-venv) when the sandbox runs a "
+        "prebuilt --from image instead of a host-uploaded runtime; caches -> /tmp",
+    )
+    osh_render.add_argument("--qdrant-port", type=int, default=6333)
+    osh_render.add_argument("--firecrawl-port", type=int, default=3002)
+    osh_render.add_argument(
+        "--template",
+        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
+        help="operator policy template path",
+    )
+    osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
+    _set(cmd_openshell_render_policy, osh_render)
+
+    osh_policy = openshell.add_parser("policy", help="MAC-managed OpenShell policies").add_subparsers(
+        dest="openshell_policy_command", required=True
+    )
+    osh_policy_create = osh_policy.add_parser("create")
+    osh_policy_create.add_argument("name")
+    osh_policy_create.add_argument("--policy-text")
+    osh_policy_create.add_argument("--policy-file", help="read policy YAML from file path or '-'")
+    osh_policy_create.add_argument("--description", default="")
+    osh_policy_create.add_argument("--metadata")
+    osh_policy_create.add_argument("--metadata-file")
+    osh_policy_create.add_argument("--created-by", default="human")
+    osh_policy_create.add_argument("--policy-id")
+    _set(cmd_openshell_policy_create, osh_policy_create)
+
+    osh_policy_list = osh_policy.add_parser("list")
+    osh_policy_list.add_argument("--include-deleted", action="store_true")
+    _set(cmd_openshell_policy_list, osh_policy_list)
+
+    osh_policy_show = osh_policy.add_parser("show")
+    osh_policy_show.add_argument("policy")
+    _set(cmd_openshell_policy_show, osh_policy_show)
+
+    osh_policy_update = osh_policy.add_parser("update")
+    osh_policy_update.add_argument("policy")
+    osh_policy_update.add_argument("--name")
+    osh_policy_update.add_argument("--description")
+    osh_policy_update.add_argument("--policy-text")
+    osh_policy_update.add_argument("--policy-file")
+    osh_policy_update.add_argument("--metadata")
+    osh_policy_update.add_argument("--metadata-file")
+    osh_policy_update.add_argument("--updated-by", default="human")
+    _set(cmd_openshell_policy_update, osh_policy_update)
+
+    osh_policy_delete = osh_policy.add_parser("delete")
+    osh_policy_delete.add_argument("policy")
+    osh_policy_delete.add_argument("--actor", default="human")
+    _set(cmd_openshell_policy_delete, osh_policy_delete)
+
+    osh_policy_render = osh_policy.add_parser("render")
+    osh_policy_render.add_argument("policy")
+    osh_policy_render.add_argument("--agent-user")
+    osh_policy_render.add_argument("--hub-host")
+    osh_policy_render.add_argument("--hub-port", type=int)
+    osh_policy_render.add_argument("--model-gateway-host")
+    osh_policy_render.add_argument("--shared-services")
+    osh_policy_render.add_argument("--shared-services-file")
+    osh_policy_render.add_argument("--into")
+    _set(cmd_openshell_policy_render, osh_policy_render)
+
+    osh_policy_assign = osh_policy.add_parser("assign")
+    osh_policy_assign.add_argument("policy")
+    osh_policy_assign.add_argument("target_id")
+    osh_policy_assign.add_argument("--target-type", default="agent", choices=("agent", "fleet", "host"))
+    osh_policy_assign.add_argument("--created-by", default="human")
+    _set(cmd_openshell_policy_assign, osh_policy_assign)
+
+    osh_policy_versions = osh_policy.add_parser("versions")
+    osh_policy_versions.add_argument("policy")
+    _set(cmd_openshell_policy_versions, osh_policy_versions)
+
+    osh_policy_deploy_status = osh_policy.add_parser("deploy-status")
+    osh_policy_deploy_status.add_argument("--agent", required=True)
+    _set(cmd_openshell_policy_deploy_status, osh_policy_deploy_status)
+
+    osh_status = openshell.add_parser("status")
+    osh_status.add_argument("--agent", required=True)
+    _set(cmd_openshell_status, osh_status)
+
     machine = sub.add_parser("machine", help="machine registry commands").add_subparsers(dest="machine_command", required=True)
     machine_register = machine.add_parser("register")
     machine_register.add_argument("hostname")
@@ -2725,7 +2817,7 @@ def build_parser() -> argparse.ArgumentParser:
         "memory-export",
         help="export Qdrant vector memory to greppable JSONL for vetting",
     )
-    fleet_mem_export.add_argument("--qdrant-url", required=True, help="e.g. http://10.0.0.1:6333")
+    fleet_mem_export.add_argument("--qdrant-url", required=True, help="e.g. http://100.125.137.89:6333")
     fleet_mem_export.add_argument("--agent", help="filter to this agent_id")
     fleet_mem_export.add_argument("--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)")
     fleet_mem_export.add_argument("--search", help="case-insensitive substring filter (e.g. a stale name)")
@@ -3884,98 +3976,6 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run_list.add_argument("--eval-set", dest="eval_set")
     eval_run_list.add_argument("--target-id")
     _set(cmd_eval_run_list, eval_run_list)
-
-    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
-    osh_render = openshell.add_parser(
-        "render-policy",
-        help="render the OpenShell guardrail policy from the operator template for this fleet",
-    )
-    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host")
-    osh_render.add_argument("--hub-host", required=True, help="MAC hub host the sandbox egresses to")
-    osh_render.add_argument("--hub-port", type=int, default=8789)
-    osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
-    osh_render.add_argument(
-        "--image-runtime",
-        help="in-image runtime path (e.g. /opt/mac-venv) when the sandbox runs a "
-        "prebuilt --from image instead of a host-uploaded runtime; caches -> /tmp",
-    )
-    osh_render.add_argument("--qdrant-port", type=int, default=6333)
-    osh_render.add_argument("--firecrawl-port", type=int, default=3002)
-    osh_render.add_argument(
-        "--template",
-        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
-        help="operator policy template path",
-    )
-    osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
-    _set(cmd_openshell_render_policy, osh_render)
-
-    osh_policy = openshell.add_parser("policy", help="MAC-managed OpenShell policies").add_subparsers(
-        dest="openshell_policy_command", required=True
-    )
-    osh_policy_create = osh_policy.add_parser("create")
-    osh_policy_create.add_argument("name")
-    osh_policy_create.add_argument("--policy-text")
-    osh_policy_create.add_argument("--policy-file", help="read policy YAML from file path or '-'")
-    osh_policy_create.add_argument("--description", default="")
-    osh_policy_create.add_argument("--metadata")
-    osh_policy_create.add_argument("--metadata-file")
-    osh_policy_create.add_argument("--created-by", default="human")
-    osh_policy_create.add_argument("--policy-id")
-    _set(cmd_openshell_policy_create, osh_policy_create)
-
-    osh_policy_list = osh_policy.add_parser("list")
-    osh_policy_list.add_argument("--include-deleted", action="store_true")
-    _set(cmd_openshell_policy_list, osh_policy_list)
-
-    osh_policy_show = osh_policy.add_parser("show")
-    osh_policy_show.add_argument("policy")
-    _set(cmd_openshell_policy_show, osh_policy_show)
-
-    osh_policy_update = osh_policy.add_parser("update")
-    osh_policy_update.add_argument("policy")
-    osh_policy_update.add_argument("--name")
-    osh_policy_update.add_argument("--description")
-    osh_policy_update.add_argument("--policy-text")
-    osh_policy_update.add_argument("--policy-file")
-    osh_policy_update.add_argument("--metadata")
-    osh_policy_update.add_argument("--metadata-file")
-    osh_policy_update.add_argument("--updated-by", default="human")
-    _set(cmd_openshell_policy_update, osh_policy_update)
-
-    osh_policy_delete = osh_policy.add_parser("delete")
-    osh_policy_delete.add_argument("policy")
-    osh_policy_delete.add_argument("--actor", default="human")
-    _set(cmd_openshell_policy_delete, osh_policy_delete)
-
-    osh_policy_render = osh_policy.add_parser("render")
-    osh_policy_render.add_argument("policy")
-    osh_policy_render.add_argument("--agent-user")
-    osh_policy_render.add_argument("--hub-host")
-    osh_policy_render.add_argument("--hub-port", type=int)
-    osh_policy_render.add_argument("--model-gateway-host")
-    osh_policy_render.add_argument("--shared-services")
-    osh_policy_render.add_argument("--shared-services-file")
-    osh_policy_render.add_argument("--into")
-    _set(cmd_openshell_policy_render, osh_policy_render)
-
-    osh_policy_assign = osh_policy.add_parser("assign")
-    osh_policy_assign.add_argument("policy")
-    osh_policy_assign.add_argument("target_id")
-    osh_policy_assign.add_argument("--target-type", default="agent", choices=("agent", "fleet", "host"))
-    osh_policy_assign.add_argument("--created-by", default="human")
-    _set(cmd_openshell_policy_assign, osh_policy_assign)
-
-    osh_policy_versions = osh_policy.add_parser("versions")
-    osh_policy_versions.add_argument("policy")
-    _set(cmd_openshell_policy_versions, osh_policy_versions)
-
-    osh_policy_deploy_status = osh_policy.add_parser("deploy-status")
-    osh_policy_deploy_status.add_argument("--agent", required=True)
-    _set(cmd_openshell_policy_deploy_status, osh_policy_deploy_status)
-
-    osh_status = openshell.add_parser("status")
-    osh_status.add_argument("--agent", required=True)
-    _set(cmd_openshell_status, osh_status)
 
     return parser
 

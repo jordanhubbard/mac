@@ -31,22 +31,22 @@ def _load():
 def test_format_fleet_status_shows_who_is_doing_what():
     mod = _load()
     agents = [
-        {"id": "agent_hosta", "name": "hosta", "status": "busy", "health_status": "healthy"},
-        {"id": "agent_hostc", "name": "hostc", "status": "idle", "health_status": "healthy"},
+        {"id": "agent_rocky", "name": "rocky", "status": "busy", "health_status": "healthy"},
+        {"id": "agent_natasha", "name": "natasha", "status": "idle", "health_status": "healthy"},
     ]
-    tasks = [{"id": "task_abc", "owner_agent_id": "agent_hosta", "state": "running", "title": "Ship the connector"}]
+    tasks = [{"id": "task_abc", "owner_agent_id": "agent_rocky", "state": "running", "title": "Ship the connector"}]
     out = mod.format_fleet_status(agents, tasks)
-    assert "hosta [busy/healthy]" in out
+    assert "rocky [busy/healthy]" in out
     assert "working on task_abc" in out and "Ship the connector" in out
-    assert "hostc [idle/healthy]" in out  # idle agent shown, no task
+    assert "natasha [idle/healthy]" in out  # idle agent shown, no task
 
 
 def test_format_inbox_empty_and_populated():
     mod = _load()
     assert "Inbox empty" in mod.format_inbox([])
-    chunks = [{"sender_agent_id": "hostc", "topic": "chat", "payload": "can you take task X?"}]
+    chunks = [{"sender_agent_id": "natasha", "topic": "chat", "payload": "can you take task X?"}]
     out = mod.format_inbox(chunks)
-    assert "from hostc" in out and "task X" in out
+    assert "from natasha" in out and "task X" in out
 
 
 def test_check_requirements_needs_hub_env(monkeypatch):
@@ -66,41 +66,41 @@ def test_status_action_queries_agents_and_tasks(monkeypatch):
     def fake_req(method, path, payload=None, **kw):
         calls.append((method, path))
         if path == "/agents":
-            return [{"id": "agent_hosta", "name": "hosta", "status": "busy", "health_status": "healthy"}]
+            return [{"id": "agent_rocky", "name": "rocky", "status": "busy", "health_status": "healthy"}]
         if path.startswith("/tasks"):
-            return [{"id": "t1", "owner_agent_id": "agent_hosta", "state": "running", "title": "X"}]
+            return [{"id": "t1", "owner_agent_id": "agent_rocky", "state": "running", "title": "X"}]
         return []
 
     monkeypatch.setattr(mod, "_hub_request", fake_req)
     out = mod._handle_fleet({"action": "status"})
-    assert "hosta" in out and "working on t1" in out
+    assert "rocky" in out and "working on t1" in out
     assert ("GET", "/agents") in calls
 
 
 def test_message_action_resolves_name_and_posts(monkeypatch):
     mod = _load()
-    monkeypatch.setenv("MAC_AGENT_ID", "agent_hosta")
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_rocky")
     posted = {}
 
     def fake_req(method, path, payload=None, **kw):
         if path == "/agents":
-            return [{"id": "agent_hostc", "name": "hostc"}]
+            return [{"id": "agent_natasha", "name": "natasha"}]
         if method == "POST" and path == "/agentbus":
             posted.update(payload)
             return {"stream_id": "s1"}
         return []
 
     monkeypatch.setattr(mod, "_hub_request", fake_req)
-    out = mod._handle_fleet({"action": "message", "recipient": "hostc", "message": "hi"})
-    assert json.loads(out)["delivered_to"] == "agent_hostc"
-    assert posted["sender_agent_id"] == "agent_hosta"
-    assert posted["recipient_agent_id"] == "agent_hostc"
+    out = mod._handle_fleet({"action": "message", "recipient": "natasha", "message": "hi"})
+    assert json.loads(out)["delivered_to"] == "agent_natasha"
+    assert posted["sender_agent_id"] == "agent_rocky"
+    assert posted["recipient_agent_id"] == "agent_natasha"
     assert posted["payload"] == "hi"
 
 
 def test_publish_action_reports_directory_info(monkeypatch):
     mod = _load()
-    monkeypatch.setenv("MAC_AGENT_ID", "agent_hosta")
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_rocky")
     monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
     monkeypatch.setenv("MAC_PUBLISH_PUBLIC_URL", "http://hub.example:8790/artifacts")
     out = json.loads(mod._handle_fleet({"action": "publish", "operation": "info"}))
@@ -111,7 +111,7 @@ def test_publish_action_reports_directory_info(monkeypatch):
 
 def test_publish_action_posts_agentbus_artifact_crud(monkeypatch):
     mod = _load()
-    monkeypatch.setenv("MAC_AGENT_ID", "agent_hosta")
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_rocky")
     monkeypatch.setenv("MAC_PUBLISH_DIR", "/srv/mac-artifacts")
     posted = {}
 
@@ -129,17 +129,17 @@ def test_publish_action_posts_agentbus_artifact_crud(monkeypatch):
                 "operation": "upsert",
                 "digest": "sha256:abc",
                 "path": "out/report.txt",
-                "recipient_agent_ids": ["agent_hostc"],
+                "recipient_agent_ids": ["agent_natasha"],
                 "metadata": {"content_type": "text/plain"},
             }
         )
     )
     assert out["operation"] == "upsert"
-    assert posted["sender_agent_id"] == "agent_hosta"
+    assert posted["sender_agent_id"] == "agent_rocky"
     assert posted["digest"] == "sha256:abc"
     assert posted["path"] == "out/report.txt"
     assert posted["publish_dir"] == "/srv/mac-artifacts"
-    assert posted["recipient_agent_ids"] == ["agent_hostc"]
+    assert posted["recipient_agent_ids"] == ["agent_natasha"]
 
 
 def test_unknown_action_errors():

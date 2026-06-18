@@ -30,20 +30,20 @@ network_policies:
 
 def test_render_substitutes_and_parses():
     out = op.render_policy(
-        TEMPLATE, agent_user="agentuser", hub_host="10.0.0.1", hub_port=8789,
+        TEMPLATE, agent_user="jkh", hub_host="100.125.137.89", hub_port=8789,
         shared_services={"qdrant": 6333, "firecrawl": 3002},
     )
     assert "__" not in out  # no placeholder survives
     doc = yaml.safe_load(out)
     np = doc["network_policies"]
-    assert np["mac_hub"]["endpoints"][0]["host"] == "10.0.0.1"
+    assert np["mac_hub"]["endpoints"][0]["host"] == "100.125.137.89"
     assert np["mac_hub"]["endpoints"][0]["port"] == 8789
     # model gateway defaults to the hub host
-    assert np["model_gateway"]["endpoints"][0]["host"] == "10.0.0.1"
+    assert np["model_gateway"]["endpoints"][0]["host"] == "100.125.137.89"
     # shared-service blocks appended + valid
     assert np["qdrant"]["endpoints"][0]["port"] == 6333
-    assert np["firecrawl"]["endpoints"][0]["host"] == "10.0.0.1"
-    assert "/home/agentuser/.mac/venv" in out
+    assert np["firecrawl"]["endpoints"][0]["host"] == "100.125.137.89"
+    assert "/home/jkh/.mac/venv" in out
 
 
 def test_explicit_model_gateway_host():
@@ -83,18 +83,18 @@ def test_real_operator_template_renders(tmp_path):
     # comments may still carry __TOKENS__ (template docs). Verify the parsed
     # config is correct.
     out = op.render_policy(
-        tmpl, agent_user="agentuser", hub_host="10.0.0.1", hub_port=8789,
+        tmpl, agent_user="jkh", hub_host="100.125.137.89", hub_port=8789,
         shared_services={"qdrant": 6333, "firecrawl": 3002},
     )
     doc = yaml.safe_load(out)
-    assert doc["network_policies"]["mac_hub"]["endpoints"][0]["host"] == "10.0.0.1"
+    assert doc["network_policies"]["mac_hub"]["endpoints"][0]["host"] == "100.125.137.89"
     assert doc["network_policies"]["mac_hub"]["endpoints"][0]["port"] == 8789
     assert doc["network_policies"]["qdrant"]["endpoints"][0]["port"] == 6333
-    assert doc["network_policies"]["firecrawl"]["endpoints"][0]["host"] == "10.0.0.1"
+    assert doc["network_policies"]["firecrawl"]["endpoints"][0]["host"] == "100.125.137.89"
     # operator policy is best_effort (OpenShell egress-proxy incompatibility with
     # hard_requirement); the executor's Landlock precheck recovers fail-closed.
     assert doc["landlock"]["compatibility"] == "best_effort"
-    assert "/home/agentuser/.mac/venv" in out  # agent_user substituted in active config
+    assert "/home/jkh/.mac/venv" in out  # agent_user substituted in active config
 
 
 def _real_template():
@@ -108,7 +108,7 @@ def test_dev_is_directory_not_leaf_under_hard_requirement():
     # right are rejected under hard_requirement on Landlock ABI >= 3; the policy
     # must list the /dev DIRECTORY instead (in either provisioning mode).
     for kwargs in ({}, {"image_runtime": "/opt/mac-venv"}):
-        out = op.render_policy(_real_template(), agent_user="agentuser", hub_host="h",
+        out = op.render_policy(_real_template(), agent_user="jkh", hub_host="h",
                                hub_port=8789, **kwargs)
         doc = yaml.safe_load(out)
         fp = doc["filesystem_policy"]
@@ -118,7 +118,7 @@ def test_dev_is_directory_not_leaf_under_hard_requirement():
 
 
 def test_image_runtime_uses_in_image_paths_and_tmp_caches():
-    out = op.render_policy(_real_template(), agent_user="agentuser", hub_host="100.64.0.1",
+    out = op.render_policy(_real_template(), agent_user="jkh", hub_host="100.64.0.1",
                            hub_port=8789, image_runtime="/opt/mac-venv",
                            shared_services={"qdrant": 6333})
     assert "__" not in "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("#"))

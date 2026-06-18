@@ -18,18 +18,18 @@ def test_fleet_setup_persists_ssh_jump_into_defaults():
     from mac.fleet_setup import build_setup_plan
 
     spec = {
-        "schema": "mac.fleet_setup.v1", "fleet_name": "devuser-gke", "hub": "devuser-hub",
-        "hub_url": "http://devuser-hub:8789", "supervisor": "supervisord",
-        "ssh_jump": "dev@bastion.example.com:2222",
+        "schema": "mac.fleet_setup.v1", "fleet_name": "jordanh-gke", "hub": "jordanh-hub",
+        "hub_url": "http://jordanh-hub:8789", "supervisor": "supervisord",
+        "ssh_jump": "horde@bastion.horde-gke.nvidia.com:2222",
         "ssh_strict_host_key_checking": False,
         "router": {"backend": "inproc", "providers": [{"id": "nvidia"}]},
-        "agents": [{"name": "devuser-hub", "target": "dev@devuser-hub", "os": "linux", "supervisor": "supervisord"}],
-        "deploy_agents": ["devuser-hub"],
+        "agents": [{"name": "jordanh-hub", "target": "horde@jordanh-hub", "os": "linux", "supervisor": "supervisord"}],
+        "deploy_agents": ["jordanh-hub"],
     }
     plan = build_setup_plan(spec, root=ROOT, fleets_config=Path("/tmp/_x.yaml"), env_file=Path("/tmp/_x.env"))
     d = plan["fleet_config"]["defaults"]
     assert plan["errors"] == []
-    assert d["ssh_jump"] == "dev@bastion.example.com:2222"
+    assert d["ssh_jump"] == "horde@bastion.horde-gke.nvidia.com:2222"
     assert d["ssh_strict_host_key_checking"] is False
 
 
@@ -62,10 +62,10 @@ def _extract(func: str) -> str:
 def test_ssh_conn_opts_emits_proxyjump_dynamically():
     fn = _extract("ssh_conn_opts")
     with_jump = subprocess.run(
-        ["bash", "-c", fn + '\nSSH_JUMP="dev@bastion:2222"; SSH_STRICT=0; ssh_conn_opts | tr "\\0" "\\n"'],
+        ["bash", "-c", fn + '\nSSH_JUMP="horde@bastion:2222"; SSH_STRICT=0; ssh_conn_opts | tr "\\0" "\\n"'],
         capture_output=True, text=True,
     ).stdout
-    assert "ProxyJump=dev@bastion:2222" in with_jump
+    assert "ProxyJump=horde@bastion:2222" in with_jump
     assert "StrictHostKeyChecking=no" in with_jump
     # no jump configured -> emits nothing (default non-bastion fleet)
     none = subprocess.run(

@@ -40,17 +40,17 @@ def test_soul_survives_hermes_process_loss():
     client = TestClient(create_app(control_plane=cp))
     adapter = HermesMacAdapter(MacApiClient("http://mac.test", transport=_api_transport(client)))
 
-    # --- Pre-restart: register Hosta and attach two platform bindings.
+    # --- Pre-restart: register Rocky and attach two platform bindings.
     pre = adapter.register_identity(
         tenant_name="personal",
-        persona_name="Hosta",
-        instance_name="hosta",
-        soul_ref="hermes://personal/hosta/SOUL.md",
-        memory_scope="hermes://personal/hosta/memory",
-        home_ref="hermes://personal/hosta",
+        persona_name="Rocky",
+        instance_name="rocky",
+        soul_ref="hermes://personal/rocky/SOUL.md",
+        memory_scope="hermes://personal/rocky/memory",
+        home_ref="hermes://personal/rocky",
         platform_bindings=[
             PlatformBindingSpec("slack", "T123/C456", "#ops"),
-            PlatformBindingSpec("telegram", "chat-42", "@hosta"),
+            PlatformBindingSpec("telegram", "chat-42", "@rocky"),
         ],
     )
     pre_tenant_id = pre["tenant"]["id"]
@@ -141,24 +141,24 @@ def test_reusing_tenant_name_glues_new_identity_onto_old_tenant_id():
 
     first = adapter.register_identity(
         tenant_name="shared-name",
-        persona_name="Hosta",
-        instance_name="hosta",
-        soul_ref="hermes://shared/hosta/SOUL.md",
-        memory_scope="hermes://shared/hosta/memory",
+        persona_name="Rocky",
+        instance_name="rocky",
+        soul_ref="hermes://shared/rocky/SOUL.md",
+        memory_scope="hermes://shared/rocky/memory",
     )
     # A different operator reuses the same tenant name for what they think is a
     # fresh tenant. mac upserts on (name UNIQUE), so this lands on the same id.
     second = adapter.register_identity(
         tenant_name="shared-name",
-        persona_name="Hostc",
-        instance_name="hostc",
-        soul_ref="hermes://shared/hostc/SOUL.md",
-        memory_scope="hermes://shared/hostc/memory",
+        persona_name="Natasha",
+        instance_name="natasha",
+        soul_ref="hermes://shared/natasha/SOUL.md",
+        memory_scope="hermes://shared/natasha/memory",
     )
     assert second["tenant"]["id"] == first["tenant"]["id"]
     # Both personas now coexist under the shared tenant. Tombstone, don't recycle.
     personas = client.get("/personas", params={"tenant_id": first["tenant"]["id"]}).json()
-    assert {p["name"] for p in personas} == {"Hosta", "Hostc"}
+    assert {p["name"] for p in personas} == {"Rocky", "Natasha"}
 
 
 def test_reregistering_does_not_proliferate_personas_or_bindings():
@@ -171,10 +171,10 @@ def test_reregistering_does_not_proliferate_personas_or_bindings():
     for _ in range(5):
         adapter.register_identity(
             tenant_name="team",
-            persona_name="Hostc",
-            instance_name="hostc",
-            soul_ref="hermes://team/hostc/SOUL.md",
-            memory_scope="hermes://team/hostc/memory",
+            persona_name="Natasha",
+            instance_name="natasha",
+            soul_ref="hermes://team/natasha/SOUL.md",
+            memory_scope="hermes://team/natasha/memory",
             platform_bindings=[
                 PlatformBindingSpec("slack", "T999/C000", "#deploys"),
             ],
@@ -185,6 +185,6 @@ def test_reregistering_does_not_proliferate_personas_or_bindings():
     instances = client.get("/hermes-instances").json()
     bindings = client.get("/platform-bindings").json()
     assert len([t for t in tenants if t["name"] == "team"]) == 1
-    assert len([p for p in personas if p["name"] == "Hostc"]) == 1
-    assert len([h for h in instances if h["name"] == "hostc"]) == 1
+    assert len([p for p in personas if p["name"] == "Natasha"]) == 1
+    assert len([h for h in instances if h["name"] == "natasha"]) == 1
     assert len([b for b in bindings if b["external_id"] == "T999/C000"]) == 1

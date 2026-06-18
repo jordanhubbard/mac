@@ -2,8 +2,8 @@
 # inside (`openshell sandbox create --from localhost/mac-hermes:net`).
 #
 # Multi-arch: python:3.12-slim resolves to the host architecture, so the SAME
-# Containerfile builds natively on x86_64 and aarch64 hosts. Build from the mac
-# source tree as context:
+# Containerfile builds natively on x86_64 (rocky, bullwinkle) and aarch64
+# (natasha / GB10). Build from the mac source tree as context:
 #
 #   docker build  -t localhost/mac-hermes:net -f deploy/openshell/mac-hermes.Containerfile <mac-src>
 #   podman build  -t localhost/mac-hermes:net -f deploy/openshell/mac-hermes.Containerfile <mac-src>

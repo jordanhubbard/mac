@@ -1,6 +1,6 @@
 [Unit]
 Description=mac Qdrant shared memory service
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 After=network-online.target
 Wants=network-online.target
 Before=mac.service

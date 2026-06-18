@@ -29,9 +29,9 @@ def test_setup_py_routes_modes_without_bash_arrays():
     assert deploy_direct is False
 
     args, config_only, dry_run, deploy_direct = setup.parse_setup_args(
-        ["--hub", "dev", "worker-a"]
+        ["--hub", "horde", "worker-a"]
     )
-    assert args == ["--hub", "dev", "worker-a"]
+    assert args == ["--hub", "horde", "worker-a"]
     assert config_only is False
     assert dry_run is False
     assert deploy_direct is True
@@ -63,10 +63,10 @@ def test_setup_py_parses_generated_env_file(tmp_path):
 def test_setup_py_builds_deploy_args_from_plan():
     setup = _load_setup_module()
 
-    assert setup.deploy_args_from_plan({"hub": "dev", "agents": ["worker-a", ""]}) == [
+    assert setup.deploy_args_from_plan({"hub": "horde", "agents": ["worker-a", ""]}) == [
         str(ROOT / "deploy" / "deploy-mac-fleet.sh"),
         "--hub",
-        "dev",
+        "horde",
         "worker-a",
     ]
 

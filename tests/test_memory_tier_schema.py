@@ -52,7 +52,7 @@ def test_payload_to_dict_round_trips():
     p = _payload(
         task_id="task_42",
         project="mac",
-        agent_id="agent_hosta",
+        agent_id="agent_rocky",
         tenant_id="tenant_acme",
         evidence_type="repo_change",
         tags=["incident", "review-pipeline"],

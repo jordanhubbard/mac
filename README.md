@@ -77,7 +77,7 @@ The identity framework reflects that split:
 - `tenant`: an organization or isolated user deployment.
 - `user`: a human identity inside a tenant.
 - `persona`: a named Hermes personality with a `soul_ref` and `memory_scope`.
-- `hermes_instance`: a running or durable Hermes identity such as `hub`.
+- `hermes_instance`: a running or durable Hermes identity such as `worker-1`.
 - `platform_binding`: a Slack workspace/channel, Telegram chat, or similar binding.
 - interaction task: a durable task created from a Hermes conversation with origin metadata, not copied private memory.
 

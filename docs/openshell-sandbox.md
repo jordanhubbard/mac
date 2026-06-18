@@ -107,7 +107,7 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-3. Start `mac-openshell-supervisor` on the hub, worker-1, and worker-2. Confirm
+3. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
    the gateway, task executor, finalizers, and Hermes sessions inherit the same
    sandbox id.
 4. Trigger an off-policy filesystem or network attempt. Confirm the denial

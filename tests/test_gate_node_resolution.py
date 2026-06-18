@@ -5,11 +5,12 @@ Node version a JS/TS repo declares (.nvmrc / .node-version / engines.node / CI
 workflow) so the pre-push test gate runs under that toolchain instead of the
 image's baseline Node. The resolved value is interpolated into a shell that
 runs `nvm install/use`, so it MUST be strictly validated — repo content is
-semi-trusted.
+semi-trusted (gate-node-version-injection-01).
 
-These tests exercise the shell helpers directly. The three functions are a
-contiguous block of pure definitions in the script, so we slice that block out
-and source it in bash (avoids running the executor's top-level body). They use
+These tests exercise the shell helpers directly. `_validate_node_version` and
+`_resolve_node_version` are a contiguous block of pure definitions in the
+script (terminated by a sentinel comment), so we slice that block out and
+source it in bash — this avoids running the executor's top-level body. They use
 only python3/grep/tr, so they run in CI without nvm/node present.
 """
 
@@ -27,14 +28,15 @@ GATE = (
     / "mac-task-executor-opencode-build"
 )
 
+_END_MARKER = "# --- end node-version resolution helpers"
+
 
 def _node_funcs() -> str:
     text = GATE.read_text(encoding="utf-8")
     start = text.index("_validate_node_version() {")
-    end = text.index("# Step B: run lint/format")
+    end = text.index(_END_MARKER)
     block = text[start:end]
     assert "_resolve_node_version() {" in block
-    assert "gate_select_node() {" in block
     return block
 
 
@@ -46,7 +48,7 @@ def _resolve(tmp_path: Path, files: dict) -> str:
         p = tmp_path / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-    script = FUNCS + '\nGATE_NODE_SOURCE=""\n_resolve_node_version "$1"\n'
+    script = FUNCS + '\n_resolve_node_version "$1"\n'
     proc = subprocess.run(
         ["bash", "-c", script, "_", str(tmp_path)],
         capture_output=True,

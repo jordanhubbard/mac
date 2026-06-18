@@ -316,11 +316,11 @@ def test_remote_dispatch_read_agentbus_chunks_passes_agent_id():
     )
     disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
     # Mirror the CLI call shape: agent_id first, then stream_id, kwargs after.
-    chunks = disp.read_agentbus_chunks("agent_hosta", "bus_x", after_sequence=2, limit=5)
+    chunks = disp.read_agentbus_chunks("agent_rocky", "bus_x", after_sequence=2, limit=5)
     assert [c.to_dict() for c in chunks] == [{"sequence": 0}]
     url = next(u for (m, u, _b, _t) in fake.calls if m == "GET")
     assert "/agentbus/streams/bus_x/chunks" in url
-    assert "agent_id=agent_hosta" in url
+    assert "agent_id=agent_rocky" in url
     assert "after_sequence=2" in url
     assert "limit=5" in url
 
@@ -372,7 +372,7 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
                 "--project",
                 "mac",
                 "--actor",
-                "devuser",
+                "jordanh",
             ]
         )
     finally:
@@ -387,7 +387,7 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
     assert url == "http://hub.example:8789/tasks"
     assert payload["title"] == "Stop the runaway loop"
     assert payload["project"] == "mac"
-    assert payload["actor"] == "devuser"
+    assert payload["actor"] == "jordanh"
     assert token == "tok"
 
 
@@ -443,7 +443,7 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
         response_for={
             ("POST", "/tasks/task_xyz/claim"): {
                 "task": {"id": "task_xyz", "state": "claimed"},
-                "lease": {"id": "lease_42", "agent_id": "agent_hostc"},
+                "lease": {"id": "lease_42", "agent_id": "agent_natasha"},
             }
         }
     )
@@ -465,7 +465,7 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
                 "task",
                 "claim",
                 "task_xyz",
-                "agent_hostc",
+                "agent_natasha",
             ]
         )
     finally:

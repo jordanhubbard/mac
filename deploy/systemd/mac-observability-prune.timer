@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily trigger for mac observability_events prune
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 
 [Timer]
 # Run shortly after midnight UTC; randomize so a fleet doesn't stampede.

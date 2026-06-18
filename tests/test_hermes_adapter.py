@@ -44,7 +44,7 @@ def test_mac_hermes_cli_defaults_to_deployed_hub_env(monkeypatch):
     monkeypatch.setenv("MAC_HUB_URL", "http://hub.example.internal:8789")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-token")
 
-    args = build_parser().parse_args(["work-brief", "hermes_hosta"])
+    args = build_parser().parse_args(["work-brief", "hermes_rocky"])
 
     assert args.url == "http://hub.example.internal:8789"
     assert args.token == "worker-token"
@@ -95,18 +95,18 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
 
     registration = adapter.register_identity(
         "personal",
-        "Hosta",
-        "hosta",
-        "hermes://personal/hosta/SOUL.md",
-        "hermes://personal/hosta/memory",
+        "Rocky",
+        "rocky",
+        "hermes://personal/rocky/SOUL.md",
+        "hermes://personal/rocky/memory",
         platform_bindings=[PlatformBindingSpec("slack", "T123/C456", "#ops")],
     )
     repeat = adapter.register_identity(
         "personal",
-        "Hosta",
-        "hosta",
-        "hermes://personal/hosta/SOUL.md",
-        "hermes://personal/hosta/memory",
+        "Rocky",
+        "rocky",
+        "hermes://personal/rocky/SOUL.md",
+        "hermes://personal/rocky/memory",
     )
     assert repeat["tenant"]["id"] == registration["tenant"]["id"]
     assert repeat["persona"]["id"] == registration["persona"]["id"]
@@ -319,10 +319,10 @@ def test_hermes_adapter_summarizes_result_and_prepares_memory_writeback():
     adapter = HermesMacAdapter(MacApiClient("http://testserver", transport=api_transport(client)))
     registration = adapter.register_identity(
         "team",
-        "Hostc",
-        "hostc",
-        "hermes://team/hostc/SOUL.md",
-        "hermes://team/hostc/memory",
+        "Natasha",
+        "natasha",
+        "hermes://team/natasha/SOUL.md",
+        "hermes://team/natasha/memory",
     )
     task = adapter.create_task_from_conversation(
         registration["hermes_instance"]["id"],
@@ -345,7 +345,7 @@ def test_hermes_adapter_summarizes_result_and_prepares_memory_writeback():
         task["id"],
         sink=writes.append,
     )
-    assert writes[0]["memory_scope"] == "hermes://team/hostc/memory"
+    assert writes[0]["memory_scope"] == "hermes://team/natasha/memory"
     assert writes[0]["content"] == "Fix build is complete and published to test://publish."
     assert writeback["record"]["subject_type"] == "hermes_memory"
     assert cp.search_memory(task_id=task["id"])[0].record_type == "task_result_writeback"
@@ -360,10 +360,10 @@ def test_hermes_adapter_performs_task_lifecycle_operations_through_api():
     adapter = HermesMacAdapter(MacApiClient("http://testserver", transport=api_transport(client)))
     registration = adapter.register_identity(
         "team",
-        "Hosta",
-        "hosta",
-        "hermes://team/hosta/SOUL.md",
-        "hermes://team/hosta/memory",
+        "Rocky",
+        "rocky",
+        "hermes://team/rocky/SOUL.md",
+        "hermes://team/rocky/memory",
     )
     worker = register_agent(cp, "worker", ["ops"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -458,10 +458,10 @@ def test_hermes_adapter_transition_operation_updates_mac_task_state():
     adapter = HermesMacAdapter(MacApiClient("http://testserver", transport=api_transport(client)))
     registration = adapter.register_identity(
         "team",
-        "Hostc",
-        "hostc",
-        "hermes://team/hostc/SOUL.md",
-        "hermes://team/hostc/memory",
+        "Natasha",
+        "natasha",
+        "hermes://team/natasha/SOUL.md",
+        "hermes://team/natasha/memory",
     )
     task = adapter.create_task_from_conversation(
         registration["hermes_instance"]["id"],
@@ -548,11 +548,11 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     tenant = cp.register_tenant("team")
     persona = cp.register_persona(
         tenant.id,
-        "Hosta",
-        "hermes://team/hosta/SOUL.md",
-        "hermes://team/hosta/memory",
+        "Rocky",
+        "hermes://team/rocky/SOUL.md",
+        "hermes://team/rocky/memory",
     )
-    hermes = cp.register_hermes_instance(tenant.id, "hosta", persona_id=persona.id)
+    hermes = cp.register_hermes_instance(tenant.id, "rocky", persona_id=persona.id)
     cp.create_interaction_task(
         hermes.id,
         "Track project from Hermes",

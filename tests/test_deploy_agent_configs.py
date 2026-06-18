@@ -45,8 +45,8 @@ def load_sample_fleet_config():
 def deploy_env_config(
     tmp_path,
     *,
-    agent="hosta",
-    hub_agent="hosta",
+    agent="rocky",
+    hub_agent="rocky",
     hub_url="http://127.0.0.1:8789",
     hub_token="HUBTOK",
     worker_mode="loop",
@@ -176,12 +176,28 @@ def test_build_mac_env_advertises_enabled_webdav_publish_service(tmp_path):
     assert env["MAC_WEBDAV_MAX_UPLOAD_BYTES"] == "1024"
 
 
+def test_build_mac_env_defaults_relay_observability_on(tmp_path):
+    """New nodes come up relay-active by default (nemo-relay ships via the
+    deploy's relay extra + worker reconcile)."""
+    cfg = deploy_env_config(tmp_path)
+    env = build_mac_env({}, cfg, environ={})
+    assert env["MAC_RELAY_OBSERVABILITY"] == "1"
+
+
+def test_build_mac_env_preserves_explicit_relay_opt_out(tmp_path):
+    """An operator's explicit MAC_RELAY_OBSERVABILITY=0 survives redeploys
+    (setdefault, not overwrite)."""
+    cfg = deploy_env_config(tmp_path)
+    env = build_mac_env({"MAC_RELAY_OBSERVABILITY": "0"}, cfg, environ={})
+    assert env["MAC_RELAY_OBSERVABILITY"] == "0"
+
+
 def test_deploy_env_import_is_dependency_light():
     # Regression: deploy-mac-fleet.sh runs `python -m mac.deploy_env write-mac-env`
     # on the bootstrap python BEFORE the deploy venv exists, so importing
     # mac.deploy_env must NOT transitively pull in mac.services (which needs
     # yaml, cryptography, …). A lazy mac/__init__ keeps the package import light.
-    # (A hostd redeploy died with ModuleNotFoundError: 'yaml' before this.)
+    # (A bullwinkle redeploy died with ModuleNotFoundError: 'yaml' before this.)
     code = (
         "import sys, mac.deploy_env\n"
         "assert 'mac.services' not in sys.modules, "
@@ -247,10 +263,10 @@ def test_sample_fleet_config_is_generic_and_externalized():
     assert "~/.mac/fleets.yaml" in rendered
     assert "--hub <hub-node>" in rendered
     assert "deploy/agents/" not in rendered
-    assert "hosta" not in rendered.lower()
-    assert "hostc" not in rendered.lower()
-    assert "hostd" not in rendered.lower()
-    assert "100.64.1.1" not in rendered
+    assert "rocky" not in rendered.lower()
+    assert "natasha" not in rendered.lower()
+    assert "bullwinkle" not in rendered.lower()
+    assert "100.125.137.89" not in rendered
 
 
 def test_sample_fleet_config_supports_home_channel_and_model_diversity():
@@ -599,15 +615,15 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     # spokes route through the hub's /v1 with their hub-facing token.
     hub_env = build_mac_env(
         {},
-        deploy_env_config(tmp_path, agent="hosta", hub_agent="hosta"),
+        deploy_env_config(tmp_path, agent="rocky", hub_agent="rocky"),
         environ={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
     )
     spoke_env = build_mac_env(
         {},
         deploy_env_config(
             tmp_path,
-            agent="hostc",
-            hub_agent="hosta",
+            agent="natasha",
+            hub_agent="rocky",
             hub_url="http://hub.example:8789",
             hub_token="HUBTOK",
         ),
@@ -710,7 +726,7 @@ _ROUTER_ENV = {
 
 def test_env_writer_hub_runs_router_locally(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="hosta", hub_agent="hosta",
+        tmp_path, agent="rocky", hub_agent="rocky",
         hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
         extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
     )
@@ -727,7 +743,7 @@ def test_env_writer_hub_runs_router_locally(tmp_path):
 
 def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="hostc", hub_agent="hosta",
+        tmp_path, agent="natasha", hub_agent="rocky",
         hub_url="http://hub.example:8789", hub_token="HUBTOK",
         # provider key passed UNBLANKED to prove the env-writer never persists it
         # for a spoke (defense-in-depth on top of deploy_host's hub-only gating).
@@ -752,7 +768,7 @@ def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
 def test_env_writer_spoke_without_hub_token_leaves_gateway_unconfigured(tmp_path):
     # No configured hub token → MAC_WORKER_TOKEN degenerates to the local token.
     out = _run_env_writer(
-        tmp_path, agent="hostc", hub_agent="hosta",
+        tmp_path, agent="natasha", hub_agent="rocky",
         hub_url="http://hub.example:8789", hub_token="",
         extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": ""},
         existing_env_text=(
@@ -817,7 +833,7 @@ _HERMES_ENV = (
     "ANTHROPIC_API_KEY=sk-ant-stale\n"
     "PERPLEXITY_API_KEY=pplx-stale\n"
     "FIRECRAWL_API_KEY=none\n"
-    "MESSAGING_CWD=/home/dev/.mac/src/mac\n"
+    "MESSAGING_CWD=/home/jkh/.mac/src/mac\n"
     "MAC_HERMES_GATEWAY_API_KEY=hub-token\n"
 )
 
@@ -825,7 +841,7 @@ _HERMES_ENV = (
 def test_scrub_spoke_provider_secrets_clean_invariant(tmp_path):
     # Re-deploy must converge a spoke's gateway env to a clean invariant: NO
     # upstream provider keys, but messaging tokens + gateway creds preserved.
-    keys = _run_scrub(tmp_path, agent="hostc", hub_agent="hosta", hermes_env_text=_HERMES_ENV)
+    keys = _run_scrub(tmp_path, agent="natasha", hub_agent="rocky", hermes_env_text=_HERMES_ENV)
     # upstream provider keys stripped
     for gone in ("OPENAI_API_KEY", "NVIDIA_API_KEY", "FAL_KEY", "ANTHROPIC_API_KEY",
                  "PERPLEXITY_API_KEY", "FIRECRAWL_API_KEY"):
@@ -838,7 +854,7 @@ def test_scrub_spoke_provider_secrets_clean_invariant(tmp_path):
 
 def test_scrub_spoke_provider_secrets_is_noop_on_hub(tmp_path):
     # The hub legitimately holds provider keys (it runs the router) — never scrub it.
-    keys = _run_scrub(tmp_path, agent="hosta", hub_agent="hosta", hermes_env_text=_HERMES_ENV)
+    keys = _run_scrub(tmp_path, agent="rocky", hub_agent="rocky", hermes_env_text=_HERMES_ENV)
     assert "NVIDIA_API_KEY" in keys and "OPENAI_API_KEY" in keys
 
 
@@ -1273,8 +1289,8 @@ def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):
 
 
 def test_ssh_target_parser_supports_inline_and_explicit_ports():
-    target = parse_ssh_target("dev@20.115.163.162:2201")
-    assert target.user_host == "dev@20.115.163.162"
+    target = parse_ssh_target("horde@20.115.163.162:2201")
+    assert target.user_host == "horde@20.115.163.162"
     assert target.port == 2201
     assert target.ssh_args() == ["-p", "2201"]
     assert target.scp_args() == ["-P", "2201"]
@@ -1294,11 +1310,11 @@ def test_setup_fleet_wizard_new_hub_is_noninteractive_and_custom_port_aware(tmp_
             str(ROOT / "scripts" / "setup-fleet.py"),
             "--force",
             "--new-hub",
-            "dev",
+            "horde",
             "--target",
-            "dev@20.115.163.162:2201",
+            "horde@20.115.163.162:2201",
             "--fleet-name",
-            "dev-fleet",
+            "horde-fleet",
             "--fleets-config",
             str(fleets_config),
             "--env-file",
@@ -1311,10 +1327,10 @@ def test_setup_fleet_wizard_new_hub_is_noninteractive_and_custom_port_aware(tmp_
 
     assert result.returncode == 0, result.stderr + result.stdout
     registry = yaml.safe_load(fleets_config.read_text(encoding="utf-8"))
-    cfg = registry["fleets"]["dev"]
-    assert cfg["fleet_name"] == "dev-fleet"
-    assert cfg["hub_agent"] == "dev"
-    assert cfg["agents"][0]["target"] == "dev@20.115.163.162:2201"
+    cfg = registry["fleets"]["horde"]
+    assert cfg["fleet_name"] == "horde-fleet"
+    assert cfg["hub_agent"] == "horde"
+    assert cfg["agents"][0]["target"] == "horde@20.115.163.162:2201"
     assert cfg["agents"][0]["worker"]["mode"] == "loop"
     assert cfg["agents"][0]["control_bind_host"] == "0.0.0.0"
     assert "MAC_SECRET_KEY=" in env_file.read_text(encoding="utf-8")
@@ -1527,12 +1543,12 @@ def test_build_mac_env_passes_through_local_gen_advertisement(tmp_path):
         environ={
             "MAC_DEPLOY_AGENT_GEN_MODEL": "sdxl-turbo",
             "MAC_DEPLOY_AGENT_GEN_PORT": "8189",
-            "MAC_DEPLOY_AGENT_GEN_BASE_URL": "http://100.64.1.2:8189/v1",
+            "MAC_DEPLOY_AGENT_GEN_BASE_URL": "http://100.87.229.125:8189/v1",
         },
     )
     assert values["MAC_AGENT_GEN_MODEL"] == "sdxl-turbo"
     assert values["MAC_AGENT_GEN_PORT"] == "8189"
-    assert values["MAC_AGENT_GEN_BASE_URL"] == "http://100.64.1.2:8189/v1"
+    assert values["MAC_AGENT_GEN_BASE_URL"] == "http://100.87.229.125:8189/v1"
     # absent when not supplied
     bare = build_mac_env({}, deploy_env_config(tmp_path, fleet_name="t2"), environ={})
     assert "MAC_AGENT_GEN_MODEL" not in bare

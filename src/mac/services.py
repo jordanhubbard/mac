@@ -126,7 +126,7 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.service_role_service import ServiceRoleService
-from mac.review_service import ReviewService
+from mac.review_service import ReviewService, cross_llm_review_problems
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
@@ -5426,7 +5426,7 @@ class ControlPlane:
         # mem-11: reject `operator_result` evidence_type when the task's
         # execution contract declared a repository contract (or set
         # repository_required=true). The original `task_d7c51a0b`
-        # incident hinged on hostd emitting operator_result evidence
+        # incident hinged on bullwinkle emitting operator_result evidence
         # for a code task; the validator accepted it because
         # OperatorResultValidator only requires *any* summary string,
         # which then sent the review loop hunting a remote_ref that was
@@ -6803,7 +6803,7 @@ class ControlPlane:
         # which differs on essentially every heartbeat. Writing a durable
         # agent_lifecycle_events row (+ mirrored observability_event) on every
         # beat was the dominant source of hub-db bloat: ~527K lifecycle + ~228K
-        # obs rows in ~4 days on hosta, almost all just CPU/mem jitter.
+        # obs rows in ~4 days on rocky, almost all just CPU/mem jitter.
         meaningful_changes = [f for f in changed_fields if f != "resources"]
         with self.store.transaction() as conn:
             conn.execute("UPDATE agents SET %s WHERE id = ?" % ", ".join(updates), tuple(params))
@@ -8417,7 +8417,7 @@ class ControlPlane:
         origin = ensure_json_object(metadata.get("origin"))
         repo_path_raw = str(origin.get("repository_path") or "").strip()
         repository_url = str(origin.get("repository_url") or "").strip()
-        # mac-k8s: remote-clone tasks (devuser-gke and any K8s fleet) have no
+        # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
         # local repository_path on the hub. Rather than refuse to publish, merge
         # via a transient authed clone of the remote so K8s-mode work can reach
         # main. The clone is cleaned up before returning (best-effort on errors).
@@ -10523,7 +10523,7 @@ class ControlPlane:
     ) -> None:
         # mem-03: silence the bridge.beads.repository_source emitter
         # when the bridge is disabled (the default per CLAUDE.md). The
-        # original audit found 31,833 rows of this log on hosta despite
+        # original audit found 31,833 rows of this log on rocky despite
         # MAC_BEADS_BRIDGE_ENABLED being unset — _refresh_beads_repository_source
         # is reachable from non-poll paths that don't gate themselves.
         if not _truthy_env("MAC_BEADS_BRIDGE_ENABLED"):
@@ -13824,6 +13824,13 @@ class ControlPlane:
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
                 problems.append("verdict %s requires worktree_digest sha256" % evidence.id)
+                continue
+            llm_problems = cross_llm_review_problems(executor_manifest, manifest)
+            if llm_problems:
+                problems.extend(
+                    "verdict %s %s" % (evidence.id, problem)
+                    for problem in llm_problems
+                )
                 continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)

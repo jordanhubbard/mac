@@ -1,13 +1,11 @@
-"""Tests for the NeMo Relay observability adapter (relay-01).
+"""Tests for the NeMo Relay observability seam (relay_observability.py).
 
-Covers three parts that are exercisable without the (optional, pre-1.0)
-``nemo_relay`` binding installed:
+All tests run without nemo-relay installed (the default).  The seam must
+behave as a transparent no-op in that configuration so all existing tests
+continue to pass unchanged.
 
-* the no-op degradation of the scope/event API,
-* the scope-export seam (``create_agent_scope`` / ``relay_tool_context`` /
-  ``relay_llm_context``), exercised both absent and with a fake nemo_relay
-  monkey-patched in to simulate a relay-present environment, and
-* the pure OpenShell OCSF -> mac observation translation.
+Separate parametrised tests simulate relay-present behaviour by monkey-patching
+the module's internal flags — no nemo-relay wheel is needed in the test env.
 """
 
 from __future__ import annotations
@@ -17,11 +15,11 @@ import json
 import os
 import sys
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from mac import relay_observability as ro
+import mac.relay_observability as ro
 
 
 @pytest.fixture(autouse=True)

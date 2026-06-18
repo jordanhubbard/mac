@@ -16,7 +16,7 @@ WORKTREE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 # mem-13: when evidence claims pushed=true with a remote_url + remote_ref,
 # the validator runs `git ls-remote <url> <ref>` and refuses the evidence
 # if the ref doesn't resolve. This closes the validator gap that let
-# hostd's phantom-push evidence get past the repo anchor check.
+# bullwinkle's phantom-push evidence get past the repo anchor check.
 #
 # Set MAC_VALIDATE_REMOTE_REFS=0 to skip the network round-trip (useful
 # for offline development; tests run with no remote_url so they don't

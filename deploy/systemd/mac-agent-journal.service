@@ -1,6 +1,6 @@
 [Unit]
 Description=mac agent journal — daily snapshot of this agent's soul + memory state
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 After=mac.service
 Wants=mac.service
 

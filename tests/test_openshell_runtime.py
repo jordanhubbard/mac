@@ -22,9 +22,8 @@ def test_truthy_normalizes_common_env_values():
     assert truthy(None) is False
 
 
-def test_default_required_set_is_empty_in_this_snapshot():
-    # de-personalized: no hardcoded fleet agent names; required-ness comes from
-    # MAC_OPENSHELL_REQUIRED, per-agent resources, or an explicit required set.
+def test_default_required_set_is_empty_no_hardcoded_fleet():
+    # The fleet roster is no longer baked into source; required-ness is data-driven.
     assert DEFAULT_REQUIRED_AGENT_NAMES == frozenset()
 
 
@@ -32,15 +31,23 @@ def test_required_for_identity_explicit_and_resources_override():
     # explicit wins outright
     assert openshell_required_for_identity(agent_id="agent_alpha", explicit="1") is True
     assert openshell_required_for_identity(agent_id="agent_alpha", explicit="0") is False
-    # resources.openshell_required wins over name matching
-    assert openshell_required_for_identity(agent_id="agent_x", resources={"openshell_required": "true"}) is True
-    assert openshell_required_for_identity(agent_id="agent_x", resources={"openshell_required": "false"}) is False
+    # resources.openshell_required is the data-driven signal
+    assert openshell_required_for_identity(
+        agent_id="agent_x", resources={"openshell_required": "true"}
+    ) is True
+    assert openshell_required_for_identity(
+        agent_id="agent_x", resources={"openshell_required": "false"}
+    ) is False
 
 
-def test_required_for_identity_matches_against_an_explicit_required_set():
-    # name matching works against a caller-supplied set (not hardcoded names)
-    assert openshell_required_for_identity(agent_id="agent_alpha", required_agent_names={"alpha"}) is True
-    assert openshell_required_for_identity(agent_id="agent_beta", required_agent_names={"alpha"}) is False
+def test_required_for_identity_matches_only_an_explicit_required_set():
+    # name matching works against a caller-supplied set, not a hardcoded one
+    assert openshell_required_for_identity(
+        agent_id="agent_alpha", required_agent_names={"alpha"}
+    ) is True
+    assert openshell_required_for_identity(
+        agent_id="agent_beta", required_agent_names={"alpha"}
+    ) is False
     # with the empty default set, an agent name alone never forces sandboxing
     assert openshell_required_for_identity(agent_id="agent_alpha") is False
 
@@ -78,6 +85,7 @@ def test_apply_openshell_requirement_noop_when_resource_absent():
 
 
 def test_apply_then_local_agent_round_trips():
+    # the env this helper writes is exactly what the executor's gate reads
     env: dict[str, str] = {}
     apply_openshell_requirement({"openshell_required": True}, env)
     assert openshell_required_for_local_agent(env) is True

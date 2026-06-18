@@ -31,9 +31,9 @@ def _stale_hermes_home(tmp_path):
     (home / ".env").write_text(
         "\n".join(
             [
-                "OPENAI_BASE_URL=http://100.64.1.1:8090/v1",
-                "CUSTOM_BASE_URL=http://100.64.1.1:8090/v1",
-                "MAC_HERMES_GATEWAY_BASE_URL=http://100.64.1.1:8090/v1",
+                "OPENAI_BASE_URL=http://100.125.137.89:8090/v1",
+                "CUSTOM_BASE_URL=http://100.125.137.89:8090/v1",
+                "MAC_HERMES_GATEWAY_BASE_URL=http://100.125.137.89:8090/v1",
                 "MAC_HERMES_GATEWAY_API_KEY=%s" % STALE,
                 "SLACK_BOT_TOKEN=xoxb-keepme",
             ]
@@ -46,10 +46,10 @@ def _stale_hermes_home(tmp_path):
             [
                 "model:",
                 "  provider: tokenhub",
-                "  base_url: http://100.64.1.1:8090/v1/",
+                "  base_url: http://100.125.137.89:8090/v1/",
                 "providers:",
                 "  tokenhub:",
-                "    api: http://100.64.1.1:8090/v1/",
+                "    api: http://100.125.137.89:8090/v1/",
                 "    name: tokenhub",
                 "    key: %s" % STALE,
                 "fallback_providers: []",
@@ -148,7 +148,7 @@ def test_router_env_emits_wildcard_models_from_spec(tmp_path):
     spec = {
         "schema": "mac.fleet_setup.v1",
         "fleet": {"name": "gke", "hub": "gke-hub", "hub_url": "http://gke-hub:8789"},
-        "agents": [{"name": "gke-hub", "target": "dev@gke-hub", "os": "linux"}],
+        "agents": [{"name": "gke-hub", "target": "horde@gke-hub", "os": "linux"}],
         "router": {
             "backend": "inproc",
             "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],
@@ -181,7 +181,7 @@ def test_router_env_emits_modality_upstreams_and_keys_from_spec(tmp_path):
     spec = {
         "schema": "mac.fleet_setup.v1",
         "fleet": {"name": "gke", "hub": "gke-hub", "hub_url": "http://gke-hub:8789"},
-        "agents": [{"name": "gke-hub", "target": "dev@gke-hub", "os": "linux"}],
+        "agents": [{"name": "gke-hub", "target": "horde@gke-hub", "os": "linux"}],
         "router": {
             "backend": "inproc",
             "providers": [{"id": "nvidia", "key_env": "NVIDIA_API_KEY"}],

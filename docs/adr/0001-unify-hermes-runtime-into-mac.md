@@ -2,7 +2,7 @@
 
 - Status: **Accepted (with refinement)**
 - Date: 2026-05-30
-- Decision owner: Dev User
+- Decision owner: Jordan Hubbard
 - Context: validating the premise that the three-month "circling the drain"
   is caused by `mac`, `hermes-agent`, and `tokenhub` being separate systems
   with separate event loops and opaque boundaries — and that folding a

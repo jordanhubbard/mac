@@ -1,13 +1,13 @@
 # GPU worker nodes
 
-Turn a fleet GPU host (gpu-worker-1, gpu-worker-2) into a Kubernetes **GPU worker node** so
+Turn a fleet GPU host (gpu-node, gpu-node-arm) into a Kubernetes **GPU worker node** so
 the elastic executor tier ([ADR 0005](../../../docs/adr/0005-elastic-executor-tier-vs-static-fleet.md))
 can run `nvidia.com/gpu`-requesting Jobs on it.
 
-> **Why this is now worth doing for gpu-worker-1.** The thing that used to "block" the
+> **Why this is now worth doing for gpu-node.** The thing that used to "block" the
 > GPU — the long-lived vLLM "LLM brain" Deployment — serves **≈0 hub traffic**
 > (live `llm.route` telemetry, 2026-06-11: 994/1000 routed to cloud `nvidia`, 0
-> to gpu-worker-1's vLLM, because no caller requests its `Qwen/...` model). See the ADR
+> to gpu-node's vLLM, because no caller requests its `Qwen/...` model). See the ADR
 > Evidence section. So the GPU can be **dedicated** to executor Jobs rather than
 > carefully time-sliced around an idle service.
 
@@ -28,19 +28,19 @@ deploy/k8s/gpu-worker/
 
 ## Prerequisites (per host)
 
-Verified present on gpu-worker-1 (RTX 6000 Ada) and gpu-worker-2 (GB10) in ADR 0005:
+Verified present on gpu-node (RTX 6000 Ada) and gpu-node-arm (GB10) in ADR 0005:
 
 - NVIDIA driver loaded (`nvidia-smi` works).
 - **NVIDIA Container Toolkit** (`nvidia-ctk`) + **containerd**, with the `nvidia`
   runtime wired as containerd's default (or as a `RuntimeClass`). This is the
-  exact mechanism that *cannot* exist on macOS — which is why **mac-worker is not
+  exact mechanism that *cannot* exist on macOS — which is why **mac-node is not
   a candidate** (its Metal GPU is unschedulable; its image-gen stays an
   off-cluster native service).
-- The node has **joined the cluster** as a worker (kubelet running). `hub` is
+- The node has **joined the cluster** as a worker (kubelet running). `hub-node` is
   the intended control-plane / CPU node; it has no container runtime today, so
   add containerd there before it can host anything.
 
-gpu-worker-2 caveats (from ADR 0005): it's **arm64** (mixed-arch cluster → build
+gpu-node-arm caveats (from ADR 0005): it's **arm64** (mixed-arch cluster → build
 workload images for arm64 too) and runs a **kernel-coupled driver** (`6.17-nvidia`
 + driver 580) — keep the per-kernel module package matched (see the
 `reference-fleet-gpu-capability` memory for the exact `apt-get` fix).
@@ -51,14 +51,14 @@ workload images for arm64 too) and runs a **kernel-coupled driver** (`6.17-nvidi
 # 1. Label the node (run from a context with the cluster's kubeconfig).
 #    Plain label  -> GPU shareable with other pods.
 #    --taint      -> dedicate the node to GPU work (CPU executor Jobs stay off it).
-deploy/k8s/gpu-worker/label-gpu-node.sh gpu-worker-1 --taint
+deploy/k8s/gpu-worker/label-gpu-node.sh gpu-node --taint
 
 # 2. Roll out the device plugin. It only lands on nodes carrying the
 #    mac.fleet/capability-gpu=true label set in step 1.
 kubectl apply -k deploy/k8s/gpu-worker
 
 # 3. Verify the node now advertises GPUs as a schedulable resource.
-kubectl describe node gpu-worker-1 | grep -A2 'Capacity:' | grep nvidia.com/gpu
+kubectl describe node gpu-node | grep -A2 'Capacity:' | grep nvidia.com/gpu
 #   nvidia.com/gpu:  1
 kubectl -n kube-system get pods -l app.kubernetes.io/name=nvidia-device-plugin -o wide
 ```
@@ -114,12 +114,12 @@ existing `build_job_spec` coverage before enabling.
 ## What about the vLLM brain?
 
 Because it serves ≈0 traffic, the simplest path is to **stop the vLLM Deployment
-and dedicate gpu-worker-1's GPU to executor Jobs**. Before decommissioning, confirm
+and dedicate gpu-node's GPU to executor Jobs**. Before decommissioning, confirm
 there's no out-of-band direct consumer (the hub telemetry can't see processes
-that hit `gpu-worker-1:8000` directly):
+that hit `gpu-node:8000` directly):
 
 ```bash
-ssh <user>@gpu-worker-1.local "curl -s localhost:8000/metrics | grep request_success_total; ss -tnp | grep :8000"
+ssh <user>@<gpu-node-host> "curl -s localhost:8000/metrics | grep request_success_total; ss -tnp | grep :8000"
 ```
 
 If you still want a local-LLM fallback, keep a **right-sized** vLLM and share the

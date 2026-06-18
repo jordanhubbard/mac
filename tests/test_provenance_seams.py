@@ -17,7 +17,7 @@ def cp():
 
 def _setup_binding(cp):
     tenant = cp.register_tenant("ops")
-    hermes = cp.register_hermes_instance(tenant.id, "hosta")
+    hermes = cp.register_hermes_instance(tenant.id, "rocky")
     return cp.register_platform_binding(
         tenant.id, hermes.id, "slack", "T123/C456", display_name="#ops"
     )
@@ -74,7 +74,7 @@ def test_track_conversation_requires_external_thread_id(cp):
 def test_list_conversation_threads_filters_by_binding(cp):
     binding_a = _setup_binding(cp)
     tenant_b = cp.register_tenant("other")
-    hermes_b = cp.register_hermes_instance(tenant_b.id, "hostc")
+    hermes_b = cp.register_hermes_instance(tenant_b.id, "natasha")
     binding_b = cp.register_platform_binding(
         tenant_b.id, hermes_b.id, "telegram", "chat-7"
     )

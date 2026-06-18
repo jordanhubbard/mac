@@ -1,18 +1,19 @@
-"""Guard checked-in docs/skills against per-user / per-fleet operator identity.
+"""Guard: checked-in docs/skills must read as generic for ANY fleet owner.
 
-The repo must read as generic for ANY fleet owner. Checked-in docs, skills, and
-deploy markdown must never name a specific fleet's agents, hosts, or operator —
-those belong only in the home-scoped fleet registry (``~/.mac/fleets.yaml`` /
-``~/.mac/specs/``), never in Git. This test codifies that so an example fleet's
-real names (and the de-personalized ``hostX`` / ``devuser`` placeholders, which
-are still per-fleet example identity) cannot leak back into the documentation.
+The mac repo documents a *generic* fleet, never the maintainer's specific one.
+Operational identity — real agent names, the operator user, concrete hosts —
+belongs OUTSIDE git (in ~/.mac/specs / ~/.mac/fleets.yaml), not in the docs that
+travel with the repo. This test fails loudly the moment any such token sneaks
+back into a checked-in doc, skill, or deploy markdown file.
 
-Use generic, readable placeholders/role names instead: ``hub`` / ``<hub-node>``,
-``worker-1`` / ``<worker-node>``, ``gpu-worker`` / ``<gpu-node>``, ``<user>``,
-``<host>``, ``<mesh-ip>``.
+It forbids BOTH de-personalized example schemes so neither fork's identity can
+leak: the maintainer's real fleet names (rocky/natasha/bullwinkle/madmax/puck/
+sparky/jkh/do-host...) AND the older mac-dev placeholders (hosta..hostf,
+worker2, devuser, agentuser). It does NOT forbid `jordanhubbard` / `NVIDIA-dev`
+— those are this fork's legitimate repo-org slug, not operator identity.
 
-This test is kept IDENTICAL across the mac and mac-dev forks so the two stay
-unified.
+Genericize new docs with READABLE role names instead: hub / worker-1 /
+worker-2 / gpu-worker, and placeholders like <user> / <host> / <mesh-ip>.
 """
 from __future__ import annotations
 
@@ -21,16 +22,16 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SELF_REL = "tests/test_docs_no_operator_identity.py"
 
-# Per-user / per-fleet operator identity that must never appear in a checked-in
-# doc/skill. Includes real example-fleet agent/host names AND the
-# de-personalized ``hostX`` / ``devuser`` / ``agentuser`` placeholders, which are
-# still per-fleet example identity rather than generic role names.
-#
-# NOTE: ``NVIDIA-dev`` / ``jordanhubbard`` (this fork's real repo/clone org
-# identity) are deliberately NOT forbidden.
-FORBIDDEN = [
+# This test file itself legitimately *names* the forbidden tokens (in the regex
+# and docstring), so it must be excluded from the scan.
+SELF = Path(__file__).resolve()
+
+# Operational-identity tokens that must never appear in a checked-in doc.
+# Matched word-boundary + case-insensitive. Includes the maintainer's real
+# fleet identity AND the de-personalized mac-dev example names, so neither
+# fork's example identity can come back.
+_TOKENS = [
     "rocky",
     "natasha",
     "bullwinkle",
@@ -39,7 +40,6 @@ FORBIDDEN = [
     "sparky",
     "worker2",
     "jkh",
-    "do-host",
     "hosta",
     "hostb",
     "hostc",
@@ -49,47 +49,19 @@ FORBIDDEN = [
     "devuser",
     "agentuser",
 ]
-
-# Boundaries are alphanumeric-only (NOT \b) so an underscore counts as a
-# separator: this catches `agent_rocky` / `hermes_hosta` forms a \b regex misses
-# (`_` is a word char). The trailing boundary keeps real words like "hostage"
-# from matching `hosta`. `do-host` is split out with only a left boundary so the
-# hyphenated `do-host1` still matches.
-_PLAIN = [t for t in FORBIDDEN if t != "do-host"]
+# Boundaries are alphanumeric-only (NOT \b), so an underscore counts as a
+# separator: this catches `agent_rocky` / `hermes_hosta` forms that a `\b`
+# regex misses because `_` is a word character. `do-host` is matched with the
+# same left boundary (the hyphen already terminates it on the right).
 IDENTITY = re.compile(
-    r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(t) for t in _PLAIN) + r")(?![A-Za-z0-9])"
+    r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(t) for t in _TOKENS) + r")(?![A-Za-z0-9])"
     r"|(?<![A-Za-z0-9])do-host",
     re.IGNORECASE,
 )
 
 
-def _is_in_scope(rel: str) -> bool:
-    """Doc/markdown/skill files this guard walks.
-
-    Scope: ``docs/``, ``skills/``, ``deploy/skills/``, ``deploy/*.md`` /
-    ``deploy/**/*.md``, and root ``*.md``. Excludes vendored Hermes, the ticket
-    mirrors, and this test file itself.
-    """
-    if rel.startswith("src/mac/_hermes/"):
-        return False
-    if rel.startswith(".tickets/"):
-        return False
-    if rel == SELF_REL:
-        return False
-    if rel.startswith("docs/"):
-        return True
-    if rel.startswith("skills/"):
-        return True
-    if rel.startswith("deploy/skills/"):
-        return True
-    if rel.startswith("deploy/") and rel.endswith(".md"):
-        return True
-    if re.fullmatch(r"[^/]+\.md", rel):
-        return True
-    return False
-
-
-def _tracked_docs() -> list[str]:
+def _scanned_files() -> list[Path]:
+    """git-tracked docs/skills/deploy-md/root-md, minus the excluded trees."""
     out = subprocess.run(
         ["git", "ls-files"],
         cwd=ROOT,
@@ -97,25 +69,41 @@ def _tracked_docs() -> list[str]:
         text=True,
         check=True,
     )
-    return [rel for rel in out.stdout.splitlines() if _is_in_scope(rel)]
-
-
-def test_docs_carry_no_operator_or_per_fleet_identity():
-    docs = _tracked_docs()
-    assert docs, "expected to find checked-in docs/skills to scan"
-    offenders: list[str] = []
-    for rel in docs:
-        path = ROOT / rel
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+    files: list[Path] = []
+    for rel in out.stdout.splitlines():
+        # Exclusions first.
+        if rel.startswith("src/mac/_hermes/") or rel.startswith(".tickets/"):
             continue
+        path = (ROOT / rel).resolve()
+        if path == SELF:
+            continue
+        # In-scope globs.
+        in_docs = rel.startswith("docs/")
+        in_skills = rel.startswith("skills/")
+        in_deploy_skills = rel.startswith("deploy/skills/")
+        in_deploy_md = rel.startswith("deploy/") and rel.endswith(".md")
+        in_root_md = "/" not in rel and rel.endswith(".md")
+        if in_docs or in_skills or in_deploy_skills or in_deploy_md or in_root_md:
+            files.append(path)
+    return files
+
+
+def test_docs_carry_no_operator_identity():
+    scanned = _scanned_files()
+    assert scanned, "expected to scan at least one checked-in doc/skill file"
+    offenders: list[str] = []
+    for path in scanned:
+        text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), 1):
-            if IDENTITY.search(line):
-                offenders.append("%s:%d: %s" % (rel, lineno, line.strip()))
+            match = IDENTITY.search(line)
+            if match:
+                offenders.append(
+                    "%s:%d: %r (matched %r)"
+                    % (path.relative_to(ROOT), lineno, line.strip(), match.group(0))
+                )
     assert not offenders, (
-        "per-user / per-fleet operator identity leaked into checked-in docs "
-        "(use generic placeholders/role names: hub / <hub-node>, worker-1 / "
-        "<worker-node>, gpu-worker / <gpu-node>, <user>, <host>, <mesh-ip>):\n"
-        + "\n".join(offenders)
+        "operator/per-fleet identity leaked into checked-in docs — the repo must "
+        "read as generic for any fleet owner. Replace with readable role names "
+        "(hub / worker-1 / worker-2 / gpu-worker) or placeholders "
+        "(<user> / <host> / <mesh-ip>):\n" + "\n".join(offenders)
     )

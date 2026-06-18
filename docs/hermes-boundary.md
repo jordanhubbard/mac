@@ -5,7 +5,7 @@ The system needs both roles.
 
 Without Hermes, OpenClaw, or an equivalent runtime, the control plane can track
 tasks and machines but has no conversational continuity, adaptive personality,
-or lived memory. The hub, worker-1, worker-2, and similar agents are not just
+or lived memory. `hub`, `worker-1`, `worker-2`, and similar agents are not just
 worker names; they are Hermes identities with souls, user context, prior
 conversation memory, and situational behavior.
 
@@ -42,7 +42,7 @@ instances:
 - `user`: a human inside a tenant.
 - `persona`: the durable identity contract for a Hermes agent, including
   `soul_ref` and `memory_scope`.
-- `hermes_instance`: a running or recoverable Hermes identity, such as `hub`.
+- `hermes_instance`: a running or recoverable Hermes identity, such as `worker-1`.
 - `platform_binding`: the Slack workspace/channel, Telegram chat, Discord
   guild/channel, or other message surface attached to a Hermes instance.
 

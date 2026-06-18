@@ -3,8 +3,8 @@
 TokenHub's vault under stable key names.
 
 Key naming: slack.<agent>.<workspace>.<kind>
-  agent     ∈ {hosta, hostc, hostd, ...}
-  workspace ∈ {teamone, teamtwo, ...}  (Slack team slug, no .slack.com)
+  agent     ∈ {rocky, natasha, bullwinkle, ...}
+  workspace ∈ {omgjkh, offtera, ...}  (Slack team slug, no .slack.com)
   kind      ∈ {bot, app, signing, client, uauth}
 
 For bot and uauth tokens we run Slack auth.test before uploading;
@@ -22,7 +22,7 @@ import urllib.parse
 from pathlib import Path
 
 SLACK_APPS_DIR = Path(os.environ.get("SLACK_APPS_DIR") or "~/Documents/Slack-Apps").expanduser()
-TOKENHUB_URL = os.environ.get("TOKENHUB_URL", "http://100.64.1.1:8090").rstrip("/")
+TOKENHUB_URL = os.environ.get("TOKENHUB_URL", "http://100.125.137.89:8090").rstrip("/")
 TOKENHUB_ADMIN_TOKEN = os.environ["TOKENHUB_ADMIN_TOKEN"]
 
 # Tokens that are pre-verifiable via Slack auth.test

@@ -14,7 +14,7 @@ Two kinds of tests:
    end inside the writer service, with no real network calls.
 
 To run an integration test against a real Qdrant, set
-``QDRANT_URL=http://127.0.0.1:6333`` (or the hosta endpoint) and use
+``QDRANT_URL=http://127.0.0.1:6333`` (or the rocky endpoint) and use
 ``mac memory backfill`` + ``mac memory recall``. The CLI uses the same
 VectorWriterService class.
 """
@@ -193,7 +193,7 @@ def test_embed_memory_round_trip_recall_finds_the_record(cp, writer, fake_qdrant
     other memories also landed cleanly."""
     a = _add_memory(cp, "the slack notifier broke last week")
     b = _add_memory(cp, "ship the qdrant memory tier writer")
-    c = _add_memory(cp, "hosta's mac.db is 3GB; need a prune timer")
+    c = _add_memory(cp, "rocky's mac.db is 3GB; need a prune timer")
     for r in (a, b, c):
         writer.embed_memory(r.id)
 

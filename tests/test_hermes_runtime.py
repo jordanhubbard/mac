@@ -50,7 +50,7 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
         context_path=context_path,
         markdown_path=markdown_path,
         hermes_env_path=env_path,
-        agent_name="Hosta Host",
+        agent_name="Rocky Host",
         fleet_name="classic-fleet",
         mac_url="http://hub.example.internal:8789/path?token=hidden",
         hermes_home=hermes_home,
@@ -63,8 +63,8 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     env = parse_env(env_path)
     assert context["schema"] == "mac.hermes.runtime_context.v1"
     assert stored["identity"]["tenant_id"] == "tenant_classic-fleet"
-    assert stored["agent"]["agent_id"] == "agent_hosta_host"
-    assert stored["identity"]["hermes_instance_id"] == "hermes_hosta_host"
+    assert stored["agent"]["agent_id"] == "agent_rocky_host"
+    assert stored["identity"]["hermes_instance_id"] == "hermes_rocky_host"
     assert stored["authority"]["tasks"] == "mac"
     assert stored["authority"]["projects"] == "mac"
     assert stored["authority"]["agents"] == "mac"
@@ -78,7 +78,7 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "children: subtasks" in "; ".join(
         stored["first_class_objects"]["vocabulary"]["task_relationships"]
     )
-    assert "hgmac agents identity agent_hosta_host" in stored["first_class_objects"]["objects"]["agents"]["hgmac_cli"]
+    assert "hgmac agents identity agent_rocky_host" in stored["first_class_objects"]["objects"]["agents"]["hgmac_cli"]
     assert "hgmac fleets list" in stored["first_class_objects"]["objects"]["fleets"]["hgmac_cli"]
     assert "hgmac tasks list" in stored["first_class_objects"]["objects"]["tasks"]["hgmac_cli"]
     assert "hgmac tasks add-child {task_id} --title ..." in stored["first_class_objects"]["objects"]["tasks"]["hgmac_cli"]
@@ -105,9 +105,9 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
         "command_audit",
         "web_search",
     } <= capability_names
-    assert "mac-hermes work-context hermes_hosta_host --active-only" in markdown
+    assert "mac-hermes work-context hermes_rocky_host --active-only" in markdown
     assert "Identity boundary" in markdown
-    assert "answer only as `Hosta Host`" in markdown
+    assert "answer only as `Rocky Host`" in markdown
     assert "never claim to be, proxy for, or relay as another agent" in markdown
     assert "mac-hermes tasks --state open" in markdown
     assert "First-Class Objects" in markdown
@@ -123,8 +123,8 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "mac-hermes register-beads-repository <name> <path> --project <project>" in markdown
     assert "Agent View" in markdown
     assert "mac-hermes agents" in markdown
-    assert "mac-hermes claim-next agent_hosta_host --dry-run" in markdown
-    assert "mac-hermes command-audit list --agent-id agent_hosta_host" in markdown
+    assert "mac-hermes claim-next agent_rocky_host --dry-run" in markdown
+    assert "mac-hermes command-audit list --agent-id agent_rocky_host" in markdown
     assert "Dashboard Views" in markdown
     assert "/ui?view=work&selected={task_id}" in markdown
     assert "/ui?view=fleets&selected={fleet_id}" in markdown
@@ -133,8 +133,8 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "/ui?view=agents&selected={agent_id}" in markdown
     assert "Web Research" in markdown
     assert 'mac-hermes web-search "current project dependency release notes" --limit 5' in markdown
-    assert "hgmac agents claim-next agent_hosta_host --dry-run" in markdown
-    assert "mac-hermes claim {task_id} agent_hosta_host" in markdown
+    assert "hgmac agents claim-next agent_rocky_host --dry-run" in markdown
+    assert "mac-hermes claim {task_id} agent_rocky_host" in markdown
     assert "mac-hermes add-child-task {task_id} <child-title>" in markdown
     assert "Direct Session Parity" in markdown
     assert "`mac task ready" in markdown
@@ -155,12 +155,12 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert env["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"] == str(markdown_path)
     assert env["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] == "1"
     assert env["MAC_FLEET_TENANT_ID"] == "tenant_classic-fleet"
-    assert env["MAC_HERMES_PERSONA_ID"] == "persona_hosta_host"
-    assert env["MAC_HERMES_INSTANCE_ID"] == "hermes_hosta_host"
-    assert env["MAC_WORKER_HERMES_INSTANCE_ID"] == "hermes_hosta_host"
-    assert env["MAC_AGENT_ID"] == "agent_hosta_host"
-    assert env["MAC_WORKER_AGENT_NAME"] == "Hosta Host"
-    assert env["MAC_WORKER_HOSTNAME"] == "Hosta Host"
+    assert env["MAC_HERMES_PERSONA_ID"] == "persona_rocky_host"
+    assert env["MAC_HERMES_INSTANCE_ID"] == "hermes_rocky_host"
+    assert env["MAC_WORKER_HERMES_INSTANCE_ID"] == "hermes_rocky_host"
+    assert env["MAC_AGENT_ID"] == "agent_rocky_host"
+    assert env["MAC_WORKER_AGENT_NAME"] == "Rocky Host"
+    assert env["MAC_WORKER_HOSTNAME"] == "Rocky Host"
     assert env["MAC_URL"] == "http://hub.example.internal:8789/path"
     assert env["MAC_HUB_URL"] == "http://hub.example.internal:8789/path"
     assert env["HERMES_HOME"] == str(hermes_home)
@@ -171,8 +171,8 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
 
 
 def test_stable_id_matches_deployed_worker_id_shape():
-    assert stable_id("agent", "Hosta Host") == "agent_hosta_host"
-    assert stable_id("hermes", "hostf.local") == "hermes_hostf.local"
+    assert stable_id("agent", "Rocky Host") == "agent_rocky_host"
+    assert stable_id("hermes", "puck.local") == "hermes_puck.local"
 
 
 def test_runtime_context_advertises_directory_backed_public_artifact_publish(tmp_path, monkeypatch):
@@ -191,8 +191,8 @@ def test_runtime_context_advertises_directory_backed_public_artifact_publish(tmp
         context_path=context_path,
         markdown_path=markdown_path,
         hermes_env_path=env_path,
-        agent_name="Hosta Host",
-        fleet_name="hosta",
+        agent_name="Rocky Host",
+        fleet_name="rocky",
         mac_url="http://hub.example:8789",
         hermes_home=hermes_home,
         mac_home=mac_home,

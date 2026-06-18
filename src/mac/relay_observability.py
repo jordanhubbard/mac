@@ -24,22 +24,29 @@ events (ATOF), middleware, and multi-backend export (ATOF / ATIF / OpenTelemetry
   bridge between the two halves of the OpenShell + NeMo Relay design: OpenShell
   produces the security events, Relay/observability consumes them.
 
-Enable with ``MAC_RELAY_OBSERVABILITY=1`` (and the ``nemo_relay`` package
-installed). The full scope/managed-call/exporter rollout is tracked as
-follow-up work; see ``docs/openshell-nemo-relay-integration.md``.
+Activate by setting ``MAC_RELAY_OBSERVABILITY=1`` in the environment (and with
+the ``nemo_relay`` package installed); any other value (or absent) leaves the
+scope/export half in no-op mode. The pure OCSF translation half is always
+available — it has no nemo-relay dependency. The full scope/managed-call/
+exporter rollout is tracked as follow-up work; see
+``docs/openshell-nemo-relay-integration.md``.
 
 Public surface
 --------------
 is_available()                            -> bool   (relay importable AND opted-in)
 enabled()                                 -> bool   (alias of is_available)
 relay_available()                         -> bool   (relay importable, ignoring opt-in)
-create_agent_scope(session_id)            -> context manager (sync)
-relay_tool_context(tool_name, input_dict) -> context manager (sync)
-relay_llm_context(model, provider, ...)   -> context manager (sync)
+create_agent_scope(session_id)            -> context manager (sync)   [Phase 1]
+relay_tool_context(tool_name, input_dict) -> context manager (sync)   [Phase 2]
+relay_llm_context(model, provider, ...)   -> context manager (sync)   [Phase 2]
 scope(name, scope_type, **fields)         -> context manager (legacy handle-yielding)
 record_event(name, *, data)               -> bool
 flush()                                   -> None
 ocsf_to_observation / iter_ocsf_observations / parse_ocsf_lines  (pure translation)
+
+All scopes are opened with ``nemo_relay.scope.scope(name, ScopeType.X,
+data=...)`` and async export is drained with
+``nemo_relay._native.flush_subscribers()`` — the real nemo-relay 0.3.0 API.
 
 When nemo-relay is absent or MAC_RELAY_OBSERVABILITY != '1' every context
 manager is a transparent no-op and flush() does nothing, so callers need no
@@ -131,7 +138,7 @@ def enabled() -> bool:
 
 
 def flush() -> None:
-    """Flush pending async exports. No-op when relay is absent/disabled."""
+    """Flush pending async exports.  No-op when relay is absent/disabled."""
     if not is_available():
         return
     try:
@@ -179,18 +186,7 @@ def scope(name: str, scope_type: str = "Agent", **fields: Any) -> Iterator[Any]:
         yield None
 
 
-# ---------------------------------------------------------------------------
-# Managed scope helpers — root Agent scope + managed tool / LLM child scopes.
-#
-# These wrap the existing executor / tool-dispatch / LLM-call sites in scopes.
-# They use ``nemo_relay.scope.scope()`` (the documented 0.3.0 context-manager
-# primitive) rather than tools.execute()/llm.execute(), which are callback-based
-# and would require restructuring the call sites. Span-style wrapping captures
-# the same lifecycle without that churn.
-# ---------------------------------------------------------------------------
-
-
-@contextmanager
+@contextlib.contextmanager
 def create_agent_scope(session_id: str) -> Generator[None, None, None]:
     """Open a root Agent scope for the given session_id.
 
@@ -204,9 +200,9 @@ def create_agent_scope(session_id: str) -> Generator[None, None, None]:
     overhead, so callers need no conditional logic.
 
     The scope name is ``mac.agent.<session_id>`` (truncated to 128 chars for
-    safety). If _HERMES_HOME_OVERRIDE is set in the environment it is stored as
-    a scope attribute so downstream exporters can associate the trace with the
-    originating Hermes home directory.
+    safety).  If _HERMES_HOME_OVERRIDE is set in the environment it is stored
+    as a scope attribute so downstream exporters can associate the trace with
+    the originating Hermes home directory.
     """
     if not is_available():
         yield
@@ -245,6 +241,17 @@ def create_agent_scope(session_id: str) -> Generator[None, None, None]:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 — managed tool / LLM call context managers
+#
+# These wrap the existing tool-dispatch and LLM-call sites in a child scope.
+# They use nemo_relay.scope.scope() (the documented 0.3.0 context-manager
+# primitive) rather than tools.execute()/llm.execute(), which are callback-
+# based and would require restructuring the call sites. Span-style wrapping
+# captures the same lifecycle without that churn.
+# ---------------------------------------------------------------------------
+
+
 def _sanitize_attrs(attrs: Dict[str, Any]) -> Dict[str, Any]:
     """Return a copy of *attrs* keeping only JSON-serialisable scalar values.
 
@@ -263,7 +270,7 @@ def _sanitize_attrs(attrs: Dict[str, Any]) -> Dict[str, Any]:
     return safe
 
 
-@contextmanager
+@contextlib.contextmanager
 def _scoped(name: str, scope_type: Any, data: Dict[str, Any]) -> Generator[None, None, None]:
     """Open a child scope around the body, best-effort.
 
@@ -289,7 +296,7 @@ def _scoped(name: str, scope_type: Any, data: Dict[str, Any]) -> Generator[None,
             pass
 
 
-@contextmanager
+@contextlib.contextmanager
 def relay_tool_context(
     tool_name: str,
     input_dict: Optional[Dict[str, Any]] = None,
@@ -306,7 +313,7 @@ def relay_tool_context(
         yield
 
 
-@contextmanager
+@contextlib.contextmanager
 def relay_llm_context(
     model: str,
     provider: str,

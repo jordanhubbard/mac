@@ -332,7 +332,7 @@ def test_mount_forwards_with_binding_auth_scheme(monkeypatch):
 
 def test_media_bindings_from_agents_priority_and_offline_skip():
     agents = [
-        {"name": "hostd", "status": "idle", "health_status": "healthy",
+        {"name": "bullwinkle", "status": "idle", "health_status": "healthy",
          "resources": {"media_routes": [
              {"op": "image.generate", "base_url": "http://bw:8189", "adapter": "openai_images", "priority": 1},
              {"op": "image.generate", "base_url": "http://bw:8190", "adapter": "passthrough", "priority": 0}]}},
@@ -413,21 +413,21 @@ def test_media_bindings_ranked_by_reported_hardware():
     agents = [
         _gpu_agent("cpu-box", "none", None, "http://cpu:8189"),
         _gpu_agent("mac", "metal", "Apple M4 Pro", "http://mac:8189"),
-        _gpu_agent("hostc", "cuda", "NVIDIA GB10", "http://hostc:8189"),
+        _gpu_agent("natasha", "cuda", "NVIDIA GB10", "http://natasha:8189"),
     ]
     urls = [b.base_url for b in media_bindings_from_agents(agents)["image.generate"]]
-    assert urls == ["http://hostc:8189", "http://mac:8189", "http://cpu:8189"]  # cuda > metal > cpu
+    assert urls == ["http://natasha:8189", "http://mac:8189", "http://cpu:8189"]  # cuda > metal > cpu
 
 
 def test_gen_capable_agents_lists_accelerated_only_sorted():
     agents = [
-        _gpu_agent("hostc", "cuda", "NVIDIA GB10"),
+        _gpu_agent("natasha", "cuda", "NVIDIA GB10"),
         _gpu_agent("mac", "metal", "Apple M4 Pro"),
-        {"name": "hosta", "status": "idle", "resources": {"hardware": {"accelerator": "none"}}},
+        {"name": "rocky", "status": "idle", "resources": {"hardware": {"accelerator": "none"}}},
         {"name": "stale", "status": "idle", "resources": {}},
     ]
     caps = gen_capable_agents(agents)
-    assert [c["agent"] for c in caps] == ["hostc", "mac"]  # cuda first; none/stale excluded
+    assert [c["agent"] for c in caps] == ["natasha", "mac"]  # cuda first; none/stale excluded
     assert caps[0]["gpu"] == "NVIDIA GB10" and caps[0]["serving"] is True
 
 
@@ -449,13 +449,13 @@ def test_same_tier_ordered_by_vram_descending():
 
 
 def test_binding_carries_accelerator_rank():
-    agents = [_gpu_agent_vram("hostc", "cuda", 0, "http://hostc:8189"),
+    agents = [_gpu_agent_vram("natasha", "cuda", 0, "http://natasha:8189"),
               {"name": "mac", "status": "idle", "health_status": "healthy",
                "resources": {"hardware": {"accelerator": "metal", "memory_mb": 64000},
                              "media_routes": [{"op": "image.generate", "base_url": "http://mac:8189", "adapter": "openai_images"}]}}]
     table = media_bindings_from_agents(agents)["image.generate"]
     ranks = {b.base_url: b.rank for b in table}
-    assert ranks["http://hostc:8189"] == 0 and ranks["http://mac:8189"] == 1  # cuda tier 0, metal tier 1
+    assert ranks["http://natasha:8189"] == 0 and ranks["http://mac:8189"] == 1  # cuda tier 0, metal tier 1
 
 
 def test_dispatch_order_least_loaded_within_top_tier():
@@ -582,7 +582,7 @@ def test_media_endpoint_audio_tts_routes_binary(monkeypatch):
     app = FastAPI()
     media_json = _json.dumps({
         "audio.tts": [{
-            "provider": "hostc", "base_url": "http://hostc:8190/v1",
+            "provider": "natasha", "base_url": "http://natasha:8190/v1",
             "model": "bark", "adapter": "openai_audio_speech",
         }]
     })
@@ -591,7 +591,7 @@ def test_media_endpoint_audio_tts_routes_binary(monkeypatch):
     r = TestClient(app).post("/v1/media/audio.tts", json={"input": "hello world"})
     assert r.status_code == 200, r.text
     payload = r.json()
-    assert payload["provider"] == "hostc" and payload["model"] == "bark"
+    assert payload["provider"] == "natasha" and payload["model"] == "bark"
     assert payload["artifacts"][0]["base64"] == _b64.b64encode(wav).decode("ascii")
     assert payload["artifacts"][0]["content_type"] == "audio/wav"
     assert captured["url"].endswith("/audio/speech")
@@ -669,7 +669,7 @@ def test_media_endpoint_audio_asr_multipart(monkeypatch):
     app = FastAPI()
     media_json = _json.dumps({
         "audio.asr": [{
-            "provider": "hostc", "base_url": "http://hostc:8190/v1",
+            "provider": "natasha", "base_url": "http://natasha:8190/v1",
             "model": "whisper-large-v3", "adapter": "openai_audio_transcription",
         }]
     })
@@ -747,7 +747,7 @@ def test_media_endpoint_video_async_submit_then_poll(monkeypatch):
     app = FastAPI()
     media_json = _json.dumps({
         "video.generate": [{
-            "provider": "hostc", "base_url": "http://hostc:8191/v1",
+            "provider": "natasha", "base_url": "http://natasha:8191/v1",
             "model": "animatediff", "adapter": "video_generate",
         }]
     })

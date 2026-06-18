@@ -298,19 +298,19 @@ def _build_executor_pod_template(
     container_volume_mounts: List[JsonDict] = [
         {"name": "task-tmp", "mountPath": "/tmp"},
         {"name": "task-workspace", "mountPath": "/var/lib/mac/workspaces"},
-        # The pre-push gate uses nvm to install a project's declared Node
-        # version; nvm writes binaries to versions/ and a download cache to
-        # .cache/ inside NVM_DIR (/var/lib/mac/.nvm). readOnlyRootFilesystem
-        # blocks those writes, so overlay exactly those two subdirectories
-        # with writable emptyDirs (without relaxing the read-only root).
+        # nvm writes Node binaries to versions/, download cache to .cache/,
+        # and version aliases to alias/ inside NVM_DIR. The root filesystem is
+        # read-only, so these three subdirectories need writable emptyDir overlays.
         {"name": "nvm-versions", "mountPath": "/var/lib/mac/.nvm/versions"},
         {"name": "nvm-cache", "mountPath": "/var/lib/mac/.nvm/.cache"},
+        {"name": "nvm-alias", "mountPath": "/var/lib/mac/.nvm/alias"},
     ]
     pod_volumes: List[JsonDict] = [
         {"name": "task-tmp", "emptyDir": {}},
         {"name": "task-workspace", "emptyDir": {"sizeLimit": "5Gi"}},
         {"name": "nvm-versions", "emptyDir": {"sizeLimit": "2Gi"}},
         {"name": "nvm-cache", "emptyDir": {"sizeLimit": "1Gi"}},
+        {"name": "nvm-alias", "emptyDir": {}},
     ]
     if opencode_cm:
         container_volume_mounts.append(
@@ -341,7 +341,7 @@ def _build_executor_pod_template(
                     "env": container_env,
                     "resources": {
                         "requests": {"cpu": "100m", "memory": "256Mi"},
-                        "limits": {"cpu": "2", "memory": "2Gi"},
+                        "limits": {"cpu": "2", "memory": "6Gi"},
                     },
                     "securityContext": {
                         "allowPrivilegeEscalation": False,

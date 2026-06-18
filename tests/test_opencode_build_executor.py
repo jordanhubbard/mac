@@ -555,6 +555,14 @@ def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> N
         manifest["opencode_model"]
         == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
     )
+    assert (
+        manifest["llm_model"]
+        == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
+    )
+    assert (
+        manifest["llm"]["model"]
+        == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
+    )
 
 
 def test_records_original_and_effective_returncode_on_no_change(
@@ -2084,5 +2092,4 @@ def test_gate_agent_cannot_fake_pass_with_untracked_shim(tmp_path: Path) -> None
     assert result.returncode != 0
     repo = _findings_by_kind(manifest)["repo_change_summary"]
     assert repo["pushed"] is False
-
 

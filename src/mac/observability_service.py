@@ -35,7 +35,7 @@ from mac.models import (
 
 OBSERVABILITY_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/:]{0,127}$")
 
-# mem-04: the original audit on hosta 2026-05-28 found 1.83M of 2.09M
+# mem-04: the original audit on rocky 2026-05-28 found 1.83M of 2.09M
 # total observability_events rows came from these six emitters, all
 # of which fire on every poll regardless of state change. They're
 # debug-level by design but the table still grew to 3.1GB. By default
@@ -51,7 +51,7 @@ _VERBOSE_POLL_LOG_NAMES = frozenset(
         "workflow.default_review.heartbeat_tick_failed",
         # Re-emitted every review tick for a task stuck waiting on an operator to
         # set metadata.publication_target — a steady-state condition, not an
-        # event. It alone wrote 262K rows in ~4 days on hosta.
+        # event. It alone wrote 262K rows in ~4 days on rocky.
         "workflow.default_review.no_publication_target",
     }
 )
@@ -161,7 +161,7 @@ class ObservabilityService:
     ) -> Optional[ObservabilityEvent]:
         # mem-04: silence the high-volume idle-poll log names by
         # default. The original audit found that 1.83M of 2.09M total
-        # observability rows on hosta came from these six emitters,
+        # observability rows on rocky came from these six emitters,
         # all of which fire on every poll regardless of state change.
         # Operators who need them for debugging can re-enable with
         # MAC_OBSERVABILITY_VERBOSE_POLL=1 in the mac.env file.

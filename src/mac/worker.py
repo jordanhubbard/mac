@@ -4269,7 +4269,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     # Re-resolve token using --fleet if it wasn't already supplied; this
-    # lets `--fleet hosta` pick MAC_API_TOKEN__HOSTA without requiring
+    # lets `--fleet rocky` pick MAC_API_TOKEN__ROCKY without requiring
     # MAC_FLEET to be exported separately (mac-g55y).
     if args.token is None and args.fleet:
         from mac.fleet_env import resolve_first as _rt

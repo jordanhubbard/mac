@@ -92,7 +92,7 @@ def test_assign_role_merges_default_capabilities_into_agent(cp):
     machine = _register_machine(cp)
     soul = bind_soul(cp, persona_name="DevOps Soul", allowed_role_slugs=["devops"])
     agent = cp.register_agent(
-        machine.id, "hosta", capabilities=["python"], hermes_instance_id=soul
+        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
     )
     refreshed = cp.roles.assign_role(agent.id, "devops")
     assert refreshed.role_id == role.id
@@ -226,7 +226,7 @@ def test_persona_role_slugs_defaults_from_persona_name(cp):
     # No metadata.role_slugs — default to slugify(persona.name) =
     # "code-reviewer".
     soul = bind_soul(cp, persona_name="Code Reviewer")
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=soul)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=soul)
     refreshed = cp.roles.assign_role(agent.id, "code-reviewer")
     assert refreshed.role_id is not None
 
@@ -247,7 +247,7 @@ def test_dispatch_skips_agent_whose_soul_no_longer_accepts_role(cp):
     machine = _register_machine(cp)
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
     agent = cp.register_agent(
-        machine.id, "hosta", capabilities=["python"], hermes_instance_id=soul
+        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
     )
     cp.roles.assign_role(agent.id, "qa")
 
@@ -270,12 +270,12 @@ def test_register_agent_preserves_hermes_instance_id_across_reregistration(cp):
     caller explicitly passes a new value."""
     machine = _register_machine(cp)
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=soul)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=soul)
     assert agent.hermes_instance_id == soul
 
     # Re-register without hermes_instance_id — value preserved.
     again = cp.register_agent(
-        machine.id, "hosta", capabilities=["python"], agent_id=agent.id
+        machine.id, "rocky", capabilities=["python"], agent_id=agent.id
     )
     assert again.hermes_instance_id == soul
 
@@ -287,7 +287,7 @@ def test_register_agent_preserves_hermes_instance_id_across_reregistration(cp):
         allowed_role_slugs=["qa"],
     )
     rebound = cp.register_agent(
-        machine.id, "hosta", agent_id=agent.id, hermes_instance_id=new_soul
+        machine.id, "rocky", agent_id=agent.id, hermes_instance_id=new_soul
     )
     assert rebound.hermes_instance_id == new_soul
 
@@ -301,7 +301,7 @@ def test_hermes_instance_without_persona_refuses_role_assignment(cp):
     # Hermes instance with no persona attached.
     instance = cp.register_hermes_instance(tenant.id, "personaless")
     machine = _register_machine(cp)
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=instance.id)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=instance.id)
     with pytest.raises(ValidationError) as exc:
         cp.roles.assign_role(agent.id, "qa")
     assert "soul does not accept" in str(exc.value).lower()
@@ -319,7 +319,7 @@ def test_explicit_empty_role_slugs_refuses_all_roles(cp):
         persona_name="No-Roles Soul",
         allowed_role_slugs=[],  # explicit empty
     )
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=soul)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=soul)
     with pytest.raises(ValidationError):
         cp.roles.assign_role(agent.id, "qa")
     with pytest.raises(ValidationError):
@@ -347,7 +347,7 @@ def test_dispatch_refuses_role_id_smuggled_in_via_raw_db_write(cp):
     )
     machine = _register_machine(cp)
     qa_soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=qa_soul)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=qa_soul)
     # Hand-edit role_id to "design" — bypasses assign_role's compat check.
     cp.store.execute(
         "UPDATE agents SET role_id = ? WHERE id = ?", (role.id, agent.id)
@@ -374,7 +374,7 @@ def test_agent_identity_returns_layered_view(cp):
         "host-id", hardware={"cpu_arch": "arm64", "memory_gb": 32}
     )
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
-    agent = cp.register_agent(machine.id, "hosta", hermes_instance_id=soul)
+    agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "qa")
     cp.set_mood(agent.id, "cheerful", reason="working")
 

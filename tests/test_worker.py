@@ -66,13 +66,13 @@ def test_mac_worker_cli_defaults_to_deployed_hub_env(monkeypatch):
     monkeypatch.delenv("MAC_TOKEN", raising=False)
     monkeypatch.setenv("MAC_HUB_URL", "http://hub.example.internal:8789")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-token")
-    monkeypatch.setenv("MAC_HERMES_INSTANCE_ID", "hermes_hosta")
+    monkeypatch.setenv("MAC_HERMES_INSTANCE_ID", "hermes_rocky")
 
     args = build_parser().parse_args(["--register", "--heartbeat-only"])
 
     assert args.url == "http://hub.example.internal:8789"
     assert args.token == "worker-token"
-    assert args.hermes_instance_id == "hermes_hosta"
+    assert args.hermes_instance_id == "hermes_rocky"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -622,8 +622,8 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
     (hermes_home / "slack_accounts.json").write_text(
         json.dumps(
             [
-                {"name": "teamone", "bot_token": "xoxb-one"},
-                {"name": "teamtwo", "bot_token": "xoxb-two"},
+                {"name": "omgjkh", "bot_token": "xoxb-one"},
+                {"name": "offtera", "bot_token": "xoxb-two"},
             ]
         ),
         encoding="utf-8",
@@ -631,8 +631,8 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
     (hermes_home / "slack_home_channels.json").write_text(
         json.dumps(
             [
-                {"name": "teamone", "team_id": "T1", "channel_id": "C1"},
-                {"name": "teamtwo", "team_id": "T2", "channel_id": "C2"},
+                {"name": "omgjkh", "team_id": "T1", "channel_id": "C1"},
+                {"name": "offtera", "team_id": "T2", "channel_id": "C2"},
             ]
         ),
         encoding="utf-8",
@@ -666,7 +666,7 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
             "channel_type": "slack",
             "notification": {
                 "title": "Task completed",
-                "body": "Hosta completed lifecycle proof",
+                "body": "Rocky completed lifecycle proof",
                 "event_type": "task.completed",
                 "subject_id": "task_live",
             },
@@ -688,12 +688,12 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
         {
             "token": "xoxb-one",
             "channel": "C1",
-            "text": "[task.completed] Hosta completed lifecycle proof",
+            "text": "[task.completed] Rocky completed lifecycle proof",
         },
         {
             "token": "xoxb-two",
             "channel": "C2",
-            "text": "[task.completed] Hosta completed lifecycle proof",
+            "text": "[task.completed] Rocky completed lifecycle proof",
         },
     ]
     assert cp.list_messages(agent.id)[0].status == "delivered"
@@ -1183,7 +1183,7 @@ def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_p
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     _seed, repo = _git_fixture(tmp_path)
-    metadata = _repository_task_metadata(Path("/home/dev/.mac/src/mac"))
+    metadata = _repository_task_metadata(Path("/home/jkh/.mac/src/mac"))
     metadata["origin"]["repository_name"] = "mac"
     metadata["origin"]["source"] = "repo-beads-mac"
     task = cp.create_task(
@@ -1195,7 +1195,7 @@ def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_p
 
     def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
         runtime = task_payload["metadata"]["runtime"]
-        assert runtime["repository_declared_path"] == "/home/dev/.mac/src/mac"
+        assert runtime["repository_declared_path"] == "/home/jkh/.mac/src/mac"
         assert runtime["repository_source_path"] == str(repo.resolve())
         worktree = Path(runtime["repository_worktree"])
         assert worktree.is_dir()
@@ -1846,8 +1846,8 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
 
     registered = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
         resources={"capacity": 2},
     )
@@ -1864,7 +1864,7 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_agent(registered["id"]).name == "hosta"
+    assert cp.get_agent(registered["id"]).name == "rocky"
     assert cp.get_agent(registered["id"]).capabilities == ["python"]
     assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
@@ -1872,14 +1872,14 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
 def test_register_worker_binds_agent_to_hermes_instance():
     cp = ControlPlane.in_memory()
     tenant = cp.register_tenant("fleet")
-    hermes = cp.register_hermes_instance(tenant.id, "hosta")
+    hermes = cp.register_hermes_instance(tenant.id, "rocky")
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
 
     registered = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
         hermes_instance_id=hermes.id,
     )
@@ -1893,86 +1893,86 @@ def test_register_worker_bootstraps_hermes_identity_from_env(monkeypatch, tmp_pa
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
     monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_mac")
-    monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_hostc")
-    monkeypatch.setenv("MAC_AGENT_ID", "agent_hostc")
+    monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_natasha")
+    monkeypatch.setenv("MAC_AGENT_ID", "agent_natasha")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
 
     registered = register_worker(
         api,
-        hostname="hoste.local",
-        agent_name="hostc",
+        hostname="sparky.local",
+        agent_name="natasha",
         capabilities=["python"],
-        hermes_instance_id="hermes_hostc",
+        hermes_instance_id="hermes_natasha",
     )
 
-    assert registered["hermes_instance_id"] == "hermes_hostc"
-    assert cp.get_hermes_instance("hermes_hostc").persona_id == "persona_hostc"
-    assert cp.get_agent(registered["id"]).hermes_instance_id == "hermes_hostc"
+    assert registered["hermes_instance_id"] == "hermes_natasha"
+    assert cp.get_hermes_instance("hermes_natasha").persona_id == "persona_natasha"
+    assert cp.get_agent(registered["id"]).hermes_instance_id == "hermes_natasha"
 
 
 def test_register_worker_auto_registers_deployment_fleet(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
-    monkeypatch.setenv("MAC_FLEET_NAME", "hosta")
-    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_hosta")
-    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "hosta")
-    monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_hosta")
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
+    monkeypatch.setenv("MAC_HERMES_PERSONA_ID", "persona_rocky")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "missing-fleets.yaml"))
 
     registered = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
-        hermes_instance_id="hermes_hosta",
+        hermes_instance_id="hermes_rocky",
     )
 
     fleets = cp.list_fleets()
     assert len(fleets) == 1
     fleet = fleets[0]
-    assert fleet.id == "fleet_hosta"
-    assert fleet.name == "hosta"
-    assert fleet.tenant_id == "tenant_hosta"
+    assert fleet.id == "fleet_rocky"
+    assert fleet.name == "rocky"
+    assert fleet.tenant_id == "tenant_rocky"
     assert fleet.status == "active"
     assert fleet.agent_ids == []
     assert fleet.observed_agent_ids == [registered["id"]]
     assert fleet.unmanaged_agent_ids == [registered["id"]]
     assert fleet.metadata["source"] == "mac-agent"
-    assert fleet.metadata["hub_agent"] == "hosta"
+    assert fleet.metadata["hub_agent"] == "rocky"
 
 
 def test_register_worker_adds_additional_agents_to_deployment_fleet(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     api = MacApiClient("http://mac.test", transport=api_transport(client))
-    monkeypatch.setenv("MAC_FLEET_NAME", "hosta")
-    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_hosta")
-    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "hosta")
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "missing-fleets.yaml"))
 
-    hosta = register_worker(
+    rocky = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
-        hermes_instance_id="hermes_hosta",
+        hermes_instance_id="hermes_rocky",
     )
-    hostc = register_worker(
+    natasha = register_worker(
         api,
-        hostname="hostc.local",
-        agent_name="hostc",
+        hostname="natasha.local",
+        agent_name="natasha",
         capabilities=["review"],
-        hermes_instance_id="hermes_hostc",
+        hermes_instance_id="hermes_natasha",
     )
 
-    fleet = cp.get_fleet("hosta")
+    fleet = cp.get_fleet("rocky")
     assert fleet.agent_ids == []
-    assert fleet.observed_agent_ids == sorted([hosta["id"], hostc["id"]])
-    assert fleet.unmanaged_agent_ids == sorted([hosta["id"], hostc["id"]])
-    assert fleet.metadata["hub_agent"] == "hosta"
+    assert fleet.observed_agent_ids == sorted([rocky["id"], natasha["id"]])
+    assert fleet.unmanaged_agent_ids == sorted([rocky["id"], natasha["id"]])
+    assert fleet.metadata["hub_agent"] == "rocky"
 
 
 def test_register_worker_configures_membership_when_deployed_registry_lists_agent(
@@ -1986,30 +1986,30 @@ def test_register_worker_configures_membership_when_deployed_registry_lists_agen
         """
 version: 1
 fleets:
-  hosta:
-    fleet_name: hosta
-    hub_agent: hosta
+  rocky:
+    fleet_name: rocky
+    hub_agent: rocky
     agents:
-      - name: hosta
+      - name: rocky
         enabled: true
 """.lstrip(),
         encoding="utf-8",
     )
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(registry))
-    monkeypatch.setenv("MAC_FLEET_NAME", "hosta")
-    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_hosta")
-    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "hosta")
+    monkeypatch.setenv("MAC_FLEET_NAME", "rocky")
+    monkeypatch.setenv("MAC_FLEET_TENANT_ID", "tenant_rocky")
+    monkeypatch.setenv("MAC_SHARED_SERVICES_MANAGER_AGENT", "rocky")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
 
     registered = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
-        hermes_instance_id="hermes_hosta",
+        hermes_instance_id="hermes_rocky",
     )
 
-    fleet = cp.get_fleet("hosta")
+    fleet = cp.get_fleet("rocky")
     assert fleet.agent_ids == [registered["id"]]
     assert fleet.observed_agent_ids == [registered["id"]]
     assert fleet.unmanaged_agent_ids == []
@@ -2025,8 +2025,8 @@ def test_worker_detects_stale_local_attestation_key():
 
     registered = register_worker(
         api,
-        hostname="hostc.local",
-        agent_name="hostc",
+        hostname="natasha.local",
+        agent_name="natasha",
         capabilities=["review"],
     )
     local_key = registered["attestation_key"]
@@ -2043,8 +2043,8 @@ def test_mac_worker_dry_run_claim_uses_canary_policy_without_leasing(tmp_path: P
     api = MacApiClient("http://mac.test", transport=api_transport(client))
     registered = register_worker(
         api,
-        hostname="hosta.local",
-        agent_name="hosta",
+        hostname="rocky.local",
+        agent_name="rocky",
         capabilities=["python"],
     )
     normal = cp.create_task(
@@ -2181,8 +2181,8 @@ def test_register_worker_advertises_multi_modality_routes(monkeypatch):
     monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark, musicgen-small")
     monkeypatch.setenv("MAC_AGENT_GEN_VIDEO_MODELS", "animatediff")
-    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "hostc")
-    registered = register_worker(api, hostname="hostc", agent_name="hostc", capabilities=["python"])
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
+    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["python"])
     routes = cp.get_agent(registered["id"]).resources["media_routes"]
     by_op = {r["op"]: r for r in routes}
     assert {"image.generate", "audio.tts", "audio.music", "video.generate"} <= set(by_op)
@@ -2205,9 +2205,9 @@ def test_worker_advertises_only_held_service_ops(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
     monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
-    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "hostc")
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
     registered = register_worker(
-        api, hostname="hostc", agent_name="hostc",
+        api, hostname="natasha", agent_name="natasha",
         capabilities=["gpu", "cuda"], resources={"capacity": 1},
     )
     worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
@@ -2232,8 +2232,8 @@ def test_worker_advertises_all_willing_when_no_service_roles(tmp_path: Path, mon
     monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
     monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
-    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "hostc")
-    registered = register_worker(api, hostname="hostc", agent_name="hostc", capabilities=["gpu", "cuda"])
+    monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
+    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["gpu", "cuda"])
     worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
                        attestation_key=registered.get("attestation_key"))
     worker._sync_service_claims()

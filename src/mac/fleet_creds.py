@@ -214,7 +214,7 @@ def restart_command(hub: HubSsh) -> str:
     """Best-effort command to reload the hub so it re-reads its token set.
 
     The hub loads tokens once at startup, so any token change needs a restart.
-    The service name is the fleet's ``fleet_name`` (e.g. ``mac`` for the hosta
+    The service name is the fleet's ``fleet_name`` (e.g. ``mac`` for the rocky
     fleet) per the deploy script.
     """
     name = hub.fleet_name

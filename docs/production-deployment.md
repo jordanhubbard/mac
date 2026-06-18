@@ -160,17 +160,17 @@ Example `fleet-setup.yaml`:
 ```yaml
 schema: mac.fleet_setup.v1
 fleet:
-  name: dev
-  hub: dev-hub
-  hub_url: http://dev-hub:8789
+  name: horde
+  hub: horde-hub
+  hub_url: http://horde-hub:8789
 agents:
-  - name: dev-hub
+  - name: horde-hub
     target: ubuntu@10.0.0.10:2201
     os: linux
     model: nvidia/llama-3.3-nemotron-super-49b-v1
     worker:
       mode: loop
-  - name: dev-worker
+  - name: horde-worker
     target: ubuntu@10.0.0.11
     os: linux
 router:
@@ -234,8 +234,8 @@ port:
 # ~/.ssh/config
 Host my-hub
     HostName my-hub.cluster.local
-    User dev
-    ProxyJump dev@bastion.example.com:2222
+    User horde
+    ProxyJump horde@bastion.example.com:2222
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
     ForwardAgent yes

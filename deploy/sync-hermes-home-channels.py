@@ -39,7 +39,7 @@ def _home_channel_name() -> str:
 
 def _normalize_workspace(name: str) -> str:
     name = name.strip().lower().replace("_", "-")
-    return "teamtwo" if name == "ofterra" else name
+    return "offtera" if name == "ofterra" else name
 
 
 def _load_json(path: Path, default: Any) -> Any:

@@ -174,7 +174,7 @@ def verified_deployment_metadata(cp=None, agent_id=None):
             "dirty": False,
             "files_changed": ["deploy/example.yaml"],
         },
-        "targets": ["hosta"],
+        "targets": ["rocky"],
         "checks": [{"name": "systemd status", "status": "pass"}],
     }
     if cp is not None and agent_id is not None:
@@ -313,8 +313,8 @@ def create_acc_migration_fixture(path):
     conn.execute(
         "INSERT INTO agents (name, host, status, last_heartbeat, data) VALUES (?, ?, ?, ?, ?)",
         (
-            "hosta",
-            "node1",
+            "rocky",
+            "do-host1",
             "online",
             "2026-05-18T07:13:07Z",
             json.dumps({"capabilities": ["memory"], "lastSeen": "2026-05-18T07:13:07Z"}),
@@ -343,7 +343,7 @@ def create_acc_migration_fixture(path):
             None,
             "2026-05-18T07:00:00Z",
             "2026-05-18T07:00:00Z",
-            json.dumps({"assigned_agent": "hosta", "beads_id": "ACC-1"}),
+            json.dumps({"assigned_agent": "rocky", "beads_id": "ACC-1"}),
             "work",
             None,
             None,
@@ -370,11 +370,11 @@ def create_acc_migration_fixture(path):
             "from ACC",
             "completed",
             2,
-            "hostd",
+            "bullwinkle",
             "2026-05-18T07:05:00Z",
             None,
             "2026-05-18T07:09:00Z",
-            "hostd",
+            "bullwinkle",
             "2026-05-18T07:01:00Z",
             "2026-05-18T07:09:00Z",
             json.dumps({"workflow_role": "work"}),
@@ -399,7 +399,7 @@ def create_acc_migration_fixture(path):
         (
             "attempt-1",
             "task-2",
-            "hostd",
+            "bullwinkle",
             "ready_for_review",
             "task/task-2",
             "abc1234",
@@ -415,7 +415,7 @@ def create_acc_migration_fixture(path):
     )
     conn.execute(
         "INSERT INTO projects (id, name, full_name, data) VALUES (?, ?, ?, ?)",
-        ("proj-1", "ACC", "devuser/ACC", json.dumps({"status": "active", "assignee": "hosta"})),
+        ("proj-1", "ACC", "jordanh/ACC", json.dumps({"status": "active", "assignee": "rocky"})),
     )
     conn.execute(
         """
@@ -429,8 +429,8 @@ def create_acc_migration_fixture(path):
             "audit-1",
             "2026-05-18T07:06:00Z",
             "task_execution_started",
-            "hostd",
-            "hostf.local",
+            "bullwinkle",
+            "puck.local",
             "task-2",
             "proj-1",
             "{}",
@@ -450,8 +450,8 @@ def create_acc_migration_fixture(path):
             "audit-2",
             "2026-05-18T07:08:00Z",
             "branch_pushed",
-            "hostd",
-            "hostf.local",
+            "bullwinkle",
+            "puck.local",
             "task-2",
             "proj-1",
             json.dumps({"branch": "task/task-2"}),
@@ -505,15 +505,15 @@ def test_hermes_identity_context_and_interaction_task_boundaries(cp):
     user = cp.register_user(tenant.id, "jordan", display_name="Jordan")
     persona = cp.register_persona(
         tenant.id,
-        "Hosta",
-        soul_ref="hermes://acme/hosta/SOUL.md",
-        memory_scope="hermes://acme/hosta/memory",
+        "Rocky",
+        soul_ref="hermes://acme/rocky/SOUL.md",
+        memory_scope="hermes://acme/rocky/memory",
     )
     hermes = cp.register_hermes_instance(
         tenant.id,
-        "hosta",
+        "rocky",
         persona_id=persona.id,
-        home_ref="hermes://acme/hosta",
+        home_ref="hermes://acme/rocky",
     )
     binding = cp.register_platform_binding(
         tenant.id,
@@ -527,7 +527,7 @@ def test_hermes_identity_context_and_interaction_task_boundaries(cp):
     context = cp.hermes_context(hermes.id)
     assert context["memory_contract"]["personality_authority"] == "hermes"
     assert context["memory_contract"]["operational_provenance_authority"] == "mac"
-    assert context["persona"]["soul_ref"] == "hermes://acme/hosta/SOUL.md"
+    assert context["persona"]["soul_ref"] == "hermes://acme/rocky/SOUL.md"
     assert context["platform_bindings"][0]["id"] == binding.id
 
     task = cp.create_interaction_task(
@@ -548,8 +548,8 @@ def test_hermes_identity_context_and_interaction_task_boundaries(cp):
 def test_tenant_scoped_task_visibility_and_machine_pool_policy(cp):
     tenant_a = cp.register_tenant("tenant-a")
     tenant_b = cp.register_tenant("tenant-b")
-    hermes_a = cp.register_hermes_instance(tenant_a.id, "hosta")
-    hermes_b = cp.register_hermes_instance(tenant_b.id, "hostc")
+    hermes_a = cp.register_hermes_instance(tenant_a.id, "rocky")
+    hermes_b = cp.register_hermes_instance(tenant_b.id, "natasha")
     task_a = cp.create_interaction_task(hermes_a.id, "A work", required_capabilities=["python"])
     task_b = cp.create_interaction_task(
         hermes_b.id,
@@ -739,7 +739,7 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
 def test_beads_source_state_log_suppressed_when_bridge_disabled(cp, monkeypatch, tmp_path):
     """mem-03: bridge.beads.repository_source must NOT fire when
     MAC_BEADS_BRIDGE_ENABLED is unset (the default per CLAUDE.md).
-    The original audit found 31K rows of this log on hosta despite
+    The original audit found 31K rows of this log on rocky despite
     the bridge being supposedly off."""
     monkeypatch.delenv("MAC_BEADS_BRIDGE_ENABLED", raising=False)
     # Build a minimal BeadsRepository directly instead of registering a
@@ -809,7 +809,7 @@ def test_beads_source_state_log_writes_when_bridge_enabled(cp, monkeypatch, tmp_
 
 def test_record_log_suppresses_verbose_poll_names_by_default(cp):
     """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
-    by default. The 1.83M-of-2.09M-row bloat on hosta was these six
+    by default. The 1.83M-of-2.09M-row bloat on rocky was these six
     names firing per-poll regardless of state change."""
     # Default: suppressed → record_log returns None and no row lands.
     result = cp.record_log(
@@ -836,7 +836,7 @@ def test_record_log_writes_verbose_poll_names_when_env_set(cp, monkeypatch):
 def test_add_evidence_rejects_operator_result_for_repo_coupled_task(cp):
     """mem-11: repo-coupled tasks (execution_contract.type=repository
     or repository_required=true) must not accept operator_result
-    evidence — that was the validator gap that let hostd's
+    evidence — that was the validator gap that let bullwinkle's
     fake-merge evidence trigger the runaway review loop."""
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task(
@@ -1649,7 +1649,7 @@ def test_publication_revalidates_declared_required_changed_files(cp):
     [
         ("test", {"checks": [{"name": "pytest", "returncode": 0}]}),
         ("artifact", {"checks": [{"name": "build", "returncode": 0}], "artifacts": ["artifact://x"]}),
-        ("deployment", {"checks": [{"name": "health", "returncode": 0}], "targets": ["hosta"]}),
+        ("deployment", {"checks": [{"name": "health", "returncode": 0}], "targets": ["rocky"]}),
         ("documentation", {"checks": [{"name": "docs", "returncode": 0}]}),
         ("no_change", {"checks": [{"name": "inspection", "returncode": 0}], "reason": "already fixed"}),
     ],
@@ -1986,7 +1986,7 @@ def test_default_review_workflow_refuses_without_publication_target(cp):
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
     # The waiting condition is asserted via result["status"] above. The
     # 'no_publication_target' log is silenced (mem-04): the review tick re-emits
-    # it every cycle for a stuck task — 262K durable rows in ~4 days on hosta —
+    # it every cycle for a stuck task — 262K durable rows in ~4 days on rocky —
     # so it must NOT land as an observability event.
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.no_publication_target" not in names
@@ -2083,14 +2083,14 @@ def test_default_reviewer_requires_review_capability(cp):
 
 def test_default_reviewer_honors_target_agent_name(cp):
     worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "hostd", ["review"])
-    hostc = register_agent(cp, "hostc", ["review"])
+    register_agent(cp, "bullwinkle", ["review"])
+    natasha = register_agent(cp, "natasha", ["review"])
     task = cp.create_task(
         "needs-specific-reviewer",
         required_capabilities=["python"],
         metadata={
             "publication_target": "test://r",
-            "default_review": {"target_agent_name": "hostc"},
+            "default_review": {"target_agent_name": "natasha"},
         },
     )
     cp.claim_task(task.id, worker.id)
@@ -2108,13 +2108,13 @@ def test_default_reviewer_honors_target_agent_name(cp):
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == hostc.id
+    assert result["reviewer_agent_id"] == natasha.id
 
 
 def test_default_reviewer_honors_review_required_capabilities(cp):
     worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "hostd", ["review"])
-    hostc = register_agent(cp, "hostc", ["qemu", "review"])
+    register_agent(cp, "bullwinkle", ["review"])
+    natasha = register_agent(cp, "natasha", ["qemu", "review"])
     task = cp.create_task(
         "needs-qemu-reviewer",
         required_capabilities=["python"],
@@ -2138,13 +2138,13 @@ def test_default_reviewer_honors_review_required_capabilities(cp):
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == hostc.id
+    assert result["reviewer_agent_id"] == natasha.id
 
 
 def test_default_review_reassigns_stale_pending_reviewer(cp):
     worker = register_agent(cp, "worker", ["python"])
     stale_reviewer = register_agent(cp, "operator-reviewer", ["review"])
-    live_reviewer = register_agent(cp, "hosta", ["review"])
+    live_reviewer = register_agent(cp, "rocky", ["review"])
     task = cp.create_task(
         "needs-live-reviewer",
         required_capabilities=["python"],
@@ -2552,8 +2552,8 @@ def test_tick_marks_stale_agents_offline_and_requeues_work(cp):
 def test_dispatch_tick_round_robins_between_tenants(cp):
     tenant_a = cp.register_tenant("tenant-a")
     tenant_b = cp.register_tenant("tenant-b")
-    hermes_a = cp.register_hermes_instance(tenant_a.id, "hosta")
-    hermes_b = cp.register_hermes_instance(tenant_b.id, "hostd")
+    hermes_a = cp.register_hermes_instance(tenant_a.id, "rocky")
+    hermes_b = cp.register_hermes_instance(tenant_b.id, "bullwinkle")
     task_a1 = cp.create_interaction_task(hermes_a.id, "A1", priority=100, required_capabilities=["python"])
     cp.create_interaction_task(hermes_a.id, "A2", priority=90, required_capabilities=["python"])
     task_b = cp.create_interaction_task(hermes_b.id, "B1", priority=10, required_capabilities=["python"])
@@ -3611,7 +3611,7 @@ def test_beads_bridge_auto_pulls_git_repository_before_poll(cp, tmp_path, monkey
 def test_beads_bridge_polls_dedicated_checkout_when_registered_source_is_dirty(cp, tmp_path, monkeypatch):
     _origin, _seed, clone = _seed_bare_beads_repo(tmp_path, "mac-dirty")
     repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    hosta = register_agent(cp, "hosta", ["python"])
+    rocky = register_agent(cp, "rocky", ["python"])
     (clone / ".beads" / "issues.jsonl").write_text(
         '{"_type":"issue","id":"local-dirty","status":"open"}\n',
         encoding="utf-8",
@@ -3619,7 +3619,7 @@ def test_beads_bridge_polls_dedicated_checkout_when_registered_source_is_dirty(c
     monkeypatch.setenv("MAC_BEADS_AUTO_PULL", "1")
     monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
 
-    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=hosta.id)
+    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=rocky.id)
 
     repo_report = report["repositories"][0]
     source_state = repo_report["source_state"]
@@ -3636,7 +3636,7 @@ def test_beads_bridge_polls_dedicated_checkout_when_registered_source_is_dirty(c
 def test_beads_bridge_restores_registered_export_noise_before_poll(cp, tmp_path, monkeypatch):
     _origin, _seed, clone = _seed_bare_beads_repo(tmp_path, "mac-clean")
     repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    hosta = register_agent(cp, "hosta", ["python"])
+    rocky = register_agent(cp, "rocky", ["python"])
     (clone / ".beads" / "issues.jsonl").write_text(
         '{"_type":"issue","id":"local-export-noise","status":"open"}\n',
         encoding="utf-8",
@@ -3649,7 +3649,7 @@ def test_beads_bridge_restores_registered_export_noise_before_poll(cp, tmp_path,
     monkeypatch.setenv("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
     monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
 
-    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=hosta.id)
+    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=rocky.id)
 
     source_state = report["repositories"][0]["source_state"]
     status = subprocess.run(
@@ -3803,7 +3803,7 @@ def test_beads_bridge_failed_task_reopen_limit_is_bounded(cp, tmp_path, monkeypa
 def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
-    hosta = register_agent(cp, "hosta", ["python"])
+    rocky = register_agent(cp, "rocky", ["python"])
     task = cp.create_task(
         "needs review",
         required_capabilities=["python"],
@@ -3821,13 +3821,13 @@ def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
     )
     cp.submit_for_review(task.id, worker.id)
     monkeypatch.setenv("MAC_REVIEW_TICK_ON_HEARTBEAT", "1")
-    monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", "hosta")
+    monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", "rocky")
     # mem-04: workflow.default_review.heartbeat_tick is one of the
     # high-volume poll-log names suppressed by default; enable verbose
     # poll logging for this assertion.
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
 
-    cp.heartbeat_agent(hosta.id, status=AgentStatus.IDLE.value)
+    cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
 
     refreshed = cp.get_task(task.id)
     assert refreshed.state == TaskState.REVIEWING.value
@@ -3901,15 +3901,15 @@ def test_task_notifier_delivers_task_progress_to_configured_slack_home_channel(c
     tenant = cp.register_tenant("ops")
     persona = cp.register_persona(
         tenant.id,
-        "Hosta",
-        soul_ref="hermes://ops/hosta/SOUL.md",
-        memory_scope="hermes://ops/hosta/memory",
+        "Rocky",
+        soul_ref="hermes://ops/rocky/SOUL.md",
+        memory_scope="hermes://ops/rocky/memory",
     )
     hermes = cp.register_hermes_instance(
         tenant.id,
-        "hosta",
+        "rocky",
         persona_id=persona.id,
-        home_ref="hermes://ops/hosta",
+        home_ref="hermes://ops/rocky",
     )
     binding = cp.register_platform_binding(
         tenant.id,
@@ -4404,7 +4404,7 @@ def test_beads_export_noise_can_be_restored_after_sync(cp, tmp_path, monkeypatch
     subprocess.run(["git", "-C", str(repo), "add", ".beads/issues.jsonl"], check=True)
 
     monkeypatch.setenv("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
-    cp._restore_beads_tracked_exports(repo, "agent_hosta", "task_1", "claim")
+    cp._restore_beads_tracked_exports(repo, "agent_rocky", "task_1", "claim")
 
     status = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain"],
@@ -4553,7 +4553,7 @@ def test_beads_bridge_tolerates_preclaimed_bead_during_reconcile(cp, tmp_path, m
                     ]
                 )
             )
-        return Completed(returncode=1, stderr="Error claiming mac-preclaimed: issue already claimed by Dev User")
+        return Completed(returncode=1, stderr="Error claiming mac-preclaimed: issue already claimed by Jordan Hubbard")
 
     monkeypatch.setattr("mac.services.subprocess.run", fake_run)
 
@@ -4876,7 +4876,7 @@ def test_acc_migration_blocks_active_tasks_unless_allowed(cp, tmp_path):
     conn = sqlite3.connect(acc_db)
     conn.execute(
         "UPDATE fleet_tasks SET status = ?, claimed_by = ? WHERE id = ?",
-        ("claimed", "hosta", "task-1"),
+        ("claimed", "rocky", "task-1"),
     )
     conn.commit()
     conn.close()
@@ -5128,7 +5128,7 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
 def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
     """mac-k8s: K8s remote-clone tasks carry origin.repository_url but no local
     repository_path. Publication must merge via a transient authed clone of the
-    remote instead of refusing — this is the autonomous-loop path the devuser-gke
+    remote instead of refusing — this is the autonomous-loop path the jordanh-gke
     fleet depends on (previously it raised 'requires repository_path')."""
     from tests.conftest import submit_review_verdict
 
@@ -5741,15 +5741,15 @@ def test_notifier_delivery_claim_prevents_concurrent_duplicate_messages(cp):
     tenant = cp.register_tenant("ops")
     persona = cp.register_persona(
         tenant.id,
-        "Hosta",
-        soul_ref="hermes://ops/hosta/SOUL.md",
-        memory_scope="hermes://ops/hosta/memory",
+        "Rocky",
+        soul_ref="hermes://ops/rocky/SOUL.md",
+        memory_scope="hermes://ops/rocky/memory",
     )
     hermes = cp.register_hermes_instance(
         tenant.id,
-        "hosta",
+        "rocky",
         persona_id=persona.id,
-        home_ref="hermes://ops/hosta",
+        home_ref="hermes://ops/rocky",
     )
     binding = cp.register_platform_binding(
         tenant.id,
@@ -5894,6 +5894,151 @@ def test_submit_review_refuses_executor_evidence_as_verdict(cp):
             reviewer.id,
             evidence_id=evidence.id,
         )
+
+
+def _signed_agent_executor_manifest(cp, agent_id, llm_model):
+    from mac.services import sign_verification_manifest
+
+    manifest = verified_repo_metadata()["verification"]
+    manifest["executor"] = "mac-task-executor-opencode-build"
+    manifest["llm_model"] = llm_model
+    manifest["llm"] = {
+        "tool": "opencode",
+        "agent": "build",
+        "model": llm_model,
+    }
+    manifest["signed_by"] = agent_id
+    manifest["signature"] = sign_verification_manifest(
+        cp._agent_attestation_key(agent_id),
+        manifest,
+    )
+    return manifest
+
+
+def test_submit_review_requires_different_llm_for_agent_executor(cp):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata={
+            "returncode": 0,
+            "verification": _signed_agent_executor_manifest(
+                cp,
+                worker.id,
+                "inference-hub/anthropic/claude-sonnet",
+            ),
+        },
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        reviewer_llm_model="inference-hub/anthropic/claude-sonnet",
+    )
+
+    with pytest.raises(ValidationError, match="reviewer LLM must differ"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=verdict_id,
+        )
+
+
+def test_submit_review_accepts_different_llm_for_agent_executor(cp):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata={
+            "returncode": 0,
+            "verification": _signed_agent_executor_manifest(
+                cp,
+                worker.id,
+                "inference-hub/anthropic/claude-sonnet",
+            ),
+        },
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        reviewer_llm_model="inference-hub/openai/gpt-5",
+    )
+
+    result = cp.submit_review(
+        review.id,
+        ReviewStatus.APPROVED.value,
+        reviewer.id,
+        evidence_id=verdict_id,
+    )
+    assert result.status == ReviewStatus.APPROVED.value
+
+
+def test_cross_llm_review_helper_contracts():
+    from mac.review_service import (
+        cross_llm_review_problems,
+        manifest_llm_model,
+        manifest_requires_cross_llm_review,
+    )
+
+    assert manifest_llm_model({"llm": {"model": " Model A "}}) == "Model A"
+    assert manifest_llm_model({"llm_model": "model-b"}) == "model-b"
+    assert manifest_llm_model({"opencode_model": "model-c"}) == "model-c"
+    assert manifest_llm_model({"gateway_model": "model-d"}) == "model-d"
+    assert manifest_llm_model(None) == ""
+
+    assert manifest_requires_cross_llm_review(
+        {"executor": "mac-task-executor-opencode-build"}
+    )
+    assert manifest_requires_cross_llm_review({"agent_generated": True})
+    assert manifest_requires_cross_llm_review({"requires_cross_llm_review": True})
+    assert not manifest_requires_cross_llm_review(
+        {"evidence_type": "review_verdict", "llm_model": "reviewer"}
+    )
+    assert not manifest_requires_cross_llm_review(None)
+
+    assert cross_llm_review_problems(None, {"llm_model": "reviewer"}) == []
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build"},
+        {"llm_model": "reviewer"},
+    ) == ["executor evidence from an agent runner requires llm.model or llm_model"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "builder"},
+        {},
+    ) == ["review_verdict evidence requires reviewer llm.model or llm_model"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
+        {"llm_model": " model x "},
+    ) == ["reviewer LLM must differ from executor LLM (both Model X)"]
+    assert cross_llm_review_problems(
+        {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
+        {"llm_model": "Model Y"},
+    ) == []
 
 
 def test_register_artifact_recomputes_local_digest_and_rejects_mismatch(cp, tmp_path):
@@ -7371,14 +7516,14 @@ def test_observability_records_metrics_logs_and_control_plane_events(cp):
         12.5,
         unit="ms",
         layer="worker",
-        source="hosta",
+        source="rocky",
         detail={"iteration": 1},
     )
     log = cp.record_log(
         "worker.claim.empty",
         level="warning",
         layer="worker",
-        source="hosta",
+        source="rocky",
         detail={"queue": "default"},
     )
     task = cp.create_task("observed", actor="tester")
@@ -7417,7 +7562,7 @@ def test_observability_prune_drops_old_or_excess_rows(cp):
             "worker.heartbeat",
             float(index),
             layer="worker",
-            source="hosta",
+            source="rocky",
         )
     all_rows = cp.list_observability(layer="worker", limit=20)
     assert len(all_rows) == 5
@@ -8332,7 +8477,7 @@ def test_update_task_filters_disallowed_capabilities(cp):
 def test_heartbeat_only_logs_meaningful_changes():
     """Hub-db bloat fix: a heartbeat must not write a durable lifecycle/obs row
     on resource jitter — only on a meaningful change (status/health/digest).
-    Resource churn on every beat was ~527K+228K rows in ~4 days on hosta."""
+    Resource churn on every beat was ~527K+228K rows in ~4 days on rocky."""
     cp = ControlPlane.in_memory()
     agent = register_agent(cp, "worker", ["python"])
 

@@ -14,13 +14,13 @@
 # removed right after use.
 #
 # Usage:    bash scripts/escrow-upstream-key.sh [DST_AGENT]
-# Env:      SRC_HOST (default hosta), SECRET_NAME (default nvidia-upstream)
+# Env:      SRC_HOST (default rocky), SECRET_NAME (default nvidia-upstream)
 # Verify:   ssh <DST_AGENT> 'set -a; . ~/.mac/mac.env; set +a;
 #             curl -s localhost:$MAC_PORT/secrets -H "Authorization: Bearer $MAC_API_TOKEN"'
 set -euo pipefail
 
-DST_AGENT="${1:-${DST_AGENT:-hostc}}"
-SRC_HOST="${SRC_HOST:-hosta}"
+DST_AGENT="${1:-${DST_AGENT:-natasha}}"
+SRC_HOST="${SRC_HOST:-rocky}"
 SECRET_NAME="${SECRET_NAME:-nvidia-upstream}"
 TMP_REMOTE='$HOME/.mac/.upstream-key.tmp'
 

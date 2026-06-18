@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 
 USER_AGENT = os.environ.get(
     "MAC_FIRECRAWL_GATEWAY_USER_AGENT",
-    "mac-firecrawl-gateway/0.1 (+https://github.com/devuser/mac)",
+    "mac-firecrawl-gateway/0.1 (+https://github.com/jordanh/mac)",
 )
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("MAC_FIRECRAWL_GATEWAY_TIMEOUT", "15"))
 MAX_RESPONSE_BYTES = int(os.environ.get("MAC_FIRECRAWL_GATEWAY_MAX_BYTES", str(2 * 1024 * 1024)))

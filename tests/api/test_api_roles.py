@@ -85,7 +85,7 @@ def test_role_assignment_routes_through_agents_endpoint():
         "/agents",
         json={
             "machine_id": machine["id"],
-            "name": "hosta",
+            "name": "rocky",
             "hermes_instance_id": instance["id"],
         },
     ).json()
@@ -136,7 +136,7 @@ def test_agent_identity_endpoint_returns_layered_view():
         "/agents",
         json={
             "machine_id": machine["id"],
-            "name": "hosta",
+            "name": "rocky",
             "hermes_instance_id": instance["id"],
         },
     ).json()

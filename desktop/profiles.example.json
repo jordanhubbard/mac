@@ -5,10 +5,10 @@
     "tokenEnv": "MAC_DESKTOP_API_TOKEN"
   },
   "sshHub": {
-    "displayName": "Hosta / dev",
+    "displayName": "Rocky / horde",
     "tokenEnv": "MAC_DESKTOP_API_TOKEN",
     "ssh": {
-      "target": "dev@example.test",
+      "target": "horde@example.test",
       "localPort": 18789,
       "remoteHost": "127.0.0.1",
       "remotePort": 8789,

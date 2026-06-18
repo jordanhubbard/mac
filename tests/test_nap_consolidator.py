@@ -63,7 +63,7 @@ def _add_memory_as_agent(cp, agent_id, content, **kwargs):
 
 def test_consolidate_groups_by_task_id(cp):
     """One summary per distinct task_id the agent touched."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     cp.create_task("T1")  # we only need ids; not the full lifecycle.
     cp.create_task("T2")
     tasks = sorted(t.id for t in cp.list_tasks() if t.title in ("T1", "T2"))
@@ -86,7 +86,7 @@ def test_consolidate_groups_by_task_id(cp):
 def test_consolidate_skips_prior_nap_summaries(cp):
     """The consolidator must NOT summarize summaries — a second pass
     over already-summarized records writes nothing new."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     _add_memory_as_agent(cp, agent_id, "fact A")
     _add_memory_as_agent(cp, agent_id, "fact B")
     consolidator = NapConsolidatorService(store=cp.store, memory=cp.memory)
@@ -102,7 +102,7 @@ def test_consolidate_skips_prior_nap_summaries(cp):
 def test_consolidate_uses_pluggable_summarizer(cp):
     """Operators can swap a real LLM in. The contract is just a
     Callable[[List[MemoryRecord], dict], str]."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     _add_memory_as_agent(cp, agent_id, "first")
     _add_memory_as_agent(cp, agent_id, "second")
 
@@ -116,12 +116,12 @@ def test_consolidate_uses_pluggable_summarizer(cp):
     )
     report = consolidator.consolidate_agent(agent_id, embed_into_medium=False)
     summary = cp.memory.get_memory(report["summary_memory_ids"][0])
-    assert summary.content == "AGENT agent_hosta saw 2 things"
+    assert summary.content == "AGENT agent_rocky saw 2 things"
 
 
 def test_consolidate_writes_structured_dream_artifact_with_evidence(cp):
     """Nap consolidation now emits typed mac.dream.v1 artifacts, not only prose."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     task = cp.create_task("Ship structured dreams", project="mac")
     first = _add_memory_as_agent(
         cp,
@@ -163,7 +163,7 @@ def test_consolidate_writes_structured_dream_artifact_with_evidence(cp):
 
 def test_dream_artifacts_embed_with_payload_filters_and_recall_rules(cp, writer, fake_qdrant):
     """Dream recall is explicit: subject_type=dream plus project/agent/scope/kind/confidence."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     task = cp.create_task("Recall dream rules", project="mac")
     _add_memory_as_agent(
         cp,
@@ -177,7 +177,7 @@ def test_dream_artifacts_embed_with_payload_filters_and_recall_rules(cp, writer,
         "include confidence and scope in the vector payload",
         task_id=task.id,
     )
-    _add_memory_as_agent(cp, "agent_hostc", "unrelated project memory")
+    _add_memory_as_agent(cp, "agent_natasha", "unrelated project memory")
 
     consolidator = NapConsolidatorService(
         store=cp.store,
@@ -226,7 +226,7 @@ def test_dream_artifacts_embed_with_payload_filters_and_recall_rules(cp, writer,
 def test_consolidate_embeds_when_writer_provided(cp, writer, fake_qdrant):
     """When a VectorWriterService is provided, every summary is embedded
     into the medium tier — visible in fake Qdrant and vector_refs."""
-    agent_id = "agent_hosta"
+    agent_id = "agent_rocky"
     _add_memory_as_agent(cp, agent_id, "alpha")
     _add_memory_as_agent(cp, agent_id, "beta")
     consolidator = NapConsolidatorService(
@@ -381,32 +381,32 @@ def test_consolidate_and_recall_end_to_end(cp, writer, fake_qdrant):
     hashes to identical vectors. Swap embed_fn for a real model and
     the same test runs end-to-end with real semantic recall.
     """
-    hosta = "agent_hosta"
-    hostc = "agent_hostc"
-    _add_memory_as_agent(cp, hosta, "Hosta reviewed the slack notifier last Tuesday")
-    _add_memory_as_agent(cp, hosta, "Hosta also looked at the prune timer")
-    _add_memory_as_agent(cp, hostc, "Hostc worked on the Qdrant collection schema")
+    rocky = "agent_rocky"
+    natasha = "agent_natasha"
+    _add_memory_as_agent(cp, rocky, "Rocky reviewed the slack notifier last Tuesday")
+    _add_memory_as_agent(cp, rocky, "Rocky also looked at the prune timer")
+    _add_memory_as_agent(cp, natasha, "Natasha worked on the Qdrant collection schema")
 
     consolidator = NapConsolidatorService(
         store=cp.store, memory=cp.memory, vector_writer=writer,
     )
-    hosta_report = consolidator.consolidate_agent(hosta)
-    hostc_report = consolidator.consolidate_agent(hostc)
-    assert hosta_report["summaries_embedded"] == 1
-    assert hostc_report["summaries_embedded"] == 1
+    rocky_report = consolidator.consolidate_agent(rocky)
+    natasha_report = consolidator.consolidate_agent(natasha)
+    assert rocky_report["summaries_embedded"] == 1
+    assert natasha_report["summaries_embedded"] == 1
 
-    hosta_summary = cp.memory.get_memory(hosta_report["summary_memory_ids"][0])
-    hostc_summary = cp.memory.get_memory(hostc_report["summary_memory_ids"][0])
+    rocky_summary = cp.memory.get_memory(rocky_report["summary_memory_ids"][0])
+    natasha_summary = cp.memory.get_memory(natasha_report["summary_memory_ids"][0])
 
-    # Recall against hosta's summary content → hosta's summary is the
+    # Recall against rocky's summary content → rocky's summary is the
     # top hit (score = 1.0 because same text hashes to same vector).
-    hits = writer.recall(hosta_summary.content, limit=5)
+    hits = writer.recall(rocky_summary.content, limit=5)
     assert hits, "recall should not be empty"
     top = hits[0]
-    assert top["payload"]["memory_id"] == hosta_summary.id
+    assert top["payload"]["memory_id"] == rocky_summary.id
     assert top["score"] > 0.99
-    # Hostc's summary must rank lower — they're about different
+    # Natasha's summary must rank lower — they're about different
     # topics, so their hashed vectors are uncorrelated.
-    hostc_hits = [h for h in hits if h["payload"]["memory_id"] == hostc_summary.id]
-    if hostc_hits:
-        assert hostc_hits[0]["score"] < top["score"]
+    natasha_hits = [h for h in hits if h["payload"]["memory_id"] == natasha_summary.id]
+    if natasha_hits:
+        assert natasha_hits[0]["score"] < top["score"]

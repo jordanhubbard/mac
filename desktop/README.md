@@ -55,7 +55,7 @@ SSH-managed hub tunnel:
 
 ```bash
 cd desktop
-MAC_DESKTOP_SSH_TARGET=dev@example.test \
+MAC_DESKTOP_SSH_TARGET=horde@example.test \
 MAC_DESKTOP_API_TOKEN=... \
 npm start
 ```
@@ -89,10 +89,10 @@ Profiles are plain JSON:
 
 ```json
 {
-  "displayName": "hub / dev",
+  "displayName": "hub / horde",
   "tokenEnv": "MAC_DESKTOP_API_TOKEN",
   "ssh": {
-    "target": "dev@example.test",
+    "target": "horde@example.test",
     "localPort": 18789,
     "remoteHost": "127.0.0.1",
     "remotePort": 8789

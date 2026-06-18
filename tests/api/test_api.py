@@ -31,6 +31,26 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     assert thread is not None and thread.daemon is True and thread.is_alive()
 
 
+def test_well_known_acp_manifest_is_public_and_advertises_mac_extensions(monkeypatch):
+    # ADR 0006 Phase 3: the discovery manifest is unauthenticated even when the
+    # hub is token-protected, and carries protocolVersion + mac's _meta extensions.
+    monkeypatch.setenv("MAC_API_TOKEN", "secret-token")
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    resp = client.get("/.well-known/acp")  # no Authorization header
+    assert resp.status_code == 200
+    manifest = resp.json()
+    assert manifest["protocolVersion"] == 1
+    assert isinstance(manifest["protocolVersion"], int)
+    assert manifest["_meta"]["mac"] == {
+        "sandbox": True,
+        "decomposition": True,
+        "evidence": True,
+    }
+    assert manifest["agentCapabilities"]["loadSession"] is False
+    assert manifest["agentCapabilities"]["_meta"]["mac"]["evidence"] is True
+
+
 def test_post_tasks_accepts_summary_alias_for_description():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
 
@@ -134,18 +154,18 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         "/personas",
         json={
             "tenant_id": tenant["id"],
-            "name": "Hosta",
-            "soul_ref": "hermes://team/hosta/SOUL.md",
-            "memory_scope": "hermes://team/hosta/memory",
+            "name": "Rocky",
+            "soul_ref": "hermes://team/rocky/SOUL.md",
+            "memory_scope": "hermes://team/rocky/memory",
         },
     ).json()
     hermes = client.post(
         "/hermes-instances",
         json={
             "tenant_id": tenant["id"],
-            "name": "hosta",
+            "name": "rocky",
             "persona_id": persona["id"],
-            "home_ref": "hermes://team/hosta",
+            "home_ref": "hermes://team/rocky",
         },
     ).json()
     binding = client.post(
@@ -162,12 +182,12 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert context["memory_contract"]["user_memory_authority"] == "hermes"
     assert context["platform_bindings"][0]["id"] == binding["id"]
 
-    machine = client.post("/machines", json={"hostname": "hosta-host"}).json()
+    machine = client.post("/machines", json={"hostname": "rocky-host"}).json()
     agent = client.post(
         "/agents",
         json={
             "machine_id": machine["id"],
-            "name": "hosta",
+            "name": "rocky",
             "capabilities": ["ops"],
             "hermes_instance_id": hermes["id"],
         },
@@ -1053,7 +1073,7 @@ def test_tenant_bound_token_cannot_cross_tenants_or_touch_global_fleet():
         headers={"Authorization": "Bearer alpha-writer"},
         json={
             "tenant_id": tenant_a.id,
-            "name": "Hosta",
+            "name": "Rocky",
             "soul_ref": "h://a/r/SOUL.md",
             "memory_scope": "h://a/r/mem",
         },
@@ -1147,20 +1167,20 @@ def test_agent_registration_observes_created_agent_in_existing_fleet():
         "/agents",
         json={
             "machine_id": machine["id"],
-            "name": "hosta",
-            "agent_id": "agent_hosta",
+            "name": "rocky",
+            "agent_id": "agent_rocky",
             "hermes_instance_id": None,
             "fleet_id": fleet["id"],
             "capabilities": ["python", "review"],
-            "resources": {"workspace": "/home/hosta/.mac"},
+            "resources": {"workspace": "/home/rocky/.mac"},
         },
     ).json()
 
-    assert agent["id"] == "agent_hosta"
+    assert agent["id"] == "agent_rocky"
     refreshed = client.get("/fleets/%s" % fleet["id"]).json()
     assert refreshed["agent_ids"] == []
-    assert refreshed["observed_agent_ids"] == ["agent_hosta"]
-    assert refreshed["unmanaged_agent_ids"] == ["agent_hosta"]
+    assert refreshed["observed_agent_ids"] == ["agent_rocky"]
+    assert refreshed["unmanaged_agent_ids"] == ["agent_rocky"]
 
 
 def test_dashboard_exposes_and_updates_hermes_fleet_config_surface(monkeypatch, tmp_path):
@@ -1832,8 +1852,8 @@ def test_fastapi_exposes_first_class_object_crud_e2e():
         "/fleets",
         json={
             "name": "classic",
-            "description": "Hosta-era fleet",
-            "metadata": {"hub": "hosta"},
+            "description": "Rocky-era fleet",
+            "metadata": {"hub": "rocky"},
             "agent_ids": [agent["id"]],
         },
     )
@@ -1846,7 +1866,7 @@ def test_fastapi_exposes_first_class_object_crud_e2e():
 
     fleet_update = client.put(
         "/fleets/%s" % fleet_body["id"],
-        json={"status": "inactive", "agent_ids": [], "metadata": {"hub": "hosta", "vpn": "tailscale"}},
+        json={"status": "inactive", "agent_ids": [], "metadata": {"hub": "rocky", "vpn": "tailscale"}},
     )
     assert fleet_update.status_code == 200, fleet_update.text
     assert fleet_update.json()["status"] == "inactive"
@@ -2107,7 +2127,7 @@ def test_observability_api_records_lists_and_streams_metrics_and_logs():
             "value": 7,
             "unit": "tasks",
             "layer": "worker",
-            "source": "hosta",
+            "source": "rocky",
             "detail": {"queue": "default"},
         },
     ).json()
@@ -2117,7 +2137,7 @@ def test_observability_api_records_lists_and_streams_metrics_and_logs():
             "name": "worker.dispatch.waiting",
             "level": "warning",
             "layer": "worker",
-            "source": "hosta",
+            "source": "rocky",
             "detail": {"reason": "no lease"},
         },
     ).json()
@@ -2163,7 +2183,7 @@ def test_observability_logs_silenced_poll_name_is_filtered_not_500():
     # a silenced idle-poll name is dropped: 200 + {"filtered": True}, never 500
     dropped = client.post(
         "/observability/logs",
-        json={"name": "worker.no_task", "level": "info", "layer": "worker", "source": "hosta"},
+        json={"name": "worker.no_task", "level": "info", "layer": "worker", "source": "rocky"},
     )
     assert dropped.status_code == 200
     assert dropped.json() == {"filtered": True}
@@ -2171,7 +2191,7 @@ def test_observability_logs_silenced_poll_name_is_filtered_not_500():
     # a normal log name still records and returns the event
     kept = client.post(
         "/observability/logs",
-        json={"name": "worker.dispatch.waiting", "level": "warning", "layer": "worker", "source": "hosta"},
+        json={"name": "worker.dispatch.waiting", "level": "warning", "layer": "worker", "source": "rocky"},
     )
     assert kept.status_code == 200
     assert kept.json()["name"] == "worker.dispatch.waiting"
@@ -2202,7 +2222,7 @@ def test_observability_write_endpoints_are_not_self_observed():
     client = TestClient(create_app(control_plane=cp, record_http_observations=True))
     client.post(
         "/observability/logs",
-        json={"name": "worker.heartbeat", "layer": "worker", "source": "hosta"},
+        json={"name": "worker.heartbeat", "layer": "worker", "source": "rocky"},
     )
     api_rows = [item for item in cp.list_observability(limit=20) if item.layer == "api"]
     assert api_rows == []

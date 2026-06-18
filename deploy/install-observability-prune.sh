@@ -3,7 +3,7 @@
 # mac's observability_events table daily.
 #
 # Background: ObservabilityService.prune() is unused. Without it mac.db grows
-# unbounded (3.1GB and 2M+ rows observed on hosta as of 2026-05-28). This
+# unbounded (3.1GB and 2M+ rows observed on rocky as of 2026-05-28). This
 # timer calls `mac observability prune` once a day to bound the table.
 #
 # The hub agent must be running so the CLI can reach the control plane.

@@ -17,14 +17,11 @@ network_policies:
 
 
 def _agent(cp: ControlPlane):
-    machine = cp.register_machine("hosta", resources={"openshell_required": True})
-    # De-personalized: required is driven by per-agent resources (not a
-    # hardcoded agent-name allowlist, which the snapshot emptied out).
+    # openshell_required is data-driven from the agent's own resources (no
+    # hardcoded name allowlist), so the agent record must carry the flag.
+    machine = cp.register_machine("rocky", resources={"openshell_required": True})
     return cp.register_agent(
-        machine.id,
-        "hosta",
-        capabilities=["python"],
-        resources={"openshell_required": True},
+        machine.id, "rocky", capabilities=["python"], resources={"openshell_required": True}
     )
 
 
@@ -100,7 +97,7 @@ def test_openshell_collector_normalizes_denials_and_supervisor_command():
             "disposition": "denied",
             "policy_id": "ospol_1",
         },
-        agent_id="agent_hosta",
+        agent_id="agent_rocky",
         sandbox_id="sandbox-1",
     )
     assert event["outcome"] == "denied"
@@ -109,7 +106,7 @@ def test_openshell_collector_normalizes_denials_and_supervisor_command():
     assert event["sandbox_id"] == "sandbox-1"
 
     argv = build_supervisor_argv(
-        agent_id="agent_hosta",
+        agent_id="agent_rocky",
         policy_path="/etc/mac/policy.yaml",
         child_argv=["mac-hermes-gateway"],
         openshell_bin="/usr/bin/openshell",

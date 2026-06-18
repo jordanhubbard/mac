@@ -42,11 +42,11 @@ def test_purge_cleans_all_three_env_files(tmp_path):
     )
     # operator deploy env: bare + fleet-scoped dead variants + a live provider key
     deploy_env.write_text(
-        "MAC_DEPLOY_HUB_AGENT=hosta\n"
+        "MAC_DEPLOY_HUB_AGENT=rocky\n"
         "MAC_DEPLOY_TOKENHUB_API_KEY=dead\n"
-        "MAC_DEPLOY_TOKENHUB_API_KEY__HOSTA=dead\n"
+        "MAC_DEPLOY_TOKENHUB_API_KEY__ROCKY=dead\n"
         "MAC_DEPLOY_TOKENHUB_URL=http://hub:8090\n"
-        "NVIDIA_API_KEY__HOSTA=keep\n"
+        "NVIDIA_API_KEY__ROCKY=keep\n"
     )
     # gateway env: ENTIRELY dead lines (would make `grep -v` exit 1 and, under
     # set -e, abort after the backup — awk must emit empty output and exit 0).
@@ -66,10 +66,10 @@ def test_purge_cleans_all_three_env_files(tmp_path):
     assert "MAC_ROUTER_BACKEND=inproc" in mac_txt
 
     deploy_txt = deploy_env.read_text()
-    assert "MAC_DEPLOY_TOKENHUB_API_KEY" not in deploy_txt  # bare + __HOSTA both gone
+    assert "MAC_DEPLOY_TOKENHUB_API_KEY" not in deploy_txt  # bare + __ROCKY both gone
     assert "MAC_DEPLOY_TOKENHUB_URL" not in deploy_txt
-    assert "NVIDIA_API_KEY__HOSTA=keep" in deploy_txt
-    assert "MAC_DEPLOY_HUB_AGENT=hosta" in deploy_txt
+    assert "NVIDIA_API_KEY__ROCKY=keep" in deploy_txt
+    assert "MAC_DEPLOY_HUB_AGENT=rocky" in deploy_txt
 
     # all-dead file: emptied (no dead vars), NOT aborted, backup written
     hermes_txt = hermes_env.read_text()

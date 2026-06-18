@@ -3,33 +3,34 @@ FROM ${MAC_BASE_IMAGE}
 
 USER root
 
-# npm is kept (NOT purged) on purpose: the pre-push gate
-# (mac-task-executor-opencode-build) provisions a project's JS dependencies at
-# test time via `_npm_install_in` (`npm install`), so npm must remain available
-# at gate runtime — not just at image-build time for the global installs below.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        git ca-certificates curl nodejs npm && \
+    apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm && \
     npm install -g @openai/codex && \
     npm install -g opencode-ai && \
     npm cache clean --force && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
-# Install nvm so the pre-push gate can switch to a project's DECLARED Node
-# version (.nvmrc / .node-version / engines.node / CI) at test time. The system
-# Node installed above stays as the baseline used when a repo declares nothing
-# or nvm is unavailable. nvm is owned by the runtime user (mac) and sourced
-# per-shell by the gate (mac-task-executor-opencode-build).
+# The image is a BOOTSTRAP, not a per-project toolchain. It ships baseline
+# Node + nvm (Node version switching), uv (Python interpreter + venv
+# provisioning), and opencode (agent fallback). The pre-push gate
+# (mac-task-executor-opencode-build) resolves and provisions each project's
+# DECLARED toolchain at test time so the verdict reflects the code, not the
+# image's defaults. Do not hardcode a project's Node/Python version here.
+
+# Install nvm so the gate can switch to whatever Node version a project
+# declares (.nvmrc, .node-version, engines.node, or CI workflow).
+# nvm must be owned by the runtime user (mac) and sourced per-shell.
 ENV NVM_DIR=/var/lib/mac/.nvm
 RUN mkdir -p "${NVM_DIR}" && \
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | \
         NVM_DIR="${NVM_DIR}" PROFILE=/dev/null bash && \
     chown -R mac:mac "${NVM_DIR}"
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | \
-        UV_INSTALL_DIR=/usr/local/bin sh && \
-    chmod a+rx /usr/local/bin/uv* 2>/dev/null || true
+# Install uv (Python package manager) using the Docker-recommended method
+# See: https://docs.astral.sh/uv/guides/integration/docker/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN uv --version
 
 COPY deploy/codex-runner/mac-task-executor-codex /usr/local/bin/mac-task-executor-codex
 COPY deploy/codex-runner/mac-task-executor-codex-review /usr/local/bin/mac-task-executor-codex-review

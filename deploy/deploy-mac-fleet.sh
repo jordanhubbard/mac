@@ -1153,7 +1153,7 @@ deploy_host() {
   # only; consumed by install_gpu_gen_server.
   add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL "${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
   # Optional HF cache/home for the gen server — point at pre-staged weights to
-  # avoid a fresh multi-GB download (e.g. /home/dev/gen/hf on the GB10 box).
+  # avoid a fresh multi-GB download (e.g. /home/jkh/gen/hf on the GB10 box).
   add_remote_env MAC_DEPLOY_AGENT_GEN_HF_HOME "${MAC_DEPLOY_AGENT_GEN_HF_HOME:-}"
   # B1b: audio/video local servers (CSV catalog-id model lists + ports).
   add_remote_env MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS "${MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS:-}"
@@ -2204,7 +2204,7 @@ if agent == shared_services_manager:
         registered_configured_agent_ids.append(configured_agent_id)
     # Idempotent get-or-create. create_fleet derives the id via
     # stable_id("fleet", fleet), which lowercases the name — so a prior deploy of
-    # the same fleet under different case (e.g. "devuser-GKE" vs "devuser-gke")
+    # the same fleet under different case (e.g. "jordanh-GKE" vs "jordanh-gke")
     # shares the id but NOT the case-sensitive name. Look up by the stable id as
     # well as the name, or a re-deploy hits a fleets.id UNIQUE collision instead
     # of reconciling the fleet that is already there.
@@ -4037,13 +4037,16 @@ install_github_review_key
 install_or_validate_shared_services
 write_hermes_memory_topology
 
-log "installing mac Python package (with vendored Hermes runtime + gateway extra)"
+log "installing mac Python package (with vendored Hermes runtime + gateway + relay extras)"
 "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
 # ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
 # runtime (src/mac/_hermes) runs in-process from this one venv — no separate
 # hermes-agent venv needed. The gateway service execs mac-hermes-gateway.
-"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway]" >/dev/null
+# The relay extra ships nemo-relay so the gateway has the observability seam at
+# deploy time (the worker also reconciles REQUIRED_RUNTIME_PIP at lifecycle
+# start, so a stale node self-upgrades on demand — see mac/worker.py).
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay]" >/dev/null
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
 install_or_validate_web_search_service
@@ -5002,7 +5005,12 @@ SuccessExitStatus=75
 KillMode=mixed
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 \$MAINPID
-TimeoutStopSec=120
+# Must exceed the gateway's restart_drain_timeout so systemd doesn't SIGKILL it
+# mid-drain. Mirrors hermes_cli/gateway.py: max(60, restart_drain_timeout) + 30
+# (=210 for the default drain of 180). A too-low value triggers the gateway's
+# "Stale systemd unit detected" startup warning. Bump if restart_drain_timeout
+# is raised above 180.
+TimeoutStopSec=210
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
@@ -5576,12 +5584,12 @@ install_reverse_tunnel_on_hub() {
   fi
   # Derive the worker's SSH user from the agent's target (user@host, an
   # ~/.ssh/config alias, or a bare host) the same way we derive the
-  # host. Falls back to "dev" only when ssh can't resolve a user, so
-  # fleets whose worker user isn't dev (e.g. dev@...) get the right
+  # host. Falls back to "horde" only when ssh can't resolve a user, so
+  # fleets whose worker user isn't horde (e.g. jkh@...) get the right
   # account instead of a hardcoded guess.
   tunnel_user="$(ssh -G "$worker_target" 2>/dev/null | awk '/^user / {print $2; exit}')"
   if [ -z "$tunnel_user" ]; then
-    tunnel_user="dev"
+    tunnel_user="horde"
   fi
   # Pass values to the remote inline; quoting handled by shell_quote
   ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
@@ -5589,7 +5597,7 @@ install_reverse_tunnel_on_hub() {
 set -euo pipefail
 worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
-tunnel_user="${TUNNEL_USER:-dev}"
+tunnel_user="${TUNNEL_USER:-horde}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   service="${fleet_name}-tunnel-${worker_agent}.service"

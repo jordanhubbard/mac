@@ -1,5 +1,5 @@
 """The config surface promotes slack_accounts.json tokens into config.yaml's env
-block so a redeploy keeps the Slack platform enabled (the hostd case).
+block so a redeploy keeps the Slack platform enabled (the bullwinkle case).
 
 An agent provisioned via a multi-workspace slack_accounts.json carries its
 bot/app tokens there, not in config.yaml's env: block — and the gateway enables
@@ -23,7 +23,7 @@ def _write_accounts(home, accounts):
 def test_promotes_first_valid_account_tokens(tmp_path):
     _write_accounts(tmp_path, [
         {"name": "offtera", "bot_token": "xoxb-AAA", "app_token": "xapp-BBB", "user_token": "xoxp-CCC"},
-        {"name": "omgagentuser", "bot_token": "xoxb-DDD", "app_token": "xapp-EEE"},
+        {"name": "omgjkh", "bot_token": "xoxb-DDD", "app_token": "xapp-EEE"},
     ])
     cfg: dict = {}
     hcs._promote_slack_accounts_tokens(cfg, tmp_path)

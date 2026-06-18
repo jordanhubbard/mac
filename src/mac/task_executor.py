@@ -38,11 +38,11 @@ agent runner are injectable so the logic is testable without a live hub.
 
 Optional OpenShell sandboxing (sandbox-01): the agent already runs ``--yolo``
 (Hermes' own approval prompts bypassed). When ``MAC_OPENSHELL_SANDBOX`` is set,
-:func:`_invoke_agent` launches that invocation as a confined child of an
+:func:`_maybe_wrap_openshell` launches that invocation as a confined child of an
 OpenShell sandbox, which then enforces *all* guardrails (filesystem, syscall,
 and deny-by-default network egress) from a declarative policy. Default OFF —
-so behavior is unchanged unless enabled. See
-``docs/openshell-nemo-relay-integration.md``.
+the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
+``docs/openshell-sandbox.md``.
 """
 
 from __future__ import annotations
@@ -61,7 +61,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mac import relay_observability
-from mac.openshell_runtime import openshell_required_for_local_agent as _openshell_required_for_local_agent
+from mac.openshell_runtime import (
+    openshell_required_for_local_agent as _openshell_required_for_local_agent,
+    truthy as _truthy,
+)
 
 # ---------------------------------------------------------------------------
 # Small utilities (ported verbatim from the deploy heredoc)
@@ -1127,11 +1130,11 @@ def _hermes_argv(prompt: str) -> List[str]:
 #   * egress    — deny-by-default network proxy driven by a declarative policy
 # The policy YAML (MAC_OPENSHELL_POLICY) *is* the guardrail specification.
 #
-# Default OFF: with MAC_OPENSHELL_SANDBOX unset/false ``_invoke_agent`` runs the
-# agent directly (gated by MAC_ALLOW_UNSANDBOXED_YOLO), so the executor behaves
-# exactly as before. The sandboxed path does not itself require OpenShell to be
-# installed at import time; that is the deployer's responsibility (see
-# docs/openshell-nemo-relay-integration.md).
+# Default OFF: with MAC_OPENSHELL_SANDBOX unset/false ``_maybe_wrap_openshell``
+# returns the argv unchanged, so the executor behaves exactly as before. The
+# wrap is a pure argv transform — it does not itself require OpenShell to be
+# installed; that is the deployer's responsibility (see
+# docs/openshell-sandbox.md).
 #
 # Knobs (read at wrap time — nothing is frozen at import):
 #   MAC_OPENSHELL_SANDBOX          truthy -> enable wrapping
@@ -1149,6 +1152,10 @@ def _hermes_argv(prompt: str) -> List[str]:
 #                                 make the Hermes runtime + workspace available
 #                                 inside the sandbox
 #   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names forwarded via --env
+#   MAC_ALLOW_UNSANDBOXED_YOLO    truthy (default "1") -> allow --yolo with no
+#                                 sandbox (current fleet, logs a warning). Set
+#                                 "0" to fail closed: refuse unguarded YOLO so
+#                                 --yolo is only ever used inside the sandbox.
 # ---------------------------------------------------------------------------
 
 # Forward the env the agent needs to reach the hub + model gateway from inside
@@ -1165,10 +1172,6 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
     "OPENAI_BASE_URL,OPENAI_API_KEY"
 )
-
-
-def _truthy(value: Optional[str]) -> bool:
-    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _openshell_enabled() -> bool:

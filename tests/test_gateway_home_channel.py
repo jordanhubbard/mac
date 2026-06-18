@@ -24,8 +24,8 @@ def test_slack_home_resolved_from_file(tmp_path, monkeypatch):
             [
                 {
                     "channel_id": "C0AMSBEU7CJ",
-                    "channel_name": "#teamchannel",
-                    "name": "teamtwo",
+                    "channel_name": "#rockyandfriends",
+                    "name": "offtera",
                     "team_id": "THJ9A47K3",
                 }
             ]
@@ -36,7 +36,7 @@ def test_slack_home_resolved_from_file(tmp_path, monkeypatch):
 
     chan, name = _slack_home_from_resolved_file()
     assert chan == "C0AMSBEU7CJ"
-    assert name == "teamchannel"  # leading '#' stripped
+    assert name == "rockyandfriends"  # leading '#' stripped
 
 
 def test_slack_home_absent_returns_empty(tmp_path, monkeypatch):
@@ -51,8 +51,8 @@ def test_slack_home_absent_returns_empty(tmp_path, monkeypatch):
 
 
 _TWO_WORKSPACES = [
-    {"channel_id": "C0AMSBEU7CJ", "channel_name": "#teamchannel", "name": "teamtwo", "team_id": "THJ9A47K3"},
-    {"channel_id": "C0AMNRSN9EZ", "channel_name": "#teamchannel", "name": "teamone", "team_id": "TE0V8MBEJ"},
+    {"channel_id": "C0AMSBEU7CJ", "channel_name": "#rockyandfriends", "name": "offtera", "team_id": "THJ9A47K3"},
+    {"channel_id": "C0AMNRSN9EZ", "channel_name": "#rockyandfriends", "name": "omgjkh", "team_id": "TE0V8MBEJ"},
 ]
 
 
@@ -66,8 +66,8 @@ def test_slack_homes_resolved_returns_every_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(home))
 
     assert _slack_homes_from_resolved_file() == [
-        ("C0AMSBEU7CJ", "teamchannel"),
-        ("C0AMNRSN9EZ", "teamchannel"),
+        ("C0AMSBEU7CJ", "rockyandfriends"),
+        ("C0AMNRSN9EZ", "rockyandfriends"),
     ]
 
 

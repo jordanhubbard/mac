@@ -1,6 +1,6 @@
 [Unit]
 Description=Periodic trigger for mac nap-tick
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 
 [Timer]
 # Tick every 15 minutes. `mac nap due` is catch-up, not strictly

@@ -153,7 +153,7 @@ def test_repo_change_validator_reuses_repo_anchor_and_check_gates():
 def test_non_code_validators_keep_type_specific_requirements():
     deployment = _repo_manifest(
         evidence_type="deployment",
-        targets=["hosta"],
+        targets=["rocky"],
     )
     assert validate_evidence_type(
         "deployment",

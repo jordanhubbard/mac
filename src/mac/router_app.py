@@ -51,7 +51,7 @@ from fastapi import Body, Request
 from mac.provider_router import Provider, ProviderRouter, providers_from_env
 
 # Per-route visibility: every routed request logs which provider served it, so
-# "when did the hub use hostb?" is answerable from the mac service journal
+# "when did the hub use madmax?" is answerable from the mac service journal
 # (`journalctl -u mac | grep 'router: route'`). Attributable per provider, unlike
 # a provider's own /metrics which can't tell hub traffic from direct traffic.
 logger = logging.getLogger("mac.router")

@@ -296,7 +296,7 @@ def test_run_advances_on_task_completed_through_to_terminal(cp):
     qa_soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
     qa_agent = cp.register_agent(
         machine.id,
-        "hosta",
+        "rocky",
         capabilities=["python", "qa", "review"],
         hermes_instance_id=qa_soul,
     )
@@ -361,13 +361,13 @@ def test_failed_task_picks_failure_edge_and_finishes(cp):
     machine = cp.register_machine("h1")
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
     qa_agent = cp.register_agent(
-        machine.id, "hosta", capabilities=["python", "qa"], hermes_instance_id=soul
+        machine.id, "rocky", capabilities=["python", "qa"], hermes_instance_id=soul
     )
     cp.roles.assign_role(qa_agent.id, "qa")
     cp.claim_task(first_task.id, qa_agent.id)
     cp.start_task(first_task.id, qa_agent.id)
     # Fail the task — there's a failure edge to '' (terminal).
-    cp.transition_task(first_task.id, TaskState.FAILED.value, "hosta")
+    cp.transition_task(first_task.id, TaskState.FAILED.value, "rocky")
 
     run = cp.workflow_runtime.get_run(run.id)
     assert run.state == "failed"

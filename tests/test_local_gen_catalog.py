@@ -62,9 +62,9 @@ def test_no_accelerator_runs_nothing_gpu():
 
 
 def test_media_route_for_builds_advertisement():
-    route = media_route_for("sdxl-turbo", "http://hostc:8189/v1/")
+    route = media_route_for("sdxl-turbo", "http://natasha:8189/v1/")
     assert route == {
-        "op": "image.generate", "base_url": "http://hostc:8189/v1",
+        "op": "image.generate", "base_url": "http://natasha:8189/v1",
         "model": "sdxl-turbo", "adapter": "openai_images", "key": "", "auth_scheme": "Bearer",
     }
 
@@ -82,9 +82,9 @@ def test_get_model():
 # --- durable self-advertisement (catalog-driven, GPU-gated) -----------------
 
 def test_advertised_routes_gpu_agent():
-    routes = advertised_media_routes("sdxl-turbo", "http://hostc:8189/v1",
+    routes = advertised_media_routes("sdxl-turbo", "http://natasha:8189/v1",
                                      {"accelerator": "cuda", "gpu": {"vram_mb": 0}, "memory_mb": 122000})
-    assert routes == [{"op": "image.generate", "base_url": "http://hostc:8189/v1",
+    assert routes == [{"op": "image.generate", "base_url": "http://natasha:8189/v1",
                        "model": "sdxl-turbo", "adapter": "openai_images", "key": "", "auth_scheme": "Bearer"}]
 
 

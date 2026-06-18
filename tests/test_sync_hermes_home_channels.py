@@ -37,7 +37,7 @@ def run_sync(tmp_path, monkeypatch, accounts=None):
 def test_home_channel_static_json_writes_home_and_route_files(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_HERMES_SLACK_HOME_CHANNELS_JSON", json.dumps([
         {
-            "name": "teamone",
+            "name": "omgjkh",
             "team_id": "T123",
             "channel_id": "C456",
             "channel_name": "#ops",
@@ -49,7 +49,7 @@ def test_home_channel_static_json_writes_home_and_route_files(monkeypatch, tmp_p
     assert result.returncode == 0
     assert json.loads(home_path.read_text(encoding="utf-8")) == [
         {
-            "name": "teamone",
+            "name": "omgjkh",
             "team_id": "T123",
             "channel_id": "C456",
             "channel_name": "#ops",
@@ -76,7 +76,7 @@ def test_home_channel_sync_removes_legacy_direct_home_env(monkeypatch, tmp_path)
     )
     monkeypatch.setenv("MAC_HERMES_SLACK_HOME_CHANNELS_JSON", json.dumps([
         {
-            "name": "teamone",
+            "name": "omgjkh",
             "team_id": "T123",
             "channel_id": "C456",
             "channel_name": "#ops",
@@ -136,7 +136,7 @@ def test_home_channel_name_discovers_channel_from_slack_accounts(monkeypatch, tm
         result, home_path, routes_path, report_path = run_sync(
             tmp_path,
             monkeypatch,
-            accounts=[{"name": "Teamtwo", "bot_token": "xoxb-secret"}],
+            accounts=[{"name": "Offtera", "bot_token": "xoxb-secret"}],
         )
     finally:
         server.shutdown()
@@ -146,7 +146,7 @@ def test_home_channel_name_discovers_channel_from_slack_accounts(monkeypatch, tm
     homes = json.loads(home_path.read_text(encoding="utf-8"))
     assert homes == [
         {
-            "name": "teamtwo",
+            "name": "offtera",
             "team_id": "T999",
             "channel_id": "C999",
             "channel_name": "#team-home",

@@ -25,7 +25,7 @@ def cp():
     return ControlPlane.in_memory()
 
 
-def _register_agent(cp, name="hosta", capabilities=None):
+def _register_agent(cp, name="rocky", capabilities=None):
     machine = cp.register_machine("%s-host" % name)
     return cp.register_agent(machine.id, name, capabilities=capabilities or ["ops"])
 
@@ -134,8 +134,8 @@ def test_mood_unknown_agent_rejected(cp):
 
 
 def test_configure_nap_uses_deterministic_offset_when_unspecified(cp):
-    a1 = _register_agent(cp, "hosta")
-    a2 = _register_agent(cp, "hostc")
+    a1 = _register_agent(cp, "rocky")
+    a2 = _register_agent(cp, "natasha")
 
     schedule_a = cp.configure_nap(a1.id)
     schedule_b = cp.configure_nap(a2.id)
@@ -161,7 +161,7 @@ def test_configure_nap_validates_bounds(cp):
 
 
 def test_next_nap_window_is_in_future_and_matches_offset(cp):
-    agent = _register_agent(cp, "hosta")
+    agent = _register_agent(cp, "rocky")
     cp.configure_nap(agent.id, offset_minutes=120, window_minutes=15)
     reference = datetime(2026, 5, 18, 10, 0, 0, tzinfo=timezone.utc)
     window = cp.next_nap_window(agent.id, now=reference)
@@ -225,7 +225,7 @@ def test_complete_nap_requires_log_kind_evidence(cp):
 
 
 def test_begin_nap_refuses_if_agent_holds_active_lease(cp):
-    agent = _register_agent(cp, "hosta", capabilities=["python"])
+    agent = _register_agent(cp, "rocky", capabilities=["python"])
     cp.configure_nap(agent.id)
     task = cp.create_task("hold", required_capabilities=["python"])
     cp.claim_task(task.id, agent.id)
@@ -269,7 +269,7 @@ def test_nap_schedule_offset_spreads_across_typical_fleet():
     practice. Pin the computed offsets for known names so future renames are
     forced to surface the change."""
     cp = ControlPlane.in_memory()
-    names = ["hosta", "hostc", "hostd", "boris"]
+    names = ["rocky", "natasha", "bullwinkle", "boris"]
     agents = [_register_agent(cp, name) for name in names]
     offsets = {a.name: cp.configure_nap(a.id).offset_minutes for a in agents}
     # All distinct — pure mathematical assertion the hash spreads four names.

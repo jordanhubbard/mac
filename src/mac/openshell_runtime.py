@@ -6,7 +6,13 @@ import os
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 
-DEFAULT_REQUIRED_AGENT_NAMES = frozenset()  # de-personalized snapshot: set required agents via MAC_OPENSHELL_REQUIRED or per-agent resources, not hardcoded names
+# Empty by default: sandbox required-ness is DATA-DRIVEN (the agent's runtime
+# ``resources["openshell_required"]``, an explicit override, or the
+# ``MAC_OPENSHELL_REQUIRED`` env), never a hardcoded fleet roster baked into
+# source that goes stale as the fleet changes. Callers may still pass an
+# explicit ``required_agent_names`` set for a name-match fallback, but the
+# default matches nothing.
+DEFAULT_REQUIRED_AGENT_NAMES: frozenset[str] = frozenset()
 TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -78,10 +84,10 @@ def apply_openshell_requirement(
     """Stamp ``MAC_OPENSHELL_REQUIRED`` into ``environ`` from an agent's runtime
     ``resources`` so a DB-driven sandbox requirement reaches the local executor
     (which inherits the worker process environment) WITHOUT a hardcoded agent
-    list. The hub owns ``resources["openshell_required"]`` per agent, the worker
-    reads its own record back at registration, and this function projects that
-    fact into the env the executor reads via
-    :func:`openshell_required_for_local_agent`.
+    list. This is the data-driven channel that replaces the old name allowlist:
+    the hub owns ``resources["openshell_required"]`` per agent, the worker reads
+    its own record back at registration, and this function projects that fact
+    into the env the executor reads via :func:`openshell_required_for_local_agent`.
 
     Precedence: an existing ``MAC_OPENSHELL_REQUIRED`` (operator/deploy override)
     always wins and is left untouched. Otherwise, if ``resources`` carries an

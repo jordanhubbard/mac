@@ -457,7 +457,7 @@ def build_media_table(env: Optional[Mapping[str, str]] = None) -> Dict[str, List
 # with zero per-caller knowledge — and it's dropped automatically when the agent
 # is offline. Route dict shape (all but op/base_url optional)::
 #
-#     {"op": "image.generate", "base_url": "http://hostd:8189",
+#     {"op": "image.generate", "base_url": "http://bullwinkle:8189",
 #      "model": "sdxl-turbo", "adapter": "openai_images",
 #      "key": "secret:...", "auth_scheme": "Bearer", "priority": 0, "timeout": 180}
 

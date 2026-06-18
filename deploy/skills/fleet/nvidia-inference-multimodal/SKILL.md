@@ -8,7 +8,7 @@ tools:
   - Read
   - Shell
 metadata:
-  author: mac fleet (<user>)
+  author: mac fleet (jordanh)
   tags: [nvidia, inference, multimodal, vision, vlm, image-generation, sdxl, flux, router]
   hermes:
     tags: [vision, image, multimodal, image-gen, nvidia, router]

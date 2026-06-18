@@ -18,20 +18,20 @@ def _spec() -> dict:
     return {
         "schema": "mac.fleet_setup.v1",
         "fleet": {
-            "name": "dev",
-            "hub": "dev-hub",
-            "hub_url": "http://dev-hub:8789",
+            "name": "horde",
+            "hub": "horde-hub",
+            "hub_url": "http://horde-hub:8789",
         },
         "agents": [
             {
-                "name": "dev-hub",
+                "name": "horde-hub",
                 "target": "ubuntu@10.0.0.10:2201",
                 "os": "linux",
                 "model": "nvidia/test-model",
                 "worker": {"mode": "loop"},
             },
             {
-                "name": "dev-worker",
+                "name": "horde-worker",
                 "target": "ubuntu@10.0.0.11",
                 "os": "linux",
                 "worker": {"mode": "heartbeat"},
@@ -55,9 +55,9 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
     )
 
     assert plan["status"] == "pass"
-    assert plan["hub"] == "dev-hub"
+    assert plan["hub"] == "horde-hub"
     assert plan["fleet_config"]["sample"] is False
-    assert plan["fleet_config"]["hub_agent"] == "dev-hub"
+    assert plan["fleet_config"]["hub_agent"] == "horde-hub"
     assert plan["fleet_config"]["agents"][0]["target"] == "ubuntu@10.0.0.10:2201"
     assert plan["fleet_config"]["agents"][0]["control_bind_host"] == "0.0.0.0"
     assert plan["env_values"]["MAC_ROUTER_BACKEND"] == "inproc"
@@ -66,7 +66,7 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
         in plan["env_values"]["MAC_ROUTER_PROVIDERS"]
     )
     assert plan["env_values"]["NVIDIA_API_KEY"] == "nv-secret"
-    assert 'make deploy HUB=dev-hub ARGS="dev-hub"' in plan["next_steps"][0]
+    assert 'make deploy HUB=horde-hub ARGS="horde-hub"' in plan["next_steps"][0]
 
     redacted = public_plan(plan)
     assert redacted["env_values"]["NVIDIA_API_KEY"] == "<set>"
@@ -75,7 +75,7 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
 
 def test_declarative_webdav_requires_dns_name_and_derives_https_url(tmp_path):
     spec = _spec()
-    spec["webdav"] = {"enabled": True, "dns_name": "example.com", "public_host": "203.0.113.10"}
+    spec["webdav"] = {"enabled": True, "dns_name": "jordanhubbard.net", "public_host": "146.190.134.110"}
     plan = build_setup_plan(
         spec,
         root=ROOT,
@@ -86,13 +86,13 @@ def test_declarative_webdav_requires_dns_name_and_derives_https_url(tmp_path):
 
     webdav = plan["fleet_config"]["defaults"]["webdav"]
     assert webdav["port"] == 80
-    assert webdav["dns_name"] == "example.com"
-    assert webdav["url"] == "https://example.com/artifacts/"
+    assert webdav["dns_name"] == "jordanhubbard.net"
+    assert webdav["url"] == "https://jordanhubbard.net/artifacts/"
 
 
 def test_declarative_webdav_enabled_without_dns_name_fails(tmp_path):
     spec = _spec()
-    spec["webdav"] = {"enabled": True, "public_host": "203.0.113.10"}
+    spec["webdav"] = {"enabled": True, "public_host": "146.190.134.110"}
     plan = build_setup_plan(
         spec,
         root=ROOT,
@@ -149,13 +149,13 @@ def test_setup_fleet_spec_mode_writes_registry_and_env(tmp_path):
 
     assert result.returncode == 0, result.stderr
     registry = yaml.safe_load(fleets_config.read_text(encoding="utf-8"))
-    assert registry["fleets"]["dev-hub"]["hub_url"] == "http://dev-hub:8789"
-    assert registry["fleets"]["dev-hub"]["agents"][1]["name"] == "dev-worker"
+    assert registry["fleets"]["horde-hub"]["hub_url"] == "http://horde-hub:8789"
+    assert registry["fleets"]["horde-hub"]["agents"][1]["name"] == "horde-worker"
     env_text = env_file.read_text(encoding="utf-8")
     assert "MAC_ROUTER_BACKEND=inproc" in env_text
     assert "MAC_ROUTER_PROVIDERS=" in env_text
     assert "NVIDIA_API_KEY=nv-secret" in env_text
-    assert 'make deploy HUB=dev-hub ARGS="dev-hub"' in result.stdout
+    assert 'make deploy HUB=horde-hub ARGS="horde-hub"' in result.stdout
 
 
 def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
@@ -188,7 +188,7 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
     report = json.loads(result.stdout)
     assert report["schema"] == "mac.fleet_setup_doctor.v1"
     assert report["status"] == "pass"
-    assert report["hub"] == "dev-hub"
+    assert report["hub"] == "horde-hub"
     assert any(check["name"] == "router.providers" for check in report["checks"])
 
 
@@ -206,6 +206,6 @@ def test_spec_path_materializes_default_model_never_blank(tmp_path):
         env={"NVIDIA_API_KEY": "nv-secret"},
     )
     models = {a["name"]: a["hermes"]["gateway_model"] for a in plan["fleet_config"]["agents"]}
-    assert models["dev-hub"] == "nvidia/test-model"  # explicit model preserved
-    assert models["dev-worker"] == DEFAULT_GATEWAY_MODEL  # blank -> default, not ""
+    assert models["horde-hub"] == "nvidia/test-model"  # explicit model preserved
+    assert models["horde-worker"] == DEFAULT_GATEWAY_MODEL  # blank -> default, not ""
     assert all(v for v in models.values())  # nothing blank

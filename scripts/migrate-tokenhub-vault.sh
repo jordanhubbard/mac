@@ -10,15 +10,15 @@
 # a shell var into a single POST per secret.
 #
 # Usage:  bash scripts/migrate-tokenhub-vault.sh
-# Env:    TOKENHUB_HOST (default hosta)   — ssh host running TokenHub + the target mac API
-#         TOKENHUB_URL  (default http://100.64.1.1:8090)
+# Env:    TOKENHUB_HOST (default rocky)   — ssh host running TokenHub + the target mac API
+#         TOKENHUB_URL  (default http://100.125.137.89:8090)
 #
 # Idempotent-ish: a name that already exists in the mac vault reports ALREADY
 # (the mac API rejects the duplicate) rather than overwriting.
 set -euo pipefail
 
-TOKENHUB_HOST="${TOKENHUB_HOST:-hosta}"
-TH_URL="${TOKENHUB_URL:-http://100.64.1.1:8090}"
+TOKENHUB_HOST="${TOKENHUB_HOST:-rocky}"
+TH_URL="${TOKENHUB_URL:-http://100.125.137.89:8090}"
 
 echo ">> migrating TokenHub vault -> mac vault on ${TOKENHUB_HOST} (values never printed)" >&2
 
@@ -26,7 +26,7 @@ ssh "$TOKENHUB_HOST" "TOKENHUB_URL='${TH_URL}' bash -s" <<'REMOTE'
 set -euo pipefail
 set -a; . "$HOME/.tokenhub/service.env" >/dev/null 2>&1 || true; . "$HOME/.tokenhub/env" >/dev/null 2>&1 || true; set +a
 set -a; . "$HOME/.mac/mac.env" >/dev/null 2>&1 || true; set +a
-CTL=/home/dev/.local/bin/tokenhubctl
+CTL=/home/jkh/.local/bin/tokenhubctl
 PORT="${MAC_PORT:-8789}"
 : "${MAC_API_TOKEN:?MAC_API_TOKEN missing}"
 

@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily trigger for mac agent journal (soul + memory backup)
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 
 [Timer]
 # Once a day. Persistent=true means a host that was off at the scheduled time

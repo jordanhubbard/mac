@@ -2,7 +2,7 @@
 
 - Status: **Accepted**
 - Date: 2026-06-09
-- Decision owner: Dev User
+- Decision owner: Jordan Hubbard
 - Context: Phase 2 of `kanban-adopt-01`. Phase 1 shipped a dashboard link-out to
   the Hermes kanban (PR #122). This ADR answers how the Hermes kanban store
   (`kanban.db`) should relate to the MAC hub task ledger (`mac.db`, the

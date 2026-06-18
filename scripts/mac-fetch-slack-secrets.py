@@ -8,8 +8,8 @@ each agent's hermes-gateway has the right credentials without having
 to scatter secrets across host-specific .env files.
 
 Key namespace: slack.<agent>.<workspace>.<kind>
-  agent: this host's agent name (hosta / hostc / hostd)
-  workspace: Slack team slug (teamone, teamtwo)
+  agent: this host's agent name (rocky / natasha / bullwinkle)
+  workspace: Slack team slug (omgjkh, offtera)
   kind: bot, app, signing, client, uauth
 
 Environment:

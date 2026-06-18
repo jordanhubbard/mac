@@ -100,9 +100,9 @@ def test_hub_get_mood_fetches_from_hub(monkeypatch):
         return _R({"mode": "warm", "reason": "good chat"})
 
     monkeypatch.setattr(_u, "urlopen", fake)
-    out = _hub_get_mood("agent_hosta")
+    out = _hub_get_mood("agent_rocky")
     assert out == {"mode": "warm", "reason": "good chat"}
-    assert captured["url"] == "http://hub:8789/agents/agent_hosta/mood"
+    assert captured["url"] == "http://hub:8789/agents/agent_rocky/mood"
     assert captured["auth"] == "Bearer tok"
 
 
@@ -111,7 +111,7 @@ def test_hub_get_mood_none_without_env_or_agent(monkeypatch):
 
     for k in ("MAC_HUB_URL", "MAC_URL", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"):
         monkeypatch.delenv(k, raising=False)
-    assert _hub_get_mood("agent_hosta") is None
+    assert _hub_get_mood("agent_rocky") is None
     monkeypatch.setenv("MAC_HUB_URL", "http://h")
     monkeypatch.setenv("MAC_API_TOKEN", "t")
     assert _hub_get_mood(None) is None

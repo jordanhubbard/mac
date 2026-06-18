@@ -657,6 +657,11 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-hermes-task-executor"))
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
+    # NeMo Relay observability on by default for new nodes (nemo-relay ships via
+    # the deploy's `relay` extra + the worker runtime-deps reconcile). setdefault
+    # so an operator's explicit MAC_RELAY_OBSERVABILITY=0 is preserved across
+    # redeploys; set to 0 in mac.env to opt a host out.
+    values.setdefault("MAC_RELAY_OBSERVABILITY", "1")
     values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.identity.shared_services_manager)
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)

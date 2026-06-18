@@ -3,8 +3,8 @@
 #
 # Run ON the target node (it touches the local user's ~/.mac, ~/.local, docker/
 # podman, and — with sudo — the CDI spec + a firewall). Idempotent: safe to
-# re-run. Supports x86_64 + aarch64 hosts, podman or docker compute driver,
-# CPU- or GPU-equipped nodes.
+# re-run. Encodes the recipe proven across the fleet (rocky x86 podman,
+# bullwinkle x86 GPU podman, natasha aarch64 GPU docker).
 #
 # It does NOT flip enforcement by default. After it succeeds, validate a real
 # task, then enable:  --enable (MAC_OPENSHELL_SANDBOX=1) and, once validated,

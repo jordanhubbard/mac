@@ -2,7 +2,7 @@
 
 - Status: **Proposed**
 - Date: 2026-05-31
-- Decision owner: Dev User
+- Decision owner: Jordan Hubbard
 - Context: the fleet today is 3 agents (the minimum), but the target is
   **50–200 agents per user, each user starting with their own hub**. The
   question "is Qdrant the best vector store for our purposes" has a different

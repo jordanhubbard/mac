@@ -882,6 +882,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 elif agent._should_emit_quiet_tool_messages():
                     agent._vprint(f"  {cute_msg}")
         else:
+
             try:
                 with _relay_tool_ctx(function_name, function_args):
                     function_result = _ra().handle_function_call(
@@ -897,7 +898,6 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 function_result = f"Error executing tool '{function_name}': {tool_error}"
                 logger.error("handle_function_call raised for %s: %s", function_name, tool_error, exc_info=True)
             tool_duration = time.time() - tool_start_time
-
         if isinstance(function_result, str):
             result_preview = function_result if agent.verbose_logging else (
                 function_result[:200] if len(function_result) > 200 else function_result

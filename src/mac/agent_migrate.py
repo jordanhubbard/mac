@@ -1,7 +1,7 @@
 """First-class agent migration: move an agent (soul + memory) between hosts.
 
 Codifies the manual playbook for relocating a fleet agent — e.g. moving
-``hostd`` from a macOS host to a Linux host:
+``bullwinkle`` from a macOS host to a Linux host:
 
   1. back up the soul from the source host (selective: memory/state IN; host
      cruft, host-specific runtime config, and deploy-managed skills OUT),

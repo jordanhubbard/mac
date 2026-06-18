@@ -38,10 +38,10 @@ def test_tar_exclude_args_format():
 def _registry():
     return {
         "fleets": {
-            "hosta": {
+            "rocky": {
                 "agents": [
-                    {"name": "hosta", "target": "devuser@hosta", "os": "linux"},
-                    {"name": "hostd", "target": "devuser@hostc", "os": "darwin"},
+                    {"name": "rocky", "target": "jkh@do-host1", "os": "linux"},
+                    {"name": "bullwinkle", "target": "jkh@puck.local", "os": "darwin"},
                 ]
             }
         }
@@ -50,21 +50,21 @@ def _registry():
 
 def test_retarget_updates_target_and_os_and_returns_old():
     reg = _registry()
-    old = am.retarget_fleet_agent(reg, "hosta", "hostd", target="devuser@hostd", os="linux")
-    assert old == ("devuser@hostc", "darwin")
-    bw = [a for a in reg["fleets"]["hosta"]["agents"] if a["name"] == "hostd"][0]
-    assert bw["target"] == "devuser@hostd"
+    old = am.retarget_fleet_agent(reg, "rocky", "bullwinkle", target="jkh@madmax.local", os="linux")
+    assert old == ("jkh@puck.local", "darwin")
+    bw = [a for a in reg["fleets"]["rocky"]["agents"] if a["name"] == "bullwinkle"][0]
+    assert bw["target"] == "jkh@madmax.local"
     assert bw["os"] == "linux"
 
 
 def test_retarget_missing_agent_raises():
     with pytest.raises(KeyError):
-        am.retarget_fleet_agent(_registry(), "hosta", "ghost", target="devuser@x")
+        am.retarget_fleet_agent(_registry(), "rocky", "ghost", target="jkh@x")
 
 
 def test_retarget_missing_fleet_raises():
     with pytest.raises(KeyError):
-        am.retarget_fleet_agent(_registry(), "nope", "hostd", target="devuser@x")
+        am.retarget_fleet_agent(_registry(), "nope", "bullwinkle", target="jkh@x")
 
 
 # --- migration_plan ---------------------------------------------------------
@@ -72,7 +72,7 @@ def test_retarget_missing_fleet_raises():
 
 def test_plan_is_ordered_and_soul_safe():
     steps = am.migration_plan(
-        "hostd", src_target="devuser@hostc", dst_target="devuser@hostd", fleet="hosta"
+        "bullwinkle", src_target="jkh@puck.local", dst_target="jkh@madmax.local", fleet="rocky"
     )
     order = [s for s, _ in steps]
     # backup must precede transfer/deploy; restore must come AFTER deploy
@@ -85,22 +85,22 @@ def test_plan_is_ordered_and_soul_safe():
 
 def test_plan_keep_source_skips_decommission():
     steps = am.migration_plan(
-        "x", src_target="a@b", dst_target="a@c", fleet="hosta", keep_source=True
+        "x", src_target="a@b", dst_target="a@c", fleet="rocky", keep_source=True
     )
     assert "decommission-source" not in [s for s, _ in steps]
 
 
 def test_plan_retire_source_agent_appends_delete():
     steps = am.migration_plan(
-        "x", src_target="a@b", dst_target="a@c", fleet="hosta", retire_source_agent="agent_stale"
+        "x", src_target="a@b", dst_target="a@c", fleet="rocky", retire_source_agent="agent_madmax"
     )
     cmds = dict(steps)
     assert "retire-source-agent" in cmds
-    assert "mac agent delete agent_stale" in cmds["retire-source-agent"]
+    assert "mac agent delete agent_madmax" in cmds["retire-source-agent"]
 
 
 def test_plan_backup_excludes_host_config():
-    steps = dict(am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="hosta"))
+    steps = dict(am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky"))
     assert "--exclude=.hermes/config.yaml" in steps["backup-soul"]
     assert "--exclude=.hermes/.env" in steps["backup-soul"]
 
@@ -109,7 +109,7 @@ def test_plan_backup_excludes_host_config():
 
 
 def test_execute_runs_steps_in_order_and_skips_retarget_marker():
-    steps = am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="hosta")
+    steps = am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky")
     ran = []
     res = am.execute_migration("x", steps, runner=lambda cmd: ran.append(cmd) or 0)
     assert res["ok"] is True
@@ -119,7 +119,7 @@ def test_execute_runs_steps_in_order_and_skips_retarget_marker():
 
 
 def test_execute_stops_on_first_failure():
-    steps = am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="hosta")
+    steps = am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky")
 
     calls = {"n": 0}
 

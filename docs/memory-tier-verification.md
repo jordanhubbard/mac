@@ -6,7 +6,7 @@ This document captures the operational evidence that the system works
 end to end on a live fleet, not just in unit tests.
 
 **Date:** 2026-05-30
-**Hub:** hub (node1, Tailscale <mesh-ip>)
+**Hub:** hub (`<host>`, Tailscale `<mesh-ip>`)
 **Commits exercised:**
 `106abce` (mem-06 schema) →
 `898085e` (mem-07 writer) →
@@ -24,7 +24,7 @@ deselected.
 |---|---|---|
 | **Qdrant provisioning** | `WORKSPACE=… bash deploy/install-qdrant-service.sh` with `MAC_MEMORY_EMBEDDING_DIM=2048` | Both `mac_memory_medium` and `mac_memory_long` collections created at the right dim with HNSW indexes. |
 | **Embedding via TokenHub** | `MAC_MEMORY_EMBED_BACKEND=tokenhub MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2 mac memory backfill --limit 20` | 20/20 of the hub's real `memory_records` embedded into Qdrant with no failures. Vectors are 2048-dim from the real NVIDIA embedding model, not the hash stub. |
-| **Semantic recall (the actual test)** | `mac memory recall "github repository for the ACC project"` (paraphrased — no exact words match the stored content) | Top hit is the `repo-beads-acc` ACC project record at cosine score **0.4115**, with the next four hits all ACC-related task records at 0.36–0.37. The model successfully matched "github repository for ACC" → stored JSON about `<user>/ACC` without word-level overlap. |
+| **Semantic recall (the actual test)** | `mac memory recall "github repository for the ACC project"` (paraphrased — no exact words match the stored content) | Top hit is the `repo-beads-acc` ACC project record at cosine score **0.4115**, with the next four hits all ACC-related task records at 0.36–0.37. The model successfully matched "github repository for ACC" → stored JSON about `jordanhubbard/ACC` without word-level overlap. |
 | **Round-trip recall** (write → embed → search → retrieve) | `tests/test_vector_writer_service.py::test_embed_memory_round_trip_recall_finds_the_record` | Three memories written, embedded, queried by one memory's content → that memory ranks #1 with score > 0.99 in fake Qdrant; in unit form for CI. |
 | **Consolidator + recall** | `tests/test_nap_consolidator.py::test_consolidate_and_recall_end_to_end` | Two agents author distinct memory_records, consolidator produces one nap_summary per agent, both summaries embed into Qdrant, recall against one summary's content returns that summary as top hit. |
 | **Structured dream artifacts** | `tests/test_nap_consolidator.py::test_consolidate_writes_structured_dream_artifact_with_evidence` and `::test_dream_artifacts_embed_with_payload_filters_and_recall_rules` | Nap consolidation writes typed `mac.dream.v1` records with evidence/scope/confidence/retrieval metadata; vector payload filters can recall only matching dream artifacts by project, agent, scope, kind, and confidence. |

@@ -144,11 +144,11 @@ def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path):
     machine = client.post("/machines", json={"hostname": "host-e2e"}).json()
     worker = client.post(
         "/agents",
-        json={"machine_id": machine["id"], "name": "hosta", "capabilities": ["python"]},
+        json={"machine_id": machine["id"], "name": "rocky", "capabilities": ["python"]},
     ).json()
     reviewer = client.post(
         "/agents",
-        json={"machine_id": machine["id"], "name": "hostc", "capabilities": ["review"]},
+        json={"machine_id": machine["id"], "name": "natasha", "capabilities": ["review"]},
     ).json()
     task = client.post(
         "/tasks",
@@ -239,7 +239,7 @@ def test_e2e_chatter_evidence_fails_closed(tmp_path: Path):
     machine = client.post("/machines", json={"hostname": "host-fc"}).json()
     worker = client.post(
         "/agents",
-        json={"machine_id": machine["id"], "name": "hosta", "capabilities": ["python"]},
+        json={"machine_id": machine["id"], "name": "rocky", "capabilities": ["python"]},
     ).json()
     api = MacApiClient("http://mac.test", transport=_api_transport(client))
 
@@ -289,11 +289,11 @@ def test_e2e_two_workers_race_for_one_task_serializes(tmp_path: Path):
     m2 = client.post("/machines", json={"hostname": "host-b"}).json()
     a1 = client.post(
         "/agents",
-        json={"machine_id": m1["id"], "name": "hosta", "capabilities": ["python"]},
+        json={"machine_id": m1["id"], "name": "rocky", "capabilities": ["python"]},
     ).json()
     a2 = client.post(
         "/agents",
-        json={"machine_id": m2["id"], "name": "hostc", "capabilities": ["python"]},
+        json={"machine_id": m2["id"], "name": "natasha", "capabilities": ["python"]},
     ).json()
     # Reviewer is now a required role (mac-s1a) — register a separate
     # agent that can do the review work for the auto-publish path.

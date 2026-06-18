@@ -22,7 +22,7 @@ def _seed(cp):
 def test_sync_claims_eligible_ops_up_to_capacity():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=2)
+    a = _gpu_agent(cp, "natasha", capacity=2)
     res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts", "video.generate"])
     assert res["capacity"] == 2
     assert len(res["held"]) == 2  # capacity-bounded
@@ -32,8 +32,8 @@ def test_sync_claims_eligible_ops_up_to_capacity():
 def test_pool_spreads_across_hosts():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=2)
-    b = _gpu_agent(cp, "hostb", capacity=2)
+    a = _gpu_agent(cp, "natasha", capacity=2)
+    b = _gpu_agent(cp, "madmax", capacity=2)
     willing = ["image.generate", "audio.tts", "audio.music", "video.generate"]
     held_a = set(cp.sync_agent_service_claims(a.id, willing)["held"])
     held_b = set(cp.sync_agent_service_claims(b.id, willing)["held"])
@@ -45,9 +45,9 @@ def test_pool_spreads_across_hosts():
 def test_cpu_agent_is_ineligible():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    m = cp.register_machine("hosta-host", resources={})
+    m = cp.register_machine("rocky-host", resources={})
     a = cp.register_agent(
-        m.id, "hosta", capabilities=["python"],
+        m.id, "rocky", capabilities=["python"],
         resources={"hardware": {"accelerator": "none"}, "capacity": 5},
     )
     res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
@@ -69,7 +69,7 @@ def test_under_vram_hardware_is_ineligible():
 def test_release_on_unwilling_then_renew():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=5)
+    a = _gpu_agent(cp, "natasha", capacity=5)
     cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
     assert set(cp.service_roles.held_ops_for_agent(a.id)) == {"image.generate", "audio.tts"}
     cp.sync_agent_service_claims(a.id, ["image.generate"])  # drop audio.tts
@@ -79,7 +79,7 @@ def test_release_on_unwilling_then_renew():
 def test_expire_reopens_and_reconcile_signals_zero_holders():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=5)
+    a = _gpu_agent(cp, "natasha", capacity=5)
     cp.sync_agent_service_claims(a.id, ["image.generate"])
     role = cp.service_roles.get_role_by_slug("media:image.generate")
     # renew into the past, then sweep with no grace -> expired, slot reopens
@@ -94,7 +94,7 @@ def test_expire_reopens_and_reconcile_signals_zero_holders():
 def test_one_agent_cannot_double_hold_an_op():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=5)
+    a = _gpu_agent(cp, "natasha", capacity=5)
     role = cp.service_roles.get_role_by_slug("media:image.generate")
     c1 = cp.service_roles.claim_service(role.id, a.id)
     c2 = cp.service_roles.claim_service(role.id, a.id)  # same agent+op -> renew, not duplicate
@@ -114,7 +114,7 @@ def test_reconcile_auto_seeds_from_env_and_signals_zero_holders(monkeypatch):
 def test_offline_holder_is_reaped_by_reconcile():
     cp = ControlPlane.in_memory()
     _seed(cp)
-    a = _gpu_agent(cp, "hostc", capacity=5)
+    a = _gpu_agent(cp, "natasha", capacity=5)
     cp.sync_agent_service_claims(a.id, ["image.generate"])
     assert cp.service_roles.held_ops_for_agent(a.id) == ["image.generate"]
     cp.heartbeat_agent(a.id, status="offline")  # agent goes offline -> claims expired
@@ -126,7 +126,7 @@ def test_sync_auto_seeds_roles_from_env(monkeypatch):
     (no /dispatch/tick needed) and then claims them."""
     cp = ControlPlane.in_memory()  # no explicit _seed
     monkeypatch.setenv("MAC_SERVICE_ROLE_OPS", "image.generate, audio.tts")
-    a = _gpu_agent(cp, "hostc", capacity=5)
+    a = _gpu_agent(cp, "natasha", capacity=5)
     res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
     assert set(res["held"]) == {"image.generate", "audio.tts"}
     assert {r.op for r in cp.service_roles.desired_services()} >= {"image.generate", "audio.tts"}

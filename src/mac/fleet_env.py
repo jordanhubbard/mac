@@ -10,7 +10,7 @@ This module gives every fleet-bound credential a scoped form:
     MAC_API_TOKEN__<FLEET>
 
 where ``<FLEET>`` is the fleet name uppercased with non-alphanumeric
-chars replaced by ``_`` (e.g. ``MAC_API_TOKEN__DEVUSER_HUB``).
+chars replaced by ``_`` (e.g. ``MAC_API_TOKEN__JORDANH_HUB``).
 
 Readers should call :func:`resolve` with ``fleet`` set to the active
 fleet (CLI ``--fleet``, ``MAC_FLEET`` env, or hub-derived). When the
@@ -48,10 +48,10 @@ FLEET_SCOPED_VARS = frozenset(
 def _normalize_fleet(fleet: str) -> str:
     """Map a fleet name to its env-var suffix form.
 
-    >>> _normalize_fleet("devuser-hub")
-    'DEVUSER_HUB'
-    >>> _normalize_fleet("hosta")
-    'HOSTA'
+    >>> _normalize_fleet("jordanh-hub")
+    'JORDANH_HUB'
+    >>> _normalize_fleet("rocky")
+    'ROCKY'
     """
     cleaned = re.sub(r"[^A-Za-z0-9]+", "_", fleet.strip()).strip("_").upper()
     if not cleaned:

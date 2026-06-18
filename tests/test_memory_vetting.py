@@ -13,26 +13,26 @@ def _fake_scroll(store):
 def test_export_flattens_and_keeps_id_collection():
     store = {
         "mac_memory_medium": [
-            {"id": 1, "payload": {"agent_id": "hostc", "summary": "knows Boris", "tier": "medium"}},
-            {"id": 2, "payload": {"agent_id": "hosta", "summary": "ships connectors"}},
+            {"id": 1, "payload": {"agent_id": "natasha", "summary": "knows Boris", "tier": "medium"}},
+            {"id": 2, "payload": {"agent_id": "rocky", "summary": "ships connectors"}},
         ],
         "mac_memory_long": [
-            {"id": 9, "payload": {"agent_id": "hostc", "summary": "DGX Spark host"}},
+            {"id": 9, "payload": {"agent_id": "natasha", "summary": "DGX Spark host"}},
         ],
     }
     recs = mv.export_memory_records(_fake_scroll(store), ["mac_memory_medium", "mac_memory_long"])
     assert len(recs) == 3
     r0 = next(r for r in recs if r["id"] == 1)
     assert r0["collection"] == "mac_memory_medium"
-    assert r0["agent_id"] == "hostc" and r0["summary"] == "knows Boris"
+    assert r0["agent_id"] == "natasha" and r0["summary"] == "knows Boris"
 
 
 def test_export_filters_by_agent():
     store = {"mac_memory_medium": [
-        {"id": 1, "payload": {"agent_id": "hostc", "summary": "a"}},
-        {"id": 2, "payload": {"agent_id": "hosta", "summary": "b"}},
+        {"id": 1, "payload": {"agent_id": "natasha", "summary": "a"}},
+        {"id": 2, "payload": {"agent_id": "rocky", "summary": "b"}},
     ]}
-    recs = mv.export_memory_records(_fake_scroll(store), ["mac_memory_medium"], agent_id="hostc")
+    recs = mv.export_memory_records(_fake_scroll(store), ["mac_memory_medium"], agent_id="natasha")
     assert [r["id"] for r in recs] == [1]
 
 

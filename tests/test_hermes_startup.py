@@ -249,7 +249,7 @@ def test_spoke_router_v1_not_mistaken_for_tokenhub(monkeypatch):
     for var in ("TOKENHUB_URL", "MAC_TOKENHUB_URL", "MAC_ROUTER_BACKEND",
                 "MAC_REQUIRE_TOKENHUB", "CUSTOM_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("OPENAI_BASE_URL", "http://100.64.1.1:8789/v1")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://100.125.137.89:8789/v1")
     assert hermes_startup._tokenhub_endpoint_from_env() == (None, None)
 
     def _boom(*a, **k):
@@ -531,13 +531,13 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     _prepare_direct_session_tools(monkeypatch, mac_home, workspace)
     _configure_mandatory_shared_services(monkeypatch, hermes_home)
     context = build_runtime_context(
-        agent_name="hosta",
+        agent_name="rocky",
         fleet_name="classic",
         mac_url="http://secret@hub.example.internal:8789?token=hidden",
         hermes_home=hermes_home,
         mac_home=mac_home,
-        hermes_instance_id="hermes_hosta",
-        agent_id="agent_hosta",
+        hermes_instance_id="hermes_rocky",
+        agent_id="agent_rocky",
         workspace_path=workspace,
     )
     _write(context_path, json.dumps(context))
@@ -561,8 +561,8 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     assert report["task_project_runtime"]["authority"]["projects"] == "mac"
     assert report["task_project_runtime"]["authority"]["agents"] == "mac"
     assert report["task_project_runtime"]["authority"]["fleets"] == "mac"
-    assert report["task_project_runtime"]["hermes_instance_id"] == "hermes_hosta"
-    assert report["task_project_runtime"]["agent_id"] == "agent_hosta"
+    assert report["task_project_runtime"]["hermes_instance_id"] == "hermes_rocky"
+    assert report["task_project_runtime"]["agent_id"] == "agent_rocky"
     assert report["task_project_runtime"]["mac_url"] == "http://hub.example.internal:8789"
     assert report["task_project_runtime"]["workspace"]["path"] == str(workspace)
     assert report["task_project_runtime"]["workspace"]["project_contract"]["project"] == "repo-beads-mac"
@@ -653,13 +653,13 @@ def test_required_task_project_runtime_context_blocks_when_session_tools_missing
         ),
     )
     context = build_runtime_context(
-        agent_name="hosta",
+        agent_name="rocky",
         fleet_name="classic",
         mac_url="http://hub.example.internal:8789",
         hermes_home=hermes_home,
         mac_home=tmp_path / ".mac",
-        hermes_instance_id="hermes_hosta",
-        agent_id="agent_hosta",
+        hermes_instance_id="hermes_rocky",
+        agent_id="agent_rocky",
         workspace_path=workspace,
     )
     _write(context_path, json.dumps(context))
@@ -717,13 +717,13 @@ def test_required_task_project_runtime_context_blocks_when_markdown_contract_mis
     )
     _prepare_direct_session_tools(monkeypatch, mac_home, workspace)
     context = build_runtime_context(
-        agent_name="hosta",
+        agent_name="rocky",
         fleet_name="classic",
         mac_url="http://hub.example.internal:8789",
         hermes_home=hermes_home,
         mac_home=mac_home,
-        hermes_instance_id="hermes_hosta",
-        agent_id="agent_hosta",
+        hermes_instance_id="hermes_rocky",
+        agent_id="agent_rocky",
         workspace_path=workspace,
     )
     _write(context_path, json.dumps(context))
@@ -784,13 +784,13 @@ def test_required_task_project_runtime_context_blocks_when_object_model_missing(
     _write(hermes_home / "MEMORY.md", "memory")
     _write(hermes_home / "state.db", "state")
     context = build_runtime_context(
-        agent_name="hosta",
+        agent_name="rocky",
         fleet_name="classic",
         mac_url="http://hub.example.internal:8789",
         hermes_home=hermes_home,
         mac_home=tmp_path / ".mac",
-        hermes_instance_id="hermes_hosta",
-        agent_id="agent_hosta",
+        hermes_instance_id="hermes_rocky",
+        agent_id="agent_rocky",
     )
     context.pop("first_class_objects")
     _write(context_path, json.dumps(context))
@@ -830,13 +830,13 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
         context_path,
         json.dumps(
             build_runtime_context(
-                agent_name="hosta",
+                agent_name="rocky",
                 fleet_name="classic",
                 mac_url="http://hub.example.internal:8789",
                 hermes_home=hermes_home,
                 mac_home=tmp_path / ".mac",
-                hermes_instance_id="hermes_hosta",
-                agent_id="agent_hosta",
+                hermes_instance_id="hermes_rocky",
+                agent_id="agent_rocky",
             )
         ),
     )

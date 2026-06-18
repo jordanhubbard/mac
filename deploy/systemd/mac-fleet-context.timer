@@ -1,6 +1,6 @@
 [Unit]
 Description=Periodic refresh of the live fleet view in each agent's runtime context
-Documentation=https://github.com/devuser/mac
+Documentation=https://github.com/jordanh/mac
 
 [Timer]
 # Refresh every 3 minutes so a session started at any time sees a recent view

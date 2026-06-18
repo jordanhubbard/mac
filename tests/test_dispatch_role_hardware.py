@@ -30,7 +30,7 @@ def _machine(cp, *, hostname="host-x", hardware=None):
 
 def test_un_roled_dispatch_unaffected_by_role_check(cp):
     machine = _machine(cp)
-    agent = cp.register_agent(machine.id, "hosta", capabilities=["python"])
+    agent = cp.register_agent(machine.id, "rocky", capabilities=["python"])
     task = cp.create_task("plain", required_capabilities=["python"])
     assignment = cp.dispatch_once(lease_seconds=300)
     assert assignment is not None
@@ -40,7 +40,7 @@ def test_un_roled_dispatch_unaffected_by_role_check(cp):
 
 def test_agent_without_required_role_is_ineligible(cp):
     machine = _machine(cp)
-    cp.register_agent(machine.id, "hosta", capabilities=["python", "review"])
+    cp.register_agent(machine.id, "rocky", capabilities=["python", "review"])
     cp.create_task(
         "needs-reviewer",
         required_capabilities=["python"],
@@ -64,7 +64,7 @@ def test_agent_with_required_role_matches(cp):
         cp, persona_name="Reviewer Soul", allowed_role_slugs=["code-reviewer"]
     )
     agent = cp.register_agent(
-        machine.id, "hosta", capabilities=["python"], hermes_instance_id=soul
+        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
     )
     cp.roles.assign_role(agent.id, "code-reviewer")
     task = cp.create_task(
@@ -93,7 +93,7 @@ def test_role_required_capabilities_stack_onto_task_set(cp):
     machine = _machine(cp)
     soul = bind_soul(cp, persona_name="Ops Soul", allowed_role_slugs=["ops"])
     agent = cp.register_agent(
-        machine.id, "hosta", capabilities=["python"], hermes_instance_id=soul
+        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
     )
     cp.roles.assign_role(agent.id, "ops")
     cp.create_task("py-task", required_capabilities=["python"])
@@ -102,7 +102,7 @@ def test_role_required_capabilities_stack_onto_task_set(cp):
     # Re-register adding `sudo` to the agent's capability set.
     cp.register_agent(
         machine.id,
-        "hosta",
+        "rocky",
         capabilities=["python", "sudo"],
         agent_id=agent.id,
         hermes_instance_id=soul,

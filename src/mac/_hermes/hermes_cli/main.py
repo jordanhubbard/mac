@@ -8761,7 +8761,7 @@ def _ensure_fhs_path_guard() -> None:
     """Ensure /usr/local/bin is on PATH for RHEL-family root non-login shells.
 
     Mirrors the post-symlink probe added to ``scripts/install.sh`` so that
-    existing FHS-layout root installs on RHEL/CentOS/Hosta/Alma 8+ get
+    existing FHS-layout root installs on RHEL/CentOS/Rocky/Alma 8+ get
     repaired on ``hermes update`` without requiring a reinstall.  The
     installer's assumption that ``/usr/local/bin`` is on PATH for every
     standard shell breaks on those distros in non-login interactive shells

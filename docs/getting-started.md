@@ -52,7 +52,7 @@ Think of MAC as a project office for AI workers:
 - Tenant: an isolated organization or personal deployment.
 - User: a human identity inside a tenant.
 - Persona: a Hermes personality and memory scope.
-- Hermes instance: a running named Hermes identity, such as `hub`.
+- Hermes instance: a running named Hermes identity, such as `worker-1`.
 - Platform binding: a Slack channel, Telegram chat, Discord channel, or similar
   place where Hermes talks to humans.
 - Fleet: a set of MAC machines and agents managed together.
@@ -245,27 +245,27 @@ sample-config mistakes, and the exact next commands.
 For a new hub:
 
 ```bash
-make deploy ARGS="--new-hub dev --target dev@20.115.163.162:2201"
+make deploy ARGS="--new-hub horde --target horde@20.115.163.162:2201"
 ```
 
 Use `--ssh-port 2201` instead of an inline `:2201` when the target is an SSH
 alias or otherwise contains a colon:
 
 ```bash
-make deploy ARGS="--new-hub dev --target dev@20.115.163.162 --ssh-port 2201"
+make deploy ARGS="--new-hub horde --target horde@20.115.163.162 --ssh-port 2201"
 ```
 
 Re-run deployment for an existing hub:
 
 ```bash
-make deploy HUB=dev
+make deploy HUB=horde
 ```
 
 The Make targets pick a Python 3.11+ `.venv/bin/python`, `python3.11`, `python3`, or `python` automatically:
 
 ```bash
 make setup
-make deploy HUB=dev
+make deploy HUB=horde
 ```
 
 MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. TokenHub,

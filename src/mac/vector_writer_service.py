@@ -200,7 +200,7 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
     """Build an embed_fn from environment variables. Returns None when
     nothing is configured (callers then fall back to the hash stub).
 
-    Recognized env vars (TokenHub on the hosta fleet ships these
+    Recognized env vars (TokenHub on the rocky fleet ships these
     pre-set in /etc/mac/mac.env):
 
       MAC_MEMORY_EMBED_BACKEND   = auto | tokenhub | hash (default: auto)
@@ -212,7 +212,7 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
         tokenhub: require the real embedder (raise if unconfigured).
         hash:     force the deterministic offline stub (non-semantic).
       MAC_MEMORY_EMBED_MODEL     = e.g. nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
-      MAC_MEMORY_EMBED_BASE_URL  = e.g. http://100.64.1.1:8090/v1
+      MAC_MEMORY_EMBED_BASE_URL  = e.g. http://100.125.137.89:8090/v1
                                     (falls back to OPENAI_BASE_URL)
       MAC_MEMORY_EMBED_API_KEY   = bearer token
                                     (falls back to OPENAI_API_KEY)
