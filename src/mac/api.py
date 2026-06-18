@@ -57,6 +57,29 @@ from mac.store import SQLiteStore, StoreError, make_store_from_env
 _log = logging.getLogger(__name__)
 
 
+def _configured_qdrant_url(explicit: Optional[str] = None) -> Optional[str]:
+    if explicit:
+        return explicit
+    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+def _vector_writer_for_memory(
+    cp: ControlPlane, *, enabled: bool, qdrant_url: Optional[str]
+) -> Optional[Any]:
+    if not enabled:
+        return None
+    resolved = _configured_qdrant_url(qdrant_url)
+    if not resolved:
+        return None
+    from mac.vector_writer_service import VectorWriterService
+
+    return VectorWriterService(memory=cp.memory, qdrant_url=resolved)
+
+
 @dataclass(frozen=True)
 class TokenPrincipal:
     """Authenticated bearer principal.
@@ -1034,6 +1057,22 @@ class NapFail(BaseModel):
     actor: Optional[str] = None
 
 
+class NapCycle(BaseModel):
+    actor: Optional[str] = None
+    embed_into_medium: bool = True
+    emit_dream_artifacts: bool = True
+    qdrant_url: Optional[str] = None
+
+
+class NapConsolidate(BaseModel):
+    since: Optional[str] = None
+    nap_run_id: Optional[str] = None
+    embed_into_medium: bool = True
+    emit_dream_artifacts: bool = True
+    created_by: Optional[str] = None
+    qdrant_url: Optional[str] = None
+
+
 class ConversationThreadTrack(BaseModel):
     platform_binding_id: str
     external_thread_id: str
@@ -1135,6 +1174,13 @@ class MemoryCreate(BaseModel):
     content: str
     evidence_id: Optional[str] = None
     created_by: str
+
+
+class MemoryRemember(BaseModel):
+    key: str
+    content: str
+    project: Optional[str] = None
+    actor: Optional[str] = None
 
 
 class RolloutCreate(BaseModel):
@@ -4578,6 +4624,10 @@ def create_app(
     def list_nap_schedules() -> List[Dict[str, Any]]:
         return [schedule.to_dict() for schedule in cp.list_nap_schedules()]
 
+    @app.get("/nap-due")
+    def list_due_nap_agents(as_of: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return cp.list_due_nap_agents(as_of=as_of)
+
     @app.post("/agents/{agent_id}/nap-runs")
     def begin_nap(agent_id: str, body: NapBegin) -> Dict[str, Any]:
         return cp.begin_nap(agent_id, **_data(body)).to_dict()
@@ -4597,6 +4647,38 @@ def create_app(
     @app.post("/nap-runs/{run_id}/fail")
     def fail_nap(run_id: str, body: NapFail) -> Dict[str, Any]:
         return cp.fail_nap(run_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/nap-cycle")
+    def run_nap_cycle(agent_id: str, body: NapCycle) -> Dict[str, Any]:
+        vector_writer = _vector_writer_for_memory(
+            cp,
+            enabled=body.embed_into_medium,
+            qdrant_url=body.qdrant_url,
+        )
+        return cp.run_nap_cycle(
+            agent_id,
+            actor=body.actor,
+            vector_writer=vector_writer,
+            embed_into_medium=body.embed_into_medium,
+            emit_dream_artifacts=body.emit_dream_artifacts,
+        )
+
+    @app.post("/agents/{agent_id}/nap-consolidate")
+    def consolidate_nap(agent_id: str, body: NapConsolidate) -> Dict[str, Any]:
+        vector_writer = _vector_writer_for_memory(
+            cp,
+            enabled=body.embed_into_medium,
+            qdrant_url=body.qdrant_url,
+        )
+        return cp.consolidate_nap(
+            agent_id,
+            since=body.since,
+            nap_run_id=body.nap_run_id,
+            embed_into_medium=body.embed_into_medium,
+            emit_dream_artifacts=body.emit_dream_artifacts,
+            vector_writer=vector_writer,
+            created_by=body.created_by,
+        )
 
     @app.post("/agents/{agent_id}/heartbeat")
     def heartbeat_agent(
@@ -5814,6 +5896,18 @@ def create_app(
         subject_id: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
+
+    @app.post("/memory/remembered")
+    def remember_memory(body: MemoryRemember) -> Dict[str, Any]:
+        return cp.remember_memory(**_data(body)).to_dict()
+
+    @app.get("/memory/remembered")
+    def list_remembered_memory(project: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return cp.list_remembered_memory(project=project)
+
+    @app.delete("/memory/remembered/{key}")
+    def forget_memory(key: str, project: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+        return cp.forget_memory(key, project=project)
 
     # mem-10: memory-tier health snapshot for operators + future alerter.
     @app.get("/v1/memory/health")

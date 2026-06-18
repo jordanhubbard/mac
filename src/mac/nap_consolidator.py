@@ -375,10 +375,43 @@ class NapConsolidatorService:
     def _records_for_agent_since(
         self, agent_id: str, since: str
     ) -> List[MemoryRecord]:
-        """Memory records the agent authored after `since`, excluding
-        prior nap_summary rows (don't summarize summaries)."""
-        clauses = ["created_by = ?", "record_type != ?", "record_type NOT LIKE ?"]
-        params: List[Any] = [agent_id, "nap_summary", "%s:%%" % DREAM_RECORD_PREFIX]
+        """Memory records the agent touched after `since`, excluding
+        prior nap_summary rows (don't summarize summaries).
+
+        Deployment-learning and other hub-side writers often attach
+        records to the task while using their own service actor as
+        ``created_by``. Treat task ownership/history as the agent
+        relationship so those records feed the owning agent's nap
+        without making every ambient project record visible to every
+        agent.
+        """
+        clauses = [
+            """
+            (
+                created_by = ?
+                OR (
+                    task_id IS NOT NULL
+                    AND (
+                        task_id IN (
+                            SELECT id FROM tasks WHERE owner_agent_id = ?
+                        )
+                        OR task_id IN (
+                            SELECT task_id FROM task_history WHERE actor = ?
+                        )
+                    )
+                )
+            )
+            """,
+            "record_type != ?",
+            "record_type NOT LIKE ?",
+        ]
+        params: List[Any] = [
+            agent_id,
+            agent_id,
+            agent_id,
+            "nap_summary",
+            "%s:%%" % DREAM_RECORD_PREFIX,
+        ]
         if since:
             clauses.append("created_at > ?")
             params.append(since)

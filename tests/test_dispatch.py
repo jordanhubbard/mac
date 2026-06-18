@@ -325,6 +325,133 @@ def test_remote_dispatch_read_agentbus_chunks_passes_agent_id():
     assert "limit=5" in url
 
 
+def test_remote_dispatch_memory_wrappers_hit_hub_paths():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/memory"): {"id": "mem_1"},
+            ("GET", "/memory"): [{"id": "mem_2"}],
+            ("POST", "/memory/remembered"): {"id": "mem_key"},
+            ("GET", "/memory/remembered"): [{"key": "k"}],
+            ("DELETE", "/memory/remembered/k"): {"deleted": 1, "key": "k", "project": "mac"},
+            ("GET", "/v1/memory/dreams/recall"): [{"memory_id": "mem_dream"}],
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    created = disp.add_memory(
+        None,
+        "project",
+        "mac",
+        "deployment_learning:mac",
+        "learned thing",
+        None,
+        "deployment-learning",
+    )
+    found = disp.search_memory("task_1", "dream", "project:mac")
+    remembered = disp.remember_memory(
+        "k",
+        "remember this",
+        project="mac",
+        actor="operator",
+    )
+    listed = disp.list_remembered_memory(project="mac")
+    forgotten = disp.forget_memory("k", project="mac")
+    dreams = disp.recall_dream_artifacts(
+        "hub memories",
+        project="mac",
+        agent_id="agent_rocky",
+        scope="project",
+        kind="knowledge_snippet",
+        min_confidence="medium",
+        limit=7,
+    )
+
+    assert created.to_dict() == {"id": "mem_1"}
+    assert [item.to_dict() for item in found] == [{"id": "mem_2"}]
+    assert remembered.to_dict() == {"id": "mem_key"}
+    assert [item.to_dict() for item in listed] == [{"key": "k"}]
+    assert forgotten.to_dict() == {"deleted": 1, "key": "k", "project": "mac"}
+    assert [item.to_dict() for item in dreams] == [{"memory_id": "mem_dream"}]
+    post = fake.calls[0]
+    assert post[0] == "POST"
+    assert post[1] == "http://hub:8789/memory"
+    assert post[2]["record_type"] == "deployment_learning:mac"
+    memory_get = fake.calls[1][1]
+    assert "/memory" in memory_get
+    assert "task_id=task_1" in memory_get
+    assert "subject_type=dream" in memory_get
+    remember_post = fake.calls[2]
+    assert remember_post[1] == "http://hub:8789/memory/remembered"
+    assert remember_post[2] == {
+        "key": "k",
+        "content": "remember this",
+        "project": "mac",
+        "actor": "operator",
+    }
+    assert fake.calls[3][1] == "http://hub:8789/memory/remembered?project=mac"
+    assert fake.calls[4][1] == "http://hub:8789/memory/remembered/k?project=mac"
+    dream_get = fake.calls[5][1]
+    assert "/v1/memory/dreams/recall" in dream_get
+    assert "agent_id=agent_rocky" in dream_get
+    assert "min_confidence=medium" in dream_get
+    assert "limit=7" in dream_get
+
+
+def test_remote_dispatch_nap_wrappers_hit_hub_paths():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/nap-due"): [{"agent_id": "agent_rocky"}],
+            ("POST", "/agents/agent_rocky/nap-cycle"): {"cycled": True},
+            ("POST", "/agents/agent_rocky/nap-consolidate"): {"summaries_written": 1},
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    due = disp.list_due_nap_agents(as_of="2026-06-18T00:00:00Z")
+    cycle = disp.run_nap_cycle(
+        "agent_rocky",
+        actor="operator",
+        embed_into_medium=True,
+        emit_dream_artifacts=False,
+        qdrant_url="http://qdrant:6333",
+    )
+    consolidated = disp.consolidate_nap(
+        "agent_rocky",
+        since="2026-06-17T00:00:00Z",
+        nap_run_id="nap_1",
+        embed_into_medium=False,
+        emit_dream_artifacts=True,
+        created_by="operator",
+        qdrant_url="http://qdrant:6333",
+    )
+
+    assert [item.to_dict() for item in due] == [{"agent_id": "agent_rocky"}]
+    assert cycle.to_dict() == {"cycled": True}
+    assert consolidated.to_dict() == {"summaries_written": 1}
+    assert fake.calls[0][0] == "GET"
+    assert "as_of=2026-06-18T00%3A00%3A00Z" in fake.calls[0][1]
+    assert fake.calls[1][2] == {
+        "actor": "operator",
+        "embed_into_medium": True,
+        "emit_dream_artifacts": False,
+        "qdrant_url": "http://qdrant:6333",
+    }
+    assert fake.calls[2][2] == {
+        "since": "2026-06-17T00:00:00Z",
+        "nap_run_id": "nap_1",
+        "embed_into_medium": False,
+        "emit_dream_artifacts": True,
+        "created_by": "operator",
+        "qdrant_url": "http://qdrant:6333",
+    }
+    with pytest.raises(DispatchError, match="vector writer"):
+        disp.run_nap_cycle("agent_rocky", vector_writer=object())
+
+
 def test_remote_dispatch_create_task_via_cli(monkeypatch):
     """End-to-end: `mac --hub-url ... task create` posts to /tasks."""
     import io
@@ -475,6 +602,107 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
     # cli.cmd_task_claim builds {"task": ..., "lease_id": lease.id if lease else None}
     assert body["task"]["id"] == "task_xyz"
     assert body["lease_id"] == "lease_42"
+
+
+def test_remote_dispatch_nap_cycle_via_cli_uses_hub_writer(monkeypatch):
+    import json as _json
+
+    from mac.cli import main
+    from mac.http_client import HubClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.setattr(
+        "mac.cli._build_vector_writer",
+        lambda _args: (_ for _ in ()).throw(AssertionError("built local writer")),
+    )
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/agents/agent_rocky/nap-cycle"): {
+                "nap_run": {"agent_id": "agent_rocky"},
+                "consolidation": {"summaries_written": 1},
+            }
+        }
+    )
+    orig_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "nap",
+                "cycle",
+                "agent_rocky",
+                "--qdrant-url",
+                "http://qdrant:6333",
+            ]
+        )
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    assert _json.loads(out.getvalue())["nap_run"]["agent_id"] == "agent_rocky"
+    method, url, payload, _token = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://hub.example:8789/agents/agent_rocky/nap-cycle"
+    assert payload["embed_into_medium"] is True
+    assert payload["emit_dream_artifacts"] is True
+    assert payload["qdrant_url"] == "http://qdrant:6333"
+
+
+def test_remote_dispatch_memory_list_via_cli_uses_hub(monkeypatch):
+    import json as _json
+
+    from mac.cli import main
+    from mac.http_client import HubClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+    fake = _FakeTransport(
+        response_for={("GET", "/memory/remembered"): [{"key": "k", "content": "v"}]}
+    )
+    orig_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "memory",
+                "list",
+                "--project",
+                "mac",
+            ]
+        )
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    assert _json.loads(out.getvalue()) == [{"key": "k", "content": "v"}]
+    method, url, _payload, _token = fake.calls[0]
+    assert method == "GET"
+    assert url == "http://hub.example:8789/memory/remembered?project=mac"
 
 
 def test_remote_dispatch_task_close_uses_api_transition_shape(monkeypatch):

@@ -889,6 +889,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agents/{agent_id}/nap-schedule/next"): {"agent_id": "nap_agent_id"},
         ("POST", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
         ("PUT", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
+        ("POST", "/agents/{agent_id}/nap-cycle"): {"agent_id": "nap_agent_id"},
+        ("POST", "/agents/{agent_id}/nap-consolidate"): {"agent_id": "nap_agent_id"},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {"agent_id": "agent_id"},
         ("GET", "/nap-runs/{run_id}"): {"run_id": "nap_run_id"},
         ("POST", "/nap-runs/{run_id}/complete"): {"run_id": "nap_run_id"},
@@ -919,6 +921,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "eval_set_id": ctx["eval_set_id"],
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
+        "key": "route-memory-key",
         "lease_id": ctx["lease_id"],
         "name": ctx["secret_name"],
         "notification_id": ctx["notification_id"],
@@ -1256,6 +1259,16 @@ edges:
         ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},
         ("POST", "/nap-runs/{run_id}/complete"): {"actor": "operator", "detail": {"summary": "rested"}},
         ("POST", "/nap-runs/{run_id}/fail"): {"actor": "operator", "reason": "route coverage failure case"},
+        ("POST", "/agents/{agent_id}/nap-cycle"): {
+            "actor": "operator",
+            "embed_into_medium": False,
+            "emit_dream_artifacts": True,
+        },
+        ("POST", "/agents/{agent_id}/nap-consolidate"): {
+            "embed_into_medium": False,
+            "emit_dream_artifacts": True,
+            "created_by": "operator",
+        },
         ("POST", "/agents/{agent_id}/heartbeat"): {
             "status": "idle",
             "health_status": "healthy",
@@ -1327,6 +1340,12 @@ edges:
             "layer": "test",
             "source": "route-coverage",
             "detail": {"ok": True},
+        },
+        ("POST", "/memory/remembered"): {
+            "key": "route-memory-key",
+            "content": "route remembered memory content",
+            "project": "mac",
+            "actor": "operator",
         },
         ("POST", "/memory/summarize-actions"): {
             "agent_id": ctx["agent_id"],

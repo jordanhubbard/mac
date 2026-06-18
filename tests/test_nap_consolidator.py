@@ -161,6 +161,52 @@ def test_consolidate_writes_structured_dream_artifact_with_evidence(cp):
     assert {item["memory_id"] for item in artifact["evidence"]} == {first.id, second.id}
 
 
+def test_consolidate_includes_task_owned_records_from_service_actors(cp):
+    """Hub-side writers may use a service actor but still attach memory to
+    the task an agent owns. Those records must feed that agent's nap."""
+    machine = cp.register_machine("h1")
+    rocky = cp.register_agent(machine.id, "agent_rocky", capabilities=[])
+    natasha = cp.register_agent(machine.id, "agent_natasha", capabilities=[])
+    rocky_task = cp.create_task("Rocky learns via deployment service", project="mac")
+    natasha_task = cp.create_task("Natasha unrelated service memory", project="mac")
+    cp.claim_task(rocky_task.id, rocky.id)
+    cp.claim_task(natasha_task.id, natasha.id)
+
+    owned = cp.add_memory(
+        task_id=rocky_task.id,
+        subject_type="project",
+        subject_id="mac",
+        record_type="deployment_learning:mac",
+        content="restart the fleet after rotating hub memory tokens",
+        evidence_id=None,
+        created_by="deployment-learning",
+    )
+    cp.add_memory(
+        task_id=natasha_task.id,
+        subject_type="project",
+        subject_id="mac",
+        record_type="deployment_learning:mac",
+        content="unrelated natasha-only deployment learning",
+        evidence_id=None,
+        created_by="deployment-learning",
+    )
+
+    consolidator = NapConsolidatorService(store=cp.store, memory=cp.memory)
+    report = consolidator.consolidate_agent(rocky.id, embed_into_medium=False)
+
+    assert report["records_considered"] == 1
+    assert report["summaries_written"] == 1
+    assert report["dream_artifacts_written"] == 1
+    summary = cp.memory.get_memory(report["summary_memory_ids"][0])
+    dream = cp.memory.get_memory(report["dream_memory_ids"][0])
+    artifact = json.loads(dream.content)
+    assert summary.task_id == rocky_task.id
+    assert owned.content in summary.content
+    assert artifact["agent_id"] == rocky.id
+    assert artifact["task_id"] == rocky_task.id
+    assert {item["memory_id"] for item in artifact["evidence"]} == {owned.id}
+
+
 def test_dream_artifacts_embed_with_payload_filters_and_recall_rules(cp, writer, fake_qdrant):
     """Dream recall is explicit: subject_type=dream plus project/agent/scope/kind/confidence."""
     agent_id = "agent_rocky"
