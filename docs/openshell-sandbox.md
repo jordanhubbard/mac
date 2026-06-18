@@ -77,7 +77,7 @@ $EDITOR /etc/mac/openshell-policy.yaml      # fill in __PLACEHOLDER__ tokens
 export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml
 export MAC_OPENSHELL_REQUIRED=1
 export MAC_ALLOW_UNSANDBOXED_YOLO=0
-mac-openshell-supervisor --agent-id agent_rocky --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
+mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
 ```
 
 ### Environment knobs
