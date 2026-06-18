@@ -1158,7 +1158,22 @@ class MacWorker:
                 self._publish_repo_update_result(stream, result)
                 service_result = self._run_repo_update_service_restarts(result)
                 if service_result:
-                    self._publish_repo_update_result(stream, service_result)
+                    self._publish_repo_update_result(
+                        stream,
+                        service_result,
+                        attempts=_bounded_int(
+                            os.environ.get("MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS"),
+                            1,
+                            120,
+                            60,
+                        ),
+                        delay_seconds=_bounded_float(
+                            os.environ.get("MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS"),
+                            0.1,
+                            10.0,
+                            1.0,
+                        ),
+                    )
                 if result.get("restart_requested"):
                     return result
                 continue
@@ -1942,12 +1957,21 @@ class MacWorker:
                 result[key] = value
         return result
 
-    def _publish_repo_update_result(self, stream: JsonDict, result: JsonDict) -> None:
+    def _publish_repo_update_result(
+        self,
+        stream: JsonDict,
+        result: JsonDict,
+        *,
+        attempts: int = 5,
+        delay_seconds: float = 0.5,
+    ) -> None:
         sender = str(stream.get("sender_agent_id") or "")
         if not sender:
             return
         last_error = ""
-        for attempt in range(5):
+        attempts = _bounded_int(attempts, 1, 120, 5)
+        delay_seconds = _bounded_float(delay_seconds, 0.1, 10.0, 0.5)
+        for attempt in range(attempts):
             try:
                 self.client.post(
                     "/agentbus",
@@ -1962,8 +1986,8 @@ class MacWorker:
                 return
             except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
                 last_error = str(exc)
-                if attempt < 4:
-                    time.sleep(0.5)
+                if attempt < attempts - 1:
+                    time.sleep(delay_seconds)
         self._observe_log(
             "worker.agentbus.repo_update_result_failed",
             level="warning",
@@ -3538,6 +3562,14 @@ def _normalize_restart_services(value: Any) -> List[str]:
 def _bounded_int(value: Any, minimum: int, maximum: int, default: int) -> int:
     try:
         parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(maximum, max(minimum, parsed))
+
+
+def _bounded_float(value: Any, minimum: float, maximum: float, default: float) -> float:
+    try:
+        parsed = float(value)
     except (TypeError, ValueError):
         parsed = default
     return min(maximum, max(minimum, parsed))

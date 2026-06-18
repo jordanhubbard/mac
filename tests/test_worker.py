@@ -1879,6 +1879,69 @@ def test_repo_update_service_restart_skips_current_worker_service(monkeypatch):
     }
 
 
+def test_repo_update_result_publish_can_extend_retries_for_service_result(
+    monkeypatch, tmp_path: Path
+):
+    attempts: list[Dict[str, Any]] = []
+    sleeps: list[float] = []
+
+    class _Client:
+        def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+            attempts.append({"path": path, "payload": payload})
+            if len(attempts) < 3:
+                raise MacApiError("hub restarting")
+            return {"ok": True}
+
+    worker = MacWorker(
+        _Client(),  # type: ignore[arg-type]
+        "agent_rocky",
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    monkeypatch.setattr("mac.worker.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    worker._publish_repo_update_result(
+        {"id": "stream_1", "sender_agent_id": "agent_hub"},
+        {"status": "service_restarted"},
+        attempts=3,
+        delay_seconds=0.25,
+    )
+
+    assert [item["path"] for item in attempts] == ["/agentbus", "/agentbus", "/agentbus"]
+    assert sleeps == [0.25, 0.25]
+
+
+def test_repo_update_result_publish_default_retry_window_stays_short(
+    monkeypatch, tmp_path: Path
+):
+    attempts: list[Dict[str, Any]] = []
+    sleeps: list[float] = []
+    observed: list[Dict[str, Any]] = []
+
+    class _Client:
+        def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+            attempts.append({"path": path, "payload": payload})
+            raise MacApiError("hub unavailable")
+
+    worker = MacWorker(
+        _Client(),  # type: ignore[arg-type]
+        "agent_rocky",
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    monkeypatch.setattr("mac.worker.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(worker, "_observe_log", lambda *args, **kwargs: observed.append(kwargs))
+
+    worker._publish_repo_update_result(
+        {"id": "stream_1", "sender_agent_id": "agent_hub"},
+        {"status": "updated"},
+    )
+
+    assert len(attempts) == 5
+    assert sleeps == [0.5, 0.5, 0.5, 0.5]
+    assert observed[-1]["detail"]["error"] == "hub unavailable"
+
+
 def test_mac_worker_declares_running_digest_on_first_heartbeat(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
