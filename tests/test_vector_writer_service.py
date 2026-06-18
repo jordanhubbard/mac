@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from mac.services import ControlPlane
-from mac.vector_writer_service import VectorWriterService
+from mac.vector_writer_service import VectorWriterService, _hash_embedding
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,7 @@ class _FakeQdrant:
 
     def __init__(self):
         self.collections: dict[str, dict[str, dict]] = {}
+        self.collection_sizes: dict[str, int] = {}
         self.calls: list[tuple[str, str, dict | None]] = []
 
     def __call__(self, method: str, url: str, body, token):
@@ -57,11 +58,24 @@ class _FakeQdrant:
         coll, _, suffix = rest.partition("/")
         coll = coll.split("?", 1)[0]
         self.collections.setdefault(coll, {})
+        if method == "GET" and not suffix:
+            size = self.collection_sizes.get(coll)
+            if size is None and self.collections[coll]:
+                first = next(iter(self.collections[coll].values()))
+                size = len(first.get("vector") or [])
+            vectors = {"size": size, "distance": "Cosine"} if size else {}
+            return {
+                "result": {"config": {"params": {"vectors": vectors}}},
+                "status": "ok",
+            }
         if method == "PUT" and suffix.startswith("points"):
             for point in (body or {}).get("points", []):
+                vector = list(point.get("vector") or [])
+                if vector:
+                    self.collection_sizes.setdefault(coll, len(vector))
                 self.collections[coll][str(point["id"])] = {
                     "id": str(point["id"]),
-                    "vector": list(point.get("vector") or []),
+                    "vector": vector,
                     "payload": point.get("payload") or {},
                 }
             return {"result": {"status": "ok"}, "status": "ok"}
@@ -442,3 +456,78 @@ def test_embed_fn_returning_wrong_dim_is_rejected(cp, fake_qdrant):
     )
     with pytest.raises(Exception, match="returned 32 dims; expected 64"):
         writer.embed_memory(record.id)
+
+
+def test_hash_fallback_adapts_to_existing_collection_dim(cp, fake_qdrant):
+    """Offline hash mode should still match an already-provisioned collection."""
+    fake_qdrant.collection_sizes["mac_memory_medium"] = 2048
+    record = _add_memory(cp, "collection dimension controls hash fallback")
+    writer = VectorWriterService(
+        memory=cp.memory,
+        qdrant_url="http://fake.invalid:6333",
+        transport=fake_qdrant,
+        auto_env=False,
+    )
+
+    ref = writer.embed_memory(record.id)
+
+    point = fake_qdrant.collections["mac_memory_medium"][ref.point_id]
+    assert len(point["vector"]) == 2048
+    assert ref.metadata["embedding_dim"] == 2048
+
+
+def test_env_model_drift_falls_back_to_collection_vector_ref_model(
+    cp,
+    fake_qdrant,
+    monkeypatch,
+):
+    """If env drifts to a different-sized model, collection provenance wins.
+
+    The fallback is collection-scoped: repairing legacy medium recall must not
+    switch future long-memory writes away from the current configured model.
+    """
+    record = _add_memory(cp, "legacy model memory survives env drift")
+    legacy = VectorWriterService(
+        memory=cp.memory,
+        qdrant_url="http://fake.invalid:6333",
+        embedding_model="legacy-2048",
+        embedding_dim=2048,
+        transport=fake_qdrant,
+        auto_env=False,
+    )
+    legacy.embed_memory(record.id)
+
+    monkeypatch.setenv("MAC_MEMORY_EMBED_BASE_URL", "http://hub/v1")
+    monkeypatch.setenv("MAC_MEMORY_EMBED_API_KEY", "k")
+    monkeypatch.setenv("MAC_MEMORY_EMBED_MODEL", "drifted-1536")
+
+    def fake_tokenhub_embedding_fn(*, base_url, api_key, model, input_type="passage", timeout=30.0):
+        if model == "drifted-1536":
+            return lambda text: [0.1] * 1536
+        if model == "legacy-2048":
+            return lambda text: _hash_embedding(text, 2048)
+        raise AssertionError("unexpected model %s" % model)
+
+    monkeypatch.setattr(
+        "mac.vector_writer_service.tokenhub_embedding_fn",
+        fake_tokenhub_embedding_fn,
+    )
+
+    drifted = VectorWriterService(
+        memory=cp.memory,
+        qdrant_url="http://fake.invalid:6333",
+        transport=fake_qdrant,
+    )
+    hits = drifted.recall("legacy model memory survives env drift", limit=1)
+
+    assert hits[0]["memory_id"] == record.id
+    assert hits[0]["score"] > 0.99
+    assert drifted._embedding_model == "drifted-1536"
+
+    long_record = _add_memory(cp, "new long memory uses current env model")
+    long_ref = drifted.embed_memory(long_record.id, tier="long")
+    long_point = fake_qdrant.collections["mac_memory_long"][long_ref.point_id]
+    assert len(long_point["vector"]) == 1536
+    assert long_point["payload"]["embedding_model"] == "drifted-1536"
+    assert long_ref.embedding_model == "drifted-1536"
+    assert long_ref.metadata["embedding_dim"] == 1536

@@ -6427,6 +6427,8 @@ class ControlPlane:
                 now,
             )
         agent = self.get_agent(aid)
+        self._ensure_agent_nap_schedule(agent.id, actor=actor)
+        agent = self.get_agent(aid)
         # Stash the cleartext key on the returned agent so the API layer
         # can surface it to the caller on first registration. The Agent
         # dataclass itself never persists this — it's an attribute set
@@ -6842,9 +6844,17 @@ class ControlPlane:
                     now,
                 )
         agent = self.get_agent(agent_id)
+        self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
+
+    def _ensure_agent_nap_schedule(self, agent_id: str, *, actor: str) -> None:
+        agent = self.get_agent(agent_id)
+        if agent.status == AgentStatus.OFFLINE.value:
+            return
+        if self.get_nap_schedule(agent.id) is None:
+            self.configure_nap(agent.id, actor=actor or agent.id)
 
     def _maybe_poll_beads_bridge_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_BEADS_BRIDGE_ON_HEARTBEAT"):

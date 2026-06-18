@@ -37,6 +37,7 @@ import os
 import struct
 import urllib.error
 import urllib.request
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
@@ -271,6 +272,21 @@ class VectorWriterService:
             raise ValidationError("VectorWriterService requires a qdrant_url")
         self._memory = memory
         self._qdrant_url = qdrant_url.rstrip("/")
+        self._collection_dims: Dict[str, Optional[int]] = {}
+        self._collection_embed_overrides: Dict[str, tuple[str, int, EmbedFn]] = {}
+        self._env_base_url = (
+            os.environ.get("MAC_MEMORY_EMBED_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or ""
+        ).strip()
+        self._env_api_key = (
+            os.environ.get("MAC_MEMORY_EMBED_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        ).strip()
+        self._env_input_type = (
+            os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
+        ).strip()
         # Embed function resolution order:
         # 1) explicit embed_fn arg (tests, custom backends)
         # 2) env-configured backend (auto_env=True, default)
@@ -294,6 +310,7 @@ class VectorWriterService:
                 os.environ.get("MAC_MEMORY_EMBED_MODEL")
                 or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
             )
+            self._hash_fallback = False
         else:
             self._embedding_dim = int(
                 embedding_dim if embedding_dim is not None
@@ -302,6 +319,12 @@ class VectorWriterService:
             self._dim_locked = True
             self._embedding_model = embedding_model or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
             self._embed_fn = lambda text: _hash_embedding(text, self._embedding_dim)
+            self._hash_fallback = True
+        self._allow_collection_model_fallback = (
+            embed_fn is None
+            and auto_env
+            and bool(self._env_base_url and self._env_api_key)
+        )
         # `transport` is the same hook shape as mac.http_client.HubClient
         # uses for tests: (method, url, body, token) -> response dict.
         self._transport = transport or self._urllib_transport
@@ -323,6 +346,127 @@ class VectorWriterService:
                 % (len(vector), self._embedding_dim)
             )
 
+    def _embed_for_collection(self, text: str, collection: str) -> tuple[List[float], str, int]:
+        vector = self._embed_fn(text)
+        return self._ensure_collection_compatible_vector(text, collection, vector)
+
+    def _ensure_collection_compatible_vector(
+        self,
+        text: str,
+        collection: str,
+        vector: List[float],
+    ) -> tuple[List[float], str, int]:
+        if not isinstance(vector, list) or not vector:
+            raise ValidationError("embed_fn returned an empty vector")
+        collection_dim = self._collection_vector_size(collection)
+        if collection_dim is None or len(vector) == collection_dim:
+            self._resolve_dim(vector)
+            return vector, self._embedding_model, int(self._embedding_dim or len(vector))
+
+        if self._hash_fallback:
+            return _hash_embedding(text, collection_dim), self._embedding_model, collection_dim
+
+        repaired = self._try_collection_ref_model(collection, text, collection_dim)
+        if repaired is not None:
+            return repaired
+
+        raise ValidationError(
+            "embedding model %s returned %d dims but Qdrant collection %s "
+            "requires %d dims; use the model recorded for that collection's "
+            "vector_refs or recreate and backfill the collection"
+            % (self._embedding_model, len(vector), collection, collection_dim)
+        )
+
+    def _collection_vector_size(self, collection: str) -> Optional[int]:
+        if collection in self._collection_dims:
+            return self._collection_dims[collection]
+        try:
+            response = self._transport(
+                "GET",
+                "%s/collections/%s" % (self._qdrant_url, quote(collection, safe="")),
+                None,
+                None,
+            )
+        except Exception:  # noqa: BLE001 - writes/searches still surface hard failures
+            self._collection_dims[collection] = None
+            return None
+        result = (response or {}).get("result") if isinstance(response, dict) else {}
+        config = (result or {}).get("config") if isinstance(result, dict) else {}
+        params = (config or {}).get("params") if isinstance(config, dict) else {}
+        vectors = (params or {}).get("vectors") if isinstance(params, dict) else None
+        dim: Optional[int] = None
+        if isinstance(vectors, dict):
+            if "size" in vectors:
+                try:
+                    dim = int(vectors["size"])
+                except (TypeError, ValueError):
+                    dim = None
+            else:
+                for spec in vectors.values():
+                    if isinstance(spec, dict) and "size" in spec:
+                        try:
+                            dim = int(spec["size"])
+                            break
+                        except (TypeError, ValueError):
+                            continue
+        self._collection_dims[collection] = dim
+        return dim
+
+    def _try_collection_ref_model(
+        self,
+        collection: str,
+        text: str,
+        collection_dim: int,
+    ) -> Optional[tuple[List[float], str, int]]:
+        if not self._allow_collection_model_fallback:
+            return None
+        if not self._env_base_url or not self._env_api_key:
+            return None
+        cached = self._collection_embed_overrides.get(collection)
+        if cached is not None:
+            model, dim, embed_fn = cached
+            if dim == collection_dim:
+                try:
+                    vector = embed_fn(text)
+                except Exception:  # noqa: BLE001 - discard stale override and rediscover
+                    self._collection_embed_overrides.pop(collection, None)
+                else:
+                    if isinstance(vector, list) and len(vector) == collection_dim:
+                        return vector, model, collection_dim
+                    self._collection_embed_overrides.pop(collection, None)
+        try:
+            refs = self._memory.list_vector_refs(collection=collection)
+        except Exception:  # noqa: BLE001 - compatibility fallback is best-effort
+            return None
+        counts: Counter[tuple[str, int]] = Counter()
+        for ref in refs:
+            model = (ref.embedding_model or "").strip()
+            if not model or model == self._embedding_model:
+                continue
+            raw_dim = ref.metadata.get("embedding_dim") if isinstance(ref.metadata, dict) else None
+            try:
+                dim = int(raw_dim)
+            except (TypeError, ValueError):
+                continue
+            if dim == collection_dim:
+                counts[(model, dim)] += 1
+        for (model, _dim), _count in counts.most_common():
+            try:
+                embed_fn = tokenhub_embedding_fn(
+                    base_url=self._env_base_url,
+                    api_key=self._env_api_key,
+                    model=model,
+                    input_type=self._env_input_type,
+                )
+                vector = embed_fn(text)
+            except Exception:  # noqa: BLE001 - try the next recorded model
+                continue
+            if len(vector) != collection_dim:
+                continue
+            self._collection_embed_overrides[collection] = (model, collection_dim, embed_fn)
+            return vector, model, collection_dim
+        return None
+
     # -- Public API ---------------------------------------------------------
 
     def embed_memory(
@@ -339,9 +483,8 @@ class VectorWriterService:
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
         collection = MAC_MEMORY_COLLECTIONS[tier]
-        payload = self._build_payload(record, tier=tier)
-        vector = self._embed_fn(record.content)
-        self._resolve_dim(vector)
+        vector, embedding_model, embedding_dim = self._embed_for_collection(record.content, collection)
+        payload = self._build_payload(record, tier=tier, embedding_model=embedding_model)
         point_id = self._point_id_for(record.id)
         self._upsert_point(collection, point_id, vector, payload.to_dict())
         # vector_refs has a UNIQUE constraint on (vector_db, collection,
@@ -360,8 +503,8 @@ class VectorWriterService:
             vector_db=_VECTOR_DB_LABEL,
             collection=collection,
             point_id=point_id,
-            embedding_model=self._embedding_model,
-            metadata={"tier": tier, "embedding_dim": self._embedding_dim},
+            embedding_model=embedding_model,
+            metadata={"tier": tier, "embedding_dim": embedding_dim},
             created_by=created_by,
         )
 
@@ -428,8 +571,7 @@ class VectorWriterService:
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
         collection = MAC_MEMORY_COLLECTIONS[tier]
-        vector = self._embed_fn(query_text)
-        self._resolve_dim(vector)
+        vector, _embedding_model, _embedding_dim = self._embed_for_collection(query_text, collection)
         body: JsonDict = {
             "vector": vector,
             "limit": max(1, int(limit)),
@@ -477,7 +619,13 @@ class VectorWriterService:
 
     # -- Internals ----------------------------------------------------------
 
-    def _build_payload(self, record: MemoryRecord, *, tier: str) -> MacVectorPayload:
+    def _build_payload(
+        self,
+        record: MemoryRecord,
+        *,
+        tier: str,
+        embedding_model: Optional[str] = None,
+    ) -> MacVectorPayload:
         content_payload: JsonDict = {}
         try:
             loaded = json.loads(record.content)
@@ -540,7 +688,7 @@ class VectorWriterService:
             summary=summary,
             created_at=record.created_at,
             embedded_at=utcnow(),
-            embedding_model=self._embedding_model,
+            embedding_model=embedding_model or self._embedding_model,
             task_id=record.task_id,
             project=project,
             agent_id=agent_id,

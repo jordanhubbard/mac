@@ -1772,8 +1772,9 @@ def cmd_memory_remember(args: argparse.Namespace) -> None:
 
 def _build_vector_writer(args: argparse.Namespace):
     """Construct a VectorWriterService for CLI commands. The Qdrant
-    endpoint defaults to MAC_QDRANT_URL or http://127.0.0.1:6333. Tests
-    inject the writer directly; this builder is for operator use.
+    endpoint defaults to the same Qdrant env cascade the hub uses, then
+    http://127.0.0.1:6333. Tests inject the writer directly; this
+    builder is for operator use.
     """
     import os
 
@@ -1783,6 +1784,9 @@ def _build_vector_writer(args: argparse.Namespace):
     qdrant_url = (
         getattr(args, "qdrant_url", None)
         or os.environ.get("MAC_QDRANT_URL")
+        or os.environ.get("QDRANT_URL")
+        or os.environ.get("QDRANT_ADDRESS")
+        or os.environ.get("QDRANT_FLEET_URL")
         or "http://127.0.0.1:6333"
     )
     return VectorWriterService(memory=cp.memory, qdrant_url=qdrant_url)
@@ -3575,7 +3579,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_embed.add_argument(
         "--qdrant-url",
-        help="override the default Qdrant URL (MAC_QDRANT_URL env or 127.0.0.1:6333)",
+        help="override the default Qdrant URL (MAC_QDRANT_URL/QDRANT_URL env cascade or 127.0.0.1:6333)",
     )
     _set(cmd_memory_embed, memory_embed)
 
@@ -3629,7 +3633,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_recall.add_argument(
         "--qdrant-url",
         help="override Qdrant URL when running in local mode (--db). "
-        "Hub mode reads MAC_QDRANT_URL on the hub.",
+        "Hub mode reads the Qdrant env cascade on the hub.",
     )
     _set(cmd_memory_recall, memory_recall)
 
@@ -3669,7 +3673,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_recall_dreams.add_argument(
         "--qdrant-url",
         help="override Qdrant URL when running in local mode (--db). "
-        "Hub mode reads MAC_QDRANT_URL on the hub.",
+        "Hub mode reads the Qdrant env cascade on the hub.",
     )
     _set(cmd_memory_recall_dreams, memory_recall_dreams)
 

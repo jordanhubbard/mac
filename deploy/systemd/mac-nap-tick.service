@@ -22,9 +22,10 @@ EnvironmentFile=-/etc/mac/nap-tick.env
 # when nothing is due.
 ExecStart=/bin/bash -lc '\
   set -euo pipefail; \
+  qdrant_url="${MAC_QDRANT_URL:-${QDRANT_URL:-${QDRANT_ADDRESS:-${QDRANT_FLEET_URL:-http://127.0.0.1:6333}}}}"; \
   __MAC_HOME__/venv/bin/mac nap due --format=agent-ids \
     | xargs --no-run-if-empty -I{} __MAC_HOME__/venv/bin/mac nap cycle {} \
-        --qdrant-url=${MAC_QDRANT_URL:-http://127.0.0.1:6333} \
+        --qdrant-url="${qdrant_url}" \
         --actor=nap-tick.service'
 
 StandardOutput=journal

@@ -10,6 +10,8 @@
 #   MAC_MEMORY_EMBED_BACKEND=auto
 #   MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2
 #   MAC_QDRANT_URL=http://...:6333
+# If MAC_QDRANT_URL is unset, the service falls back through
+# QDRANT_URL, QDRANT_ADDRESS, and QDRANT_FLEET_URL before localhost.
 set -euo pipefail
 
 FLEET_NAME="${FLEET_NAME:-mac}"

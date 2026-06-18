@@ -133,6 +133,29 @@ def test_mood_unknown_agent_rejected(cp):
 # ── Nap ──────────────────────────────────────────────────────────────────────
 
 
+def test_register_agent_creates_default_nap_schedule(cp):
+    agent = _register_agent(cp, "natasha")
+
+    schedule = cp.get_nap_schedule(agent.id)
+
+    assert schedule is not None
+    assert schedule.agent_id == agent.id
+    assert schedule.enabled is True
+    assert 0 <= schedule.offset_minutes < 360
+
+
+def test_heartbeat_backfills_missing_nap_schedule(cp):
+    agent = _register_agent(cp, "bullwinkle")
+    cp.store.execute("DELETE FROM nap_schedules WHERE agent_id = ?", (agent.id,))
+    assert cp.get_nap_schedule(agent.id) is None
+
+    cp.heartbeat_agent(agent.id)
+
+    schedule = cp.get_nap_schedule(agent.id)
+    assert schedule is not None
+    assert schedule.agent_id == agent.id
+
+
 def test_configure_nap_uses_deterministic_offset_when_unspecified(cp):
     a1 = _register_agent(cp, "rocky")
     a2 = _register_agent(cp, "natasha")
