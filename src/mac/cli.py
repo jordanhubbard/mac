@@ -1723,42 +1723,39 @@ def cmd_integrations_observations(args: argparse.Namespace) -> None:
 def cmd_memory_add(args: argparse.Namespace) -> None:
     _print(
         _plane(args).add_memory(
-            args.task_id,
-            args.subject_type,
-            args.subject_id,
-            args.record_type,
-            args.content,
-            args.evidence_id,
-            args.created_by,
+            task_id=args.task_id,
+            subject_type=args.subject_type,
+            subject_id=args.subject_id,
+            record_type=args.record_type,
+            content=args.content,
+            evidence_id=args.evidence_id,
+            created_by=args.created_by,
         )
     )
 
 
 def cmd_memory_search(args: argparse.Namespace) -> None:
-    _print([record.to_dict() for record in _plane(args).search_memory(args.task_id, args.subject_type, args.subject_id)])
+    _print(
+        [
+            record.to_dict()
+            for record in _plane(args).search_memory(
+                task_id=args.task_id,
+                subject_type=args.subject_type,
+                subject_id=args.subject_id,
+            )
+        ]
+    )
 
 
 def cmd_memory_remember(args: argparse.Namespace) -> None:
     """`bd remember` equivalent — store an ambient project-scoped fact
     keyed by name. Subsequent calls with the same key overwrite."""
-    cp = _plane(args)
-    project = args.project or "default"
-    key = args.key
-    # Delete any prior record with the same key under this project so
-    # the value is updateable in place.
-    cp.store.execute(
-        "DELETE FROM memory_records WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?",
-        (project, "beads_memory:%s" % key),
-    )
     _print(
-        cp.add_memory(
-            None,
-            "project",
-            project,
-            "beads_memory:%s" % key,
+        _plane(args).remember_memory(
+            args.key,
             args.content,
-            None,
-            args.actor,
+            project=args.project,
+            actor=args.actor,
         )
     )
 
@@ -1845,19 +1842,22 @@ def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
 
 def cmd_nap_cycle(args: argparse.Namespace) -> None:
     """mem-08 autonomy: begin + consolidate + complete in one shot."""
+    from mac.dispatch import RemoteDispatch
+
     cp = _plane(args)
+    qdrant_url = getattr(args, "qdrant_url", None)
     writer = None
-    if not args.no_embed:
+    if not args.no_embed and not isinstance(cp, RemoteDispatch):
         writer = _build_vector_writer(args)
-    _print(
-        cp.run_nap_cycle(
-            args.agent_id,
-            actor=args.actor,
-            vector_writer=writer,
-            embed_into_medium=not args.no_embed,
-            emit_dream_artifacts=not args.no_dreams,
-        )
-    )
+    kwargs = {
+        "actor": args.actor,
+        "vector_writer": writer,
+        "embed_into_medium": not args.no_embed,
+        "emit_dream_artifacts": not args.no_dreams,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.run_nap_cycle(args.agent_id, **kwargs))
 
 
 def cmd_nap_due(args: argparse.Namespace) -> None:
@@ -1875,56 +1875,37 @@ def cmd_nap_due(args: argparse.Namespace) -> None:
 def cmd_nap_consolidate(args: argparse.Namespace) -> None:
     """mem-08: walk the agent's recent memory_records, write per-group
     summaries, and embed them into the medium tier."""
+    from mac.dispatch import RemoteDispatch
+
     cp = _plane(args)
+    qdrant_url = getattr(args, "qdrant_url", None)
     writer = None
-    if not args.no_embed:
+    if not args.no_embed and not isinstance(cp, RemoteDispatch):
         writer = _build_vector_writer(args)
-    _print(
-        cp.consolidate_nap(
-            args.agent_id,
-            since=args.since,
-            nap_run_id=args.nap_run_id,
-            embed_into_medium=not args.no_embed,
-            emit_dream_artifacts=not args.no_dreams,
-            vector_writer=writer,
-            created_by=args.created_by,
-        )
-    )
+    kwargs = {
+        "since": args.since,
+        "nap_run_id": args.nap_run_id,
+        "embed_into_medium": not args.no_embed,
+        "emit_dream_artifacts": not args.no_dreams,
+        "vector_writer": writer,
+        "created_by": args.created_by,
+    }
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.consolidate_nap(args.agent_id, **kwargs))
 
 
 def cmd_memory_list(args: argparse.Namespace) -> None:
-    cp = _plane(args)
-    project = args.project or "default"
-    rows = cp.store.query_all(
-        """
-        SELECT * FROM memory_records
-        WHERE subject_type = 'project' AND subject_id = ?
-          AND record_type LIKE 'beads_memory:%'
-        ORDER BY created_at
-        """,
-        (project,),
-    )
     _print(
         [
-            {
-                "key": row["record_type"].split(":", 1)[1] if ":" in row["record_type"] else row["record_type"],
-                "content": row["content"],
-                "created_at": row["created_at"],
-                "id": row["id"],
-            }
-            for row in rows
+            item.to_dict() if hasattr(item, "to_dict") else item
+            for item in _plane(args).list_remembered_memory(project=args.project)
         ]
     )
 
 
 def cmd_memory_forget(args: argparse.Namespace) -> None:
-    cp = _plane(args)
-    project = args.project or "default"
-    cursor = cp.store.execute(
-        "DELETE FROM memory_records WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?",
-        (project, "beads_memory:%s" % args.key),
-    )
-    _print({"deleted": cursor.rowcount, "key": args.key, "project": project})
+    _print(_plane(args).forget_memory(args.key, project=args.project))
 
 
 def cmd_memory_decay(args: argparse.Namespace) -> None:

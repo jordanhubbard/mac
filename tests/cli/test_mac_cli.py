@@ -230,6 +230,41 @@ def test_task_create_no_ticket_skips_mirror(tmp_path, monkeypatch):
     assert list(d.glob("*.md")) == []
 
 
+def test_memory_remember_list_forget_round_trip(tmp_path):
+    rc, remembered = _run(
+        tmp_path,
+        "memory",
+        "remember",
+        "rule",
+        "keep the hub memory path routable",
+        "--project",
+        "mac",
+        "--actor",
+        "tester",
+    )
+    assert rc == 0
+    assert remembered["record_type"] == "beads_memory:rule"
+    assert remembered["subject_id"] == "mac"
+
+    rc, listed = _run(tmp_path, "memory", "list", "--project", "mac")
+    assert rc == 0
+    assert listed == [
+        {
+            "key": "rule",
+            "content": "keep the hub memory path routable",
+            "created_at": remembered["created_at"],
+            "id": remembered["id"],
+        }
+    ]
+
+    rc, forgotten = _run(tmp_path, "memory", "forget", "rule", "--project", "mac")
+    assert rc == 0
+    assert forgotten == {"deleted": 1, "key": "rule", "project": "mac"}
+    rc, listed = _run(tmp_path, "memory", "list", "--project", "mac")
+    assert rc == 0
+    assert listed == []
+
+
 def test_mac_cli_task_show(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "Show me")
     assert rc == 0

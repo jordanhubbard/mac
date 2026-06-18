@@ -142,9 +142,18 @@ def test_health_includes_qdrant_block_when_url_configured(cp, monkeypatch):
         assert entry.get("points_count") is not None or entry.get("error")
 
 
-def test_health_omits_qdrant_collections_when_url_unset(cp, monkeypatch):
-    """No MAC_QDRANT_URL → qdrant.url is None, collections dict empty."""
+def test_health_uses_qdrant_url_fallback(cp, monkeypatch):
+    """Deployment may expose QDRANT_URL without MAC_QDRANT_URL."""
     monkeypatch.delenv("MAC_QDRANT_URL", raising=False)
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant.internal:6333")
+    h = cp.memory_health()
+    assert h["qdrant"]["url"] == "http://qdrant.internal:6333"
+
+
+def test_health_omits_qdrant_collections_when_url_unset(cp, monkeypatch):
+    """No configured Qdrant URL → qdrant.url is None, collections dict empty."""
+    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+        monkeypatch.delenv(name, raising=False)
     h = cp.memory_health()
     assert h["qdrant"]["url"] is None
     assert h["qdrant"]["collections"] == {}

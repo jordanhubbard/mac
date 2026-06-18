@@ -140,6 +140,16 @@ def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
 
 
+def _configured_qdrant_url(explicit: Optional[str] = None) -> Optional[str]:
+    if explicit:
+        return explicit
+    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
 def _compact_beads_ledger_text(value: Any, *, limit: int = 180) -> str:
     text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
     text = re.sub(r"Bearer\s+[-A-Za-z0-9._~+/=]+", "Bearer <redacted>", text)
@@ -7082,7 +7092,9 @@ class ControlPlane:
             running.
           * Disk bloat — mac.db growing faster than the vector tier.
 
-        ``qdrant_url`` defaults to MAC_QDRANT_URL. When unreachable,
+        ``qdrant_url`` defaults to the configured Qdrant URL
+        (MAC_QDRANT_URL, QDRANT_URL, QDRANT_ADDRESS, or
+        QDRANT_FLEET_URL). When unreachable,
         the qdrant_collections block reports its error instead of
         raising; the operator still gets the SQLite-side numbers.
         """
@@ -7117,7 +7129,7 @@ class ControlPlane:
                 db_size = None
 
         # Qdrant points per collection — best-effort.
-        url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+        url = _configured_qdrant_url(qdrant_url)
         qdrant_block: JsonDict = {"url": url, "collections": {}, "error": None}
         if url:
             try:
@@ -7231,11 +7243,11 @@ class ControlPlane:
         if not query or not str(query).strip():
             raise ValidationError("recall_memory requires a non-empty query")
         if vector_writer is None:
-            url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+            url = _configured_qdrant_url(qdrant_url)
             if not url:
                 raise ValidationError(
                     "recall_memory needs a Qdrant URL — pass qdrant_url or set "
-                    "MAC_QDRANT_URL"
+                    "MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL"
                 )
             from mac.vector_writer_service import VectorWriterService
 
@@ -7275,11 +7287,11 @@ class ControlPlane:
         if not query or not str(query).strip():
             raise ValidationError("recall_dream_artifacts requires a non-empty query")
         if vector_writer is None:
-            url = qdrant_url or os.environ.get("MAC_QDRANT_URL")
+            url = _configured_qdrant_url(qdrant_url)
             if not url:
                 raise ValidationError(
                     "recall_dream_artifacts needs a Qdrant URL — pass qdrant_url "
-                    "or set MAC_QDRANT_URL"
+                    "or set MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL"
                 )
             from mac.vector_writer_service import VectorWriterService
 
@@ -12339,6 +12351,69 @@ class ControlPlane:
 
     def search_memory(self, *args: Any, **kwargs: Any) -> List[MemoryRecord]:
         return self.memory.search_memory(*args, **kwargs)
+
+    def remember_memory(
+        self,
+        key: str,
+        content: str,
+        *,
+        project: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> MemoryRecord:
+        if not key or not str(key).strip():
+            raise ValidationError("memory key is required")
+        project_name = project or "default"
+        record_type = "beads_memory:%s" % key
+        self.store.execute(
+            """
+            DELETE FROM memory_records
+            WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?
+            """,
+            (project_name, record_type),
+        )
+        return self.add_memory(
+            None,
+            "project",
+            project_name,
+            record_type,
+            content,
+            None,
+            actor or "operator",
+        )
+
+    def list_remembered_memory(self, *, project: Optional[str] = None) -> List[JsonDict]:
+        project_name = project or "default"
+        rows = self.store.query_all(
+            """
+            SELECT * FROM memory_records
+            WHERE subject_type = 'project' AND subject_id = ?
+              AND record_type LIKE 'beads_memory:%'
+            ORDER BY created_at
+            """,
+            (project_name,),
+        )
+        return [
+            {
+                "key": row["record_type"].split(":", 1)[1]
+                if ":" in row["record_type"]
+                else row["record_type"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+                "id": row["id"],
+            }
+            for row in rows
+        ]
+
+    def forget_memory(self, key: str, *, project: Optional[str] = None) -> JsonDict:
+        project_name = project or "default"
+        cursor = self.store.execute(
+            """
+            DELETE FROM memory_records
+            WHERE subject_type = 'project' AND subject_id = ? AND record_type = ?
+            """,
+            (project_name, "beads_memory:%s" % key),
+        )
+        return {"deleted": cursor.rowcount, "key": key, "project": project_name}
 
     def track_conversation(self, *args: Any, **kwargs: Any) -> ConversationThread:
         return self.memory.track_conversation(*args, **kwargs)

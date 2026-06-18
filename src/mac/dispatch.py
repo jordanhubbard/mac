@@ -137,7 +137,7 @@ class LocalDispatch:
 
     @property
     def store(self) -> Any:
-        # Some CLI handlers (task ready/search/stats, memory list/forget)
+        # Some CLI handlers (task ready/search/stats)
         # reach into ControlPlane.store for direct SQL. Expose it.
         return self._plane.store
 
@@ -151,7 +151,7 @@ class _RemoteStore:
     """Stand-in for ``ControlPlane.store`` in remote mode.
 
     Several CLI handlers reach into ``.store.query_all`` / ``.store.execute``
-    to run direct SQL (task ready/search/stats, memory list/forget). Those
+    to run direct SQL (task ready/search/stats). Those
     can't be served over HTTP without dedicated routes. Until those routes
     land, raising here gives the user a clear next step instead of a
     confusing AttributeError.
@@ -159,8 +159,8 @@ class _RemoteStore:
 
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise DispatchError(
-            "this command needs direct SQLite access (memory list/forget, "
-            "observability prune). It is not yet served over HTTP. Pass "
+            "this command needs direct SQLite access (observability prune). "
+            "It is not yet served over HTTP. Pass "
             "--db <path> to run against a local SQLite database, or wait for "
             "the matching hub endpoint to be added."
         )
@@ -604,6 +604,61 @@ class RemoteDispatch:
     def list_nap_runs(self, agent_id: Optional[str] = None) -> List[_Dictish]:
         return _wrap_list(self._get("/nap-runs", agent_id=agent_id))
 
+    def list_due_nap_agents(self, *, as_of: Optional[str] = None) -> List[_Dictish]:
+        return _wrap_list(self._get("/nap-due", as_of=as_of))
+
+    def run_nap_cycle(
+        self,
+        agent_id: str,
+        *,
+        actor: Optional[str] = None,
+        vector_writer: Any = None,
+        embed_into_medium: bool = True,
+        emit_dream_artifacts: bool = True,
+        qdrant_url: Optional[str] = None,
+    ) -> _Dictish:
+        if vector_writer is not None:
+            raise DispatchError("hub mode builds the nap vector writer on the hub")
+        body = _drop_none(
+            {
+                "actor": actor,
+                "embed_into_medium": embed_into_medium,
+                "emit_dream_artifacts": emit_dream_artifacts,
+                "qdrant_url": qdrant_url,
+            }
+        )
+        return _Dictish(
+            self._post("/agents/%s/nap-cycle" % quote(agent_id, safe=""), body)
+        )
+
+    def consolidate_nap(
+        self,
+        agent_id: str,
+        *,
+        since: Optional[str] = None,
+        nap_run_id: Optional[str] = None,
+        embed_into_medium: bool = True,
+        emit_dream_artifacts: bool = True,
+        vector_writer: Any = None,
+        created_by: Optional[str] = None,
+        qdrant_url: Optional[str] = None,
+    ) -> _Dictish:
+        if vector_writer is not None:
+            raise DispatchError("hub mode builds the nap vector writer on the hub")
+        body = _drop_none(
+            {
+                "since": since,
+                "nap_run_id": nap_run_id,
+                "embed_into_medium": embed_into_medium,
+                "emit_dream_artifacts": emit_dream_artifacts,
+                "created_by": created_by,
+                "qdrant_url": qdrant_url,
+            }
+        )
+        return _Dictish(
+            self._post("/agents/%s/nap-consolidate" % quote(agent_id, safe=""), body)
+        )
+
     # -- Dispatch -----------------------------------------------------------
 
     def dispatch_once(self, lease_seconds: Optional[int] = None) -> Optional[_Dictish]:
@@ -917,13 +972,68 @@ class RemoteDispatch:
     def list_integration_observations(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/integrations/observations", **kw))
 
-    # -- Memory (note: list/forget remain SQL-direct, handled via store) ----
+    # -- Memory -------------------------------------------------------------
 
-    def add_memory(self, **kw: Any) -> _Dictish:
+    def add_memory(self, *args: Any, **kw: Any) -> _Dictish:
+        if args:
+            names = (
+                "task_id",
+                "subject_type",
+                "subject_id",
+                "record_type",
+                "content",
+                "evidence_id",
+                "created_by",
+            )
+            if len(args) > len(names):
+                raise TypeError(
+                    "add_memory expected at most %d positional arguments" % len(names)
+                )
+            kw = {**dict(zip(names, args)), **kw}
         return _Dictish(self._post("/memory", _drop_none(kw)))
 
-    def search_memory(self, **kw: Any) -> List[_Dictish]:
+    def search_memory(self, *args: Any, **kw: Any) -> List[_Dictish]:
+        if args:
+            names = ("task_id", "subject_type", "subject_id")
+            if len(args) > len(names):
+                raise TypeError(
+                    "search_memory expected at most %d positional arguments" % len(names)
+                )
+            kw = {**dict(zip(names, args)), **kw}
         return _wrap_list(self._get("/memory", **kw))
+
+    def remember_memory(
+        self,
+        key: str,
+        content: str,
+        *,
+        project: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/memory/remembered",
+                _drop_none(
+                    {
+                        "key": key,
+                        "content": content,
+                        "project": project,
+                        "actor": actor,
+                    }
+                ),
+            )
+        )
+
+    def list_remembered_memory(self, *, project: Optional[str] = None) -> List[_Dictish]:
+        return _wrap_list(self._get("/memory/remembered", project=project))
+
+    def forget_memory(self, key: str, *, project: Optional[str] = None) -> _Dictish:
+        return _Dictish(
+            self._delete(
+                "/memory/remembered/%s%s"
+                % (quote(key, safe=""), _query({"project": project}))
+            )
+        )
 
     # mem-10: memory-tier health snapshot.
     def memory_health(self, *, nap_interval_hours: float = 24.0) -> _Dictish:
@@ -951,6 +1061,37 @@ class RemoteDispatch:
                 limit=limit,
                 min_score=min_score,
                 project=project,
+                tenant_id=tenant_id,
+            )
+        )
+
+    def recall_dream_artifacts(
+        self,
+        query: str,
+        *,
+        tier: str = "medium",
+        limit: int = 5,
+        min_score: Optional[float] = None,
+        project: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        scope: Optional[str] = None,
+        kind: Optional[str] = None,
+        min_confidence: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        **_extra: Any,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/v1/memory/dreams/recall",
+                q=query,
+                tier=tier,
+                limit=limit,
+                min_score=min_score,
+                project=project,
+                agent_id=agent_id,
+                scope=scope,
+                kind=kind,
+                min_confidence=min_confidence,
                 tenant_id=tenant_id,
             )
         )
