@@ -342,6 +342,7 @@ class RemoteDispatch:
         *,
         checksum: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        artifacts: Optional[List[Dict[str, Any]]] = None,
     ) -> _Dictish:
         body = _drop_none(
             {
@@ -351,6 +352,7 @@ class RemoteDispatch:
                 "created_by": created_by,
                 "checksum": checksum,
                 "metadata": metadata,
+                "artifacts": artifacts,
             }
         )
         return _Dictish(self._post("/tasks/%s/evidence" % quote(task_id, safe=""), body))

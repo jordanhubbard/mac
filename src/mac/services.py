@@ -54,6 +54,7 @@ from mac.models import (
     EvalSet,
     EvalTargetKind,
     Evidence,
+    EvidenceArtifact,
     Fleet,
     HealthStatus,
     HistoryEvent,
@@ -198,6 +199,36 @@ _REQUIRED_CHANGED_FILE_KEYS = (
     "required_files",
     "required_repo_files",
 )
+
+MAX_EVIDENCE_ARTIFACTS = 16
+DEFAULT_EVIDENCE_ARTIFACT_BYTES = 5 * 1024 * 1024
+MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
+DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
+MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def _evidence_artifact_max_bytes() -> int:
+    raw = os.environ.get("MAC_EVIDENCE_ARTIFACT_MAX_BYTES", "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_EVIDENCE_ARTIFACT_BYTES
+    except ValueError:
+        value = DEFAULT_EVIDENCE_ARTIFACT_BYTES
+    return min(MAX_EVIDENCE_ARTIFACT_BYTES, max(0, value))
+
+
+def _evidence_artifact_total_max_bytes() -> int:
+    raw = os.environ.get("MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES", "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES
+    except ValueError:
+        value = DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES
+    return min(MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES, max(0, value))
+
+
+def _evidence_artifact_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _normalize_repo_relative_path(value: Any) -> str:
@@ -5426,6 +5457,7 @@ class ControlPlane:
         checksum: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         *,
+        artifacts: Optional[List[Dict[str, Any]]] = None,
         sync_beads: bool = True,
     ) -> Evidence:
         task = self.get_task(task_id)
@@ -5449,6 +5481,23 @@ class ControlPlane:
         self._enforce_repo_coupled_evidence_type(task, metadata)
         now = utcnow()
         evidence_id = new_id("ev")
+        stored_artifacts = self._prepare_evidence_artifacts(
+            evidence_id,
+            task_id,
+            artifacts or [],
+            now,
+        )
+        metadata_obj = dict(ensure_json_object(metadata))
+        metadata_obj.pop("durable_artifacts", None)
+        if stored_artifacts:
+            metadata_obj["durable_artifacts"] = {
+                "schema": "mac.evidence_artifacts.v1",
+                "count": len(stored_artifacts),
+                "artifacts": [
+                    self._evidence_artifact_public_dict(item, include_content=False)
+                    for item in stored_artifacts
+                ],
+            }
         with self.store.transaction() as conn:
             conn.execute(
                 """
@@ -5462,18 +5511,50 @@ class ControlPlane:
                     uri,
                     summary,
                     checksum,
-                    json_dumps(ensure_json_object(metadata)),
+                    json_dumps(metadata_obj),
                     created_by,
                     now,
                 ),
             )
+            for artifact in stored_artifacts:
+                conn.execute(
+                    """
+                    INSERT INTO evidence_artifacts (
+                        id, evidence_id, task_id, name, artifact_type, source_uri,
+                        content_type, encoding, size_bytes, sha256, content_base64,
+                        truncated, metadata, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artifact.id,
+                        artifact.evidence_id,
+                        artifact.task_id,
+                        artifact.name,
+                        artifact.artifact_type,
+                        artifact.source_uri,
+                        artifact.content_type,
+                        artifact.encoding,
+                        artifact.size_bytes,
+                        artifact.sha256,
+                        artifact.content_base64 or "",
+                        1 if artifact.truncated else 0,
+                        json_dumps(artifact.metadata),
+                        artifact.created_at,
+                    ),
+                )
             self._record_history(
                 task_id,
                 "task.evidence_added",
                 created_by,
                 None,
                 None,
-                {"evidence_id": evidence_id, "kind": kind, "uri": uri},
+                {
+                    "evidence_id": evidence_id,
+                    "kind": kind,
+                    "uri": uri,
+                    "artifact_count": len(stored_artifacts),
+                },
                 conn=conn,
             )
         evidence = self.get_evidence(evidence_id)
@@ -5481,6 +5562,139 @@ class ControlPlane:
         if sync_beads:
             self.sync_evidence_side_effects(evidence_id)
         return evidence
+
+    def _prepare_evidence_artifacts(
+        self,
+        evidence_id: str,
+        task_id: str,
+        artifacts: List[Dict[str, Any]],
+        created_at: str,
+    ) -> List[EvidenceArtifact]:
+        if not artifacts:
+            return []
+        if len(artifacts) > MAX_EVIDENCE_ARTIFACTS:
+            raise ValidationError(
+                "evidence accepts at most %d durable artifacts" % MAX_EVIDENCE_ARTIFACTS
+            )
+        max_bytes = _evidence_artifact_max_bytes()
+        total_max_bytes = _evidence_artifact_total_max_bytes()
+        total_bytes = 0
+        prepared: List[EvidenceArtifact] = []
+        for index, item in enumerate(artifacts):
+            if not isinstance(item, dict):
+                raise ValidationError("evidence artifact %d must be an object" % index)
+            encoding = str(item.get("encoding") or "base64").strip().lower()
+            if encoding != "base64":
+                raise ValidationError("evidence artifact %d uses unsupported encoding" % index)
+            if "content_base64" not in item:
+                raise ValidationError("evidence artifact %d requires content_base64" % index)
+            raw_b64 = str(item.get("content_base64") or "").strip()
+            try:
+                content = base64.b64decode(raw_b64.encode("ascii"), validate=True)
+            except Exception as exc:  # noqa: BLE001
+                raise ValidationError("evidence artifact %d has invalid base64: %s" % (index, exc))
+            if len(content) > max_bytes:
+                raise ValidationError(
+                    "evidence artifact %d exceeds %d bytes"
+                    % (index, max_bytes)
+                )
+            if total_bytes + len(content) > total_max_bytes:
+                raise ValidationError(
+                    "evidence artifacts exceed aggregate limit of %d bytes"
+                    % total_max_bytes
+                )
+            total_bytes += len(content)
+            declared_size = item.get("size_bytes")
+            if declared_size not in {None, ""}:
+                try:
+                    declared_size_int = int(declared_size)
+                except (TypeError, ValueError):
+                    raise ValidationError("evidence artifact %d size_bytes is invalid" % index)
+                if declared_size_int != len(content):
+                    raise ValidationError(
+                        "evidence artifact %d size_bytes does not match content" % index
+                    )
+            digest = "sha256:%s" % hashlib.sha256(content).hexdigest()
+            declared_sha = str(item.get("sha256") or "").strip()
+            if declared_sha and declared_sha != digest:
+                raise ValidationError("evidence artifact %d sha256 does not match content" % index)
+            prepared.append(
+                EvidenceArtifact(
+                    id=new_id("eva"),
+                    evidence_id=evidence_id,
+                    task_id=task_id,
+                    name=self._normalize_evidence_artifact_name(item.get("name"), index),
+                    artifact_type=(
+                        str(item.get("artifact_type") or item.get("kind") or "artifact").strip()[:64]
+                        or "artifact"
+                    ),
+                    source_uri=str(item.get("source_uri") or item.get("uri") or "").strip()[:2048],
+                    content_type=(
+                        str(item.get("content_type") or "application/octet-stream").strip()[:128]
+                        or "application/octet-stream"
+                    ),
+                    encoding="base64",
+                    size_bytes=len(content),
+                    sha256=digest,
+                    content_base64=base64.b64encode(content).decode("ascii"),
+                    truncated=_evidence_artifact_bool(item.get("truncated")),
+                    metadata=ensure_json_object(item.get("metadata")),
+                    created_at=created_at,
+                )
+            )
+        return prepared
+
+    def _normalize_evidence_artifact_name(self, value: Any, index: int) -> str:
+        name = str(value or "").strip().replace("\\", "/")
+        name = name.rsplit("/", 1)[-1].strip()
+        if not name or name in {".", ".."}:
+            name = "artifact-%02d" % (index + 1)
+        return name[:160]
+
+    def _evidence_artifact_public_dict(
+        self,
+        artifact: EvidenceArtifact,
+        *,
+        include_content: bool,
+    ) -> JsonDict:
+        data = artifact.to_dict()
+        if not include_content:
+            data.pop("content_base64", None)
+            data.pop("metadata", None)
+        return data
+
+    def list_evidence_artifacts(self, evidence_id: str) -> List[JsonDict]:
+        self.get_evidence(evidence_id)
+        rows = self.store.query_all(
+            """
+            SELECT * FROM evidence_artifacts
+            WHERE evidence_id = ?
+            ORDER BY created_at, id
+            """,
+            (evidence_id,),
+        )
+        return [
+            self._evidence_artifact_public_dict(
+                self._evidence_artifact_from_row(row),
+                include_content=False,
+            )
+            for row in rows
+        ]
+
+    def get_evidence_artifact(self, evidence_id: str, artifact_id: str) -> JsonDict:
+        row = self.store.query_one(
+            """
+            SELECT * FROM evidence_artifacts
+            WHERE evidence_id = ? AND id = ?
+            """,
+            (evidence_id, artifact_id),
+        )
+        if row is None:
+            raise NotFoundError("evidence artifact not found: %s" % artifact_id)
+        return self._evidence_artifact_public_dict(
+            self._evidence_artifact_from_row(row),
+            include_content=True,
+        )
 
     def _capture_runtime_delta_from_evidence(
         self,
@@ -12599,6 +12813,24 @@ class ControlPlane:
             row["checksum"],
             json_loads(row["metadata"], {}),
             row["created_by"],
+            row["created_at"],
+        )
+
+    def _evidence_artifact_from_row(self, row: Any) -> EvidenceArtifact:
+        return EvidenceArtifact(
+            row["id"],
+            row["evidence_id"],
+            row["task_id"],
+            row["name"],
+            row["artifact_type"],
+            row["source_uri"],
+            row["content_type"],
+            row["encoding"],
+            int(row["size_bytes"]),
+            row["sha256"],
+            row["content_base64"],
+            str(row["truncated"]).strip().lower() in {"1", "true", "yes"},
+            json_loads(row["metadata"], {}),
             row["created_at"],
         )
 

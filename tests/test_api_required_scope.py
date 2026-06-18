@@ -28,3 +28,8 @@ def test_secret_resolve_requires_secret_scope():
     # th-merge-07: audited reveal-by-name (Slack fetcher) is gated on `secret`.
     assert _required_scope("POST", "/secrets/slack.rocky.omgjkh.bot/resolve") == "secret"
     assert _required_scope("POST", "/secrets/github.token/resolve") == "secret"
+
+
+def test_evidence_artifact_content_requires_secret_scope():
+    assert _required_scope("GET", "/evidence/ev_123/artifacts") == "read"
+    assert _required_scope("GET", "/evidence/ev_123/artifacts/eva_456") == "secret"

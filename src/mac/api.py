@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -444,6 +445,7 @@ class EvidenceCreate(BaseModel):
     created_by: str
     checksum: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class MachineRegister(BaseModel):
@@ -1291,6 +1293,11 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # regardless of method. This keeps the router from being an open proxy
         # when the API is bound to a network interface (e.g. the hub node).
         return "agent"
+    if method == "GET" and re.match(r"^/evidence/[^/]+/artifacts/[^/]+$", path):
+        # Durable evidence artifact bytes can contain raw stdout/stderr and
+        # result manifests. Listing metadata is a read model; fetching bytes is
+        # closer to secret reveal and requires the narrower secret scope.
+        return "secret"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -4096,6 +4103,14 @@ def create_app(
         evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
         background_tasks.add_task(cp.sync_evidence_side_effects, evidence.id)
         return evidence.to_dict()
+
+    @app.get("/evidence/{evidence_id}/artifacts")
+    def list_evidence_artifacts(evidence_id: str) -> List[Dict[str, Any]]:
+        return cp.list_evidence_artifacts(evidence_id)
+
+    @app.get("/evidence/{evidence_id}/artifacts/{artifact_id}")
+    def get_evidence_artifact(evidence_id: str, artifact_id: str) -> Dict[str, Any]:
+        return cp.get_evidence_artifact(evidence_id, artifact_id)
 
     @app.post("/machines")
     def register_machine(

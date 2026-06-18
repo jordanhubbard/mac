@@ -2501,6 +2501,7 @@ class MacWorker:
             encoding="utf-8",
         )
         metadata = self._execution_metadata(task_dir, execution)
+        artifacts = _durable_evidence_artifacts(task_dir, result_path)
         return self.client.post(
             "/tasks/%s/evidence" % quote(task_id, safe=""),
             {
@@ -2508,6 +2509,7 @@ class MacWorker:
                 "uri": result_path.resolve().as_uri(),
                 "summary": execution.summary,
                 "created_by": self.agent_id,
+                "artifacts": artifacts,
                 "metadata": {
                     "returncode": execution.returncode,
                     "stdout": (task_dir / "stdout.txt").resolve().as_uri(),
@@ -2670,6 +2672,7 @@ class MacWorker:
             ),
             encoding="utf-8",
         )
+        artifacts = _durable_evidence_artifacts(task_dir, result_path)
         return self.client.post(
             "/tasks/%s/evidence" % quote(task_id, safe=""),
             {
@@ -2677,6 +2680,7 @@ class MacWorker:
                 "uri": result_path.resolve().as_uri(),
                 "summary": execution.summary,
                 "created_by": self.agent_id,
+                "artifacts": artifacts,
                 "metadata": {
                     "returncode": execution.returncode,
                     "stdout": (task_dir / "stdout.txt").resolve().as_uri(),
@@ -3302,6 +3306,113 @@ def _sha256_file(path: Path) -> str:
     except FileNotFoundError:
         return ""
     return "sha256:%s" % digest.hexdigest()
+
+
+def _evidence_artifact_max_bytes() -> int:
+    raw = os.environ.get("MAC_EVIDENCE_ARTIFACT_MAX_BYTES", "").strip()
+    try:
+        value = int(raw) if raw else 5 * 1024 * 1024
+    except ValueError:
+        value = 5 * 1024 * 1024
+    return min(50 * 1024 * 1024, max(0, value))
+
+
+def _evidence_artifact_total_max_bytes() -> int:
+    raw = os.environ.get("MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES", "").strip()
+    try:
+        value = int(raw) if raw else 50 * 1024 * 1024
+    except ValueError:
+        value = 50 * 1024 * 1024
+    return min(100 * 1024 * 1024, max(0, value))
+
+
+def _artifact_content_type(path: Path) -> str:
+    if path.suffix == ".json":
+        return "application/json"
+    if path.suffix in {".txt", ".log", ".md"}:
+        return "text/plain; charset=utf-8"
+    return "application/octet-stream"
+
+
+def _capture_evidence_artifact(
+    path: Path,
+    *,
+    name: str,
+    artifact_type: str,
+    max_bytes: int,
+) -> Optional[JsonDict]:
+    try:
+        source_size = path.stat().st_size
+    except OSError:
+        return None
+    source_digest = hashlib.sha256()
+    captured = bytearray()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                source_digest.update(chunk)
+                if len(captured) < max_bytes:
+                    remaining = max_bytes - len(captured)
+                    captured.extend(chunk[:remaining])
+    except OSError:
+        return None
+    content = bytes(captured)
+    content_digest = "sha256:%s" % hashlib.sha256(content).hexdigest()
+    source_sha256 = "sha256:%s" % source_digest.hexdigest()
+    truncated = source_size > len(content)
+    return {
+        "name": name,
+        "artifact_type": artifact_type,
+        "source_uri": path.resolve().as_uri(),
+        "content_type": _artifact_content_type(path),
+        "encoding": "base64",
+        "size_bytes": len(content),
+        "sha256": content_digest,
+        "content_base64": base64.b64encode(content).decode("ascii"),
+        "truncated": truncated,
+        "metadata": {
+            "schema": "mac.evidence_artifact_capture.v1",
+            "source_size_bytes": source_size,
+            "source_sha256": source_sha256,
+            "captured_size_bytes": len(content),
+            "capture_limit_bytes": max_bytes,
+        },
+    }
+
+
+def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> List[JsonDict]:
+    candidates = [
+        (primary_result_path, primary_result_path.name, "result"),
+        (task_dir / "stdout.txt", "stdout.txt", "stdout"),
+        (task_dir / "stderr.txt", "stderr.txt", "stderr"),
+        (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
+        (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
+        (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
+        (task_dir / "executor-task.json", "executor-task.json", "review_context"),
+    ]
+    artifacts: List[JsonDict] = []
+    seen: set[str] = set()
+    per_artifact_limit = _evidence_artifact_max_bytes()
+    total_limit = _evidence_artifact_total_max_bytes()
+    captured_total = 0
+    for path, name, artifact_type in candidates:
+        remaining = total_limit - captured_total
+        if remaining <= 0:
+            break
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        captured = _capture_evidence_artifact(
+            path,
+            name=name,
+            artifact_type=artifact_type,
+            max_bytes=min(per_artifact_limit, remaining),
+        )
+        if captured is not None:
+            artifacts.append(captured)
+            captured_total += int(captured.get("size_bytes") or 0)
+    return artifacts
 
 
 def _default_self_update_repo() -> Path:

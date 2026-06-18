@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import sqlite3
 import subprocess
@@ -107,6 +109,92 @@ def cp(tmp_path, monkeypatch):
 def register_agent(cp, name="agent", capabilities=None):
     machine = cp.register_machine("%s-host" % name, resources={"cpu": 4, "memory_gb": 8})
     return cp.register_agent(machine.id, name, capabilities=capabilities or [])
+
+
+def test_add_evidence_persists_durable_artifacts(cp):
+    task = cp.create_task("capture artifacts")
+    content = b"full worker stdout\n"
+    digest = "sha256:%s" % hashlib.sha256(content).hexdigest()
+
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "file:///tmp/worker-result.json",
+        "worker completed",
+        "agent",
+        artifacts=[
+            {
+                "name": "stdout.txt",
+                "artifact_type": "stdout",
+                "source_uri": "file:///tmp/stdout.txt",
+                "content_type": "text/plain; charset=utf-8",
+                "encoding": "base64",
+                "size_bytes": len(content),
+                "sha256": digest,
+                "content_base64": base64.b64encode(content).decode("ascii"),
+            }
+        ],
+    )
+
+    index = evidence.metadata["durable_artifacts"]
+    assert index["schema"] == "mac.evidence_artifacts.v1"
+    assert index["count"] == 1
+    assert index["artifacts"][0]["sha256"] == digest
+    assert "content_base64" not in index["artifacts"][0]
+    assert "metadata" not in index["artifacts"][0]
+
+    listed = cp.list_evidence_artifacts(evidence.id)
+    assert listed[0]["name"] == "stdout.txt"
+    assert "content_base64" not in listed[0]
+    assert "metadata" not in listed[0]
+
+    artifact = cp.get_evidence_artifact(evidence.id, listed[0]["id"])
+    assert artifact["sha256"] == digest
+    assert base64.b64decode(artifact["content_base64"]) == content
+    assert cp.task_history(task.id)[-1].detail["artifact_count"] == 1
+
+
+def test_add_evidence_owns_durable_artifacts_metadata(cp):
+    task = cp.create_task("artifact metadata ownership")
+
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "worker completed without artifacts",
+        "agent",
+        metadata={"durable_artifacts": {"fake": True}, "kept": True},
+    )
+
+    assert evidence.metadata == {"kept": True}
+
+
+def test_add_evidence_rejects_invalid_and_oversized_artifacts(cp, monkeypatch):
+    task = cp.create_task("artifact validation")
+
+    with pytest.raises(ValidationError, match="invalid base64"):
+        cp.add_evidence(
+            task.id,
+            "log",
+            "file:///tmp/result.json",
+            "bad base64",
+            "agent",
+            artifacts=[{"name": "stdout.txt", "content_base64": "not base64!"}],
+        )
+
+    monkeypatch.setenv("MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES", "5")
+    with pytest.raises(ValidationError, match="aggregate limit"):
+        cp.add_evidence(
+            task.id,
+            "log",
+            "file:///tmp/result.json",
+            "too much content",
+            "agent",
+            artifacts=[
+                {"name": "a.txt", "content_base64": base64.b64encode(b"abc").decode("ascii")},
+                {"name": "b.txt", "content_base64": base64.b64encode(b"def").decode("ascii")},
+            ],
+        )
 
 
 def create_runtime(cp, name="runtime"):

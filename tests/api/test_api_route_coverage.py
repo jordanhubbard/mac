@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
@@ -799,6 +800,15 @@ network_policies:
         "runtime route evidence",
         default_agent["id"],
         metadata={"verification": _operator_manifest("runtime route evidence")},
+        artifacts=[
+            {
+                "name": "route-runtime-evidence.txt",
+                "artifact_type": "test-output",
+                "source_uri": "artifact://route/runtime-evidence.txt",
+                "content_type": "text/plain; charset=utf-8",
+                "content_base64": base64.b64encode(b"route runtime durable artifact\n").decode("ascii"),
+            }
+        ],
         sync_beads=False,
     )
     runtime_run = _ok(
@@ -813,6 +823,7 @@ network_policies:
     )
     ctx["runtime_run_id"] = runtime_run["id"]
     ctx["runtime_evidence_id"] = runtime_evidence.id
+    ctx["evidence_artifact_id"] = cp.list_evidence_artifacts(runtime_evidence.id)[0]["id"]
 
     eval_set = _ok(
         client.post(
@@ -918,9 +929,11 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "delta_id": ctx["delta_id"],
         "draft_id": ctx["draft_id"],
         "env_id": ctx["env_id"],
+        "evidence_id": ctx["runtime_evidence_id"],
         "eval_set_id": ctx["eval_set_id"],
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
+        "artifact_id": ctx["evidence_artifact_id"],
         "key": "route-memory-key",
         "lease_id": ctx["lease_id"],
         "name": ctx["secret_name"],

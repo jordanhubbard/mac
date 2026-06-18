@@ -66,6 +66,93 @@ def test_post_tasks_accepts_summary_alias_for_description():
     assert detail["description"] == "worker instructions"
 
 
+def test_evidence_artifacts_are_retrievable_via_api():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    task = client.post("/tasks", json={"title": "artifact task"}).json()
+    payload = base64.b64encode(b"captured stdout\n").decode("ascii")
+
+    evidence_resp = client.post(
+        "/tasks/%s/evidence" % task["id"],
+        json={
+            "kind": "log",
+            "uri": "file:///tmp/worker-result.json",
+            "summary": "worker completed",
+            "created_by": "agent",
+            "artifacts": [
+                {
+                    "name": "stdout.txt",
+                    "artifact_type": "stdout",
+                    "source_uri": "file:///tmp/stdout.txt",
+                    "content_type": "text/plain; charset=utf-8",
+                    "encoding": "base64",
+                    "content_base64": payload,
+                }
+            ],
+        },
+    )
+
+    assert evidence_resp.status_code == 200
+    evidence = evidence_resp.json()
+    listed = client.get("/evidence/%s/artifacts" % evidence["id"]).json()
+    assert listed[0]["name"] == "stdout.txt"
+    assert "content_base64" not in listed[0]
+    artifact = client.get(
+        "/evidence/%s/artifacts/%s" % (evidence["id"], listed[0]["id"])
+    ).json()
+    assert base64.b64decode(artifact["content_base64"]) == b"captured stdout\n"
+
+
+def test_evidence_artifact_content_requires_secret_scope():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task("artifact auth task")
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "file:///tmp/worker-result.json",
+        "worker completed",
+        "agent",
+        artifacts=[
+            {
+                "name": "stdout.txt",
+                "artifact_type": "stdout",
+                "source_uri": "file:///tmp/stdout.txt",
+                "content_type": "text/plain; charset=utf-8",
+                "content_base64": base64.b64encode(b"sensitive output\n").decode("ascii"),
+            }
+        ],
+    )
+    artifact_id = cp.list_evidence_artifacts(evidence.id)[0]["id"]
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "reader": ["read"],
+                "secret-reader": ["secret"],
+            },
+        )
+    )
+
+    listed = client.get(
+        "/evidence/%s/artifacts" % evidence.id,
+        headers={"Authorization": "Bearer reader"},
+    )
+    assert listed.status_code == 200
+    assert "content_base64" not in listed.json()[0]
+
+    blocked = client.get(
+        "/evidence/%s/artifacts/%s" % (evidence.id, artifact_id),
+        headers={"Authorization": "Bearer reader"},
+    )
+    assert blocked.status_code == 403
+
+    allowed = client.get(
+        "/evidence/%s/artifacts/%s" % (evidence.id, artifact_id),
+        headers={"Authorization": "Bearer secret-reader"},
+    )
+    assert allowed.status_code == 200
+    assert base64.b64decode(allowed.json()["content_base64"]) == b"sensitive output\n"
+
+
 def test_repositories_onboard_creates_contract_backed_task():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     resp = client.post(

@@ -252,6 +252,67 @@ def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: P
     assert any(item.subject_id == task.id for item in observations)
 
 
+def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task(
+        "Artifact capture task",
+        required_capabilities=["python"],
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "operator_directive",
+                "quality": "weak",
+                "evidence_type": "operator_result",
+            }
+        },
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(_task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
+        (task_dir / "mac-evidence.json").write_text(
+            json.dumps(
+                {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "operator_result",
+                    "summary": "Captured output",
+                    "result": "The worker output was captured durably.",
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return WorkerExecution(
+            0,
+            "captured output",
+            stdout="durable stdout\n",
+            stderr="durable stderr\n",
+        )
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "submitted_for_review"
+    evidence = cp.list_evidence(task.id)[0]
+    index = evidence.metadata["durable_artifacts"]["artifacts"]
+    by_name = {item["name"]: item for item in index}
+    assert {"worker-result.json", "stdout.txt", "stderr.txt", "mac-evidence.json"} <= set(by_name)
+    assert "content_base64" not in by_name["stdout.txt"]
+    stdout_artifact = cp.get_evidence_artifact(evidence.id, by_name["stdout.txt"]["id"])
+    stderr_artifact = cp.get_evidence_artifact(evidence.id, by_name["stderr.txt"]["id"])
+    assert base64.b64decode(stdout_artifact["content_base64"]) == b"durable stdout\n"
+    assert base64.b64decode(stderr_artifact["content_base64"]) == b"durable stderr\n"
+
+
 def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

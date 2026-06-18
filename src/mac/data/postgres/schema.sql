@@ -232,6 +232,27 @@ CREATE TABLE IF NOT EXISTS evidence (
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence (task_id);
 
+CREATE TABLE IF NOT EXISTS evidence_artifacts (
+    id TEXT PRIMARY KEY,
+    evidence_id TEXT NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    encoding TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    content_base64 TEXT NOT NULL,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_evidence
+    ON evidence_artifacts (evidence_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_task
+    ON evidence_artifacts (task_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS leases (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

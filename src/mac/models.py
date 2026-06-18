@@ -495,6 +495,27 @@ class Evidence:
 
 
 @dataclass
+class EvidenceArtifact:
+    id: str
+    evidence_id: str
+    task_id: str
+    name: str
+    artifact_type: str
+    source_uri: str
+    content_type: str
+    encoding: str
+    size_bytes: int
+    sha256: str
+    content_base64: Optional[str]
+    truncated: bool
+    metadata: JsonDict
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
 class Lease:
     id: str
     task_id: str
