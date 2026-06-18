@@ -50,8 +50,16 @@ FORBIDDEN = [
     "agentuser",
 ]
 
+# Boundaries are alphanumeric-only (NOT \b) so an underscore counts as a
+# separator: this catches `agent_rocky` / `hermes_hosta` forms a \b regex misses
+# (`_` is a word char). The trailing boundary keeps real words like "hostage"
+# from matching `hosta`. `do-host` is split out with only a left boundary so the
+# hyphenated `do-host1` still matches.
+_PLAIN = [t for t in FORBIDDEN if t != "do-host"]
 IDENTITY = re.compile(
-    r"(?i)\b(?:%s)\b" % "|".join(re.escape(t) for t in FORBIDDEN)
+    r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(t) for t in _PLAIN) + r")(?![A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9])do-host",
+    re.IGNORECASE,
 )
 
 
