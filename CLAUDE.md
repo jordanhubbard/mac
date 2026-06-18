@@ -4,11 +4,13 @@ This file provides instructions and context for AI coding agents working on this
 
 ## Issue Tracking
 
-Issues live as one markdown file per ticket under `.tickets/<id>.md`
-(wedow/ticket-compatible format: YAML frontmatter + body with optional
-Design / Acceptance Criteria / Notes sections). The MAC hub task ledger
-(`mac task`) is the canonical execution store; `.tickets/<id>.md` is
-the git-trackable human/IDE mirror that travels with the repo.
+Issues live in the MAC hub task ledger (`mac task`), which is the **canonical**
+execution store. `.tickets/<id>.md` (wedow/ticket-compatible: YAML frontmatter +
+body with optional Design / Acceptance Criteria / Notes sections) is a **local,
+gitignored** human/IDE mirror auto-emitted on task create/close — it is
+operational state, NOT product content, so it is **not** checked into the repo
+(a generic product tree must not carry one operator's task history). A fresh
+clone has no `.tickets/`; populate it locally from the ledger as needed.
 
 The legacy beads (`bd`) integration is shut off: `bd dolt push/pull`
 is disabled, the beads bridge is gated off by default
@@ -19,8 +21,8 @@ from this repo. Do not run `bd`.
 
 ```bash
 # Discover work
-ls .tickets                         # browse all tickets
-cat .tickets/mac-y7ha.md            # one issue (the file IS authoritative for text)
+mac task show <task_id>             # one issue (the ledger is authoritative)
+ls .tickets 2>/dev/null             # browse the LOCAL mirror, if populated (gitignored)
 mac task ready --limit 10           # ledger view: open + no unfinished deps + unclaimed
 mac task stats                      # counts by state
 mac task search <keyword>           # title/description match
@@ -46,10 +48,10 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 
 ### Rules
 
-- Read issues from `.tickets/<id>.md` whenever possible; the file IS authoritative for the issue's text.
+- Read issues via `mac task show <id>` (the ledger is authoritative). A local `.tickets/<id>.md` mirror, if present, is a convenience copy — do NOT commit it (`.tickets/` is gitignored).
 - Create / claim / close issues via `mac task` — do NOT run `bd`, do NOT use TodoWrite / TaskCreate / markdown TODO lists.
 - Use `mac memory remember` for persistent project knowledge — do NOT use MEMORY.md files.
-- After `mac task create` / `mac task close`, refresh the .tickets mirror if you want a markdown copy of newly-created tasks (auto-emit is on the roadmap).
+- `mac task create` / `close` auto-emit the local `.tickets/<id>.md` mirror; it stays out of git. Never check `.tickets/` into the repo — it is operational state, not product content.
 
 ### How `mac task` finds the hub
 
