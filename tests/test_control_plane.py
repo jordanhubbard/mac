@@ -824,75 +824,8 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
-def test_beads_source_state_log_suppressed_when_bridge_disabled(cp, monkeypatch, tmp_path):
-    """mem-03: bridge.beads.repository_source must NOT fire when
-    MAC_BEADS_BRIDGE_ENABLED is unset (the default per CLAUDE.md).
-    The original audit found 31K rows of this log on rocky despite
-    the bridge being supposedly off."""
-    monkeypatch.delenv("MAC_BEADS_BRIDGE_ENABLED", raising=False)
-    # Build a minimal BeadsRepository directly instead of registering a
-    # real on-disk one — the .mac/project.yaml requirement at registration
-    # time is unrelated to this gate test.
-    from mac.models import BeadsRepository
-    repo = BeadsRepository(
-        id="repo_fake",
-        name="acme",
-        path=str(tmp_path / "acme"),
-        source="file://acme",
-        project="acme-project",
-        required_capabilities=[],
-        enabled=True,
-        poll_interval_seconds=300,
-        last_polled_at=None,
-        last_imported_at=None,
-        last_error=None,
-        metadata={},
-        created_at="2026-05-29T00:00:00Z",
-        updated_at="2026-05-29T00:00:00Z",
-    )
-    cp._record_beads_source_state(
-        actor="test",
-        repo=repo,
-        state={"status": "error", "error": "anything"},
-        level="warning",
-    )
-    names = {e.name for e in cp.list_observability(limit=50)}
-    assert "bridge.beads.repository_source" not in names
 
 
-def test_beads_source_state_log_writes_when_bridge_enabled(cp, monkeypatch, tmp_path):
-    """mem-03 (negative): when MAC_BEADS_BRIDGE_ENABLED is true, the
-    log fires normally — operators who actually use the bridge keep
-    the audit trail."""
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    # Build a minimal BeadsRepository directly instead of registering a
-    # real on-disk one — the .mac/project.yaml requirement at registration
-    # time is unrelated to this gate test.
-    from mac.models import BeadsRepository
-    repo = BeadsRepository(
-        id="repo_fake",
-        name="acme",
-        path=str(tmp_path / "acme"),
-        source="file://acme",
-        project="acme-project",
-        required_capabilities=[],
-        enabled=True,
-        poll_interval_seconds=300,
-        last_polled_at=None,
-        last_imported_at=None,
-        last_error=None,
-        metadata={},
-        created_at="2026-05-29T00:00:00Z",
-        updated_at="2026-05-29T00:00:00Z",
-    )
-    cp._record_beads_source_state(
-        actor="test",
-        repo=repo,
-        state={"status": "error", "error": "anything"},
-        level="warning",
-    )
-    names = {e.name for e in cp.list_observability(limit=50)}
-    assert "bridge.beads.repository_source" in names
 
 
 def test_record_log_suppresses_verbose_poll_names_by_default(cp):
@@ -1070,7 +1003,7 @@ def test_default_review_workflow_caps_retractions(cp, monkeypatch):
     assert result["status"] == "review_retraction_exhausted"
     assert result["cap"] == 2
     assert result["retracted_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     # Confirm an observability row was written so operators can see why.
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.exhausted" in names
@@ -1146,7 +1079,8 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
 def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     """A reviewer that keeps producing review-attempt evidence but never a
     valid signed verdict must not spin forever: past the verdict-wait cap the
-    task FAILS instead of re-nudging (the live half of the 2026-06 runaway)."""
+    task blocks for repair instead of re-nudging (the live half of the
+    2026-06 runaway)."""
     monkeypatch.setenv("MAC_REVIEW_VERDICT_WAIT_CAP", "2")
     worker = register_agent(cp, "worker", ["python"])
     register_agent(cp, "reviewer-a", ["review"])
@@ -1188,7 +1122,7 @@ def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     assert result["status"] == "review_verdict_wait_exhausted", result
     assert result["cap"] == 2
     assert result["wait_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.exhausted" in names
 
@@ -1248,7 +1182,7 @@ def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypa
 
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "review_retraction_exhausted", result
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
@@ -2739,60 +2673,6 @@ def test_claim_next_capabilities_filter_empty_is_noop(cp):
     assert claimed is not None and claimed["task"]["id"] == task.id
 
 
-def test_claim_next_can_defer_beads_claim_side_effects(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-defer-claim",
-                "title": "Defer claim writeback",
-                "description": "claim response should not wait on beads",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
-
-    class Completed:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
-        return Completed()
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    claimed = cp.claim_next_for_agent(worker.id, sync_beads=False)
-
-    assert claimed is not None
-    assert claimed["task"]["id"] == task.id
-    assert calls == []
-
-    cp.sync_claim_side_effects(
-        task.id,
-        worker.id,
-        claimed["lease"]["id"],
-        claimed["lease"]["expires_at"],
-    )
-
-    commands = [call["command"] for call in calls]
-    assert [bd_cli, "--actor", worker.id, "update", "mac-defer-claim", "--claim"] in commands
-    assert any(command[:5] == [bd_cli, "--actor", worker.id, "comment", "mac-defer-claim"] for command in commands)
 
 
 def test_dependencies_block_until_parent_completes(cp):
@@ -2807,6 +2687,23 @@ def test_dependencies_block_until_parent_completes(cp):
 
     assert cp.get_task(child.id).state == TaskState.CLAIMED.value
     assert tick["assignments"][0]["task"]["id"] == child.id
+
+
+def test_manual_block_without_dependencies_is_not_auto_unblocked(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("Needs manual repair", required_capabilities=["python"])
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "verifier",
+        {"reason": "verification_contract_failed", "manual_repair_required": True},
+    )
+
+    tick = cp.tick()
+
+    assert tick["assignments"] == []
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    assert cp.claim_next_for_agent(worker.id) is None
 
 
 def test_message_bus_accepts_structured_payloads_and_rejects_execution(cp):
@@ -3133,7 +3030,7 @@ def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):
     repo.mkdir()
 
     with pytest.raises(ValidationError, match="runtime contract not found"):
-        cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
 def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, tmp_path):
@@ -3142,460 +3039,34 @@ def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, t
     _write_repository_contract(repo, include_test=False)
 
     with pytest.raises(ValidationError, match="test.command"):
-        cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
-def test_beads_bridge_imports_ready_open_issues_idempotently(cp, tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-ready",
-                "title": "Ready bead",
-                "description": "do the ready work",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            },
-            {
-                "_type": "issue",
-                "id": "mac-blocked",
-                "title": "Blocked bead",
-                "description": "must wait",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:01:00Z",
-                "dependencies": [
-                    {"issue_id": "mac-blocked", "depends_on_id": "mac-ready", "type": "blocks"}
-                ],
-                "dependency_count": 1,
-            },
-        ],
-    )
-    repo_record = cp.register_beads_repository(
-        "mac",
-        str(repo),
-        source="repo-beads-mac",
-        required_capabilities=["python"],
-        poll_interval_seconds=60,
-    )
-
-    report = cp.poll_beads_repositories(force=True)
-    again = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    assert report["imported_count"] == 1
-    assert again["imported_count"] == 0
-    assert again["existing_count"] == 1
-    assert len(cp.list_project_items()) == 1
-    item = cp.list_project_items()[0]
-    assert item.source == "repo-beads-mac"
-    assert item.external_id == "mac-ready"
-    assert item.payload["repository_contract"]["test"]["command"] == "PATH=.venv/bin:$PATH .venv/bin/python -m pytest"
-    task = cp.get_task(item.task_id)
-    assert task.state == TaskState.OPEN.value
-    assert task.project == "repo-beads-mac"
-    assert task.priority >= 98
-    assert task.required_capabilities == ["python"]
-    assert repo_record.metadata["repository_contract"]["bootstrap"]["command"] == "python3 scripts/bootstrap-project.py"
-    assert task.metadata["origin"]["type"] == "beads"
-    assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
-    assert task.metadata["publication_target"] == "git://main"
-    assert task.metadata["acc_metadata"]["beads_sync_close_on_complete"] is True
-    assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
 
 
-def test_beads_bridge_pulls_existing_embedded_dolt_database(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_repository_contract(repo)
-    beads_dir = repo / ".beads"
-    beads_dir.mkdir()
-    embedded = beads_dir / "embeddeddolt"
-    embedded.mkdir()
-    (embedded / "marker").write_text("db exists", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_bd.chmod(0o755)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    monkeypatch.setenv("MAC_BEADS_DOLT_SYNC_ENABLED", "1")
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    state = {}
-
-    cp._bootstrap_beads_bridge_checkout(repo_record, repo, "test", state)
-
-    assert state["beads_bootstrap"] == "already_exists"
-    assert state["beads_dolt_pull"] == "ok"
-    assert [str(fake_bd), "dolt", "pull"] in calls
 
 
-def test_beads_bridge_skips_dolt_sync_when_disabled(cp, tmp_path, monkeypatch):
-    # mac-dolt-off: with MAC_BEADS_DOLT_SYNC_ENABLED unset (default),
-    # the bridge must not invoke `bd dolt pull` or attempt a rebuild.
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_repository_contract(repo)
-    beads_dir = repo / ".beads"
-    beads_dir.mkdir()
-    embedded = beads_dir / "embeddeddolt"
-    embedded.mkdir()
-    (embedded / "marker").write_text("db exists", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_bd.chmod(0o755)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    monkeypatch.delenv("MAC_BEADS_DOLT_SYNC_ENABLED", raising=False)
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    state = {}
-
-    cp._bootstrap_beads_bridge_checkout(repo_record, repo, "test", state)
-
-    assert state["beads_bootstrap"] == "already_exists"
-    assert state["beads_dolt_pull"] == "skipped"
-    assert state["beads_dolt_pull_reason"] == "dolt_sync_disabled"
-    assert [str(fake_bd), "dolt", "pull"] not in calls
 
 
-def test_beads_bridge_rebuilds_disposable_dolt_database_after_pull_failure(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_repository_contract(repo)
-    beads_dir = repo / ".beads"
-    beads_dir.mkdir()
-    embedded = beads_dir / "embeddeddolt"
-    embedded.mkdir()
-    (embedded / "marker").write_text("conflicted db", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    fake_bd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    fake_bd.chmod(0o755)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    monkeypatch.setenv("MAC_BEADS_DOLT_SYNC_ENABLED", "1")
-    calls = []
-    pull_count = 0
-
-    def fake_run(cmd, **kwargs):
-        nonlocal pull_count
-        calls.append(list(cmd))
-        if list(cmd) == [str(fake_bd), "dolt", "pull"]:
-            pull_count += 1
-            if pull_count == 1:
-                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="foreign key conflicts")
-            return subprocess.CompletedProcess(cmd, 0, stdout="pulled", stderr="")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    state = {}
-
-    cp._bootstrap_beads_bridge_checkout(repo_record, repo, "test", state)
-
-    assert state["beads_bootstrap"] == "already_exists"
-    assert state["beads_dolt_pull"] == "failed"
-    assert state["beads_dolt_rebuild"] == "ok"
-    assert state["beads_dolt_pull_retry"] == "ok"
-    assert pull_count == 2
-    assert [str(fake_bd), "bootstrap", "--yes"] in calls
-    assert not embedded.exists()
-    assert list(beads_dir.glob("embeddeddolt.rebuild.*"))
 
 
-def test_beads_bridge_records_authority_drift_when_jsonl_export_disagrees_with_db(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    issue = {
-        "_type": "issue",
-        "id": "mac-jsonl-only",
-        "title": "Export-only bead",
-        "description": "present in tracked JSONL but not canonical DB",
-        "status": "open",
-        "priority": 0,
-        "created_at": "2026-05-20T00:00:00Z",
-        "dependency_count": 0,
-    }
-    _write_beads(repo, [issue])
-    ready_path = tmp_path / "ready.json"
-    ready_path.write_text("[]", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    _write_fake_bd_cli(fake_bd, ready_path)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    assert report["imported_count"] == 0
-    assert report["error_count"] == 1
-    assert cp.list_project_items() == []
-    repo_report = report["repositories"][0]
-    assert repo_report["status"] == "authority_drift"
-    assert repo_report["health"]["status"] == "unhealthy"
-    assert repo_report["health"]["reason"] == "authority_drift"
-    assert repo_report["ready_count"] == 0
-    assert repo_report["source_state"]["authority"]["authority"] == "beads_db"
-    assert repo_report["source_state"]["authority"]["status"] == "drift"
-    assert repo_report["source_state"]["authority"]["jsonl_ready_ids"] == ["mac-jsonl-only"]
-    assert repo_report["source_state"]["authority_findings"][0]["finding_type"] == "beads.export_drift.ready_mismatch"
-    assert repo_report["source_state"]["authority_drift"]["repair_action"]["type"] == "beads_canonical_reconcile"
-    assert cp.get_beads_repository(repo_record.id).metadata["health"]["status"] == "unhealthy"
-    findings = cp.list_integration_findings(status="open")
-    assert len(findings) == 1
-    assert findings[0].detail["jsonl_only_ready_ids"] == ["mac-jsonl-only"]
-    assert findings[0].detail["jsonl_only_untracked_ids"] == ["mac-jsonl-only"]
-    assert "bd export -o .beads/issues.jsonl" in findings[0].detail["repair_action"]["commands"]
-    assert findings[0].detail["repair_action"]["commands"][-1] == "git push"
-    observations = cp.list_integration_observations(source_id=repo_record.id)
-    assert observations[0].authority == "beads_db"
-    assert observations[0].status == "drift"
-    assert observations[0].detail["canonical_ready_ids"] == []
-    notifications = cp.list_notifications(subject_id=repo_record.id)
-    assert notifications[0].event_type == "integration.beads.export_drift.ready_mismatch"
-    names = {item.name for item in cp.list_observability(layer="control_plane", limit=20)}
-    assert "integration.finding.opened" in names
-
-    ready_path.write_text(json.dumps([issue]), encoding="utf-8")
-    second = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    assert second["imported_count"] == 1
-    assert second["error_count"] == 0
-    assert second["repositories"][0]["health"]["status"] == "healthy"
-    assert cp.get_beads_repository(repo_record.id).last_error is None
-    assert cp.list_integration_findings(status="open") == []
-    resolved = cp.list_integration_findings(status="resolved")
-    assert len(resolved) == 1
-    assert resolved[0].resolution == "no longer observed"
 
 
-def test_beads_bridge_marks_repo_unhealthy_for_jsonl_only_issue_already_imported(
-    cp,
-    tmp_path,
-    monkeypatch,
-):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    issue = {
-        "_type": "issue",
-        "id": "mac-jsonl-active",
-        "title": "Already imported bead",
-        "description": "present in tracked JSONL but already represented by a mac task",
-        "status": "open",
-        "priority": 0,
-        "created_at": "2026-05-20T00:00:00Z",
-        "dependency_count": 0,
-    }
-    _write_beads(repo, [issue])
-    ready_path = tmp_path / "ready.json"
-    ready_path.write_text("[]", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    _write_fake_bd_cli(fake_bd, ready_path)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    item = cp.import_project_item(
-        repo_record.source,
-        "mac-jsonl-active",
-        "Already imported bead",
-        {"issue": issue},
-        actor="test",
-    )
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    assert report["imported_count"] == 0
-    assert report["error_count"] == 1
-    assert report["repositories"][0]["status"] == "authority_drift"
-    assert report["repositories"][0]["health"]["status"] == "unhealthy"
-    assert report["repositories"][0]["source_state"]["authority_findings"][0]["finding_type"] == "beads.export_drift.ready_mismatch"
-    drift = report["repositories"][0]["source_state"]["authority_drift"]
-    assert drift["jsonl_only_ready_ids"] == ["mac-jsonl-active"]
-    assert drift["jsonl_only_untracked_ids"] == []
-    assert drift["jsonl_only_already_imported_ids"] == ["mac-jsonl-active"]
-    assert drift["jsonl_only_existing_tasks"]["mac-jsonl-active"] == {
-        "task_id": item.task_id,
-        "state": "open",
-    }
-    findings = cp.list_integration_findings(status="open")
-    assert len(findings) == 1
-    assert findings[0].detail["jsonl_only_already_imported_ids"] == ["mac-jsonl-active"]
-    assert cp.list_notifications(subject_id=repo_record.id)[0].event_type == "integration.beads.export_drift.ready_mismatch"
 
 
-def test_beads_bridge_fails_closed_when_canonical_ready_is_unavailable(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    issue = {
-        "_type": "issue",
-        "id": "mac-jsonl-only",
-        "title": "Do not import from JSONL fallback",
-        "description": "canonical DB is broken",
-        "status": "open",
-        "priority": 0,
-        "created_at": "2026-05-20T00:00:00Z",
-        "dependency_count": 0,
-    }
-    _write_beads(repo, [issue])
-    fake_bd = tmp_path / "bd-broken"
-    fake_bd.write_text(
-        "#!/bin/sh\n"
-        "if [ \"$1 $2\" = \"ready --json\" ]; then echo 'embeddeddolt: missing table' >&2; exit 1; fi\n"
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    fake_bd.chmod(0o755)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    repo_report = report["repositories"][0]
-    assert report["imported_count"] == 0
-    assert report["error_count"] == 1
-    assert repo_report["status"] == "error"
-    assert repo_report["health"]["status"] == "unhealthy"
-    assert repo_report["health"]["reason"] == "canonical_unavailable"
-    assert repo_report["source_state"]["authority"]["authority"] == "beads_db"
-    assert repo_report["source_state"]["authority"]["status"] == "unavailable"
-    assert repo_report["source_state"]["authority"]["jsonl_ready_ids"] == ["mac-jsonl-only"]
-    assert cp.list_project_items() == []
-    refreshed_repo = cp.get_beads_repository(repo_record.id)
-    assert refreshed_repo.last_error.startswith("canonical Beads DB unavailable")
-    assert refreshed_repo.metadata["health"]["status"] == "unhealthy"
-    findings = cp.list_integration_findings(status="open")
-    assert len(findings) == 1
-    assert findings[0].finding_type == "beads.canonical_unavailable"
-    assert findings[0].detail["jsonl_ready_ids"] == ["mac-jsonl-only"]
-    assert findings[0].detail["repair_action"]["type"] == "beads_canonical_reconcile"
 
 
-def test_beads_bridge_repair_reconciles_tracked_export_from_canonical_db(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    issue = {
-        "_type": "issue",
-        "id": "mac-stale-export",
-        "title": "Stale export",
-        "description": "JSONL says ready but canonical DB does not",
-        "status": "open",
-        "priority": 0,
-        "created_at": "2026-05-20T00:00:00Z",
-        "dependency_count": 0,
-    }
-    _write_beads(repo, [issue])
-    ready_path = tmp_path / "ready.json"
-    ready_path.write_text("[]", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    _write_fake_bd_cli(fake_bd, ready_path)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    drift = cp.poll_beads_repositories(repo_record.id, force=True)
-    assert drift["repositories"][0]["status"] == "authority_drift"
-
-    repaired = cp.repair_beads_repository(repo_record.id, actor="operator")
-
-    assert repaired["status"] == "ok"
-    assert [step["name"] for step in repaired["steps"]] == [
-        "bootstrap",
-        "dolt_pull",
-        "ready",
-        "export",
-    ]
-    assert (repo / ".beads" / "issues.jsonl").read_text(encoding="utf-8") == ""
-    assert repaired["poll_report"]["repositories"][0]["status"] == "ok"
-    assert cp.get_beads_repository(repo_record.id).metadata["health"]["status"] == "healthy"
-    assert cp.list_integration_findings(status="open") == []
 
 
-def test_beads_bridge_repair_skips_bootstrap_when_embedded_db_already_exists(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    issue = {
-        "_type": "issue",
-        "id": "mac-stale-export",
-        "title": "Stale export",
-        "description": "JSONL says ready but canonical DB does not",
-        "status": "open",
-        "priority": 0,
-        "created_at": "2026-05-20T00:00:00Z",
-        "dependency_count": 0,
-    }
-    _write_beads(repo, [issue])
-    (repo / ".beads" / "embeddeddolt" / "repo").mkdir(parents=True)
-    ready_path = tmp_path / "ready.json"
-    ready_path.write_text("[]", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    _write_fake_bd_cli(
-        fake_bd,
-        ready_path,
-        bootstrap_returncode=1,
-        bootstrap_stderr="Error 1007: can't create database repo; database exists\n",
-    )
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    drift = cp.poll_beads_repositories(repo_record.id, force=True)
-    assert drift["repositories"][0]["status"] == "authority_drift"
-
-    repaired = cp.repair_beads_repository(repo_record.id, actor="operator")
-
-    assert repaired["status"] == "ok"
-    assert [step["name"] for step in repaired["steps"]] == [
-        "bootstrap",
-        "dolt_pull",
-        "ready",
-        "export",
-    ]
-    assert repaired["steps"][0]["skipped"] is True
-    assert (repo / ".beads" / "issues.jsonl").read_text(encoding="utf-8") == ""
-    assert repaired["poll_report"]["repositories"][0]["status"] == "ok"
-    assert cp.get_beads_repository(repo_record.id).metadata["health"]["status"] == "healthy"
-    assert cp.list_integration_findings(status="open") == []
 
 
-def test_beads_bridge_repair_persists_export_to_dedicated_checkout(cp, tmp_path, monkeypatch):
-    origin, _seed, clone = _seed_bare_beads_repo(tmp_path, "mac-stale-export")
-    ready_path = tmp_path / "ready.json"
-    ready_path.write_text("[]", encoding="utf-8")
-    fake_bd = tmp_path / "bd"
-    _write_fake_bd_cli(fake_bd, ready_path)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
-    repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    drift = cp.poll_beads_repositories(repo_record.id, force=True)
-    assert drift["repositories"][0]["status"] == "authority_drift"
-
-    repaired = cp.repair_beads_repository(repo_record.id, actor="operator")
-
-    assert repaired["status"] == "ok"
-    step_names = [step["name"] for step in repaired["steps"]]
-    assert "git_add_export" in step_names
-    assert "git_commit_export" in step_names
-    assert "git_push_export" in step_names
-    assert repaired["poll_report"]["repositories"][0]["status"] == "ok"
-    bridge_path = Path(repaired["poll_report"]["repositories"][0]["source_state"]["poll_path"])
-    assert _git(["status", "--porcelain", "--", ".beads/issues.jsonl"], cwd=bridge_path).stdout.strip() == ""
-    assert _git(["--git-dir", str(origin), "show", "main:.beads/issues.jsonl"]).stdout == ""
-    repoll = cp.poll_beads_repositories(repo_record.id, force=True)
-    assert repoll["repositories"][0]["status"] == "ok"
 
 
 def test_direct_task_for_registered_project_gets_repository_execution_contract(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(repo, [])
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
     task = cp.create_task(
         "Direct repository task",
@@ -3660,226 +3131,16 @@ def _seed_bare_beads_repo(tmp_path, issue_id="mac-old"):
     return origin, seed, clone
 
 
-def test_beads_bridge_auto_pulls_git_repository_before_poll(cp, tmp_path, monkeypatch):
-    _origin, seed, clone = _seed_bare_beads_repo(tmp_path, "mac-old")
-    repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
-    first = cp.poll_beads_repositories(repo_record.id, force=True)
-    assert first["imported_count"] == 1
-    assert first["repositories"][0]["source_state"]["status"] == "cloned"
-
-    (seed / ".beads" / "issues.jsonl").write_text(
-        json.dumps(
-            {
-                "_type": "issue",
-                "id": "mac-new",
-                "title": "New upstream bead",
-                "description": "arrived after hub checkout became stale",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:01:00Z",
-                "dependency_count": 0,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    _git(["add", ".beads/issues.jsonl"], cwd=seed)
-    _git(["commit", "-m", "new bead"], cwd=seed)
-    _git(["push"], cwd=seed)
-    monkeypatch.setenv("MAC_BEADS_AUTO_PULL", "1")
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    assert report["imported_count"] == 1
-    assert report["repositories"][0]["source_state"]["status"] == "updated"
-    assert [item.external_id for item in cp.list_project_items()] == ["mac-old", "mac-new"]
 
 
-def test_beads_bridge_polls_dedicated_checkout_when_registered_source_is_dirty(cp, tmp_path, monkeypatch):
-    _origin, _seed, clone = _seed_bare_beads_repo(tmp_path, "mac-dirty")
-    repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    (clone / ".beads" / "issues.jsonl").write_text(
-        '{"_type":"issue","id":"local-dirty","status":"open"}\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MAC_BEADS_AUTO_PULL", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=rocky.id)
-
-    repo_report = report["repositories"][0]
-    source_state = repo_report["source_state"]
-    assert report["error_count"] == 0
-    assert repo_report["status"] == "ok"
-    assert source_state["checkout_policy"] == "dedicated_git_checkout"
-    assert source_state["poll_path"] != str(clone)
-    assert source_state["registered_dirty_paths"] == ["M .beads/issues.jsonl"]
-    assert [item.external_id for item in cp.list_project_items()] == ["mac-dirty"]
-    notifications = cp.list_notifications(subject_id=repo_record.id)
-    assert [item.event_type for item in notifications] == []
 
 
-def test_beads_bridge_restores_registered_export_noise_before_poll(cp, tmp_path, monkeypatch):
-    _origin, _seed, clone = _seed_bare_beads_repo(tmp_path, "mac-clean")
-    repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    rocky = register_agent(cp, "rocky", ["python"])
-    (clone / ".beads" / "issues.jsonl").write_text(
-        '{"_type":"issue","id":"local-export-noise","status":"open"}\n',
-        encoding="utf-8",
-    )
-    subprocess.run(
-        ["git", "-C", str(clone), "add", ".beads/issues.jsonl"],
-        check=True,
-    )
-    monkeypatch.setenv("MAC_BEADS_AUTO_PULL", "1")
-    monkeypatch.setenv("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True, actor=rocky.id)
-
-    source_state = report["repositories"][0]["source_state"]
-    status = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(clone),
-            "status",
-            "--porcelain",
-            "--",
-            ".beads/config.yaml",
-            ".beads/issues.jsonl",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert report["error_count"] == 0
-    assert status == ""
-    assert "registered_dirty_paths" not in source_state
-    names = {item.name for item in cp.list_observability(layer="control_plane", limit=20)}
-    assert "bridge.beads.tracked_exports_restored" in names
 
 
-def test_beads_bridge_resets_dirty_managed_checkout_before_poll(cp, tmp_path, monkeypatch):
-    _origin, seed, clone = _seed_bare_beads_repo(tmp_path, "mac-old")
-    repo_record = cp.register_beads_repository("mac", str(clone), source="repo-beads-mac")
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ROOT", str(tmp_path / "bridge-checkouts"))
-    first = cp.poll_beads_repositories(repo_record.id, force=True)
-    bridge_path = Path(first["repositories"][0]["source_state"]["poll_path"])
-    (bridge_path / ".beads" / "issues.jsonl").write_text(
-        '{"_type":"issue","id":"local-bridge-dirty","status":"open"}\n',
-        encoding="utf-8",
-    )
-    (seed / ".beads" / "issues.jsonl").write_text(
-        '{"_type":"issue","id":"mac-new","status":"open","priority":0,"dependency_count":0}\n',
-        encoding="utf-8",
-    )
-    _git(["add", ".beads/issues.jsonl"], cwd=seed)
-    _git(["commit", "-m", "replace bead"], cwd=seed)
-    _git(["push"], cwd=seed)
-
-    report = cp.poll_beads_repositories(repo_record.id, force=True)
-
-    source_state = report["repositories"][0]["source_state"]
-    assert report["error_count"] == 0
-    assert source_state["tracked_dirty_reset"] == ["M .beads/issues.jsonl"]
-    assert report["imported_count"] == 1
-    assert [item.external_id for item in cp.list_project_items()] == ["mac-old", "mac-new"]
 
 
-def test_beads_bridge_reopens_failed_existing_task_while_bead_ready(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-retry",
-                "title": "Retry failed work",
-                "description": "still ready",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id, {"reason": "verification failed"})
-
-    report = cp.poll_beads_repositories(force=True, actor="bridge")
-
-    assert report["reopened_count"] == 1
-    assert report["repositories"][0]["existing_sync_results"]["reopened"] == 1
-    reopened = cp.get_task(task.id)
-    assert reopened.state == TaskState.OPEN.value
-    assert reopened.metadata["beads_reconciliation"]["failed_task_reopen_count"] == 1
-    assert reopened.metadata["beads_reconciliation"]["last_reopened_bead_id"] == "mac-retry"
-    assert cp.claim_next_for_agent(worker.id)["task"]["id"] == task.id
 
 
-def test_beads_bridge_failed_task_reopen_limit_is_bounded(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-limited",
-                "title": "Bounded retry",
-                "description": "do not loop forever",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    monkeypatch.setenv("MAC_BEADS_FAILED_TASK_REOPEN_LIMIT", "1")
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id, {"reason": "first failure"})
-    cp.store.execute(
-        "UPDATE tasks SET attempt_count = ?, max_attempts = ? WHERE id = ?",
-        (3, 3, task.id),
-    )
-
-    first = cp.poll_beads_repositories(force=True, actor="bridge")
-    reopened = cp.get_task(task.id)
-
-    assert first["reopened_count"] == 1
-    assert reopened.state == TaskState.OPEN.value
-    assert reopened.max_attempts == 4
-
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id, {"reason": "second failure"})
-    second = cp.poll_beads_repositories(force=True, actor="bridge")
-    exhausted = cp.get_task(task.id)
-
-    assert second["reopened_count"] == 0
-    assert second["retry_exhausted_count"] == 1
-    assert exhausted.state == TaskState.FAILED.value
-    assert exhausted.metadata["beads_reconciliation"]["failed_task_reopen_count"] == 1
-    assert exhausted.metadata["beads_reconciliation"]["failed_task_reopen_limit"] == 1
-    assert exhausted.metadata["beads_reconciliation"]["retry_exhausted_at"]
-    assert any(
-        event.event_type == "task.beads_retry_exhausted"
-        for event in cp.task_history(task.id)
-    )
 
 
 
@@ -4049,8 +3310,7 @@ def test_task_claim_records_history_and_outbox_in_same_transaction(cp):
     assert claimed.lease_id == lease.id
     assert history[-1].event_type == "task.claimed"
     assert history[-1].to_state == TaskState.CLAIMED.value
-    assert [item.event_type for item in outbox] == ["beads.claim"]
-    assert outbox[0].detail["lease_id"] == lease.id
+    assert [item.event_type for item in outbox] == []
 
 
 def test_outbox_drains_in_enqueue_order_with_identical_created_at(cp):
@@ -4091,823 +3351,22 @@ def test_outbox_drains_in_enqueue_order_with_identical_created_at(cp):
     assert [item.event_type for item in pending] == expected
 
 
-def test_beads_bridge_syncs_claim_and_failure_to_beads(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-sync",
-                "title": "Sync lifecycle",
-                "description": "sync claim and failure",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
 
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
 
-        class Completed:
-            returncode = 0
-            stdout = ""
-            stderr = ""
 
-        return Completed()
 
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
 
-    cp.claim_task(task.id, worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id, {"reason": "canary failed"})
 
-    update_calls = [
-        call for call in calls if len(call["command"]) > 3 and call["command"][3] == "update"
-    ]
-    comment_calls = [
-        call for call in calls if len(call["command"]) > 3 and call["command"][3] == "comment"
-    ]
-    push_calls = [call for call in calls if call["command"] == [bd_cli, "dolt", "push"]]
-    assert update_calls[0] == {
-        "command": [bd_cli, "--actor", worker.id, "update", "mac-sync", "--claim"],
-        "cwd": str(repo),
-    }
-    assert update_calls[1]["cwd"] == str(repo)
-    assert update_calls[1]["command"][:5] == [
-        bd_cli,
-        "--actor",
-        worker.id,
-        "update",
-        "mac-sync",
-    ]
-    assert update_calls[1]["command"][5] == "--append-notes"
-    assert "canary failed" in update_calls[1]["command"][6]
-    assert update_calls[2]["cwd"] == str(repo)
-    assert update_calls[2]["command"][:7] == [
-        bd_cli,
-        "--actor",
-        worker.id,
-        "update",
-        "mac-sync",
-        "--status",
-        "open",
-    ]
-    assert update_calls[2]["command"][7] == "--append-notes"
-    assert "canary failed" in update_calls[2]["command"][8]
-    comments = "\n".join(call["command"][5] for call in comment_calls)
-    assert "event=claimed" in comments
-    assert "event=state_failed" in comments
-    assert "event=state_failed_summary" in comments
-    assert "canary failed" in comments
-    assert len(push_calls) == len(update_calls) + len(comment_calls)
 
 
-def test_beads_bridge_backfills_retry_exhausted_failure_summary_to_beads(
-    cp, tmp_path, monkeypatch
-):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-failed",
-                "title": "Explain failed work",
-                "description": "operator needs cause",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    monkeypatch.setenv("MAC_BEADS_FAILED_TASK_REOPEN_LIMIT", "1")
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "executor completed without mac-evidence.json",
-        worker.id,
-        metadata={
-            "returncode": 0,
-            "verification": {
-                "schema": "mac.worker_evidence.v1",
-                "status": "missing",
-                "problems": ["mac-evidence.json was not produced by the executor"],
-            },
-        },
-    )
-    cp.transition_task(
-        task.id,
-        TaskState.FAILED.value,
-        worker.id,
-        {
-            "reason": "verification_contract_failed",
-            "problems": ["verification.status must be \"complete\""],
-            "evidence_id": evidence.id,
-        },
-    )
-    metadata = cp.get_task(task.id).metadata
-    metadata["beads_reconciliation"] = {
-        "schema": "mac.beads_reconciliation.v1",
-        "failed_task_reopen_count": 1,
-        "failed_task_reopen_limit": 1,
-        "retry_exhausted_at": "2026-05-21T00:00:00+00:00",
-    }
-    stale_task = cp.get_task(task.id)
-    stale_task.metadata["beads_reconciliation"] = metadata["beads_reconciliation"]
-    metadata["beads_reconciliation"]["failure_summary_comment_fingerprint"] = (
-        cp._failure_summary_fingerprint(
-            stale_task,
-            cp._latest_failure_context(stale_task, None),
-        )
-    )
-    cp.store.execute(
-        "UPDATE tasks SET metadata = ? WHERE id = ?",
-        (json.dumps(metadata), task.id),
-    )
 
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
 
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
 
-        class Completed:
-            returncode = 0
-            stdout = (
-                json.dumps(
-                    [
-                        {
-                            "_type": "issue",
-                            "id": "mac-failed",
-                            "title": "Explain failed work",
-                            "description": "operator needs cause",
-                            "status": "open",
-                            "priority": 0,
-                            "created_at": "2026-05-20T00:00:00Z",
-                            "dependency_count": 0,
-                        }
-                    ]
-                )
-                if "ready" in command
-                else ""
-            )
-            stderr = ""
 
-        return Completed()
 
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
 
-    report = cp.poll_beads_repositories(force=True, actor="bridge")
 
-    assert report["retry_exhausted_count"] == 1
-    update_notes = [
-        call["command"][6]
-        for call in calls
-        if call["command"][3:6] == ["update", "mac-failed", "--append-notes"]
-    ]
-    comments = [
-        call["command"][5]
-        for call in calls
-        if call["command"][3:5] == ["comment", "mac-failed"]
-    ]
-    assert any("verification_contract_failed" in note for note in update_notes)
-    assert any(evidence.id in note for note in update_notes)
-    assert any("event=retry_exhausted_summary" in comment for comment in comments)
-    assert any("verification.status must be" in comment for comment in comments)
-    fingerprint = cp.get_task(task.id).metadata["beads_reconciliation"][
-        "failure_summary_comment_fingerprint"
-    ]
-    assert cp.get_task(task.id).metadata["beads_reconciliation"][
-        "failure_summary_pushed_fingerprint"
-    ] == fingerprint
-    calls.clear()
 
-    again = cp.poll_beads_repositories(force=True, actor="bridge")
-
-    assert again["retry_exhausted_count"] == 1
-    assert cp.get_task(task.id).metadata["beads_reconciliation"][
-        "failure_summary_comment_fingerprint"
-    ] == fingerprint
-    assert not [
-        call for call in calls if call["command"][3:5] == ["comment", "mac-failed"]
-    ]
-
-
-def test_beads_sync_falls_back_to_registered_checkout_when_bridge_db_is_broken(
-    cp, tmp_path, monkeypatch
-):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    bridge = tmp_path / "bridge"
-    repo.mkdir()
-    bridge.mkdir()
-    _write_repository_contract(repo)
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-sync",
-                "title": "Sync lifecycle",
-                "description": "sync claim and failure",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    repo_record = cp.register_beads_repository(
-        "mac",
-        str(repo),
-        source="repo-beads-mac",
-        metadata={"beads_bridge_checkout_path": str(bridge)},
-    )
-    cp._import_bead_issue(
-        repo_record,
-        {
-            "_type": "issue",
-            "id": "mac-sync",
-            "title": "Sync lifecycle",
-            "description": "sync claim and failure",
-            "status": "open",
-            "priority": 0,
-            "created_at": "2026-05-20T00:00:00Z",
-            "dependency_count": 0,
-        },
-        actor="bridge",
-    )
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
-        if cwd == str(bridge):
-            return subprocess.CompletedProcess(
-                command,
-                1,
-                stdout="",
-                stderr="failed to open database: embeddeddolt: database not found: mac",
-            )
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    assert cp._run_bd_for_task(
-        task,
-        ["comment", "mac-sync", "failure cause"],
-        "bridge",
-        "ledger",
-    )
-
-    assert calls == [
-        {
-            "command": [bd_cli, "--actor", "bridge", "comment", "mac-sync", "failure cause"],
-            "cwd": str(bridge),
-        },
-        {
-            "command": [bd_cli, "--actor", "bridge", "comment", "mac-sync", "failure cause"],
-            "cwd": str(repo),
-        },
-        {
-            "command": [bd_cli, "dolt", "push"],
-            "cwd": str(repo),
-        },
-    ]
-    names = {item.name for item in cp.list_observability(layer="control_plane", limit=20)}
-    assert "bridge.beads.sync.ledger.registered_fallback" in names
-    assert cp.get_beads_repository(repo_record.id).metadata["beads_bridge_checkout_path"] == str(
-        bridge
-    )
-
-
-def test_beads_sync_returns_false_when_writeback_push_fails(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-sync",
-                "title": "Sync lifecycle",
-                "description": "sync claim and failure",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    repo_record = cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp._import_bead_issue(
-        repo_record,
-        {
-            "_type": "issue",
-            "id": "mac-sync",
-            "title": "Sync lifecycle",
-            "description": "sync claim and failure",
-            "status": "open",
-            "priority": 0,
-            "created_at": "2026-05-20T00:00:00Z",
-            "dependency_count": 0,
-        },
-        actor="bridge",
-    )
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        if command == [bd_cli, "dolt", "push"]:
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="remote rejected")
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    assert not cp._run_bd_for_task(
-        task,
-        ["comment", "mac-sync", "failure cause"],
-        "bridge",
-        "ledger",
-    )
-    names = {item.name for item in cp.list_observability(layer="control_plane", limit=20)}
-    assert "bridge.beads.writeback_push_failed" in names
-    assert "bridge.beads.ledger_failed" in names
-
-
-def test_beads_export_noise_can_be_restored_after_sync(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    beads = repo / ".beads"
-    beads.mkdir(parents=True)
-    (beads / "config.yaml").write_text("sync.remote: origin\n", encoding="utf-8")
-    (beads / "issues.jsonl").write_text('{"id":"mac-one","status":"open"}\n', encoding="utf-8")
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "mac-tests@example.invalid"],
-        check=True,
-    )
-    subprocess.run(["git", "-C", str(repo), "config", "user.name", "mac tests"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "add", ".beads/config.yaml", ".beads/issues.jsonl"],
-        check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "seed beads"],
-        check=True,
-        capture_output=True,
-    )
-    (beads / "config.yaml").write_text("sync.remote: origin", encoding="utf-8")
-    (beads / "issues.jsonl").write_text(
-        '{"id":"mac-one","status":"in_progress"}\n',
-        encoding="utf-8",
-    )
-    subprocess.run(["git", "-C", str(repo), "add", ".beads/issues.jsonl"], check=True)
-
-    monkeypatch.setenv("MAC_BEADS_RESTORE_TRACKED_EXPORTS", "1")
-    cp._restore_beads_tracked_exports(repo, "agent_rocky", "task_1", "claim")
-
-    status = subprocess.run(
-        ["git", "-C", str(repo), "status", "--porcelain"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert status == ""
-    names = {item.name for item in cp.list_observability(layer="control_plane", limit=20)}
-    assert "bridge.beads.tracked_exports_restored" in names
-
-
-def test_beads_bridge_reconciles_existing_active_task_claim(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-reconcile",
-                "title": "Reconcile missed claim",
-                "description": "claim sync missed during deploy",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    metadata = task.metadata
-    metadata["acc_metadata"]["beads_sync_claim_on_claim"] = False
-    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
-    worker = register_agent(cp, "worker", ["python"])
-    cp.claim_task(task.id, worker.id)
-    claimed = cp.get_task(task.id)
-    metadata = claimed.metadata
-    metadata["acc_metadata"]["beads_sync_claim_on_claim"] = True
-    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
-
-    class Completed:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        if command == [bd_cli, "ready", "--json"]:
-            return Completed(
-                stdout=json.dumps(
-                    [
-                        {
-                            "_type": "issue",
-                            "id": "mac-reconcile",
-                            "title": "Reconcile missed claim",
-                            "description": "claim sync missed during deploy",
-                            "status": "open",
-                            "priority": 0,
-                            "created_at": "2026-05-20T00:00:00Z",
-                            "dependency_count": 0,
-                        }
-                    ]
-                )
-            )
-        calls.append({"command": command, "cwd": cwd})
-        return Completed()
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    cp.poll_beads_repositories(force=True)
-
-    assert calls == [
-        {
-            "command": [bd_cli, "--actor", worker.id, "update", "mac-reconcile", "--claim"],
-            "cwd": str(repo),
-        },
-        {
-            "command": [bd_cli, "dolt", "push"],
-            "cwd": str(repo),
-        }
-    ]
-
-
-def test_beads_bridge_tolerates_preclaimed_bead_during_reconcile(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-preclaimed",
-                "title": "Preclaimed work",
-                "description": "already assigned before mac claimed it",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    metadata = task.metadata
-    metadata["acc_metadata"]["beads_sync_claim_on_claim"] = False
-    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
-    worker = register_agent(cp, "worker", ["python"])
-    cp.claim_task(task.id, worker.id)
-    claimed = cp.get_task(task.id)
-    metadata = claimed.metadata
-    metadata["acc_metadata"]["beads_sync_claim_on_claim"] = True
-    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-
-    class Completed:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        if command == [bd_cli, "ready", "--json"]:
-            return Completed(
-                stdout=json.dumps(
-                    [
-                        {
-                            "_type": "issue",
-                            "id": "mac-preclaimed",
-                            "title": "Preclaimed work",
-                            "description": "already assigned before mac claimed it",
-                            "status": "open",
-                            "priority": 0,
-                            "created_at": "2026-05-20T00:00:00Z",
-                            "dependency_count": 0,
-                        }
-                    ]
-                )
-            )
-        return Completed(returncode=1, stderr="Error claiming mac-preclaimed: issue already claimed by Jordan Hubbard")
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    cp.poll_beads_repositories(force=True)
-
-    names = {event.name for event in cp.list_observability(layer="control_plane", limit=20)}
-    assert "bridge.beads.sync.claim_existing" in names
-    assert "bridge.beads.sync_failed" not in names
-
-
-def test_beads_bridge_syncs_publication_close_to_beads(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-close",
-                "title": "Close lifecycle",
-                "description": "sync publication close",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
-
-        class Completed:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-
-        return Completed()
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "test",
-        "artifact://pytest",
-        "pytest passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    review = cp.request_review(task.id, reviewer.id)
-    from tests.conftest import submit_review_verdict
-
-    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
-    cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=evidence.id)
-
-    close_calls = [
-        call for call in calls if len(call["command"]) > 3 and call["command"][3] == "close"
-    ]
-    comment_calls = [
-        call for call in calls if len(call["command"]) > 3 and call["command"][3] == "comment"
-    ]
-    assert calls[0] == {
-        "command": [bd_cli, "--actor", worker.id, "update", "mac-close", "--claim"],
-        "cwd": str(repo),
-    }
-    assert close_calls == [
-        {
-            "command": [
-                bd_cli,
-                "--actor",
-                reviewer.id,
-                "close",
-                "mac-close",
-                "--reason",
-                "Completed by mac task %s" % task.id,
-            ],
-            "cwd": str(repo),
-        }
-    ]
-    comments = "\n".join(call["command"][5] for call in comment_calls)
-    assert "event=claimed" in comments
-    assert "event=state_running" in comments
-    assert "event=evidence_added" in comments
-    assert "event=review_requested" in comments
-    assert "event=review_completed" in comments
-    assert "event=published" in comments
-
-
-def test_review_claim_records_bead_metadata_and_slack_notification(cp, tmp_path, monkeypatch):
-    monkeypatch.setenv("MAC_BEADS_BRIDGE_ENABLED", "1")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _write_beads(
-        repo,
-        [
-            {
-                "_type": "issue",
-                "id": "mac-review-claim",
-                "title": "Track review claim",
-                "description": "record reviewer ownership before verdict",
-                "status": "open",
-                "priority": 0,
-                "created_at": "2026-05-20T00:00:00Z",
-                "dependency_count": 0,
-            }
-        ],
-    )
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
-    cp.poll_beads_repositories(force=True)
-    task = cp.get_task(cp.list_project_items()[0].task_id)
-    worker = register_agent(cp, "worker", ["python"])
-
-    tenant = cp.register_tenant("ops")
-    persona = cp.register_persona(
-        tenant.id,
-        "Reviewer",
-        soul_ref="hermes://ops/reviewer/SOUL.md",
-        memory_scope="hermes://ops/reviewer/memory",
-    )
-    hermes = cp.register_hermes_instance(tenant.id, "reviewer", persona_id=persona.id)
-    binding = cp.register_platform_binding(
-        tenant.id,
-        hermes.id,
-        "slack",
-        "T123/C456",
-        display_name="#mac-home",
-    )
-    reviewer_machine = cp.register_machine("reviewer-host")
-    reviewer = cp.register_agent(
-        reviewer_machine.id,
-        "reviewer",
-        capabilities=["review"],
-        hermes_instance_id=hermes.id,
-    )
-    cp.configure_notifier_channel(
-        "slack-review-claims",
-        "slack",
-        event_types=["task.review_claimed"],
-        target={"platform_binding_id": binding.id},
-    )
-
-    bd_cli = str(tmp_path / "bd")
-    monkeypatch.setenv("MAC_BEADS_CLI", bd_cli)
-    calls = []
-
-    def fake_run(command, cwd, capture_output, text, timeout, check):
-        calls.append({"command": command, "cwd": cwd})
-
-        class Completed:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-
-        return Completed()
-
-    monkeypatch.setattr("mac.services.subprocess.run", fake_run)
-
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    verification = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "path": "/tmp/mac-review-claim-worktree",
-            "branch": "mac/worker/review-claim",
-            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
-            "pushed": True,
-            "remote_ref": "origin/mac/worker/review-claim",
-            "dirty": False,
-            "files_changed": ["src/mac/services.py"],
-        },
-        "checks": [{"name": "make build", "returncode": 0}],
-        "tests": [{"command": "pytest tests/test_control_plane.py", "returncode": 0}],
-    }
-    evidence = cp.add_evidence(
-        task.id,
-        "test",
-        "artifact://pytest",
-        "review claim implementation complete",
-        worker.id,
-        metadata={"returncode": 0, "verification": _sign(cp, worker.id, verification)},
-    )
-    cp.submit_for_review(task.id, worker.id)
-    review = cp.request_review(task.id, reviewer.id, actor="dispatcher")
-
-    claim_result = cp.claim_review(
-        review.id,
-        reviewer.id,
-        executor_evidence_id=evidence.id,
-        actor=reviewer.id,
-    )
-
-    claim = claim_result["claim"]
-    assert claim_result["status"] == "claimed"
-    assert claim["review_id"] == review.id
-    assert claim["reviewer_agent_id"] == reviewer.id
-    assert claim["executor_evidence_id"] == evidence.id
-    assert claim["project"] == task.project
-    assert claim["repository_worktree"] == "/tmp/mac-review-claim-worktree"
-    assert claim["repository_branch"] == "mac/worker/review-claim"
-    assert claim["repository_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
-    assert claim["repository_remote_ref"] == "origin/mac/worker/review-claim"
-    assert claim["repository_files_changed"] == ["src/mac/services.py"]
-    assert claim["checks"][0]["name"] == "make build"
-    assert claim["tests"][0]["command"] == "pytest tests/test_control_plane.py"
-
-    task_metadata = cp.get_task(task.id).metadata
-    assert task_metadata["review_claims"][review.id] == claim
-    assert task_metadata["latest_review_claim"] == claim
-    assert cp.get_agent(reviewer.id).status == AgentStatus.BUSY.value
-    assert cp.get_agent(reviewer.id).current_task_id == task.id
-
-    history = cp.task_history(task.id)
-    claim_events = [event for event in history if event.event_type == "task.review_claimed"]
-    assert len(claim_events) == 1
-    assert claim_events[0].actor == reviewer.id
-    assert claim_events[0].detail["repository_worktree"] == "/tmp/mac-review-claim-worktree"
-    assert "task.review_claimed" in {
-        notification.event_type for notification in cp.list_notifications(subject_id=task.id)
-    }
-
-    comments = "\n".join(
-        call["command"][5]
-        for call in calls
-        if len(call["command"]) > 5 and call["command"][3:5] == ["comment", "mac-review-claim"]
-    )
-    assert "event=review_claimed" in comments
-    assert "project=repo-beads-mac" in comments
-    assert "worktree=/tmp/mac-review-claim-worktree" in comments
-    assert "head=abcdef1234567890abcdef1234567890abcdef12" in comments
-    assert "ref=origin/mac/worker/review-claim" in comments
-
-    delivery = cp.deliver_pending_notifications(limit=50)
-    assert delivery["delivered"] >= 1
-    messages = cp.list_messages(reviewer.id)
-    review_claim_messages = [
-        message
-        for message in messages
-        if message.payload.get("notification", {}).get("event_type") == "task.review_claimed"
-    ]
-    assert len(review_claim_messages) == 1
-    assert review_claim_messages[0].payload["target"]["platform_binding_id"] == binding.id
-    safe_test = review_claim_messages[0].payload["notification"]["metadata"]["tests"][0]
-    assert safe_test["command_text"] == "pytest tests/test_control_plane.py"
-    assert "command" not in safe_test
-
-    from tests.conftest import submit_review_verdict
-
-    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
-    assert cp.get_agent(reviewer.id).status == AgentStatus.IDLE.value
-    assert cp.get_agent(reviewer.id).current_task_id is None
 
 
 def test_acc_migration_dry_run_reports_without_writing(cp, tmp_path):
@@ -5517,7 +3976,7 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_fails_exhausted_task(cp):
+def test_rejected_review_verdict_blocks_exhausted_task(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -5548,7 +4007,7 @@ def test_rejected_review_verdict_fails_exhausted_task(cp):
     assert result["status"] == "review_not_approved"
     assert result["review_status"] == ReviewStatus.REJECTED.value
     exhausted = cp.get_task(task.id)
-    assert exhausted.state == TaskState.FAILED.value
+    assert exhausted.state == TaskState.BLOCKED.value
     assert exhausted.owner_agent_id is None
     assert exhausted.lease_id is None
 
@@ -6558,40 +5017,6 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
     assert b_spawns <= 1, f"workflow spawned {b_spawns} `b` tasks, expected <= 1"
 
 
-def test_bead_issue_is_importable_strict_validation(cp):
-    """mac-3xpl: bd ready --json import must reject hostile/oversized
-    fields before they reach the project ledger."""
-    # legitimate issue
-    assert cp._bead_issue_is_importable({
-        "id": "mac-azid",
-        "status": "open",
-        "title": "fix the thing",
-        "description": "details",
-        "type": "bug",
-        "priority": 2,
-    })
-
-    # rejected: bad id shape
-    assert not cp._bead_issue_is_importable({"id": "--help", "status": "open"})
-    assert not cp._bead_issue_is_importable({"id": "", "status": "open"})
-    # rejected: closed
-    assert not cp._bead_issue_is_importable({"id": "mac-x", "status": "closed"})
-    # rejected: oversized title
-    assert not cp._bead_issue_is_importable({
-        "id": "mac-x", "status": "open", "title": "x" * 600,
-    })
-    # rejected: oversized description
-    assert not cp._bead_issue_is_importable({
-        "id": "mac-x", "status": "open", "description": "x" * (33 * 1024),
-    })
-    # rejected: priority out of canonical range
-    assert not cp._bead_issue_is_importable({
-        "id": "mac-x", "status": "open", "priority": 99,
-    })
-    # rejected: non-string title
-    assert not cp._bead_issue_is_importable({
-        "id": "mac-x", "status": "open", "title": ["not a string"],
-    })
 
 
 def test_strip_control_chars_keeps_normal_text(cp):
@@ -6605,40 +5030,6 @@ def test_strip_control_chars_keeps_normal_text(cp):
     assert cp._strip_control_chars("a\x00b\x07c") == "abc"
 
 
-def test_beads_binding_rejects_argv_smuggling_bead_ids(cp):
-    """mac-5xwh: bead_id is passed verbatim as an argv positional to
-    `bd comment <bead_id> ...`. A hostile bead_id like `--help` or
-    `-c <something>` becomes a flag. _beads_binding_for_task must
-    refuse anything that doesn't match the bead-id shape so no caller
-    ever sees a hostile binding."""
-    for hostile in ["--help", "-c something", "  ", "bead\n-id", "bead;rm -rf /", "?bad?"]:
-        task = cp.create_task(
-            "t",
-            metadata={
-                "origin": {
-                    "type": "beads",
-                    "bead_id": hostile,
-                    "repository_path": "/tmp/r",
-                },
-                "acc_metadata": {"beads_id": hostile},
-            },
-        )
-        binding = cp._beads_binding_for_task(task)
-        assert binding is None, f"hostile bead_id leaked through binding: {hostile!r}"
-
-    # Legitimate forms still bind.
-    ok = cp.create_task(
-        "t",
-        metadata={
-            "origin": {
-                "type": "beads",
-                "bead_id": "mac-azid",
-                "repository_path": "/tmp/r",
-            },
-            "acc_metadata": {"beads_id": "mac-azid"},
-        },
-    )
-    assert cp._beads_binding_for_task(ok) is not None
 
 
 def test_failed_to_open_requeue_resets_attempt_count(cp):
@@ -8617,3 +7008,34 @@ def test_agent_installed_packages_footprint_persists_and_survives_register(cp):
     assert again.id == agent.id
     assert cp.get_agent(agent.id).installed_packages == fp
     assert "gpu" in cp.get_agent(agent.id).capabilities
+
+
+def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
+    """beads->mac: a pre-rename DB with a `beads_repositories` table must have
+    its rows migrated into `project_repositories` (and the legacy table dropped)
+    on the next open, with no data loss."""
+    from mac.store import SQLiteStore
+
+    db = str(tmp_path / "legacy.db")
+    store = SQLiteStore(db)
+    store._conn.execute(
+        "INSERT INTO project_repositories "
+        "(id, name, path, source, project, created_at, updated_at) "
+        "VALUES ('repo_legacy','mac','/repo/mac','repo-mac','mac','t0','t0')"
+    )
+    # Simulate the historical schema where the registry was `beads_repositories`.
+    store._conn.execute("ALTER TABLE project_repositories RENAME TO beads_repositories")
+    store._conn.commit()
+    store._conn.close()
+
+    # Reopen: initialize() recreates `project_repositories` empty, then
+    # _migrate() copies the legacy rows over and drops `beads_repositories`.
+    store2 = SQLiteStore(db)
+    rows = store2._conn.execute(
+        "SELECT id, name, project FROM project_repositories"
+    ).fetchall()
+    assert [(r[0], r[1], r[2]) for r in rows] == [("repo_legacy", "mac", "mac")]
+    legacy = store2._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='beads_repositories'"
+    ).fetchone()
+    assert legacy is None

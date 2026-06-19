@@ -33,7 +33,7 @@ class JobExecutionResult:
     duration_ms: Optional[float] = None
 
     def exit_code(self) -> int:
-        if self.status in ("submitted-for-review", "failed"):
+        if self.status in ("submitted-for-review", "blocked", "failed"):
             return 0
         return 2
 
@@ -166,38 +166,27 @@ def run_one_lease(
                 stdout_sha256=exec_result.stdout_sha256,
             )
         except Exception as exc:  # noqa: BLE001
-            return JobExecutionResult(
-                status="no-evidence",
-                task_id=task_id,
-                lease_id=lease_id,
-                returncode=0,
+            return _block_task_after_evidence(
+                mac,
+                task_id,
+                lease_id,
+                agent_id,
+                reason="review_submission_failed",
                 evidence_id=evidence.get("id"),
-                duration_ms=duration_ms,
+                returncode=0,
                 error="submit-for-review failed: %s" % exc,
+                duration_ms=duration_ms,
+                stdout_sha256=exec_result.stdout_sha256,
             )
 
-    # Non-zero executor exit -> transition to failed.
-    try:
-        mac.post(
-            "/tasks/%s/transition" % _q(task_id),
-            {
-                "target_state": "failed",
-                "actor": agent_id,
-                "detail": {
-                    "reason": "executor_nonzero_exit",
-                    "returncode": exec_result.returncode,
-                    "evidence_id": evidence.get("id"),
-                },
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.error("failed-transition POST failed: %s", exc)
-    return JobExecutionResult(
-        status="failed",
-        task_id=task_id,
-        lease_id=lease_id,
-        returncode=exec_result.returncode,
+    return _block_task_after_evidence(
+        mac,
+        task_id,
+        lease_id,
+        agent_id,
+        reason="executor_nonzero_exit",
         evidence_id=evidence.get("id"),
+        returncode=exec_result.returncode,
         duration_ms=duration_ms,
         stdout_sha256=exec_result.stdout_sha256,
     )
@@ -248,12 +237,16 @@ def _run_one_review(
     try:
         exec_result, duration_ms = _execute_timed(executor, task)
     except Exception as exc:  # noqa: BLE001
-        return JobExecutionResult(
-            status="failed",
-            task_id=task_id,
-            lease_id=None,
+        return _block_task_after_evidence(
+            mac,
+            task_id,
+            None,
+            agent_id,
+            reason="review_executor_exception",
+            evidence_id=None,
             returncode=-1,
             error="review executor raised: %s" % exc,
+            detail_extra={"review_id": review_id},
         )
 
     metadata: JsonDict = {
@@ -308,9 +301,22 @@ def _run_one_review(
                 review_id, exc,
             )
 
-    status = "submitted-for-review" if exec_result.returncode == 0 else "failed"
+    if exec_result.returncode != 0:
+        return _block_task_after_evidence(
+            mac,
+            task_id,
+            None,
+            agent_id,
+            reason="review_executor_failed",
+            evidence_id=evidence.get("id") if isinstance(evidence, dict) else None,
+            returncode=exec_result.returncode,
+            duration_ms=duration_ms,
+            stdout_sha256=exec_result.stdout_sha256,
+            detail_extra={"review_id": review_id},
+        )
+
     return JobExecutionResult(
-        status=status,
+        status="submitted-for-review",
         task_id=task_id,
         lease_id=None,
         returncode=exec_result.returncode,
@@ -503,28 +509,64 @@ def _record_failure_evidence(
             returncode=returncode,
             error=error,
         )
+    return _block_task_after_evidence(
+        mac,
+        task_id=task_id,
+        lease_id=lease_id,
+        agent_id=agent_id,
+        reason="executor_exception",
+        evidence_id=evidence.get("id"),
+        returncode=returncode,
+        error=error,
+    )
+
+
+def _block_task_after_evidence(
+    mac: Any,
+    task_id: str,
+    lease_id: Optional[str],
+    agent_id: str,
+    *,
+    reason: str,
+    evidence_id: Optional[str],
+    returncode: Optional[int],
+    error: Optional[str] = None,
+    duration_ms: Optional[float] = None,
+    stdout_sha256: Optional[str] = None,
+    detail_extra: Optional[JsonDict] = None,
+) -> JobExecutionResult:
+    detail: JsonDict = {
+        "reason": reason,
+        "manual_repair_required": True,
+    }
+    if detail_extra:
+        detail.update(detail_extra)
+    if returncode is not None:
+        detail["returncode"] = returncode
+    if evidence_id:
+        detail["evidence_id"] = evidence_id
+    if error:
+        detail["error"] = error
     try:
         mac.post(
             "/tasks/%s/transition" % _q(task_id),
             {
-                "target_state": "failed",
+                "target_state": "blocked",
                 "actor": agent_id,
-                "detail": {
-                    "reason": "executor_exception",
-                    "error": error,
-                    "evidence_id": evidence.get("id"),
-                },
+                "detail": detail,
             },
         )
     except Exception as exc:  # noqa: BLE001
-        log.error("failed-transition POST failed: %s", exc)
+        log.error("blocked-transition POST failed: %s", exc)
     return JobExecutionResult(
-        status="failed",
+        status="blocked",
         task_id=task_id,
         lease_id=lease_id,
         returncode=returncode,
-        evidence_id=evidence.get("id"),
+        evidence_id=evidence_id,
         error=error,
+        duration_ms=duration_ms,
+        stdout_sha256=stdout_sha256,
     )
 
 def main(argv: Optional[List[str]] = None) -> int:

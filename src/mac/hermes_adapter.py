@@ -399,7 +399,7 @@ class HermesMacAdapter:
     def project_detail(self, project: str) -> JsonDict:
         return self.client.get("/projects/%s" % _path_part(project))
 
-    def register_beads_repository(
+    def register_project_repository(
         self,
         name: str,
         path: str,
@@ -413,7 +413,7 @@ class HermesMacAdapter:
         actor: str = "hermes",
     ) -> JsonDict:
         return self.client.post(
-            "/bridge/beads/repositories",
+            "/bridge/repositories",
             {
                 "name": name,
                 "path": path,
@@ -427,28 +427,12 @@ class HermesMacAdapter:
             },
         )
 
-    def list_beads_repositories(self, *, enabled: Optional[bool] = None) -> Any:
+    def list_project_repositories(self, *, enabled: Optional[bool] = None) -> Any:
         query = _query((("enabled", enabled),))
-        path = "/bridge/beads/repositories"
+        path = "/bridge/repositories"
         if query:
             path = "%s?%s" % (path, query)
         return self.client.get(path)
-
-    def poll_beads_repositories(
-        self,
-        *,
-        repository: Optional[str] = None,
-        force: bool = False,
-        actor: str = "hermes",
-    ) -> JsonDict:
-        return self.client.post(
-            "/bridge/beads/poll",
-            {
-                "repository": repository,
-                "force": force,
-                "actor": actor,
-            },
-        )
 
     def list_agents(self) -> Any:
         return self.client.get("/agents")
@@ -992,9 +976,9 @@ def _cmd_project_detail(args: argparse.Namespace) -> None:
     _print(_adapter(args).project_detail(args.project))
 
 
-def _cmd_register_beads_repository(args: argparse.Namespace) -> None:
+def _cmd_register_project_repository(args: argparse.Namespace) -> None:
     _print(
-        _adapter(args).register_beads_repository(
+        _adapter(args).register_project_repository(
             args.name,
             args.path,
             source=args.source,
@@ -1008,18 +992,8 @@ def _cmd_register_beads_repository(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_beads_repositories(args: argparse.Namespace) -> None:
-    _print(_adapter(args).list_beads_repositories(enabled=args.enabled))
-
-
-def _cmd_poll_beads_repositories(args: argparse.Namespace) -> None:
-    _print(
-        _adapter(args).poll_beads_repositories(
-            repository=args.repository,
-            force=args.force,
-            actor=args.actor,
-        )
-    )
+def _cmd_project_repositories(args: argparse.Namespace) -> None:
+    _print(_adapter(args).list_project_repositories(enabled=args.enabled))
 
 
 def _cmd_agents(args: argparse.Namespace) -> None:
@@ -1333,27 +1307,21 @@ def build_parser() -> argparse.ArgumentParser:
     project_detail.add_argument("project")
     project_detail.set_defaults(func=_cmd_project_detail)
 
-    beads_repositories = sub.add_parser("beads-repositories", help="list registered Beads repositories")
-    beads_repositories.add_argument("--enabled", action="store_true", default=None)
-    beads_repositories.set_defaults(func=_cmd_beads_repositories)
+    project_repositories = sub.add_parser("project-repositories", help="list registered Beads repositories")
+    project_repositories.add_argument("--enabled", action="store_true", default=None)
+    project_repositories.set_defaults(func=_cmd_project_repositories)
 
-    register_beads_repository = sub.add_parser("register-beads-repository", help="register a Beads-backed project repository")
-    register_beads_repository.add_argument("name")
-    register_beads_repository.add_argument("path")
-    register_beads_repository.add_argument("--source")
-    register_beads_repository.add_argument("--project")
-    register_beads_repository.add_argument("--required-capabilities")
-    register_beads_repository.add_argument("--poll-interval-seconds", type=int, default=60)
-    register_beads_repository.add_argument("--metadata", default="{}")
-    register_beads_repository.add_argument("--disabled", action="store_true")
-    register_beads_repository.add_argument("--actor", default="hermes")
-    register_beads_repository.set_defaults(func=_cmd_register_beads_repository)
-
-    poll_beads_repositories = sub.add_parser("poll-beads-repositories", help="poll registered Beads repositories")
-    poll_beads_repositories.add_argument("--repository")
-    poll_beads_repositories.add_argument("--force", action="store_true")
-    poll_beads_repositories.add_argument("--actor", default="hermes")
-    poll_beads_repositories.set_defaults(func=_cmd_poll_beads_repositories)
+    register_project_repository = sub.add_parser("register-project-repository", help="register a Beads-backed project repository")
+    register_project_repository.add_argument("name")
+    register_project_repository.add_argument("path")
+    register_project_repository.add_argument("--source")
+    register_project_repository.add_argument("--project")
+    register_project_repository.add_argument("--required-capabilities")
+    register_project_repository.add_argument("--poll-interval-seconds", type=int, default=60)
+    register_project_repository.add_argument("--metadata", default="{}")
+    register_project_repository.add_argument("--disabled", action="store_true")
+    register_project_repository.add_argument("--actor", default="hermes")
+    register_project_repository.set_defaults(func=_cmd_register_project_repository)
 
     agents = sub.add_parser("agents", help="list MAC agents visible to Hermes")
     agents.set_defaults(func=_cmd_agents)

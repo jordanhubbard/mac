@@ -120,29 +120,30 @@ def test_job_pod_does_not_renew_lease() -> None:
         )
 
 
-def test_nonzero_executor_transitions_to_failed() -> None:
+def test_nonzero_executor_transitions_to_blocked() -> None:
     mac = _FakeMac()
     result = run_one_lease(env=_env(), mac=mac, executor=_exec_fail, sleeper=_no_sleep)
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert result.returncode == 7
     assert result.evidence_id == "ev-1"
-    assert result.exit_code() == 0  # failed task is a clean Job exit
-    failed_post = next(
+    assert result.exit_code() == 0  # blocked-with-evidence is a clean Job exit
+    blocked_post = next(
         p for p in mac.posts if p["path"].endswith("/transition")
     )
-    assert failed_post["body"]["target_state"] == "failed"
-    assert failed_post["body"]["detail"]["returncode"] == 7
+    assert blocked_post["body"]["target_state"] == "blocked"
+    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
+    assert blocked_post["body"]["detail"]["returncode"] == 7
 
 
-def test_executor_exception_records_failure_evidence() -> None:
+def test_executor_exception_records_failure_evidence_and_blocks() -> None:
     mac = _FakeMac()
     result = run_one_lease(
         env=_env(), mac=mac, executor=_exec_raises, sleeper=_no_sleep
     )
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert result.evidence_id == "ev-1"
     assert result.exit_code() == 0
-    # Both evidence + failed-transition POSTs were made.
+    # Both evidence + blocked-transition POSTs were made.
     paths = [p["path"].split("?", 1)[0] for p in mac.posts]
     assert "/tasks/task-1/evidence" in paths
     assert "/tasks/task-1/transition" in paths
@@ -153,6 +154,28 @@ def test_evidence_failure_returns_no_evidence_status() -> None:
     result = run_one_lease(env=_env(), mac=mac, executor=_exec_ok, sleeper=_no_sleep)
     assert result.status == "no-evidence"
     assert result.exit_code() != 0  # non-zero so K8s notices the failure
+
+
+def test_submit_for_review_failure_blocks_with_recorded_evidence() -> None:
+    class _MacReviewSubmitFails(_FakeMac):
+        def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+            self.posts.append({"path": path, "body": body})
+            if path.split("?", 1)[0].endswith("/submit-for-review"):
+                raise RuntimeError("task needs verifiable evidence before review")
+            if path.endswith("/evidence"):
+                return {"id": "ev-1"}
+            return {}
+
+    mac = _MacReviewSubmitFails()
+    result = run_one_lease(env=_env(), mac=mac, executor=_exec_ok, sleeper=_no_sleep)
+
+    assert result.status == "blocked"
+    assert result.evidence_id == "ev-1"
+    blocked_post = next(p for p in mac.posts if p["path"].endswith("/transition"))
+    assert blocked_post["body"]["target_state"] == "blocked"
+    assert blocked_post["body"]["detail"]["reason"] == "review_submission_failed"
+    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
+    assert "verifiable evidence" in blocked_post["body"]["detail"]["error"]
 
 
 def test_start_already_running_is_tolerated() -> None:
@@ -168,6 +191,45 @@ def test_start_already_running_is_tolerated() -> None:
     mac = _MacAlreadyRunning()
     result = run_one_lease(env=_env(), mac=mac, executor=_exec_ok, sleeper=_no_sleep)
     assert result.status == "submitted-for-review"
+
+
+def test_review_mode_nonzero_blocks_task_with_review_evidence() -> None:
+    mac = _FakeMac()
+    result = run_one_lease(
+        env=_env(MAC_REVIEW_ID="review-1", MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target"),
+        mac=mac,
+        executor=_exec_fail,
+        sleeper=_no_sleep,
+    )
+
+    assert result.status == "blocked"
+    assert result.evidence_id == "ev-1"
+    evidence_post = next(p for p in mac.posts if p["path"].endswith("/evidence"))
+    assert evidence_post["body"]["kind"] == "review"
+    blocked_post = next(p for p in mac.posts if p["path"].endswith("/transition"))
+    assert blocked_post["body"]["target_state"] == "blocked"
+    assert blocked_post["body"]["detail"]["reason"] == "review_executor_failed"
+    assert blocked_post["body"]["detail"]["review_id"] == "review-1"
+    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
+
+
+def test_review_mode_executor_exception_blocks_task_without_evidence() -> None:
+    mac = _FakeMac()
+    result = run_one_lease(
+        env=_env(MAC_REVIEW_ID="review-1", MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target"),
+        mac=mac,
+        executor=_exec_raises,
+        sleeper=_no_sleep,
+    )
+
+    assert result.status == "blocked"
+    assert result.evidence_id is None
+    assert not any(p["path"].endswith("/evidence") for p in mac.posts)
+    blocked_post = next(p for p in mac.posts if p["path"].endswith("/transition"))
+    assert blocked_post["body"]["target_state"] == "blocked"
+    assert blocked_post["body"]["detail"]["reason"] == "review_executor_exception"
+    assert blocked_post["body"]["detail"]["review_id"] == "review-1"
+    assert blocked_post["body"]["detail"]["manual_repair_required"] is True
 
 
 def test_get_task_failure_aborts_cleanly() -> None:
@@ -195,8 +257,8 @@ def test_exit_code_table() -> None:
         returncode=0,
     ).exit_code() == 0
     assert JobExecutionResult(
-        status="failed", task_id="t", lease_id="l", returncode=1
-    ).exit_code() == 0  # failed-but-recorded is a clean Job exit
+        status="blocked", task_id="t", lease_id="l", returncode=1
+    ).exit_code() == 0  # blocked-but-recorded is a clean Job exit
     assert JobExecutionResult(
         status="no-evidence", task_id="t", lease_id="l", returncode=None
     ).exit_code() != 0

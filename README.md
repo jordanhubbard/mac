@@ -31,10 +31,10 @@ This project provides durable contracts for coordinating a fleet:
   content chunks with NDJSON tailing semantics.
 - Review and publication pipeline that requires typed evidence, independent
   approved review, and publication hashes when policy requires them.
-- Human-facing Beads ledger mirroring for imported issue work: mac keeps its
-  internal task history authoritative, and appends concise `mac-ledger v1`
-  comments back to the Bead for imports, claims, state gates, evidence, review,
-  publication, retry, and exhaustion milestones.
+- Canonical durable task ledger (`mac task`) — a beads-equivalent that avoids the
+  beads/dolt sync problems — with an optional local, gitignored `.tickets/<id>.md`
+  mirror auto-emitted on task create/close for human/IDE viewing. mac task history
+  (not any external tracker) is authoritative.
 - Short-retention command audit for worker subprocesses so operators can see
   what agents actually ran without treating local shell history as evidence.
 - Optional scoped API bearer tokens for read/write/agent/dispatch/secret/admin access.
@@ -156,12 +156,14 @@ Key route groups:
 
 ## Current Task Workflow
 
-For Beads-backed repository work, the production path is:
+For repository-backed work, the production path is:
 
-1. The hub polls registered Beads repositories and treats `bd ready --json`
-   as canonical when it is available.
-2. Each ready Bead becomes one durable mac task with repository contract,
-   execution contract, origin metadata, and Beads provenance.
+1. A project's git repository is registered — e.g. via `mac project onboard
+   <repo-url>`, which clones the repo and authors a `.mac/project.yaml`
+   repository contract. The mac task ledger is canonical; ready work is
+   `mac task ready`.
+2. Each task for a registered-repository project carries a repository contract,
+   execution contract, and origin metadata, so the executor gets a real checkout.
 3. A healthy worker claims the task, works only in a task-owned git worktree,
    renews its lease, and records command-audit rows for subprocesses.
 4. The executor records typed evidence with a `mac.worker_evidence.v1`
@@ -170,15 +172,12 @@ For Beads-backed repository work, the production path is:
 5. The default review workflow assigns a healthy reviewer-capable agent that
    has not owned the task, waits for signed `review_verdict` evidence, then
    publishes only after executor and reviewer evidence both verify.
-6. Publication completes the mac task and syncs the backing Bead close. Failed
-   mapped tasks are reopened with a bounded retry policy; exhausted retries
-   remain failed and visible.
+6. Publication completes the mac task. Failed tasks are reopened with a bounded
+   retry policy; exhausted retries remain failed and visible.
 
-mac records the complete internal ledger in task history, evidence, reviews,
-publications, command audit, observability, and notifications. For Beads-backed
-work it also writes concise Beads comments with the prefix `mac-ledger v1` so a
-human reading the Bead can see key milestones without opening the mac database.
-Lease renewals stay internal to avoid noisy issue logs.
+mac records the complete ledger in task history, evidence, reviews, publications,
+command audit, observability, and notifications — all in the mac task store,
+which is authoritative. Lease renewals stay internal to avoid noise.
 
 ## Workflow Orchestration
 

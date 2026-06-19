@@ -862,7 +862,7 @@ CREATE TABLE IF NOT EXISTS project_items (
     UNIQUE(source, external_id)
 );
 
-CREATE TABLE IF NOT EXISTS beads_repositories (
+CREATE TABLE IF NOT EXISTS project_repositories (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     path TEXT NOT NULL,
@@ -878,8 +878,8 @@ CREATE TABLE IF NOT EXISTS beads_repositories (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_beads_repositories_enabled
-    ON beads_repositories (enabled, last_polled_at);
+CREATE INDEX IF NOT EXISTS idx_project_repositories_enabled
+    ON project_repositories (enabled, last_polled_at);
 
 CREATE TABLE IF NOT EXISTS integration_observations (
     id TEXT PRIMARY KEY,
