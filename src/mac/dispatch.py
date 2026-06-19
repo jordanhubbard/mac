@@ -308,6 +308,24 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/tasks/%s/transition" % quote(task_id, safe=""), body))
 
+    def reopen_task(
+        self,
+        task_id: str,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none({"actor": actor, "reason": reason})
+        return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
+
+    def force_complete_task(
+        self,
+        task_id: str,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none({"actor": actor, "reason": reason})
+        return _Dictish(self._post("/tasks/%s/force-complete" % quote(task_id, safe=""), body))
+
     def start_task(self, task_id: str, agent_id: str) -> _Dictish:
         return _Dictish(
             self._post(

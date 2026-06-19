@@ -328,9 +328,8 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         "list_projects",
         "get_project",
         "list_project_items",
-        "register_beads_repository",
-        "list_beads_repositories",
-        "poll_beads_repositories",
+        "register_project_repository",
+        "list_project_repositories",
         "claim_next_task",
         "record_command_audit",
         "list_command_audit",
@@ -1574,7 +1573,7 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert "agentbus_streams" in state
     assert "artifacts" in state
     assert "bridge_items" in state
-    assert "beads_repositories" in state
+    assert "project_repositories" in state
     assert "project_summaries" in state
     assert "swarm_summary" in state
     assert "fleets" in state

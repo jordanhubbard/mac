@@ -1513,7 +1513,7 @@ class ProjectRecord:
 
 
 @dataclass
-class BeadsRepository:
+class ProjectRepository:
     id: str
     name: str
     path: str

@@ -74,7 +74,7 @@ EXPECTED_TABLES = [
     "projects",
     "project_events",
     "project_items",
-    "beads_repositories",
+    "project_repositories",
     "integration_observations",
     "integration_findings",
     "rollouts",

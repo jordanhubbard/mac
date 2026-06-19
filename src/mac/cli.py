@@ -492,6 +492,18 @@ def cmd_task_close(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_reopen(args: argparse.Namespace) -> None:
+    # Recovery: return a stuck/terminal task to OPEN (failed/cancelled reset
+    # attempt_count so the requeue isn't immediately re-exhausted).
+    _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
+
+
+def cmd_task_force_complete(args: argparse.Namespace) -> None:
+    # Operator override: mark a task COMPLETED regardless of state/review, for
+    # reconciling work done out-of-band or recovering a stranded terminal task.
+    _print(_plane(args).force_complete_task(args.task_id, args.actor, args.reason or None))
+
+
 def cmd_task_search(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
@@ -1664,9 +1676,9 @@ def cmd_bridge_list(args: argparse.Namespace) -> None:
     _print([item.to_dict() for item in _plane(args).list_project_items()])
 
 
-def cmd_bridge_beads_register(args: argparse.Namespace) -> None:
+def cmd_bridge_repository_register(args: argparse.Namespace) -> None:
     _print(
-        _plane(args).register_beads_repository(
+        _plane(args).register_project_repository(
             args.name,
             args.path,
             source=args.source,
@@ -1680,22 +1692,12 @@ def cmd_bridge_beads_register(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_bridge_beads_repos(args: argparse.Namespace) -> None:
+def cmd_bridge_repository_list(args: argparse.Namespace) -> None:
     _print(
         [
             repo.to_dict()
-            for repo in _plane(args).list_beads_repositories(enabled=args.enabled)
+            for repo in _plane(args).list_project_repositories(enabled=args.enabled)
         ]
-    )
-
-
-def cmd_bridge_beads_poll(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).poll_beads_repositories(
-            args.repository,
-            force=args.force,
-            actor=args.actor,
-        )
     )
 
 
@@ -2451,6 +2453,24 @@ def build_parser() -> argparse.ArgumentParser:
                        help="close as CANCELLED instead of COMPLETED")
     close.set_defaults(success=True)
     _set(cmd_task_close, close)
+
+    reopen = task.add_parser(
+        "reopen",
+        help="recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation",
+    )
+    reopen.add_argument("task_id")
+    reopen.add_argument("--reason", default="")
+    reopen.add_argument("--actor", default="human")
+    _set(cmd_task_reopen, reopen)
+
+    force_complete = task.add_parser(
+        "force-complete",
+        help="operator override: mark a task COMPLETED regardless of state/review (bypasses the review gate; audited)",
+    )
+    force_complete.add_argument("task_id")
+    force_complete.add_argument("--reason", default="")
+    force_complete.add_argument("--actor", default="human")
+    _set(cmd_task_force_complete, force_complete)
 
     search = task.add_parser("search", help="keyword search across task title and description")
     search.add_argument("query")
@@ -3466,27 +3486,21 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_bridge_import, bridge_import)
     bridge_list = bridge.add_parser("list")
     _set(cmd_bridge_list, bridge_list)
-    bridge_beads = bridge.add_parser("beads", help="registered Beads repository bridge").add_subparsers(dest="bridge_beads_command", required=True)
-    bridge_beads_register = bridge_beads.add_parser("register")
-    bridge_beads_register.add_argument("name")
-    bridge_beads_register.add_argument("path")
-    bridge_beads_register.add_argument("--source")
-    bridge_beads_register.add_argument("--project")
-    bridge_beads_register.add_argument("--required-capabilities")
-    bridge_beads_register.add_argument("--poll-interval-seconds", type=int, default=60)
-    bridge_beads_register.add_argument("--metadata", default="{}")
-    bridge_beads_register.add_argument("--disabled", action="store_true")
-    bridge_beads_register.add_argument("--actor", default="beads-bridge")
-    _set(cmd_bridge_beads_register, bridge_beads_register)
-    bridge_beads_repos = bridge_beads.add_parser("repos")
-    bridge_beads_repos.add_argument("--enabled", action="store_true", default=None)
-    _set(cmd_bridge_beads_repos, bridge_beads_repos)
-    bridge_beads_poll = bridge_beads.add_parser("poll")
-    bridge_beads_poll.add_argument("--repository")
-    bridge_beads_poll.add_argument("--force", action="store_true")
-    bridge_beads_poll.add_argument("--actor", default="beads-bridge")
-    _set(cmd_bridge_beads_poll, bridge_beads_poll)
-
+    bridge_repository = bridge.add_parser("repository", help="registered project repository").add_subparsers(dest="bridge_repository_command", required=True)
+    bridge_repository_register = bridge_repository.add_parser("register")
+    bridge_repository_register.add_argument("name")
+    bridge_repository_register.add_argument("path")
+    bridge_repository_register.add_argument("--source")
+    bridge_repository_register.add_argument("--project")
+    bridge_repository_register.add_argument("--required-capabilities")
+    bridge_repository_register.add_argument("--poll-interval-seconds", type=int, default=60)
+    bridge_repository_register.add_argument("--metadata", default="{}")
+    bridge_repository_register.add_argument("--disabled", action="store_true")
+    bridge_repository_register.add_argument("--actor", default="beads-bridge")
+    _set(cmd_bridge_repository_register, bridge_repository_register)
+    bridge_repository_list = bridge_repository.add_parser("repos")
+    bridge_repository_list.add_argument("--enabled", action="store_true", default=None)
+    _set(cmd_bridge_repository_list, bridge_repository_list)
     integrations = sub.add_parser("integrations", help="integration authority observations and findings").add_subparsers(dest="integrations_command", required=True)
     integrations_findings = integrations.add_parser("findings")
     integrations_findings.add_argument("--source-kind")

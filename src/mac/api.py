@@ -438,6 +438,11 @@ class TransitionRequest(BaseModel):
     detail: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskRecoveryRequest(BaseModel):
+    actor: str
+    reason: Optional[str] = None
+
+
 class EvidenceCreate(BaseModel):
     kind: str
     uri: str
@@ -1675,7 +1680,7 @@ def _dashboard_project_summaries(
     tasks: List[Any],
     agents: List[Any],
     bridge_items: List[Dict[str, Any]],
-    beads_repositories: List[Dict[str, Any]],
+    project_repositories: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     task_by_id = {task.id: task for task in tasks}
     agents_by_id = {agent.id: agent for agent in agents}
@@ -1766,7 +1771,7 @@ def _dashboard_project_summaries(
     for bridge_item in bridge_items:
         project = str(bridge_item.get("project") or bridge_item.get("source") or "unassigned")
         bucket(project)["bridge_item_count"] += 1
-    for repo in beads_repositories:
+    for repo in project_repositories:
         project = str(repo.get("project") or repo.get("name") or repo.get("source") or "unassigned")
         bucket(project)["repository_count"] += 1
 
@@ -2337,7 +2342,7 @@ def _dashboard_state(
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
     # beads removed as a read/write source; the status view no longer lists
     # beads repositories (kept as an empty list for dashboard shape stability).
-    beads_repositories: List[Dict[str, Any]] = []
+    project_repositories: List[Dict[str, Any]] = []
     memory_records = [
         record.to_dict() for record in cp.search_memory()
     ][-120:]
@@ -2420,7 +2425,7 @@ def _dashboard_state(
                 "agentbus_streams": len(agentbus_streams),
                 "terminal_sessions": len(terminal_sessions),
                 "artifacts": len(artifacts),
-                "beads_repositories": len(beads_repositories),
+                "project_repositories": len(project_repositories),
                 "projects": len(project_summaries),
                 "memory_records": len(memory_records),
                 "integration_findings": len(integration_findings),
@@ -2473,7 +2478,7 @@ def _dashboard_state(
         "terminal_sessions": terminal_sessions,
         "artifacts": artifacts,
         "bridge_items": bridge_items,
-        "beads_repositories": beads_repositories,
+        "project_repositories": project_repositories,
         "memory_records": memory_records,
         "nap_schedules": nap_schedules,
         "nap_runs": nap_runs,
@@ -4034,14 +4039,20 @@ def create_app(
         lease_seconds: int = 900,
     ) -> Dict[str, Any]:
         task, lease = cp.claim_task(task_id, agent_id, lease_seconds, sync_beads=False)
-        background_tasks.add_task(
-            cp.sync_claim_side_effects,
-            task.id,
-            agent_id,
-            lease.id,
-            lease.expires_at,
-        )
         return {"task": task.to_dict(), "lease": lease.to_dict()}
+
+    @app.post("/tasks/{task_id}/reopen")
+    def reopen_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+        # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
+        # OPEN so it can be retried or reconciled. Counterpart to force-complete.
+        return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
+
+    @app.post("/tasks/{task_id}/force-complete")
+    def force_complete_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+        # Operator override: mark a task COMPLETED regardless of state/review,
+        # for reconciling work done out-of-band (e.g. merged via PR) or a task
+        # stranded in a terminal state. Bypasses the review gate (audited).
+        return cp.force_complete_task(task_id, body.actor, body.reason).to_dict()
 
     @app.post("/leases/{lease_id}/renew")
     def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:
@@ -4108,7 +4119,6 @@ def create_app(
         # downstream). Bind it to the principal.
         principal.assert_actor(body.created_by)
         evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
-        background_tasks.add_task(cp.sync_evidence_side_effects, evidence.id)
         return evidence.to_dict()
 
     @app.get("/evidence/{evidence_id}/artifacts")
@@ -4731,16 +4741,6 @@ def create_app(
             capabilities=body.capabilities,
             sync_beads=False,
         )
-        if assignment and not body.dry_run:
-            task = assignment["task"]
-            lease = assignment["lease"]
-            background_tasks.add_task(
-                cp.sync_claim_side_effects,
-                task["id"],
-                agent_id,
-                lease["id"],
-                lease["expires_at"],
-            )
         return assignment
 
     @app.post("/agents/{agent_id}/service-claims/sync")
@@ -5512,14 +5512,6 @@ def create_app(
             actor=body.actor,
             sync_beads=False,
         )
-        if claim.get("status") == "claimed":
-            task = claim.get("task") if isinstance(claim.get("task"), dict) else {}
-            background_tasks.add_task(
-                cp.sync_review_claim_side_effects,
-                str(task.get("id") or ""),
-                review_id,
-                body.reviewer_agent_id,
-            )
         return claim
 
     @app.post("/reviews/{review_id}/decision")

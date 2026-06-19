@@ -12,10 +12,14 @@ operational state, NOT product content, so it is **not** checked into the repo
 (a generic product tree must not carry one operator's task history). A fresh
 clone has no `.tickets/`; populate it locally from the ledger as needed.
 
-The legacy beads (`bd`) integration is shut off: `bd dolt push/pull`
-is disabled, the beads bridge is gated off by default
-(`MAC_BEADS_BRIDGE_ENABLED`), and `.beads/` directories were removed
-from this repo. Do not run `bd`.
+This project does **not** use beads (`bd`) or its dolt/DoltHub backend — those
+caused the sync problems we moved away from. Issue tracking is the **mac task
+ledger** (`mac task`), a beads-equivalent durable ledger that avoids those
+problems. It is correct to say we do not use beads; it is **not** correct to say
+we do not use a durable task ledger — we use mac tasks. The legacy beads bridge
+is removed/gated off by default (`MAC_BEADS_BRIDGE_ENABLED`), `bd dolt push/pull`
+is disabled, and `.beads/` directories were removed. Do not run `bd`; use
+`mac task`.
 
 ### Quick reference
 

@@ -155,9 +155,8 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
         "list_projects",
         "get_project",
         "list_project_items",
-        "register_beads_repository",
-        "list_beads_repositories",
-        "poll_beads_repositories",
+        "register_project_repository",
+        "list_project_repositories",
         "claim_next_task",
         "record_command_audit",
         "list_command_audit",
@@ -239,7 +238,7 @@ def test_hermes_adapter_exposes_project_bridge_operations():
     adapter.list_project_items()
     adapter.list_projects()
     adapter.project_detail("repo-beads-mac")
-    adapter.register_beads_repository(
+    adapter.register_project_repository(
         "mac",
         "/repo/mac",
         source="repo-beads-mac",
@@ -248,8 +247,7 @@ def test_hermes_adapter_exposes_project_bridge_operations():
         poll_interval_seconds=30,
         metadata={"team": "core", "api_token": "drop"},
     )
-    adapter.list_beads_repositories(enabled=True)
-    adapter.poll_beads_repositories(repository="mac", force=True, actor="agent_1")
+    adapter.list_project_repositories(enabled=True)
     adapter.list_agents()
     adapter.agent_detail("agent_1")
     adapter.agent_identity("agent_1")
@@ -288,7 +286,7 @@ def test_hermes_adapter_exposes_project_bridge_operations():
         ("GET", "/projects/repo-beads-mac", None),
         (
             "POST",
-            "/bridge/beads/repositories",
+            "/bridge/repositories",
             {
                 "name": "mac",
                 "path": "/repo/mac",
@@ -301,12 +299,7 @@ def test_hermes_adapter_exposes_project_bridge_operations():
                 "actor": "hermes",
             },
         ),
-        ("GET", "/bridge/beads/repositories?enabled=true", None),
-        (
-            "POST",
-            "/bridge/beads/poll",
-            {"repository": "mac", "force": True, "actor": "agent_1"},
-        ),
+        ("GET", "/bridge/repositories?enabled=true", None),
         ("GET", "/agents", None),
         ("GET", "/agents/agent_1", None),
         ("GET", "/agents/agent_1/identity", None),
@@ -813,9 +806,9 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
             "--actor",
             "agent_1",
         ],
-        ["beads-repositories", "--enabled"],
+        ["project-repositories", "--enabled"],
         [
-            "register-beads-repository",
+            "register-project-repository",
             "mac",
             "/repo/mac",
             "--source",
@@ -828,14 +821,6 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
             "30",
             "--metadata",
             '{"team":"core","api_token":"drop"}',
-            "--actor",
-            "agent_1",
-        ],
-        [
-            "poll-beads-repositories",
-            "--repository",
-            "mac",
-            "--force",
             "--actor",
             "agent_1",
         ],
@@ -881,10 +866,10 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
                 "actor": "agent_1",
             },
         ),
-        ("GET", "/bridge/beads/repositories?enabled=true", None),
+        ("GET", "/bridge/repositories?enabled=true", None),
         (
             "POST",
-            "/bridge/beads/repositories",
+            "/bridge/repositories",
             {
                 "name": "mac",
                 "path": "/repo/mac",
@@ -896,11 +881,6 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
                 "metadata": {"team": "core"},
                 "actor": "agent_1",
             },
-        ),
-        (
-            "POST",
-            "/bridge/beads/poll",
-            {"repository": "mac", "force": True, "actor": "agent_1"},
         ),
         ("GET", "/agents", None),
         ("GET", "/agents/agent_1", None),

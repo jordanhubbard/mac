@@ -1005,7 +1005,7 @@ class SQLiteStore:
                     UNIQUE(source, external_id)
                 );
 
-                CREATE TABLE IF NOT EXISTS beads_repositories (
+                CREATE TABLE IF NOT EXISTS project_repositories (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     path TEXT NOT NULL,
@@ -1021,8 +1021,8 @@ class SQLiteStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_beads_repositories_enabled
-                    ON beads_repositories (enabled, last_polled_at);
+                CREATE INDEX IF NOT EXISTS idx_project_repositories_enabled
+                    ON project_repositories (enabled, last_polled_at);
 
                 CREATE TABLE IF NOT EXISTS integration_observations (
                     id TEXT PRIMARY KEY,
@@ -1422,6 +1422,19 @@ class SQLiteStore:
             self._conn.commit()
 
     def _migrate(self) -> None:
+        # beads→mac: the project repository registry was historically the
+        # `beads_repositories` table. `project_repositories` is created empty
+        # during table setup, so copy any legacy rows over and drop the old
+        # table. Idempotent (skipped once the legacy table is gone); columns
+        # are identical, so a positional copy is safe.
+        legacy_repo_table = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = 'beads_repositories'"
+        ).fetchone()
+        if legacy_repo_table is not None:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO project_repositories SELECT * FROM beads_repositories"
+            )
+            self._conn.execute("DROP TABLE beads_repositories")
         # mac-s2vz: record when an agent's attestation key was last
         # rotated so the verifier can produce a clear error message
         # (key-rotation-after-signature, not "signature does not verify")
