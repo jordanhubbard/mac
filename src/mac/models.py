@@ -108,12 +108,14 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.NEEDS_REVIEW.value: {
+        TaskState.BLOCKED.value,
         TaskState.REVIEWING.value,
         TaskState.RUNNING.value,
         TaskState.FAILED.value,
         TaskState.CANCELLED.value,
     },
     TaskState.REVIEWING.value: {
+        TaskState.BLOCKED.value,
         TaskState.OPEN.value,
         TaskState.RUNNING.value,
         TaskState.COMPLETED.value,

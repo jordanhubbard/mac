@@ -321,22 +321,22 @@ class ReviewService:
             ReviewStatus.REJECTED.value,
         }:
             task = self._get_task(review.task_id)
-            target = (
-                TaskState.FAILED.value
-                if task.attempt_count >= task.max_attempts
-                else TaskState.OPEN.value
-            )
+            exhausted = task.attempt_count >= task.max_attempts
+            target = TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
+            detail = {
+                "review_id": review_id,
+                "review_status": status_value,
+                "reason": "review rejected after max attempts"
+                if exhausted
+                else "review rejected",
+            }
+            if exhausted:
+                detail["manual_repair_required"] = True
             self._transition_task(
                 review.task_id,
                 target,
                 reviewer_agent_id,
-                {
-                    "review_id": review_id,
-                    "review_status": status_value,
-                    "reason": "review rejected after max attempts"
-                    if target == TaskState.FAILED.value
-                    else "review rejected",
-                },
+                detail,
             )
         return self.get_review(review_id)
 

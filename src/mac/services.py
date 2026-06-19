@@ -2081,7 +2081,14 @@ class ControlPlane:
                 item["ready_count"] += 1
                 if len(item["frontier_tasks"]) < 10:
                     item["frontier_tasks"].append(compact)
-            elif task.state in {TaskState.OPEN.value, TaskState.BLOCKED.value} and waiting_on:
+            elif task.state == TaskState.BLOCKED.value:
+                item["blocked_count"] += 1
+                if len(item["waiting_tasks"]) < 10:
+                    blocked = dict(compact)
+                    if waiting_on:
+                        blocked["waiting_on"] = waiting_on[:8]
+                    item["waiting_tasks"].append(blocked)
+            elif task.state == TaskState.OPEN.value and waiting_on:
                 item["blocked_count"] += 1
                 if len(item["waiting_tasks"]) < 10:
                     item["waiting_tasks"].append({**compact, "waiting_on": waiting_on[:8]})
@@ -5116,7 +5123,7 @@ class ControlPlane:
                 detail=detail or {},
                 created_at=now,
             )
-            if target in TERMINAL_TASK_STATES:
+            if target in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
                 row = conn.execute(
                     "SELECT workflow_run_id FROM tasks WHERE id = ?", (task_id,)
                 ).fetchone()
@@ -5132,6 +5139,7 @@ class ControlPlane:
                         created_at=now,
                     )
             if target in {
+                TaskState.BLOCKED.value,
                 TaskState.RUNNING.value,
                 TaskState.NEEDS_REVIEW.value,
                 TaskState.REVIEWING.value,
@@ -5176,7 +5184,11 @@ class ControlPlane:
     ) -> Tuple[Task, Lease]:
         task = self.get_task(task_id)
         agent = self.get_agent(agent_id)
-        if task.state == TaskState.BLOCKED.value and self._dependencies_satisfied(task):
+        if (
+            task.state == TaskState.BLOCKED.value
+            and task.dependencies
+            and self._dependencies_satisfied(task)
+        ):
             task = self.transition_task(task_id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
@@ -5371,7 +5383,7 @@ class ControlPlane:
             # Workflow-runtime hook. The link is the `tasks.workflow_run_id`
             # column (never caller metadata), so forged task metadata cannot
             # push a free-floating task into the workflow state machine.
-            if item.to_state in TERMINAL_TASK_STATES:
+            if item.to_state in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
                 self.workflow_runtime.on_task_completed(item.task_id, item.to_state or "")
             return
         if item.event_type == "beads.ledger":
@@ -9127,8 +9139,8 @@ class ControlPlane:
             # mem-12: bound review retraction. Before creating a fresh
             # review for the same executor evidence, count how many
             # reviews for this task have already retracted *since the
-            # latest evidence was recorded*. If we've hit the cap, fail
-            # the task — looping forever is what bit task_d7c51a0b
+            # latest evidence was recorded*. If we've hit the cap, block
+            # the task for repair — looping forever is what bit task_d7c51a0b
             # with 503 retracted reviews in the original incident.
             try:
                 retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
@@ -9183,17 +9195,18 @@ class ControlPlane:
                 try:
                     self.transition_task(
                         task_id,
-                        TaskState.FAILED.value,
+                        TaskState.BLOCKED.value,
                         actor,
                         {
                             "reason": "review_retraction_cap_hit",
+                            "manual_repair_required": True,
                             "cap": retraction_cap,
                             "retracted_count": retracted_count,
                             "executor_evidence_id": evidence.id,
                         },
                     )
                 except TransitionError:
-                    # Already terminal: nothing more to do.
+                    # Already terminal or otherwise moved: nothing more to do.
                     pass
                 return {
                     "task_id": task_id,
@@ -9257,7 +9270,7 @@ class ControlPlane:
                 # never a valid signed verdict would otherwise spin here
                 # forever, re-nudging every tick (task_5de06b: 59 review-kind
                 # evidence rows, 0 verdict — the live half of the 2026-06
-                # runaway). Past a cap, fail the task instead of re-nudging.
+                # runaway). Past a cap, block the task instead of re-nudging.
                 try:
                     verdict_wait_cap = int(
                         os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6")
@@ -9303,10 +9316,11 @@ class ControlPlane:
                     try:
                         self.transition_task(
                             task_id,
-                            TaskState.FAILED.value,
+                            TaskState.BLOCKED.value,
                             actor,
                             {
                                 "reason": "review_verdict_wait_cap_hit",
+                                "manual_repair_required": True,
                                 "cap": verdict_wait_cap,
                                 "wait_count": wait_count,
                                 "review_id": review.id,
@@ -12168,6 +12182,7 @@ class ControlPlane:
             TaskState.RUNNING.value,
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
+            TaskState.BLOCKED.value,
             TaskState.COMPLETED.value,
             TaskState.FAILED.value,
             TaskState.CANCELLED.value,
@@ -12341,6 +12356,7 @@ class ControlPlane:
         if task.state in {
             TaskState.CLAIMED.value,
             TaskState.RUNNING.value,
+            TaskState.BLOCKED.value,
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
         }:
@@ -13286,6 +13302,7 @@ class ControlPlane:
             }
         if event_type == "task.transitioned" and to_state in {
             TaskState.RUNNING.value,
+            TaskState.BLOCKED.value,
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
             TaskState.COMPLETED.value,
@@ -13310,7 +13327,7 @@ class ControlPlane:
 
     def _unblock_ready_tasks(self) -> None:
         for task in self.list_tasks(TaskState.BLOCKED.value):
-            if self._dependencies_satisfied(task):
+            if task.dependencies and self._dependencies_satisfied(task):
                 self.transition_task(task.id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
 
     # mac-5ayd: cap the working set per dispatch tick. The dispatcher

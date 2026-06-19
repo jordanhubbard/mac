@@ -1746,7 +1746,14 @@ def _dashboard_project_summaries(
             item["ready_count"] += 1
             if len(item["frontier_tasks"]) < 10:
                 item["frontier_tasks"].append(_project_summary_task(task))
-        elif task.state in {"open", "blocked"} and missing_or_incomplete:
+        elif task.state == "blocked":
+            item["blocked_count"] += 1
+            if len(item["waiting_tasks"]) < 10:
+                blocked = _project_summary_task(task)
+                if missing_or_incomplete:
+                    blocked["waiting_on"] = missing_or_incomplete[:8]
+                item["waiting_tasks"].append(blocked)
+        elif task.state == "open" and missing_or_incomplete:
             item["blocked_count"] += 1
             if len(item["waiting_tasks"]) < 10:
                 blocked = _project_summary_task(task)

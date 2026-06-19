@@ -619,21 +619,22 @@ class MacWorker:
                             "problems": submission_problems,
                         },
                     )
-                    failed_task = self.client.post(
+                    blocked_task = self.client.post(
                         "/tasks/%s/transition" % quote(task_id, safe=""),
                         {
-                            "target_state": "failed",
+                            "target_state": "blocked",
                             "actor": self.agent_id,
                             "detail": {
                                 "reason": "verification_contract_failed",
+                                "manual_repair_required": True,
                                 "evidence_id": evidence.get("id"),
                                 "problems": submission_problems,
                             },
                         },
                     )
                     return WorkerRunResult(
-                        status="failed",
-                        task=failed_task,
+                        status="blocked",
+                        task=blocked_task,
                         lease=lease,
                         evidence=evidence,
                         error="; ".join(submission_problems[:4]),
@@ -657,21 +658,22 @@ class MacWorker:
                     lease=lease,
                     evidence=evidence,
                 )
-            failed_task = self.client.post(
+            blocked_task = self.client.post(
                 "/tasks/%s/transition" % quote(task_id, safe=""),
                 {
-                    "target_state": "failed",
+                    "target_state": "blocked",
                     "actor": self.agent_id,
                     "detail": {
                         "reason": "executor_failed",
+                        "manual_repair_required": True,
                         "returncode": execution.returncode,
                         "evidence_id": evidence["id"],
                     },
                 },
             )
             return WorkerRunResult(
-                status="failed",
-                task=failed_task,
+                status="blocked",
+                task=blocked_task,
                 lease=lease,
                 evidence=evidence,
                 error=execution.summary,
@@ -690,9 +692,13 @@ class MacWorker:
                 self.client.post(
                     "/tasks/%s/transition" % quote(task_id, safe=""),
                     {
-                        "target_state": "failed",
+                        "target_state": "blocked",
                         "actor": self.agent_id,
-                        "detail": {"reason": "worker_exception", "error": str(exc)},
+                        "detail": {
+                            "reason": "worker_exception",
+                            "manual_repair_required": True,
+                            "error": str(exc),
+                        },
                     },
                 )
             except Exception:

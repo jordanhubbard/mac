@@ -1905,14 +1905,35 @@ def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates(
             "dependencies": [blocker["id"]],
         },
     )
+    manual_block = client.post(
+        "/tasks",
+        json={
+            "title": "Story blocked for verifier repair",
+            "project": "nanolang",
+            "required_capabilities": ["python"],
+        },
+    ).json()
+    client.post(
+        "/tasks/%s/transition" % manual_block["id"],
+        json={
+            "target_state": "blocked",
+            "actor": "verifier",
+            "detail": {
+                "reason": "verification_contract_failed",
+                "manual_repair_required": True,
+            },
+        },
+    )
 
     state = client.get("/dashboard/state").json()
 
     nanolang = next(project for project in state["project_summaries"] if project["project"] == "nanolang")
     assert nanolang["ready_count"] == 1
-    assert nanolang["blocked_count"] == 1
+    assert nanolang["blocked_count"] == 2
     assert nanolang["cross_project_dependency_count"] == 1
     assert nanolang["frontier_tasks"][0]["id"] == story["id"]
+    manual_waiting = next(item for item in nanolang["waiting_tasks"] if item["id"] == manual_block["id"])
+    assert "waiting_on" not in manual_waiting
     assert state["swarm_summary"]["agent_total"] == 75
     assert state["dispatch"]["tasks"][0]["candidate_count"] == 75
     assert len(state["dispatch"]["tasks"][0]["candidates"]) == 60

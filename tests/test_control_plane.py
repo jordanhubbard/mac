@@ -1070,7 +1070,7 @@ def test_default_review_workflow_caps_retractions(cp, monkeypatch):
     assert result["status"] == "review_retraction_exhausted"
     assert result["cap"] == 2
     assert result["retracted_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     # Confirm an observability row was written so operators can see why.
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.exhausted" in names
@@ -1146,7 +1146,8 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
 def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     """A reviewer that keeps producing review-attempt evidence but never a
     valid signed verdict must not spin forever: past the verdict-wait cap the
-    task FAILS instead of re-nudging (the live half of the 2026-06 runaway)."""
+    task blocks for repair instead of re-nudging (the live half of the
+    2026-06 runaway)."""
     monkeypatch.setenv("MAC_REVIEW_VERDICT_WAIT_CAP", "2")
     worker = register_agent(cp, "worker", ["python"])
     register_agent(cp, "reviewer-a", ["review"])
@@ -1188,7 +1189,7 @@ def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     assert result["status"] == "review_verdict_wait_exhausted", result
     assert result["cap"] == 2
     assert result["wait_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.exhausted" in names
 
@@ -1248,7 +1249,7 @@ def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypa
 
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "review_retraction_exhausted", result
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
@@ -2807,6 +2808,23 @@ def test_dependencies_block_until_parent_completes(cp):
 
     assert cp.get_task(child.id).state == TaskState.CLAIMED.value
     assert tick["assignments"][0]["task"]["id"] == child.id
+
+
+def test_manual_block_without_dependencies_is_not_auto_unblocked(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("Needs manual repair", required_capabilities=["python"])
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "verifier",
+        {"reason": "verification_contract_failed", "manual_repair_required": True},
+    )
+
+    tick = cp.tick()
+
+    assert tick["assignments"] == []
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    assert cp.claim_next_for_agent(worker.id) is None
 
 
 def test_message_bus_accepts_structured_payloads_and_rejects_execution(cp):
@@ -5517,7 +5535,7 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_fails_exhausted_task(cp):
+def test_rejected_review_verdict_blocks_exhausted_task(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -5548,7 +5566,7 @@ def test_rejected_review_verdict_fails_exhausted_task(cp):
     assert result["status"] == "review_not_approved"
     assert result["review_status"] == ReviewStatus.REJECTED.value
     exhausted = cp.get_task(task.id)
-    assert exhausted.state == TaskState.FAILED.value
+    assert exhausted.state == TaskState.BLOCKED.value
     assert exhausted.owner_agent_id is None
     assert exhausted.lease_id is None
 

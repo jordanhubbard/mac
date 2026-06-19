@@ -208,8 +208,8 @@ def test_run_forever_survives_run_once_exception(tmp_path: Path):
     results = worker.run_forever(max_iterations=1)
     assert results and results[-1].status == "error"
     assert "executor blew up" in (results[-1].error or "")
-    # The task was best-effort-marked failed before the re-raise.
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    # The task was best-effort-blocked before the re-raise.
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
 def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: Path):
@@ -764,7 +764,7 @@ def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(
     )
 
 
-def test_mac_worker_records_failed_execution_and_fails_task(tmp_path: Path):
+def test_mac_worker_records_failed_execution_and_blocks_task(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     task = cp.create_task("Python task", required_capabilities=["python"])
@@ -782,14 +782,14 @@ def test_mac_worker_records_failed_execution_and_fails_task(tmp_path: Path):
 
     result = worker.run_once()
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert result.error == "pytest failed"
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     evidence = cp.list_evidence(task.id)
     assert evidence[0].metadata["returncode"] == 2
 
 
-def test_mac_worker_fails_successful_execution_without_verification_manifest(tmp_path: Path):
+def test_mac_worker_blocks_successful_execution_without_verification_manifest(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     task = cp.create_task("Python task", required_capabilities=["python"])
@@ -804,9 +804,9 @@ def test_mac_worker_fails_successful_execution_without_verification_manifest(tmp
 
     result = worker.run_once()
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert "status" in (result.error or "")
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     assert cp.list_evidence(task.id)[0].metadata["verification"]["status"] == "missing"
 
 
@@ -1202,9 +1202,9 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
 
     result = worker.run_once()
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert "README.md" in (result.error or "")
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     assert cp.list_reviews(task.id) == []
 
 
@@ -1235,9 +1235,9 @@ def test_mac_worker_fails_dirty_repository_worktree_after_success(tmp_path: Path
 
     result = worker.run_once()
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert "uncommitted changes" in (result.error or "")
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
 def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_path: Path):
@@ -1369,7 +1369,7 @@ def test_mac_worker_refuses_dirty_repository_source_for_normal_work(tmp_path: Pa
     with pytest.raises(RuntimeError, match="repository source checkout is dirty"):
         worker.run_once()
 
-    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     observations = cp.list_observability(layer="worker", limit=20)
     assert any(item.name == "worker.repository.source_dirty" for item in observations)
     assert not any((tmp_path / "workspaces" / task.id).glob("repo-*"))

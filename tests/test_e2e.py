@@ -261,12 +261,12 @@ def test_e2e_chatter_evidence_fails_closed(tmp_path: Path):
         )
         return task, macworker.run_once()
 
-    # Chatter → rejected at the gate, task fails closed, nothing published.
+    # Chatter -> rejected at the gate, task blocks for repair, nothing published.
     task, result = _run("E2E chatter task", "hello hello hello")
-    assert result.status == "failed", result
+    assert result.status == "blocked", result
     assert "substantive" in (result.error or "")
     final = client.get("/tasks/%s" % task["id"]).json()
-    assert final["task"]["state"] == TaskState.FAILED.value
+    assert final["task"]["state"] == TaskState.BLOCKED.value
     assert not final.get("publications")
 
     # Substantive planning result → passes the gate (submitted for review).

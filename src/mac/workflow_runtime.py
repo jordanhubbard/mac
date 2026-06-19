@@ -4,7 +4,8 @@ A run snapshots its workflow's definition at start time so subsequent
 edits to the parent workflow don't change in-flight behavior. The
 runtime spawns a task per node, sets ``tasks.workflow_run_id`` so the
 control-plane's ``transition_task`` hook can call back, and on terminal
-states picks the highest-priority matching outbound edge.
+or manual-repair ``blocked`` states picks the highest-priority matching
+outbound edge.
 
 The hook in ``ControlPlane.transition_task`` ignores any
 ``metadata.workflow_run_id`` field a caller might forge — only the
@@ -44,6 +45,7 @@ from mac.workflow_service import WorkflowService
 TASK_TERMINAL_TO_CONDITION: Dict[str, str] = {
     TaskState.COMPLETED.value: "success",
     TaskState.FAILED.value: "failure",
+    TaskState.BLOCKED.value: "failure",
     TaskState.CANCELLED.value: "cancelled",
 }
 
