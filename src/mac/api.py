@@ -438,6 +438,11 @@ class TransitionRequest(BaseModel):
     detail: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskRecoveryRequest(BaseModel):
+    actor: str
+    reason: Optional[str] = None
+
+
 class EvidenceCreate(BaseModel):
     kind: str
     uri: str
@@ -4035,6 +4040,19 @@ def create_app(
     ) -> Dict[str, Any]:
         task, lease = cp.claim_task(task_id, agent_id, lease_seconds, sync_beads=False)
         return {"task": task.to_dict(), "lease": lease.to_dict()}
+
+    @app.post("/tasks/{task_id}/reopen")
+    def reopen_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+        # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
+        # OPEN so it can be retried or reconciled. Counterpart to force-complete.
+        return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
+
+    @app.post("/tasks/{task_id}/force-complete")
+    def force_complete_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+        # Operator override: mark a task COMPLETED regardless of state/review,
+        # for reconciling work done out-of-band (e.g. merged via PR) or a task
+        # stranded in a terminal state. Bypasses the review gate (audited).
+        return cp.force_complete_task(task_id, body.actor, body.reason).to_dict()
 
     @app.post("/leases/{lease_id}/renew")
     def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:

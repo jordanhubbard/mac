@@ -7056,3 +7056,47 @@ def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
         "SELECT name FROM sqlite_master WHERE type='table' AND name='beads_repositories'"
     ).fetchone()
     assert legacy is None
+
+
+def test_reopen_task_requeues_terminal_task_and_resets_attempts(cp):
+    """Recovery: a failed task (e.g. flap-killed) can be reopened back to OPEN,
+    clearing the owner/lease and resetting attempt_count so the requeue is not
+    immediately re-exhausted."""
+    worker = register_agent(cp, "recover-worker", ["python"])
+    task = cp.create_task("recover me", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id, sync_beads=False)
+    cp.transition_task(task.id, TaskState.FAILED.value, "dispatcher", {"reason": "heartbeat_offline"})
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+
+    reopened = cp.reopen_task(task.id, "operator", reason="hub flap; retry")
+    assert reopened.state == TaskState.OPEN.value
+    assert reopened.owner_agent_id is None
+    assert reopened.lease_id is None
+    assert reopened.attempt_count == 0
+    hist = cp.task_history(task.id)
+    assert hist[-1].to_state == TaskState.OPEN.value
+    assert hist[-1].detail.get("via") == "operator_reopen"
+
+
+def test_reopen_task_recovers_blocked_task(cp):
+    task = cp.create_task("blocked recover", required_capabilities=["python"])
+    cp.transition_task(task.id, TaskState.BLOCKED.value, "dispatcher", {})
+    reopened = cp.reopen_task(task.id, "operator")
+    assert reopened.state == TaskState.OPEN.value
+
+
+def test_force_complete_overrides_review_gate_for_stranded_task(cp):
+    """Operator override: a task stranded in a terminal state (or whose work
+    merged out-of-band) can be force-completed without the review/evidence gate,
+    and the override is audited (who, prior state, why)."""
+    task = cp.create_task("done out of band", required_capabilities=["python"])
+    cp.transition_task(task.id, TaskState.FAILED.value, "dispatcher", {"reason": "flap"})
+
+    completed = cp.force_complete_task(task.id, "operator", reason="merged via PR #181")
+    assert completed.state == TaskState.COMPLETED.value
+    assert completed.completed_at is not None
+    assert completed.owner_agent_id is None
+    hist = cp.task_history(task.id)
+    assert hist[-1].event_type == "task.force_completed"
+    assert hist[-1].detail.get("reason") == "merged via PR #181"
+    assert hist[-1].detail.get("from_state") == TaskState.FAILED.value

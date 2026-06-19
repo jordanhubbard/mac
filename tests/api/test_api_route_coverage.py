@@ -466,6 +466,8 @@ network_policies:
     ctx["delete_task_id"] = task("route delete task", caps=["delete-only"])["id"]
     ctx["parent_task_id"] = task("route parent task")["id"]
     ctx["transition_task_id"] = task("route transition task")["id"]
+    ctx["reopen_task_id"] = task("route reopen task")["id"]
+    ctx["force_complete_task_id"] = task("route force-complete task")["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
     ctx["evidence_task_id"] = task("route evidence task")["id"]
@@ -882,6 +884,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/children"): {"task_id": "parent_task_id"},
         ("DELETE", "/tasks/{task_id}"): {"task_id": "delete_task_id"},
         ("POST", "/tasks/{task_id}/transition"): {"task_id": "transition_task_id"},
+        ("POST", "/tasks/{task_id}/reopen"): {"task_id": "reopen_task_id"},
+        ("POST", "/tasks/{task_id}/force-complete"): {"task_id": "force_complete_task_id"},
         ("POST", "/tasks/{task_id}/claim"): {"task_id": "claim_task_id"},
         ("POST", "/tasks/{task_id}/start"): {"task_id": "start_task_id"},
         ("POST", "/tasks/{task_id}/submit-for-review"): {"task_id": "submit_task_id"},
@@ -1106,6 +1110,14 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "target_state": "blocked",
             "actor": "operator",
             "detail": {"reason": "route coverage transition"},
+        },
+        ("POST", "/tasks/{task_id}/reopen"): {
+            "actor": "operator",
+            "reason": "route coverage reopen",
+        },
+        ("POST", "/tasks/{task_id}/force-complete"): {
+            "actor": "operator",
+            "reason": "route coverage force-complete",
         },
         ("POST", "/leases/{lease_id}/renew"): {"agent_id": ctx["lease_agent_id"], "lease_seconds": 120},
         ("POST", "/leases/{lease_id}/delegate"): {
