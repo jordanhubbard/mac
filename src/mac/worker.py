@@ -66,6 +66,22 @@ _GIT_REMOTE_URL_RE = re.compile(
 )
 # Git ref name rules (simplified — see git-check-ref-format).
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
+DEFAULT_COMMAND_INVENTORY_NAMES = (
+    "bash",
+    "git",
+    "gh",
+    "make",
+    "node",
+    "npm",
+    "pip",
+    "python",
+    "python3",
+    "pytest",
+    "sh",
+    "uv",
+)
+DEFAULT_COMMAND_INVENTORY_MAX = 10000
+DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS = 300.0
 
 
 def _validate_git_remote_url(value: str) -> str:
@@ -90,6 +106,28 @@ def _validate_git_ref(value: str) -> str:
     if not _GIT_REF_RE.match(value):
         raise ValueError("git ref contains disallowed characters: %r" % value)
     return value
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 REQUIRED_CHANGED_FILE_KEYS = (
     "required_changed_files",
     "required_files",
@@ -287,6 +325,67 @@ def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List
     return routes
 
 
+def _detect_command_inventory() -> JsonDict:
+    """Report executable command names visible in this worker process.
+
+    Repository contracts use this as toolchain inventory. It deliberately lives
+    in resources, not dispatch capabilities: commands are environmental facts,
+    while capabilities describe the work an agent is allowed to perform.
+    """
+    available: set[str] = set()
+    paths: Dict[str, str] = {}
+    max_entries = _env_int(
+        "MAC_WORKER_COMMAND_INVENTORY_MAX",
+        DEFAULT_COMMAND_INVENTORY_MAX,
+    )
+    max_entries = max(1, max_entries)
+    truncated = False
+
+    for directory in os.get_exec_path():
+        if not directory:
+            continue
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry or entry in available:
+                continue
+            candidate = os.path.join(directory, entry)
+            if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+                continue
+            available.add(entry)
+            if len(available) >= max_entries:
+                truncated = True
+                break
+        if truncated:
+            break
+
+    extra = os.environ.get("MAC_WORKER_COMMAND_PROBES") or ""
+    explicit_names = list(DEFAULT_COMMAND_INVENTORY_NAMES)
+    explicit_names.extend(item.strip() for item in extra.split(",") if item.strip())
+    for name in explicit_names:
+        path = shutil.which(name)
+        if path:
+            available.add(name)
+            paths[name] = path
+
+    return {
+        "schema": "mac.command_inventory.v1",
+        "source": "worker_path",
+        "available": sorted(available),
+        "paths": {name: paths[name] for name in sorted(paths)},
+        "truncated": truncated,
+        "refreshed_at": _utcnow(),
+    }
+
+
+def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict:
+    merged = ensure_json_object(resources)
+    merged["commands"] = _detect_command_inventory()
+    return merged
+
+
 def register_worker(
     client: MacApiClient,
     hostname: Optional[str] = None,
@@ -345,6 +444,7 @@ def register_worker(
             _routes = derived
     if _routes:
         resources = {**(resources or {}), "media_routes": _routes}
+    resources = _resources_with_command_inventory(resources)
     machine = client.post(
         "/machines",
         {
@@ -444,6 +544,7 @@ class MacWorker:
         self._stop = False
         self._declared_digest = False
         self._declared_policy = False
+        self._last_command_inventory_at = 0.0
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
 
@@ -3356,6 +3457,9 @@ class MacWorker:
 
     def _heartbeat(self) -> None:
         payload: JsonDict = {"status": "idle"}
+        command_resources = self._maybe_command_inventory_resources()
+        if command_resources is not None:
+            payload["resources"] = command_resources
         # Declare the build the agent is running. Send the digest at most once
         # per process; subsequent heartbeats are pure liveness pings.
         if self.running_digest and not self._declared_digest:
@@ -3366,6 +3470,24 @@ class MacWorker:
         )
         if self.running_digest and not self._declared_digest:
             self._declared_digest = True
+
+    def _maybe_command_inventory_resources(self) -> Optional[JsonDict]:
+        interval = _env_float(
+            "MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS",
+            DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS,
+        )
+        if interval < 0:
+            return None
+        now = time.monotonic()
+        if self._last_command_inventory_at and (now - self._last_command_inventory_at) < interval:
+            return None
+        try:
+            agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
+            resources = ensure_json_object((agent or {}).get("resources"))
+        except Exception:
+            return None
+        self._last_command_inventory_at = now
+        return _resources_with_command_inventory(resources)
 
     def _observe_metric(
         self,
