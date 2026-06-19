@@ -37,7 +37,7 @@ from mac.models import (
     AgentStatus,
     Artifact,
     AuthorizationError,
-    BeadsRepository,
+    ProjectRepository,
     COMMAND_AUDIT_PHASES,
     CommandAuditRecord,
     MoodMode,
@@ -945,7 +945,7 @@ class ControlPlane:
             if fleet.tenant_id in (None, tenant_id)
         ]
         project_items = [item.to_dict() for item in self.list_project_items()]
-        repositories = [repo.to_dict() for repo in self.list_beads_repositories()]
+        repositories = [repo.to_dict() for repo in self.list_project_repositories()]
         return {
             "schema": "mac.hermes_work_context.v1",
             "authority": {
@@ -1031,9 +1031,8 @@ class ControlPlane:
             "delete_project",
             "import_project_item",
             "list_project_items",
-            "register_beads_repository",
-            "list_beads_repositories",
-            "poll_beads_repositories",
+            "register_project_repository",
+            "list_project_repositories",
         }
         expected_agent_api_operations = {
             "create_agent",
@@ -1070,9 +1069,8 @@ class ControlPlane:
             "mac-hermes project-detail",
             "mac-hermes import-project-item",
             "mac-hermes project-items",
-            "mac-hermes beads-repositories",
-            "mac-hermes register-beads-repository",
-            "mac-hermes poll-beads-repositories",
+            "mac-hermes project-repositories",
+            "mac-hermes register-project-repository",
             "mac-hermes claim-next",
             "mac-hermes tasks",
             "mac-hermes task ",
@@ -1189,7 +1187,7 @@ class ControlPlane:
             live_tenant_tasks,
             live_agents,
             [item.to_dict() for item in self.list_project_items()],
-            [repository.to_dict() for repository in self.list_beads_repositories()],
+            [repository.to_dict() for repository in self.list_project_repositories()],
             [project.to_dict() for project in self.list_project_records()],
         )
         live_alignment = {
@@ -1476,7 +1474,7 @@ class ControlPlane:
                         "mac project show",
                         "mac bridge import",
                         "mac bridge list",
-                        "mac bridge beads register",
+                        "mac bridge repository register",
                     ),
                 ),
                 "mac_hermes_cli_commands": matching(
@@ -1486,9 +1484,8 @@ class ControlPlane:
                         "mac-hermes project-detail",
                         "mac-hermes import-project-item",
                         "mac-hermes project-items",
-                        "mac-hermes beads-repositories",
-                        "mac-hermes register-beads-repository",
-                        "mac-hermes poll-beads-repositories",
+                        "mac-hermes project-repositories",
+                        "mac-hermes register-project-repository",
                     ),
                 ),
                 "mac_hermes_cli_ready": has_all(
@@ -1498,9 +1495,8 @@ class ControlPlane:
                         "mac-hermes project-detail",
                         "mac-hermes import-project-item",
                         "mac-hermes project-items",
-                        "mac-hermes beads-repositories",
-                        "mac-hermes register-beads-repository",
-                        "mac-hermes poll-beads-repositories",
+                        "mac-hermes project-repositories",
+                        "mac-hermes register-project-repository",
                     ),
                 ),
                 "hgmac_cli_commands": matching(hgmac_commands, ("hgmac projects ",)),
@@ -1705,7 +1701,7 @@ class ControlPlane:
                         int(project.get("bridge_item_count") or 0)
                         for project in project_contexts
                     ),
-                    "beads_repository_count": sum(
+                    "project_repository_count": sum(
                         int(project.get("repository_count") or 0)
                         for project in project_contexts
                     ),
@@ -2306,19 +2302,14 @@ class ControlPlane:
                     "path": "/bridge/items",
                 },
                 {
-                    "name": "register_beads_repository",
+                    "name": "register_project_repository",
                     "method": "POST",
-                    "path": "/bridge/beads/repositories",
+                    "path": "/bridge/repositories",
                 },
                 {
-                    "name": "list_beads_repositories",
+                    "name": "list_project_repositories",
                     "method": "GET",
-                    "path": "/bridge/beads/repositories",
-                },
-                {
-                    "name": "poll_beads_repositories",
-                    "method": "POST",
-                    "path": "/bridge/beads/poll",
+                    "path": "/bridge/repositories",
                 },
                 {
                     "name": "create_fleet",
@@ -2394,9 +2385,8 @@ class ControlPlane:
                 "mac project show <project>",
                 "mac bridge import <source> <external_id> <title> --project <project>",
                 "mac bridge list",
-                "mac bridge beads register <name> <path> --project <project>",
-                "mac bridge beads repos",
-                "mac bridge beads poll --repository <repository>",
+                "mac bridge repository register <name> <path> --project <project>",
+                "mac bridge repository repos",
                 "mac task list",
                 "mac task show {task_id}",
                 "mac task create --title ...",
@@ -2412,9 +2402,8 @@ class ControlPlane:
                 "mac-hermes project-detail <project>",
                 "mac-hermes import-project-item <source> <external_id> <title> --project <project>",
                 "mac-hermes project-items",
-                "mac-hermes beads-repositories",
-                "mac-hermes register-beads-repository <name> <path> --project <project>",
-                "mac-hermes poll-beads-repositories --repository <repository>",
+                "mac-hermes project-repositories",
+                "mac-hermes register-project-repository <name> <path> --project <project>",
                 "mac-hermes agents",
                 "mac-hermes agent-detail {agent_id}",
                 "mac-hermes agent-identity {agent_id}",
@@ -3079,11 +3068,11 @@ class ControlPlane:
                 "repository_contract": repository_contract,
             }
             return normalized
-        repo = self._beads_repository_for_project(project)
+        repo = self._repository_for_project(project)
         if repo is not None:
             contract = repo.metadata.get("repository_contract")
             if not isinstance(contract, dict) or not contract.get("schema"):
-                contract = self._repository_contract_for_beads_repo(repo)
+                contract = self._repository_contract_for_repo(repo)
             origin_dict.setdefault("type", "direct_task")
             origin_dict.setdefault("repository_id", repo.id)
             origin_dict.setdefault("repository_name", repo.name)
@@ -3130,19 +3119,19 @@ class ControlPlane:
         }
         return normalized
 
-    def _beads_repository_for_project(self, project: Optional[str]) -> Optional[BeadsRepository]:
+    def _repository_for_project(self, project: Optional[str]) -> Optional[ProjectRepository]:
         if not project:
             return None
         row = self.store.query_one(
             """
-            SELECT * FROM beads_repositories
+            SELECT * FROM project_repositories
             WHERE project = ? AND enabled = ?
             ORDER BY name, id
             LIMIT 1
             """,
             (project, 1),
         )
-        return self._beads_repository_from_row(row) if row is not None else None
+        return self._repository_from_row(row) if row is not None else None
 
     def get_task(self, task_id: str) -> Task:
         row = self.store.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -3681,7 +3670,7 @@ class ControlPlane:
         return str(item.get("project") or item.get("source") or "unassigned")
 
     @staticmethod
-    def _beads_repository_project_key(repository: JsonDict) -> str:
+    def _repository_project_key(repository: JsonDict) -> str:
         return str(
             repository.get("project")
             or repository.get("name")
@@ -3694,7 +3683,7 @@ class ControlPlane:
             self.list_tasks(),
             self.list_agents(),
             [item.to_dict() for item in self.list_project_items()],
-            [repository.to_dict() for repository in self.list_beads_repositories()],
+            [repository.to_dict() for repository in self.list_project_repositories()],
             [project.to_dict() for project in self.list_project_records()],
         )
 
@@ -3812,10 +3801,10 @@ class ControlPlane:
             for item in self.list_project_items()
             if self._project_item_project_key(item.to_dict()) == project_key
         ]
-        beads_repositories = [
+        project_repositories = [
             repository.to_dict()
-            for repository in self.list_beads_repositories()
-            if self._beads_repository_project_key(repository.to_dict()) == project_key
+            for repository in self.list_project_repositories()
+            if self._repository_project_key(repository.to_dict()) == project_key
         ]
         return {
             "project": project_key,
@@ -3827,7 +3816,7 @@ class ControlPlane:
             ),
             "tasks": tasks,
             "bridge_items": bridge_items,
-            "beads_repositories": beads_repositories,
+            "project_repositories": project_repositories,
         }
 
     def update_project(
@@ -3889,7 +3878,7 @@ class ControlPlane:
                 raise
             if new_name != project.name:
                 conn.execute("UPDATE tasks SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
-                conn.execute("UPDATE beads_repositories SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
+                conn.execute("UPDATE project_repositories SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
             self._record_project_event(
                 conn,
                 project.id,
@@ -3940,7 +3929,7 @@ class ControlPlane:
         project = self.get_project_record(name_or_id)
         tasks = [task for task in self.list_tasks() if task.project == project.name]
         repo_rows = self.store.query_all(
-            "SELECT id FROM beads_repositories WHERE project = ?",
+            "SELECT id FROM project_repositories WHERE project = ?",
             (project.name,),
         )
         if (tasks or repo_rows) and not force:
@@ -3954,7 +3943,7 @@ class ControlPlane:
         with self.store.transaction() as conn:
             if force:
                 conn.execute("UPDATE tasks SET project = NULL, updated_at = ? WHERE project = ?", (now, project.name))
-                conn.execute("UPDATE beads_repositories SET enabled = 0, updated_at = ? WHERE project = ?", (now, project.name))
+                conn.execute("UPDATE project_repositories SET enabled = 0, updated_at = ? WHERE project = ?", (now, project.name))
             self._record_project_event(
                 conn,
                 project.id,
@@ -3965,7 +3954,7 @@ class ControlPlane:
                     "project_name": project.name,
                     "force": bool(force),
                     "task_count": len(tasks),
-                    "beads_repository_count": len(repo_rows),
+                    "project_repository_count": len(repo_rows),
                 },
                 now,
             )
@@ -9325,7 +9314,7 @@ class ControlPlane:
         )
         return self.get_project_item(item_id)
 
-    def register_beads_repository(
+    def register_project_repository(
         self,
         name: str,
         path: str,
@@ -9336,7 +9325,7 @@ class ControlPlane:
         poll_interval_seconds: int = 60,
         metadata: Optional[Dict[str, Any]] = None,
         actor: str = "beads-bridge",
-    ) -> BeadsRepository:
+    ) -> ProjectRepository:
         name = name.strip()
         if not name:
             raise ValidationError("beads repository name is required")
@@ -9355,11 +9344,11 @@ class ControlPlane:
         repo_metadata = ensure_json_object(metadata)
         repo_metadata["repository_contract"] = contract
         now = utcnow()
-        row = self.store.query_one("SELECT id FROM beads_repositories WHERE name = ?", (name,))
-        repo_id = row["id"] if row is not None else new_id("beadsrepo")
+        row = self.store.query_one("SELECT id FROM project_repositories WHERE name = ?", (name,))
+        repo_id = row["id"] if row is not None else new_id("projectrepo")
         self.store.execute(
             """
-            INSERT INTO beads_repositories (
+            INSERT INTO project_repositories (
                 id, name, path, source, project, required_capabilities,
                 enabled, poll_interval_seconds, metadata, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -9388,7 +9377,7 @@ class ControlPlane:
             ),
         )
         self.record_log(
-            "bridge.beads_repository.registered",
+            "bridge.project_repository.registered",
             layer="control_plane",
             source=actor,
             subject_type="environment",
@@ -9403,28 +9392,28 @@ class ControlPlane:
                 "repository_contract_path": contract["contract_path"],
             },
         )
-        return self.get_beads_repository(repo_id)
+        return self.get_project_repository(repo_id)
 
-    def get_beads_repository(self, repo_id_or_name: str) -> BeadsRepository:
+    def get_project_repository(self, repo_id_or_name: str) -> ProjectRepository:
         row = self.store.query_one(
-            "SELECT * FROM beads_repositories WHERE id = ? OR name = ?",
+            "SELECT * FROM project_repositories WHERE id = ? OR name = ?",
             (repo_id_or_name, repo_id_or_name),
         )
         if row is None:
             raise NotFoundError("beads repository not found: %s" % repo_id_or_name)
-        return self._beads_repository_from_row(row)
+        return self._repository_from_row(row)
 
-    def list_beads_repositories(self, enabled: Optional[bool] = None) -> List[BeadsRepository]:
+    def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
         if enabled is None:
-            rows = self.store.query_all("SELECT * FROM beads_repositories ORDER BY name, id")
+            rows = self.store.query_all("SELECT * FROM project_repositories ORDER BY name, id")
         else:
             rows = self.store.query_all(
-                "SELECT * FROM beads_repositories WHERE enabled = ? ORDER BY name, id",
+                "SELECT * FROM project_repositories WHERE enabled = ? ORDER BY name, id",
                 (1 if enabled else 0,),
             )
-        return [self._beads_repository_from_row(row) for row in rows]
+        return [self._repository_from_row(row) for row in rows]
 
-    def _repository_contract_for_beads_repo(self, repo: BeadsRepository) -> JsonDict:
+    def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
         contract = _load_repository_contract(Path(repo.path).expanduser())
         if contract["project"] != repo.project:
             raise ValidationError(
@@ -10043,8 +10032,8 @@ class ControlPlane:
             row["updated_at"],
         )
 
-    def _beads_repository_from_row(self, row: Any) -> BeadsRepository:
-        return BeadsRepository(
+    def _repository_from_row(self, row: Any) -> ProjectRepository:
+        return ProjectRepository(
             row["id"],
             row["name"],
             row["path"],

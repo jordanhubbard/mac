@@ -1675,7 +1675,7 @@ def _dashboard_project_summaries(
     tasks: List[Any],
     agents: List[Any],
     bridge_items: List[Dict[str, Any]],
-    beads_repositories: List[Dict[str, Any]],
+    project_repositories: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     task_by_id = {task.id: task for task in tasks}
     agents_by_id = {agent.id: agent for agent in agents}
@@ -1766,7 +1766,7 @@ def _dashboard_project_summaries(
     for bridge_item in bridge_items:
         project = str(bridge_item.get("project") or bridge_item.get("source") or "unassigned")
         bucket(project)["bridge_item_count"] += 1
-    for repo in beads_repositories:
+    for repo in project_repositories:
         project = str(repo.get("project") or repo.get("name") or repo.get("source") or "unassigned")
         bucket(project)["repository_count"] += 1
 
@@ -2337,7 +2337,7 @@ def _dashboard_state(
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
     # beads removed as a read/write source; the status view no longer lists
     # beads repositories (kept as an empty list for dashboard shape stability).
-    beads_repositories: List[Dict[str, Any]] = []
+    project_repositories: List[Dict[str, Any]] = []
     memory_records = [
         record.to_dict() for record in cp.search_memory()
     ][-120:]
@@ -2420,7 +2420,7 @@ def _dashboard_state(
                 "agentbus_streams": len(agentbus_streams),
                 "terminal_sessions": len(terminal_sessions),
                 "artifacts": len(artifacts),
-                "beads_repositories": len(beads_repositories),
+                "project_repositories": len(project_repositories),
                 "projects": len(project_summaries),
                 "memory_records": len(memory_records),
                 "integration_findings": len(integration_findings),
@@ -2473,7 +2473,7 @@ def _dashboard_state(
         "terminal_sessions": terminal_sessions,
         "artifacts": artifacts,
         "bridge_items": bridge_items,
-        "beads_repositories": beads_repositories,
+        "project_repositories": project_repositories,
         "memory_records": memory_records,
         "nap_schedules": nap_schedules,
         "nap_runs": nap_runs,

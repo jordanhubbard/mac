@@ -5083,7 +5083,7 @@ function hermesRecord(instance, data) {
             ${field("Task ops", String(taskOperationCount))}
             ${field("Project ops", String(projectOperationCount))}
             ${field("Agent ops", String(agentOperationCount))}
-            ${field("Project links", `${proofWork.project_bridge_item_count || 0}/${proofWork.beads_repository_count || 0}`)}
+            ${field("Project links", `${proofWork.project_bridge_item_count || 0}/${proofWork.project_repository_count || 0}`)}
             ${field("Bound agents", String((proofWork.bound_agent_ids || []).length))}
           </div>
           <h4>First-Class Objects</h4>

@@ -597,7 +597,7 @@ interface DashboardData {
   terminal_sessions?: TerminalAttachRecord[];
   artifacts: ApiRecord[];
   bridge_items: ApiRecord[];
-  beads_repositories: ApiRecord[];
+  project_repositories: ApiRecord[];
   memory_records: ApiRecord[];
   nap_schedules: ApiRecord[];
   nap_runs: ApiRecord[];
@@ -5945,7 +5945,7 @@ function hermesRecord(instance: ApiRecord, data: DashboardData): string {
             ${field("Task ops", String(taskOperationCount))}
             ${field("Project ops", String(projectOperationCount))}
             ${field("Agent ops", String(agentOperationCount))}
-            ${field("Project links", `${proofWork.project_bridge_item_count || 0}/${proofWork.beads_repository_count || 0}`)}
+            ${field("Project links", `${proofWork.project_bridge_item_count || 0}/${proofWork.project_repository_count || 0}`)}
             ${field("Bound agents", String(((proofWork.bound_agent_ids || []) as unknown[]).length))}
           </div>
           <h4>First-Class Objects</h4>

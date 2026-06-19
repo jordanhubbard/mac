@@ -3030,7 +3030,7 @@ def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):
     repo.mkdir()
 
     with pytest.raises(ValidationError, match="runtime contract not found"):
-        cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
 def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, tmp_path):
@@ -3039,7 +3039,7 @@ def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, t
     _write_repository_contract(repo, include_test=False)
 
     with pytest.raises(ValidationError, match="test.command"):
-        cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
 
@@ -3066,7 +3066,7 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_beads(repo, [])
-    cp.register_beads_repository("mac", str(repo), source="repo-beads-mac")
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
     task = cp.create_task(
         "Direct repository task",
@@ -7008,3 +7008,34 @@ def test_agent_installed_packages_footprint_persists_and_survives_register(cp):
     assert again.id == agent.id
     assert cp.get_agent(agent.id).installed_packages == fp
     assert "gpu" in cp.get_agent(agent.id).capabilities
+
+
+def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
+    """beads->mac: a pre-rename DB with a `beads_repositories` table must have
+    its rows migrated into `project_repositories` (and the legacy table dropped)
+    on the next open, with no data loss."""
+    from mac.store import SQLiteStore
+
+    db = str(tmp_path / "legacy.db")
+    store = SQLiteStore(db)
+    store._conn.execute(
+        "INSERT INTO project_repositories "
+        "(id, name, path, source, project, created_at, updated_at) "
+        "VALUES ('repo_legacy','mac','/repo/mac','repo-mac','mac','t0','t0')"
+    )
+    # Simulate the historical schema where the registry was `beads_repositories`.
+    store._conn.execute("ALTER TABLE project_repositories RENAME TO beads_repositories")
+    store._conn.commit()
+    store._conn.close()
+
+    # Reopen: initialize() recreates `project_repositories` empty, then
+    # _migrate() copies the legacy rows over and drops `beads_repositories`.
+    store2 = SQLiteStore(db)
+    rows = store2._conn.execute(
+        "SELECT id, name, project FROM project_repositories"
+    ).fetchall()
+    assert [(r[0], r[1], r[2]) for r in rows] == [("repo_legacy", "mac", "mac")]
+    legacy = store2._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='beads_repositories'"
+    ).fetchone()
+    assert legacy is None
