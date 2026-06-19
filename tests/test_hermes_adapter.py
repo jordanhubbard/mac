@@ -249,7 +249,6 @@ def test_hermes_adapter_exposes_project_bridge_operations():
         metadata={"team": "core", "api_token": "drop"},
     )
     adapter.list_beads_repositories(enabled=True)
-    adapter.poll_beads_repositories(repository="mac", force=True, actor="agent_1")
     adapter.list_agents()
     adapter.agent_detail("agent_1")
     adapter.agent_identity("agent_1")
@@ -302,11 +301,6 @@ def test_hermes_adapter_exposes_project_bridge_operations():
             },
         ),
         ("GET", "/bridge/beads/repositories?enabled=true", None),
-        (
-            "POST",
-            "/bridge/beads/poll",
-            {"repository": "mac", "force": True, "actor": "agent_1"},
-        ),
         ("GET", "/agents", None),
         ("GET", "/agents/agent_1", None),
         ("GET", "/agents/agent_1/identity", None),
@@ -831,14 +825,6 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
             "--actor",
             "agent_1",
         ],
-        [
-            "poll-beads-repositories",
-            "--repository",
-            "mac",
-            "--force",
-            "--actor",
-            "agent_1",
-        ],
         ["agents"],
         ["agent-detail", "agent_1"],
         ["agent-identity", "agent_1"],
@@ -896,11 +882,6 @@ def test_mac_hermes_cli_exposes_project_bridge_operations(monkeypatch, capsys):
                 "metadata": {"team": "core"},
                 "actor": "agent_1",
             },
-        ),
-        (
-            "POST",
-            "/bridge/beads/poll",
-            {"repository": "mac", "force": True, "actor": "agent_1"},
         ),
         ("GET", "/agents", None),
         ("GET", "/agents/agent_1", None),

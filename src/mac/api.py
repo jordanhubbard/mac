@@ -4034,13 +4034,6 @@ def create_app(
         lease_seconds: int = 900,
     ) -> Dict[str, Any]:
         task, lease = cp.claim_task(task_id, agent_id, lease_seconds, sync_beads=False)
-        background_tasks.add_task(
-            cp.sync_claim_side_effects,
-            task.id,
-            agent_id,
-            lease.id,
-            lease.expires_at,
-        )
         return {"task": task.to_dict(), "lease": lease.to_dict()}
 
     @app.post("/leases/{lease_id}/renew")
@@ -4108,7 +4101,6 @@ def create_app(
         # downstream). Bind it to the principal.
         principal.assert_actor(body.created_by)
         evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
-        background_tasks.add_task(cp.sync_evidence_side_effects, evidence.id)
         return evidence.to_dict()
 
     @app.get("/evidence/{evidence_id}/artifacts")
@@ -4731,16 +4723,6 @@ def create_app(
             capabilities=body.capabilities,
             sync_beads=False,
         )
-        if assignment and not body.dry_run:
-            task = assignment["task"]
-            lease = assignment["lease"]
-            background_tasks.add_task(
-                cp.sync_claim_side_effects,
-                task["id"],
-                agent_id,
-                lease["id"],
-                lease["expires_at"],
-            )
         return assignment
 
     @app.post("/agents/{agent_id}/service-claims/sync")
@@ -5512,14 +5494,6 @@ def create_app(
             actor=body.actor,
             sync_beads=False,
         )
-        if claim.get("status") == "claimed":
-            task = claim.get("task") if isinstance(claim.get("task"), dict) else {}
-            background_tasks.add_task(
-                cp.sync_review_claim_side_effects,
-                str(task.get("id") or ""),
-                review_id,
-                body.reviewer_agent_id,
-            )
         return claim
 
     @app.post("/reviews/{review_id}/decision")

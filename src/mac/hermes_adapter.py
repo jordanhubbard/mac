@@ -434,22 +434,6 @@ class HermesMacAdapter:
             path = "%s?%s" % (path, query)
         return self.client.get(path)
 
-    def poll_beads_repositories(
-        self,
-        *,
-        repository: Optional[str] = None,
-        force: bool = False,
-        actor: str = "hermes",
-    ) -> JsonDict:
-        return self.client.post(
-            "/bridge/beads/poll",
-            {
-                "repository": repository,
-                "force": force,
-                "actor": actor,
-            },
-        )
-
     def list_agents(self) -> Any:
         return self.client.get("/agents")
 
@@ -1012,16 +996,6 @@ def _cmd_beads_repositories(args: argparse.Namespace) -> None:
     _print(_adapter(args).list_beads_repositories(enabled=args.enabled))
 
 
-def _cmd_poll_beads_repositories(args: argparse.Namespace) -> None:
-    _print(
-        _adapter(args).poll_beads_repositories(
-            repository=args.repository,
-            force=args.force,
-            actor=args.actor,
-        )
-    )
-
-
 def _cmd_agents(args: argparse.Namespace) -> None:
     _print(_adapter(args).list_agents())
 
@@ -1348,12 +1322,6 @@ def build_parser() -> argparse.ArgumentParser:
     register_beads_repository.add_argument("--disabled", action="store_true")
     register_beads_repository.add_argument("--actor", default="hermes")
     register_beads_repository.set_defaults(func=_cmd_register_beads_repository)
-
-    poll_beads_repositories = sub.add_parser("poll-beads-repositories", help="poll registered Beads repositories")
-    poll_beads_repositories.add_argument("--repository")
-    poll_beads_repositories.add_argument("--force", action="store_true")
-    poll_beads_repositories.add_argument("--actor", default="hermes")
-    poll_beads_repositories.set_defaults(func=_cmd_poll_beads_repositories)
 
     agents = sub.add_parser("agents", help="list MAC agents visible to Hermes")
     agents.set_defaults(func=_cmd_agents)

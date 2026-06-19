@@ -1689,16 +1689,6 @@ def cmd_bridge_beads_repos(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_bridge_beads_poll(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).poll_beads_repositories(
-            args.repository,
-            force=args.force,
-            actor=args.actor,
-        )
-    )
-
-
 def cmd_integrations_findings(args: argparse.Namespace) -> None:
     _print(
         [
@@ -3481,12 +3471,6 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_beads_repos = bridge_beads.add_parser("repos")
     bridge_beads_repos.add_argument("--enabled", action="store_true", default=None)
     _set(cmd_bridge_beads_repos, bridge_beads_repos)
-    bridge_beads_poll = bridge_beads.add_parser("poll")
-    bridge_beads_poll.add_argument("--repository")
-    bridge_beads_poll.add_argument("--force", action="store_true")
-    bridge_beads_poll.add_argument("--actor", default="beads-bridge")
-    _set(cmd_bridge_beads_poll, bridge_beads_poll)
-
     integrations = sub.add_parser("integrations", help="integration authority observations and findings").add_subparsers(dest="integrations_command", required=True)
     integrations_findings = integrations.add_parser("findings")
     integrations_findings.add_argument("--source-kind")
