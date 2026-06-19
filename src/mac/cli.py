@@ -492,6 +492,18 @@ def cmd_task_close(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_reopen(args: argparse.Namespace) -> None:
+    # Recovery: return a stuck/terminal task to OPEN (failed/cancelled reset
+    # attempt_count so the requeue isn't immediately re-exhausted).
+    _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
+
+
+def cmd_task_force_complete(args: argparse.Namespace) -> None:
+    # Operator override: mark a task COMPLETED regardless of state/review, for
+    # reconciling work done out-of-band or recovering a stranded terminal task.
+    _print(_plane(args).force_complete_task(args.task_id, args.actor, args.reason or None))
+
+
 def cmd_task_search(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
@@ -2441,6 +2453,24 @@ def build_parser() -> argparse.ArgumentParser:
                        help="close as CANCELLED instead of COMPLETED")
     close.set_defaults(success=True)
     _set(cmd_task_close, close)
+
+    reopen = task.add_parser(
+        "reopen",
+        help="recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation",
+    )
+    reopen.add_argument("task_id")
+    reopen.add_argument("--reason", default="")
+    reopen.add_argument("--actor", default="human")
+    _set(cmd_task_reopen, reopen)
+
+    force_complete = task.add_parser(
+        "force-complete",
+        help="operator override: mark a task COMPLETED regardless of state/review (bypasses the review gate; audited)",
+    )
+    force_complete.add_argument("task_id")
+    force_complete.add_argument("--reason", default="")
+    force_complete.add_argument("--actor", default="human")
+    _set(cmd_task_force_complete, force_complete)
 
     search = task.add_parser("search", help="keyword search across task title and description")
     search.add_argument("query")

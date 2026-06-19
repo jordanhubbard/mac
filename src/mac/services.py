@@ -5103,6 +5103,76 @@ class ControlPlane:
         transitioned = self.get_task(task_id)
         return transitioned
 
+    def reopen_task(
+        self,
+        task_id: str,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> Task:
+        """Recovery action: return a stuck/terminal task to OPEN so it can be
+        retried or reconciled.
+
+        Valid from ``failed``/``cancelled`` (resets ``attempt_count`` and clears
+        ``completed_at`` so the requeue isn't immediately re-exhausted) and from
+        ``blocked``; the state machine rejects reopening an already-``completed``
+        task. Records who reopened it and why. Counterpart to
+        :meth:`force_complete_task`.
+        """
+        detail: Dict[str, Any] = {"via": "operator_reopen"}
+        if reason:
+            detail["reason"] = reason
+        return self.transition_task(task_id, TaskState.OPEN.value, actor, detail)
+
+    def force_complete_task(
+        self,
+        task_id: str,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> Task:
+        """Operator override: mark a task COMPLETED regardless of its current
+        state or review status.
+
+        For reconciling work done out-of-band (e.g. a task whose change merged
+        via a PR) or recovering a task stranded in a terminal state where the
+        normal review→publish path can no longer run. This deliberately bypasses
+        the review/evidence completion gate, so it records who forced it, the
+        prior state, and why. Recovery counterpart to :meth:`reopen_task`.
+        """
+        task = self.get_task(task_id)
+        if task.state == TaskState.COMPLETED.value:
+            return task
+        now = utcnow()
+        detail: Dict[str, Any] = {"via": "operator_force_complete", "from_state": task.state}
+        if reason:
+            detail["reason"] = reason
+        with self.store.transaction() as conn:
+            if task.lease_id:
+                conn.execute(
+                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                    (LeaseStatus.RELEASED.value, now, task.lease_id, LeaseStatus.ACTIVE.value),
+                )
+            if task.owner_agent_id:
+                self._set_agent_idle(task.owner_agent_id, conn=conn)
+            conn.execute(
+                """
+                UPDATE tasks
+                SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
+                    completed_at = COALESCE(completed_at, ?), updated_at = ?
+                WHERE id = ?
+                """,
+                (TaskState.COMPLETED.value, now, now, task_id),
+            )
+            self._record_history(
+                task_id,
+                "task.force_completed",
+                actor,
+                task.state,
+                TaskState.COMPLETED.value,
+                detail,
+                conn=conn,
+            )
+        return self.get_task(task_id)
+
     def claim_task(
         self,
         task_id: str,
