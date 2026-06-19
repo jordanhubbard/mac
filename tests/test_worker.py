@@ -2064,6 +2064,43 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
     assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
+def test_register_worker_reports_command_inventory_without_command_capability(
+    tmp_path: Path,
+    monkeypatch,
+):
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("git", "gh", "python3"):
+        path = bin_dir / name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_MAX", "not-an-int")
+
+    registered = register_worker(
+        api,
+        hostname="rocky.local",
+        agent_name="rocky",
+        capabilities=["python"],
+    )
+
+    refreshed = cp.get_agent(registered["id"])
+    commands = refreshed.resources["commands"]
+    assert commands["schema"] == "mac.command_inventory.v1"
+    assert {"git", "gh", "python3"} <= set(commands["available"])
+    assert refreshed.capabilities == ["python"]
+    assert "git" not in refreshed.capabilities
+
+    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS", "not-a-float")
+    worker = MacWorker(api, registered["id"], tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    heartbeat_resources = worker._maybe_command_inventory_resources()
+    assert heartbeat_resources is not None
+    assert {"git", "gh", "python3"} <= set(heartbeat_resources["commands"]["available"])
+
+
 def test_register_worker_binds_agent_to_hermes_instance():
     cp = ControlPlane.in_memory()
     tenant = cp.register_tenant("fleet")

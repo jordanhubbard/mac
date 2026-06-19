@@ -121,6 +121,49 @@ def test_fulfill_refuses_agent_lacking_required_role_or_capabilities(cp):
         cp.provisioning.fulfill_request(request.id, no_caps_agent.id, fulfilled_by="ops")
 
 
+def test_fulfill_refuses_agent_lacking_required_commands(cp):
+    machine = cp.register_machine("h")
+    missing_gh = cp.register_agent(
+        machine.id,
+        "missing-gh",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git"],
+            }
+        },
+    )
+    ready = cp.register_agent(
+        machine.id,
+        "ready",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git", "gh"],
+            }
+        },
+    )
+    request = cp.provisioning.request_agent(
+        reason="dispatch.no_eligible_agent",
+        capabilities=["python"],
+        detail={"required_commands": ["python3", "git", "gh"]},
+        requested_by="dispatcher",
+    )
+
+    with pytest.raises(ValidationError, match="required commands"):
+        cp.provisioning.fulfill_request(request.id, missing_gh.id, fulfilled_by="operator")
+
+    fulfilled = cp.provisioning.fulfill_request(
+        request.id,
+        ready.id,
+        fulfilled_by="operator",
+    )
+    assert fulfilled.status == ProvisioningStatus.FULFILLED.value
+    assert fulfilled.fulfilled_agent_id == ready.id
+
+
 def test_provisioner_hook_runs_synchronously(cp):
     machine = cp.register_machine("h")
     spawned = cp.register_agent(machine.id, "auto")
@@ -136,6 +179,33 @@ def test_provisioner_hook_runs_synchronously(cp):
     assert request.status == ProvisioningStatus.FULFILLED.value
     assert request.fulfilled_agent_id == spawned.id
     assert seen == [request.id]
+
+
+def test_provisioner_hook_result_must_satisfy_required_commands(cp):
+    machine = cp.register_machine("h")
+    missing_gh = cp.register_agent(
+        machine.id,
+        "auto-missing-gh",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git"],
+            }
+        },
+    )
+
+    cp.provisioning.register_provisioner(lambda request: missing_gh.id)
+    request = cp.provisioning.request_agent(
+        reason="dispatch.no_eligible_agent",
+        capabilities=["python"],
+        detail={"required_commands": ["python3", "git", "gh"]},
+    )
+
+    assert request.status == ProvisioningStatus.PENDING.value
+    assert request.fulfilled_agent_id is None
+    names = {event.name for event in cp.list_observability(limit=30)}
+    assert "provisioning.hook_failed" in names
 
 
 def test_provisioner_hook_failure_does_not_abort_request(cp):

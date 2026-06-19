@@ -265,6 +265,66 @@ def _nested_json_object(root: JsonDict, *keys: str) -> JsonDict:
     return ensure_json_object(node) if isinstance(node, dict) else {}
 
 
+def _repository_contracts_from_metadata(metadata: JsonDict) -> List[JsonDict]:
+    contracts: List[JsonDict] = []
+    seen: set[str] = set()
+    for path in (
+        ("execution_contract", "repository_contract"),
+        ("origin", "repository_contract"),
+        ("repository_contract",),
+    ):
+        contract = _nested_json_object(metadata, *path)
+        if not contract:
+            continue
+        key = json_dumps(contract)
+        if key not in seen:
+            seen.add(key)
+            contracts.append(contract)
+    return contracts
+
+
+def _repository_required_commands_from_metadata(metadata: JsonDict) -> List[str]:
+    required: List[str] = []
+    seen: set[str] = set()
+    for contract in _repository_contracts_from_metadata(metadata):
+        toolchain = ensure_json_object(contract.get("toolchain"))
+        for command in _metadata_string_list(toolchain.get("required_commands")):
+            if command not in seen:
+                seen.add(command)
+                required.append(command)
+    return required
+
+
+def _agent_resource_command_names(resources: JsonDict) -> set[str]:
+    names: set[str] = set()
+    for key in ("commands", "command_inventory"):
+        inventory = resources.get(key)
+        if isinstance(inventory, dict):
+            for value in _metadata_string_list(inventory.get("available")):
+                names.add(value)
+            commands = inventory.get("commands")
+            if isinstance(commands, list):
+                for item in commands:
+                    if isinstance(item, str) and item.strip():
+                        names.add(item.strip())
+                    elif isinstance(item, dict):
+                        name = str(item.get("name") or "").strip()
+                        if name:
+                            names.add(name)
+            paths = inventory.get("paths")
+            if isinstance(paths, dict):
+                names.update(str(name).strip() for name in paths if str(name).strip())
+        elif isinstance(inventory, list):
+            for item in inventory:
+                if isinstance(item, str) and item.strip():
+                    names.add(item.strip())
+                elif isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        names.add(name)
+    return names
+
+
 def _required_changed_files_from_metadata(metadata: JsonDict) -> List[str]:
     containers = [
         ensure_json_object(metadata),
@@ -2895,6 +2955,41 @@ class ControlPlane:
             caps = accepted
         return caps, normalized
 
+    def _decouple_repository_commands_from_capabilities(
+        self,
+        required_capabilities: List[str],
+        metadata: Dict[str, Any],
+    ) -> Tuple[List[str], JsonDict]:
+        normalized = ensure_json_object(metadata)
+        required_commands = _repository_required_commands_from_metadata(normalized)
+        if not required_commands:
+            return list(required_capabilities), normalized
+
+        command_set = set(required_commands)
+        kept: List[str] = []
+        filtered: List[str] = []
+        for capability in required_capabilities:
+            cap = str(capability).strip()
+            if not cap:
+                continue
+            if cap in command_set:
+                filtered.append(cap)
+            else:
+                kept.append(cap)
+
+        toolchain = ensure_json_object(normalized.get("toolchain_requirements"))
+        toolchain.update(
+            {
+                "schema": "mac.task_toolchain_requirements.v1",
+                "source": "repository_contract.toolchain.required_commands",
+                "required_commands": required_commands,
+            }
+        )
+        if filtered:
+            toolchain["filtered_from_required_capabilities"] = filtered
+        normalized["toolchain_requirements"] = toolchain
+        return kept, normalized
+
     def create_task(
         self,
         title: str,
@@ -2925,6 +3020,10 @@ class ControlPlane:
             task_metadata,
             project,
             task_capabilities,
+        )
+        task_capabilities, normalized_metadata = self._decouple_repository_commands_from_capabilities(
+            task_capabilities,
+            normalized_metadata,
         )
         self.store.execute(
             """
@@ -3371,15 +3470,19 @@ class ControlPlane:
                 new_capabilities,
                 ensure_json_object(new_metadata),
             )
-            if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
-                updates.append("required_capabilities = ?")
-                params.append(json_dumps(new_capabilities))
-                detail["required_capabilities"] = new_capabilities
             new_metadata = self._normalize_task_execution_contract(
                 new_metadata,
                 new_project,
                 new_capabilities,
             )
+            new_capabilities, new_metadata = self._decouple_repository_commands_from_capabilities(
+                new_capabilities,
+                new_metadata,
+            )
+            if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
+                updates.append("required_capabilities = ?")
+                params.append(json_dumps(new_capabilities))
+                detail["required_capabilities"] = new_capabilities
             updates.append("metadata = ?")
             params.append(json_dumps(new_metadata))
             if metadata is not None:
@@ -7983,6 +8086,9 @@ class ControlPlane:
     def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
         required_role = None
         hardware: JsonDict = {}
+        required_commands = _repository_required_commands_from_metadata(
+            ensure_json_object(task.metadata)
+        )
         if isinstance(task.metadata, dict):
             md_role = task.metadata.get("required_role")
             if isinstance(md_role, str) and md_role.strip():
@@ -8000,6 +8106,7 @@ class ControlPlane:
             detail={
                 "task_state": task.state,
                 "task_title": task.title,
+                "required_commands": required_commands,
             },
         )
 
@@ -13522,6 +13629,8 @@ class ControlPlane:
             return False
         if not self._agent_resources_satisfy(agent, machine, task):
             return False
+        if not self._agent_has_repository_commands(agent, task):
+            return False
         # Role + hardware gates. Both no-op when neither the agent nor the
         # task carry role/hardware metadata, so the legacy capability path
         # below stays the dominant matcher for un-roled fleets.
@@ -13577,6 +13686,15 @@ class ControlPlane:
         capabilities = set(agent.capabilities)
         required = set(task.required_capabilities) | role_required_caps
         return required.issubset(capabilities)
+
+    def _agent_has_repository_commands(self, agent: Agent, task: Task) -> bool:
+        required_commands = _repository_required_commands_from_metadata(
+            ensure_json_object(task.metadata)
+        )
+        if not required_commands:
+            return True
+        available = _agent_resource_command_names(ensure_json_object(agent.resources))
+        return set(required_commands).issubset(available)
 
     def _task_required_runtime_digest(self, task: Task) -> Optional[str]:
         metadata = ensure_json_object(task.metadata)

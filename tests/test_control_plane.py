@@ -106,9 +106,16 @@ def cp(tmp_path, monkeypatch):
     return ControlPlane.in_memory()
 
 
-def register_agent(cp, name="agent", capabilities=None):
+def register_agent(cp, name="agent", capabilities=None, resources=None):
+    capabilities = capabilities or []
+    agent_resources = dict(resources or {})
+    if "python" in capabilities and "commands" not in agent_resources:
+        agent_resources["commands"] = {
+            "schema": "mac.command_inventory.v1",
+            "available": ["python3", "git", "gh"],
+        }
     machine = cp.register_machine("%s-host" % name, resources={"cpu": 4, "memory_gb": 8})
-    return cp.register_agent(machine.id, name, capabilities=capabilities or [])
+    return cp.register_agent(machine.id, name, capabilities=capabilities, resources=agent_resources)
 
 
 def test_add_evidence_persists_durable_artifacts(cp):
@@ -3108,6 +3115,90 @@ def _write_repository_contract(repo_path, project="repo-beads-mac", include_test
         % (project, test_block),
         encoding="utf-8",
     )
+
+
+def _repository_task_metadata(
+    project="repo-beads-mac",
+    required_commands=("python3", "git", "gh"),
+):
+    return {
+        "origin": {
+            "type": "direct_task",
+            "repository_contract": {
+                "schema": "mac.repository_contract.v1",
+                "project": project,
+                "platforms": ["darwin", "linux", "wsl2"],
+                "toolchain": {"required_commands": list(required_commands)},
+                "bootstrap": {
+                    "command": "python3 scripts/bootstrap-project.py",
+                    "creates": [".venv/bin/python"],
+                },
+                "test": {"command": "scripts/run-contract-tests.sh"},
+                "evidence": {"required": ["tests"]},
+            },
+        }
+    }
+
+
+def test_repository_contract_commands_do_not_become_dispatch_capabilities(cp):
+    machine = cp.register_machine("worker")
+    agent = cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git", "gh"],
+            }
+        },
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert task.required_capabilities == ["python"]
+    assert task.metadata["toolchain_requirements"]["required_commands"] == [
+        "python3",
+        "git",
+        "gh",
+    ]
+    assert task.metadata["toolchain_requirements"]["filtered_from_required_capabilities"] == ["git"]
+    assert assignment is not None
+    assert assignment["agent"]["id"] == agent.id
+
+
+def test_repository_contract_commands_gate_dispatch_via_agent_resources(cp):
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git"],
+            }
+        },
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+
+    assert cp.dispatch_once() is None
+    pending = cp.provisioning.list_pending_requests()
+    assert len(pending) == 1
+    assert pending[0].task_id == task.id
+    assert pending[0].capabilities == ["python"]
+    assert pending[0].detail["required_commands"] == ["python3", "git", "gh"]
 
 
 def _write_fake_bd_cli(path, ready_path, *, bootstrap_returncode=0, bootstrap_stderr=""):

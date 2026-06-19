@@ -18,7 +18,7 @@ auto-fulfillment without changing this service.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from mac.models import (
     AgentProvisioningRequest,
@@ -41,6 +41,65 @@ from mac.observability_service import ObservabilityService
 # path — the hook is here so future inline provisioners (e.g., a
 # dev-mode auto-spawner) can plug in without touching dispatch.
 ProvisionerHook = Callable[[AgentProvisioningRequest], Optional[str]]
+
+
+def _metadata_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if not isinstance(value, Iterable) or isinstance(value, dict):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _json_object(value: Any) -> JsonDict:
+    return value if isinstance(value, dict) else {}
+
+
+def _request_required_commands(request: AgentProvisioningRequest) -> List[str]:
+    required: List[str] = []
+    seen: set[str] = set()
+    detail = ensure_json_object(request.detail)
+    containers = [
+        detail,
+        _json_object(detail.get("toolchain_requirements")),
+    ]
+    for container in containers:
+        for command in _metadata_string_list(container.get("required_commands")):
+            if command not in seen:
+                seen.add(command)
+                required.append(command)
+    return required
+
+
+def _agent_resource_command_names(resources: JsonDict) -> set[str]:
+    names: set[str] = set()
+    for key in ("commands", "command_inventory"):
+        inventory = resources.get(key)
+        if isinstance(inventory, dict):
+            for value in _metadata_string_list(inventory.get("available")):
+                names.add(value)
+            commands = inventory.get("commands")
+            if isinstance(commands, list):
+                for item in commands:
+                    if isinstance(item, str) and item.strip():
+                        names.add(item.strip())
+                    elif isinstance(item, dict):
+                        name = str(item.get("name") or "").strip()
+                        if name:
+                            names.add(name)
+            paths = inventory.get("paths")
+            if isinstance(paths, dict):
+                names.update(str(name).strip() for name in paths if str(name).strip())
+        elif isinstance(inventory, list):
+            for item in inventory:
+                if isinstance(item, str) and item.strip():
+                    names.add(item.strip())
+                elif isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        names.add(name)
+    return names
 
 
 class ProvisioningService:
@@ -180,11 +239,29 @@ class ProvisioningService:
                 # Provisioner hook is trusted by configuration; it ran
                 # in-process to satisfy the request it just observed.
                 # Skip the two-party check (the hook IS the second party
-                # by design) and the capability re-check (the hook just
-                # registered the agent and knows its shape).
-                request = self.fulfill_request(
-                    rid, fulfilled_agent_id, allow_self_fulfill=True
-                )
+                # by design) and the capability re-check. Still validate
+                # resource-level toolchain requirements before closing the
+                # request; otherwise a buggy provisioner can hide an unmet
+                # command shortage while dispatch continues to reject it.
+                try:
+                    request = self.fulfill_request(
+                        rid, fulfilled_agent_id, allow_self_fulfill=True
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep provisioning signal pending
+                    self.observability.record_log(
+                        "provisioning.hook_failed",
+                        level="error",
+                        layer="control_plane",
+                        source="provisioning",
+                        subject_type="agent_provisioning_request",
+                        subject_id=rid,
+                        detail={
+                            "reason": "provisioner returned unsuitable agent",
+                            "agent_id": fulfilled_agent_id,
+                            "error": str(exc),
+                        },
+                    )
+                    request = self.get_request(rid)
         return request
 
     def get_request(self, request_id: str) -> AgentProvisioningRequest:
@@ -252,11 +329,14 @@ class ProvisioningService:
                     "two-party check: %s requested and may not also fulfill request %s"
                     % (requester, request_id)
                 )
-        # Capability + role match. Skip when the caller opted into a
-        # self-fulfill flow (typically an auto-fulfill hook that just
-        # registered the agent).
+        # Capability + role match. Skip those checks when the caller opted into
+        # a self-fulfill flow (typically an auto-fulfill hook that just
+        # registered the agent), but always enforce resource-level command
+        # requirements so unmet toolchain shortages cannot be closed.
         if not allow_self_fulfill:
             self._assert_agent_matches_request(request, agent_id)
+        else:
+            self._assert_agent_commands_match_request(request, agent_id)
         return self._close_request(
             request_id,
             ProvisioningStatus.FULFILLED.value,
@@ -272,7 +352,7 @@ class ProvisioningService:
         """Refuse to fulfill when the proposed agent doesn't satisfy the
         declared role/capability requirements (mac-1oi4)."""
         agent_row = self.store.query_one(
-            "SELECT capabilities, role_id FROM agents WHERE id = ?", (agent_id,)
+            "SELECT capabilities, role_id, resources FROM agents WHERE id = ?", (agent_id,)
         )
         if agent_row is None:
             raise NotFoundError("agent not found: %s" % agent_id)
@@ -304,6 +384,31 @@ class ProvisioningService:
                         request.role_slug,
                     )
                 )
+        self._assert_agent_commands_match_request(request, agent_id, agent_row=agent_row)
+
+    def _assert_agent_commands_match_request(
+        self,
+        request: AgentProvisioningRequest,
+        agent_id: str,
+        *,
+        agent_row: Optional[Any] = None,
+    ) -> None:
+        required_commands = _request_required_commands(request)
+        if not required_commands:
+            return
+        if agent_row is None:
+            agent_row = self.store.query_one(
+                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+            )
+            if agent_row is None:
+                raise NotFoundError("agent not found: %s" % agent_id)
+        raw_resources = json_loads(agent_row["resources"], {})
+        available = _agent_resource_command_names(_json_object(raw_resources))
+        missing = set(required_commands) - available
+        if missing:
+            raise ValidationError(
+                "agent %s lacks required commands: %s" % (agent_id, sorted(missing))
+            )
 
     def fail_request(self, request_id: str, *, reason: str) -> AgentProvisioningRequest:
         return self._close_request(
