@@ -7,6 +7,7 @@ round-trips through the same ControlPlane layer the HTTP API uses.
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import sqlite3
@@ -163,6 +164,84 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
     rc, chunks = _run(tmp_path, "agentbus", "read", targeted["streams"][0]["id"], worker["id"])
     assert rc == 0
     assert chunks[0]["payload"]["restart_services"] == ["mac.service"]
+
+
+def test_agentbus_cli_wrappers_pass_sender_as_keyword(monkeypatch, capsys):
+    from mac.cli import cmd_agentbus_append, cmd_agentbus_close, cmd_agentbus_open
+
+    calls = []
+
+    class FakePlane:
+        def open_agentbus_stream(self, *, sender_agent_id, **kwargs):
+            calls.append(("open", sender_agent_id, kwargs))
+            return {"id": kwargs["stream_id"]}
+
+        def append_agentbus_chunk(self, stream_id, *, sender_agent_id, **kwargs):
+            calls.append(("append", stream_id, sender_agent_id, kwargs))
+            return {"id": stream_id}
+
+        def close_agentbus_stream(self, stream_id, *, sender_agent_id, **kwargs):
+            calls.append(("close", stream_id, sender_agent_id, kwargs))
+            return {"id": stream_id}
+
+    monkeypatch.setattr("mac.cli._plane", lambda args: FakePlane())
+
+    cmd_agentbus_open(
+        argparse.Namespace(
+            sender_agent_id="agent_sender",
+            recipient_agent_id="agent_recipient",
+            content_type="application/json",
+            topic="probe",
+            headers='{"trace": true}',
+            task_id="task_1",
+            stream_id="bus_1",
+        )
+    )
+    cmd_agentbus_append(
+        argparse.Namespace(
+            stream_id="bus_1",
+            sender_agent_id="agent_sender",
+            payload='{"ok": true}',
+            payload_encoding="json",
+            content_type="application/json",
+            final=True,
+        )
+    )
+    cmd_agentbus_close(
+        argparse.Namespace(
+            stream_id="bus_1",
+            sender_agent_id="agent_sender",
+            status="complete",
+        )
+    )
+
+    capsys.readouterr()
+    assert calls == [
+        (
+            "open",
+            "agent_sender",
+            {
+                "recipient_agent_id": "agent_recipient",
+                "content_type": "application/json",
+                "topic": "probe",
+                "headers": {"trace": True},
+                "task_id": "task_1",
+                "stream_id": "bus_1",
+            },
+        ),
+        (
+            "append",
+            "bus_1",
+            "agent_sender",
+            {
+                "payload": {"ok": True},
+                "content_type": "application/json",
+                "payload_encoding": "json",
+                "final": True,
+            },
+        ),
+        ("close", "bus_1", "agent_sender", {"status": "complete"}),
+    ]
 
 
 # ---------------------------------------------------------------------------

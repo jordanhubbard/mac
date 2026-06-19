@@ -1271,7 +1271,7 @@ def _agentbus_payload_arg(args: argparse.Namespace) -> Any:
 def cmd_agentbus_open(args: argparse.Namespace) -> None:
     _print(
         _plane(args).open_agentbus_stream(
-            args.sender_agent_id,
+            sender_agent_id=args.sender_agent_id,
             recipient_agent_id=args.recipient_agent_id,
             content_type=args.content_type,
             topic=args.topic,
@@ -1286,7 +1286,7 @@ def cmd_agentbus_append(args: argparse.Namespace) -> None:
     _print(
         _plane(args).append_agentbus_chunk(
             args.stream_id,
-            args.sender_agent_id,
+            sender_agent_id=args.sender_agent_id,
             payload=_agentbus_payload_arg(args),
             content_type=args.content_type,
             payload_encoding=args.payload_encoding,
@@ -1299,7 +1299,7 @@ def cmd_agentbus_close(args: argparse.Namespace) -> None:
     _print(
         _plane(args).close_agentbus_stream(
             args.stream_id,
-            args.sender_agent_id,
+            sender_agent_id=args.sender_agent_id,
             status=args.status,
         )
     )
