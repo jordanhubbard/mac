@@ -6,10 +6,13 @@ state for migration/compatibility workflows only; do not rely on it as
 a checked-in source of truth and do not create or commit `.tickets/`
 files during normal work.
 
-The legacy beads (`bd`) integration is shut off — dolt sync is
-disabled, the beads bridge is gated off by default
-(`MAC_BEADS_BRIDGE_ENABLED`), and `.beads/` has been removed from this
-repo. Do not run `bd`.
+This project does **not** use beads (`bd`) or dolt — issue tracking is the
+**mac task ledger** (`mac task`), a beads-equivalent durable ledger that avoids
+the beads/dolt sync problems. It is correct to say we do not use beads; it is
+**not** correct to say we lack a durable task ledger — we use mac tasks. The
+legacy beads bridge is removed/gated off by default (`MAC_BEADS_BRIDGE_ENABLED`),
+dolt sync is disabled, and `.beads/` has been removed. Do not run `bd`; use
+`mac task`.
 
 ## Quick Reference
 
