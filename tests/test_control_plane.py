@@ -2834,6 +2834,63 @@ def test_manual_block_without_dependencies_is_not_auto_unblocked(cp):
     assert cp.claim_next_for_agent(worker.id) is None
 
 
+def test_manual_repair_block_with_satisfied_dependencies_is_not_auto_unblocked(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    parent = cp.create_task("Parent", required_capabilities=["python"])
+    child = cp.create_task("Child", required_capabilities=["python"], dependencies=[parent.id])
+
+    finish_task(cp, parent, worker, reviewer)
+    cp.transition_task(
+        child.id,
+        TaskState.OPEN.value,
+        "dispatcher",
+        {"reason": "dependencies satisfied"},
+    )
+    cp.transition_task(
+        child.id,
+        TaskState.BLOCKED.value,
+        "verifier",
+        {"reason": "verification_contract_failed", "manual_repair_required": True},
+    )
+
+    tick = cp.tick()
+
+    assert tick["assignments"] == []
+    assert cp.get_task(child.id).state == TaskState.BLOCKED.value
+    assert cp.claim_next_for_agent(worker.id) is None
+    with pytest.raises(TransitionError):
+        cp.claim_task(child.id, worker.id)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["verification_contract_failed", "executor_failed", "worker_exception"],
+)
+def test_reason_only_manual_repair_blocks_are_not_auto_unblocked(cp, reason):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    parent = cp.create_task("Parent", required_capabilities=["python"])
+    child = cp.create_task("Child", required_capabilities=["python"], dependencies=[parent.id])
+
+    finish_task(cp, parent, worker, reviewer)
+    cp.transition_task(
+        child.id,
+        TaskState.OPEN.value,
+        "dispatcher",
+        {"reason": "dependencies satisfied"},
+    )
+    cp.transition_task(child.id, TaskState.BLOCKED.value, "worker", {"reason": reason})
+
+    tick = cp.tick()
+
+    assert tick["assignments"] == []
+    assert cp.get_task(child.id).state == TaskState.BLOCKED.value
+    assert cp.claim_next_for_agent(worker.id) is None
+    with pytest.raises(TransitionError):
+        cp.claim_task(child.id, worker.id)
+
+
 def test_message_bus_accepts_structured_payloads_and_rejects_execution(cp):
     sender = register_agent(cp, "sender", ["python"])
     recipient = register_agent(cp, "recipient", ["review"])

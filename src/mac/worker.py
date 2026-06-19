@@ -2593,7 +2593,13 @@ class MacWorker:
         (task_dir / "stdout.txt").write_text(execution.stdout, encoding="utf-8")
         (task_dir / "stderr.txt").write_text(execution.stderr, encoding="utf-8")
         if execution.succeeded:
-            self._auto_publish_repository_worktree(task_id, task_dir)
+            finalized_missing_manifest = self._write_missing_repository_evidence_manifest(
+                task_id,
+                task_dir,
+                execution,
+            )
+            if not finalized_missing_manifest:
+                self._auto_publish_repository_worktree(task_id, task_dir)
         result_path = task_dir / "worker-result.json"
         result_path.write_text(
             json.dumps(
@@ -2624,6 +2630,248 @@ class MacWorker:
                     **metadata,
                 },
             },
+        )
+
+    def _write_missing_repository_evidence_manifest(
+        self,
+        task_id: str,
+        task_dir: Path,
+        execution: WorkerExecution,
+    ) -> bool:
+        manifest_path = task_dir / "mac-evidence.json"
+        if manifest_path.exists():
+            return False
+        context = _load_repository_context(task_dir)
+        if not context:
+            return False
+
+        try:
+            manifest = self._finalize_missing_repository_evidence_manifest(
+                task_id,
+                task_dir,
+                execution,
+                context,
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence must record finalizer failures.
+            manifest = {
+                "schema": VERIFICATION_SCHEMA,
+                "status": "invalid",
+                "evidence_type": "repo_change",
+                "summary": "repository evidence finalizer failed",
+                "problems": ["repository evidence finalizer failed: %s" % exc],
+                "repo": _repository_context_repo_snapshot(context),
+            }
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self._observe_log(
+            "worker.repository.missing_manifest_finalized",
+            level="info" if str(manifest.get("status") or "") == "complete" else "error",
+            subject_type="task",
+            subject_id=task_id,
+            detail={
+                "manifest_path": str(manifest_path),
+                "status": manifest.get("status"),
+                "evidence_type": manifest.get("evidence_type"),
+                "problems": manifest.get("problems") or [],
+            },
+        )
+        return True
+
+    def _finalize_missing_repository_evidence_manifest(
+        self,
+        task_id: str,
+        task_dir: Path,
+        execution: WorkerExecution,
+        context: JsonDict,
+    ) -> JsonDict:
+        task = _task_payload_from_workspace(task_dir)
+        worktree = Path(str(context.get("repository_worktree") or "")).expanduser()
+        if not worktree.exists():
+            return {
+                "schema": VERIFICATION_SCHEMA,
+                "status": "invalid",
+                "evidence_type": "repo_change",
+                "summary": "repository worktree missing",
+                "problems": ["repository worktree is missing: %s" % worktree],
+                "repo": _repository_context_repo_snapshot(context),
+            }
+
+        branch = str(context.get("repository_branch") or "").strip()
+        problems: List[str] = []
+        self._commit_dirty_repository_worktree(task_id, task, worktree, problems)
+        files_changed = _repository_context_changed_files(worktree, context)
+
+        test_command = _repository_contract_test_command(task)
+        test_item = self._run_repository_contract_test(worktree, test_command)
+        tests = [test_item]
+        repo = _repository_context_repo_snapshot(context)
+        repo["head_sha"] = _git_stdout(worktree, ["rev-parse", "HEAD"]) or repo.get("head_sha", "")
+        repo["dirty"] = _repository_worktree_is_dirty(worktree)
+        repo["files_changed"] = files_changed
+        repo["pushed"] = False
+        if branch:
+            repo["remote_ref"] = "refs/heads/%s" % branch
+
+        pushed = False
+        push_item: Optional[JsonDict] = None
+        prepush_problems = _repository_finalizer_prepush_problems(task, repo, test_item)
+        if problems:
+            problems.append("repository finalizer had local errors; refusing to push")
+        elif prepush_problems:
+            problems.extend(prepush_problems)
+            problems.append("repository evidence failed local contract checks; refusing to push")
+        elif test_item.get("returncode") == 0:
+            if branch:
+                push = _run_git(worktree, ["push", "origin", "HEAD:refs/heads/%s" % branch])
+                push_item = _process_check_item(
+                    "git push",
+                    push.returncode,
+                    command="git push origin HEAD:refs/heads/%s" % branch,
+                    stdout=push.stdout,
+                    stderr=push.stderr,
+                )
+                if push.returncode == 0:
+                    pushed = _repository_context_head_is_pushed(
+                        worktree,
+                        {
+                            "head_sha": _git_stdout(worktree, ["rev-parse", "HEAD"]),
+                            "remote_ref": "refs/heads/%s" % branch,
+                            "remote_url": context.get("repository_origin_remote"),
+                        },
+                    )
+                    if not pushed:
+                        problems.append("repository push succeeded but remote HEAD verification failed")
+                else:
+                    problems.append(
+                        "repository push failed: %s"
+                        % ((push.stderr or push.stdout or "").strip() or branch)
+                    )
+            else:
+                problems.append("repository context is missing repository_branch")
+        else:
+            problems.append("repository contract test failed; refusing to push")
+
+        repo["pushed"] = pushed
+
+        checks: List[JsonDict] = []
+        if push_item is not None:
+            checks.append(push_item)
+        manifest: JsonDict = {
+            "schema": VERIFICATION_SCHEMA,
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "summary": (
+                "worker finalized missing repository evidence for successful executor result"
+            ),
+            "executor_summary": execution.summary,
+            "repo": repo,
+            "tests": tests,
+            "checks": checks,
+        }
+        if problems:
+            manifest["problems"] = problems
+        return manifest
+
+    def _commit_dirty_repository_worktree(
+        self,
+        task_id: str,
+        task: JsonDict,
+        worktree: Path,
+        problems: List[str],
+    ) -> None:
+        status = _run_git(worktree, ["status", "--porcelain"])
+        if status.returncode != 0:
+            problems.append(
+                "could not inspect repository worktree status: %s"
+                % ((status.stderr or status.stdout or "").strip() or worktree)
+            )
+            return
+        if not status.stdout.strip():
+            return
+        add = _run_git(worktree, ["add", "-A"])
+        if add.returncode != 0:
+            problems.append(
+                "repository finalizer add failed: %s"
+                % ((add.stderr or add.stdout or "").strip() or worktree)
+            )
+            return
+        staged = _run_git(worktree, ["diff", "--cached", "--quiet"])
+        if staged.returncode == 0:
+            return
+        if staged.returncode != 1:
+            problems.append(
+                "repository finalizer staged diff failed: %s"
+                % ((staged.stderr or staged.stdout or "").strip() or worktree)
+            )
+            return
+        title = str(task.get("title") or task_id).strip() or task_id
+        commit = _run_git(
+            worktree,
+            [
+                "-c",
+                "user.email=mac-fleet@nvidia.com",
+                "-c",
+                "user.name=MAC fleet",
+                "commit",
+                "-m",
+                "MAC task %s: %s" % (task_id, title[:120]),
+            ],
+        )
+        if commit.returncode != 0:
+            problems.append(
+                "repository finalizer commit failed: %s"
+                % ((commit.stderr or commit.stdout or "").strip() or worktree)
+            )
+
+    def _run_repository_contract_test(self, worktree: Path, command: str) -> JsonDict:
+        if not command:
+            return {
+                "name": "repository contract test",
+                "command": "",
+                "returncode": 1,
+                "status": "fail",
+                "stderr": "repository contract test.command is missing",
+            }
+        try:
+            timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
+        except ValueError:
+            timeout = 600.0
+        try:
+            proc = subprocess.run(
+                ["bash", "-lc", command],
+                cwd=str(worktree),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            return {
+                "name": "repository contract test",
+                "command": command,
+                "returncode": 124,
+                "status": "fail",
+                "stdout": _truncate_process_text(stdout),
+                "stderr": _truncate_process_text(stderr or "test command timed out"),
+            }
+        except Exception as exc:  # noqa: BLE001 - report as verification failure.
+            return {
+                "name": "repository contract test",
+                "command": command,
+                "returncode": 1,
+                "status": "fail",
+                "stderr": str(exc),
+            }
+        return _process_check_item(
+            "repository contract test",
+            proc.returncode,
+            command=command,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
         )
 
     def _auto_publish_repository_worktree(self, task_id: str, task_dir: Path) -> None:
@@ -3745,6 +3993,95 @@ def _repository_context_changed_files(worktree: Path, context: JsonDict) -> List
     return sorted({item for item in candidates if item})
 
 
+def _git_stdout(worktree: Path, args: List[str]) -> str:
+    result = _run_git(worktree, args)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _repository_worktree_is_dirty(worktree: Path) -> bool:
+    status = _run_git(worktree, ["status", "--porcelain"])
+    return status.returncode != 0 or bool(status.stdout.strip())
+
+
+def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
+    worktree_raw = str(context.get("repository_worktree") or "").strip()
+    worktree = Path(worktree_raw).expanduser() if worktree_raw else None
+    branch = str(context.get("repository_branch") or "").strip()
+    repo: JsonDict = {
+        "path": context.get("repository_worktree"),
+        "remote_url": context.get("repository_origin_remote"),
+        "branch": branch,
+        "base_sha": context.get("repository_base_sha"),
+        "head_sha": context.get("repository_base_sha"),
+        "remote_ref": "refs/heads/%s" % branch if branch else "",
+        "dirty": True,
+        "pushed": False,
+        "files_changed": [],
+    }
+    if worktree is not None and worktree.exists():
+        head = _git_stdout(worktree, ["rev-parse", "HEAD"])
+        if head:
+            repo["head_sha"] = head
+        repo["dirty"] = _repository_worktree_is_dirty(worktree)
+        repo["files_changed"] = _repository_context_changed_files(worktree, context)
+    return repo
+
+
+def _repository_contract_test_command(task: JsonDict) -> str:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "test"),
+        _nested_dict(metadata, "execution_contract", "repository_contract", "test"),
+        _nested_dict(metadata, "origin", "repository_contract", "test"),
+        _nested_dict(metadata, "repository_contract", "test"),
+    ]
+    for candidate in candidates:
+        command = str(candidate.get("command") or "").strip()
+        if command:
+            return command
+    return ""
+
+
+def _repository_finalizer_prepush_problems(
+    task: JsonDict,
+    repo: JsonDict,
+    test_item: JsonDict,
+) -> List[str]:
+    problems: List[str] = []
+    head_sha = str(repo.get("head_sha") or "").strip()
+    if not GIT_SHA_RE.match(head_sha):
+        problems.append("repo.head_sha must be a git SHA")
+    if repo.get("dirty") is not False:
+        problems.append("repo evidence must declare dirty=false")
+    files_changed = _manifest_list(repo.get("files_changed"))
+    if not files_changed and not _worker_allows_empty_repo_change_evidence(task, "repo_change"):
+        problems.append("repo evidence requires changed files")
+    if _worker_verification_item_passed(test_item) is not True:
+        problems.append("repo code evidence requires at least one passing test/check")
+    problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
+    return problems
+
+
+def _process_check_item(
+    name: str,
+    returncode: int,
+    *,
+    command: str,
+    stdout: str,
+    stderr: str,
+) -> JsonDict:
+    return {
+        "name": name,
+        "command": command,
+        "returncode": int(returncode),
+        "status": "pass" if int(returncode) == 0 else "fail",
+        "stdout": _truncate_process_text(stdout),
+        "stderr": _truncate_process_text(stderr),
+    }
+
+
 def _repository_context_head_is_pushed(worktree: Path, repo: JsonDict) -> bool:
     head_sha = str(repo.get("head_sha") or "").strip()
     remote_url = str(repo.get("remote_url") or "").strip()
@@ -3758,6 +4095,12 @@ def _repository_context_head_is_pushed(worktree: Path, repo: JsonDict) -> bool:
                 parts = line.split()
                 if len(parts) >= 2 and parts[0] == head_sha and parts[1] == remote_ref:
                     return True
+    remote = _run_git(worktree, ["ls-remote", "origin", remote_ref])
+    if remote.returncode == 0:
+        for line in remote.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == head_sha and parts[1] == remote_ref:
+                return True
     branch = _remote_branch_from_ref(remote_ref)
     if branch:
         remote_head = _run_git(worktree, ["rev-parse", "--verify", "origin/%s" % branch])

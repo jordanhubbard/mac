@@ -1152,6 +1152,94 @@ def test_mac_worker_auto_publishes_repository_worktree_when_enabled(tmp_path: Pa
     )
 
 
+def test_mac_worker_finalizes_missing_repository_manifest(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    task = cp.create_task(
+        "Repository task forgot manifest",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        (worktree / "README.md").write_text("executor changed this\n", encoding="utf-8")
+        return WorkerExecution(0, "changed repo without evidence", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "submitted_for_review"
+    evidence = cp.list_evidence(task.id)[0]
+    manifest = evidence.metadata["verification"]
+    repo_anchor = manifest["repo"]
+    assert manifest["status"] == "complete"
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["tests"][0]["returncode"] == 0
+    assert repo_anchor["dirty"] is False
+    assert repo_anchor["pushed"] is True
+    assert repo_anchor["files_changed"] == ["README.md"]
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]).startswith(
+        repo_anchor["head_sha"]
+    )
+
+
+def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    metadata = _repository_task_metadata(repo)
+    metadata["execution_contract"]["required_changed_files"] = ["README.md"]
+    task = cp.create_task(
+        "Repository task forgot manifest and required file",
+        required_capabilities=["python"],
+        metadata=metadata,
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        docs = worktree / "docs"
+        docs.mkdir()
+        (docs / "demo-story.md").write_text("demo\n", encoding="utf-8")
+        return WorkerExecution(0, "changed wrong repo file without evidence", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    evidence = cp.list_evidence(task.id)[0]
+    manifest = evidence.metadata["verification"]
+    repo_anchor = manifest["repo"]
+    problems = " ".join(manifest.get("problems") or [])
+    assert manifest["status"] == "complete"
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["tests"][0]["returncode"] == 0
+    assert repo_anchor["dirty"] is False
+    assert repo_anchor["pushed"] is False
+    assert repo_anchor["files_changed"] == ["docs/demo-story.md"]
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]) == ""
+    assert "repo evidence missing required changed files: README.md" in problems
+    assert "refusing to push" in problems
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+
+
 def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

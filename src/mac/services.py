@@ -5306,6 +5306,7 @@ class ControlPlane:
             task.state == TaskState.BLOCKED.value
             and task.dependencies
             and self._dependencies_satisfied(task)
+            and not self._blocked_task_requires_manual_repair(task)
         ):
             task = self.transition_task(task_id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
         if task.state != TaskState.OPEN.value:
@@ -13447,9 +13448,28 @@ class ControlPlane:
                 return False
         return True
 
+    def _blocked_task_requires_manual_repair(self, task: Task) -> bool:
+        if task.state != TaskState.BLOCKED.value:
+            return False
+        for event in reversed(self.task_history(task.id, limit=20)):
+            if event.to_state != TaskState.BLOCKED.value:
+                continue
+            detail = ensure_json_object(event.detail)
+            reason = str(detail.get("reason") or "").strip()
+            return detail.get("manual_repair_required") is True or reason in {
+                "verification_contract_failed",
+                "executor_failed",
+                "worker_exception",
+            }
+        return False
+
     def _unblock_ready_tasks(self) -> None:
         for task in self.list_tasks(TaskState.BLOCKED.value):
-            if task.dependencies and self._dependencies_satisfied(task):
+            if (
+                task.dependencies
+                and self._dependencies_satisfied(task)
+                and not self._blocked_task_requires_manual_repair(task)
+            ):
                 self.transition_task(task.id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
 
     # mac-5ayd: cap the working set per dispatch tick. The dispatcher
