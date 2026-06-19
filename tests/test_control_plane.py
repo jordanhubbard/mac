@@ -3168,6 +3168,7 @@ def test_repository_contract_commands_do_not_become_dispatch_capabilities(cp):
         "git",
         "gh",
     ]
+    assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
     assert task.metadata["toolchain_requirements"]["filtered_from_required_capabilities"] == ["git"]
     assert assignment is not None
     assert assignment["agent"]["id"] == agent.id
@@ -3714,8 +3715,25 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
 
     assert task.metadata["execution_contract"]["type"] == "repository"
     assert task.metadata["execution_contract"]["quality"] == "strong"
+    assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
     assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+
+
+def test_existing_repository_execution_contract_gets_repo_change_evidence_default(cp):
+    task = cp.create_task(
+        "Existing repository contract",
+        metadata={
+            "execution_contract": {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+            }
+        },
+    )
+
+    assert task.metadata["execution_contract"]["type"] == "repository"
+    assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
 
 
 def test_direct_task_without_repository_gets_explicit_operator_contract(cp):

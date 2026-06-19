@@ -3201,6 +3201,19 @@ class ControlPlane:
         origin_dict = dict(origin) if isinstance(origin, dict) else {}
         existing_contract = normalized.get("execution_contract")
         if isinstance(existing_contract, dict) and existing_contract.get("type"):
+            contract_type = str(existing_contract.get("type") or "").strip().lower()
+            if (
+                (
+                    contract_type == "repository"
+                    or existing_contract.get("repository_required") is True
+                    or isinstance(existing_contract.get("repository_contract"), dict)
+                )
+                and not str(existing_contract.get("evidence_type") or "").strip()
+            ):
+                normalized["execution_contract"] = {
+                    **existing_contract,
+                    "evidence_type": "repo_change",
+                }
             return normalized
         repository_contract = origin_dict.get("repository_contract")
         if isinstance(repository_contract, dict) and repository_contract.get("schema"):
@@ -3209,6 +3222,7 @@ class ControlPlane:
                 "type": "repository",
                 "quality": "strong",
                 "source": "task_origin",
+                "evidence_type": "repo_change",
                 "repository_contract": repository_contract,
             }
             return normalized
@@ -3239,6 +3253,7 @@ class ControlPlane:
                 "type": "repository",
                 "quality": "strong",
                 "source": "registered_project",
+                "evidence_type": "repo_change",
                 "repository_id": repo.id,
                 "repository_path": repo.path,
                 "repository_contract": contract,

@@ -825,7 +825,29 @@ def task_evidence_type(task: Dict[str, Any]) -> str:
         "no_change",
         "operator_result",
     }
-    return evidence_type if evidence_type in allowed else "operator_result"
+    if evidence_type in allowed:
+        return evidence_type
+    if task_is_repo_coupled(task):
+        return "repo_change"
+    return "operator_result"
+
+
+def task_is_repo_coupled(task: Dict[str, Any]) -> bool:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return False
+    contract = metadata.get("execution_contract")
+    if isinstance(contract, dict):
+        if str(contract.get("type") or "").strip().lower() == "repository":
+            return True
+        if contract.get("repository_required") is True:
+            return True
+        if isinstance(contract.get("repository_contract"), dict):
+            return True
+    origin = metadata.get("origin")
+    if isinstance(origin, dict) and isinstance(origin.get("repository_contract"), dict):
+        return True
+    return isinstance(metadata.get("repository_contract"), dict)
 
 
 def _lessons_section(lessons: List[str]) -> str:
@@ -847,6 +869,7 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "When you finish, report the exact outcome, files changed, tests run, and any blockers.",
         "Also write a verifiable evidence manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
         "Use schema mac.worker_evidence.v1 with status=complete and evidence_type set to one of repo_change, documentation, investigation, deployment, test, artifact, no_change, or operator_result.",
+        "For tasks with a repository runtime contract, default to evidence_type=repo_change. Use operator_result only for tasks that are not tied to a repository contract.",
         "For no-repository planning or operator directive work, use evidence_type=operator_result with summary and result fields describing the completed work.",
         "For repo/code work include repo.head_sha, repo.remote_ref or repo.pr_url, repo.pushed=true, repo.dirty=false, repo.files_changed, and passing tests/checks. Passing tests/checks should use returncode=0, status=pass, result=passed, or boolean/count fields that make success unambiguous. For deployments include targets/services plus passing checks. If you cannot produce this manifest, say why; MAC will not auto-publish unverifiable work.",
         "If the task needs new software, install it only in the task workspace or project worktree, such as a task-local .venv, uv project env, or project-local npm/pnpm install. Do not use sudo, host package managers, global npm/pip/pipx installs, or the shared Hermes/worker virtualenv.",
@@ -1073,6 +1096,8 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
     proof-requiring task with no real evidence fails the verification gate
     honestly instead of auto-publishing chatter."""
     if result.returncode != 0 or isinstance(review_context, dict):
+        return
+    if task_is_repo_coupled(task):
         return
     manifest_path = task_workspace / "mac-evidence.json"
     if manifest_path.exists():

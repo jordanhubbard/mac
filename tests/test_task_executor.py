@@ -33,6 +33,8 @@ def test_task_evidence_type_defaults_and_honors_contract():
     assert te.task_evidence_type({}) == "operator_result"
     assert te.task_evidence_type({"metadata": {"execution_contract": {"evidence_type": "repo_change"}}}) == "repo_change"
     assert te.task_evidence_type({"metadata": {"execution_contract": {"evidence_type": "bogus"}}}) == "operator_result"
+    assert te.task_evidence_type({"metadata": {"execution_contract": {"type": "repository"}}}) == "repo_change"
+    assert te.task_evidence_type({"metadata": {"origin": {"repository_contract": {"schema": "mac.repository_contract.v1"}}}}) == "repo_change"
 
 
 def test_build_task_prompt_injects_recalled_lessons():
@@ -54,6 +56,18 @@ def test_build_task_prompt_demands_autonomy():
     prompt = te.build_task_prompt({"id": "t1", "title": "x", "project": "p"}, Path("/tmp/task.json"))
     assert "AUTONOMOUS" in prompt
     assert "never ask the operator for confirmation" in prompt
+
+
+def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
+    task = {
+        "id": "t1",
+        "title": "Repo work",
+        "project": "demo",
+        "metadata": {"execution_contract": {"type": "repository"}},
+    }
+    prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
+    assert "default to evidence_type=repo_change" in prompt
+    assert "Use operator_result only for tasks that are not tied to a repository contract" in prompt
 
 
 def test_repository_contract_section_no_repository_is_a_failure():
@@ -121,6 +135,17 @@ def test_fallback_writes_unverified_operator_result_no_synthetic_check(tmp_path)
     assert manifest["evidence_type"] == "operator_result"
     assert manifest["summary"] == "Mapped the milestones."
     assert "checks" not in manifest  # no fabricated passing check
+
+
+def test_fallback_does_not_write_operator_result_for_repo_coupled_task(tmp_path):
+    task = {
+        "id": "t1",
+        "title": "repo task",
+        "project": "demo",
+        "metadata": {"execution_contract": {"type": "repository"}},
+    }
+    te.write_fallback_evidence_manifest(tmp_path, task, _FakeResult(0, stdout="Changed repo."), None)
+    assert not (tmp_path / "mac-evidence.json").exists()
 
 
 def test_fallback_skips_on_failure_review_and_existing(tmp_path):
@@ -679,4 +704,3 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
     # children were posted
     assert captured_children.get("task_id") == "t_plan"
     assert len(captured_children.get("children", [])) == 3
-
