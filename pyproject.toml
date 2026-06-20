@@ -95,6 +95,7 @@ markers = [
     "cli: CLI command tests — mac (tests/cli/)",
     "ui: UI asset-serving and dashboard tests (tests/ui/)",
     "postgres: live-Postgres tests; need MAC_TEST_PG_URL pointing at a writable test DB",
+    "docker_e2e: Docker/Podman container e2e tests; require TEST_DOCKER_E2E=1 and docker compose",
 ]
 
 [tool.coverage.run]
