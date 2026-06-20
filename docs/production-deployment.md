@@ -6,9 +6,8 @@ Three supported topologies:
    process. Suitable for dev fleets, personal Hermes runtimes, and pilot
    deployments. See `deploy/systemd/`.
 2. **Containerized, single-instance** — image at `Dockerfile`. Same SQLite
-   topology, but lifecycle is managed by the container runtime (Docker,
-   Podman, k8s as a single-replica deployment). See the container section
-   below.
+   topology, but lifecycle is managed by Docker Engine/Moby or k8s as a
+   single-replica deployment. See the container section below.
 3. **Kubernetes, multi-replica, Postgres-backed** — stateless `mac-api`
    Deployment in front of an externally-managed Postgres 17 cluster.
    Multiple `mac-api` replicas share the same durable state via
@@ -621,7 +620,7 @@ visual workflow authoring is still an operator-facing gap in the checked-in
 dashboard; use the API/CLI for workflow creation and editing until that UI is
 built.
 
-## Docker / Podman
+## Docker Engine / Moby
 
 ```bash
 docker build -t mac:latest .

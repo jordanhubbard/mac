@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # bootstrap-openshell.sh — stand up OpenShell sandbox enforcement on a mac node.
 #
-# Run ON the target node (it touches the local user's ~/.mac, ~/.local, docker/
-# podman, and — with sudo — the CDI spec + a firewall). Idempotent: safe to
-# re-run. Encodes the recipe proven across the fleet (rocky x86 podman,
-# bullwinkle x86 GPU podman, natasha aarch64 GPU docker).
+# Run ON the target node (it touches the local user's ~/.mac, ~/.local, Docker
+# Engine/Moby, and — with sudo — the CDI spec + a firewall). Idempotent: safe to
+# re-run. MAC standardizes on the OpenShell Docker driver only. Do not use
+# Docker Desktop, Podman, or podman-docker for production fleet nodes; use the
+# OSS Docker Engine/Moby daemon package supplied by the Linux distribution or a
+# nested Docker daemon in containerized environments that support DinD.
 #
 # It does NOT flip enforcement by default. After it succeeds, validate a real
 # task, then enable:  --enable (MAC_OPENSHELL_SANDBOX=1) and, once validated,
@@ -14,7 +16,7 @@
 #   OPENSHELL_VERSION   default 0.0.62        — CLI + gateway version (must match)
 #   MAC_HOME            default $HOME/.mac
 #   MAC_SRC             default $MAC_HOME/src/mac    — mac source tree (image build context)
-#   OSH_DRIVER          auto|podman|docker   — auto: podman>=5 else docker
+#   OSH_DOCKER_BIN      default docker       — Docker Engine/Moby CLI path
 #   OSH_GPU             auto|yes|no          — auto: detect nvidia-smi
 #   OSH_HUB_URL         default from mac.env MAC_HUB_URL — the hub the sandbox egresses to
 #   OSH_FIREWALL_NIC    default: the default-route NIC
@@ -24,7 +26,7 @@ set -euo pipefail
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.62}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
-OSH_DRIVER="${OSH_DRIVER:-auto}"
+OSH_DOCKER_BIN="${OSH_DOCKER_BIN:-docker}"
 OSH_GPU="${OSH_GPU:-auto}"
 ENVF="$MAC_HOME/mac.env"
 OSH_DIR="$MAC_HOME/openshell"
@@ -38,15 +40,57 @@ log(){ printf '[bootstrap-openshell] %s\n' "$*"; }
 export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p "$OSH_DIR" "$BIN"
 
-# --- driver + GPU detection -------------------------------------------------
+# --- Docker Engine/Moby + GPU detection -------------------------------------
 [ "$OSH_GPU" = auto ] && { command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1 && OSH_GPU=yes || OSH_GPU=no; }
-if [ "$OSH_DRIVER" = auto ]; then
-  pmaj="$(podman --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo 0)"
-  # podman < 5 can't parse current nvidia-ctk CDI specs (0.7.0) -> docker
-  if [ "${pmaj:-0}" -ge 5 ]; then OSH_DRIVER=podman; else OSH_DRIVER=docker; fi
+if [ "${OSH_DRIVER:-docker}" != docker ]; then
+  echo "OSH_DRIVER is no longer supported; MAC/OpenShell uses Docker Engine/Moby only" >&2
+  exit 2
 fi
-log "arch=$ARCH gpu=$OSH_GPU driver=$OSH_DRIVER version=$OPENSHELL_VERSION"
-BUILDER="$OSH_DRIVER"   # build the image with the same engine the gateway uses
+
+install_docker_engine() {
+  if command -v apt-get >/dev/null; then
+    log "installing Docker Engine/Moby from distro packages (docker.io)"
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io acl
+    return 0
+  fi
+  echo "Docker Engine/Moby is required, but '$OSH_DOCKER_BIN' is missing and this host has no supported package installer" >&2
+  echo "Install an OSS Docker Engine/Moby daemon, then rerun this bootstrap." >&2
+  exit 1
+}
+
+ensure_docker_engine() {
+  if ! command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1; then
+    install_docker_engine
+  fi
+  docker_version="$("$OSH_DOCKER_BIN" --version 2>/dev/null || true)"
+  case "$docker_version" in
+    *[Pp]odman*)
+      echo "'$OSH_DOCKER_BIN' resolves to a Podman compatibility shim, not Docker Engine/Moby: $docker_version" >&2
+      echo "Remove podman-docker or set OSH_DOCKER_BIN to a real Docker Engine/Moby CLI." >&2
+      exit 1
+      ;;
+  esac
+  if command -v systemctl >/dev/null; then
+    sudo systemctl enable --now docker >/dev/null 2>&1 || true
+  fi
+  if ! "$OSH_DOCKER_BIN" info >/dev/null 2>&1; then
+    if getent group docker >/dev/null 2>&1; then
+      sudo usermod -aG docker "$USER" >/dev/null 2>&1 || true
+    fi
+    if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then
+      sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock >/dev/null 2>&1 || true
+    fi
+  fi
+  if ! "$OSH_DOCKER_BIN" info >/dev/null 2>&1; then
+    echo "Docker Engine/Moby is installed but this user cannot reach the daemon." >&2
+    echo "Ensure docker.service is running and '$USER' can read/write /var/run/docker.sock, then rerun." >&2
+    exit 1
+  fi
+}
+
+ensure_docker_engine
+log "arch=$ARCH gpu=$OSH_GPU driver=docker-engine version=$OPENSHELL_VERSION docker=$("$OSH_DOCKER_BIN" --version 2>&1 | head -1)"
 
 # --- 1. openshell CLI (uv tool, else pip venv) ------------------------------
 if ! command -v openshell >/dev/null; then
@@ -84,22 +128,22 @@ fi
 # --- 4. mac-hermes image (native build; multi-arch Containerfile) -----------
 if [ "$SKIP_IMAGE" = 0 ]; then
   cf="$(cd "$(dirname "$0")" && pwd)/mac-hermes.Containerfile"
-  log "building localhost/mac-hermes:net with $BUILDER from $MAC_SRC"
-  ( cd "$MAC_SRC" && "$BUILDER" build -t localhost/mac-hermes:net -f "$cf" . )
+  log "building localhost/mac-hermes:net with Docker Engine/Moby from $MAC_SRC"
+  ( cd "$MAC_SRC" && "$OSH_DOCKER_BIN" build -t localhost/mac-hermes:net -f "$cf" . )
 fi
 
 # --- 5. JWT signing keys ----------------------------------------------------
 [ -f "$OSH_DIR/pki/jwt/signing.pem" ] || openshell-gateway generate-certs --output-dir "$OSH_DIR/pki" >/dev/null 2>&1
 log "jwt keys: $(ls "$OSH_DIR/pki/jwt" 2>/dev/null | tr '\n' ' ')"
 
-# --- 6. gateway.toml (driver-specific) --------------------------------------
-common_top() { cat <<EOF
+# --- 6. gateway.toml (Docker driver) ----------------------------------------
+cat > "$OSH_DIR/gateway.toml" <<EOF
 [openshell]
 version = 1
 [openshell.gateway]
 bind_address = "0.0.0.0:17670"
 log_level = "info"
-compute_drivers = ["$OSH_DRIVER"]
+compute_drivers = ["docker"]
 disable_tls = true
 [openshell.gateway.auth]
 allow_unauthenticated_users = true
@@ -107,21 +151,6 @@ allow_unauthenticated_users = true
 signing_key_path = "$OSH_DIR/pki/jwt/signing.pem"
 public_key_path = "$OSH_DIR/pki/jwt/public.pem"
 kid_path = "$OSH_DIR/pki/jwt/kid"
-EOF
-}
-if [ "$OSH_DRIVER" = podman ]; then
-  command -v loginctl >/dev/null && sudo loginctl enable-linger "$USER" >/dev/null 2>&1 || true
-  systemctl --user enable --now podman.socket >/dev/null 2>&1 || true
-  { common_top; cat <<EOF
-[openshell.drivers.podman]
-socket_path = "/run/user/$(id -u)/podman/podman.sock"
-grpc_endpoint = "http://host.openshell.internal:17670"
-supervisor_image = "ghcr.io/nvidia/openshell/supervisor:latest"
-default_image = "localhost/mac-hermes:net"
-EOF
-  } > "$OSH_DIR/gateway.toml"
-else
-  { common_top; cat <<EOF
 [openshell.drivers.docker]
 default_image = "localhost/mac-hermes:net"
 supervisor_image = "ghcr.io/nvidia/openshell/supervisor:latest"
@@ -129,19 +158,16 @@ network_name = "openshell-docker"
 grpc_endpoint = "http://host.openshell.internal:17670"
 image_pull_policy = "IfNotPresent"
 EOF
-  } > "$OSH_DIR/gateway.toml"
-fi
 
 # --- 7. gateway systemd --user service + register ---------------------------
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/openshell-gateway.service" <<EOF
 [Unit]
-Description=OpenShell gateway ($OSH_DRIVER driver)
-After=podman.socket
-Wants=podman.socket
+Description=OpenShell gateway (Docker Engine/Moby driver)
 [Service]
 ExecStart=%h/.local/bin/openshell-gateway --config %h/.mac/openshell/gateway.toml
 Restart=on-failure
+RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
@@ -201,7 +227,7 @@ cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo boo
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d' "$ENVF"
 {
   echo ""
-  echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; $OSH_DRIVER driver, gpu=$OSH_GPU)"
+  echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; Docker Engine/Moby driver, gpu=$OSH_GPU)"
   echo "MAC_OPENSHELL_SANDBOX=$DO_ENABLE"
   echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"

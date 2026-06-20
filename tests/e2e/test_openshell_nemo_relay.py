@@ -1,6 +1,6 @@
 """Containerized full-stack e2e: OpenShell sandbox + NeMo Relay observability.
 
-These are the Docker/Podman container tests that exercise the full integration
+These are the Docker Engine/Moby container tests that exercise the full integration
 chain against the real built image:
 
   1. ``MAC_OPENSHELL_SANDBOX=1`` makes ``task_executor._maybe_wrap_openshell()``
@@ -37,7 +37,7 @@ COMPOSE_FILE = Path(__file__).parent / "docker-compose.e2e.yaml"
 
 
 def _docker_available() -> bool:
-    """Return True if docker/podman compose is functional."""
+    """Return True if Docker Engine/Moby compose is functional."""
     try:
         r = subprocess.run(
             ["docker", "compose", "version"],
@@ -56,7 +56,7 @@ class TestDockerE2E:
     def test_compose_file_exists(self):
         assert COMPOSE_FILE.exists(), f"Compose file not found: {COMPOSE_FILE}"
 
-    @pytest.mark.skipif(not _docker_available(), reason="docker/podman compose not available")
+    @pytest.mark.skipif(not _docker_available(), reason="Docker Engine/Moby compose not available")
     def test_executor_sandbox_on(self):
         """executor container with MAC_OPENSHELL_SANDBOX=1 wraps argv with openshell."""
         result = subprocess.run(
@@ -82,7 +82,7 @@ class TestDockerE2E:
         assert result.returncode == 0, f"executor exited {result.returncode}:\n{result.stderr}"
         assert "SANDBOX_ON: OK" in result.stdout
 
-    @pytest.mark.skipif(not _docker_available(), reason="docker/podman compose not available")
+    @pytest.mark.skipif(not _docker_available(), reason="Docker Engine/Moby compose not available")
     def test_executor_sandbox_off_fallback(self):
         """executor container with MAC_OPENSHELL_SANDBOX=0 uses unconfined argv."""
         result = subprocess.run(
@@ -107,7 +107,7 @@ class TestDockerE2E:
         assert result.returncode == 0, f"executor exited {result.returncode}:\n{result.stderr}"
         assert "SANDBOX_OFF_FALLBACK: OK" in result.stdout
 
-    @pytest.mark.skipif(not _docker_available(), reason="docker/podman compose not available")
+    @pytest.mark.skipif(not _docker_available(), reason="Docker Engine/Moby compose not available")
     def test_ocsf_event_flows_to_mac_observability(self):
         """A denied-egress OCSF event translates to a mac observation, escalated to warning."""
         result = subprocess.run(

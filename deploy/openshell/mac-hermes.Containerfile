@@ -6,14 +6,15 @@
 # (natasha / GB10). Build from the mac source tree as context:
 #
 #   docker build  -t localhost/mac-hermes:net -f deploy/openshell/mac-hermes.Containerfile <mac-src>
-#   podman build  -t localhost/mac-hermes:net -f deploy/openshell/mac-hermes.Containerfile <mac-src>
 #
-# (Use the driver the gateway is configured with — docker for hosts whose podman
-# is too old for the system CDI spec version, podman otherwise.)
+# MAC/OpenShell standardizes on Docker Engine/Moby as the only production
+# container runtime. Do not build this image with Podman: OpenShell's gateway,
+# image store, GPU/CDI behavior, and nested-container path must all use the same
+# Docker driver.
 #
 # Hard-won requirements baked in (each line below is load-bearing — see the
 # comments): a `sandbox` user/group, `iproute2` (the egress proxy's `ip`), the
-# hermes_cli path hook, and a sandbox-writable /sandbox for the docker driver.
+# hermes_cli path hook, and a sandbox-writable /sandbox for the Docker driver.
 
 FROM docker.io/library/python:3.12-slim-bookworm
 
@@ -48,9 +49,9 @@ RUN /opt/mac-venv/bin/pip install --no-cache-dir /tmp/mac-src \
     && rm -rf /tmp/mac-src
 
 # The executor uploads the task workspace to /sandbox and the upload (ssh+tar)
-# runs as the `sandbox` user. The docker driver creates /sandbox root-owned, so
+# runs as the `sandbox` user. The Docker driver creates /sandbox root-owned, so
 # make it sandbox-writable or the upload fails ("tar: Cannot mkdir: Permission
-# denied"). Harmless for the podman driver.
+# denied").
 RUN mkdir -p /sandbox && chown sandbox:sandbox /sandbox
 
 ENV VIRTUAL_ENV=/opt/mac-venv PATH="/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"

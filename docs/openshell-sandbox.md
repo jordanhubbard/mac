@@ -57,15 +57,21 @@ OTLP-compatible shape through `/action-events/export/otlp`.
 
 ## Prerequisites
 
-> **macOS:** OpenShell's kernel primitives (Landlock, seccomp, network
-> namespaces) run inside the **Docker Desktop Linux VM**, not on the host. You
-> need Docker Desktop running. On Linux hosts they run natively (kernel ≥ 5.13
-> for Landlock).
+MAC/OpenShell uses one container runtime: **Docker Engine/Moby through
+OpenShell's Docker driver**. This is the production contract for bare metal,
+VMs, and containerized environments that support nested Docker/DinD. Do not use
+Docker Desktop, Podman, or `podman-docker` for fleet nodes; those create
+different image stores, gateway configs, GPU behavior, and failure modes.
+
+On Linux hosts, OpenShell's kernel primitives run natively (kernel ≥ 5.13 for
+Landlock). On non-Linux developer machines, run a Linux VM/container with OSS
+Docker Engine/Moby and validate there; the production architecture does not
+depend on Docker Desktop licensing or behavior.
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-# or: uv tool install -U openshell
-openshell status        # gateway must be reachable
+deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
+docker info             # must be a real Docker Engine/Moby daemon, not Podman
+openshell gateway list  # gateway must be reachable
 ```
 
 ## Enable
@@ -95,10 +101,12 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 | `MAC_OPENSHELL_CREATE_ARGS` | _(none)_ | extra `sandbox create` args (shell-split), e.g. `--from img`, `--upload /src:/src` |
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | hub+gateway vars | comma list of env names forwarded via `--env` |
 
-## Verify (requires Docker + OpenShell installed)
+## Verify (requires Docker Engine/Moby + OpenShell installed)
 
-1. `openshell status` healthy.
-2. Dry-run the wrap without spawning:
+1. `docker info` succeeds and `docker --version` is not a Podman compatibility
+   shim.
+2. `openshell gateway list` shows the selected gateway.
+3. Dry-run the wrap without spawning:
    ```python
    import os; os.environ["MAC_OPENSHELL_SANDBOX"]="1"
    os.environ["MAC_OPENSHELL_POLICY"]="/etc/mac/openshell-policy.yaml"
@@ -107,17 +115,15 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-3. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
+4. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
    the gateway, task executor, finalizers, and Hermes sessions inherit the same
    sandbox id.
-4. Trigger an off-policy filesystem or network attempt. Confirm the denial
+5. Trigger an off-policy filesystem or network attempt. Confirm the denial
    appears in OpenShell logs, `/action-events`, the dashboard Observability
    action feed, memory summary eligibility, and OTLP export.
 
 ## Follow-up
 
-- Build a sandbox image (or `--upload` payload) containing the Hermes runtime
-  (`~/.mac/venv` + `~/.mac/src`) so `--from` works on fleet hosts.
 - Tune the operator policy against the real model-gateway/hub hosts (both the
   bundled default and the operator template already use
   `landlock: hard_requirement`).

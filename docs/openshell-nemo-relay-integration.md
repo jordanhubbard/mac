@@ -72,16 +72,18 @@ executor behaves exactly as before (proven by `tests/test_openshell_sandbox.py`)
 
 ## How to enable
 
-> **Prerequisite (macOS):** OpenShell's kernel primitives (Landlock, seccomp,
-> network namespaces) run inside the **Docker Desktop Linux VM** on macOS, not
-> on the host. You must have **Docker Desktop running** and a compute driver
-> available. On Linux hosts they run natively (kernel ≥ 5.13 for Landlock).
+> **Container runtime:** MAC/OpenShell uses **Docker Engine/Moby** through
+> OpenShell's Docker driver. Production fleet nodes must not use Docker Desktop,
+> Podman, or `podman-docker`; those split the image store, gateway config, and
+> GPU behavior. For non-Linux development, validate inside a Linux VM/container
+> with OSS Docker Engine/Moby. On Linux hosts, OpenShell's kernel primitives run
+> natively (kernel ≥ 5.13 for Landlock).
 
-1. Install OpenShell and start its gateway:
+1. Bootstrap OpenShell and its Docker-backed gateway:
    ```bash
-   curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-   # or: uv tool install -U openshell
-   openshell status        # must report the gateway reachable
+   deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
+   docker info             # must be Docker Engine/Moby, not Podman
+   openshell gateway list  # must report the gateway reachable
    ```
 2. Copy and fill in the policy template — substitute every `__PLACEHOLDER__`
    (`__AGENT_USER__`, `__MAC_HUB_HOST__`/`__MAC_HUB_PORT__`, `__MODEL_GATEWAY_HOST__`)
@@ -112,13 +114,14 @@ executor behaves exactly as before (proven by `tests/test_openshell_sandbox.py`)
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | hub+gateway vars | comma list of env names forwarded via `--env` |
 | `MAC_RELAY_OBSERVABILITY` | _(off)_ | truthy → emit NeMo Relay scopes/events (needs `nemo_relay`) |
 
-## Verification (requires Docker + OpenShell installed)
+## Verification (requires Docker Engine/Moby + OpenShell installed)
 
-This session could not run OpenShell end-to-end (no Docker daemon, CLI not
-installed, Python 3.14 venv). To verify on a host that has them:
+To verify on a host with the production runtime:
 
-1. `openshell status` reports the gateway up.
-2. Dry-run the wrap without spawning:
+1. `docker info` succeeds and `docker --version` is not a Podman compatibility
+   shim.
+2. `openshell gateway list` reports the gateway up.
+3. Dry-run the wrap without spawning:
    ```python
    import os; os.environ["MAC_OPENSHELL_SANDBOX"]="1"
    os.environ["MAC_OPENSHELL_POLICY"]="/etc/mac/openshell-policy.yaml"
@@ -127,7 +130,7 @@ installed, Python 3.14 venv). To verify on a host that has them:
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-3. Run one real task with `MAC_OPENSHELL_SANDBOX=1`. Confirm: the agent
+4. Run one real task with `MAC_OPENSHELL_SANDBOX=1`. Confirm: the agent
    completes; a network attempt **not** in the policy is **denied**
    (`openshell logs <sandbox> --since 5m` shows `action=deny`); evidence is
    written to the workspace.

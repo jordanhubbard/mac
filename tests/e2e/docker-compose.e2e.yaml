@@ -23,13 +23,13 @@
 #   - GitHub Actions: add `services` stanza or use `docker compose` in a step.
 #     Gate on: if: github.event_name == 'push' && runner.os == 'Linux'
 #     Required secret: none (containers are built locally, no registry).
-#   - GitLab CI: use `services:` with `docker:dind` or Podman socket.
-#   - When Docker/Podman is unavailable in CI, the compose tests are skipped
+#   - GitLab CI: use `services:` with `docker:dind`.
+#   - When Docker Engine/Moby is unavailable in CI, the compose tests are skipped
 #     automatically (TEST_DOCKER_E2E is unset by default). Unit tests in the
 #     same file run without any container dependency.
 #
 # Prerequisites:
-#   - docker (or podman + podman-docker) with compose plugin
+#   - Docker Engine/Moby with compose plugin
 #   - No public registry required; image is built from local Dockerfile
 #   - openshell and nemo-relay are installed in the executor image
 #   - MAC workspace source tree is mounted read-only at /app
@@ -39,8 +39,8 @@
 #   enabled (CONFIG_SECURITY_LANDLOCK=y). In a container environment, Landlock
 #   is only active when the host kernel and container runtime both support it.
 #   The seccomp profile must be set to 'unconfined' or a custom profile to
-#   allow Landlock syscalls. In Docker Desktop / Podman Desktop on macOS/Win,
-#   Landlock is not available — openshell falls back gracefully.
+#   allow Landlock syscalls. Validate the production path on Linux with
+#   Docker Engine/Moby; desktop runtimes are not production-equivalent.
 #   This compose file sets security_opt: seccomp=unconfined for the executor
 #   to allow Landlock + seccomp filter installation by openshell.
 

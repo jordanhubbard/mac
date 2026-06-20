@@ -117,9 +117,10 @@ behaviour they exercise is also covered (unit-level) by the main suite.
    protobuf circular-import bug on Python 3.14; the CLI binary works. `Dockerfile.e2e`
    uses `python:3.11-slim` to avoid it.
 2. **Landlock kernel requirement**: full filesystem confinement needs Linux 5.13+
-   with `CONFIG_SECURITY_LANDLOCK=y`; on older kernels / Docker Desktop, openshell
-   falls back gracefully. The compose file sets `security_opt: seccomp=unconfined`
-   so Landlock syscalls are permitted where supported.
+   with `CONFIG_SECURITY_LANDLOCK=y`. Validate the production path with Docker
+   Engine/Moby on Linux; desktop runtimes are not production-equivalent. The
+   compose file sets `security_opt: seccomp=unconfined` so Landlock syscalls are
+   permitted where supported.
 3. **No live hub in e2e containers**: `MAC_HUB_URL`/`MAC_HUB_TOKEN` are empty in
    the compose spec; OCSF events flow to a local observability service only. Real
    fleet deployments inject these via fleet operator secrets.
