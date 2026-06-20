@@ -36,7 +36,7 @@ backends ship in the same wheel/image; pick at deploy time.
 | `MAC_SECRET_KEY` | yes | 32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it. |
 | `MAC_DATABASE_URL` | no | Postgres DSN (`postgresql://...` or `postgres://...`). When set, `mac-api` uses `PostgresStore` and ignores `MAC_DB`. The Postgres schema is auto-applied on startup (idempotent). |
 | `MAC_PG_POOL_SIZE` | no | `psycopg_pool` max connections per `mac-api` replica. Default `10`. |
-| `MAC_DB` | no | SQLite file path used when `MAC_DATABASE_URL` is unset. Default `./mac.db`. |
+| `MAC_DB` | no | SQLite file path used when `MAC_DATABASE_URL` is unset. Store default is `~/.mac/mac.db`; CLI local mode should pass `--db` or set `MAC_DB` explicitly. |
 | `MAC_API_TOKEN` | no | Single admin bearer token. Set empty string is rejected. |
 | `MAC_API_TOKENS` | no | JSON `{token: [scopes,...]}` for scoped auth. Mutually exclusive with `MAC_API_TOKEN`. |
 | `HERMES_HOME` | no | Hermes state directory checked at startup. Default `~/.hermes`. |
@@ -522,135 +522,43 @@ Loop mode is canary-gated by default. To make a worker eligible for real
 migrated work, explicitly set `MAC_DEPLOY_WORKER_REQUIRE_CANARY=0` and narrow
 the blast radius with project or metadata filters first.
 
-## Beads Bridge
+## Legacy Beads Migration And Repository Registry
 
-The hub can turn ready Beads into durable mac tasks automatically. Register
-each repository once:
+The live production issue authority is the MAC task ledger. Beads/Dolt
+round-trip sync is not part of the normal deployment path, and operators should
+not run `bd` for current MAC task lifecycle. Legacy Beads state is handled as a
+one-time import path:
 
 ```bash
-mac --db ~/.mac/mac.db bridge beads register mac ~/.mac/src/mac \
-  --source repo-beads-mac --project repo-beads-mac
+mac task detect-beads <repo>
+mac task migrate-beads <repo> --project <project>
+```
+
+Use `--tickets-only` only when creating local compatibility files during a
+migration audit. `.tickets/<id>.md` is ignored local operational state; it is
+not checked into this repository and is not a cross-host ledger.
+
+Repository-backed execution uses the project repository registry instead of a
+legacy bridge poller. Register or onboard repositories through the current
+project/repository commands:
+
+```bash
+mac project onboard <repo-url>
+mac bridge repository register <name> <path> --project <project>
+mac bridge repository repos
 ```
 
 Every registered repository must include a repository runtime contract at
-`.mac/project.yaml`. The bridge validates that contract at registration and on
-each poll, and rejects repositories that do not declare their supported host
-families, bootstrap command, canonical test command, and required evidence.
-See [Repository Runtime Contract](repository-runtime-contract.md).
+`.mac/project.yaml`. Registration and task creation use that contract to attach
+the bootstrap command, canonical test command, supported host families,
+canonical remote URL, and required evidence to new tasks. See
+[Repository Runtime Contract](repository-runtime-contract.md).
 
-The deploy script enables heartbeat polling on the configured hub agent and
-registers the deployed mac checkout by default through:
-
-```bash
-MAC_BEADS_BRIDGE_ON_HEARTBEAT=1
-MAC_BEADS_BRIDGE_HUB_AGENT=<hub-agent-name>
-MAC_BEADS_AUTO_PULL=1
-MAC_BEADS_CLI=$HOME/.mac/bin/bd
-MAC_BEADS_BRIDGE_ROOT=$HOME/.mac/beads-checkouts
-MAC_BEADS_REPOSITORIES=mac=$HOME/.mac/src/mac:repo-beads-mac:repo-beads-mac::30
-```
-
-The deploy bootstrap installs the `gh` CLI into `~/.mac/bin/gh` and the `bd`
-CLI into `~/.mac/bin/bd`. `gh` is required so worker branches can become GitHub
-PRs instead of stranded pushed refs. `bd` is built from the configured Beads
-source (`MAC_DEPLOY_BEADS_REPO_URL`, `MAC_DEPLOY_BEADS_REF`) when it is not
-already present, then deploy runs `bd bootstrap --yes` for each configured
-Beads repository and `bd dolt pull` when possible so fresh clones and bridge
-checkouts have a writable, current Beads database, not only tracked JSONL.
-Production deploys set
-`MAC_BEADS_RESTORE_TRACKED_EXPORTS=1`, so Beads may keep its embedded
-operational state while tracked export noise in `.beads/issues.jsonl` and
-`.beads/config.yaml` is restored after bootstrap and claim/close sync.
-
-The hub does not poll the live runtime checkout directly. Each git-backed
-registered repository is cloned or refreshed into a managed bridge checkout
-under `MAC_BEADS_BRIDGE_ROOT`, and polling plus Beads claim/close sync run
-there. The registered path remains the canonical project path that workers use
-to create task-owned worktrees, but bridge polling is isolated from local
-self-update, deploy, and repair activity in `~/.mac/src/mac`.
-
-On each hub heartbeat or lease renewal, the control plane
-polls every enabled registered repository whose poll interval has elapsed. The
-poller first refreshes the managed bridge checkout. With `MAC_BEADS_AUTO_PULL=1`
-(default), the bridge checkout is cloned if missing, fetches its upstream, and
-is checked out to the registered branch's upstream ref before Beads are read.
-Dirty tracked files in the managed bridge checkout are reset because that tree
-is owned by the bridge; dirty files in the registered runtime checkout are
-recorded in `bridge.beads.repository_source` but do not block polling. If the
-managed checkout cannot be cloned or refreshed, the bridge does not silently
-poll ambiguous local state; it returns `source_refresh_error`, logs
-`bridge.beads.repository_source`, writes a dashboard/Hermes notification, and
-creates one idempotent remediation task for the agent that owns that registered
-environment. Ownership is resolved from repository metadata
-(`owner_agent_id`/`owner_agent_name` and aliases), then from the polling hub
-agent. The poller then runs `bd ready --json` when available, falling back to
-`.beads/issues.jsonl` parsing for simple local fixtures. Only `open` Beads with
-no active blockers are imported; blocked
-Beads wait until their blockers close. Imports are idempotent through the
-`project_items(source, external_id)` unique key.
-
-When `bd ready --json` succeeds, the Beads database is treated as canonical.
-The tracked `.beads/issues.jsonl` export is still parsed as a derived copy and
-compared against the canonical ready IDs. If ready issues exist only in JSONL,
-mac opens an `integration_findings` row of type
-`beads.export_drift.jsonl_only_ready`, emits an operator notification, and does
-not import those export-only issues until the Beads DB exposes them. This keeps
-the bridge from silently choosing the wrong authority during DB/export drift.
-If the managed bridge checkout's embedded Dolt database cannot pull from the
-configured remote, mac moves that disposable DB aside, re-runs
-`bd bootstrap --yes`, and retries `bd dolt pull` before declaring drift.
-See [Integration Authority Contract](integration-authority-contract.md).
-
-The hub also advances the default review/publication workflow from heartbeat
-when `MAC_REVIEW_TICK_ON_HEARTBEAT=1` and `MAC_REVIEW_TICK_HUB_AGENT` is set
-to the configured hub agent. Fleet deploy sets it from the same configured hub
-agent used by `MAC_BEADS_BRIDGE_HUB_AGENT` unless explicitly overridden.
-The tick only moves tasks when required evidence, reviewer verdicts, and
-publication targets are present; otherwise it records explicit waiting reasons
-in observability.
-
-Useful operator commands:
-
-```bash
-mac --db ~/.mac/mac.db bridge beads repos
-mac --db ~/.mac/mac.db bridge beads poll --force
-mac --db ~/.mac/mac.db integrations findings --source-kind beads_repository --status open
-```
-
-Imported tasks keep Beads provenance in `task.metadata.origin` and
-`task.metadata.acc_metadata`, use the repository source as their mac project,
-and are immediately eligible for normal worker claiming.
-
-### Beads Human Ledger
-
-mac's internal task history remains the authoritative execution ledger, but
-humans usually read the Bead first. For Beads-backed work, mac mirrors key
-workflow milestones into Beads comments with the prefix `mac-ledger v1`.
-
-Mirrored milestones include:
-
-- `imported`: a ready Bead became a durable mac task.
-- `claimed`: an agent claimed the task and an attempt started.
-- `state_running`, `state_needs_review`, `state_reviewing`,
-  `state_failed`, `state_cancelled`, `state_open`: major task gates.
-- `evidence_added`: executor, review, artifact, test, publication, or log
-  evidence was recorded.
-- `review_requested`, `review_completed`, `review_retracted`: review gates and
-  reviewer changes.
-- `published`: publication target and publication id.
-- `retry_reopened`, `retry_exhausted`: Beads reconciliation decisions for
-  failed mapped tasks.
-
-For failed work, mac also appends a concise failure summary to the Bead notes
-and comments. The summary is derived from mac task history and evidence, and
-includes the failure reason, verification problems, evidence id, and retry
-exhaustion state when available. This is the human-facing breadcrumb for why an
-otherwise open Bead is not currently progressing.
-
-Lease renewals are intentionally not mirrored to Beads; they remain in mac task
-history and observability so issue logs do not fill with heartbeat noise.
-Ledger comment failures are logged as `bridge.beads.ledger_failed` and do not
-roll back the primary mac task transition.
+The hub advances the default review/publication workflow from heartbeat when
+`MAC_REVIEW_TICK_ON_HEARTBEAT=1` and `MAC_REVIEW_TICK_HUB_AGENT` is set to the
+configured hub agent. The tick only moves tasks when required evidence,
+reviewer verdicts, and publication targets are present; otherwise it records
+explicit waiting reasons in observability.
 
 ## AgentBus
 

@@ -11,8 +11,9 @@
 > are below; see [`linear-bridge-spec-review.md`](linear-bridge-spec-review.md)
 > for the codex review notes.
 >
-> See also: [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md),
-> [`docs/production-deployment.md`](production-deployment.md) §Beads Bridge.
+> See also: [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md)
+> and the legacy import/repository registry section in
+> [`docs/production-deployment.md`](production-deployment.md).
 
 ## Revision history
 
@@ -1110,7 +1111,8 @@ After this phase: bidirectional state sync is robust.
 
 ### Phase L8 — Docs + operator readiness
 
-- `production-deployment.md` §Linear Bridge (mirrors §Beads Bridge)
+- `production-deployment.md` §Linear Bridge (mirrors the current repository
+  registry and legacy-import framing)
 - `linear-bridge-runbook.md`: rotation, troubleshooting, common
   failure modes
 - README updates

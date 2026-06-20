@@ -9,7 +9,7 @@ The contract file lives at `.mac/project.yaml` in the repository root.
 
 ```yaml
 schema: mac.repository_contract.v1
-project: repo-beads-mac
+project: mac
 platforms:
   - darwin
   - linux
@@ -56,14 +56,14 @@ evidence:
 
 ## Enforcement
 
-The Beads bridge validates this file during repository registration and again
-before every poll. Registration fails if the contract is missing, malformed, or
-names a different `project` than the registered mac project.
+The project repository registry validates this file during repository
+registration/onboarding. Registration fails if the contract is missing,
+malformed, or names a different `project` than the registered mac project.
 
-Imported tasks carry the normalized contract in both the project item payload
-and `task.metadata.origin.repository_contract`. The Hermes executor prompt
-surfaces the contract and tells workers to bootstrap from the local checkout
-before running the declared test command.
+Repository-backed tasks carry the normalized contract in
+`task.metadata.origin.repository_contract`. The Hermes executor prompt surfaces
+the contract and tells workers to bootstrap from the local checkout before
+running the declared test command.
 
 Direct tasks created through the task CRUD API are normalized too. If their
 `project` matches an enabled registered repository, mac attaches the same
@@ -83,10 +83,10 @@ PR URL in `mac.worker_evidence.v1` evidence.
 
 The registered repository path remains the durable project source used to derive
 worktrees and to identify the runtime contract. It should stay clean in normal
-operation. If mac detects dirty registered source state that affects bridge
-polling or worktree preparation, it creates a source-remediation task for the
-agent that owns that environment; ordinary feature or bug tasks should not edit
-the registered checkout directly.
+operation. If mac detects dirty registered source state that affects worktree
+preparation, it creates a source-remediation task for the agent that owns that
+environment; ordinary feature or bug tasks should not edit the registered
+checkout directly.
 
 ## mac As First Adopter
 

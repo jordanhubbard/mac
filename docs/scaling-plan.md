@@ -158,14 +158,13 @@ The current suite has regression coverage for these contracts:
 - Rollouts cannot install or promote without verified artifacts and health gates.
 - Worker registration and dispatch run both in-process and through an
   end-to-end uvicorn plus `mac-agent` subprocess path against a real SQLite DB.
-- Beads bridge imports use `bd ready --json` as canonical, detect JSONL drift,
-  bootstrap/pull registered repositories, and isolate bridge polling in managed
-  checkouts.
+- Legacy Beads migration/import paths preserve provenance without making Beads
+  a live read/write task authority.
 - The default review workflow requires verifiable executor evidence, an
   independent reviewer, signed verdict evidence, and publication evidence when
   policy demands it.
-- Command audit, integration findings, operator notifications, Beads ledger
-  comments, and deploy-token redaction have regression tests.
+- Command audit, integration findings, operator notifications, and deploy-token
+  redaction have regression tests.
 - Workflow definitions, YAML import, seed loading, run advancement, cancellation,
   timeout ticks, and forged metadata rejection are covered.
 

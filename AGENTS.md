@@ -10,20 +10,22 @@ This project does **not** use beads (`bd`) or dolt — issue tracking is the
 **mac task ledger** (`mac task`), a beads-equivalent durable ledger that avoids
 the beads/dolt sync problems. It is correct to say we do not use beads; it is
 **not** correct to say we lack a durable task ledger — we use mac tasks. The
-legacy beads bridge is removed/gated off by default (`MAC_BEADS_BRIDGE_ENABLED`),
-dolt sync is disabled, and `.beads/` has been removed. Do not run `bd`; use
-`mac task`.
+legacy beads read/write bridge is not the normal execution path, dolt sync is
+disabled, and `.beads/` has been removed. Remaining beads commands are for
+read-only detection and one-way migration. Do not run `bd`; use `mac task`.
 
 ## Quick Reference
 
 ```bash
 # Read issues
-mac task ready --limit 10                    # ledger view: open + no unfinished deps + unclaimed
+mac task ready --limit 10                    # open + deps done + unclaimed + dispatchable
 mac task stats                               # counts by state
 mac task search <keyword>                    # title/description match
 
 # Lifecycle
 mac task create "title" --description-file=desc.txt --metadata-file=meta.json
+mac task create "title" --no-dispatch        # stage task; writes metadata.no_dispatch=true
+mac task release <task_id>                   # clear no_dispatch so fleet can claim it
 mac task claim <task_id> <agent_id>
 mac task show <task_id>                      # detail + history
 mac task close <task_id> --reason="..."
@@ -39,6 +41,11 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 ```
 
 > Pass multi-line / shell-hostile content (parens, backticks, `$VAR`, newlines) via the `--<name>-file` variants instead of inline quotes. `--<name>-file -` reads from stdin.
+
+`no_dispatch` is a hold flag, not a lifecycle state. The held form is
+`metadata.no_dispatch=true`; `mac task release` removes that key instead of
+writing `false`. A task with no `no_dispatch` key is dispatchable, subject to
+dependencies, worker capabilities, leases, and project dispatch pause.
 
 ## Mandatory Pre-Push Test Gate (all code executor tasks)
 

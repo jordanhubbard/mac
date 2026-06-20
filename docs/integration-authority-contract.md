@@ -1,9 +1,9 @@
 # Integration Authority Contract
 
 mac integrates state from systems that already have their own authority:
-Beads, git hosting, Hermes, Slack, deployment services, and future project
-trackers. Each integration must make the authority boundary explicit so the
-fleet never guesses which copy of state should win.
+git hosting, Hermes, Slack, deployment services, legacy import sources, and
+future project trackers. Each integration must make the authority boundary
+explicit so the fleet never guesses which copy of state should win.
 
 ## Contract
 
@@ -41,7 +41,7 @@ Operators can inspect the ledger through:
 
 ```bash
 mac --db ~/.mac/mac.db integrations findings
-mac --db ~/.mac/mac.db integrations observations --source-kind beads_repository
+mac --db ~/.mac/mac.db integrations observations
 ```
 
 The HTTP API exposes the same state at:
@@ -51,52 +51,23 @@ The HTTP API exposes the same state at:
 
 The dashboard includes recent integration findings in the Observability view.
 
-## Beads Authority
+## Legacy Beads Import Authority
 
-For registered Beads repositories, the canonical task source is the Beads
-database as exposed by `bd ready --json`. The tracked export at
-`.beads/issues.jsonl` is a derived copy. mac uses the JSONL export only when the
-canonical Beads CLI path is unavailable, which preserves lightweight local test
-fixtures without letting a stale export override the database.
+Beads is no longer a read/write task authority for normal MAC operation. The MAC
+task ledger is the canonical execution store, and operators should use
+`mac task` for task lifecycle. Legacy Beads repositories are handled through
+read-only detection and one-way migration commands:
 
-mac does not poll the live runtime checkout directly. The registered repository
-path is the canonical project path for workers and task-owned git worktrees, but
-the bridge refreshes a disposable managed checkout under
-`MAC_BEADS_BRIDGE_ROOT` before polling. With `MAC_BEADS_AUTO_PULL=1`, that
-checkout is cloned or fast-forwarded from its upstream branch. Dirty tracked
-files in the disposable checkout are reset because the bridge owns it; dirty
-files in the registered runtime checkout are recorded as source state and, when
-needed, become an idempotent remediation task for the agent that owns that
-environment.
+```bash
+mac task detect-beads <repo>
+mac task migrate-beads <repo> --project <project>
+```
 
-When `bd ready --json` succeeds, the Beads bridge also parses the tracked JSONL
-export and compares the ready issue IDs. If the JSONL export contains ready
-open issues that the canonical DB does not expose, mac opens a
-`beads.export_drift.jsonl_only_ready` integration finding and does not import
-those JSONL-only issues. That is intentional: importing them would make the
-export authoritative and recreate the split-brain failure.
+For migration, `.beads/issues.jsonl` is treated as a legacy source snapshot.
+Imported tasks keep provenance in task metadata, but follow normal MAC task
+lifecycle afterwards. MAC does not write claim, close, failure, or human-ledger
+events back into Beads during current operation.
 
-When the canonical DB later exposes the same ready IDs, the bridge imports them
-normally and resolves the drift finding as no longer observed.
-
-## Beads Write Policy
-
-mac writes back only derived state needed for human visibility and tracker
-convergence:
-
-- Claim sync: when a Beads-backed mac task is claimed, mac runs `bd update
-  <id> --claim` in the managed bridge checkout.
-- Close sync: when publication completes the mac task, mac runs `bd close <id>`
-  with a reason that points back to the mac task and publication.
-- Failure sync: failed mapped tasks append a note and either reopen for a
-  bounded retry or remain failed when retries are exhausted.
-- Human ledger: key workflow milestones are appended as Beads comments prefixed
-  `mac-ledger v1`.
-
-Those writes never make Beads authoritative for mac execution state. The mac
-task history, evidence, reviews, publications, command audit, observability,
-and notifications remain the execution ledger. Beads comments are a compact
-operator-facing mirror so someone reading the issue can see imports, claims,
-state gates, evidence, review events, publication, retries, and exhaustion
-without opening the mac database. Lease renewals intentionally stay inside mac
-to avoid filling issue logs with liveness noise.
+`.tickets/<id>.md` files are optional ignored local compatibility output. The
+emitter writes them only when a `.tickets/` directory already exists, and they
+are never the source of truth for task dispatch, claim, review, or completion.

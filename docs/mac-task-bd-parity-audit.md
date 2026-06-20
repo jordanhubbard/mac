@@ -16,23 +16,27 @@ parent), `design`, `acceptance_criteria`, `notes`, `close_reason`,
 
 `bd` commands referenced in-repo (only these appear — no broader CLI is
 documented here):
-- `bd ready --json` — canonical ready queue (`docs/integration-authority-contract.md:57`, `docs/production-deployment.md:569`).
+- `bd ready --json` — historical canonical ready queue for Beads.
 - `bd memories --json` — persistent memories export (`beads_migrator.py:228`).
-- `bd update <id> --claim`, `bd close <id>` — claim/close writeback (`integration-authority-contract.md:87-90`).
+- `bd update <id> --claim`, `bd close <id>` — historical claim/close writeback.
 - `bd dolt push/pull` — cross-machine sync of the embedded Dolt DB + `.beads/issues.jsonl` mirror (`docs/linear-bridge-spec.md`, `docs/metadata-sync-assessment.md:27`).
 - Project tagging tied to the repo a bead was filed from (`docs/hermes-integration.md:169`).
 
 ## `mac task` surface today (`src/mac/cli.py`)
 
-`create, list, show, ready, claim, close, search, stats, start, submit-review,
-evidence, detect-beads, migrate-beads, detect-ticketing, convert-ticketing`.
-`ready`, `search`, `stats` require `--db` (direct SQLite) and are **refused in
-hub mode** (`dispatch.py` `_RemoteStore._refuse`).
+`create, list, show, ready, claim, close, reopen, force-complete, search, stats,
+start, release, submit-review, evidence, detect-beads, migrate-beads,
+detect-ticketing, convert-ticketing`. `ready`, `search`, and `stats` work in hub
+mode through `/tasks/ready`, `/tasks/search`, and `/tasks/stats`, with the
+direct SQLite path still available under `--db`.
 
 `.tickets/<id>.md` mirror frontmatter (`beads_migrator._render_ticket`):
 `id, status, deps, links, created, type, priority` (+ optional `assignee`,
 `external-ref`, `parent`, `mac-task-id`) and body sections Design / Acceptance
-Criteria / Notes / Close Reason — a faithful superset of the bead fields.
+Criteria / Notes / Close Reason — a faithful superset of the bead fields. The
+mirror is optional local compatibility output: `tickets_mirror.py` writes it
+only when a `.tickets/` directory already exists, and this repo ignores
+`.tickets/` instead of checking it into git.
 
 ## Parity table
 
@@ -49,10 +53,10 @@ Criteria / Notes / Close Reason — a faithful superset of the bead fields.
 | Body sections (design/acceptance/notes) | `.tickets` body + metadata | Present |
 | Assignment (assignee/owner) | metadata + `.tickets` `assignee` | Present |
 | External refs | metadata + `.tickets` `external-ref` | Present |
-| Memories | `mac memory remember/list/forget` | Present (`list/forget` are `--db`-only) |
-| `.tickets` markdown mirror **auto-emitted** on create/close | `mac task create`/`close` write `.tickets/<id>.md` (`tickets_mirror.py`) | **Present** (parity-tickets-autoemit-01) |
+| Memories | `mac memory remember/list/forget` | Present in local and hub modes |
+| `.tickets` markdown mirror **auto-emitted when a local `.tickets/` directory exists** | `mac task create`/`close` write `.tickets/<id>.md` (`tickets_mirror.py`) and otherwise no-op | **Present** as local compatibility output (parity-tickets-autoemit-01) |
 | `bd dolt push/pull` cross-machine sync | — | Removed by design (mac hub is the store) |
-| Two-way `bd update/close` writeback | — | Removed by design (`MAC_BEADS_BRIDGE_ENABLED` gated off) |
+| Two-way `bd update/close` writeback | — | Removed by design; legacy Beads state is one-way migration only |
 
 ## Remaining gaps (actionable)
 
@@ -63,9 +67,11 @@ Both gaps are now closed:
    them in hub mode and keeps the direct-SQL path under `--db`
    (`parity-ready-http-01`).
 2. ~~**No `.tickets` auto-emit.**~~ **DONE** — `mac task create`/`close` now
-   write/update `.tickets/<id>.md` via `src/mac/tickets_mirror.py` (reusing the
-   migrator's renderer), idempotent and opt-out via `--no-ticket` /
-   `MAC_NO_TICKET_MIRROR` (`parity-tickets-autoemit-01`).
+   write/update `.tickets/<id>.md` via `src/mac/tickets_mirror.py` when a local
+   `.tickets/` directory already exists (reusing the migrator's renderer),
+   idempotent and opt-out via `--no-ticket` / `MAC_NO_TICKET_MIRROR`
+   (`parity-tickets-autoemit-01`). It deliberately does not create `.tickets/`
+   or make that mirror authoritative.
 
 ## Deliberately not parity (recorded so they aren't re-opened as "gaps")
 

@@ -24,9 +24,11 @@ When bd was the parallel issue store:
 That entire layer is off:
 
 - dolt sync gated off (`MAC_BEADS_DOLT_SYNC_ENABLED`, commit 1835af0)
-- bridge polling + bd CLI writeback gated off (`MAC_BEADS_BRIDGE_ENABLED`, commit 64283fb)
+- bridge polling + bd CLI writeback removed from the normal execution path
 - `.beads/` directories removed from mac, c26 repos; nanolang queued (commit e70bead)
-- `.tickets/<id>.md` mirrors are the new git-trackable artifact
+- `.tickets/<id>.md` mirrors are optional gitignored local compatibility
+  artifacts. They are useful for human/IDE viewing in repos that already have a
+  `.tickets/` directory, but they are not cross-host sync.
 
 ## What still uses the `beads_repositories` table
 
@@ -83,11 +85,13 @@ issue rather than blocking the migration on it.
 
 ## What the new system requires for cross-host parity
 
-- `.tickets/<id>.md` files are checked into git. `git push` from any
-  host propagates them. No extra sync.
 - The MAC hub task ledger is host-local SQLite on the hub agent. All
   other agents talk to the hub via the control plane API, so there is
   no per-host ledger drift.
+- `.tickets/<id>.md` files are not checked into git in this repo. The
+  emitter only writes them when a `.tickets/` directory already exists,
+  and `.gitignore` keeps them local. They are compatibility/readability
+  output, not the propagation mechanism.
 - `mac task migrate-beads <repo>` can re-emit `.tickets/<id>.md` from
   a stale `.beads/issues.jsonl` if a contributor still uses the bd
   CLI offline. Useful as a one-shot, not a sync.
@@ -109,6 +113,6 @@ issue rather than blocking the migration on it.
 ## TL;DR
 
 No sync layer needs to be built. The hub is the authority for tasks;
-`.tickets/<id>.md` is the git-distributed mirror; `beads_repositories`
-is a registry that doesn't change at runtime. The remaining work is
-cosmetic schema cleanup, not synchronization.
+`.tickets/<id>.md` is local ignored compatibility output;
+`beads_repositories` is a registry that doesn't change at runtime. The
+remaining work is cosmetic schema cleanup, not synchronization.

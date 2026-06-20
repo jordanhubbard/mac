@@ -61,8 +61,10 @@ Think of MAC as a project office for AI workers:
 - Agent: a worker process registered with MAC.
 - Project: a named area of work.
 - Repository: a source checkout an agent can work in.
-- Beads repository: a repository whose `bd` issues are bridged into MAC.
-- Project item: imported external work, such as a Beads issue.
+- Legacy Beads repository: a repository with old `bd` issues that can be
+  inspected or one-time migrated into MAC. Beads is not the normal issue
+  authority for new work.
+- Project item: imported external work.
 - Task: a durable unit of work in MAC.
 - Epic or story: human-scale task groupings; in MAC they are represented by tasks
   and task relationships.
@@ -135,6 +137,23 @@ uv run mac --db mac.db task list
 
 At this point MAC has durable state: a project and a task. No agent has done the
 task yet. You have created the official work record.
+
+`mac task ready` shows open tasks that have no unfinished dependencies, no
+owner/lease, no per-task dispatch hold, and no project-level dispatch pause. A
+staged task is represented by `metadata.no_dispatch: true`:
+
+```bash
+uv run mac --db mac.db task create "Stage work for later" \
+  --project demo \
+  --description "Do not let the fleet auto-claim this yet." \
+  --no-dispatch
+
+uv run mac --db mac.db task release task_...
+```
+
+`task release` clears the `no_dispatch` metadata key; it does not store
+`no_dispatch: false`. Once the key is absent, the task is dispatchable again,
+subject to dependencies, worker capability match, and project dispatch state.
 
 ## Run The API And Dashboard
 

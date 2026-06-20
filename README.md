@@ -32,9 +32,13 @@ This project provides durable contracts for coordinating a fleet:
 - Review and publication pipeline that requires typed evidence, independent
   approved review, and publication hashes when policy requires them.
 - Canonical durable task ledger (`mac task`) — a beads-equivalent that avoids the
-  beads/dolt sync problems — with an optional local, gitignored `.tickets/<id>.md`
-  mirror auto-emitted on task create/close for human/IDE viewing. mac task history
-  (not any external tracker) is authoritative.
+  beads/dolt sync problems. `.tickets/<id>.md` is optional, gitignored local
+  compatibility output for human/IDE viewing when a `.tickets/` directory already
+  exists; it is not cross-host sync and is not authoritative.
+- Dispatch staging is explicit in the task ledger: `mac task create
+  --no-dispatch` writes `metadata.no_dispatch: true`, ready/dispatch skip that
+  task, and `mac task release` clears that metadata key. Absence of the key is
+  the dispatchable state; project-level dispatch pause is a separate gate.
 - Short-retention command audit for worker subprocesses so operators can see
   what agents actually ran without treating local shell history as evidence.
 - Optional scoped API bearer tokens for read/write/agent/dispatch/secret/admin access.
@@ -96,7 +100,10 @@ uv run uvicorn mac.api:app --reload
 uv run mac-hermes --url http://127.0.0.1:8000 --help
 ```
 
-The CLI stores state in `mac.db` by default. Use `--db path/to/file.db` or `MAC_DB` to choose a different SQLite database.
+For local work, pass `--db path/to/file.db` or set `MAC_DB`. Without `--db`, the
+CLI selects a configured hub (`--hub-url`, `MAC_API_URL`, `MAC_URL`,
+`MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise refuses to run instead of
+silently creating a stray `./mac.db`.
 
 ## API
 
