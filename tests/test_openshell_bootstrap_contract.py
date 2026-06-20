@@ -18,6 +18,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "podman.socket" not in script
     assert "podman --version" not in script
     assert "OSH_DRIVER is no longer supported" in script
+    assert "replacing podman-docker compatibility shim" in script
     assert "Podman compatibility shim" in script
 
 

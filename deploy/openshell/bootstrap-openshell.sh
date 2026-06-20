@@ -59,6 +59,18 @@ install_docker_engine() {
   exit 1
 }
 
+replace_podman_docker_shim() {
+  if command -v apt-get >/dev/null; then
+    log "replacing podman-docker compatibility shim with Docker Engine/Moby"
+    if dpkg -s podman-docker >/dev/null 2>&1; then
+      sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y podman-docker
+    fi
+    install_docker_engine
+    return 0
+  fi
+  return 1
+}
+
 ensure_docker_engine() {
   if ! command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1; then
     install_docker_engine
@@ -66,8 +78,17 @@ ensure_docker_engine() {
   docker_version="$("$OSH_DOCKER_BIN" --version 2>/dev/null || true)"
   case "$docker_version" in
     *[Pp]odman*)
-      echo "'$OSH_DOCKER_BIN' resolves to a Podman compatibility shim, not Docker Engine/Moby: $docker_version" >&2
-      echo "Remove podman-docker or set OSH_DOCKER_BIN to a real Docker Engine/Moby CLI." >&2
+      if ! replace_podman_docker_shim; then
+        echo "'$OSH_DOCKER_BIN' resolves to a Podman compatibility shim, not Docker Engine/Moby: $docker_version" >&2
+        echo "Remove podman-docker or set OSH_DOCKER_BIN to a real Docker Engine/Moby CLI." >&2
+        exit 1
+      fi
+      ;;
+  esac
+  docker_version="$("$OSH_DOCKER_BIN" --version 2>/dev/null || true)"
+  case "$docker_version" in
+    *[Pp]odman*)
+      echo "'$OSH_DOCKER_BIN' is still a Podman compatibility shim after remediation: $docker_version" >&2
       exit 1
       ;;
   esac
