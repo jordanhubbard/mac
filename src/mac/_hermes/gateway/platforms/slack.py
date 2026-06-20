@@ -974,6 +974,61 @@ class SlackAdapter(BasePlatformAdapter):
     def _status_key(team_id: str, chat_id: str) -> Any:
         return (team_id, chat_id) if team_id else chat_id
 
+    def _remember_bounded_marker(
+        self,
+        markers: set,
+        marker: Optional[str],
+        max_size: int,
+    ) -> None:
+        if not marker:
+            return
+        markers.add(marker)
+        if len(markers) > max_size:
+            excess = len(markers) - max_size // 2
+            for old_marker in list(markers)[:excess]:
+                markers.discard(old_marker)
+
+    def _thread_markers(self, team_id: str, thread_ts: Optional[str]) -> List[str]:
+        if not thread_ts:
+            return []
+        return [self._thread_marker(team_id, str(thread_ts))]
+
+    def _remember_bot_thread_participation(
+        self,
+        team_id: str,
+        thread_ts: Optional[str],
+    ) -> None:
+        """Remember a Slack thread the gateway should keep routing to the bot."""
+        for marker in self._thread_markers(team_id, thread_ts):
+            self._remember_bounded_marker(self._bot_message_ts, marker, self._BOT_TS_MAX)
+
+    def _has_bot_thread_participation(
+        self,
+        team_id: str,
+        thread_ts: Optional[str],
+    ) -> bool:
+        return any(marker in self._bot_message_ts for marker in self._thread_markers(team_id, thread_ts))
+
+    def _remember_mentioned_thread(
+        self,
+        team_id: str,
+        thread_ts: Optional[str],
+    ) -> None:
+        """Remember a thread where the bot was directly addressed."""
+        for marker in self._thread_markers(team_id, thread_ts):
+            self._remember_bounded_marker(
+                self._mentioned_threads,
+                marker,
+                self._MENTIONED_THREADS_MAX,
+            )
+
+    def _has_mentioned_thread(
+        self,
+        team_id: str,
+        thread_ts: Optional[str],
+    ) -> bool:
+        return any(marker in self._mentioned_threads for marker in self._thread_markers(team_id, thread_ts))
+
     async def send(
         self,
         chat_id: str,
@@ -1033,18 +1088,10 @@ class SlackAdapter(BasePlatformAdapter):
             # replies without requiring @mention.
             sent_ts = last_result.get("ts") if last_result else None
             if sent_ts:
-                self._bot_message_ts.add(self._thread_marker(team_id, sent_ts))
-                if team_id:
-                    self._bot_message_ts.add(sent_ts)
+                self._remember_bot_thread_participation(team_id, sent_ts)
                 # Also register the thread root so replies-to-my-replies work
                 if thread_ts:
-                    self._bot_message_ts.add(self._thread_marker(team_id, thread_ts))
-                    if team_id:
-                        self._bot_message_ts.add(thread_ts)
-                if len(self._bot_message_ts) > self._BOT_TS_MAX:
-                    excess = len(self._bot_message_ts) - self._BOT_TS_MAX // 2
-                    for old_ts in list(self._bot_message_ts)[:excess]:
-                        self._bot_message_ts.discard(old_ts)
+                    self._remember_bot_thread_participation(team_id, thread_ts)
 
             return SendResult(
                 success=True,
@@ -1374,16 +1421,8 @@ class SlackAdapter(BasePlatformAdapter):
 
     def _record_uploaded_file_thread(self, chat_id: str, thread_ts: Optional[str]) -> None:
         """Treat successful file uploads as bot participation in a thread."""
-        if not thread_ts:
-            return
         team_id = self._channel_team.get(chat_id, "")
-        self._bot_message_ts.add(self._thread_marker(team_id, thread_ts))
-        if team_id:
-            self._bot_message_ts.add(thread_ts)
-        if len(self._bot_message_ts) > self._BOT_TS_MAX:
-            excess = len(self._bot_message_ts) - self._BOT_TS_MAX // 2
-            for old_ts in list(self._bot_message_ts)[:excess]:
-                self._bot_message_ts.discard(old_ts)
+        self._remember_bot_thread_participation(team_id, thread_ts)
 
     def _is_retryable_upload_error(self, exc: Exception) -> bool:
         """Best-effort detection for transient Slack upload failures."""
@@ -2170,6 +2209,7 @@ class SlackAdapter(BasePlatformAdapter):
             event.get("team")
             or event.get("team_id")
             or assistant_meta.get("team_id", "")
+            or self._channel_team.get(channel_id, "")
         )
 
         # Track which workspace owns this channel
@@ -2223,14 +2263,11 @@ class SlackAdapter(BasePlatformAdapter):
             elif self._slack_strict_mention() and not is_mentioned:
                 return  # Strict mode: ignore until @-mentioned again
             elif not is_mentioned:
-                event_thread_marker = self._thread_marker(team_id, event_thread_ts)
-                reply_to_bot_thread = (
-                    is_thread_reply and event_thread_marker in self._bot_message_ts
+                reply_to_bot_thread = is_thread_reply and self._has_bot_thread_participation(
+                    team_id,
+                    event_thread_ts,
                 )
-                in_mentioned_thread = (
-                    event_thread_ts is not None
-                    and event_thread_marker in self._mentioned_threads
-                )
+                in_mentioned_thread = self._has_mentioned_thread(team_id, event_thread_ts)
                 has_session = (
                     is_thread_reply
                     and self._has_active_session_for_thread(
@@ -2250,12 +2287,8 @@ class SlackAdapter(BasePlatformAdapter):
             # Skipped in strict mode: strict_mention=true bots must be
             # re-mentioned every turn, so remembering the thread would
             # defeat the feature (and re-enable agent-to-agent ack loops).
-            if event_thread_ts and not self._slack_strict_mention():
-                self._mentioned_threads.add(self._thread_marker(team_id, event_thread_ts))
-                if len(self._mentioned_threads) > self._MENTIONED_THREADS_MAX:
-                    to_remove = list(self._mentioned_threads)[:self._MENTIONED_THREADS_MAX // 2]
-                    for t in to_remove:
-                        self._mentioned_threads.discard(t)
+            if not self._slack_strict_mention():
+                self._remember_mentioned_thread(team_id, event_thread_ts or thread_ts)
 
         # When entering a thread for the first time (no existing session),
         # fetch thread context so the agent understands the conversation.
@@ -2485,6 +2518,9 @@ class SlackAdapter(BasePlatformAdapter):
         _should_react = (is_dm or is_mentioned) and self._reactions_enabled()
         if _should_react:
             self._reacting_message_ids.add(ts)
+
+        if not is_dm and thread_ts and not self._slack_strict_mention():
+            self._remember_bot_thread_participation(team_id, thread_ts)
 
         await self.handle_message(msg_event)
 
