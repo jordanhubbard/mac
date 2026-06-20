@@ -169,6 +169,9 @@ already pointed at a hub through `--hub-url`, environment, or `~/.mac/fleets.yam
 
 ```bash
 mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
+# After the onboarding task has produced .mac/project.yaml and that contract
+# exists in a hub-visible checkout:
+mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project
 # or, for a non-repository/manual project:
 mac --db mac.db project create my-project --active
 
@@ -191,9 +194,10 @@ assignment, use `mac task claim <task_id> <agent_id>` followed by
 For repository-backed work, the production path is:
 
 1. A project's git repository is registered — e.g. via `mac project onboard
-   <repo-url>`, which clones the repo and authors a `.mac/project.yaml`
-   repository contract. The mac task ledger is canonical; ready work is
-   `mac task ready`.
+   <repo-url>`, which creates the contract-authoring onboarding task, followed
+   by `mac bridge repository register <name> <path> --project <project>` once
+   `.mac/project.yaml` exists in a hub-visible checkout. The mac task ledger is
+   canonical; ready work is `mac task ready`.
 2. Each task for a registered-repository project carries a repository contract,
    execution contract, and origin metadata, so the executor gets a real checkout.
 3. A healthy worker claims the task, works only in a task-owned git worktree,

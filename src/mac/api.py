@@ -1171,6 +1171,18 @@ class ProjectImport(BaseModel):
     actor: str = "bridge"
 
 
+class ProjectRepositoryRegister(BaseModel):
+    name: str
+    path: str
+    source: Optional[str] = None
+    project: Optional[str] = None
+    required_capabilities: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    poll_interval_seconds: int = 60
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "bridge"
+
+
 class MemoryCreate(BaseModel):
     task_id: Optional[str] = None
     subject_type: str
@@ -5872,9 +5884,22 @@ def create_app(
     def list_project_items() -> List[Dict[str, Any]]:
         return [item.to_dict() for item in cp.list_project_items()]
 
-    # beads is no longer a read/write source — the bridge register/poll/repair
-    # endpoints are removed. Detection + one-way conversion live behind the
-    # ticketing connector (`mac task detect-ticketing` / `convert-ticketing`).
+    @app.post("/bridge/repositories")
+    def register_project_repository(body: ProjectRepositoryRegister) -> Dict[str, Any]:
+        _ensure_payload_bounded(body.metadata, "repository.metadata")
+        return cp.register_project_repository(**_data(body)).to_dict()
+
+    @app.get("/bridge/repositories")
+    def list_project_repositories(
+        enabled: Optional[bool] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            repository.to_dict()
+            for repository in cp.list_project_repositories(enabled=enabled)
+        ]
+
+    # The legacy beads poller/repair endpoints remain removed. The repository
+    # registry above is the current contract-backed execution surface.
 
     @app.post("/memory")
     def add_memory(body: MemoryCreate) -> Dict[str, Any]:

@@ -446,6 +446,41 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/repositories/onboard", body))
 
+    def register_project_repository(
+        self,
+        name: str,
+        path: str,
+        *,
+        source: Optional[str] = None,
+        project: Optional[str] = None,
+        required_capabilities: Optional[Iterable[str]] = None,
+        enabled: bool = True,
+        poll_interval_seconds: int = 60,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "name": name,
+                "path": path,
+                "source": source,
+                "project": project,
+                "required_capabilities": list(required_capabilities or []),
+                "enabled": enabled,
+                "poll_interval_seconds": poll_interval_seconds,
+                "metadata": metadata,
+                "actor": actor,
+            }
+        )
+        return _Dictish(self._post("/bridge/repositories", body))
+
+    def list_project_repositories(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(self._get("/bridge/repositories", enabled=enabled))
+
     # -- Workflow decisions (wf-02) -----------------------------------------
 
     def workflow_decisions(

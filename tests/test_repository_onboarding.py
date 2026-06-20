@@ -130,6 +130,26 @@ def test_onboard_repository_preserves_existing_paused_state(cp):
     )
 
 
+def test_repo_project_without_registered_contract_rejects_normal_tasks(cp):
+    cp.create_project(
+        "widget",
+        metadata={"repository_url": "https://github.com/o/widget.git"},
+        dispatch_paused=False,
+    )
+
+    with pytest.raises(ValidationError, match="no registered repository contract"):
+        cp.create_task("Fix widget bug", project="widget", required_capabilities=["python"])
+
+
+def test_onboarding_task_allowed_before_registered_contract(cp):
+    task = cp.onboard_repository("https://github.com/o/widget.git", project="widget")
+
+    assert task.project == "widget"
+    assert task.metadata["origin"]["onboarding"] is True
+    assert task.metadata["execution_contract"]["type"] == "operator_directive"
+    assert task.metadata["execution_contract"]["evidence_type"] == "investigation"
+
+
 # -- Gap A: `project create` rejects git-URL-shaped names --------------------
 
 

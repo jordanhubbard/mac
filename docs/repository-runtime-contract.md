@@ -57,8 +57,9 @@ evidence:
 ## Enforcement
 
 The project repository registry validates this file during repository
-registration/onboarding. Registration fails if the contract is missing,
-malformed, or names a different `project` than the registered mac project.
+registration. Registration fails if the contract is missing, malformed, or names
+a different `project` than the registered mac project. Repository onboarding is
+the pre-registration task that produces the first draft of this file.
 
 Repository-backed tasks carry the normalized contract in
 `task.metadata.origin.repository_contract`. The Hermes executor prompt surfaces
@@ -68,10 +69,14 @@ running the declared test command.
 Direct tasks created through the task CRUD API are normalized too. If their
 `project` matches an enabled registered repository, mac attaches the same
 repository contract to `task.metadata.origin.repository_contract` and records a
-strong `task.metadata.execution_contract`. If no repository applies, mac records
-a weak `operator_directive` execution contract and emits
-`task.execution_contract.weak` telemetry so under-specified work is visible
-before an agent tries to execute it.
+strong `task.metadata.execution_contract`. If a project record advertises
+`metadata.repository_url` but no enabled repository contract is registered,
+normal task creation fails closed; only the `origin.onboarding=true` contract
+authoring task is allowed through. If no repository applies and the project does
+not advertise a repository URL, mac records a weak `operator_directive`
+execution contract and emits `task.execution_contract.weak` telemetry so
+under-specified non-repository work is visible before an agent tries to execute
+it.
 
 ## Worker Checkout Rules
 

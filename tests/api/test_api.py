@@ -16,6 +16,26 @@ from mac.deploy_env import parse_env_text
 from mac.services import ControlPlane, sign_verification_manifest
 
 
+def _write_repository_contract(repo_path: Path, project: str) -> None:
+    contract_dir = repo_path / ".mac"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    (contract_dir / "project.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema": "mac.repository_contract.v1",
+                "project": project,
+                "platforms": ["linux"],
+                "toolchain": {"required_commands": ["python3"]},
+                "bootstrap": {"command": "python3 -m venv .venv"},
+                "test": {"command": "pytest"},
+                "evidence": {"required": ["tests"]},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_hub_tick_loop_gated_by_env(monkeypatch):
     # mac-selfdrive: the hub self-drives tick() only when the interval env is
     # set (>0), so the CLI/tests/replicas don't each spawn a competing ticker.
@@ -169,6 +189,32 @@ def test_repositories_onboard_creates_contract_backed_task():
     # A malformed URL is a client error (400), never a 500.
     bad = client.post("/repositories/onboard", json={"repository_url": "not-a-url"})
     assert bad.status_code == 400
+
+
+def test_bridge_repositories_registers_and_lists_contract_backed_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo, "route-project")
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    registered = client.post(
+        "/bridge/repositories",
+        json={
+            "name": "route-repo",
+            "path": str(repo),
+            "project": "route-project",
+            "required_capabilities": ["python"],
+            "poll_interval_seconds": 30,
+            "metadata": {"team": "core"},
+            "actor": "api-test",
+        },
+    )
+    assert registered.status_code == 200
+    assert registered.json()["metadata"]["repository_contract"]["project"] == "route-project"
+
+    listed = client.get("/bridge/repositories", params={"enabled": True})
+    assert listed.status_code == 200
+    assert [item["name"] for item in listed.json()] == ["route-repo"]
 
 
 def test_fastapi_exposes_core_workflow_and_redacts_secrets():

@@ -24,7 +24,9 @@ mac task search <keyword>                    # title/description match
 
 # Projects
 mac project create <project> --active        # manual project, immediately dispatchable
-mac project onboard <repo-url> --project=<project>
+mac project onboard <repo-url> --project=<project>  # creates contract-authoring task
+mac bridge repository register <name> <path> --project=<project>
+mac bridge repository repos
 mac project activate <project>               # clear project-level dispatch pause
 
 # Lifecycle

@@ -543,8 +543,8 @@ legacy bridge poller. Register or onboard repositories through the current
 project/repository commands:
 
 ```bash
-mac project onboard <repo-url>
-mac bridge repository register <name> <path> --project <project>
+mac project onboard <repo-url>                         # creates contract-authoring task
+mac bridge repository register <name> <path> --project <project>  # after .mac/project.yaml exists
 mac bridge repository repos
 ```
 

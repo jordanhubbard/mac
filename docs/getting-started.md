@@ -166,6 +166,9 @@ tasks in the hub ledger. The operator flow is:
 # onboarding task that authors .mac/project.yaml.
 uv run mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
 
+# After onboarding, register the hub-visible checkout that contains the contract.
+uv run mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project
+
 # Or create a manual project. New projects default to paused, so pass --active
 # when the fleet should be allowed to claim its tasks immediately.
 uv run mac --db mac.db project create my-project --active

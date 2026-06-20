@@ -3214,6 +3214,15 @@ class ControlPlane:
                 "repository_contract": contract,
             }
             return normalized
+        project_repository_url = self._project_repository_url(project)
+        if project_repository_url and not origin_dict.get("onboarding"):
+            raise ValidationError(
+                "project %s advertises repository_url %s but has no registered "
+                "repository contract; complete onboarding, ensure .mac/project.yaml "
+                "exists in the hub-visible checkout, then run `mac bridge repository "
+                "register <name> <path> --project %s` before creating normal tasks"
+                % (project, project_repository_url, project)
+            )
         policy = normalized.get("policy") if isinstance(normalized.get("policy"), dict) else {}
         evidence_type = str(
             normalized.get("evidence_type")
@@ -3232,6 +3241,21 @@ class ControlPlane:
             "reason": "no_registered_repository_or_task_repository_contract",
         }
         return normalized
+
+    def _project_repository_url(self, project: Optional[str]) -> Optional[str]:
+        if not project:
+            return None
+        row = self.store.query_one(
+            "SELECT metadata FROM projects WHERE name = ? OR id = ?",
+            (project, project),
+        )
+        if row is None:
+            return None
+        metadata = ensure_json_object(json_loads(row["metadata"], {}))
+        value = metadata.get("repository_url")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
     def _repository_for_project(self, project: Optional[str]) -> Optional[ProjectRepository]:
         if not project:

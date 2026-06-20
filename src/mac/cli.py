@@ -538,8 +538,8 @@ def cmd_project_create(args: argparse.Namespace) -> None:
 
 
 def cmd_project_onboard(args: argparse.Namespace) -> None:
-    # URL-only registration: derive the project name from the repo, clone a
-    # read-only worktree, and create one onboarding task that instructs a
+    # URL-only onboarding: derive the project name from the repo, clone a
+    # task-owned worktree, and create one onboarding task that instructs a
     # worker to read the repo's own README.md / AGENTS.md / PLAN.md (+ manifests)
     # and author the .mac/project.yaml contract. Everything except the URL
     # defaults — this is the "sane-defaults, just give me a repo URL" path.
@@ -2589,9 +2589,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_project_create, project_create)
     project_onboard = project.add_parser(
         "onboard",
-        help="register a project from just a git repo URL: clone a read-only "
-        "worktree and task a worker to read the repo's own README/AGENTS/PLAN "
-        "(+ manifests) and author the .mac/project.yaml contract",
+        help="create a contract-authoring task from just a git repo URL: clone "
+        "a worktree and task a worker to read the repo's own README/AGENTS/PLAN "
+        "(+ manifests), then author .mac/project.yaml",
     )
     project_onboard.add_argument(
         "repository_url",

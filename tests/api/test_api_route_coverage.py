@@ -186,7 +186,7 @@ def _prepare_publishable_task(
     }
 
 
-def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
+def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[str, Any]:
     ctx: Dict[str, Any] = {}
 
     tenant = _ok(client.post("/tenants", json={"name": "Route Coverage Tenant"}))
@@ -247,6 +247,31 @@ def _seed_route_state(client: TestClient, cp: ControlPlane) -> Dict[str, Any]:
     ctx["delete_project_name"] = _ok(
         client.post("/projects", json={"name": "route-project-delete"})
     )["name"]
+    route_repo = tmp_path / "route-repo"
+    (route_repo / ".mac").mkdir(parents=True)
+    (route_repo / ".mac" / "project.yaml").write_text(
+        "\n".join(
+            [
+                "schema: mac.repository_contract.v1",
+                "project: route-project",
+                "platforms:",
+                "  - linux",
+                "toolchain:",
+                "  required_commands:",
+                "    - python3",
+                "bootstrap:",
+                "  command: python3 -m venv .venv",
+                "test:",
+                "  command: pytest",
+                "evidence:",
+                "  required:",
+                "    - tests",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ctx["repository_path"] = str(route_repo)
 
     machine = _ok(
         client.post(
@@ -1526,6 +1551,13 @@ edges:
             "payload": {"source_url": "https://example.test/route-item"},
             "required_capabilities": ["python"],
         },
+        ("POST", "/bridge/repositories"): {
+            "name": "route-repo",
+            "path": ctx["repository_path"],
+            "project": ctx["project_name"],
+            "required_capabilities": ["python"],
+            "poll_interval_seconds": 30,
+        },
         ("POST", "/memory"): {
             "task_id": ctx["task_id"],
             "subject_type": "task",
@@ -1663,7 +1695,7 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
         ],
     }
     client = TestClient(app)
-    ctx = _seed_route_state(client, cp)
+    ctx = _seed_route_state(client, cp, tmp_path)
 
     executed: set[RouteKey] = set()
     failures = []

@@ -343,6 +343,51 @@ def test_remote_dispatch_read_agentbus_chunks_passes_agent_id():
     assert "limit=5" in url
 
 
+def test_remote_dispatch_project_repository_wrappers_hit_hub_paths():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/bridge/repositories"): {"id": "projectrepo_1"},
+            ("GET", "/bridge/repositories"): [{"id": "projectrepo_1"}],
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    registered = disp.register_project_repository(
+        "mac",
+        "/srv/mac",
+        source="repo-mac",
+        project="mac",
+        required_capabilities=["python"],
+        poll_interval_seconds=30,
+        metadata={"team": "core"},
+        actor="operator",
+    )
+    listed = disp.list_project_repositories(enabled=True)
+
+    assert registered.to_dict() == {"id": "projectrepo_1"}
+    assert [item.to_dict() for item in listed] == [{"id": "projectrepo_1"}]
+    assert fake.calls[0] == (
+        "POST",
+        "http://hub:8789/bridge/repositories",
+        {
+            "name": "mac",
+            "path": "/srv/mac",
+            "source": "repo-mac",
+            "project": "mac",
+            "required_capabilities": ["python"],
+            "enabled": True,
+            "poll_interval_seconds": 30,
+            "metadata": {"team": "core"},
+            "actor": "operator",
+        },
+        "tok",
+    )
+    assert fake.calls[1][0] == "GET"
+    assert fake.calls[1][1] == "http://hub:8789/bridge/repositories?enabled=true"
+
+
 def test_remote_dispatch_memory_wrappers_hit_hub_paths():
     from mac.http_client import HubClient
 
