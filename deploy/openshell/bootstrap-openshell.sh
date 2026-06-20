@@ -114,10 +114,20 @@ ensure_docker_engine
 log "arch=$ARCH gpu=$OSH_GPU driver=docker-engine version=$OPENSHELL_VERSION docker=$("$OSH_DOCKER_BIN" --version 2>&1 | head -1)"
 
 # --- 1. openshell CLI (uv tool, else pip venv) ------------------------------
-if ! command -v openshell >/dev/null; then
+tool_version() {
+  "$1" --version 2>/dev/null | awk 'NR==1 {print $NF}'
+}
+
+current_openshell_version=""
+if command -v openshell >/dev/null 2>&1; then
+  current_openshell_version="$(tool_version openshell || true)"
+fi
+if [ "$current_openshell_version" != "$OPENSHELL_VERSION" ]; then
+  log "installing openshell CLI $OPENSHELL_VERSION (current: ${current_openshell_version:-missing})"
   if command -v uv >/dev/null; then
-    uv tool install "openshell==$OPENSHELL_VERSION"
+    uv tool install --force "openshell==$OPENSHELL_VERSION"
   else
+    rm -rf "$HOME/.openshell-cli-venv"
     python3 -m venv "$HOME/.openshell-cli-venv"
     "$HOME/.openshell-cli-venv/bin/pip" install -q "openshell==$OPENSHELL_VERSION"
     ln -sf "$HOME/.openshell-cli-venv/bin/openshell" "$BIN/openshell"
@@ -126,7 +136,7 @@ fi
 log "openshell CLI: $(openshell --version 2>&1 | head -1)"
 
 # --- 2. openshell-gateway daemon (prebuilt per-arch release asset) ----------
-if ! [ -x "$BIN/openshell-gateway" ]; then
+install_openshell_gateway() {
   case "$ARCH" in
     x86_64)  ga="openshell-gateway-x86_64-unknown-linux-gnu.tar.gz";;
     aarch64) ga="openshell-gateway-aarch64-unknown-linux-gnu.tar.gz";;
@@ -137,6 +147,15 @@ if ! [ -x "$BIN/openshell-gateway" ]; then
   tmp="$(mktemp -d)"; curl -fsSL -o "$tmp/gw.tgz" "$url"; tar -xzf "$tmp/gw.tgz" -C "$tmp"
   install -m755 "$(find "$tmp" -name openshell-gateway -type f | head -1)" "$BIN/openshell-gateway"
   rm -rf "$tmp"
+}
+
+current_gateway_version=""
+if [ -x "$BIN/openshell-gateway" ]; then
+  current_gateway_version="$(tool_version "$BIN/openshell-gateway" || true)"
+fi
+if [ "$current_gateway_version" != "$OPENSHELL_VERSION" ]; then
+  log "installing openshell-gateway $OPENSHELL_VERSION (current: ${current_gateway_version:-missing})"
+  install_openshell_gateway
 fi
 log "gateway bin: $(openshell-gateway --version 2>&1 | head -1)"
 

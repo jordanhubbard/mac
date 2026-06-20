@@ -41,6 +41,9 @@ The bootstrap script owns this contract:
 - replace `podman-docker` with Docker Engine/Moby automatically on apt-based
   Linux hosts, and reject any remaining `docker` command that is still Podman
   emulation;
+- install the configured `OPENSHELL_VERSION` for both `openshell` and
+  `openshell-gateway` on every run, replacing older binaries instead of
+  tolerating version drift;
 - build `localhost/mac-hermes:net` with the same Docker daemon the gateway uses;
 - write only the Docker driver section in `~/.mac/openshell/gateway.toml`.
 

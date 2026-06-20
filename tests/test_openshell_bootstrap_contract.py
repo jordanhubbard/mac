@@ -20,6 +20,9 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "OSH_DRIVER is no longer supported" in script
     assert "replacing podman-docker compatibility shim" in script
     assert "Podman compatibility shim" in script
+    assert 'current_openshell_version" != "$OPENSHELL_VERSION"' in script
+    assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
+    assert 'uv tool install --force "openshell==$OPENSHELL_VERSION"' in script
 
 
 def test_openshell_image_docs_do_not_advertise_podman_builds():
