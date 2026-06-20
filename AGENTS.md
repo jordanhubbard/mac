@@ -14,6 +14,14 @@ legacy beads read/write bridge is not the normal execution path, dolt sync is
 disabled, and `.beads/` has been removed. Remaining beads commands are for
 read-only detection and one-way migration. Do not run `bd`; use `mac task`.
 
+## Fleet Host Resolution
+
+`~/.mac/fleets.yaml` is the definitive source of truth for fleet agent targets.
+When checking, refreshing, deploying to, or SSHing into a fleet agent, resolve
+the agent's current `target` from that file first. Do not assume a hostname from
+the agent name, local SSH aliases, known_hosts entries, old fleet backups, hub
+history, or prior conversation context; those can be stale after host swaps.
+
 ## Quick Reference
 
 ```bash
