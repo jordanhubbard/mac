@@ -5892,8 +5892,29 @@ def create_app(
         task_id: Optional[str] = Query(default=None),
         subject_type: Optional[str] = Query(default=None),
         subject_id: Optional[str] = Query(default=None),
+        record_type: Optional[str] = Query(default=None, description="Exact record_type filter (e.g. nap_summary)"),
+        record_type_prefix: Optional[str] = Query(default=None, description="Prefix match on record_type (e.g. dream:)"),
+        created_by: Optional[str] = Query(default=None, description="Filter by creator (e.g. nap-consolidator, agent_rocky)"),
+        since: Optional[str] = Query(default=None, description="ISO-8601 lower bound on created_at (inclusive)"),
+        until: Optional[str] = Query(default=None, description="ISO-8601 upper bound on created_at (inclusive)"),
+        limit: Optional[int] = Query(default=None, ge=1, description="Maximum number of records to return"),
+        order: str = Query(default="asc", description="Sort order: asc (oldest first) or desc (newest first)"),
     ) -> List[Dict[str, Any]]:
-        return [record.to_dict() for record in cp.search_memory(task_id, subject_type, subject_id)]
+        return [
+            record.to_dict()
+            for record in cp.search_memory(
+                task_id,
+                subject_type,
+                subject_id,
+                record_type=record_type,
+                record_type_prefix=record_type_prefix,
+                created_by=created_by,
+                since=since,
+                until=until,
+                limit=limit,
+                order=order,
+            )
+        ]
 
     @app.post("/memory/remembered")
     def remember_memory(body: MemoryRemember) -> Dict[str, Any]:

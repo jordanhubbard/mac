@@ -1754,6 +1754,13 @@ def cmd_memory_search(args: argparse.Namespace) -> None:
                 task_id=args.task_id,
                 subject_type=args.subject_type,
                 subject_id=args.subject_id,
+                record_type=getattr(args, "record_type", None),
+                record_type_prefix=getattr(args, "record_type_prefix", None),
+                created_by=getattr(args, "created_by", None),
+                since=getattr(args, "since", None),
+                until=getattr(args, "until", None),
+                limit=getattr(args, "limit", None),
+                order=getattr(args, "order", "asc"),
             )
         ]
     )
@@ -3541,6 +3548,37 @@ def build_parser() -> argparse.ArgumentParser:
     memory_search.add_argument("--task-id")
     memory_search.add_argument("--subject-type")
     memory_search.add_argument("--subject-id")
+    memory_search.add_argument(
+        "--record-type",
+        help="Exact match on record_type (e.g. nap_summary)",
+    )
+    memory_search.add_argument(
+        "--record-type-prefix",
+        help="Prefix match on record_type (e.g. 'dream:' matches dream:reflection, dream:lesson)",
+    )
+    memory_search.add_argument(
+        "--created-by",
+        help="Filter by creator (e.g. nap-consolidator, agent_rocky)",
+    )
+    memory_search.add_argument(
+        "--since",
+        help="ISO-8601 lower bound on created_at (inclusive)",
+    )
+    memory_search.add_argument(
+        "--until",
+        help="ISO-8601 upper bound on created_at (inclusive)",
+    )
+    memory_search.add_argument(
+        "--limit",
+        type=int,
+        help="Maximum number of records to return",
+    )
+    memory_search.add_argument(
+        "--order",
+        choices=["asc", "desc"],
+        default="asc",
+        help="Sort order: asc (oldest first, default) or desc (newest first)",
+    )
     _set(cmd_memory_search, memory_search)
 
     memory_remember = memory.add_parser(

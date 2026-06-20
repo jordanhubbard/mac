@@ -101,8 +101,43 @@ class MemoryService:
         task_id: Optional[str] = None,
         subject_type: Optional[str] = None,
         subject_id: Optional[str] = None,
+        record_type: Optional[str] = None,
+        record_type_prefix: Optional[str] = None,
+        created_by: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+        order: str = "asc",
     ) -> List[MemoryRecord]:
-        clauses = []
+        """Query memory records with operator-grade filters.
+
+        Parameters
+        ----------
+        task_id:
+            Exact match on the task that produced the record.
+        subject_type:
+            Exact match on subject_type (e.g. ``"project"``, ``"agent"``).
+        subject_id:
+            Exact match on subject_id.
+        record_type:
+            Exact match on record_type (e.g. ``"nap_summary"``).
+        record_type_prefix:
+            Prefix match on record_type (e.g. ``"dream:"`` matches
+            ``"dream:reflection"`` and ``"dream:lesson"``).  Ignored when
+            *record_type* is also set (exact match takes priority).
+        created_by:
+            Exact match on the creator identifier
+            (e.g. ``"nap-consolidator"``, ``"agent_rocky"``).
+        since:
+            ISO-8601 lower bound (inclusive) on ``created_at``.
+        until:
+            ISO-8601 upper bound (inclusive) on ``created_at``.
+        limit:
+            Maximum number of records to return.  ``None`` returns all.
+        order:
+            ``"asc"`` (oldest first, default) or ``"desc"`` (newest first).
+        """
+        clauses: List[str] = []
         params: List[Any] = []
         if task_id:
             clauses.append("task_id = ?")
@@ -113,10 +148,28 @@ class MemoryService:
         if subject_id:
             clauses.append("subject_id = ?")
             params.append(subject_id)
+        if record_type:
+            clauses.append("record_type = ?")
+            params.append(record_type)
+        elif record_type_prefix:
+            clauses.append("record_type LIKE ?")
+            params.append(record_type_prefix.rstrip("%") + "%")
+        if created_by:
+            clauses.append("created_by = ?")
+            params.append(created_by)
+        if since:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if until:
+            clauses.append("created_at <= ?")
+            params.append(until)
         sql = "SELECT * FROM memory_records"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY created_at, id"
+        direction = "DESC" if (order or "asc").lower().startswith("d") else "ASC"
+        sql += f" ORDER BY created_at {direction}, id {direction}"
+        if limit is not None and limit > 0:
+            sql += f" LIMIT {int(limit)}"
         rows = self.store.query_all(sql, tuple(params))
         return [self._memory_from_row(row) for row in rows]
 
