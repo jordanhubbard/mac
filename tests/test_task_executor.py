@@ -9,7 +9,9 @@ hub HTTP seam are injected, so nothing here spawns Hermes or hits a network.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -99,6 +101,115 @@ def test_repository_contract_section_shows_existing_contract():
     section = te.repository_contract_section(task)
     assert "make test" in section
     assert "task contract failure" not in section
+
+
+def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypatch):
+    workspace = tmp_path / "task"
+    repo = workspace / "repo-lease"
+    repo.mkdir(parents=True)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
+    monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "mac/test")
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+
+    argv = te._build_sandbox_create_argv("sb", workspace, "task", ["python", "-m", "agent"])
+
+    assert "MAC_TASK_REPO_WORKTREE=/sandbox/task/repo-lease" in argv
+    assert "MAC_TASK_REPO_BRANCH=mac/test" in argv
+    assert "mac_sandbox_toolchain_setup" in argv[-1]
+
+
+def test_sandbox_toolchain_setup_exports_repository_contract_env(tmp_path):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "toolchain": {"required_commands": ["git"]},
+                            "test": {"command": "make test"},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n".join(
+        [
+            te._sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup",
+            r'''"$MAC_SANDBOX_PYTHON" - <<'PY'
+import json, os
+assert os.environ["MAC_REPO_TEST_COMMAND"] == "make test"
+assert os.environ["MAC_REPO_REQUIRED_COMMANDS"] == "git"
+delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
+with open(delta_path, encoding="utf-8") as handle:
+    delta = json.load(handle)
+assert delta["commands"] == ["git"]
+PY''',
+        ]
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeypatch):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb")
+    steps = []
+
+    def fake_step(args, *, timeout):
+        steps.append(args)
+        return True, ""
+
+    def fake_runner(argv, cwd, audit_id, opts):
+        steps.append(["runner", *argv[:3]])
+        return _FakeResult(0, stdout="ok\n")
+
+    monkeypatch.setattr(te, "_sandbox_step", fake_step)
+    task = {
+        "id": "t1",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "make test"},
+                    "toolchain": {"required_commands": ["git", "pnpm"]},
+                },
+            }
+        },
+    }
+
+    result = te._run_sandboxed(fake_runner, ["python", "-m", "agent"], workspace, "t1", {"task": task})
+
+    assert result.returncode == 0
+    assert steps[0][0] == "runner"
+    assert steps[1][:2] == ["exec", "--name"]
+    assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
+    assert steps[2][0] == "download"
+    assert steps[3][0] == "delete"
 
 
 def test_build_telemetry_record_shape():

@@ -3110,7 +3110,35 @@ def test_repository_contract_commands_do_not_become_dispatch_capabilities(cp):
     assert assignment["agent"]["id"] == agent.id
 
 
-def test_repository_contract_commands_gate_dispatch_via_agent_resources(cp):
+def test_repository_contract_project_commands_do_not_gate_dispatch(cp):
+    machine = cp.register_machine("worker")
+    agent = cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources={
+            "openshell_required": True,
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["git"],
+            }
+        },
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(required_commands=("python3", "git", "gh", "pnpm", "java", "lein")),
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["agent"]["id"] == agent.id
+    assert cp.get_task(task.id).state == "claimed"
+
+
+def test_repository_contract_project_commands_gate_unsandboxed_dispatch(cp):
     machine = cp.register_machine("worker")
     cp.register_agent(
         machine.id,
@@ -3119,7 +3147,32 @@ def test_repository_contract_commands_gate_dispatch_via_agent_resources(cp):
         resources={
             "commands": {
                 "schema": "mac.command_inventory.v1",
-                "available": ["python3", "git"],
+                "available": ["git"],
+            }
+        },
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(required_commands=("python3", "git", "gh", "pnpm", "java", "lein")),
+    )
+
+    assert cp.dispatch_once() is None
+    assert cp.get_task(task.id).state == "open"
+
+
+def test_repository_contract_host_git_still_gates_dispatch(cp):
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources={
+            "openshell_required": True,
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "gh", "pnpm", "java", "lein"],
             }
         },
     )
@@ -3136,6 +3189,8 @@ def test_repository_contract_commands_gate_dispatch_via_agent_resources(cp):
     assert pending[0].task_id == task.id
     assert pending[0].capabilities == ["python"]
     assert pending[0].detail["required_commands"] == ["python3", "git", "gh"]
+    assert pending[0].detail["sandbox_host_required_commands"] == ["git"]
+    assert pending[0].detail["sandbox_required_commands"] == ["python3", "git", "gh"]
 
 
 def _write_fake_bd_cli(path, ready_path, *, bootstrap_returncode=0, bootstrap_stderr=""):

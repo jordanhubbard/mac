@@ -850,6 +850,32 @@ def task_is_repo_coupled(task: Dict[str, Any]) -> bool:
     return isinstance(metadata.get("repository_contract"), dict)
 
 
+def _nested_dict(root: Dict[str, Any], *path: str) -> Dict[str, Any]:
+    node: Any = root
+    for key in path:
+        if not isinstance(node, dict):
+            return {}
+        node = node.get(key)
+    return node if isinstance(node, dict) else {}
+
+
+def _repository_contract_test_command(task: Dict[str, Any]) -> str:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "test"),
+        _nested_dict(metadata, "execution_contract", "repository_contract", "test"),
+        _nested_dict(metadata, "origin", "repository_contract", "test"),
+        _nested_dict(metadata, "repository_contract", "test"),
+    ]
+    for candidate in candidates:
+        command = str(candidate.get("command") or "").strip()
+        if command:
+            return command
+    return ""
+
+
 def _lessons_section(lessons: List[str]) -> str:
     """Render recalled deployment lessons as a prompt section (or empty)."""
     if not lessons:
@@ -1313,6 +1339,7 @@ def _resolve_openshell_policy() -> str:
 # does not copy files. /sandbox is OpenShell's writable workspace root (uploads
 # and downloads must live under it).
 _SANDBOX_WORKDIR = "/sandbox"
+_SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
 
 
 def _openshell_bin() -> str:
@@ -1336,6 +1363,33 @@ def _workspace_basename(workspace: Path) -> str:
     return os.path.basename(str(workspace).rstrip("/")) or "workspace"
 
 
+def _sandbox_path_for_workspace_child(workspace: Path, sandbox_workspace: str, value: str) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        rel = Path(raw).expanduser().resolve().relative_to(workspace.expanduser().resolve())
+    except (OSError, ValueError):
+        return None
+    return "%s/%s" % (sandbox_workspace.rstrip("/"), str(rel).replace(os.sep, "/"))
+
+
+def _sandbox_repository_env_flags(workspace: Path, sandbox_workspace: str) -> List[str]:
+    flags: List[str] = []
+    mapped_worktree = _sandbox_path_for_workspace_child(
+        workspace,
+        sandbox_workspace,
+        os.environ.get("MAC_TASK_REPO_WORKTREE", ""),
+    )
+    if mapped_worktree:
+        flags += ["--env", "MAC_TASK_REPO_WORKTREE=%s" % mapped_worktree]
+    for name in ("MAC_TASK_REPO_BRANCH", "MAC_TASK_REPO_BASE_SHA", "MAC_TASK_REPO_REMOTE"):
+        value = os.environ.get(name)
+        if value:
+            flags += ["--env", "%s=%s" % (name, value)]
+    return flags
+
+
 def _ensure_landlock_or_fail() -> None:
     """Fail closed if the kernel can't enforce Landlock: the operator policy is
     best_effort (forced by OpenShell's proxy/hard_requirement incompatibility),
@@ -1349,6 +1403,228 @@ def _ensure_landlock_or_fail() -> None:
             "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
             "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."
         )
+
+
+def _sandbox_toolchain_setup_shell() -> str:
+    """Shell function injected into the task sandbox before agent/test work."""
+    return r'''
+mac_sandbox_toolchain_setup() {
+  set +e
+  MAC_SANDBOX_PYTHON="${MAC_SANDBOX_PYTHON:-/opt/mac-venv/bin/python}"
+  [ -x "$MAC_SANDBOX_PYTHON" ] || MAC_SANDBOX_PYTHON="$(command -v python3 || command -v python || true)"
+  [ -n "$MAC_SANDBOX_PYTHON" ] || return 0
+  export MAC_TOOLCHAIN_ROOT="${MAC_TOOLCHAIN_ROOT:-${MAC_TASK_WORKSPACE:-$PWD}/.mac-toolchain}"
+  export MAC_TOOLCHAIN_BIN="$MAC_TOOLCHAIN_ROOT/bin"
+  mkdir -p "$MAC_TOOLCHAIN_BIN"
+  export PATH="$MAC_TOOLCHAIN_BIN:$MAC_TOOLCHAIN_ROOT/node_modules/.bin:${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"
+  eval "$("$MAC_SANDBOX_PYTHON" - "$MAC_TASK_FILE" <<'PY'
+import json, shlex, sys
+try:
+    loaded = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    loaded = {}
+task = loaded.get("task", loaded) if isinstance(loaded, dict) else {}
+metadata = task.get("metadata") if isinstance(task, dict) else {}
+if not isinstance(metadata, dict):
+    metadata = {}
+contracts = []
+for path in (
+    ("execution_contract", "repository_contract"),
+    ("origin", "repository_contract"),
+    ("repository_contract",),
+):
+    node = metadata
+    for key in path:
+        node = node.get(key) if isinstance(node, dict) else None
+    if isinstance(node, dict):
+        contracts.append(node)
+required, seen = [], set()
+creates = []
+bootstrap = ""
+test = ""
+for contract in contracts:
+    toolchain = contract.get("toolchain") if isinstance(contract.get("toolchain"), dict) else {}
+    for command in toolchain.get("required_commands") or []:
+        command = str(command).strip()
+        if command and command not in seen:
+            seen.add(command)
+            required.append(command)
+    if not bootstrap:
+        boot = contract.get("bootstrap") if isinstance(contract.get("bootstrap"), dict) else {}
+        bootstrap = str(boot.get("command") or "").strip()
+        creates = [str(item).strip() for item in (boot.get("creates") or []) if str(item).strip()]
+    if not test:
+        test_block = contract.get("test") if isinstance(contract.get("test"), dict) else {}
+        test = str(test_block.get("command") or "").strip()
+print("export MAC_REPO_REQUIRED_COMMANDS=%s" % shlex.quote(" ".join(required)))
+print("export MAC_REPO_BOOTSTRAP_COMMAND=%s" % shlex.quote(bootstrap))
+print("export MAC_REPO_BOOTSTRAP_CREATES=%s" % shlex.quote("\n".join(creates)))
+print("export MAC_REPO_TEST_COMMAND=%s" % shlex.quote(test))
+PY
+)"
+  mac_log="$MAC_TOOLCHAIN_ROOT/provisioning.log"
+  mac_note() { printf '%s\n' "$*" >> "$mac_log"; }
+  mac_install_java_local() {
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v tar >/dev/null 2>&1 || return 1
+    arch="$(uname -m 2>/dev/null || echo x64)"
+    case "$arch" in
+      x86_64|amd64) arch="x64" ;;
+      aarch64|arm64) arch="aarch64" ;;
+      *) return 1 ;;
+    esac
+    mkdir -p "$MAC_TOOLCHAIN_ROOT/java"
+    curl -fsSL "https://api.adoptium.net/v3/binary/latest/17/ga/linux/${arch}/jre/hotspot/normal/eclipse?project=jdk" -o "$MAC_TOOLCHAIN_ROOT/jre.tar.gz" || return 1
+    tar -xzf "$MAC_TOOLCHAIN_ROOT/jre.tar.gz" -C "$MAC_TOOLCHAIN_ROOT/java" --strip-components=1 || return 1
+    export JAVA_HOME="$MAC_TOOLCHAIN_ROOT/java"
+    export PATH="$JAVA_HOME/bin:$PATH"
+  }
+  mac_install_command() {
+    cmd="$1"
+    case "$cmd" in
+      pnpm)
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable --install-directory "$MAC_TOOLCHAIN_BIN" >> "$mac_log" 2>&1 || true
+          corepack prepare pnpm@latest --activate >> "$mac_log" 2>&1 || true
+        fi
+        command -v pnpm >/dev/null 2>&1 && return 0
+        command -v npm >/dev/null 2>&1 || return 1
+        npm install --prefix "$MAC_TOOLCHAIN_ROOT" pnpm >> "$mac_log" 2>&1
+        ;;
+      lein)
+        command -v curl >/dev/null 2>&1 || return 1
+        curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o "$MAC_TOOLCHAIN_BIN/lein" >> "$mac_log" 2>&1 || return 1
+        chmod +x "$MAC_TOOLCHAIN_BIN/lein"
+        ;;
+      java)
+        if [ "$(id -u 2>/dev/null || echo 1)" = "0" ] && command -v apt-get >/dev/null 2>&1; then
+          DEBIAN_FRONTEND=noninteractive apt-get update >> "$mac_log" 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-17-jre-headless >> "$mac_log" 2>&1 && return 0
+        fi
+        mac_install_java_local
+        ;;
+      node|npm)
+        [ "$(id -u 2>/dev/null || echo 1)" = "0" ] || return 1
+        command -v apt-get >/dev/null 2>&1 || return 1
+        DEBIAN_FRONTEND=noninteractive apt-get update >> "$mac_log" 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm >> "$mac_log" 2>&1
+        ;;
+      make)
+        [ "$(id -u 2>/dev/null || echo 1)" = "0" ] || return 1
+        command -v apt-get >/dev/null 2>&1 || return 1
+        DEBIAN_FRONTEND=noninteractive apt-get update >> "$mac_log" 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends make >> "$mac_log" 2>&1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  for cmd in $MAC_REPO_REQUIRED_COMMANDS; do
+    command -v "$cmd" >/dev/null 2>&1 && continue
+    mac_note "missing command before provisioning: $cmd"
+    mac_install_command "$cmd" || mac_note "could not provision command: $cmd"
+  done
+  missing_after=""
+  for cmd in $MAC_REPO_REQUIRED_COMMANDS; do
+    command -v "$cmd" >/dev/null 2>&1 || missing_after="$missing_after $cmd"
+  done
+  worktree="${MAC_TASK_REPO_WORKTREE:-$PWD}"
+  needs_bootstrap=0
+  if [ -n "$MAC_REPO_BOOTSTRAP_COMMAND" ]; then
+    if [ -z "$MAC_REPO_BOOTSTRAP_CREATES" ]; then
+      needs_bootstrap=1
+    else
+      while IFS= read -r create_path; do
+        [ -z "$create_path" ] && continue
+        [ -e "$worktree/$create_path" ] || needs_bootstrap=1
+      done <<EOF
+$MAC_REPO_BOOTSTRAP_CREATES
+EOF
+    fi
+  fi
+  if [ "$needs_bootstrap" = "1" ] && [ -d "$worktree" ]; then
+    mac_note "running bootstrap.command: $MAC_REPO_BOOTSTRAP_COMMAND"
+    ( cd "$worktree" && bash -lc "$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1 || mac_note "bootstrap.command failed"
+  fi
+  "$MAC_SANDBOX_PYTHON" - <<'PY' >/dev/null 2>&1 || true
+import json, os, shutil
+root = os.environ.get("MAC_TOOLCHAIN_ROOT") or ""
+if not root:
+    raise SystemExit(0)
+required = [item for item in os.environ.get("MAC_REPO_REQUIRED_COMMANDS", "").split() if item]
+delta = {
+    "schema": "mac.sandbox_environment_delta.v1",
+    "package_manager": "sandbox-toolchain",
+    "commands": required,
+    "missing_after": [item for item in required if shutil.which(item) is None],
+    "toolchain_root": root,
+    "reason": "repository_contract.toolchain.required_commands",
+}
+os.makedirs(root, exist_ok=True)
+with open(os.path.join(root, "environment-delta.json"), "w", encoding="utf-8") as handle:
+    json.dump(delta, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+  return 0
+}
+'''
+
+
+def _sandbox_repository_verification_shell() -> str:
+    return "\n".join(
+        [
+            _sandbox_toolchain_setup_shell(),
+            'cd "$MAC_TASK_WORKSPACE"',
+            "mac_sandbox_toolchain_setup || true",
+            r'''$MAC_SANDBOX_PYTHON - <<'PY'
+import json, os, subprocess, time
+workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
+worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
+command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
+result_path = os.path.join(workspace, "mac-sandbox-verification.json")
+delta_path = os.path.join(os.environ.get("MAC_TOOLCHAIN_ROOT", ""), "environment-delta.json")
+delta = {}
+try:
+    with open(delta_path, encoding="utf-8") as handle:
+        delta = json.load(handle)
+except Exception:
+    delta = {}
+if not command:
+    payload = {
+        "schema": "mac.sandbox_verification.v1",
+        "status": "fail",
+        "command": "",
+        "returncode": 1,
+        "stderr": "repository contract test.command is missing",
+        "environment_delta": delta,
+    }
+else:
+    started = time.time()
+    proc = subprocess.run(
+        ["bash", "-lc", command],
+        cwd=worktree,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600") or "600"),
+        check=False,
+    )
+    payload = {
+        "schema": "mac.sandbox_verification.v1",
+        "status": "pass" if proc.returncode == 0 else "fail",
+        "command": command,
+        "returncode": int(proc.returncode),
+        "stdout": (proc.stdout or "")[:4000],
+        "stderr": (proc.stderr or "")[:4000],
+        "duration_ms": int((time.time() - started) * 1000),
+        "worktree": worktree,
+        "environment_delta": delta,
+    }
+with open(result_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+raise SystemExit(0 if payload.get("returncode") == 0 else int(payload.get("returncode") or 1))
+PY''',
+        ]
+    )
 
 
 def _build_sandbox_create_argv(
@@ -1374,11 +1650,19 @@ def _build_sandbox_create_argv(
         "--env", "MAC_TASK_WORKSPACE=%s" % sub,
         "--env", "MAC_TASK_FILE=%s/task.json" % sub,
     ]
+    argv += _sandbox_repository_env_flags(workspace, sub)
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
         argv += shlex.split(extra)
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
-    inner = "cd %s && exec %s" % (shlex.quote(sub), shlex.join(agent_argv))
+    inner = "\n".join(
+        [
+            "cd %s" % shlex.quote(sub),
+            _sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup || true",
+            "exec %s" % shlex.join(agent_argv),
+        ]
+    )
     argv += ["--", "bash", "-lc", inner]
     return argv
 
@@ -1394,6 +1678,37 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return proc.returncode == 0, (proc.stderr or proc.stdout or "").strip()
     except Exception as exc:  # noqa: BLE001 - teardown must never mask the run
         return False, str(exc)
+
+
+def _sandbox_run_repository_verification(name: str, basename: str, task: Any) -> None:
+    if not isinstance(task, dict) or not task_is_repo_coupled(task):
+        return
+    if not _repository_contract_test_command(task):
+        return
+    sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    try:
+        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
+    except ValueError:
+        timeout = 600.0
+    ok, msg = _sandbox_step(
+        [
+            "exec",
+            "--name",
+            name,
+            "--workdir",
+            sub,
+            "--timeout",
+            str(max(1, int(timeout))),
+            "--no-tty",
+            "--",
+            "bash",
+            "-lc",
+            _sandbox_repository_verification_shell(),
+        ],
+        timeout=timeout + 90.0,
+    )
+    if not ok:
+        sys.stderr.write("[executor] WARNING: sandbox repository verification failed: %s\n" % msg)
 
 
 def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
@@ -1426,6 +1741,7 @@ def _run_sandboxed(
     create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
     try:
         result = runner(create_argv, workspace, audit_id, opts)
+        _sandbox_run_repository_verification(name, basename, opts.get("task"))
         _sandbox_download(name, basename, workspace)
         return result
     finally:
@@ -1804,7 +2120,7 @@ def _run_executor(
         prompt,
         task_workspace,
         str(audit_task_id) if audit_task_id else None,
-        {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout()},
+        {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout(), "task": task},
     )
     emit_telemetry(
         "agent_completed",

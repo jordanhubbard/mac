@@ -178,7 +178,9 @@ def test_build_uploads_workspace_to_sandbox_root():
 
 def test_build_runs_agent_in_workspace_subdir_with_yolo():
     inner = _inner(_build("/work/task-7"))
-    assert inner.startswith("cd /sandbox/task-7 && exec ")
+    assert inner.startswith("cd /sandbox/task-7\n")
+    assert "mac_sandbox_toolchain_setup" in inner
+    assert "\nexec " in inner
     assert "hermes_cli.main" in inner and "--yolo" in inner
 
 

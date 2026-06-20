@@ -2704,7 +2704,7 @@ class MacWorker:
         files_changed = _repository_context_changed_files(worktree, context)
 
         test_command = _repository_contract_test_command(task)
-        test_item = self._run_repository_contract_test(worktree, test_command)
+        test_item = self._run_repository_contract_test(worktree, test_command, task_dir=task_dir)
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
         repo["head_sha"] = _git_stdout(worktree, ["rev-parse", "HEAD"]) or repo.get("head_sha", "")
@@ -2825,7 +2825,16 @@ class MacWorker:
                 % ((commit.stderr or commit.stdout or "").strip() or worktree)
             )
 
-    def _run_repository_contract_test(self, worktree: Path, command: str) -> JsonDict:
+    def _run_repository_contract_test(
+        self,
+        worktree: Path,
+        command: str,
+        *,
+        task_dir: Optional[Path] = None,
+    ) -> JsonDict:
+        sandbox_item = _sandbox_repository_verification_item(task_dir, command)
+        if sandbox_item is not None:
+            return sandbox_item
         if not command:
             return {
                 "name": "repository contract test",
@@ -3762,6 +3771,7 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "stdout.txt", "stdout.txt", "stdout"),
         (task_dir / "stderr.txt", "stderr.txt", "stderr"),
         (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
+        (task_dir / "mac-sandbox-verification.json", "mac-sandbox-verification.json", "sandbox_verification"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
         (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
         (task_dir / "executor-task.json", "executor-task.json", "review_context"),
@@ -4062,6 +4072,35 @@ def _repository_finalizer_prepush_problems(
         problems.append("repo code evidence requires at least one passing test/check")
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
+
+
+def _sandbox_repository_verification_item(task_dir: Optional[Path], command: str) -> Optional[JsonDict]:
+    if task_dir is None:
+        return None
+    path = task_dir / "mac-sandbox-verification.json"
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    try:
+        returncode = int(loaded.get("returncode"))
+    except (TypeError, ValueError):
+        returncode = 1
+    item = _process_check_item(
+        "repository contract test",
+        returncode,
+        command=str(loaded.get("command") or command),
+        stdout=str(loaded.get("stdout") or ""),
+        stderr=str(loaded.get("stderr") or ""),
+    )
+    item["execution_environment"] = "openshell_sandbox"
+    if isinstance(loaded.get("environment_delta"), dict):
+        item["environment_delta"] = loaded["environment_delta"]
+    if loaded.get("worktree"):
+        item["worktree"] = loaded.get("worktree")
+    return item
 
 
 def _process_check_item(

@@ -21,9 +21,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl: task work + git push egress.
+# make/node/npm/java/pnpm/lein: common repository contracts. The executor can
+# still provision missing tools into a task-local .mac-toolchain, but the base
+# image should cover ordinary polyglot repos without mutating the host fleet.
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iproute2 iptables git curl ca-certificates \
+    && apt-get install -y --no-install-recommends iproute2 iptables git curl ca-certificates make nodejs npm openjdk-17-jre-headless \
+    && npm install -g pnpm \
+    && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
+    && chmod +x /usr/local/bin/lein \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*
 

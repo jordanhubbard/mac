@@ -1436,6 +1436,48 @@ def test_subprocess_executor_exports_repository_worktree_env(tmp_path: Path):
     assert completed.metadata["repository_checkout_policy"] == "task_owned_git_worktree"
 
 
+def test_repository_contract_test_prefers_sandbox_verification_artifact(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+    task_dir = tmp_path / "task"
+    worktree = tmp_path / "repo"
+    task_dir.mkdir()
+    worktree.mkdir()
+    (task_dir / "mac-sandbox-verification.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.sandbox_verification.v1",
+                "command": "make test",
+                "returncode": 0,
+                "status": "pass",
+                "stdout": "verified inside sandbox\n",
+                "stderr": "",
+                "worktree": "/sandbox/task/repo",
+                "environment_delta": {
+                    "schema": "mac.sandbox_environment_delta.v1",
+                    "commands": ["git", "pnpm", "java", "lein"],
+                    "missing_after": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        lambda _task, _task_dir: WorkerExecution(0, "unused"),
+    )
+
+    item = worker._run_repository_contract_test(worktree, "false", task_dir=task_dir)
+
+    assert item["status"] == "pass"
+    assert item["command"] == "make test"
+    assert item["execution_environment"] == "openshell_sandbox"
+    assert item["environment_delta"]["missing_after"] == []
+
+
 def test_mac_worker_refuses_dirty_repository_source_for_normal_work(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

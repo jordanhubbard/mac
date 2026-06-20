@@ -128,6 +128,7 @@ from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.observability_service import ObservabilityService
+from mac.openshell_runtime import openshell_required_for_identity
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.service_role_service import ServiceRoleService
@@ -282,6 +283,25 @@ def _repository_required_commands_from_metadata(metadata: JsonDict) -> List[str]
     return required
 
 
+_REPOSITORY_HOST_REQUIRED_COMMANDS = {"git"}
+
+
+def _repository_host_required_commands_from_metadata(metadata: JsonDict) -> List[str]:
+    """Commands a sandboxed host worker must have before it can start repo work.
+
+    Repository contracts describe the project toolchain, which belongs inside the
+    task sandbox when the agent is OpenShell-required. Dispatch should not
+    require sandboxed worker hosts to advertise project-local commands like
+    pnpm, java, or lein. Keep only the primitive the worker itself needs to
+    prepare/push task-owned git worktrees.
+    """
+    return [
+        command
+        for command in _repository_required_commands_from_metadata(metadata)
+        if command in _REPOSITORY_HOST_REQUIRED_COMMANDS
+    ]
+
+
 def _agent_resource_command_names(resources: JsonDict) -> set[str]:
     names: set[str] = set()
     for key in ("commands", "command_inventory"):
@@ -310,6 +330,14 @@ def _agent_resource_command_names(resources: JsonDict) -> set[str]:
                     if name:
                         names.add(name)
     return names
+
+
+def _agent_requires_openshell(agent: Agent) -> bool:
+    return openshell_required_for_identity(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        resources=ensure_json_object(agent.resources),
+    )
 
 
 def _required_changed_files_from_metadata(metadata: JsonDict) -> List[str]:
@@ -7946,9 +7974,9 @@ class ControlPlane:
     def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
         required_role = None
         hardware: JsonDict = {}
-        required_commands = _repository_required_commands_from_metadata(
-            ensure_json_object(task.metadata)
-        )
+        metadata = ensure_json_object(task.metadata)
+        required_commands = _repository_required_commands_from_metadata(metadata)
+        host_required_commands = _repository_host_required_commands_from_metadata(metadata)
         if isinstance(task.metadata, dict):
             md_role = task.metadata.get("required_role")
             if isinstance(md_role, str) and md_role.strip():
@@ -7967,6 +7995,8 @@ class ControlPlane:
                 "task_state": task.state,
                 "task_title": task.title,
                 "required_commands": required_commands,
+                "sandbox_host_required_commands": host_required_commands,
+                "sandbox_required_commands": required_commands,
             },
         )
 
@@ -10780,8 +10810,11 @@ class ControlPlane:
         return required.issubset(capabilities)
 
     def _agent_has_repository_commands(self, agent: Agent, task: Task) -> bool:
-        required_commands = _repository_required_commands_from_metadata(
-            ensure_json_object(task.metadata)
+        metadata = ensure_json_object(task.metadata)
+        required_commands = (
+            _repository_host_required_commands_from_metadata(metadata)
+            if _agent_requires_openshell(agent)
+            else _repository_required_commands_from_metadata(metadata)
         )
         if not required_commands:
             return True
