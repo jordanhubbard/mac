@@ -1,0 +1,52 @@
+# Dockerfile.e2e
+#
+# Build image for OpenShell + NeMo Relay e2e verification.
+# Extends the MAC executor base with openshell and nemo-relay installed.
+#
+# Build:
+#   docker build -f Dockerfile.e2e -t mac-executor-e2e:latest .
+#
+# Note on openshell Python 3.14 compatibility:
+#   openshell 0.0.59 has a protobuf circular-import issue on Python 3.14
+#   (the _proto/__init__.py greedily imports generated pb2 modules before
+#   they are fully initialized). The binary CLI (openshell run ...) works
+#   correctly; only the Python SDK import path is affected on 3.14.
+#   The e2e harness uses the CLI path (_maybe_wrap_openshell() prepends
+#   the openshell binary to argv) — no Python SDK import needed at runtime.
+#   The OCSF translation seam (ocsf_to_observation) does not import openshell
+#   directly; it only uses mac.relay_observability + nemo_relay.
+#   This image uses python:3.11-slim to avoid the 3.14 import issue.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system packages required by openshell and mac
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+# openshell: provides the sandbox CLI binary and Python SDK
+# nemo-relay: provides the observability scope/exporter API
+RUN pip install --no-cache-dir \
+    openshell==0.0.59 \
+    nemo-relay==0.3.0 \
+    pytest \
+    pyyaml
+
+# Copy the MAC source tree
+COPY src/ /app/src/
+COPY deploy/ /app/deploy/
+COPY tests/ /app/tests/
+COPY pyproject.toml /app/
+
+# Install mac package in editable mode (no venv — this is a dedicated container)
+RUN pip install --no-cache-dir -e /app
+
+ENV PYTHONPATH=/app/src
+ENV MAC_OPENSHELL_SANDBOX=0
+ENV MAC_RELAY_OBSERVABILITY=0
+
+CMD ["python", "-c", "import mac; print('mac package OK'); import nemo_relay; print('nemo_relay OK')"]

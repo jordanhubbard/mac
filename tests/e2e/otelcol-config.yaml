@@ -1,0 +1,47 @@
+# Minimal OpenTelemetry Collector config for e2e relay export testing.
+#
+# Receives OTLP spans from the NeMo Relay exporter running inside the
+# executor container, logs them to stdout for verification.
+#
+# In a production deployment this would export to Grafana Tempo, Jaeger,
+# NVIDIA NeMo Evaluator, or any OTLP-compatible backend.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  logging:
+    loglevel: info
+    sampling_initial: 10
+    sampling_thereafter: 50
+  debug:
+    verbosity: detailed
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging, debug]
