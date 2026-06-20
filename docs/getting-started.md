@@ -125,7 +125,8 @@ Create a practice project and task:
 
 ```bash
 uv run mac --db mac.db project create demo \
-  --description "A safe local project for learning MAC"
+  --description "A safe local project for learning MAC" \
+  --active
 
 uv run mac --db mac.db task create "Write a hello-world note" \
   --project demo \
@@ -154,6 +155,43 @@ uv run mac --db mac.db task release task_...
 `task release` clears the `no_dispatch` metadata key; it does not store
 `no_dispatch: false`. Once the key is absent, the task is dispatchable again,
 subject to dependencies, worker capability match, and project dispatch state.
+
+## Tell Agents To Work On A Project
+
+MAC agents do not watch arbitrary repositories. They work from dispatchable
+tasks in the hub ledger. The operator flow is:
+
+```bash
+# Repository-backed project: let MAC clone/analyze the repo and create the
+# onboarding task that authors .mac/project.yaml.
+uv run mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
+
+# Or create a manual project. New projects default to paused, so pass --active
+# when the fleet should be allowed to claim its tasks immediately.
+uv run mac --db mac.db project create my-project --active
+
+uv run mac --db mac.db task create "Fix failing tests" \
+  --project my-project \
+  --description-file desc.txt \
+  --required-capabilities python
+
+# If the project was staged earlier, open the project-level gate.
+uv run mac --db mac.db project activate my-project
+
+# If an individual task was staged with --no-dispatch, open the task-level gate.
+uv run mac --db mac.db task release task_...
+
+# Ask the dispatcher to assign ready work immediately.
+uv run mac --db mac.db dispatch tick --limit 10
+```
+
+Loop-mode agents can now claim matching work from `mac task ready`. To assign a
+specific task to a specific agent manually, use:
+
+```bash
+uv run mac --db mac.db task claim task_... agent_...
+uv run mac --db mac.db task start task_... agent_...
+```
 
 ## Run The API And Dashboard
 

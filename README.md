@@ -161,6 +161,31 @@ Key route groups:
 - `/agents/{id}/mood`, `/agents/{id}/mood/history` — agent-self-reported emotional state (warm/cheerful/sad/curt/cold/irritated/angry/enraged) with reason + optional TTL; transitions flow through `/events` as `subject_type=agent`
 - `/agents/{id}/nap-schedule`, `/agents/{id}/nap-schedule/next`, `/nap-schedules`, `/nap-runs`, `/nap-runs/{id}/complete`, `/nap-runs/{id}/fail` — daily memory-consolidation lifecycle. Offset defaults to `md5(agent.name) %% 360` minutes (spreads the fleet across the 0–6h UTC window). mac coordinates `begin → DRAINING → complete/fail`; summarization and vector storage are off-process and linked via `evidence` + `vector_refs`.
 
+## Tell Agents To Work On A Project
+
+Agents work on dispatchable tasks, not on repositories by implication. The
+operator flow is below. Use `--db` for local mode, or omit it when your CLI is
+already pointed at a hub through `--hub-url`, environment, or `~/.mac/fleets.yaml`.
+
+```bash
+mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
+# or, for a non-repository/manual project:
+mac --db mac.db project create my-project --active
+
+mac --db mac.db task create "Fix failing tests" \
+  --project my-project \
+  --description-file desc.txt \
+  --required-capabilities python
+
+mac --db mac.db project activate my-project      # if the project was staged/paused
+mac --db mac.db task release task_...            # if the task was created with --no-dispatch
+mac --db mac.db dispatch tick --limit 10         # assign ready work now
+```
+
+Loop-mode agents claim matching work from `mac task ready`. For explicit manual
+assignment, use `mac task claim <task_id> <agent_id>` followed by
+`mac task start <task_id> <agent_id>` with the same transport flags.
+
 ## Current Task Workflow
 
 For repository-backed work, the production path is:
