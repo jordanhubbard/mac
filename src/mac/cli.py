@@ -885,6 +885,49 @@ def cmd_openshell_policy_deploy_status(args: argparse.Namespace) -> None:
     _print(_plane(args).get_openshell_status(args.agent))
 
 
+def cmd_openshell_reconcile(args: argparse.Namespace) -> None:
+    from mac.openshell_reconcile import (
+        default_fleets_path,
+        fleet_agent_names,
+        load_fleet_config,
+        reconcile_openshell_agents,
+    )
+
+    policy_text = None
+    if args.policy_file:
+        policy_text = Path(args.policy_file).expanduser().read_text(encoding="utf-8")
+    detail = _read_json_arg(args.detail, args.detail_file, label="detail", default={})
+    selected_agents = list(args.agent or [])
+    explicit_agents = bool(selected_agents)
+    if not selected_agents:
+        cfg_path = Path(args.fleet_config).expanduser() if args.fleet_config else default_fleets_path()
+        cfg = load_fleet_config(cfg_path)
+        selected_agents = fleet_agent_names(cfg, args.target_fleet or args.fleet)
+    if args.apply and not args.no_report_status and args.status == "active" and not args.validated:
+        raise SystemExit("--validated is required with --apply when reporting status=active")
+    _print(
+        reconcile_openshell_agents(
+            _plane(args),
+            agent_selectors=selected_agents,
+            policy_name=args.policy_name,
+            policy_text=policy_text,
+            apply=args.apply,
+            actor=args.actor,
+            status=args.status,
+            validated=args.validated,
+            sandbox_id=args.sandbox_id,
+            detail=detail,
+            runtime=args.runtime,
+            openshell_version=args.openshell_version,
+            gateway_driver=args.gateway_driver,
+            image=args.image,
+            validation_summary=args.validation_summary or "",
+            report_status=not args.no_report_status,
+            allow_missing_agents=(not explicit_agents and not args.strict),
+        )
+    )
+
+
 def _soul_snapshot_setup(args):
     """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
     import yaml as _yaml
@@ -2633,6 +2676,64 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_project_show, project_show)
 
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    osh_reconcile = openshell.add_parser(
+        "reconcile",
+        help="reconcile fleet OpenShell required/policy/deployment status after host validation",
+    )
+    osh_reconcile.add_argument(
+        "--apply",
+        action="store_true",
+        help="mutate hub state; default is a dry-run diff",
+    )
+    osh_reconcile.add_argument(
+        "--validated",
+        action="store_true",
+        help="assert that host runtime validation has passed; required to apply status=active",
+    )
+    osh_reconcile.add_argument(
+        "--agent",
+        action="append",
+        help="agent id or name to reconcile; repeatable. Defaults to enabled Linux agents in fleets.yaml",
+    )
+    osh_reconcile.add_argument(
+        "--target-fleet",
+        help="fleet in fleets.yaml to read when --agent is omitted; defaults to --fleet or the config default",
+    )
+    osh_reconcile.add_argument(
+        "--fleet-config",
+        help="path to fleets.yaml (default: $MAC_FLEETS_CONFIG or ~/.mac/fleets.yaml)",
+    )
+    osh_reconcile.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail if any fleets.yaml-selected agent is missing from the hub registry",
+    )
+    osh_reconcile.add_argument("--policy-name", default="mac-docker-engine-moby")
+    osh_reconcile.add_argument(
+        "--policy-file",
+        help="policy YAML to create/reuse/update; default deploy/openshell/mac-hermes-policy.yaml",
+    )
+    osh_reconcile.add_argument(
+        "--status",
+        default="active",
+        choices=("active", "starting", "inactive", "degraded", "failed", "unknown"),
+    )
+    osh_reconcile.add_argument("--actor", default="human")
+    osh_reconcile.add_argument("--runtime", default="docker-engine-moby")
+    osh_reconcile.add_argument("--openshell-version", default="0.0.62")
+    osh_reconcile.add_argument("--gateway-driver", default="docker")
+    osh_reconcile.add_argument("--image", default="localhost/mac-hermes:net")
+    osh_reconcile.add_argument("--sandbox-id")
+    osh_reconcile.add_argument("--validation-summary")
+    osh_reconcile.add_argument("--detail", help="JSON status detail object")
+    osh_reconcile.add_argument("--detail-file", help="read JSON status detail from file path or '-'")
+    osh_reconcile.add_argument(
+        "--no-report-status",
+        action="store_true",
+        help="only reconcile required resources and policy assignment",
+    )
+    _set(cmd_openshell_reconcile, osh_reconcile)
+
     osh_render = openshell.add_parser(
         "render-policy",
         help="render the OpenShell guardrail policy from the operator template for this fleet",

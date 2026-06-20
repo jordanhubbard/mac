@@ -111,6 +111,105 @@ def test_mac_cli_agent_register_and_list(tmp_path):
     assert any(a["id"] == agent["id"] for a in agents)
 
 
+def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
+    rc, machine = _run(tmp_path, "machine", "register", "openshell-host")
+    assert rc == 0
+    rc, agent = _run(
+        tmp_path,
+        "agent",
+        "register",
+        machine["id"],
+        "rocky",
+        "--capabilities",
+        "python,ops",
+        "--resources",
+        '{"hardware":{"accelerator":"gpu"},"commands":{"available":["git"]}}',
+        "--agent-id",
+        "agent_rocky",
+    )
+    assert rc == 0
+
+    rc, result = _run(
+        tmp_path,
+        "openshell",
+        "reconcile",
+        "--agent",
+        "rocky",
+        "--apply",
+        "--validated",
+        "--actor",
+        "test",
+        "--sandbox-id",
+        "smoke-cli",
+        "--validation-summary",
+        "cli smoke passed",
+    )
+
+    assert rc == 0
+    assert result["dry_run"] is False
+    assert result["agents"][0]["after"]["effective"]["deployed"] is True
+
+    rc, status = _run(tmp_path, "openshell", "status", "--agent", agent["id"])
+    assert rc == 0
+    assert status["required"] is True
+    assert status["effective"]["assigned"] is True
+    assert status["effective"]["deployed"] is True
+
+    rc, refreshed = _run(tmp_path, "agent", "list")
+    assert rc == 0
+    rocky = next(item for item in refreshed if item["id"] == agent["id"])
+    assert rocky["resources"]["openshell_required"] is True
+    assert rocky["resources"]["hardware"] == {"accelerator": "gpu"}
+
+
+def test_mac_cli_openshell_reconcile_fleet_skips_missing_agents(tmp_path):
+    rc, machine = _run(tmp_path, "machine", "register", "fleet-host")
+    assert rc == 0
+    rc, _agent = _run(
+        tmp_path,
+        "agent",
+        "register",
+        machine["id"],
+        "present",
+        "--agent-id",
+        "agent_present",
+    )
+    assert rc == 0
+    fleet_config = tmp_path / "fleets.yaml"
+    fleet_config.write_text(
+        """
+version: 1
+fleets:
+  test-fleet:
+    default: true
+    agents:
+      - name: present
+        enabled: true
+        os: linux
+      - name: missing
+        enabled: true
+        os: linux
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc, result = _run(
+        tmp_path,
+        "openshell",
+        "reconcile",
+        "--fleet-config",
+        str(fleet_config),
+        "--target-fleet",
+        "test-fleet",
+    )
+
+    assert rc == 0
+    assert result["dry_run"] is True
+    assert result["missing_agents"] == ["missing"]
+    assert [row["agent_name"] for row in result["agents"]] == ["present"]
+
+
 def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
     rc, machine = _run(tmp_path, "machine", "register", "refresh-host")
     assert rc == 0

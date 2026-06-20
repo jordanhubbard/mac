@@ -74,6 +74,26 @@ docker info             # must be a real Docker Engine/Moby daemon, not Podman
 openshell gateway list  # gateway must be reachable
 ```
 
+After host validation, reconcile the hub's OpenShell ledger. Bootstrap success
+does not by itself prove the hub knows the agent is required, which policy is
+assigned, or whether the runtime is currently deployed. The reconciliation
+command reads the enabled Linux agents from `~/.mac/fleets.yaml` unless
+`--agent` is passed explicitly, defaults to dry-run, and preserves existing
+agent resources while setting only `resources.openshell_required`.
+
+```bash
+mac openshell reconcile --target-fleet <fleet>
+mac openshell reconcile --target-fleet <fleet> --apply --validated \
+  --sandbox-id docker-openshell-smoke-$(date +%Y%m%d) \
+  --validation-summary "Docker image smoke and OpenShell sandbox smoke passed"
+mac openshell status --agent agent_hub
+```
+
+`--validated` is required when applying `status=active`; failed or degraded
+hosts should still be reconciled as required, but reported with
+`--status failed` or `--status degraded` so `effective.fail_closed` remains
+truthful.
+
 ## Enable
 
 ```bash
@@ -81,7 +101,6 @@ cp deploy/openshell/mac-hermes-policy.yaml /etc/mac/openshell-policy.yaml
 $EDITOR /etc/mac/openshell-policy.yaml      # fill in __PLACEHOLDER__ tokens
 
 export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml
-export MAC_OPENSHELL_REQUIRED=1
 export MAC_ALLOW_UNSANDBOXED_YOLO=0
 mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -- mac-hermes-gateway
 ```
@@ -90,7 +109,7 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `MAC_OPENSHELL_REQUIRED` | hub/worker-1/worker-2 required | fail closed when OpenShell/policy is unavailable |
+| `MAC_OPENSHELL_REQUIRED` | derived from `agent.resources.openshell_required` | fail closed when OpenShell/policy is unavailable |
 | `MAC_OPENSHELL_BIN` | `openshell` | path to the `openshell` binary |
 | `MAC_OPENSHELL_POLICY` | _(resolved)_ | explicit policy path; MAC-managed materialized policy should be set here |
 | `MAC_OPENSHELL_EVENTS_FILE` | _(none)_ | JSONL/OCSF event stream for `mac-openshell-collector` |
