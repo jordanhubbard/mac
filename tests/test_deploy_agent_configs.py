@@ -386,7 +386,7 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     assert "install_codegraph_cli()" in script
     assert "initialize_codegraph_repository()" in script
     assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in script
-    assert "codegraph install" in script
+    assert "codegraph install --yes" in script
     assert "codegraph init" in script
     assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in install_window
     assert 'install_codegraph_cli || true' not in install_window

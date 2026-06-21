@@ -37,8 +37,8 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
 
     assert CODEGRAPH_INSTALL in deploy
     assert CODEGRAPH_INSTALL in containerfile
-    assert "codegraph install" in deploy
-    assert "codegraph install" in containerfile
+    assert "codegraph install --yes" in deploy
+    assert "codegraph install --yes" in containerfile
     assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in deploy
     assert 'install_codegraph_cli || true' not in deploy
     assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in deploy

@@ -41,4 +41,4 @@ def test_openshell_image_installs_codegraph_baseline():
     ).read_text(encoding="utf-8")
 
     assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in containerfile
-    assert "codegraph install" in containerfile
+    assert "codegraph install --yes" in containerfile

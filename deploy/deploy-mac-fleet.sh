@@ -2953,7 +2953,7 @@ install_codegraph_cli() {
       chmod 0755 "$target"
     fi
   fi
-  if PATH="$MAC_HOME/bin:$PATH" codegraph install > "$LOG_DIR/codegraph-install.txt" 2>&1; then
+  if PATH="$MAC_HOME/bin:$PATH" codegraph install --yes > "$LOG_DIR/codegraph-install.txt" 2>&1; then
     PATH="$MAC_HOME/bin:$PATH" codegraph --version > "$LOG_DIR/codegraph-version.txt" 2>&1 || true
     log "CodeGraph CLI ready at $target"
   else
