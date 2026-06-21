@@ -78,6 +78,13 @@ MESSAGING_MCP_ENV = "MAC_CODING_AGENT_MESSAGING_MCP"
 #: Resolution priority. Earlier entries win when more than one qualifies.
 AGENT_PRIORITY: Tuple[str, ...] = ("claude", "codex", "cursor")
 
+#: Sentinel the coding agent must echo back for the in-sandbox preflight to
+#: pass. A correct echo proves, end-to-end *inside the sandbox*, that the binary
+#: exists, the credentials resolve, and egress to the provider is permitted —
+#: i.e. that routing a real task to this agent will actually work there.
+PREFLIGHT_SENTINEL = "MAC_CODING_AGENT_SANDBOX_OK"
+PREFLIGHT_PROMPT = "Respond with exactly this text and nothing else: " + PREFLIGHT_SENTINEL
+
 _DISABLE_VALUES = {"off", "none", "hermes", "gateway", "0", "false", "no"}
 
 

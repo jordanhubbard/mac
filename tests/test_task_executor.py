@@ -522,6 +522,7 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     from mac import coding_agent as ca
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")  # unconfined -> no preflight gate
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
     # Force a Claude choice deterministically (no real PATH/home probing).
     choice = ca.CodingAgentChoice(
@@ -550,6 +551,7 @@ def test_invoke_agent_falls_back_to_hermes_when_no_coding_agent(tmp_path, monkey
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "0")
     none = ca.CodingAgentChoice(agent="", available=False)
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: none)
 
@@ -563,6 +565,102 @@ def test_invoke_agent_falls_back_to_hermes_when_no_coding_agent(tmp_path, monkey
     )
     # Fell back to the Hermes -> gateway argv.
     assert "--query" in captured["argv"] and "hermes_cli.main" in captured["argv"]
+
+
+# ---------------------------------------------------------------------------
+# Coding-agent in-sandbox gating (works in the sandbox -> enabled; else gateway)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_argv_sandboxed_uses_coding_agent_only_when_verified(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude", auth_source="ANTHROPIC_API_KEY")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: True)
+    argv = te._agent_argv("do it", tmp_path, confined=True)
+    assert argv[0] == "/b/claude" and argv[-1] == "do it"
+    # No per-invocation MCP wiring on the sandboxed path (host paths don't resolve
+    # inside the sandbox); no host MCP config file written.
+    assert "--mcp-config" not in argv
+    assert not (tmp_path / ".mac-coding-agent-mcp.json").exists()
+
+
+def test_agent_argv_sandboxed_falls_back_when_not_verified(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
+    argv = te._agent_argv("do it", tmp_path, confined=True)
+    # Host-side availability is NOT sufficient: unverified in-sandbox -> gateway.
+    assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_sandbox_mode_off_never_probes(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "off")
+    monkeypatch.setattr(
+        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+    )
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    assert te._coding_agent_sandbox_ok(choice) is False
+
+
+def test_sandbox_mode_trust_skips_probe(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "trust")
+    monkeypatch.setattr(
+        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+    )
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    assert te._coding_agent_sandbox_ok(choice) is True
+
+
+def test_sandbox_verify_runs_probe_once_and_caches(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
+    te._SANDBOX_PREFLIGHT_CACHE.clear()
+    calls = []
+    monkeypatch.setattr(te, "_run_coding_agent_preflight", lambda c: calls.append(c.agent) or True)
+    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude")
+    assert te._coding_agent_sandbox_ok(choice) is True
+    assert te._coding_agent_sandbox_ok(choice) is True  # second call served from cache
+    assert calls == ["claude"]
+
+
+def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
+    from mac import coding_agent as ca
+
+    seen = {}
+
+    def fake_probe(create_argv, *, timeout):
+        seen["argv"] = create_argv
+        return 0, "noise\n%s\n" % ca.PREFLIGHT_SENTINEL
+
+    deleted = []
+    monkeypatch.setattr(te, "_openshell_probe", fake_probe)
+    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: deleted.append(args) or (True, ""))
+    choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/usr/bin/claude")
+    assert te._run_coding_agent_preflight(choice) is True
+    # The probe ran the real CLI with the preflight prompt, inside `sandbox create`.
+    assert "create" in seen["argv"]
+    joined = " ".join(seen["argv"])
+    assert "/usr/bin/claude" in joined and ca.PREFLIGHT_SENTINEL in joined
+    # The throwaway sandbox is always deleted.
+    assert deleted and deleted[0][0] == "delete"
+
+
+def test_preflight_fails_without_sentinel(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setattr(te, "_openshell_probe", lambda create_argv, *, timeout: (0, "auth error: not logged in"))
+    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/usr/bin/codex")
+    assert te._run_coding_agent_preflight(choice) is False
 
 
 # ---------------------------------------------------------------------------

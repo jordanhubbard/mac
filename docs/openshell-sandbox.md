@@ -141,6 +141,53 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
    appears in OpenShell logs, `/action-events`, the dashboard Observability
    action feed, memory summary eligibility, and OTLP export.
 
+## Coding-agent CLIs in the sandbox
+
+The executor prefers an installed, authenticated coding-agent CLI (Claude Code,
+Codex, Cursor) over a direct LLM-gateway run, because those CLIs authenticate
+against a subscription/seat instead of a metered API token (see
+`src/mac/coding_agent.py`). A coding-agent run is launched exactly like the
+Hermes run — inside the same OpenShell sandbox, under the same policy — so the
+guardrails are unchanged.
+
+**Working outside the sandbox is not sufficient to enable it.** When OpenShell
+confinement is in effect (the per-task wrap *or* the supervisor — i.e.
+`MAC_OPENSHELL_REQUIRED` truthy / the agent is required), coding-agent
+enablement is **gated on a real in-sandbox preflight**: a throwaway sandbox runs
+the CLI under the live policy + forwarded env and must echo a sentinel back,
+proving end-to-end that the **binary exists, credentials resolve, and egress to
+the provider is permitted** in the sandbox. If the preflight fails (or cannot
+run, e.g. nested), the executor falls back to the Hermes → gateway path, which
+is known to work confined. The preflight verdict is cached per worker process.
+
+For a coding agent to pass the preflight, the deployment must ensure, **inside
+the sandbox**:
+
+1. **Binary present** — `claude` / `codex` / `cursor-agent` is in the sandbox
+   image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`).
+2. **Credentials reachable** — env-key auth (`ANTHROPIC_API_KEY`, `CURSOR_API_KEY`)
+   is forwarded automatically; file-based auth (`~/.claude.json`,
+   `~/.codex/auth.json`, `~/.cursor`) must be baked into the image or uploaded.
+3. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
+   provider host (e.g. `api.anthropic.com`) in addition to the hub/gateway. The
+   bundled fail-closed default denies all egress, so the preflight fails closed
+   there by design.
+
+### Environment knobs
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MAC_PREFER_CODING_AGENT` | `1` | master switch; `0` always uses the Hermes → gateway path |
+| `MAC_CODING_AGENT` | _(auto)_ | pin to `claude`/`codex`/`cursor`, or `off` to disable |
+| `MAC_CODING_AGENT_SANDBOX` | `verify` | `verify` = gate on the in-sandbox preflight; `trust` = assume the image is provisioned (skip the probe); `off` = never use a coding agent when confined |
+| `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | `180` | seconds for the in-sandbox preflight |
+| `MAC_CODING_AGENT_<AGENT>_CMD` | _(built-in)_ | override a CLI's invocation (shlex-split); prompt appended as the trailing arg |
+| `MAC_CODING_AGENT_MESSAGING_MCP` | `1` | register the messaging MCP server (unconfined path only, Claude) |
+
+Set `MAC_CODING_AGENT_SANDBOX=trust` only after validating the image+policy out
+of band; it skips the per-task proof. `python -m mac.coding_agent` prints the
+(secret-free) host-side routing decision for the current environment.
+
 ## Follow-up
 
 - Tune the operator policy against the real model-gateway/hub hosts (both the

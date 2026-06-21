@@ -1808,20 +1808,24 @@ def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
     )
 
 
-def _record_runner_choice(choice: Any) -> None:
+def _record_runner_choice(target: str, rationale: List[str]) -> None:
     """Make the coding-agent-vs-gateway routing decision legible (best-effort).
 
     Mirrors :func:`mac.agent_provider.record_provider_decision`: a secret-free
     line so an operator (or the agent) can answer "why did this task run on
     Claude / Codex / Cursor / the gateway?" rather than facing a silent choice.
     """
-    target = choice.agent or "hermes-gateway"
     sys.stderr.write(
-        "[executor] coding-agent routing: %s (%s)\n"
-        % (target, "; ".join(choice.rationale) or "no rationale")
+        "[executor] coding-agent routing: %s (%s)\n" % (target, "; ".join(rationale) or "no rationale")
     )
     try:
-        emit_telemetry("runner_selected", level="info", **choice.observable())
+        emit_telemetry(
+            "runner_selected",
+            level="info",
+            schema="mac.coding_agent.routing.v1",
+            runner=target,
+            rationale=list(rationale),
+        )
     except Exception:  # noqa: BLE001 - telemetry must never break execution
         pass
 
@@ -1831,7 +1835,9 @@ def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]
 
     Only when messaging-MCP is enabled and the agent supports per-invocation MCP
     (Claude Code). Best-effort: any failure returns ``None`` — hub parity via the
-    ``mac`` CLI + runtime context is unaffected.
+    ``mac`` CLI + runtime context is unaffected. Not used on the sandboxed path
+    (the host config-file path and host MCP-server interpreter do not resolve
+    inside the sandbox — see :func:`_agent_argv`).
     """
     try:
         from . import coding_agent as _ca
@@ -1846,8 +1852,90 @@ def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]
         return None
 
 
-def _agent_argv(prompt: str, workspace: Path) -> List[str]:
-    """Pick the agent runner: a coding-agent CLI when one is available + authed,
+# Per-process cache of the in-sandbox preflight verdict, keyed by (agent, binary).
+# The worker is long-lived; we verify once and reuse, so the LLM-backed probe
+# does not run on every task.
+_SANDBOX_PREFLIGHT_CACHE: Dict[tuple, bool] = {}
+
+
+def _coding_agent_preflight_timeout() -> float:
+    raw = (os.environ.get("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT") or "").strip()
+    try:
+        val = float(raw)
+        return val if val > 0 else 180.0
+    except ValueError:
+        return 180.0
+
+
+def _build_sandbox_probe_argv(name: str, agent_argv: List[str]) -> List[str]:
+    """A minimal ``openshell sandbox create`` argv that runs ``agent_argv`` under
+    the SAME policy + env-forwarding + create-args as a real task run, but with no
+    workspace upload — used only to verify the coding agent works in-sandbox."""
+    argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
+    argv += ["--policy", _resolve_openshell_policy(), "--name", name]
+    argv += _openshell_env_flags()
+    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+    if extra:
+        argv += shlex.split(extra)
+    argv += ["--", "bash", "-lc", "exec %s" % shlex.join(agent_argv)]
+    return argv
+
+
+def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
+    """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
+    Best-effort: any failure returns a non-zero code (never raises)."""
+    try:
+        proc = subprocess.run(create_argv, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except Exception as exc:  # noqa: BLE001 - a probe failure must mean "not ready", not a crash
+        return 1, str(exc)
+
+
+def _run_coding_agent_preflight(choice: Any) -> bool:
+    """Verify, inside a throwaway OpenShell sandbox, that the coding agent runs
+    end-to-end: it must execute, authenticate, reach the provider, and echo the
+    sentinel back. Proves the agent will actually work for a real sandboxed task
+    (binary present + creds resolvable + egress allowed) — host-side availability
+    is NOT sufficient. The probe sandbox is always deleted."""
+    from . import coding_agent as _ca
+
+    name = "mac-codingcap-%s-%d" % (choice.agent, os.getpid())
+    probe_argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
+    try:
+        rc, out = _openshell_probe(_build_sandbox_probe_argv(name, probe_argv), timeout=_coding_agent_preflight_timeout())
+    finally:
+        _sandbox_step(["delete", name], timeout=60.0)
+    ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
+    sys.stderr.write(
+        "[executor] coding-agent sandbox preflight (%s): %s\n"
+        % (choice.agent, "OK" if ok else "FAILED (rc=%s) — falling back to gateway" % rc)
+    )
+    return ok
+
+
+def _coding_agent_sandbox_ok(choice: Any) -> bool:
+    """Whether a coding agent may be used on the SANDBOXED path.
+
+    ``MAC_CODING_AGENT_SANDBOX`` modes:
+      * ``verify`` (default) — gate on a cached in-sandbox preflight that actually
+        runs the agent; only enable when it works there.
+      * ``trust`` / ``1`` — assume the sandbox image is provisioned; skip the probe.
+      * ``off`` / ``0`` — never use a coding agent when sandboxed (always Hermes).
+    """
+    mode = (os.environ.get("MAC_CODING_AGENT_SANDBOX") or "verify").strip().lower()
+    if mode in {"off", "0", "false", "no"}:
+        return False
+    if mode in {"trust", "1", "true", "yes", "skip"}:
+        return True
+    key = (choice.agent, choice.binary)
+    if key not in _SANDBOX_PREFLIGHT_CACHE:
+        _SANDBOX_PREFLIGHT_CACHE[key] = _run_coding_agent_preflight(choice)
+    return _SANDBOX_PREFLIGHT_CACHE[key]
+
+
+def _agent_argv(prompt: str, workspace: Path, *, confined: bool) -> List[str]:
+    """Pick the agent runner: a coding-agent CLI when one is available + authed
+    (and — when OpenShell-confined — verified to actually work inside the sandbox),
     else the vendored Hermes -> LLM gateway argv.
 
     Coding-agent CLIs (Claude Code, Codex, Cursor) authenticate against a
@@ -1856,16 +1944,35 @@ def _agent_argv(prompt: str, workspace: Path) -> List[str]:
     CLI runs in the prepared checkout (the ``mac`` CLI + runtime context + hub
     env give it the same hub tool surface Hermes has), receives the same
     structured task/evidence prompt, and — where the CLI supports per-invocation
-    MCP — the messaging MCP server. When no coding agent qualifies, this falls
-    back to ``_hermes_argv`` unchanged.
+    MCP, on the unconfined path — the messaging MCP server.
+
+    When OpenShell confinement is in effect (``confined`` — per-task wrap or the
+    production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
+    (a real in-sandbox preflight by default), because a host-side ``which``/cred
+    check does NOT prove the agent works inside the confined sandbox. When the
+    agent is unavailable, or confined but not verified, this falls back to
+    ``_hermes_argv`` unchanged (Hermes is known to work confined).
     """
     from . import coding_agent as _ca
 
     choice = _ca.resolve_coding_agent()
-    _record_runner_choice(choice)
+    rationale = list(choice.rationale)
     if not choice.available:
+        _record_runner_choice("hermes-gateway", rationale)
         return _hermes_argv(prompt)
-    mcp_path = _coding_agent_mcp_config_path(workspace, choice)
+    if confined and not _coding_agent_sandbox_ok(choice):
+        rationale.append("%s not verified inside the OpenShell sandbox; using gateway" % choice.agent)
+        _record_runner_choice("hermes-gateway", rationale)
+        return _hermes_argv(prompt)
+
+    # MCP wiring is unconfined-only: the host config path + host MCP-server
+    # interpreter do not reliably resolve inside the sandbox (messaging-MCP parity
+    # there is provisioned image-side). Hub parity (mac CLI + runtime context)
+    # still applies regardless.
+    mcp_path = None if confined else _coding_agent_mcp_config_path(workspace, choice)
+    if confined:
+        rationale.append("verified inside the OpenShell sandbox")
+    _record_runner_choice(choice.agent, rationale)
     return _ca.coding_agent_argv(choice, prompt, mcp_config_path=mcp_path)
 
 
@@ -2101,8 +2208,15 @@ def _invoke_agent(
     Returns the runner's result (carries .returncode)."""
     if _executor_backend() == "acp":
         return _invoke_acp_agent(prompt, workspace, audit_id, opts)
-    agent_argv = _agent_argv(prompt, workspace)
-    if _openshell_enabled():
+    # `wrap` is the per-task OpenShell wrap launch model; `confined` is whether
+    # OpenShell confinement is in effect by EITHER model — the per-task wrap or
+    # the production supervisor (which runs this whole process inside a sandbox,
+    # with MAC_OPENSHELL_SANDBOX off but the agent required). Coding-agent
+    # enablement is gated on `confined`, not `wrap`.
+    wrap = _openshell_enabled()
+    confined = wrap or _openshell_required_for_local_agent()
+    agent_argv = _agent_argv(prompt, workspace, confined=confined)
+    if wrap:
         return _run_sandboxed(runner, agent_argv, workspace, audit_id, opts)
     return runner(_unsandboxed_agent_argv(agent_argv), workspace, audit_id, opts)
 
