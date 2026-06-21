@@ -148,3 +148,44 @@ def test_failed_tasks_check_warns_when_failed_present_else_ok():
     recent_ids = [r["id"] for r in finding.detail["recent"]]
     assert broken.id in recent_ids
     assert healthy.id not in recent_ids
+
+
+def test_recent_rows_counts_all_but_caps_recent_dicts():
+    cp = ControlPlane.in_memory()
+
+    # Seed three failed tasks; force the state directly.
+    ids = []
+    for i in range(3):
+        t = cp.create_task("task %d" % i, project="diag")
+        cp.store.execute("UPDATE tasks SET state='failed' WHERE id=?", (t.id,))
+        ids.append(t.id)
+
+    sql = "SELECT id, title, project FROM tasks WHERE state = 'failed' ORDER BY created_at DESC"
+
+    # Count reflects all matching rows; recent is capped and sqlite3.Row -> dict.
+    count, recent = diagnostics._recent_rows(cp, sql, limit=2)
+    assert count == 3
+    assert len(recent) == 2
+    assert all(isinstance(r, dict) for r in recent)
+    assert set(recent[0].keys()) == {"id", "title", "project"}
+    assert {r["id"] for r in recent} <= set(ids)
+
+    # Default limit (10) returns every row when fewer than the cap.
+    count_all, recent_all = diagnostics._recent_rows(cp, sql)
+    assert count_all == 3
+    assert len(recent_all) == 3
+
+
+def test_threshold_finding_ok_and_warn_shape():
+    recent = [{"id": "x", "title": "t", "project": "p"}]
+
+    ok = diagnostics._threshold_finding("c", count=2, threshold=5, recent=recent, noun="widget(s)")
+    assert ok.severity == "ok"
+    assert ok.summary == "2 widget(s) (threshold 5)"
+    assert ok.detail == {"count": 2, "threshold": 5}
+    assert "recent" not in ok.detail
+
+    warn = diagnostics._threshold_finding("c", count=7, threshold=5, recent=recent, noun="widget(s)")
+    assert warn.severity == "warn"
+    assert warn.summary == "7 widget(s) exceed threshold 5"
+    assert warn.detail == {"count": 7, "threshold": 5, "recent": recent}
