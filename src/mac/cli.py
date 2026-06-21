@@ -510,6 +510,16 @@ def cmd_task_search(args: argparse.Namespace) -> None:
     _print([t.to_dict() for t in cp.search_tasks(args.query, project=project, limit=int(args.limit))])
 
 
+def cmd_diagnostics(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    from mac import diagnostics
+
+    report = diagnostics.summarize(
+        diagnostics.run_diagnostics(cp, names=getattr(args, "check", None) or None)
+    )
+    _print(report)
+
+
 def cmd_task_stats(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
@@ -2333,6 +2343,14 @@ def build_parser() -> argparse.ArgumentParser:
         "~/.mac/fleets.yaml entry.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    diagnostics_parser = sub.add_parser(
+        "diagnostics", help="run read-only control-plane health checks"
+    )
+    diagnostics_parser.add_argument(
+        "--check", action="append", help="run only the named check (repeatable)"
+    )
+    _set(cmd_diagnostics, diagnostics_parser)
 
     _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
 
