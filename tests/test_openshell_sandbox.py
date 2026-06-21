@@ -49,6 +49,7 @@ def _clean(monkeypatch, tmp_path):
     # Tests run on non-Landlock hosts (Mac/CI); bypass the kernel precheck so the
     # orchestration tests exercise the lifecycle. The precheck has its own tests.
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", lambda download_root, workspace: None)
     yield
 
 
@@ -252,7 +253,8 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch):
     assert len(r.calls) == 1
     create = r.calls[0][0]
     assert create[:3] == ["openshell", "sandbox", "create"] and "--upload" in create
-    assert steps[0] == ["download", "sb1", "/sandbox/task-7", "/work/task-7"]
+    assert steps[0][:3] == ["download", "sb1", "/sandbox/task-7"]
+    assert Path(steps[0][3]).name.startswith(".task-7-openshell-download-")
     assert steps[1] == ["delete", "sb1"]
 
 

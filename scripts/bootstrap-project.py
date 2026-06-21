@@ -47,6 +47,8 @@ def main() -> int:
         % (platform.system(), platform.machine(), sys.executable),
         flush=True,
     )
+    if not VENV_PYTHON.exists() and VENV.exists():
+        shutil.rmtree(VENV)
     if not VENV_PYTHON.exists():
         run([sys.executable, "-m", "venv", str(VENV)])
     run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])

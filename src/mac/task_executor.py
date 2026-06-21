@@ -51,8 +51,10 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -1058,11 +1060,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         )
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
-    pushed = False
     push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
-    push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
-    if push.returncode == 0:
-        pushed = True
     bootstrap = _run_repository_bootstrap_if_needed(worktree_path, task)
     test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
     tests = None
@@ -1096,11 +1094,33 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
     files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
     final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
+    clean = not bool(final_status)
+    pushed = False
+    if bootstrap_ok and tests_ok and clean:
+        push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
+        pushed = push.returncode == 0
+        push_evidence = {
+            "returncode": int(push.returncode),
+            "status": "pass" if push.returncode == 0 else "fail",
+            "stderr": (push.stderr or "")[:4000],
+        }
+    elif not clean:
+        push_evidence = {
+            "returncode": 1,
+            "status": "skipped",
+            "reason": "worktree dirty after bootstrap/tests",
+        }
+    else:
+        push_evidence = {
+            "returncode": 1,
+            "status": "skipped",
+            "reason": "bootstrap/tests failed",
+        }
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
         "evidence_type": "repo_change",
-        "summary": "Deterministic finalizer: commit+push+test for %s" % task.get("id"),
+        "summary": "Deterministic finalizer: commit+test+push for %s" % task.get("id"),
         "repo": {
             "head_sha": head_sha,
             "pushed": pushed,
@@ -1109,11 +1129,12 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "files_changed": files_changed,
         },
         "tests": tests,
+        "push": push_evidence,
         "checks": [
             {
                 "name": "git_finalizer",
-                "returncode": 0 if pushed and bootstrap_ok and tests_ok else 1,
-                "status": "pass" if pushed and bootstrap_ok and tests_ok else "fail",
+                "returncode": 0 if pushed and bootstrap_ok and tests_ok and clean else 1,
+                "status": "pass" if pushed and bootstrap_ok and tests_ok and clean else "fail",
             }
         ],
     }
@@ -1839,6 +1860,153 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return False, str(exc)
 
 
+_SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
+    ".venv",
+    "venv",
+    "node_modules",
+}
+
+
+def _relative_path_or_none(path: Path, root: Path) -> Optional[Path]:
+    try:
+        return path.expanduser().resolve().relative_to(root.expanduser().resolve())
+    except (OSError, ValueError):
+        return None
+
+
+def _sandbox_repository_roots(workspace: Path, download_root: Path) -> set[Path]:
+    roots: set[Path] = set()
+
+    env_worktree = (os.environ.get("MAC_TASK_REPO_WORKTREE") or "").strip()
+    if env_worktree:
+        rel = _relative_path_or_none(Path(env_worktree), workspace)
+        if rel is not None:
+            roots.add(rel)
+
+    for context_file in (workspace / "repository-worktree.json", download_root / "repository-worktree.json"):
+        try:
+            context = json.loads(context_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(context, dict):
+            continue
+        worktree = str(context.get("repository_worktree") or "").strip()
+        if not worktree:
+            continue
+        rel = _relative_path_or_none(Path(worktree), workspace)
+        if rel is not None:
+            roots.add(rel)
+
+    return roots
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path]) -> bool:
+    # Git metadata is never a legitimate file payload. Copying a sandbox .git
+    # directory over a host git-worktree .git file caused the live P0 failure.
+    if ".git" in rel_path.parts:
+        return True
+    for root in repository_roots:
+        for name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES:
+            runtime_root = root / name
+            if _path_is_under(rel_path, runtime_root):
+                return True
+    return False
+
+
+def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
+    """Merge a downloaded sandbox workspace into the host workspace.
+
+    OpenShell downloads a tar archive. Extracting directly over a git worktree is
+    unsafe for repo tasks because task worktrees may use a host ``.git`` file
+    while the sandbox checkout may contain a ``.git`` directory. Keep host git
+    metadata and container-local dependency caches out of the merge; the
+    deterministic finalizer rebuilds/tests from the host worktree.
+    """
+    workspace.mkdir(parents=True, exist_ok=True)
+    repository_roots = _sandbox_repository_roots(workspace, download_root)
+    source_files: set[Path] = set()
+    source_dirs: set[Path] = {Path(".")}
+
+    for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(download_root)
+        if rel_root != Path("."):
+            source_dirs.add(rel_root)
+        kept_dirs: List[str] = []
+        for name in dirs:
+            rel = rel_root / name
+            if _sandbox_download_path_excluded(rel, repository_roots):
+                continue
+            source_dirs.add(rel)
+            kept_dirs.append(name)
+        dirs[:] = kept_dirs
+        for name in files:
+            rel = rel_root / name
+            if not _sandbox_download_path_excluded(rel, repository_roots):
+                source_files.add(rel)
+
+    for root, dirs, files in os.walk(workspace, topdown=False, followlinks=False):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(workspace)
+        for name in files:
+            rel = rel_root / name
+            if _sandbox_download_path_excluded(rel, repository_roots) or rel in source_files:
+                continue
+            (root_path / name).unlink(missing_ok=True)
+        for name in dirs:
+            rel = rel_root / name
+            target = root_path / name
+            if _sandbox_download_path_excluded(rel, repository_roots) or rel in source_dirs:
+                continue
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(target, ignore_errors=True)
+
+    for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(download_root)
+        kept_dirs = []
+        for name in dirs:
+            rel = rel_root / name
+            src = root_path / name
+            if _sandbox_download_path_excluded(rel, repository_roots):
+                continue
+            if src.is_symlink():
+                dst = workspace / rel
+                if dst.exists() or dst.is_symlink():
+                    if dst.is_dir() and not dst.is_symlink():
+                        shutil.rmtree(dst)
+                    else:
+                        dst.unlink()
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.symlink_to(os.readlink(src))
+            else:
+                (workspace / rel).mkdir(parents=True, exist_ok=True)
+                kept_dirs.append(name)
+        dirs[:] = kept_dirs
+        for name in files:
+            rel = rel_root / name
+            if _sandbox_download_path_excluded(rel, repository_roots):
+                continue
+            src = root_path / name
+            dst = workspace / rel
+            if dst.exists() or dst.is_symlink():
+                if dst.is_dir() and not dst.is_symlink():
+                    shutil.rmtree(dst)
+                else:
+                    dst.unlink()
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_symlink():
+                dst.symlink_to(os.readlink(src))
+            else:
+                shutil.copy2(src, dst)
+
+
 def _sandbox_run_repository_verification(name: str, basename: str, workspace: Path, task: Any) -> None:
     if not isinstance(task, dict) or not task_is_repo_coupled(task):
         return
@@ -1885,7 +2053,19 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
     back into the host workspace. Best-effort: a failure is logged, not fatal —
     completeness is still judged by the evidence manifest on the host."""
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
-    ok, msg = _sandbox_step(["download", name, sub, str(workspace)], timeout=300.0)
+    temp_parent = str(workspace.parent) if workspace.parent.is_dir() else None
+    with tempfile.TemporaryDirectory(
+        prefix=".%s-openshell-download-" % workspace.name,
+        dir=temp_parent,
+    ) as tmp:
+        download_root = Path(tmp)
+        ok, msg = _sandbox_step(["download", name, sub, str(download_root)], timeout=300.0)
+        if ok:
+            try:
+                _merge_sandbox_download_tree(download_root, workspace)
+            except Exception as exc:  # noqa: BLE001 - download sync is best-effort
+                ok = False
+                msg = "sandbox download merge failed: %s" % exc
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox download failed: %s\n" % msg)
     return ok

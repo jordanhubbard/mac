@@ -275,6 +275,7 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
     monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
     monkeypatch.setattr(te, "_sandbox_name", lambda: "sb")
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", lambda download_root, workspace: None)
     steps = []
 
     def fake_step(args, *, timeout):
@@ -315,6 +316,61 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
     assert steps[3][0] == "download"
     assert steps[4][0] == "delete"
+
+
+def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_dirs(tmp_path):
+    workspace = tmp_path / "task"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    repository_context = {
+        "schema": "mac.repository_task_worktree.v1",
+        "repository_worktree": str(repo),
+    }
+    (workspace / "repository-worktree.json").write_text(json.dumps(repository_context), encoding="utf-8")
+    (repo / ".git").write_text("gitdir: /host/git/worktrees/repo\n", encoding="utf-8")
+    (repo / "old.py").write_text("remove me\n", encoding="utf-8")
+    (repo / "same.py").write_text("old\n", encoding="utf-8")
+
+    download = tmp_path / "download"
+    download.mkdir()
+    (download / "repository-worktree.json").write_text(json.dumps(repository_context), encoding="utf-8")
+    sandbox_repo = download / "repo"
+    (sandbox_repo / ".git").mkdir(parents=True)
+    (sandbox_repo / ".git" / "description").write_text("sandbox git dir\n", encoding="utf-8")
+    (sandbox_repo / ".venv" / "bin").mkdir(parents=True)
+    (sandbox_repo / ".venv" / "bin" / "python").write_text("container venv\n", encoding="utf-8")
+    (sandbox_repo / "fixtures" / "node_modules").mkdir(parents=True)
+    (sandbox_repo / "fixtures" / "node_modules" / "package.json").write_text("{}\n", encoding="utf-8")
+    (sandbox_repo / "same.py").write_text("new\n", encoding="utf-8")
+    (sandbox_repo / "new.py").write_text("added\n", encoding="utf-8")
+    (download / "mac-evidence.json").write_text('{"status":"complete"}\n', encoding="utf-8")
+
+    te._merge_sandbox_download_tree(download, workspace)
+
+    assert (repo / ".git").is_file()
+    assert (repo / ".git").read_text(encoding="utf-8").startswith("gitdir:")
+    assert not (repo / ".git" / "description").exists()
+    assert not (repo / ".venv").exists()
+    assert not (repo / "old.py").exists()
+    assert (repo / "same.py").read_text(encoding="utf-8") == "new\n"
+    assert (repo / "new.py").read_text(encoding="utf-8") == "added\n"
+    assert (repo / "fixtures" / "node_modules" / "package.json").exists()
+    assert (workspace / "mac-evidence.json").exists()
+
+
+def test_sandbox_download_merge_failure_is_best_effort(tmp_path, monkeypatch, capsys):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+
+    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
+
+    def fail_merge(download_root, workspace):
+        raise RuntimeError("merge boom")
+
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", fail_merge)
+
+    assert te._sandbox_download("sb", "task", workspace) is False
+    assert "sandbox download merge failed: merge boom" in capsys.readouterr().err
 
 
 def test_build_telemetry_record_shape():
@@ -681,9 +737,11 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["pushed"] is False
     assert manifest["bootstrap"]["status"] == "fail"
     assert manifest["tests"]["status"] == "pass"
+    assert manifest["push"]["status"] == "skipped"
+    assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert manifest["checks"][0]["status"] == "fail"
 
 
