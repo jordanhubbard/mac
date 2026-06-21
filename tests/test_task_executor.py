@@ -173,6 +173,124 @@ PY''',
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_sandbox_repository_verification_retries_and_records_bootstrap(tmp_path):
+    workspace = tmp_path / "task"
+    worktree = workspace / "repo"
+    worktree.mkdir(parents=True)
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "bootstrap": {
+                                "command": "sh bootstrap.sh",
+                                "creates": [".venv/bin/coverage"],
+                            },
+                            "test": {"command": "test -f .venv/bin/coverage"},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (worktree / "bootstrap.sh").write_text(
+        "\n".join(
+            [
+                "if [ ! -f first-attempt ]; then",
+                "  touch first-attempt",
+                "  exit 1",
+                "fi",
+                "mkdir -p .venv/bin",
+                "touch .venv/bin/coverage",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", te._sandbox_repository_verification_shell()],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_TASK_REPO_WORKTREE": str(worktree),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    manifest = json.loads((workspace / "mac-sandbox-verification.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "pass"
+    assert manifest["bootstrap"]["status"] == "pass"
+    assert manifest["bootstrap"]["missing_before"] == [".venv/bin/coverage"]
+    assert (worktree / "first-attempt").exists()
+    assert (worktree / ".venv/bin/coverage").exists()
+
+
+def test_sandbox_repository_verification_does_not_rerun_bootstrap_without_creates(tmp_path):
+    workspace = tmp_path / "task"
+    worktree = workspace / "repo"
+    worktree.mkdir(parents=True)
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "bootstrap": {"command": "sh bootstrap.sh"},
+                            "test": {"command": "test \"$(cat bootstrap-count)\" = 1"},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (worktree / "bootstrap.sh").write_text(
+        "\n".join(
+            [
+                "count=0",
+                "[ -f bootstrap-count ] && count=$(cat bootstrap-count)",
+                "count=$((count + 1))",
+                "printf '%s' \"$count\" > bootstrap-count",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", te._sandbox_repository_verification_shell()],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_TASK_REPO_WORKTREE": str(worktree),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    manifest = json.loads((workspace / "mac-sandbox-verification.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "pass"
+    assert manifest["bootstrap"]["status"] == "pass"
+    assert manifest["bootstrap"]["creates"] == []
+    assert (worktree / "bootstrap-count").read_text(encoding="utf-8") == "1"
+
+
 def test_sandbox_toolchain_setup_provisions_gh_when_missing(tmp_path):
     workspace = tmp_path / "task"
     workspace.mkdir()
@@ -328,6 +446,8 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     }
     (workspace / "repository-worktree.json").write_text(json.dumps(repository_context), encoding="utf-8")
     (repo / ".git").write_text("gitdir: /host/git/worktrees/repo\n", encoding="utf-8")
+    (repo / ".git.bak-old" / "objects").mkdir(parents=True)
+    (repo / ".git.bak-old" / "objects" / "stale").write_text("stale backup\n", encoding="utf-8")
     (repo / "old.py").write_text("remove me\n", encoding="utf-8")
     (repo / "same.py").write_text("old\n", encoding="utf-8")
 
@@ -337,6 +457,12 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     sandbox_repo = download / "repo"
     (sandbox_repo / ".git").mkdir(parents=True)
     (sandbox_repo / ".git" / "description").write_text("sandbox git dir\n", encoding="utf-8")
+    (sandbox_repo / ".git.bak").write_text("sandbox transfer backup\n", encoding="utf-8")
+    (sandbox_repo / ".git.bak123" / "objects").mkdir(parents=True)
+    (sandbox_repo / ".git.bak123" / "objects" / "description").write_text(
+        "sandbox transfer backup dir\n",
+        encoding="utf-8",
+    )
     (sandbox_repo / ".venv" / "bin").mkdir(parents=True)
     (sandbox_repo / ".venv" / "bin" / "python").write_text("container venv\n", encoding="utf-8")
     (sandbox_repo / "fixtures" / "node_modules").mkdir(parents=True)
@@ -350,6 +476,9 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     assert (repo / ".git").is_file()
     assert (repo / ".git").read_text(encoding="utf-8").startswith("gitdir:")
     assert not (repo / ".git" / "description").exists()
+    assert not (repo / ".git.bak").exists()
+    assert not (repo / ".git.bak123").exists()
+    assert not (repo / ".git.bak-old").exists()
     assert not (repo / ".venv").exists()
     assert not (repo / "old.py").exists()
     assert (repo / "same.py").read_text(encoding="utf-8") == "new\n"

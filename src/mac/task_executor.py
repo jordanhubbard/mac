@@ -1708,6 +1708,9 @@ PYGH
   done
   worktree="${MAC_TASK_REPO_WORKTREE:-$PWD}"
   needs_bootstrap=0
+  bootstrap_ran=0
+  bootstrap_returncode=0
+  bootstrap_status="skipped"
   if [ -n "$MAC_REPO_BOOTSTRAP_COMMAND" ]; then
     if [ -z "$MAC_REPO_BOOTSTRAP_CREATES" ]; then
       needs_bootstrap=1
@@ -1721,9 +1724,20 @@ EOF
     fi
   fi
   if [ "$needs_bootstrap" = "1" ] && [ -d "$worktree" ]; then
+    bootstrap_ran=1
     mac_note "running bootstrap.command: $MAC_REPO_BOOTSTRAP_COMMAND"
-    ( cd "$worktree" && bash -lc "$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1 || mac_note "bootstrap.command failed"
+    ( cd "$worktree" && bash -lc "$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
+    bootstrap_returncode=$?
+    if [ "$bootstrap_returncode" = "0" ]; then
+      bootstrap_status="pass"
+    else
+      bootstrap_status="fail"
+      mac_note "bootstrap.command failed"
+    fi
   fi
+  export MAC_REPO_BOOTSTRAP_SETUP_RAN="$bootstrap_ran"
+  export MAC_REPO_BOOTSTRAP_SETUP_RETURNCODE="$bootstrap_returncode"
+  export MAC_REPO_BOOTSTRAP_SETUP_STATUS="$bootstrap_status"
   "$MAC_SANDBOX_PYTHON" - <<'PY' >/dev/null 2>&1 || true
 import json, os, shutil
 root = os.environ.get("MAC_TOOLCHAIN_ROOT") or ""
@@ -1759,6 +1773,12 @@ import json, os, subprocess, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
+bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
+bootstrap_creates = [
+    item.strip()
+    for item in os.environ.get("MAC_REPO_BOOTSTRAP_CREATES", "").splitlines()
+    if item.strip()
+]
 result_path = os.path.join(workspace, "mac-sandbox-verification.json")
 delta_path = os.path.join(os.environ.get("MAC_TOOLCHAIN_ROOT", ""), "environment-delta.json")
 delta = {}
@@ -1767,6 +1787,96 @@ try:
         delta = json.load(handle)
 except Exception:
     delta = {}
+
+def missing_bootstrap_outputs():
+    return [
+        path
+        for path in bootstrap_creates
+        if not os.path.exists(os.path.join(worktree, path))
+    ]
+
+bootstrap = None
+if bootstrap_command:
+    setup_ran = os.environ.get("MAC_REPO_BOOTSTRAP_SETUP_RAN") == "1"
+    try:
+        setup_returncode = int(os.environ.get("MAC_REPO_BOOTSTRAP_SETUP_RETURNCODE") or "0")
+    except ValueError:
+        setup_returncode = 1
+    setup_status = os.environ.get("MAC_REPO_BOOTSTRAP_SETUP_STATUS") or (
+        "pass" if setup_returncode == 0 else "fail"
+    )
+    missing_before = missing_bootstrap_outputs()
+    if not bootstrap_creates:
+        bootstrap = {
+            "command": bootstrap_command,
+            "creates": bootstrap_creates,
+            "returncode": setup_returncode,
+            "status": setup_status,
+            "reason": "bootstrap.creates omitted; setup phase ran bootstrap before verification"
+            if setup_ran
+            else "bootstrap.creates omitted; setup phase did not run bootstrap",
+        }
+    elif not missing_before:
+        bootstrap = {
+            "command": bootstrap_command,
+            "creates": bootstrap_creates,
+            "returncode": 0,
+            "status": "skipped",
+            "reason": "declared bootstrap outputs already exist",
+        }
+    else:
+        started = time.time()
+        try:
+            timeout = float(
+                os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
+                or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
+                or "600"
+            )
+        except ValueError:
+            timeout = 600.0
+        try:
+            proc = subprocess.run(
+                ["bash", "-lc", bootstrap_command],
+                cwd=worktree,
+                env=os.environ.copy(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            bootstrap = {
+                "command": bootstrap_command,
+                "creates": bootstrap_creates,
+                "missing_before": missing_before,
+                "returncode": int(proc.returncode),
+                "status": "pass" if proc.returncode == 0 else "fail",
+                "stdout": (proc.stdout or "")[:4000],
+                "stderr": (proc.stderr or "")[:4000],
+                "duration_ms": int((time.time() - started) * 1000),
+            }
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            bootstrap = {
+                "command": bootstrap_command,
+                "creates": bootstrap_creates,
+                "missing_before": missing_before,
+                "returncode": 124,
+                "status": "fail",
+                "stdout": stdout[:4000],
+                "stderr": stderr[:4000],
+                "duration_ms": int((time.time() - started) * 1000),
+                "error": "bootstrap command timed out",
+            }
+    if bootstrap.get("returncode") == 0 and bootstrap_creates:
+        missing_after = missing_bootstrap_outputs()
+        if missing_after:
+            bootstrap = dict(bootstrap)
+            bootstrap["returncode"] = 1
+            bootstrap["status"] = "fail"
+            bootstrap["missing_after"] = missing_after
+            bootstrap["error"] = "bootstrap command did not create declared outputs"
+
 if not command:
     payload = {
         "schema": "mac.sandbox_verification.v1",
@@ -1775,6 +1885,17 @@ if not command:
         "returncode": 1,
         "stderr": "repository contract test.command is missing",
         "environment_delta": delta,
+    }
+elif bootstrap is not None and bootstrap.get("returncode") != 0:
+    payload = {
+        "schema": "mac.sandbox_verification.v1",
+        "status": "fail",
+        "command": command,
+        "returncode": int(bootstrap.get("returncode") or 1),
+        "stderr": "repository bootstrap failed before sandbox verification tests",
+        "worktree": worktree,
+        "environment_delta": delta,
+        "bootstrap": bootstrap,
     }
 else:
     started = time.time()
@@ -1798,6 +1919,8 @@ else:
         "worktree": worktree,
         "environment_delta": delta,
     }
+    if bootstrap is not None:
+        payload["bootstrap"] = bootstrap
 with open(result_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -1904,10 +2027,17 @@ def _path_is_under(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+def _sandbox_download_path_is_git_backup(rel_path: Path) -> bool:
+    return any(part.startswith(".git.bak") for part in rel_path.parts)
+
+
 def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path]) -> bool:
     # Git metadata is never a legitimate file payload. Copying a sandbox .git
     # directory over a host git-worktree .git file caused the live P0 failure.
-    if ".git" in rel_path.parts:
+    # OpenShell transfers can also materialize a sibling .git.bak* when a
+    # container checkout and host git-worktree metadata differ; treat that as
+    # transfer metadata too, while preserving real repo files like .gitignore.
+    if ".git" in rel_path.parts or _sandbox_download_path_is_git_backup(rel_path):
         return True
     for root in repository_roots:
         for name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES:
@@ -1954,12 +2084,18 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
         rel_root = root_path.relative_to(workspace)
         for name in files:
             rel = rel_root / name
+            if _sandbox_download_path_is_git_backup(rel):
+                (root_path / name).unlink(missing_ok=True)
+                continue
             if _sandbox_download_path_excluded(rel, repository_roots) or rel in source_files:
                 continue
             (root_path / name).unlink(missing_ok=True)
         for name in dirs:
             rel = rel_root / name
             target = root_path / name
+            if _sandbox_download_path_is_git_backup(rel):
+                shutil.rmtree(target, ignore_errors=True)
+                continue
             if _sandbox_download_path_excluded(rel, repository_roots) or rel in source_dirs:
                 continue
             if target.is_symlink() or target.is_file():
