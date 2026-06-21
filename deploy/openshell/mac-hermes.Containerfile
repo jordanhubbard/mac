@@ -40,14 +40,8 @@ RUN apt-get update \
     && npm install -g pnpm \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \
-    && curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh \
-    && if ! command -v codegraph >/dev/null 2>&1; then \
-        for candidate in /root/.codegraph/bin/codegraph /root/.local/bin/codegraph /root/.cargo/bin/codegraph /root/bin/codegraph; do \
-          if [ -x "$candidate" ]; then ln -sf "$candidate" /usr/local/bin/codegraph; break; fi; \
-        done; \
-      fi \
-    && if [ -x /root/.local/bin/codegraph ]; then rm -f /usr/local/bin/codegraph && cp -L /root/.local/bin/codegraph /usr/local/bin/codegraph; fi \
-    && chmod 0755 /usr/local/bin/codegraph \
+    && CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh \
+    && chmod -R a+rX /opt/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*

@@ -43,7 +43,9 @@ def test_openshell_image_installs_codegraph_baseline():
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
 
-    assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in containerfile
-    assert "rm -f /usr/local/bin/codegraph && cp -L /root/.local/bin/codegraph /usr/local/bin/codegraph" in containerfile
-    assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
+    assert (
+        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
+        "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh"
+    ) in containerfile
+    assert "chmod -R a+rX /opt/codegraph" in containerfile
     assert "codegraph install --yes" in containerfile
