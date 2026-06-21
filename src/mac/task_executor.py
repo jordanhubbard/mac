@@ -1593,9 +1593,52 @@ PY
     export JAVA_HOME="$MAC_TOOLCHAIN_ROOT/java"
     export PATH="$JAVA_HOME/bin:$PATH"
   }
+  mac_install_gh_local() {
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v tar >/dev/null 2>&1 || return 1
+    arch="$(uname -m 2>/dev/null || echo x64)"
+    case "$arch" in
+      x86_64|amd64) asset_arch="linux_amd64" ;;
+      aarch64|arm64) asset_arch="linux_arm64" ;;
+      armv6l|armv7l) asset_arch="linux_armv6" ;;
+      *) return 1 ;;
+    esac
+    release_json="$MAC_TOOLCHAIN_ROOT/gh-release.json"
+    curl -fsSL https://api.github.com/repos/cli/cli/releases/latest -o "$release_json" || return 1
+    url="$("$MAC_SANDBOX_PYTHON" - "$release_json" "$asset_arch" <<'PYGH'
+import json, sys
+path, asset_arch = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+for asset in data.get("assets") or []:
+    name = str(asset.get("name") or "")
+    url = str(asset.get("browser_download_url") or "")
+    if name.endswith("%s.tar.gz" % asset_arch) and url:
+        print(url)
+        break
+PYGH
+)"
+    [ -n "$url" ] || return 1
+    mkdir -p "$MAC_TOOLCHAIN_ROOT/gh"
+    curl -fsSL "$url" -o "$MAC_TOOLCHAIN_ROOT/gh.tar.gz" || return 1
+    tar -xzf "$MAC_TOOLCHAIN_ROOT/gh.tar.gz" -C "$MAC_TOOLCHAIN_ROOT/gh" --strip-components=1 || return 1
+    [ -x "$MAC_TOOLCHAIN_ROOT/gh/bin/gh" ] || return 1
+    ln -sf "$MAC_TOOLCHAIN_ROOT/gh/bin/gh" "$MAC_TOOLCHAIN_BIN/gh"
+    export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+  }
   mac_install_command() {
     cmd="$1"
     case "$cmd" in
+      gh)
+        if [ "$(id -u 2>/dev/null || echo 1)" = "0" ] && command -v apt-get >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+          mkdir -p -m 755 /etc/apt/keyrings >> "$mac_log" 2>&1 || true
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg >> "$mac_log" 2>&1 || true
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg >> "$mac_log" 2>&1 || true
+          echo "deb [arch=$(dpkg --print-architecture 2>/dev/null || echo amd64) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list 2>> "$mac_log" || true
+          DEBIAN_FRONTEND=noninteractive apt-get update >> "$mac_log" 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gh >> "$mac_log" 2>&1 && return 0
+        fi
+        mac_install_gh_local
+        ;;
       pnpm)
         if command -v corepack >/dev/null 2>&1; then
           corepack enable --install-directory "$MAC_TOOLCHAIN_BIN" >> "$mac_log" 2>&1 || true
@@ -1794,12 +1837,23 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return False, str(exc)
 
 
-def _sandbox_run_repository_verification(name: str, basename: str, task: Any) -> None:
+def _sandbox_run_repository_verification(name: str, basename: str, workspace: Path, task: Any) -> None:
     if not isinstance(task, dict) or not task_is_repo_coupled(task):
         return
     if not _repository_contract_test_command(task):
         return
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    script_path = workspace / ".mac-sandbox-repository-verify.sh"
+    script_path.write_text(_sandbox_repository_verification_shell() + "\n", encoding="utf-8")
+    script_path.chmod(0o700)
+    sandbox_script = "%s/%s" % (sub, script_path.name)
+    ok, msg = _sandbox_step(
+        ["upload", name, str(script_path), sandbox_script],
+        timeout=120.0,
+    )
+    if not ok:
+        sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
+        return
     try:
         timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
     except ValueError:
@@ -1816,8 +1870,7 @@ def _sandbox_run_repository_verification(name: str, basename: str, task: Any) ->
             "--no-tty",
             "--",
             "bash",
-            "-lc",
-            _sandbox_repository_verification_shell(),
+            sandbox_script,
         ],
         timeout=timeout + 90.0,
     )
@@ -1855,7 +1908,7 @@ def _run_sandboxed(
     create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
     try:
         result = runner(create_argv, workspace, audit_id, opts)
-        _sandbox_run_repository_verification(name, basename, opts.get("task"))
+        _sandbox_run_repository_verification(name, basename, workspace, opts.get("task"))
         _sandbox_download(name, basename, workspace)
         return result
     finally:
@@ -1928,6 +1981,25 @@ def _record_runner_choice(target: str, rationale: List[str]) -> None:
         )
     except Exception:  # noqa: BLE001 - telemetry must never break execution
         pass
+
+
+def _repo_requires_verified_coding_agent(task: Any) -> bool:
+    """Repository work under OpenShell needs a real coding CLI in the sandbox.
+
+    The Hermes gateway path can produce patch-like text without mutating the
+    prepared git worktree, which is not valid repo evidence. Non-repository
+    operator/investigation tasks may still use Hermes when confined.
+    """
+    return isinstance(task, dict) and task_is_repo_coupled(task)
+
+
+def _coding_agent_required_failure_argv(reason: str) -> List[str]:
+    msg = (
+        "repository tasks under OpenShell require a verified in-sandbox coding "
+        "agent; %s" % (reason or "no coding agent was verified")
+    )
+    code = "import sys; sys.stderr.write(%r + '\\n'); raise SystemExit(42)" % msg
+    return [_hermes_python(), "-c", code]
 
 
 def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]:
@@ -2033,7 +2105,7 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
     return _SANDBOX_PREFLIGHT_CACHE[key]
 
 
-def _agent_argv(prompt: str, workspace: Path, *, confined: bool) -> List[str]:
+def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = None) -> List[str]:
     """Pick the agent runner: a coding-agent CLI when one is available + authed
     (and — when OpenShell-confined — verified to actually work inside the sandbox),
     else the vendored Hermes -> LLM gateway argv.
@@ -2050,18 +2122,31 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool) -> List[str]:
     production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
     (a real in-sandbox preflight by default), because a host-side ``which``/cred
     check does NOT prove the agent works inside the confined sandbox. When the
-    agent is unavailable, or confined but not verified, this falls back to
-    ``_hermes_argv`` unchanged (Hermes is known to work confined).
+    agent is unavailable, or confined but not verified, non-repository work
+    falls back to ``_hermes_argv`` unchanged. Repository work fails closed under
+    OpenShell so we do not accept gateway-generated diffs that never touched the
+    prepared git worktree.
     """
     from . import coding_agent as _ca
 
+    repo_requires_agent = confined and _repo_requires_verified_coding_agent(task)
     choice = _ca.resolve_coding_agent()
     rationale = list(choice.rationale)
     if not choice.available:
+        if repo_requires_agent:
+            reason = "no host coding agent is available/authenticated"
+            rationale.append(reason)
+            _record_runner_choice("coding-agent-required", rationale)
+            return _coding_agent_required_failure_argv(reason)
         _record_runner_choice("hermes-gateway", rationale)
         return _hermes_argv(prompt)
     if confined and not _coding_agent_sandbox_ok(choice):
-        rationale.append("%s not verified inside the OpenShell sandbox; using gateway" % choice.agent)
+        reason = "%s not verified inside the OpenShell sandbox" % choice.agent
+        if repo_requires_agent:
+            rationale.append(reason)
+            _record_runner_choice("coding-agent-required", rationale)
+            return _coding_agent_required_failure_argv(reason)
+        rationale.append("%s; using gateway" % reason)
         _record_runner_choice("hermes-gateway", rationale)
         return _hermes_argv(prompt)
 
@@ -2315,7 +2400,7 @@ def _invoke_agent(
     # enablement is gated on `confined`, not `wrap`.
     wrap = _openshell_enabled()
     confined = wrap or _openshell_required_for_local_agent()
-    agent_argv = _agent_argv(prompt, workspace, confined=confined)
+    agent_argv = _agent_argv(prompt, workspace, confined=confined, task=opts.get("task"))
     if wrap:
         return _run_sandboxed(runner, agent_argv, workspace, audit_id, opts)
     return runner(_unsandboxed_agent_argv(agent_argv), workspace, audit_id, opts)

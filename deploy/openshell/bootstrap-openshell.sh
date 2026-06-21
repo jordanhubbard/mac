@@ -263,6 +263,13 @@ chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 gpuarg=""; [ "$OSH_GPU" = yes ] && gpuarg=" --gpu"
+codex_uploads=""
+if [ -s "$HOME/.codex/auth.json" ]; then
+  codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
+fi
+if [ -s "$HOME/.codex/config.toml" ]; then
+  codex_uploads="$codex_uploads --upload $HOME/.codex/config.toml:/tmp/.codex/config.toml"
+fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d' "$ENVF"
 {
@@ -272,7 +279,7 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HER
   echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from localhost/mac-hermes:net$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml --env HOME=/tmp\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from localhost/mac-hermes:net$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads --env HOME=/tmp\""
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)

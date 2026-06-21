@@ -21,14 +21,22 @@ FROM docker.io/library/python:3.12-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
-#   helper not found" otherwise). git/curl: task work + git push egress.
-# codegraph: local codebase indexing and inspection baseline for agent work.
+#   helper not found" otherwise). git/curl/gh: task work + git push egress.
+# codex: repository-editing agent for confined coding tasks. codegraph: local
+# codebase indexing and inspection baseline for agent work.
 # make/node/npm/java/pnpm/lein: common repository contracts. The executor can
 # still provision missing tools into a task-local .mac-toolchain, but the base
 # image should cover ordinary polyglot repos without mutating the host fleet.
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iproute2 iptables git curl ca-certificates make nodejs npm openjdk-17-jre-headless \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 iptables git gh make nodejs npm openjdk-17-jre-headless \
+    && npm install -g @openai/codex@0.140.0 \
     && npm install -g pnpm \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \

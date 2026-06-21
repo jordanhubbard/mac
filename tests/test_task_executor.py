@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -172,6 +173,102 @@ PY''',
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_sandbox_toolchain_setup_provisions_gh_when_missing(tmp_path):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "toolchain": {"required_commands": ["gh"]},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name in ("bash", "chmod", "id", "ln", "mkdir"):
+        target = shutil.which(name)
+        assert target, name
+        (fake_bin / name).symlink_to(target)
+    (fake_bin / "uname").write_text("#!/bin/sh\nprintf 'x86_64\\n'\n", encoding="utf-8")
+    (fake_bin / "curl").write_text(
+        """#!/bin/sh
+out=""
+want_out=0
+for arg in "$@"; do
+  if [ "$want_out" = 1 ]; then out="$arg"; want_out=0; continue; fi
+  if [ "$arg" = "-o" ]; then want_out=1; fi
+done
+if [ -n "$out" ]; then
+  case "$out" in
+    *gh-release.json) printf '{"assets":[{"name":"gh_test_linux_amd64.tar.gz","browser_download_url":"https://example.invalid/gh.tar.gz"}]}' > "$out" ;;
+    *) printf 'fake gh tarball' > "$out" ;;
+  esac
+else
+  printf '{"assets":[{"name":"gh_test_linux_amd64.tar.gz","browser_download_url":"https://example.invalid/gh.tar.gz"}]}'
+fi
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "tar").write_text(
+        """#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-C" ]; then dest="$2"; shift 2; continue; fi
+  shift
+done
+mkdir -p "$dest/bin"
+printf '#!/bin/sh\\nprintf "gh fake\\\\n"\\n' > "$dest/bin/gh"
+chmod +x "$dest/bin/gh"
+""",
+        encoding="utf-8",
+    )
+    for name in ("curl", "tar", "uname"):
+        (fake_bin / name).chmod(0o755)
+
+    script = "\n".join(
+        [
+            te._sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup",
+            r'''"$MAC_SANDBOX_PYTHON" - <<'PY'
+import json, os, shutil, subprocess
+assert shutil.which("gh"), os.environ.get("PATH")
+assert subprocess.run(["gh"], capture_output=True, text=True).returncode == 0
+delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
+with open(delta_path, encoding="utf-8") as handle:
+    delta = json.load(handle)
+assert delta["commands"] == ["gh"]
+assert delta["missing_after"] == []
+PY''',
+        ]
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "PATH": str(fake_bin),
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeypatch):
     workspace = tmp_path / "task"
     workspace.mkdir()
@@ -207,10 +304,17 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
 
     assert result.returncode == 0
     assert steps[0][0] == "runner"
-    assert steps[1][:2] == ["exec", "--name"]
+    assert steps[1][:2] == ["upload", "sb"]
+    verify_script = Path(steps[1][2])
+    assert verify_script.name == ".mac-sandbox-repository-verify.sh"
+    assert "mac-sandbox-verification.json" in verify_script.read_text(encoding="utf-8")
+    assert steps[1][3] == "/sandbox/task/.mac-sandbox-repository-verify.sh"
+    assert steps[2][:2] == ["exec", "--name"]
+    assert steps[2][-2:] == ["bash", "/sandbox/task/.mac-sandbox-repository-verify.sh"]
+    assert all("\n" not in str(arg) and "\r" not in str(arg) for arg in steps[2])
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
-    assert steps[2][0] == "download"
-    assert steps[3][0] == "delete"
+    assert steps[3][0] == "download"
+    assert steps[4][0] == "delete"
 
 
 def test_build_telemetry_record_shape():
@@ -783,8 +887,33 @@ def test_agent_argv_sandboxed_falls_back_when_not_verified(tmp_path, monkeypatch
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
     argv = te._agent_argv("do it", tmp_path, confined=True)
-    # Host-side availability is NOT sufficient: unverified in-sandbox -> gateway.
+    # Non-repository work can still fall back to the confined Hermes gateway.
     assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_agent_argv_sandboxed_repo_task_fails_closed_when_not_verified(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    joined = " ".join(argv)
+    assert "hermes_cli.main" not in joined
+    assert "require a verified in-sandbox coding agent" in joined
+
+
+def test_agent_argv_sandboxed_repo_task_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(agent="", available=False, rationale=["no coding agent"])
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    joined = " ".join(argv)
+    assert "hermes_cli.main" not in joined
+    assert "no host coding agent is available/authenticated" in joined
 
 
 def test_sandbox_mode_off_never_probes(monkeypatch):

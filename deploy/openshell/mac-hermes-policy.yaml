@@ -93,6 +93,36 @@ network_policies:
     binaries:
       - { path: __RUNTIME_PY__ }
 
+  # --- Codex CLI provider egress for repository-editing tasks. ---
+  # The CLI is a Node program. Both the symlink launcher and node itself are
+  # listed so policy enforcement remains correct regardless of exec handoff.
+  codex_provider:
+    name: codex-provider
+    endpoints:
+      - host: chatgpt.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: chat.openai.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: auth.openai.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: api.openai.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/local/bin/codex }
+      - { path: /usr/bin/node }
+
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22
   # to your git host rather than this REST block.
@@ -109,8 +139,29 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+      - host: cli.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: objects.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: github-releases.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: release-assets.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
     binaries:
       - { path: /usr/bin/git }
+      - { path: /usr/bin/gh }
       - { path: /usr/lib/git-core/git-remote-https }
       - { path: /usr/bin/curl }
 

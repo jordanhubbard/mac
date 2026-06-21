@@ -157,17 +157,22 @@ enablement is **gated on a real in-sandbox preflight**: a throwaway sandbox runs
 the CLI under the live policy + forwarded env and must echo a sentinel back,
 proving end-to-end that the **binary exists, credentials resolve, and egress to
 the provider is permitted** in the sandbox. If the preflight fails (or cannot
-run, e.g. nested), the executor falls back to the Hermes → gateway path, which
-is known to work confined. The preflight verdict is cached per worker process.
+run, e.g. nested), repository tasks fail closed because the Hermes → gateway
+path can produce patch text without mutating the prepared git worktree.
+Non-repository tasks may still fall back to Hermes, which is known to work
+confined. The preflight verdict is cached per worker process.
 
 For a coding agent to pass the preflight, the deployment must ensure, **inside
 the sandbox**:
 
 1. **Binary present** — `claude` / `codex` / `cursor-agent` is in the sandbox
-   image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`).
+   image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`). The standard MAC image
+   installs `codex`.
 2. **Credentials reachable** — env-key auth (`ANTHROPIC_API_KEY`, `CURSOR_API_KEY`)
    is forwarded automatically; file-based auth (`~/.claude.json`,
    `~/.codex/auth.json`, `~/.cursor`) must be baked into the image or uploaded.
+   `bootstrap-openshell.sh` uploads `~/.codex/auth.json` and
+   `~/.codex/config.toml` when present.
 3. **Baseline repo tools present** — the MAC OpenShell image installs `git`,
    `gh`, and `codegraph`; custom images must provide the same baseline if they
    are used for repository work.
