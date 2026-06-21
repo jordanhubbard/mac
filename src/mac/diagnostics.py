@@ -76,6 +76,53 @@ def register(name: str, description: str) -> Callable[[CheckFn], CheckFn]:
     return decorate
 
 
+def _recent_rows(
+    control_plane: Any,
+    sql: str,
+    params: Sequence[Any] = (),
+    *,
+    limit: int = 10,
+) -> tuple[int, List[Dict[str, Any]]]:
+    """Run ``sql`` and return ``(total_count, first ``limit`` rows as dicts)``.
+
+    The full result is counted so callers can compare against a threshold, but
+    only the first ``limit`` rows are materialized as plain dicts (sqlite3.Row
+    converted) for inclusion in a Finding's detail. ``params`` is forwarded to
+    the query, so callers keep ordering / filtering in their SQL.
+    """
+    rows = control_plane.store.query_all(sql, tuple(params))
+    recent = [dict(row) for row in rows[:limit]]
+    return len(rows), recent
+
+
+def _threshold_finding(
+    check: str,
+    count: int,
+    threshold: int,
+    recent: List[Dict[str, Any]],
+    noun: str,
+) -> Finding:
+    """Build the uniform ok/warn Finding for a "count vs. threshold" check.
+
+    ``ok`` when ``count <= threshold`` (summary ``"%d <noun> (threshold %d)"``,
+    detail ``{count, threshold}``); otherwise ``warn`` (summary
+    ``"%d <noun> exceed threshold %d"``, detail ``{count, threshold, recent}``).
+    """
+    if count <= threshold:
+        return Finding(
+            check,
+            "ok",
+            "%d %s (threshold %d)" % (count, noun, threshold),
+            {"count": count, "threshold": threshold},
+        )
+    return Finding(
+        check,
+        "warn",
+        "%d %s exceed threshold %d" % (count, noun, threshold),
+        {"count": count, "threshold": threshold, "recent": recent},
+    )
+
+
 def run_diagnostics(control_plane: Any, names: Optional[Sequence[str]] = None) -> List[Finding]:
     """Run all registered checks (or just ``names``) and collect their findings.
 
@@ -205,28 +252,8 @@ FAILED_TASKS_THRESHOLD = 0
 
 @register("failed-tasks", "tasks stuck in the 'failed' state exceed the tolerated threshold")
 def _failed_tasks(control_plane: Any, threshold: int = FAILED_TASKS_THRESHOLD) -> List[Finding]:
-    rows = control_plane.store.query_all(
-        "SELECT id, title, project FROM tasks WHERE state = 'failed' ORDER BY created_at DESC"
+    count, recent = _recent_rows(
+        control_plane,
+        "SELECT id, title, project FROM tasks WHERE state = 'failed' ORDER BY created_at DESC",
     )
-    count = len(rows)
-    if count <= threshold:
-        return [
-            Finding(
-                "failed-tasks",
-                "ok",
-                "%d failed task(s) (threshold %d)" % (count, threshold),
-                {"count": count, "threshold": threshold},
-            )
-        ]
-    recent = [
-        {"id": row["id"], "title": row["title"], "project": row["project"]}
-        for row in rows[:10]
-    ]
-    return [
-        Finding(
-            "failed-tasks",
-            "warn",
-            "%d failed task(s) exceed threshold %d" % (count, threshold),
-            {"count": count, "threshold": threshold, "recent": recent},
-        )
-    ]
+    return [_threshold_finding("failed-tasks", count, threshold, recent, "failed task(s)")]
