@@ -63,3 +63,31 @@ def test_finding_rejects_invalid_severity():
 
     with pytest.raises(ValueError):
         diagnostics.Finding("x", "catastrophic", "nope")
+
+
+def test_failed_tasks_check_warns_when_failed_present_else_ok():
+    cp = ControlPlane.in_memory()
+
+    # No failed tasks yet -> ok.
+    findings = diagnostics.run_diagnostics(cp, names=["failed-tasks"])
+    assert findings and len(findings) == 1
+    assert findings[0].check == "failed-tasks"
+    assert findings[0].severity == "ok"
+    assert findings[0].detail["count"] == 0
+
+    # Create two tasks; force one into the 'failed' state directly (the real
+    # transition API requires claim/run/lease bookkeeping not needed here).
+    healthy = cp.create_task("healthy task", project="diag")
+    broken = cp.create_task("broken task", project="diag")
+    cp.store.execute("UPDATE tasks SET state='failed' WHERE id=?", (broken.id,))
+
+    findings = diagnostics.run_diagnostics(cp, names=["failed-tasks"])
+    assert findings and len(findings) == 1
+    finding = findings[0]
+    assert finding.check == "failed-tasks"
+    assert finding.severity == "warn"
+    assert "1" in finding.summary
+    assert finding.detail["count"] == 1
+    recent_ids = [r["id"] for r in finding.detail["recent"]]
+    assert broken.id in recent_ids
+    assert healthy.id not in recent_ids

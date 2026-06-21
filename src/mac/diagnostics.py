@@ -119,3 +119,38 @@ def summarize(findings: Sequence[Finding]) -> Dict[str, Any]:
 def _database_reachable(control_plane: Any) -> List[Finding]:
     control_plane.store.query_one("SELECT 1")
     return [Finding("database-reachable", "ok", "database answered SELECT 1")]
+
+
+#: How many ``state='failed'`` tasks are tolerated before "failed-tasks" warns.
+#: Default 0 so any failed task surfaces a warning; raise it to suppress a known
+#: baseline of historical failures.
+FAILED_TASKS_THRESHOLD = 0
+
+
+@register("failed-tasks", "tasks stuck in the 'failed' state exceed the tolerated threshold")
+def _failed_tasks(control_plane: Any, threshold: int = FAILED_TASKS_THRESHOLD) -> List[Finding]:
+    rows = control_plane.store.query_all(
+        "SELECT id, title, project FROM tasks WHERE state = 'failed' ORDER BY created_at DESC"
+    )
+    count = len(rows)
+    if count <= threshold:
+        return [
+            Finding(
+                "failed-tasks",
+                "ok",
+                "%d failed task(s) (threshold %d)" % (count, threshold),
+                {"count": count, "threshold": threshold},
+            )
+        ]
+    recent = [
+        {"id": row["id"], "title": row["title"], "project": row["project"]}
+        for row in rows[:10]
+    ]
+    return [
+        Finding(
+            "failed-tasks",
+            "warn",
+            "%d failed task(s) exceed threshold %d" % (count, threshold),
+            {"count": count, "threshold": threshold, "recent": recent},
+        )
+    ]
