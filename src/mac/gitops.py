@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -77,6 +78,35 @@ def inject_git_remote_auth(url: str) -> str:
     if parts.port:
         netloc = "%s:%d" % (netloc, parts.port)
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def redact_git_remote_auth(url: str) -> str:
+    """Return a display-safe git remote URL with embedded passwords hidden."""
+    if not url or not url.startswith(("https://", "http://")):
+        return url
+    parts = urlsplit(url)
+    if not parts.hostname or not parts.username:
+        return url
+    netloc = parts.hostname
+    if parts.port:
+        netloc = "%s:%d" % (netloc, parts.port)
+    user = parts.username
+    if parts.password is not None:
+        netloc = "%s:<redacted>@%s" % (user, netloc)
+    else:
+        netloc = "<redacted>@%s" % netloc
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+_AUTHED_HTTP_REMOTE_RE = re.compile(r"(https?://)([^/\s:@]+):([^@\s/]+)@([^\s]+)")
+
+
+def redact_git_remote_auth_in_text(value: str) -> str:
+    """Redact embedded HTTPS git credentials in command output."""
+    text = str(value or "")
+    if "://" not in text or "@" not in text:
+        return text
+    return _AUTHED_HTTP_REMOTE_RE.sub(r"\1\2:<redacted>@\4", text)
 
 
 def _parse_owner_repo(repo_url: str) -> Tuple[str, str]:

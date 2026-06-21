@@ -63,6 +63,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mac import relay_observability
+from mac.gitops import (
+    inject_git_remote_auth as _inject_git_remote_auth,
+    redact_git_remote_auth as _redact_git_remote_auth,
+    redact_git_remote_auth_in_text as _redact_git_remote_auth_in_text,
+)
 from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
@@ -879,6 +884,28 @@ def _repository_contract_test_command(task: Dict[str, Any]) -> str:
     return ""
 
 
+def _repository_contract_canonical_remote(task: Dict[str, Any]) -> str:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "repository_contract"),
+        _nested_dict(metadata, "origin", "repository_contract"),
+        _nested_dict(metadata, "repository_contract"),
+    ]
+    for candidate in candidates:
+        remote = str(candidate.get("canonical_remote_url") or "").strip()
+        if remote:
+            return remote
+    return ""
+
+
+def _repository_push_remote(task: Dict[str, Any], fallback_remote: str = "") -> tuple[str, str]:
+    remote = _repository_contract_canonical_remote(task) or str(fallback_remote or "").strip() or "origin"
+    authed = _inject_git_remote_auth(remote)
+    return authed, _redact_git_remote_auth(authed)
+
+
 def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
@@ -1096,22 +1123,29 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
     clean = not bool(final_status)
     pushed = False
+    push_remote, push_remote_display = _repository_push_remote(
+        task,
+        os.environ.get("MAC_TASK_REPO_REMOTE", "").strip(),
+    )
     if bootstrap_ok and tests_ok and clean:
-        push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
+        push = _git(["push", push_remote, "HEAD:%s" % push_target], worktree_path)
         pushed = push.returncode == 0
         push_evidence = {
+            "remote": push_remote_display,
             "returncode": int(push.returncode),
             "status": "pass" if push.returncode == 0 else "fail",
-            "stderr": (push.stderr or "")[:4000],
+            "stderr": _redact_git_remote_auth_in_text(push.stderr or "")[:4000],
         }
     elif not clean:
         push_evidence = {
+            "remote": push_remote_display,
             "returncode": 1,
             "status": "skipped",
             "reason": "worktree dirty after bootstrap/tests",
         }
     else:
         push_evidence = {
+            "remote": push_remote_display,
             "returncode": 1,
             "status": "skipped",
             "reason": "bootstrap/tests failed",
@@ -1125,6 +1159,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "head_sha": head_sha,
             "pushed": pushed,
             "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
+            "push_remote": push_remote_display,
             "dirty": bool(final_status),
             "files_changed": files_changed,
         },

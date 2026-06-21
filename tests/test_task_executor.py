@@ -755,6 +755,74 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["checks"][0]["status"] == "pass"  # pushed + `true` test passed
 
 
+def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, monkeypatch):
+    origin = tmp_path / "origin.git"
+    canonical = tmp_path / "canonical.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "init", "--bare", str(canonical))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/canonical")
+    (work / "feature.py").write_text("print('canonical')\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t1",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": "true"},
+                },
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["push_remote"] == canonical.as_uri()
+    assert manifest["push"]["remote"] == canonical.as_uri()
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/canonical")
+        .stdout.strip()
+    )
+    assert (
+        _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/canonical")
+        .stdout.strip()
+        == ""
+    )
+
+
+def test_repository_push_remote_uses_auth_but_reports_redacted(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "secret-token")
+    task = {
+        "metadata": {
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "https://github.com/org/repo.git",
+                },
+            },
+        },
+    }
+
+    remote, display = te._repository_push_remote(task, "origin")
+
+    assert remote == "https://x-access-token:secret-token@github.com/org/repo.git"
+    assert display == "https://x-access-token:<redacted>@github.com/org/repo.git"
+
+
 def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))

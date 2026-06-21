@@ -12,6 +12,8 @@ from mac.gitops import (
     _parse_owner_repo,
     detect_host,
     open_pull_request,
+    redact_git_remote_auth,
+    redact_git_remote_auth_in_text,
 )
 
 
@@ -49,6 +51,24 @@ def test_api_base_for_gitea_preserves_scheme_host_port() -> None:
         _api_base_for("gitea", "http://gitea.local:3000/x/y")
         == "http://gitea.local:3000/api/v1"
     )
+
+
+def test_redact_git_remote_auth_hides_https_password() -> None:
+    url = "https://x-access-token:secret-token@github.com/org/repo.git"
+
+    redacted = redact_git_remote_auth(url)
+
+    assert redacted == "https://x-access-token:<redacted>@github.com/org/repo.git"
+    assert "secret-token" not in redacted
+
+
+def test_redact_git_remote_auth_in_text_hides_embedded_password() -> None:
+    text = "fatal: Authentication failed for 'https://x-access-token:secret-token@github.com/org/repo.git/'"
+
+    redacted = redact_git_remote_auth_in_text(text)
+
+    assert "secret-token" not in redacted
+    assert "https://x-access-token:<redacted>@github.com/org/repo.git/" in redacted
 
 
 class _FakeResponse:

@@ -2714,6 +2714,8 @@ class MacWorker:
         repo["pushed"] = False
         if branch:
             repo["remote_ref"] = "refs/heads/%s" % branch
+        push_remote, push_remote_display = _repository_push_remote(task, context)
+        repo["push_remote"] = push_remote_display
 
         pushed = False
         push_item: Optional[JsonDict] = None
@@ -2725,13 +2727,13 @@ class MacWorker:
             problems.append("repository evidence failed local contract checks; refusing to push")
         elif test_item.get("returncode") == 0:
             if branch:
-                push = _run_git(worktree, ["push", "origin", "HEAD:refs/heads/%s" % branch])
+                push = _run_git(worktree, ["push", push_remote, "HEAD:refs/heads/%s" % branch])
                 push_item = _process_check_item(
                     "git push",
                     push.returncode,
-                    command="git push origin HEAD:refs/heads/%s" % branch,
-                    stdout=push.stdout,
-                    stderr=push.stderr,
+                    command="git push %s HEAD:refs/heads/%s" % (push_remote_display, branch),
+                    stdout=_redact_git_remote_auth_in_text(push.stdout),
+                    stderr=_redact_git_remote_auth_in_text(push.stderr),
                 )
                 if push.returncode == 0:
                     pushed = _repository_context_head_is_pushed(
@@ -2739,7 +2741,7 @@ class MacWorker:
                         {
                             "head_sha": _git_stdout(worktree, ["rev-parse", "HEAD"]),
                             "remote_ref": "refs/heads/%s" % branch,
-                            "remote_url": context.get("repository_origin_remote"),
+                            "remote_url": push_remote,
                         },
                     )
                     if not pushed:
@@ -2747,7 +2749,10 @@ class MacWorker:
                 else:
                     problems.append(
                         "repository push failed: %s"
-                        % ((push.stderr or push.stdout or "").strip() or branch)
+                        % (
+                            _redact_git_remote_auth_in_text((push.stderr or push.stdout or "").strip())
+                            or branch
+                        )
                     )
             else:
                 problems.append("repository context is missing repository_branch")
@@ -2935,14 +2940,18 @@ class MacWorker:
                     % ((staged.stderr or staged.stdout or "").strip() or worktree)
                 )
 
-        push = _run_git(worktree, ["push", "origin", "HEAD:refs/heads/%s" % branch])
+        push_remote, push_remote_display = _repository_push_remote(task, context)
+        push = _run_git(worktree, ["push", push_remote, "HEAD:refs/heads/%s" % branch])
         if push.returncode != 0:
             raise RuntimeError(
                 "repository auto-publish push failed: %s"
-                % ((push.stderr or push.stdout or "").strip() or branch)
+                % (
+                    _redact_git_remote_auth_in_text((push.stderr or push.stdout or "").strip())
+                    or branch
+                )
             )
         head = _run_git(worktree, ["rev-parse", "HEAD"])
-        remote = _run_git(worktree, ["ls-remote", "origin", "refs/heads/%s" % branch])
+        remote = _run_git(worktree, ["ls-remote", push_remote, "refs/heads/%s" % branch])
         remote_sha = (remote.stdout.split() or [""])[0] if remote.returncode == 0 else ""
         if head.returncode != 0 or not head.stdout.strip() or remote_sha != head.stdout.strip():
             raise RuntimeError("repository auto-publish remote verification failed for %s" % branch)
@@ -2956,6 +2965,7 @@ class MacWorker:
                 "repository_branch": branch,
                 "head_sha": head.stdout.strip(),
                 "remote_ref": "refs/heads/%s" % branch,
+                "push_remote": push_remote_display,
             },
         )
 
@@ -4055,6 +4065,29 @@ def _repository_contract_test_command(task: JsonDict) -> str:
     return ""
 
 
+def _repository_contract_canonical_remote(task: JsonDict) -> str:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "repository_contract"),
+        _nested_dict(metadata, "origin", "repository_contract"),
+        _nested_dict(metadata, "repository_contract"),
+    ]
+    for candidate in candidates:
+        remote = str(candidate.get("canonical_remote_url") or "").strip()
+        if remote:
+            return remote
+    return ""
+
+
+def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str]:
+    fallback = str(context.get("repository_origin_remote") or "").strip()
+    remote = _repository_contract_canonical_remote(task) or fallback or "origin"
+    authed = _inject_git_remote_auth(remote)
+    return authed, _redact_git_remote_auth(authed)
+
+
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
@@ -4604,6 +4637,16 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 def _inject_git_remote_auth(url: str) -> str:
     from mac.gitops import inject_git_remote_auth as _impl
     return _impl(url)
+
+
+def _redact_git_remote_auth(url: str) -> str:
+    from mac.gitops import redact_git_remote_auth as _impl
+    return _impl(url)
+
+
+def _redact_git_remote_auth_in_text(value: str) -> str:
+    from mac.gitops import redact_git_remote_auth_in_text as _impl
+    return _impl(value)
 
 
 def _stable_id(prefix: str, value: str) -> str:

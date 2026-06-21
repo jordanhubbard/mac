@@ -22,6 +22,7 @@ from mac.worker import (
     MacWorker,
     WorkerExecution,
     _inject_git_remote_auth,
+    _repository_push_remote,
 )
 
 
@@ -336,3 +337,24 @@ def test_inject_git_remote_auth_ssh_left_alone(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("MAC_TASK_GIT_TOKEN", "tok")
     url = "git@github.com:org/repo.git"
     assert _inject_git_remote_auth(url) == url
+
+
+def test_repository_push_remote_prefers_canonical_and_redacts_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghtok")
+    task = {
+        "metadata": {
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "https://github.com/org/repo.git",
+                },
+            },
+        },
+    }
+    context = {"repository_origin_remote": "https://github.com/org/mirror.git"}
+
+    remote, display = _repository_push_remote(task, context)
+
+    assert remote == "https://x-access-token:ghtok@github.com/org/repo.git"
+    assert display == "https://x-access-token:<redacted>@github.com/org/repo.git"
