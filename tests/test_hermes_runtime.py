@@ -78,11 +78,16 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "children: subtasks" in "; ".join(
         stored["first_class_objects"]["vocabulary"]["task_relationships"]
     )
-    assert "hgmac agents identity agent_rocky_host" in stored["first_class_objects"]["objects"]["agents"]["hgmac_cli"]
-    assert "hgmac fleets list" in stored["first_class_objects"]["objects"]["fleets"]["hgmac_cli"]
-    assert "hgmac tasks list" in stored["first_class_objects"]["objects"]["tasks"]["hgmac_cli"]
-    assert "hgmac tasks add-child {task_id} --title ..." in stored["first_class_objects"]["objects"]["tasks"]["hgmac_cli"]
-    assert "hgmac projects list" in stored["first_class_objects"]["objects"]["projects"]["hgmac_cli"]
+    # The legacy `hgmac` binary is gone: objects expose `mac`/`mac-hermes` CLI
+    # surfaces and the REST API, never an hgmac_cli.
+    objects = stored["first_class_objects"]["objects"]
+    assert "hgmac_cli" not in objects["agents"]
+    assert "hgmac_cli" not in objects["tasks"]
+    assert "hgmac_cli" not in objects["fleets"]
+    assert "mac-hermes agent-identity agent_rocky_host" in objects["agents"]["mac_hermes_cli"]
+    assert "/fleets" in objects["fleets"]["api_paths"]
+    assert "mac task list" in objects["tasks"]["mac_cli"]
+    assert "mac project list" in objects["projects"]["mac_cli"]
     assert "/ui?view=fleets&selected={fleet_id}" in stored["first_class_objects"]["objects"]["fleets"]["dashboard_urls"]
     assert "/ui?view=work&selected={task_id}" in stored["first_class_objects"]["objects"]["tasks"]["dashboard_urls"]
     assert "/ui?view=work&project={project}" in stored["first_class_objects"]["objects"]["projects"]["dashboard_urls"]
@@ -133,15 +138,16 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "/ui?view=agents&selected={agent_id}" in markdown
     assert "Web Research" in markdown
     assert 'mac-hermes web-search "current project dependency release notes" --limit 5' in markdown
-    assert "hgmac agents claim-next agent_rocky_host --dry-run" in markdown
+    assert "mac-hermes claim-next agent_rocky_host --dry-run" in markdown
     assert "mac-hermes claim {task_id} agent_rocky_host" in markdown
     assert "mac-hermes add-child-task {task_id} <child-title>" in markdown
     assert "Direct Session Parity" in markdown
     assert "`mac task ready" in markdown
-    assert "`hgmac agents list`" in markdown
-    assert "`hgmac fleets list`" in markdown
-    assert "`hgmac projects list`" in markdown
-    assert "`hgmac tasks list`" in markdown
+    # `hgmac` is gone — agent/fleet/project/task access is via mac / mac-hermes.
+    assert "hgmac" not in markdown
+    assert "mac-hermes agents" in markdown
+    assert "mac-hermes projects" in markdown
+    assert "mac-hermes tasks --state open" in markdown
     assert "`scripts/run-contract-tests.sh`" in markdown
     assert "`hermes_oneshot_executor`" in markdown
     assert "mac-hermes-task-executor" in markdown

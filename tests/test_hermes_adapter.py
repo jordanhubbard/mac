@@ -196,13 +196,11 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
         "mac-hermes web-search" in command
         for command in work_context["operations"]["mac_hermes_cli"]
     )
+    # The legacy `hgmac` binary is gone; agent/task ops are the mac-hermes CLI.
+    assert "hgmac_cli" not in work_context["operations"]
     assert any(
-        "hgmac agents create" in command
-        for command in work_context["operations"]["hgmac_cli"]
-    )
-    assert any(
-        "hgmac tasks add-child" in command
-        for command in work_context["operations"]["hgmac_cli"]
+        "mac-hermes add-child-task" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert adapter.work_context_brief(registration["hermes_instance"]["id"]).startswith(
         "MAC work context:"

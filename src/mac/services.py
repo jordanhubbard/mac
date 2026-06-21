@@ -1145,7 +1145,6 @@ class ControlPlane:
         mac_hermes_commands = [
             str(command) for command in operations.get("mac_hermes_cli", [])
         ]
-        hgmac_commands = [str(command) for command in operations.get("hgmac_cli", [])]
         expected_api_operations = {
             "get_work_context",
             "get_runtime_proof",
@@ -1184,32 +1183,6 @@ class ControlPlane:
             "mac-hermes agent-identity",
             "mac-hermes claim-next",
             "mac-hermes command-audit",
-        )
-        expected_hgmac_fragments = (
-            "hgmac fleets list",
-            "hgmac fleets show",
-            "hgmac fleets create",
-            "hgmac fleets update",
-            "hgmac fleets delete",
-            "hgmac tasks list",
-            "hgmac tasks show",
-            "hgmac tasks create",
-            "hgmac tasks update",
-            "hgmac tasks delete",
-            "hgmac projects list",
-            "hgmac projects show",
-            "hgmac projects create",
-            "hgmac projects update",
-            "hgmac projects delete",
-            "hgmac agents list",
-            "hgmac agents show",
-            "hgmac agents create",
-            "hgmac agents update",
-            "hgmac agents disable",
-            "hgmac agents delete",
-            "hgmac agents heartbeat",
-            "hgmac agents claim-next",
-            "hgmac agents identity",
         )
         authority = work_context.get("authority", {})
         project_contexts = [
@@ -1406,7 +1379,6 @@ class ControlPlane:
             "mac_hermes_cli",
             "shell_execution",
             "workspace_file_access",
-            "hgmac_agent_ops_cli",
             "beads_issue_tracker",
             "git_source_control",
             "quality_gate",
@@ -1442,17 +1414,6 @@ class ControlPlane:
                 "authority": authority.get("fleets"),
                 "api_operations": sorted(api_operation_names & expected_fleet_api_operations),
                 "api_ready": expected_fleet_api_operations <= api_operation_names,
-                "hgmac_cli_commands": matching(hgmac_commands, ("hgmac fleets ",)),
-                "hgmac_cli_ready": has_all(
-                    hgmac_commands,
-                    (
-                        "hgmac fleets list",
-                        "hgmac fleets show",
-                        "hgmac fleets create",
-                        "hgmac fleets update",
-                        "hgmac fleets delete",
-                    ),
-                ),
                 "dashboard_projection": {
                     "state_key": "fleets",
                     "fields": ["id", "name", "status", "agent_ids"],
@@ -1469,7 +1430,6 @@ class ControlPlane:
                         "mac_api",
                         "shell_execution",
                         "workspace_file_access",
-                        "hgmac_agent_ops_cli",
                     }
                 ),
                 "runtime_ready": runtime_capabilities_ready,
@@ -1509,18 +1469,6 @@ class ControlPlane:
                         "mac-hermes add-child-task",
                         "mac-hermes transition",
                         "mac-hermes command-audit",
-                    ),
-                ),
-                "hgmac_cli_commands": matching(hgmac_commands, ("hgmac tasks ",)),
-                "hgmac_cli_ready": has_all(
-                    hgmac_commands,
-                    (
-                        "hgmac tasks list",
-                        "hgmac tasks show",
-                        "hgmac tasks create",
-                        "hgmac tasks add-child",
-                        "hgmac tasks update",
-                        "hgmac tasks delete",
                     ),
                 ),
                 "dashboard_projection": {
@@ -1587,17 +1535,6 @@ class ControlPlane:
                         "mac-hermes register-project-repository",
                     ),
                 ),
-                "hgmac_cli_commands": matching(hgmac_commands, ("hgmac projects ",)),
-                "hgmac_cli_ready": has_all(
-                    hgmac_commands,
-                    (
-                        "hgmac projects list",
-                        "hgmac projects show",
-                        "hgmac projects create",
-                        "hgmac projects update",
-                        "hgmac projects delete",
-                    ),
-                ),
                 "dashboard_projection": {
                     "state_key": "hermes_work_contexts",
                     "fields": ["projects", "projects.bridge_item_count", "projects.repository_count"],
@@ -1631,8 +1568,6 @@ class ControlPlane:
                 "mac_cli_ready": has_all(mac_cli_commands, ("mac agent register", "mac agent list", "mac agent heartbeat")),
                 "mac_hermes_cli_commands": matching(mac_hermes_commands, expected_agent_cli_fragments),
                 "mac_hermes_cli_ready": has_all(mac_hermes_commands, expected_agent_cli_fragments),
-                "hgmac_cli_commands": matching(hgmac_commands, expected_hgmac_fragments),
-                "hgmac_cli_ready": has_all(hgmac_commands, expected_hgmac_fragments),
                 "dashboard_projection": {
                     "state_key": "hermes_work_contexts",
                     "fields": ["agents", "relationships.agent_assignments", "agents.active_task_ids"],
@@ -1652,7 +1587,6 @@ class ControlPlane:
                         "mac_hermes_cli",
                         "shell_execution",
                         "workspace_file_access",
-                        "hgmac_agent_ops_cli",
                         "hermes_oneshot_executor",
                         "command_audit",
                     }
@@ -1662,7 +1596,7 @@ class ControlPlane:
         }
         for object_proof in first_class_objects.values():
             checks = ["api_ready", "dashboard_ready", "runtime_ready"]
-            for optional_check in ("mac_cli_ready", "mac_hermes_cli_ready", "hgmac_cli_ready"):
+            for optional_check in ("mac_cli_ready", "mac_hermes_cli_ready"):
                 if optional_check in object_proof:
                     checks.append(optional_check)
             object_proof["ready"] = all(bool(object_proof.get(check)) for check in checks)
@@ -1683,8 +1617,7 @@ class ControlPlane:
                 any(fragment in command for command in mac_hermes_commands)
                 for fragment in expected_cli_fragments
             )
-            and has_all(mac_hermes_commands, expected_agent_cli_fragments)
-            and has_all(hgmac_commands, expected_hgmac_fragments),
+            and has_all(mac_hermes_commands, expected_agent_cli_fragments),
             "agent_bound_to_hermes_instance": bool(bound_agents),
             "runtime_context_ready": (
                 bool(runtime.get("ready"))
@@ -1753,7 +1686,6 @@ class ControlPlane:
                 "cli": {
                     "mac_hermes_commands": mac_hermes_commands,
                     "mac_cli_commands": mac_cli_commands,
-                    "hgmac_cli_commands": hgmac_commands,
                 },
                 "ui": {
                     "dashboard_state_keys": ["hermes_work_contexts", "hermes_runtime_proofs"],
@@ -2518,38 +2450,6 @@ class ControlPlane:
                 "mac-hermes web-crawl-status {crawl_id}",
                 "mac-hermes writeback %s {task_id}" % hermes_instance_id,
             ],
-            "hgmac_cli": [
-                "hgmac fleets list",
-                "hgmac fleets show {fleet}",
-                "hgmac fleets create --name {name}",
-                "hgmac fleets update {fleet}",
-                "hgmac fleets delete {fleet}",
-                "hgmac tasks list",
-                "hgmac tasks show {task_id}",
-                "hgmac tasks create --title {title}",
-                "hgmac tasks add-child {task_id} --title {child}",
-                "hgmac tasks update {task_id}",
-                "hgmac tasks delete {task_id}",
-                "hgmac projects list",
-                "hgmac projects show {project}",
-                "hgmac projects create --name {name}",
-                "hgmac projects update {project}",
-                "hgmac projects delete {project}",
-                "hgmac agents list",
-                "hgmac agents show {agent_id}",
-                "hgmac agents create --machine-id {machine_id} --name {name}",
-                "hgmac agents update {agent_id} --status {status}",
-                "hgmac agents disable {agent_id}",
-                "hgmac agents delete {agent_id}",
-                "hgmac agents heartbeat {agent_id} --status {status}",
-                "hgmac agents claim-next {agent_id} --dry-run",
-                "hgmac agents identity {agent_id}",
-                "hgmac agents role assign {agent_id} {role}",
-                "hgmac agents role unassign {agent_id}",
-                "hgmac agents mood show {agent_id}",
-                "hgmac agents nap next {agent_id}",
-                "hgmac agents command-audit list --agent-id {agent_id}",
-            ],
             "dashboard": {
                 "schema": "mac.hermes.dashboard_operation_contract.v1",
                 "entrypoint": "/ui",
@@ -2646,18 +2546,6 @@ class ControlPlane:
     def unassign_role(self, agent_id: str) -> Agent:
         return self.roles.unassign_role(agent_id)
 
-    def seed_default_roles(self, *args: Any, **kwargs: Any) -> List[AgentRole]:
-        return self.roles.seed_defaults(*args, **kwargs)
-
-    # Provisioning hook: emitted when the swarm needs an agent it doesn't
-    # have. Today the provisioner is unimplemented; rows + observability
-    # are the signal an external poller acts on.
-
-    def request_agent_provisioning(
-        self, *args: Any, **kwargs: Any
-    ) -> AgentProvisioningRequest:
-        return self.provisioning.request_agent(*args, **kwargs)
-
     def list_provisioning_requests(
         self, *args: Any, **kwargs: Any
     ) -> List[AgentProvisioningRequest]:
@@ -2738,9 +2626,6 @@ class ControlPlane:
 
     def import_workflow_yaml(self, *args: Any, **kwargs: Any) -> Workflow:
         return self.workflows.import_yaml(*args, **kwargs)
-
-    def seed_default_workflows(self, *args: Any, **kwargs: Any) -> List[Workflow]:
-        return self.workflows.seed_defaults(*args, **kwargs)
 
     def create_workflow_draft(self, *args: Any, **kwargs: Any) -> WorkflowDraft:
         return self.workflows.create_draft(*args, **kwargs)
@@ -4710,28 +4595,6 @@ class ControlPlane:
             detail=resolved.to_dict(),
         )
         return resolved
-
-    def _resolve_integration_findings_for_source(
-        self,
-        source_kind: str,
-        source_id: str,
-        finding_type: str,
-        *,
-        active_fingerprints: Optional[Iterable[str]] = None,
-        resolution: str = "no longer observed",
-    ) -> None:
-        active = {str(item) for item in (active_fingerprints or [])}
-        for finding in self.list_integration_findings(
-            source_kind=source_kind,
-            source_id=source_id,
-            finding_type=finding_type,
-            status="open",
-            limit=1000,
-        ):
-            if finding.fingerprint not in active:
-                self.resolve_integration_finding(finding.id, resolution=resolution)
-
-    # Operator notifications ------------------------------------------
 
     def record_notification(
         self,
@@ -8205,9 +8068,6 @@ class ControlPlane:
     def get_agentbus_stream(self, stream_id: str) -> AgentBusStream:
         return self.agentbus.get_stream(stream_id)
 
-    def get_agentbus_chunk(self, chunk_id: str) -> AgentBusChunk:
-        return self.agentbus.get_chunk(chunk_id)
-
     def list_agentbus_streams(self, *args: Any, **kwargs: Any) -> List[AgentBusStream]:
         return self.agentbus.list_streams(*args, **kwargs)
 
@@ -9703,37 +9563,6 @@ class ControlPlane:
 
 
 
-    def _agent_by_id_or_name(self, value: Any) -> Optional[Agent]:
-        candidate = str(value or "").strip()
-        if not candidate:
-            return None
-        row = self.store.query_one(
-            "SELECT * FROM agents WHERE id = ? OR name = ? ORDER BY id LIMIT 1",
-            (candidate, candidate),
-        )
-        return self._agent_from_row(row) if row is not None else None
-
-
-
-
-
-
-
-
-
-
-
-
-    # mac-3xpl: schema-validation limits for fields imported from bd
-    # ready --json. The bd CLI is upstream and effectively untrusted at
-    # the API surface; an oversized or control-char-laden title would
-    # otherwise flow into MAC project items unsanitised.
-    _BEAD_IMPORT_TITLE_MAX = 512
-    _BEAD_IMPORT_DESCRIPTION_MAX = 32 * 1024
-    _BEAD_IMPORT_TYPE_MAX = 64
-    _BEAD_IMPORT_PRIORITY_MIN = 0
-    _BEAD_IMPORT_PRIORITY_MAX = 4
-
     @staticmethod
     def _strip_control_chars(value: str) -> str:
         """Strip ASCII control chars except \\t/\\n; reject ANSI escape
@@ -9743,118 +9572,6 @@ class ControlPlane:
             for c in value
             if (c >= " " or c in ("\t", "\n"))
         )
-
-
-
-
-
-
-
-
-    def _latest_failure_context(
-        self,
-        task: Task,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> JsonDict:
-        fields: JsonDict = {}
-        source_detail = detail if isinstance(detail, dict) else {}
-        if source_detail.get("reason"):
-            fields["failure_reason"] = source_detail.get("reason")
-        problems = source_detail.get("problems")
-        if isinstance(problems, list) and problems:
-            fields["failure_problems"] = "; ".join(str(item) for item in problems[:4])
-        if source_detail.get("evidence_id"):
-            fields["evidence_id"] = source_detail.get("evidence_id")
-
-        if not fields.get("failure_reason") or not fields.get("failure_problems"):
-            row = self.store.query_one(
-                """
-                SELECT detail, actor, created_at FROM task_history
-                WHERE task_id = ?
-                  AND (
-                    (event_type = 'task.transitioned' AND to_state = ?)
-                    OR event_type = 'task.beads_retry_exhausted'
-                  )
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (task.id, TaskState.FAILED.value),
-            )
-            if row is not None:
-                hist_detail = ensure_json_object(json_loads(row["detail"], {}))
-                fields.setdefault("failure_actor", row["actor"])
-                fields.setdefault("failure_at", row["created_at"])
-                if hist_detail.get("reason"):
-                    fields.setdefault("failure_reason", hist_detail.get("reason"))
-                hist_problems = hist_detail.get("problems")
-                if isinstance(hist_problems, list) and hist_problems:
-                    fields.setdefault(
-                        "failure_problems",
-                        "; ".join(str(item) for item in hist_problems[:4]),
-                    )
-                if hist_detail.get("evidence_id"):
-                    fields.setdefault("evidence_id", hist_detail.get("evidence_id"))
-
-        evidence: Optional[Evidence] = None
-        evidence_id = str(fields.get("evidence_id") or "").strip()
-        if evidence_id:
-            try:
-                evidence = self.get_evidence(evidence_id)
-            except NotFoundError:
-                evidence = None
-        if evidence is None:
-            rows = self.store.query_all(
-                "SELECT * FROM evidence WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-                (task.id,),
-            )
-            if rows:
-                evidence = self._evidence_from_row(rows[0])
-        if evidence is not None:
-            fields.setdefault("evidence_id", evidence.id)
-            fields.setdefault("evidence_kind", evidence.kind)
-            fields.setdefault("evidence_by", evidence.created_by)
-            if evidence.summary:
-                fields.setdefault("evidence_summary", evidence.summary)
-            metadata = ensure_json_object(evidence.metadata)
-            if metadata.get("returncode") is not None:
-                fields.setdefault("returncode", metadata.get("returncode"))
-            verification = ensure_json_object(metadata.get("verification"))
-            verification_problems = verification.get("problems")
-            if isinstance(verification_problems, list) and verification_problems:
-                fields.setdefault(
-                    "verification_problems",
-                    "; ".join(str(item) for item in verification_problems[:4]),
-                )
-            if verification.get("status"):
-                fields.setdefault("verification_status", verification.get("status"))
-            if verification.get("summary"):
-                fields.setdefault("verification_summary", verification.get("summary"))
-        if not fields.get("failure_reason") and fields.get("verification_problems"):
-            fields["failure_reason"] = "verification_contract_failed"
-        return fields
-
-
-    def _failure_summary_fingerprint(self, task: Task, fields: JsonDict) -> str:
-        payload = {
-            "task_id": task.id,
-            "state": task.state,
-            "reason": fields.get("failure_reason"),
-            "problems": fields.get("failure_problems") or fields.get("verification_problems"),
-            "evidence_id": fields.get("evidence_id"),
-            "retry_exhausted_at": ensure_json_object(
-                task.metadata.get("beads_reconciliation")
-                if isinstance(task.metadata, dict)
-                else {}
-            ).get("retry_exhausted_at"),
-        }
-        digest = hashlib.sha256(
-            json_dumps(payload).encode("utf-8")
-        ).hexdigest()
-        return "sha256:%s" % digest
-
-
-
-
 
 
 
@@ -11077,16 +10794,6 @@ class ControlPlane:
             if any(str(r).strip().lower() in {"tests", "test"} for r in required):
                 return True
         return False
-
-    def _repo_verification_problems(self, manifest: JsonDict, require_tests: bool) -> List[str]:
-        problems = self._require_pushed_repo_anchor(manifest)
-        repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-        files_changed = _manifest_list(repo.get("files_changed")) if isinstance(repo, dict) else []
-        if not files_changed:
-            problems.append("repo evidence requires changed files")
-        if require_tests and self._passed_verification_check_count(manifest) < 1:
-            problems.append("repo code evidence requires at least one passing test/check")
-        return problems
 
     def _require_pushed_repo_anchor(self, manifest: JsonDict) -> List[str]:
         # Canonical field names only (mac-q38). The previous code

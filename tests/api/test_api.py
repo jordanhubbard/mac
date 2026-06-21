@@ -417,10 +417,9 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert any("mac-hermes command-audit" in command for command in work_context["operations"]["mac_hermes_cli"])
     assert any("mac-hermes web-search" in command for command in work_context["operations"]["mac_hermes_cli"])
     assert any("mac-hermes agents" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("hgmac fleets create" in command for command in work_context["operations"]["hgmac_cli"])
-    assert any("hgmac tasks create" in command for command in work_context["operations"]["hgmac_cli"])
-    assert any("hgmac projects create" in command for command in work_context["operations"]["hgmac_cli"])
-    assert any("hgmac agents create" in command for command in work_context["operations"]["hgmac_cli"])
+    # The legacy `hgmac` binary is gone; agent/fleet/project/task CRUD is the
+    # mac-hermes CLI + the REST API. There is no hgmac_cli operation surface.
+    assert "hgmac_cli" not in work_context["operations"]
     assert work_context["operations"]["dashboard"]["entrypoint"] == "/ui"
     assert {"work", "projects", "map", "fleets", "agents", "tasks", "hermes", "observability"} <= set(
         work_context["operations"]["dashboard"]["views"]
@@ -498,7 +497,6 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
                     "mac_hermes_cli",
                     "shell_execution",
                     "workspace_file_access",
-                    "hgmac_agent_ops_cli",
                     "beads_issue_tracker",
                     "git_source_control",
                     "quality_gate",
@@ -535,7 +533,6 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
                         "mac_hermes_cli",
                         "shell_execution",
                         "workspace_file_access",
-                        "hgmac_agent_ops_cli",
                         "beads_issue_tracker",
                         "git_source_control",
                         "quality_gate",

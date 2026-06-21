@@ -93,7 +93,7 @@ def _executable(path, content: str = "#!/bin/sh\nexit 0\n") -> None:
 
 
 def _prepare_direct_session_tools(monkeypatch, mac_home, workspace) -> None:
-    for name in ("mac", "mac-hermes", "hgmac", "mac-firecrawl-gateway"):
+    for name in ("mac", "mac-hermes", "mac-firecrawl-gateway"):
         _executable(mac_home / "venv" / "bin" / name)
     for name in ("mac-hermes-task-executor",):
         _executable(mac_home / "bin" / name)
@@ -576,8 +576,9 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     assert report["task_project_runtime"]["first_class_objects"]["tasks"]["authority"] == "mac"
     assert report["task_project_runtime"]["first_class_objects"]["projects"]["authority"] == "mac"
     assert report["task_project_runtime"]["first_class_objects"]["agents"]["authority"] == "mac"
-    assert report["task_project_runtime"]["first_class_objects"]["agents"]["hgmac_cli"]
-    assert report["task_project_runtime"]["first_class_objects"]["fleets"]["hgmac_cli"]
+    # `hgmac` is gone; the startup report no longer carries an hgmac_cli surface.
+    assert "hgmac_cli" not in report["task_project_runtime"]["first_class_objects"]["agents"]
+    assert "hgmac_cli" not in report["task_project_runtime"]["first_class_objects"]["fleets"]
     assert "/ui?view=fleets&selected={fleet_id}" in report["task_project_runtime"]["first_class_objects"]["fleets"]["dashboard_urls"]
     assert "/ui?view=work&selected={task_id}" in report["task_project_runtime"]["first_class_objects"]["tasks"]["dashboard_urls"]
     assert "/ui?view=projects&project={project}" in report["task_project_runtime"]["first_class_objects"]["projects"]["dashboard_urls"]

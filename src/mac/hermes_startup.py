@@ -600,7 +600,6 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
                     "mac_hermes_cli": value.get("mac_hermes_cli")
                     if isinstance(value.get("mac_hermes_cli"), list)
                     else [],
-                    "hgmac_cli": value.get("hgmac_cli") if isinstance(value.get("hgmac_cli"), list) else [],
                     "dashboard_state_keys": value.get("dashboard_state_keys")
                     if isinstance(value.get("dashboard_state_keys"), list)
                     else [],
@@ -671,8 +670,6 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
                 object_model_errors.append("%s.%s" % (key, field))
         if key != "fleets" and not item.get("mac_hermes_cli"):
             object_model_errors.append("%s.mac_hermes_cli" % key)
-        if key in {"fleets", "agents", "tasks", "projects"} and not item.get("hgmac_cli"):
-            object_model_errors.append("%s.hgmac_cli" % key)
     if object_model_errors:
         summary["ready"] = not required
         summary["status"] = "first_class_object_contract_missing"

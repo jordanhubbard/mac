@@ -124,8 +124,8 @@ def test_mac_runtime_context_patch_makes_hermes_prompt_load_runtime_markdown(
                 "- `bd prime`",
                 "- `mac-hermes work-context hermes_rocky --active-only`",
                 "- `hermes_oneshot_executor`: `mac-hermes-task-executor`",
-                "- `hgmac agents list`",
-                "- `hgmac fleets list`",
+                "- `mac agent list`",
+                "- `mac agent heartbeat agent_rocky`",
                 "",
             ]
         ),
@@ -159,6 +159,6 @@ def test_mac_runtime_context_patch_makes_hermes_prompt_load_runtime_markdown(
         assert "mac-hermes work-context hermes_rocky --active-only" in rendered
         assert "hermes_oneshot_executor" in rendered
         assert "mac-hermes-task-executor" in rendered
-        assert "hgmac agents list" in rendered
-        assert "hgmac fleets list" in rendered
+        assert "mac agent list" in rendered
+        assert "mac agent heartbeat agent_rocky" in rendered
     assert "SOUL.md" not in prompt

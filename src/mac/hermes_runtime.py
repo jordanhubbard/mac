@@ -233,10 +233,7 @@ def _session_capability_contract(
         "mac-hermes projects",
         "mac-hermes project-items",
         "mac-hermes agents",
-        "hgmac fleets list",
-        "hgmac projects list",
-        "hgmac tasks list",
-        "hgmac tasks add-child {task_id} --title <child>",
+        "mac-hermes add-child-task {task_id} --title <child>",
         "mac-hermes claim-next %s --dry-run" % agent_id,
         "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
         "mac-hermes web-search \"project dependency release notes\" --limit 5",
@@ -245,8 +242,7 @@ def _session_capability_contract(
         direct_session_workflow.append(str(webdav_method.get("example_upload") or ""))
     direct_session_workflow.extend(
         [
-            "hgmac agents identity %s" % agent_id,
-            "hgmac agents claim-next %s --dry-run" % agent_id,
+            "mac-hermes agent-identity %s" % agent_id,
             "mac-agent --loop --executor %s" % (mac_home / "bin" / "mac-hermes-task-executor"),
             "git status --short --branch",
             test_command,
@@ -269,8 +265,8 @@ def _session_capability_contract(
         "rules": [
             "Treat MAC fleets, agents, tasks, and projects as first-class operational objects.",
             "Use the MAC hub task ledger as the canonical issue source. Treat .tickets/ as optional ignored migration compatibility state when present.",
-            "Use `mac task` / `mac memory` for issue lifecycle. `bd` remains available for compatibility but `bd dolt push` is disabled.",
-            "Use hgmac for agent CRUD and operational agent state, not ad hoc database edits.",
+            "Use `mac task` / `mac memory` for issue lifecycle; do not run `bd`.",
+            "Use `mac` / `mac-hermes` for agent CRUD and operational agent state, not ad hoc database edits.",
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
             "Use mac-hermes-task-executor through mac-agent loop mode for production Hermes oneshot task execution.",
@@ -369,13 +365,6 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "/fleets",
                     "/fleets/{fleet_id_or_name}",
                 ],
-                "hgmac_cli": [
-                    "hgmac fleets list",
-                    "hgmac fleets show {fleet}",
-                    "hgmac fleets create --name ...",
-                    "hgmac fleets update {fleet}",
-                    "hgmac fleets delete {fleet}",
-                ],
                 "dashboard_state_keys": [
                     "fleets",
                 ],
@@ -405,14 +394,6 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "mac task list",
                     "mac task show {task_id}",
                     "mac task create --title ...",
-                ],
-                "hgmac_cli": [
-                    "hgmac tasks list",
-                    "hgmac tasks show {task_id}",
-                    "hgmac tasks create --title ...",
-                    "hgmac tasks add-child {task_id} --title ...",
-                    "hgmac tasks update {task_id}",
-                    "hgmac tasks delete {task_id}",
                 ],
                 "mac_hermes_cli": [
                     "mac-hermes tasks --state open",
@@ -464,13 +445,6 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "mac-hermes project-repositories",
                     "mac-hermes register-project-repository <name> <path> --project <project>",
                 ],
-                "hgmac_cli": [
-                    "hgmac projects list",
-                    "hgmac projects show {project}",
-                    "hgmac projects create --name ...",
-                    "hgmac projects update {project}",
-                    "hgmac projects delete {project}",
-                ],
                 "dashboard_state_keys": [
                     "bridge_items",
                     "project_repositories",
@@ -509,17 +483,6 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "mac-hermes claim-next %s --dry-run" % agent_id,
                     "mac-hermes command-audit list --agent-id %s" % agent_id,
                 ],
-                "hgmac_cli": [
-                    "hgmac agents list",
-                    "hgmac agents show {agent_id}",
-                    "hgmac agents create --machine-id {machine_id} --name {name}",
-                    "hgmac agents update {agent_id}",
-                    "hgmac agents disable {agent_id}",
-                    "hgmac agents delete {agent_id}",
-                    "hgmac agents heartbeat {agent_id} --status {status}",
-                    "hgmac agents identity %s" % agent_id,
-                    "hgmac agents claim-next %s --dry-run" % agent_id,
-                ],
                 "dashboard_state_keys": [
                     "agents",
                     "hermes_work_contexts.{hermes_instance_id}.agents",
@@ -530,7 +493,7 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "/ui?view=work&selected={agent_id}",
                     "/ui?view=map&selected={agent_id}",
                 ],
-                "runtime_rule": "Use MAC and hgmac for agent state and operations; Hermes owns personality and private memory.",
+                "runtime_rule": "Use MAC (`mac` / `mac-hermes`) for agent state and operations; Hermes owns personality and private memory.",
             },
         },
     }
@@ -628,9 +591,6 @@ def build_runtime_context(
                 "mac-hermes work-context %s --active-only" % resolved_instance_id,
                 "mac-hermes work-brief %s" % resolved_instance_id,
                 "mac-hermes tasks --state open",
-                "hgmac fleets list",
-                "hgmac projects list",
-                "hgmac tasks list",
             ],
             "project_bridge": [
                 "mac-hermes create-project <name> --description <description>",
@@ -647,12 +607,6 @@ def build_runtime_context(
                 "mac-hermes agent-identity %s" % resolved_agent_id,
                 "mac-hermes claim-next %s --dry-run" % resolved_agent_id,
                 "mac-hermes command-audit list --agent-id %s --limit 20" % resolved_agent_id,
-                "hgmac agents list",
-                "hgmac fleets list",
-                "hgmac projects list",
-                "hgmac tasks list",
-                "hgmac agents identity %s" % resolved_agent_id,
-                "hgmac agents claim-next %s --dry-run" % resolved_agent_id,
             ],
             "web_research": [
                 "mac-hermes web-search \"current project dependency release notes\" --limit 5",

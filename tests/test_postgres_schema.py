@@ -21,74 +21,27 @@ def _schema_text() -> str:
     return (here / "src" / "mac" / "data" / "postgres" / "schema.sql").read_text()
 
 
-# Authoritative table list pulled from SQLiteStore._initialize. Update
-# both sides together when adding a new table.
-EXPECTED_TABLES = [
-    "tenants",
-    "users",
-    "personas",
-    "hermes_instances",
-    "platform_bindings",
-    "tasks",
-    "task_history",
-    "task_transition_outbox",
-    "evidence",
-    "leases",
-    "machines",
-    "agents",
-    "fleets",
-    "fleet_agents",
-    "fleet_agent_observations",
-    "fleet_events",
-    "messages",
-    "agentbus_streams",
-    "agentbus_chunks",
-    "observability_events",
-    "operator_notifications",
-    "notifier_channels",
-    "command_audit",
-    "action_events",
-    "openshell_policies",
-    "openshell_policy_versions",
-    "openshell_policy_assignments",
-    "openshell_agent_status",
-    "agent_lifecycle_events",
-    "agent_events",
-    "mood_overlays",
-    "nap_schedules",
-    "nap_runs",
-    "reviews",
-    "publications",
-    "secrets",
-    "secret_access_audit",
-    "conversation_threads",
-    "memory_records",
-    "vector_refs",
-    "artifacts",
-    "environments",
-    "environment_events",
-    "deployments",
-    "runtime_environments",
-    "runtime_environment_deltas",
-    "runtime_runs",
-    "projects",
-    "project_events",
-    "project_items",
-    "project_repositories",
-    "integration_observations",
-    "integration_findings",
-    "rollouts",
-    "rollout_events",
-    "eval_sets",
-    "eval_runs",
-    "eval_set_events",
-    "agent_roles",
-    "workflows",
-    "workflow_drafts",
-    "workflow_runs",
-    "workflow_run_history",
-    "agent_provisioning_requests",
-]
+def _sqlite_schema_text() -> str:
+    here = Path(__file__).resolve().parent.parent
+    return (here / "src" / "mac" / "store.py").read_text()
+
+
+def _create_table_names(text: str) -> set:
+    """Every ``CREATE TABLE IF NOT EXISTS <name> (`` in a schema source.
+
+    Requiring the opening paren excludes prose like "CREATE TABLE IF NOT EXISTS
+    skips already-present tables" that appears in comments.
+    """
+    return set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
+
+
+# Authoritative table list DERIVED from the live SQLite schema (store.py) rather
+# than hand-maintained, so the two schemas cannot silently drift: a table added
+# to SQLiteStore automatically becomes a required table in the Postgres schema
+# (see test_postgres_schema_has_every_sqlite_table). This replaces the previous
+# hardcoded list + frozen count, which had itself gone stale (asserted 64 while
+# SQLite had grown to 67, masking the missing service_roles/service_claims).
+EXPECTED_TABLES = sorted(_create_table_names(_sqlite_schema_text()))
 
 
 @pytest.fixture(scope="module")
@@ -106,11 +59,23 @@ def test_each_table_is_created(schema_sql: str, table: str) -> None:
     assert re.search(pattern, schema_sql), f"missing CREATE TABLE for {table}"
 
 
-def test_expected_table_count_matches_sqlite() -> None:
-    assert len(EXPECTED_TABLES) == 64, (
-        "When a table is added to SQLiteStore._initialize, update both "
-        "EXPECTED_TABLES here and src/mac/data/postgres/schema.sql."
+def test_postgres_schema_has_every_sqlite_table() -> None:
+    """Live drift guard: every table in the SQLite schema must also be created
+    in the Postgres schema. Computed from both sources, so it can never go stale
+    the way the old hardcoded count did."""
+    sqlite_tables = _create_table_names(_sqlite_schema_text())
+    pg_tables = _create_table_names(_schema_text())
+    missing = sqlite_tables - pg_tables
+    assert not missing, (
+        "Postgres schema (src/mac/data/postgres/schema.sql) is missing tables "
+        "present in SQLiteStore (src/mac/store.py): %s" % sorted(missing)
     )
+
+
+def test_sqlite_schema_table_count_is_sane() -> None:
+    # A floor guard so a parsing regression that finds zero tables can't make the
+    # drift check vacuously pass.
+    assert len(EXPECTED_TABLES) >= 60
 
 
 def test_json_extract_function_defined(schema_sql: str) -> None:

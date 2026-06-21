@@ -802,26 +802,6 @@ class WorkflowDraft:
         return asdict(self)
 
 
-@dataclass
-class WorkflowRunHistory:
-    """Append-only transition log for a workflow run."""
-
-    id: str
-    run_id: str
-    seq: int
-    from_node_key: Optional[str]
-    to_node_key: Optional[str]
-    condition: str
-    task_id: Optional[str]
-    actor: str
-    attempt_number: int
-    detail: JsonDict
-    created_at: str
-
-    def to_dict(self) -> JsonDict:
-        return asdict(self)
-
-
 class WorkflowState(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
