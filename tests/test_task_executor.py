@@ -465,6 +465,195 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["checks"][0]["status"] == "pass"  # pushed + `true` test passed
 
 
+def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    scripts = work / "scripts"
+    scripts.mkdir()
+    (scripts / "bootstrap-project.py").write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "venv_python = Path('.venv/bin/python')",
+                "venv_python.parent.mkdir(parents=True, exist_ok=True)",
+                "venv_python.write_text('#!/bin/sh\\nexit 0\\n', encoding='utf-8')",
+                "venv_python.chmod(0o755)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/bootstrap")
+    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t1",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "bootstrap": {
+                        "command": "python3 scripts/bootstrap-project.py",
+                        "creates": [".venv/bin/python"],
+                    },
+                    "test": {"command": ".venv/bin/python -c 'print(123)'"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert (work / ".venv/bin/python").exists()
+    assert manifest["bootstrap"]["status"] == "pass"
+    assert manifest["tests"]["returncode"] == 0
+    assert manifest["checks"][0]["status"] == "pass"
+
+
+def test_repository_bootstrap_runs_when_creates_omitted(tmp_path):
+    (tmp_path / "bootstrap.sh").write_text("touch bootstrapped\n", encoding="utf-8")
+    task = {
+        "metadata": {
+            "origin": {
+                "repository_contract": {
+                    "bootstrap": {"command": "sh bootstrap.sh"},
+                }
+            }
+        }
+    }
+
+    result = te._run_repository_bootstrap_if_needed(tmp_path, task)
+
+    assert result["status"] == "pass"
+    assert result["creates"] == []
+    assert (tmp_path / "bootstrapped").exists()
+
+
+def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, monkeypatch):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/bootstrap-fail")
+    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t1",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "bootstrap": {"command": "false"},
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["bootstrap"]["status"] == "fail"
+    assert manifest["tests"]["status"] == "pass"
+    assert manifest["checks"][0]["status"] == "fail"
+
+
+def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    scripts = work / "scripts"
+    scripts.mkdir()
+    (scripts / "bootstrap-project.py").write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "venv_python = Path('.venv/bin/python')",
+                "venv_python.parent.mkdir(parents=True, exist_ok=True)",
+                "venv_python.write_text('#!/bin/sh\\nexit 0\\n', encoding='utf-8')",
+                "venv_python.chmod(0o755)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "repo": {
+                            "head_sha": head,
+                            "remote_ref": "refs/heads/task/bootstrap",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
+    task = {
+        "id": "t1",
+        "owner_agent_id": "agent_review",
+        "metadata": {
+            "origin": {
+                "repository_contract": {
+                    "bootstrap": {
+                        "command": "python3 scripts/bootstrap-project.py",
+                        "creates": [".venv/bin/python"],
+                    },
+                    "test": {"command": ".venv/bin/python -c 'print(123)'"},
+                }
+            }
+        },
+    }
+
+    te.run_deterministic_review_verdict(
+        ws,
+        task,
+        {"executor_evidence_id": "ev1", "review_id": "review1"},
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert (work / ".venv/bin/python").exists()
+    assert manifest["verdict"] == "approved"
+    assert manifest["bootstrap"]["status"] == "pass"
+    assert manifest["tests"]["returncode"] == 0
+
+
 # ---------------------------------------------------------------------------
 # main() end-to-end with injected runner + hub
 # ---------------------------------------------------------------------------

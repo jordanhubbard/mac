@@ -876,6 +876,99 @@ def _repository_contract_test_command(task: Dict[str, Any]) -> str:
     return ""
 
 
+def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return {}
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "bootstrap"),
+        _nested_dict(metadata, "execution_contract", "repository_contract", "bootstrap"),
+        _nested_dict(metadata, "origin", "repository_contract", "bootstrap"),
+        _nested_dict(metadata, "repository_contract", "bootstrap"),
+    ]
+    for candidate in candidates:
+        command = str(candidate.get("command") or "").strip()
+        if command:
+            return {
+                "command": command,
+                "creates": [
+                    str(item).strip()
+                    for item in (candidate.get("creates") or [])
+                    if str(item).strip()
+                ],
+            }
+    return {}
+
+
+def _repository_bootstrap_timeout() -> float:
+    raw = (
+        os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
+        or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
+        or "600"
+    )
+    try:
+        value = float(raw)
+        return value if value > 0 else 600.0
+    except ValueError:
+        return 600.0
+
+
+def _run_repository_bootstrap_if_needed(
+    worktree_path: Path,
+    task: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    bootstrap = _repository_contract_bootstrap(task)
+    command = str(bootstrap.get("command") or "").strip()
+    if not command:
+        return None
+    creates = bootstrap.get("creates") if isinstance(bootstrap.get("creates"), list) else []
+    missing = [
+        path
+        for path in creates
+        if not (worktree_path / str(path)).exists()
+    ]
+    if creates and not missing:
+        return {
+            "command": command,
+            "creates": creates,
+            "returncode": 0,
+            "status": "skipped",
+            "reason": "declared bootstrap outputs already exist",
+        }
+    started = time.time()
+    try:
+        completed = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_repository_bootstrap_timeout(),
+        )
+        return {
+            "command": command,
+            "creates": creates,
+            "missing_before": missing,
+            "returncode": int(completed.returncode),
+            "status": "pass" if completed.returncode == 0 else "fail",
+            "stdout": (completed.stdout or "")[:4000],
+            "stderr": (completed.stderr or "")[:4000],
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "creates": creates,
+            "missing_before": missing,
+            "returncode": 124,
+            "status": "fail",
+            "stdout": (exc.stdout or "")[:4000] if isinstance(exc.stdout, str) else "",
+            "stderr": (exc.stderr or "")[:4000] if isinstance(exc.stderr, str) else "",
+            "duration_ms": int((time.time() - started) * 1000),
+            "error": "bootstrap command timed out",
+        }
+
+
 def _lessons_section(lessons: List[str]) -> str:
     """Render recalled deployment lessons as a prompt section (or empty)."""
     if not lessons:
@@ -969,8 +1062,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     push = _git(["push", "origin", "HEAD:%s" % push_target], worktree_path)
     if push.returncode == 0:
         pushed = True
-    contract = (metadata.get("origin") or {}).get("repository_contract") or {}
-    test_cmd = ((contract.get("test") or {}).get("command") or "scripts/run-contract-tests.sh").strip()
+    bootstrap = _run_repository_bootstrap_if_needed(worktree_path, task)
+    test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
     tests = None
     if test_cmd:
         tr = subprocess.run(
@@ -996,6 +1089,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "total": total,
             "status": "pass" if tr.returncode == 0 else "fail",
         }
+    bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
+    tests_ok = tests is None or tests.get("returncode") == 0
     _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
     diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
     files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
@@ -1016,11 +1111,13 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "checks": [
             {
                 "name": "git_finalizer",
-                "returncode": 0 if pushed and (tests is None or tests.get("returncode") == 0) else 1,
-                "status": "pass" if pushed and (tests is None or tests.get("returncode") == 0) else "fail",
+                "returncode": 0 if pushed and bootstrap_ok and tests_ok else 1,
+                "status": "pass" if pushed and bootstrap_ok and tests_ok else "fail",
             }
         ],
     }
+    if bootstrap is not None:
+        manifest["bootstrap"] = bootstrap
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1062,19 +1159,19 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         return
     review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
     tests = None
+    bootstrap = None
     independent_pass = False
     if review_worktree and Path(review_worktree).is_dir():
-        ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], Path(review_worktree))
+        review_worktree_path = Path(review_worktree)
+        ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], review_worktree_path)
         if ck.returncode == 0:
-            test_cmd = (
-                (((task.get("metadata") or {}).get("origin") or {}).get("repository_contract") or {})
-                .get("test", {})
-                .get("command", "scripts/run-contract-tests.sh")
-            )
+            bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
+            test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
             tr = subprocess.run(
-                ["bash", "-lc", test_cmd], cwd=review_worktree, capture_output=True, text=True, check=False, timeout=600
+                ["bash", "-lc", test_cmd], cwd=str(review_worktree_path), capture_output=True, text=True, check=False, timeout=600
             )
-            independent_pass = tr.returncode == 0
+            bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
+            independent_pass = bootstrap_ok and tr.returncode == 0
             tests = {
                 "command": test_cmd,
                 "returncode": int(tr.returncode),
@@ -1109,6 +1206,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         "tests": tests,
         "signed_by": reviewer_agent_id,
     }
+    if bootstrap is not None:
+        manifest["bootstrap"] = bootstrap
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
