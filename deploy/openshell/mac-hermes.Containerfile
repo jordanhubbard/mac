@@ -46,6 +46,8 @@ RUN apt-get update \
           if [ -x "$candidate" ]; then ln -sf "$candidate" /usr/local/bin/codegraph; break; fi; \
         done; \
       fi \
+    && if [ -x /root/.local/bin/codegraph ]; then cp -f /root/.local/bin/codegraph /usr/local/bin/codegraph; fi \
+    && chmod 0755 /usr/local/bin/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*
