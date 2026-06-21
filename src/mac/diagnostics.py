@@ -165,3 +165,33 @@ def _stale_agents(control_plane: Any, threshold_seconds: int = 3600) -> List[Fin
             },
         )
     ]
+
+
+@register(
+    "expired-active-leases",
+    "leases still marked active whose expiry is in the past",
+)
+def _expired_active_leases(control_plane: Any) -> List[Finding]:
+    from mac.models import utcnow
+
+    now = utcnow()
+    rows = control_plane.store.query_all(
+        "SELECT id, task_id, agent_id FROM leases "
+        "WHERE status = 'active' AND expires_at < ? "
+        "ORDER BY expires_at",
+        (now,),
+    )
+    if not rows:
+        return [Finding("expired-active-leases", "ok", "no expired active leases")]
+    offenders = [
+        {"id": row["id"], "task_id": row["task_id"], "agent_id": row["agent_id"]}
+        for row in rows
+    ]
+    return [
+        Finding(
+            "expired-active-leases",
+            "warn",
+            "%d active lease(s) past expiry" % len(offenders),
+            {"lease_ids": [o["id"] for o in offenders], "leases": offenders},
+        )
+    ]
