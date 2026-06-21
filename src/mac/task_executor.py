@@ -63,6 +63,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mac import relay_observability
+from mac.codegraph_audit import (
+    codegraph_audit_check,
+    codegraph_audit_manifest_problems,
+    codegraph_audit_passed,
+    run_codegraph_audit,
+)
 from mac.gitops import (
     inject_git_remote_auth as _inject_git_remote_auth,
     redact_git_remote_auth as _redact_git_remote_auth,
@@ -815,6 +821,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             "Only explicit source-remediation tasks may repair origin.repository_path directly.",
             "Before build or test work, run bootstrap.command from the repository root when the declared tools or bootstrap.creates outputs are missing.",
             "Use test.command as the canonical verification command unless the task explicitly narrows the check.",
+            "For source, build, dependency, or runtime config changes, run CodeGraph before final evidence: codegraph init or codegraph sync, codegraph affected <changed-files>, and codegraph impact/callers/callees for changed public APIs when applicable. Record the result under codegraph in mac-evidence.json.",
         ]
     )
 
@@ -1021,6 +1028,7 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "For tasks with a repository runtime contract, default to evidence_type=repo_change. Use operator_result only for tasks that are not tied to a repository contract.",
         "For no-repository planning or operator directive work, use evidence_type=operator_result with summary and result fields describing the completed work.",
         "For repo/code work include repo.head_sha, repo.remote_ref or repo.pr_url, repo.pushed=true, repo.dirty=false, repo.files_changed, and passing tests/checks. Passing tests/checks should use returncode=0, status=pass, result=passed, or boolean/count fields that make success unambiguous. For deployments include targets/services plus passing checks. If you cannot produce this manifest, say why; MAC will not auto-publish unverifiable work.",
+        "For repo/code work that changes source, build, dependency, or runtime config files, include a passing codegraph audit object in mac-evidence.json. Docs-only/media-only changes may omit it or record codegraph.status=skipped with reason=non_code_change.",
         "If the task needs new software, install it only in the task workspace or project worktree, such as a task-local .venv, uv project env, or project-local npm/pnpm install. Do not use sudo, host package managers, global npm/pip/pipx installs, or the shared Hermes/worker virtualenv.",
         "When you add task-local dependencies, include verification.environment_delta in mac-evidence.json with package_manager, commands, added_dependencies, lockfile_path, lockfile_digest, base_runtime_digest when known, and reason. MAC records that as a proposed runtime delta; it does not mutate the fleet runtime until an operator validates and promotes it.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
@@ -1044,6 +1052,7 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
             "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
             "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
             "For repository changes, build the review checkout and run the repository contract test command or the task's declared tests before approving. Look for failures introduced by the change, not just manifest shape.",
+            "For source, build, dependency, or runtime config changes, run CodeGraph in the review checkout before approving. Include codegraph in the review verdict; use impact/callers/callees for changed public APIs when applicable.",
             "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
             "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
             % (review_context.get("executor_evidence_id", ""), review_context.get("review_id", "")),
@@ -1120,6 +1129,11 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
     diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
     files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
+    codegraph = run_codegraph_audit(worktree_path, files_changed)
+    codegraph_problems = codegraph_audit_manifest_problems(
+        {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
+    )
+    codegraph_ok = not codegraph_problems
     final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
     clean = not bool(final_status)
     pushed = False
@@ -1127,7 +1141,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         task,
         os.environ.get("MAC_TASK_REPO_REMOTE", "").strip(),
     )
-    if bootstrap_ok and tests_ok and clean:
+    if bootstrap_ok and tests_ok and codegraph_ok and clean:
         push = _git(["push", push_remote, "HEAD:%s" % push_target], worktree_path)
         pushed = push.returncode == 0
         push_evidence = {
@@ -1142,6 +1156,14 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "returncode": 1,
             "status": "skipped",
             "reason": "worktree dirty after bootstrap/tests",
+        }
+    elif not codegraph_ok:
+        push_evidence = {
+            "remote": push_remote_display,
+            "returncode": 1,
+            "status": "skipped",
+            "reason": "codegraph audit failed",
+            "problems": codegraph_problems,
         }
     else:
         push_evidence = {
@@ -1163,15 +1185,18 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "dirty": bool(final_status),
             "files_changed": files_changed,
         },
+        "codegraph": codegraph,
         "tests": tests,
         "push": push_evidence,
-        "checks": [
+        "checks": (
+            ([codegraph_audit_check(codegraph)] if str(codegraph.get("status") or "") != "skipped" else [])
+            + [
             {
                 "name": "git_finalizer",
-                "returncode": 0 if pushed and bootstrap_ok and tests_ok and clean else 1,
-                "status": "pass" if pushed and bootstrap_ok and tests_ok and clean else "fail",
+                "returncode": 0 if pushed and bootstrap_ok and tests_ok and codegraph_ok and clean else 1,
+                "status": "pass" if pushed and bootstrap_ok and tests_ok and codegraph_ok and clean else "fail",
             }
-        ],
+        ]),
     }
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
@@ -1217,6 +1242,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
     tests = None
     bootstrap = None
+    codegraph = None
     independent_pass = False
     if review_worktree and Path(review_worktree).is_dir():
         review_worktree_path = Path(review_worktree)
@@ -1228,7 +1254,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
                 ["bash", "-lc", test_cmd], cwd=str(review_worktree_path), capture_output=True, text=True, check=False, timeout=600
             )
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
-            independent_pass = bootstrap_ok and tr.returncode == 0
+            codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
+            independent_pass = bootstrap_ok and tr.returncode == 0 and codegraph_audit_passed(codegraph)
             tests = {
                 "command": test_cmd,
                 "returncode": int(tr.returncode),
@@ -1252,8 +1279,14 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             "remote_ref": exec_repo.get("remote_ref") or "",
             "pushed": True,
             "dirty": False,
+            "files_changed": exec_repo.get("files_changed") or [],
         },
         "checks": [
+            *(
+                [codegraph_audit_check(codegraph)]
+                if isinstance(codegraph, dict) and str(codegraph.get("status") or "") != "skipped"
+                else []
+            ),
             {
                 "name": "review_verdict_finalizer",
                 "returncode": 0 if independent_pass else 1,
@@ -1265,6 +1298,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     }
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
+    if codegraph is not None:
+        manifest["codegraph"] = codegraph
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

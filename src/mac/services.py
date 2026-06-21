@@ -121,6 +121,7 @@ from mac.agentbus_control import (
 from mac.action_event_service import ActionEventService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
+from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
 from mac.identity_service import IdentityService
@@ -11371,6 +11372,15 @@ class ControlPlane:
                 if repo_problems:
                     problems.extend("verdict %s %s" % (evidence.id, problem) for problem in repo_problems)
                     continue
+                review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+                executor_changed = _metadata_path_list(executor_repo.get("files_changed"))
+                review_changed = _metadata_path_list(review_repo.get("files_changed"))
+                if executor_changed and set(review_changed) != set(executor_changed):
+                    problems.append(
+                        "verdict %s repo.files_changed does not match executor evidence: %s != %s"
+                        % (evidence.id, review_changed, executor_changed)
+                    )
+                    continue
                 reviewed_sha = str((manifest.get("repo") or {}).get("head_sha") or "").strip()
                 executor_sha = str(executor_repo.get("head_sha") or "").strip()
                 if reviewed_sha != executor_sha:
@@ -11411,6 +11421,17 @@ class ControlPlane:
                             continue
             if self._passed_verification_check_count(manifest) < 1:
                 problems.append("verdict %s requires at least one independent passing check" % evidence.id)
+                continue
+            codegraph_manifest = dict(manifest)
+            if isinstance(executor_manifest.get("repo"), dict):
+                review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+                codegraph_manifest["repo"] = {
+                    **review_repo,
+                    "files_changed": executor_manifest["repo"].get("files_changed") or [],
+                }
+            codegraph_problems = codegraph_audit_manifest_problems(codegraph_manifest)
+            if codegraph_problems:
+                problems.extend("verdict %s %s" % (evidence.id, problem) for problem in codegraph_problems)
                 continue
             return evidence, []
         return None, problems

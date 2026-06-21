@@ -34,6 +34,7 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
 )
 from mac.api import create_app
+from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.deploy_env import parse_env_text
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
@@ -66,6 +67,20 @@ def register_worker_fixture(cp: ControlPlane):
     machine = cp.register_machine("worker-host")
     agent = cp.register_agent(machine.id, "worker", capabilities=["python"])
     return agent
+
+
+def _codegraph_fixture(files: list[str]) -> Dict[str, Any]:
+    relevant_files = codegraph_relevant_files(files)
+    return {
+        "schema": CODEGRAPH_AUDIT_SCHEMA,
+        "status": "pass",
+        "reason": "test_fixture",
+        "relevant_files": relevant_files,
+        "commands": [
+            {"argv": ["codegraph", "sync"], "returncode": 0},
+            {"argv": ["codegraph", "affected"], "returncode": 0},
+        ],
+    }
 
 
 def test_mac_worker_cli_defaults_to_deployed_hub_env(monkeypatch):
@@ -167,6 +182,7 @@ def _write_worker_manifest(
     }
     if files_changed:
         repo["files_changed"] = files_changed
+    relevant_files = codegraph_relevant_files(files_changed or [])
     manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -174,6 +190,8 @@ def _write_worker_manifest(
         "repo": repo,
         "checks": [{"name": "pytest", "returncode": 0}],
     }
+    if relevant_files:
+        manifest["codegraph"] = _codegraph_fixture(files_changed or [])
     if extra:
         manifest.update(extra)
     (task_dir / "mac-evidence.json").write_text(
@@ -390,6 +408,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: 
             "dirty": False,
             "files_changed": ["src/example.py"],
         },
+        "codegraph": _codegraph_fixture(["src/example.py"]),
         "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
         "signed_by": executor_agent.id,
     }
@@ -426,6 +445,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: 
             "review_id": context["review_id"],
             "reviewed_evidence_id": context["executor_evidence_id"],
             "repo": dict(executor_manifest["repo"]),
+            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "reviewer independent verification", "returncode": 0}],
             "worktree_digest": "sha256:" + ("0" * 64),
             "findings": ["executor evidence is signed and tests passed"],
@@ -610,6 +630,7 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):
                 "dirty": False,
                 "files_changed": ["src/example.py"],
             },
+            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
             "signed_by": executor_agent.id,
         }
@@ -656,6 +677,7 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):
             "review_id": context["review_id"],
             "reviewed_evidence_id": context["executor_evidence_id"],
             "repo": dict(executor_manifest["repo"]),
+            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "reviewer independent verification", "returncode": 0}],
             "worktree_digest": "sha256:" + ("0" * 64),
             "findings": ["executor evidence is signed and tests passed"],

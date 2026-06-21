@@ -1,5 +1,6 @@
 import pytest
 
+from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
 from mac.evidence_validators import (
     registered_evidence_types,
     validate_evidence_type,
@@ -17,6 +18,16 @@ def _repo_manifest(**overrides):
             "pushed": True,
             "remote_ref": "origin/main",
             "files_changed": ["src/mac/services.py"],
+        },
+        "codegraph": {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "affected_computed",
+            "relevant_files": ["src/mac/services.py"],
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
         },
         "checks": [{"name": "pytest", "returncode": 0}],
     }
@@ -56,6 +67,65 @@ def test_evidence_validators_are_registry_backed_by_type():
         },
         passed_check_count=_passed_check_count,
     ) == []
+
+
+def test_repo_change_requires_codegraph_for_source_changes():
+    manifest = _repo_manifest()
+    manifest.pop("codegraph")
+    problems = validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=_passed_check_count,
+    )
+    assert "repo source/build changes require codegraph audit evidence" in problems
+
+    docs_only = _repo_manifest(
+        repo={
+            **_repo_manifest()["repo"],
+            "files_changed": ["README.md"],
+        }
+    )
+    docs_only.pop("codegraph")
+    assert validate_evidence_type(
+        "repo_change",
+        docs_only,
+        passed_check_count=_passed_check_count,
+    ) == []
+
+
+def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
+    manifest = _repo_manifest(
+        codegraph={
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "relevant_files": ["src/mac/services.py"],
+        }
+    )
+
+    problems = validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=_passed_check_count,
+    )
+
+    assert "codegraph audit requires a successful init/sync/index command" in problems
+    assert "codegraph audit requires a successful affected command" in problems
+
+
+def test_artifact_validator_requires_codegraph_for_source_changes():
+    manifest = _repo_manifest(
+        evidence_type="artifact",
+        artifacts=["artifact://build"],
+    )
+    manifest.pop("codegraph")
+
+    problems = validate_evidence_type(
+        "artifact",
+        manifest,
+        passed_check_count=_passed_check_count,
+    )
+
+    assert "repo source/build changes require codegraph audit evidence" in problems
 
 
 def test_operator_result_rejected_for_repo_coupled_task():

@@ -71,6 +71,7 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
     assert "default to evidence_type=repo_change" in prompt
     assert "Use operator_result only for tasks that are not tied to a repository contract" in prompt
+    assert "codegraph audit object" in prompt
 
 
 def test_repository_contract_section_no_repository_is_a_failure():
@@ -102,6 +103,7 @@ def test_repository_contract_section_shows_existing_contract():
     task = {"metadata": {"origin": {"repository_contract": contract}}}
     section = te.repository_contract_section(task)
     assert "make test" in section
+    assert "codegraph affected" in section
     assert "task contract failure" not in section
 
 
@@ -720,6 +722,45 @@ def _git(cwd, *args):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
 
 
+def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "codegraph"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'case "${1:-}" in',
+                "  init)",
+                '    mkdir -p "$2/.codegraph"',
+                '    echo "indexed $2"',
+                "    ;;",
+                "  sync)",
+                '    mkdir -p "$2/.codegraph"',
+                '    echo "synced $2"',
+                "    ;;",
+                "  affected)",
+                "    cat >/dev/null",
+                '    echo \'{"affected":[]}\'',
+                "    ;;",
+                "  unlock)",
+                "    ;;",
+                "  *)",
+                '    echo "unexpected codegraph command: $*" >&2',
+                "    exit 2",
+                "    ;;",
+                "esac",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("MAC_CODEGRAPH_BIN", str(script))
+    return script
+
+
 def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     # origin (bare) + worktree clone
     origin = tmp_path / "origin.git"
@@ -739,6 +780,7 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
 
     ws = tmp_path / "ws"
     ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -752,7 +794,8 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["evidence_type"] == "repo_change"
     assert manifest["repo"]["pushed"] is True
     assert "feature.py" in manifest["repo"]["files_changed"]
-    assert manifest["checks"][0]["status"] == "pass"  # pushed + `true` test passed
+    assert manifest["codegraph"]["status"] == "pass"
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
 def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, monkeypatch):
@@ -774,6 +817,7 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
 
     ws = tmp_path / "ws"
     ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -855,6 +899,7 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
 
     ws = tmp_path / "ws"
     ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -878,7 +923,7 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     assert (work / ".venv/bin/python").exists()
     assert manifest["bootstrap"]["status"] == "pass"
     assert manifest["tests"]["returncode"] == 0
-    assert manifest["checks"][0]["status"] == "pass"
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
 def test_repository_bootstrap_runs_when_creates_omitted(tmp_path):
@@ -917,6 +962,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
 
     ws = tmp_path / "ws"
     ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -939,7 +985,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     assert manifest["tests"]["status"] == "pass"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
-    assert manifest["checks"][0]["status"] == "fail"
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
 
 
 def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):

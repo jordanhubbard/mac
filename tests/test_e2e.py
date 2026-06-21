@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 import pytest
 from fastapi.testclient import TestClient
 
+from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
 from mac.api import create_app
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import TaskState
@@ -84,6 +85,7 @@ def _post_review_verdict(
         item for item in task_detail["evidence"] if item["id"] == executor_evidence_id
     )
     executor_manifest = executor_evidence["metadata"]["verification"]
+    files_changed = list((executor_manifest.get("repo") or {}).get("files_changed") or [])
     manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -94,6 +96,17 @@ def _post_review_verdict(
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("0" * 64),
     }
+    if files_changed:
+        manifest["codegraph"] = {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "test_fixture",
+            "relevant_files": files_changed,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        }
     manifest["signed_by"] = reviewer_id
     manifest["signature"] = sign_verification_manifest(reviewer_attestation_key, manifest)
     response = client.post(
@@ -126,6 +139,16 @@ def _verified_execution(summary: str = "tests passed") -> WorkerExecution:
                     "remote_ref": "refs/heads/task/example",
                     "dirty": False,
                     "files_changed": ["src/example.py"],
+                },
+                "codegraph": {
+                    "schema": CODEGRAPH_AUDIT_SCHEMA,
+                    "status": "pass",
+                    "reason": "test_fixture",
+                    "relevant_files": ["src/example.py"],
+                    "commands": [
+                        {"argv": ["codegraph", "sync"], "returncode": 0},
+                        {"argv": ["codegraph", "affected"], "returncode": 0},
+                    ],
                 },
                 "tests": [{"command": "pytest", "returncode": 0}],
             }

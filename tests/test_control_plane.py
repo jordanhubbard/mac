@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import mac.services as services
+from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.models import (
     AgentStatus,
     AuthorizationError,
@@ -242,6 +243,8 @@ def verified_repo_metadata(
     head_sha="abcdef1234567890abcdef1234567890abcdef12",
     files_changed=None,
 ):
+    files = files_changed if files_changed is not None else ["src/example.py"]
+    relevant_files = codegraph_relevant_files(files)
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -251,16 +254,28 @@ def verified_repo_metadata(
             "pushed": True,
             "remote_ref": "refs/heads/task/example",
             "dirty": False,
-            "files_changed": files_changed if files_changed is not None else ["src/example.py"],
+            "files_changed": files,
         },
         "tests": [{"command": "pytest tests/test_example.py", "returncode": 0}],
     }
+    if relevant_files:
+        manifest["codegraph"] = {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "test_fixture",
+            "relevant_files": relevant_files,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        }
     if cp is not None and agent_id is not None:
         manifest = _sign(cp, agent_id, manifest)
     return {"returncode": 0, "verification": manifest}
 
 
 def verified_deployment_metadata(cp=None, agent_id=None):
+    files_changed = ["deploy/example.yaml"]
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -270,7 +285,17 @@ def verified_deployment_metadata(cp=None, agent_id=None):
             "pushed": True,
             "remote_ref": "refs/heads/task/deploy",
             "dirty": False,
-            "files_changed": ["deploy/example.yaml"],
+            "files_changed": files_changed,
+        },
+        "codegraph": {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "test_fixture",
+            "relevant_files": files_changed,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
         },
         "targets": ["rocky"],
         "checks": [{"name": "systemd status", "status": "pass"}],
@@ -4257,7 +4282,9 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
             "pushed": True,
             "remote_ref": "refs/heads/task/example",
             "dirty": False,
+            "files_changed": executor_evidence.metadata["verification"]["repo"]["files_changed"],
         },
+        "codegraph": executor_evidence.metadata["verification"]["codegraph"],
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("1" * 64),
     }
@@ -4276,6 +4303,62 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
     assert result["status"] == "waiting_for_reviewer_verdict"
     assert result["review_id"] == review.id
     assert any("repo.head_sha does not match" in problem for problem in result["problems"])
+    assert cp.list_publications(task.id) == []
+
+
+def test_review_verdict_requires_executor_changed_files_for_codegraph(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "work",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://publish"},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    executor_evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id, files_changed=["src/example.py"]),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    executor_repo = executor_evidence.metadata["verification"]["repo"]
+    verdict_manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "approved",
+        "reviewed_evidence_id": executor_evidence.id,
+        "repo": {
+            "head_sha": executor_repo["head_sha"],
+            "pushed": True,
+            "remote_ref": executor_repo["remote_ref"],
+            "dirty": False,
+            "files_changed": [],
+        },
+        "checks": [{"name": "reviewer independent verification", "returncode": 0}],
+        "worktree_digest": "sha256:" + ("1" * 64),
+        "llm_model": "test-reviewer-llm",
+    }
+    verdict_manifest = _sign(cp, reviewer.id, verdict_manifest)
+    cp.add_evidence(
+        task.id,
+        "review",
+        "artifact://review",
+        "review approved without changed files",
+        reviewer.id,
+        metadata={"returncode": 0, "verification": verdict_manifest},
+    )
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert result["review_id"] == review.id
+    assert any("repo.files_changed does not match executor evidence" in problem for problem in result["problems"])
     assert cp.list_publications(task.id) == []
 
 

@@ -22,12 +22,16 @@ def test_codegraph_is_documented_as_agent_runtime_baseline():
     runtime_contract_text = " ".join(runtime_contract.split())
 
     assert "CodeGraph is a legitimate runtime assumption" in agents_text
+    assert "CodeGraph is an enforced evidence gate" in agents_text
+    assert "mac.codegraph_audit.v1" in agents_text
     assert "fails the deploy if CodeGraph cannot be prepared" in agents_text
     for term in ("APIs", "code behavior", "call relationships"):
         assert term in agents_text
     assert "run `codegraph init`" in agents_text
     assert "do not commit" in agents_text
     assert "CodeGraph is a legitimate baseline runtime assumption" in runtime_contract_text
+    assert "CodeGraph is also an enforced evidence gate" in runtime_contract_text
+    assert "mac.codegraph_audit.v1" in runtime_contract_text
     assert "fails the deploy if CodeGraph cannot be prepared" in runtime_contract_text
     for term in ("repository APIs", "code behavior", "call relationships"):
         assert term in runtime_contract_text

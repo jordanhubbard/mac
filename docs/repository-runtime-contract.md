@@ -74,6 +74,14 @@ behavior, call relationships, and skills that benefit from code structure. It is
 analysis support: repository contracts, source files, tests, and recorded
 evidence remain authoritative.
 
+For source, build, dependency, or runtime config changes, CodeGraph is also an
+enforced evidence gate. Worker-owned pushes and approved review verdicts must
+carry a passing `mac.codegraph_audit.v1` object produced from `codegraph init`
+or `codegraph sync` plus `codegraph affected` for the changed files. The worker
+and control-plane validators reject source/build change evidence that lacks the
+audit or records a failed audit. Pure documentation/media/text-only changes may
+skip the audit with `reason=non_code_change`.
+
 Repository-backed tasks carry the normalized contract in
 `task.metadata.origin.repository_contract`. The Hermes executor prompt surfaces
 the contract and tells workers to bootstrap from the local checkout before

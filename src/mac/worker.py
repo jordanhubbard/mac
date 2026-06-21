@@ -46,6 +46,12 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
     debug_terminal_output_payload,
 )
+from mac.codegraph_audit import (
+    codegraph_audit_check,
+    codegraph_audit_manifest_problems,
+    codegraph_audit_passed,
+    run_codegraph_audit,
+)
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.hermes_config_surface import apply_hermes_surface_payload
 
@@ -2716,10 +2722,17 @@ class MacWorker:
             repo["remote_ref"] = "refs/heads/%s" % branch
         push_remote, push_remote_display = _repository_push_remote(task, context)
         repo["push_remote"] = push_remote_display
+        codegraph = run_codegraph_audit(worktree, files_changed)
+        repo["dirty"] = _repository_worktree_is_dirty(worktree)
 
         pushed = False
         push_item: Optional[JsonDict] = None
-        prepush_problems = _repository_finalizer_prepush_problems(task, repo, test_item)
+        prepush_problems = _repository_finalizer_prepush_problems(
+            task,
+            repo,
+            test_item,
+            codegraph=codegraph,
+        )
         if problems:
             problems.append("repository finalizer had local errors; refusing to push")
         elif prepush_problems:
@@ -2762,6 +2775,8 @@ class MacWorker:
         repo["pushed"] = pushed
 
         checks: List[JsonDict] = []
+        if str(codegraph.get("status") or "") != "skipped":
+            checks.append(codegraph_audit_check(codegraph))
         if push_item is not None:
             checks.append(push_item)
         manifest: JsonDict = {
@@ -2773,6 +2788,7 @@ class MacWorker:
             ),
             "executor_summary": execution.summary,
             "repo": repo,
+            "codegraph": codegraph,
             "tests": tests,
             "checks": checks,
         }
@@ -2940,6 +2956,16 @@ class MacWorker:
                     % ((staged.stderr or staged.stdout or "").strip() or worktree)
                 )
 
+        files_changed = _repository_context_changed_files(worktree, context)
+        codegraph = run_codegraph_audit(worktree, files_changed)
+        if not codegraph_audit_passed(codegraph):
+            raise RuntimeError(
+                "repository auto-publish codegraph audit failed: %s"
+                % (codegraph.get("reason") or "unknown")
+            )
+        if _repository_worktree_is_dirty(worktree):
+            raise RuntimeError("repository auto-publish worktree dirty after codegraph audit")
+
         push_remote, push_remote_display = _repository_push_remote(task, context)
         push = _run_git(worktree, ["push", push_remote, "HEAD:refs/heads/%s" % branch])
         if push.returncode != 0:
@@ -2996,6 +3022,8 @@ class MacWorker:
                     ),
                 )
             )
+            if evidence_type == "review_verdict":
+                problems.extend(_worker_review_verdict_executor_repo_problems(task_dir, manifest))
             problems.extend(_worker_required_changed_file_problems(task_payload, manifest))
 
         repository_context = _load_repository_context(task_dir)
@@ -3070,11 +3098,13 @@ class MacWorker:
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = dict(execution.metadata)
+        repository_context = _load_repository_context(task_dir)
         manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
         manifest = _enrich_verification_manifest_from_repository_context(
             ensure_json_object(manifest),
-            _load_repository_context(task_dir),
+            repository_context,
         )
+        manifest = _attach_repository_codegraph_audit(manifest, repository_context)
         metadata["verification"] = self._sign_verification_manifest(manifest)
         metadata.setdefault(
             "workspace_outputs",
@@ -4048,6 +4078,45 @@ def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
     return repo
 
 
+def _append_codegraph_audit_check(manifest: JsonDict, audit: JsonDict) -> None:
+    if str(audit.get("status") or "") == "skipped":
+        return
+    checks = manifest.get("checks")
+    if not isinstance(checks, list):
+        checks = []
+        manifest["checks"] = checks
+    checks[:] = [
+        item
+        for item in checks
+        if not (isinstance(item, dict) and item.get("name") == "codegraph_audit")
+    ]
+    checks.append(codegraph_audit_check(audit))
+
+
+def _attach_repository_codegraph_audit(manifest: JsonDict, context: JsonDict) -> JsonDict:
+    if not context:
+        return manifest
+    worktree_raw = str(context.get("repository_worktree") or "").strip()
+    worktree = Path(worktree_raw).expanduser() if worktree_raw else None
+    if worktree is None or not worktree.exists():
+        return manifest
+    repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+    files_changed = _metadata_path_list(repo.get("files_changed")) if isinstance(repo, dict) else []
+    if not files_changed:
+        files_changed = _repository_context_changed_files(worktree, context)
+    candidate = dict(manifest)
+    candidate["repo"] = {**repo, "files_changed": files_changed}
+    if not codegraph_audit_manifest_problems(candidate):
+        return manifest
+    audit = run_codegraph_audit(worktree, files_changed)
+    if not isinstance(manifest.get("repo"), dict):
+        manifest["repo"] = {}
+    manifest["repo"]["files_changed"] = files_changed
+    manifest["codegraph"] = audit
+    _append_codegraph_audit_check(manifest, audit)
+    return manifest
+
+
 def _repository_contract_test_command(task: JsonDict) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
@@ -4092,6 +4161,8 @@ def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
     test_item: JsonDict,
+    *,
+    codegraph: Optional[JsonDict] = None,
 ) -> List[str]:
     problems: List[str] = []
     head_sha = str(repo.get("head_sha") or "").strip()
@@ -4104,6 +4175,8 @@ def _repository_finalizer_prepush_problems(
         problems.append("repo evidence requires changed files")
     if _worker_verification_item_passed(test_item) is not True:
         problems.append("repo code evidence requires at least one passing test/check")
+    if codegraph is not None:
+        problems.extend(codegraph_audit_manifest_problems({"repo": repo, "codegraph": codegraph}))
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
 
@@ -4366,6 +4439,7 @@ def _worker_verification_contract_problems(
             or _manifest_list(manifest.get("artifacts"))
         ):
             problems.append("deployment evidence requires targets, services, or artifacts")
+        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type in {"test", "artifact"}:
         problems = _worker_require_pushed_repo_anchor(manifest)
@@ -4373,6 +4447,7 @@ def _worker_verification_contract_problems(
             problems.append("%s evidence requires at least one passing check or test" % evidence_type)
         if evidence_type == "artifact" and not _manifest_list(manifest.get("artifacts")):
             problems.append("artifact evidence requires artifacts")
+        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type == "no_change":
         problems = _worker_require_pushed_repo_anchor(manifest)
@@ -4380,9 +4455,10 @@ def _worker_verification_contract_problems(
             problems.append("no_change evidence requires a reason")
         if _worker_passed_verification_check_count(manifest) < 1:
             problems.append("no_change evidence requires at least one passing check")
+        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type == "review_verdict":
-        return []
+        return codegraph_audit_manifest_problems(manifest)
     if evidence_type == "operator_result":
         # autonomy-loop fix: mirror the server's substance gate so the worker
         # pre-check fails chatter ("hello hello hello") / placeholder evidence
@@ -4408,6 +4484,42 @@ def _worker_verification_contract_problems(
     return ["unsupported verification.evidence_type: %s" % evidence_type]
 
 
+def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> JsonDict:
+    try:
+        loaded = json.loads((task_dir / "executor-evidence.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    metadata = loaded.get("metadata") if isinstance(loaded.get("metadata"), dict) else {}
+    manifest = metadata.get("verification") if isinstance(metadata.get("verification"), dict) else None
+    if manifest is None and isinstance(loaded.get("verification"), dict):
+        manifest = loaded.get("verification")
+    return dict(manifest) if isinstance(manifest, dict) else {}
+
+
+def _worker_review_verdict_executor_repo_problems(task_dir: Path, manifest: JsonDict) -> List[str]:
+    executor_manifest = _executor_verification_manifest_from_review_workspace(task_dir)
+    executor_repo = executor_manifest.get("repo") if isinstance(executor_manifest.get("repo"), dict) else {}
+    if not executor_repo:
+        return []
+    review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+    problems: List[str] = []
+    executor_changed = _metadata_path_list(executor_repo.get("files_changed"))
+    review_changed = _metadata_path_list(review_repo.get("files_changed"))
+    if executor_changed and set(review_changed) != set(executor_changed):
+        problems.append(
+            "review_verdict repo.files_changed must match executor evidence: %s != %s"
+            % (review_changed, executor_changed)
+        )
+    codegraph_manifest = {
+        **manifest,
+        "repo": {**review_repo, "files_changed": executor_changed},
+    }
+    problems.extend(codegraph_audit_manifest_problems(codegraph_manifest))
+    return problems
+
+
 def _worker_repo_verification_problems(
     manifest: JsonDict,
     require_tests: bool,
@@ -4421,6 +4533,7 @@ def _worker_repo_verification_problems(
         problems.append("repo evidence requires changed files")
     if require_tests and _worker_passed_verification_check_count(manifest) < 1:
         problems.append("repo code evidence requires at least one passing test/check")
+    problems.extend(codegraph_audit_manifest_problems(manifest))
     return problems
 
 

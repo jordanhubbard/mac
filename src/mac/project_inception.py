@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.models import ReviewStatus, Task, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
 
@@ -576,6 +577,7 @@ def _verified_repo_metadata(
     for path in required_files or []:
         if path not in files_changed:
             files_changed.append(path)
+    relevant_files = codegraph_relevant_files(files_changed)
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -599,6 +601,17 @@ def _verified_repo_metadata(
             ),
         },
     }
+    if relevant_files:
+        manifest["codegraph"] = {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "project_inception_proof",
+            "relevant_files": relevant_files,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        }
     manifest["signed_by"] = agent_id
     manifest["signature"] = sign_verification_manifest(
         cp._agent_attestation_key(agent_id),
@@ -682,16 +695,29 @@ def _submit_review_verdict(
 ) -> str:
     executor = cp.get_evidence(executor_evidence_id)
     executor_manifest = executor.metadata.get("verification") or {}
+    executor_repo = dict(executor_manifest.get("repo") or {})
+    relevant_files = codegraph_relevant_files(executor_repo.get("files_changed") or [])
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
         "evidence_type": "review_verdict",
         "verdict": "approved",
         "reviewed_evidence_id": executor_evidence_id,
-        "repo": dict(executor_manifest.get("repo") or {}),
+        "repo": executor_repo,
         "checks": [{"name": "independent c26 verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("1" * 64),
     }
+    if relevant_files:
+        manifest["codegraph"] = {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "project_inception_review",
+            "relevant_files": relevant_files,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        }
     manifest["signed_by"] = reviewer_agent_id
     manifest["signature"] = sign_verification_manifest(
         cp._agent_attestation_key(reviewer_agent_id),
