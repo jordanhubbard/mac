@@ -33,3 +33,12 @@ def test_openshell_image_docs_do_not_advertise_podman_builds():
     assert "docker build" in containerfile
     assert "podman build" not in containerfile
     assert "Docker Engine/Moby" in containerfile
+
+
+def test_openshell_image_installs_codegraph_baseline():
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in containerfile
+    assert "codegraph install" in containerfile

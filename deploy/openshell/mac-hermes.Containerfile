@@ -22,6 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl: task work + git push egress.
+# codegraph: local codebase indexing and inspection baseline for agent work.
 # make/node/npm/java/pnpm/lein: common repository contracts. The executor can
 # still provision missing tools into a task-local .mac-toolchain, but the base
 # image should cover ordinary polyglot repos without mutating the host fleet.
@@ -31,6 +32,13 @@ RUN apt-get update \
     && npm install -g pnpm \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \
+    && curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh \
+    && if ! command -v codegraph >/dev/null 2>&1; then \
+        for candidate in /root/.codegraph/bin/codegraph /root/.local/bin/codegraph /root/.cargo/bin/codegraph /root/bin/codegraph; do \
+          if [ -x "$candidate" ]; then ln -sf "$candidate" /usr/local/bin/codegraph; break; fi; \
+        done; \
+      fi \
+    && codegraph install \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*
 

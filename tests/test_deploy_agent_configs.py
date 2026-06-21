@@ -377,6 +377,184 @@ def test_fleet_deploy_installs_github_cli_for_workers():
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
 
 
+def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    install_window = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
+        'log "creating/updating mac environment file"', 1
+    )[0]
+
+    assert "install_codegraph_cli()" in script
+    assert "initialize_codegraph_repository()" in script
+    assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in script
+    assert "codegraph install" in script
+    assert "codegraph init" in script
+    assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in install_window
+    assert 'install_codegraph_cli || true' not in install_window
+    assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in install_window
+    assert "ERROR: curl unavailable; cannot install CodeGraph CLI" in script
+    assert "ERROR: codegraph install failed" in script
+    assert "ERROR: codegraph init failed" in script
+    assert 'grep -qxF ".codegraph/"' in script
+
+
+def _deploy_function(script: str, name: str, next_name: str) -> str:
+    body = script.split(f"{name}() {{", 1)[1].split(f"\n{next_name}() {{", 1)[0]
+    return f"{name}() {{{body}\n"
+
+
+def _isolated_codegraph_resolver(script: str, tmp_path: Path) -> str:
+    return _deploy_function(script, "resolve_codegraph_cli", "install_codegraph_cli").replace(
+        "/opt/homebrew/bin/codegraph /usr/local/bin/codegraph",
+        "%s %s" % (tmp_path / "missing-homebrew-codegraph", tmp_path / "missing-local-codegraph"),
+    )
+
+
+def test_codegraph_installer_function_links_installed_binary(tmp_path):
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(
+        """#!/bin/sh
+cat <<'SH'
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/codegraph" <<'EOF'
+#!/bin/sh
+case "$1" in
+  install) echo installed; exit 0 ;;
+  --version) echo codegraph-test; exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$HOME/.local/bin/codegraph"
+SH
+""",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    runner = tmp_path / "run-install.sh"
+    runner.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'MAC_HOME="$PWD/mac-home"',
+                'HOME="$PWD/home"',
+                'LOG_DIR="$PWD/logs"',
+                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
+                _isolated_codegraph_resolver(script, tmp_path),
+                _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
+                "install_codegraph_cli",
+                'test -x "$MAC_HOME/bin/codegraph"',
+                'test -s "$LOG_DIR/codegraph-install.txt"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+
+    result = subprocess.run(
+        [str(runner)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "installed" in (tmp_path / "logs" / "codegraph-install.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text("#!/bin/sh\nexit 22\n", encoding="utf-8")
+    curl.chmod(0o755)
+    runner = tmp_path / "run-install-fail.sh"
+    runner.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'MAC_HOME="$PWD/mac-home"',
+                'HOME="$PWD/home"',
+                'LOG_DIR="$PWD/logs"',
+                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
+                _isolated_codegraph_resolver(script, tmp_path),
+                _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
+                "install_codegraph_cli",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+
+    result = subprocess.run(
+        [str(runner)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "ERROR: CodeGraph CLI installer failed" in (
+        tmp_path / "logs" / "log.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_path):
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codegraph = bin_dir / "codegraph"
+    codegraph.write_text("#!/bin/sh\necho codegraph init should not run >&2\nexit 99\n", encoding="utf-8")
+    codegraph.chmod(0o755)
+    source_dir = tmp_path / "archive-source"
+    source_dir.mkdir()
+    runner = tmp_path / "run-init-non-git.sh"
+    runner.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'MAC_HOME="$PWD/mac-home"',
+                'HOME="$PWD/home"',
+                'LOG_DIR="$PWD/logs"',
+                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
+                _deploy_function(script, "ensure_codegraph_git_exclude", "initialize_codegraph_repository"),
+                _deploy_function(script, "initialize_codegraph_repository", "normalize_hermes_redaction_env"),
+                f"initialize_codegraph_repository {source_dir}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+
+    result = subprocess.run(
+        [str(runner)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "not a git worktree" in (tmp_path / "logs" / "log.txt").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     agent_service = script.split("install_linux_agent_service() {", 1)[1].split(

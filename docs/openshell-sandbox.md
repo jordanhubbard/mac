@@ -168,7 +168,10 @@ the sandbox**:
 2. **Credentials reachable** — env-key auth (`ANTHROPIC_API_KEY`, `CURSOR_API_KEY`)
    is forwarded automatically; file-based auth (`~/.claude.json`,
    `~/.codex/auth.json`, `~/.cursor`) must be baked into the image or uploaded.
-3. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
+3. **Baseline repo tools present** — the MAC OpenShell image installs `git`,
+   `gh`, and `codegraph`; custom images must provide the same baseline if they
+   are used for repository work.
+4. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
    provider host (e.g. `api.anthropic.com`) in addition to the hub/gateway. The
    bundled fail-closed default denies all egress, so the preflight fails closed
    there by design.

@@ -73,6 +73,7 @@ def test_onboard_repository_description_directs_contract_authoring(cp):
     task = cp.onboard_repository("https://github.com/o/widget.git")
     assert ".mac/project.yaml" in task.description
     assert "$MAC_TASK_REPO_WORKTREE" in task.description
+    assert "codegraph init" in task.description
     assert "do NOT push" in task.description
 
 

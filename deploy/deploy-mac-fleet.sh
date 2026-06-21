@@ -2909,6 +2909,98 @@ install_github_cli() {
   log "GitHub CLI ready at $target"
 }
 
+resolve_codegraph_cli() {
+  local existing=""
+  existing="$(command -v codegraph 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ -x "$existing" ]; then
+    printf '%s\n' "$existing"
+    return 0
+  fi
+  for candidate in "$MAC_HOME/bin/codegraph" "$HOME/.codegraph/bin/codegraph" "$HOME/.local/bin/codegraph" "$HOME/.cargo/bin/codegraph" "$HOME/bin/codegraph" /opt/homebrew/bin/codegraph /usr/local/bin/codegraph; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_codegraph_cli() {
+  local target="$MAC_HOME/bin/codegraph" existing=""
+  mkdir -p "$MAC_HOME/bin"
+  existing="$(resolve_codegraph_cli || true)"
+  if [ -z "$existing" ]; then
+    if ! command -v curl >/dev/null 2>&1; then
+      log "ERROR: curl unavailable; cannot install CodeGraph CLI"
+      return 1
+    fi
+    log "installing CodeGraph CLI"
+    if ! curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh; then
+      log "ERROR: CodeGraph CLI installer failed"
+      return 1
+    fi
+    existing="$(resolve_codegraph_cli || true)"
+  fi
+  if [ -z "$existing" ] || [ ! -x "$existing" ]; then
+    log "ERROR: CodeGraph CLI unavailable after installer"
+    return 1
+  fi
+  if [ "$existing" != "$target" ]; then
+    if ln -sf "$existing" "$target" 2>/dev/null; then
+      :
+    else
+      cp -f "$existing" "$target"
+      chmod 0755 "$target"
+    fi
+  fi
+  if PATH="$MAC_HOME/bin:$PATH" codegraph install > "$LOG_DIR/codegraph-install.txt" 2>&1; then
+    PATH="$MAC_HOME/bin:$PATH" codegraph --version > "$LOG_DIR/codegraph-version.txt" 2>&1 || true
+    log "CodeGraph CLI ready at $target"
+  else
+    log "ERROR: codegraph install failed; see $LOG_DIR/codegraph-install.txt"
+    return 1
+  fi
+}
+
+ensure_codegraph_git_exclude() {
+  local repo_dir="$1" exclude_file=""
+  if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+  exclude_file="$(git -C "$repo_dir" rev-parse --git-path info/exclude 2>/dev/null || true)"
+  [ -n "$exclude_file" ] || return 0
+  case "$exclude_file" in
+    /*) ;;
+    *) exclude_file="$repo_dir/$exclude_file" ;;
+  esac
+  mkdir -p "$(dirname "$exclude_file")"
+  touch "$exclude_file"
+  if ! grep -qxF ".codegraph/" "$exclude_file"; then
+    printf '\n.codegraph/\n' >> "$exclude_file"
+  fi
+}
+
+initialize_codegraph_repository() {
+  local repo_dir="$1"
+  [ -d "$repo_dir" ] || return 0
+  if ! PATH="$MAC_HOME/bin:$PATH" command -v codegraph >/dev/null 2>&1; then
+    log "CodeGraph CLI unavailable; skipping CodeGraph init for $repo_dir"
+    return 0
+  fi
+  if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    log "CodeGraph init skipped; $repo_dir is not a git worktree"
+    return 0
+  fi
+  ensure_codegraph_git_exclude "$repo_dir"
+  log "initializing CodeGraph index for $repo_dir"
+  if (cd "$repo_dir" && PATH="$MAC_HOME/bin:$PATH" codegraph init) > "$LOG_DIR/codegraph-init-source.txt" 2>&1; then
+    log "CodeGraph index initialized for $repo_dir"
+  else
+    log "ERROR: codegraph init failed for $repo_dir; see $LOG_DIR/codegraph-init-source.txt"
+    return 1
+  fi
+}
+
 
 
 normalize_hermes_redaction_env() {
@@ -3998,6 +4090,8 @@ mv "$SRC_DIR.new" "$SRC_DIR"
 rm -f "$ARCHIVE"
 
 install_github_cli || true
+install_codegraph_cli
+initialize_codegraph_repository "$SRC_DIR"
 
 log "creating/updating mac environment file"
 PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env \

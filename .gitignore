@@ -21,3 +21,6 @@ dist/
 
 # Operational task-ledger mirror (mac task is canonical; mirror is local-only).
 .tickets/
+
+# CodeGraph indexes are local generated state.
+.codegraph/

@@ -552,6 +552,9 @@ Every registered repository must include a repository runtime contract at
 the bootstrap command, canonical test command, supported host families,
 canonical remote URL, and required evidence to new tasks. See
 [Repository Runtime Contract](repository-runtime-contract.md).
+If CodeGraph is available on the registering host, repository registration also
+runs `codegraph init` after excluding `.codegraph/` through the checkout-local
+`.git/info/exclude`.
 
 The hub advances the default review/publication workflow from heartbeat when
 `MAC_REVIEW_TICK_ON_HEARTBEAT=1` and `MAC_REVIEW_TICK_HUB_AGENT` is set to the

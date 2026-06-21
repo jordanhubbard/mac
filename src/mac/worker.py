@@ -68,6 +68,7 @@ _GIT_REMOTE_URL_RE = re.compile(
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 DEFAULT_COMMAND_INVENTORY_NAMES = (
     "bash",
+    "codegraph",
     "git",
     "gh",
     "make",

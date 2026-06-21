@@ -780,6 +780,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
                     "  1. Explore the tree: README/docs, build files and package manifests, CI config, entry points, and the test layout.",
                     "  2. Infer the supported platforms, the required toolchain commands, the bootstrap/setup command, and the canonical test command — only from what the repo actually declares; do not invent commands.",
                     "  3. Author a repository contract at .mac/project.yaml in the checkout using schema mac.repository_contract.v1 with keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required.",
+                    "  4. If codegraph is available, run codegraph init for local API/code behavior analysis. Treat .codegraph/ as generated local state, not a deliverable.",
                     "Do NOT push or open a PR — the authored .mac/project.yaml is a local analysis artifact. Include its full content and your architecture summary + prioritized backlog in the evidence (evidence_type=investigation).",
                 ]
             )

@@ -1,6 +1,8 @@
 import base64
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -8,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import mac.services as services
 from mac.models import (
     AgentStatus,
     AuthorizationError,
@@ -3243,6 +3246,123 @@ def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, t
     _write_repository_contract(repo, include_test=False)
 
     with pytest.raises(ValidationError, match="test.command"):
+        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+
+def test_repository_registration_initializes_codegraph_for_git_checkout(cp, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch=main", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _write_repository_contract(repo)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "codegraph-cwd.txt"
+    codegraph = bin_dir / "codegraph"
+    codegraph.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import pathlib",
+                "import sys",
+                "if sys.argv[1:] != ['init']:",
+                "    sys.stderr.write('unexpected args: %r\\n' % (sys.argv[1:],))",
+                "    sys.exit(9)",
+                "cwd = pathlib.Path.cwd()",
+                "(cwd / '.codegraph').mkdir(exist_ok=True)",
+                "(cwd / '.codegraph' / 'codegraph.db').write_text('fake\\n', encoding='utf-8')",
+                "pathlib.Path(%r).write_text(str(cwd), encoding='utf-8')" % str(marker),
+                "sys.exit(0)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    codegraph.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+    registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+    status = registered.metadata["codegraph"]
+    assert status["command"] == "codegraph init"
+    assert status["attempted"] is True
+    assert status["initialized"] is True
+    assert status["returncode"] == 0
+    assert Path(marker.read_text(encoding="utf-8")) == repo
+    assert (repo / ".codegraph" / "codegraph.db").exists()
+    exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert ".codegraph/" in exclude_text
+    assert registered.metadata["repository_contract"]["project"] == "repo-beads-mac"
+
+
+def test_repository_registration_resolves_codegraph_from_mac_home(cp, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch=main", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _write_repository_contract(repo)
+    git_path = shutil.which("git")
+    assert git_path is not None
+    mac_home = tmp_path / ".mac"
+    bin_dir = mac_home / "bin"
+    bin_dir.mkdir(parents=True)
+    marker = tmp_path / "codegraph-mac-home-cwd.txt"
+    codegraph = bin_dir / "codegraph"
+    codegraph.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import pathlib",
+                "cwd = pathlib.Path.cwd()",
+                "(cwd / '.codegraph').mkdir(exist_ok=True)",
+                "pathlib.Path(%r).write_text(str(cwd), encoding='utf-8')" % str(marker),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    codegraph.chmod(0o755)
+    monkeypatch.setenv("MAC_HOME", str(mac_home))
+    monkeypatch.setattr(
+        services.shutil,
+        "which",
+        lambda name: None if name == "codegraph" else (git_path if name == "git" else None),
+    )
+
+    registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+    status = registered.metadata["codegraph"]
+    assert status["initialized"] is True
+    assert status["binary"] == str(codegraph)
+    assert Path(marker.read_text(encoding="utf-8")) == repo
+
+
+def test_repository_registration_fails_when_codegraph_init_fails(cp, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch=main", str(repo)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _write_repository_contract(repo)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codegraph = bin_dir / "codegraph"
+    codegraph.write_text("#!/bin/sh\necho codegraph failed >&2\nexit 7\n", encoding="utf-8")
+    codegraph.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+    with pytest.raises(ValidationError, match="codegraph init failed"):
         cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 

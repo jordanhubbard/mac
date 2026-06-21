@@ -87,6 +87,7 @@ def test_repository_contract_section_onboarding_when_checkout_present():
     assert "task contract failure" not in section
     assert ".mac/project.yaml" in section
     assert "$MAC_TASK_REPO_WORKTREE" in section
+    assert "codegraph init" in section
     assert "do not push" in section.lower()
 
 

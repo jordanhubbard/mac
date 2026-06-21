@@ -584,6 +584,7 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "",
             "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE (a task branch). Work entirely there.",
             "This is READ-ONLY with respect to the remote: do NOT push or open a pull request. You MAY write local analysis files in the checkout (notably .mac/project.yaml).",
+            "If CodeGraph is available, initialize it for local API/code behavior analysis with `codegraph init`; `.codegraph/` is generated local state and must not be committed or included as a deliverable.",
             "",
             "Start from the repo's own self-description. Read these files first if they exist and treat them as authoritative for intent, not just for code: README.md (what it is / how to build), AGENTS.md (instructions for AI agents working here), and PLAN.md (roadmap / planned work). Fold what they say into the deliverables below; do not contradict them without explaining why.",
             "",
@@ -617,6 +618,147 @@ def _load_repository_contract(repo_path: Path) -> JsonDict:
         "repository runtime contract not found under %s; expected one of: %s"
         % (root, ", ".join(checked))
     )
+
+
+def _tail_text(value: str, limit: int = 4000) -> str:
+    if len(value) <= limit:
+        return value
+    return value[-limit:]
+
+
+def _ensure_codegraph_git_exclude(repo_path: Path) -> Optional[str]:
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        result = subprocess.run(
+            [git, "rev-parse", "--git-path", "info/exclude"],
+            cwd=str(repo_path),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    exclude_path = Path(result.stdout.strip())
+    if not exclude_path.is_absolute():
+        exclude_path = repo_path / exclude_path
+    try:
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+        lines = {line.strip() for line in existing.splitlines()}
+        if ".codegraph/" not in lines:
+            suffix = "" if existing.endswith("\n") or not existing else "\n"
+            exclude_path.write_text(existing + suffix + ".codegraph/\n", encoding="utf-8")
+    except OSError:
+        return None
+    return str(exclude_path)
+
+
+def _resolve_codegraph_binary() -> Optional[str]:
+    found = shutil.which("codegraph")
+    if found:
+        return found
+    home = Path.home()
+    candidates: List[Path] = []
+    mac_home = os.environ.get("MAC_HOME")
+    if mac_home:
+        candidates.append(Path(mac_home).expanduser() / "bin" / "codegraph")
+    candidates.extend(
+        [
+            home / ".mac" / "bin" / "codegraph",
+            home / ".codegraph" / "bin" / "codegraph",
+            home / ".local" / "bin" / "codegraph",
+            home / ".cargo" / "bin" / "codegraph",
+            home / "bin" / "codegraph",
+            Path("/opt/homebrew/bin/codegraph"),
+            Path("/usr/local/bin/codegraph"),
+        ]
+    )
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
+def _initialize_codegraph_repository(repo_path: Path) -> JsonDict:
+    status: JsonDict = {
+        "schema": "mac.codegraph_init.v1",
+        "command": "codegraph init",
+        "attempted": False,
+        "initialized": False,
+    }
+    if not repo_path.exists() or not repo_path.is_dir():
+        status["reason"] = "repository_path_not_directory"
+        return status
+    git = shutil.which("git")
+    if git is None:
+        status["reason"] = "git_unavailable"
+        return status
+    try:
+        inside = subprocess.run(
+            [git, "rev-parse", "--is-inside-work-tree"],
+            cwd=str(repo_path),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        status["reason"] = "git_probe_failed"
+        status["error"] = str(exc)
+        return status
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        status["reason"] = "not_git_worktree"
+        if inside.stderr.strip():
+            status["stderr"] = _tail_text(inside.stderr)
+        return status
+    codegraph = _resolve_codegraph_binary()
+    if codegraph is None:
+        status["reason"] = "codegraph_unavailable"
+        return status
+    status["binary"] = codegraph
+    status["git_exclude"] = _ensure_codegraph_git_exclude(repo_path)
+    status["attempted"] = True
+    try:
+        result = subprocess.run(
+            [codegraph, "init"],
+            cwd=str(repo_path),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        status["reason"] = "codegraph_init_failed"
+        status["error"] = str(exc)
+        return status
+    status["returncode"] = result.returncode
+    if result.stdout:
+        status["stdout"] = _tail_text(result.stdout)
+    if result.stderr:
+        status["stderr"] = _tail_text(result.stderr)
+    if result.returncode == 0:
+        status["initialized"] = True
+    else:
+        status["reason"] = "codegraph_init_nonzero"
+    return status
+
+
+def _raise_for_codegraph_init_failure(status: JsonDict) -> None:
+    if not status.get("attempted") or status.get("initialized"):
+        return
+    reason = str(status.get("reason") or "codegraph_init_failed")
+    detail = str(status.get("stderr") or status.get("stdout") or status.get("error") or "").strip()
+    if detail:
+        detail = ": " + _tail_text(detail, limit=500)
+    raise ValidationError("codegraph init failed (%s)%s" % (reason, detail))
 
 
 def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
@@ -9448,8 +9590,11 @@ class ControlPlane:
                 "repository runtime contract project %s does not match registered project %s"
                 % (contract["project"], repo_project)
             )
+        codegraph_status = _initialize_codegraph_repository(repo_path_obj)
+        _raise_for_codegraph_init_failure(codegraph_status)
         repo_metadata = ensure_json_object(metadata)
         repo_metadata["repository_contract"] = contract
+        repo_metadata["codegraph"] = codegraph_status
         now = utcnow()
         row = self.store.query_one("SELECT id FROM project_repositories WHERE name = ?", (name,))
         repo_id = row["id"] if row is not None else new_id("projectrepo")
@@ -9497,6 +9642,7 @@ class ControlPlane:
                 "enabled": enabled,
                 "repository_contract_schema": contract["schema"],
                 "repository_contract_path": contract["contract_path"],
+                "codegraph": codegraph_status,
             },
         )
         return self.get_project_repository(repo_id)

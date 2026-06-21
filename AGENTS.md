@@ -70,6 +70,20 @@ tasks, and let loop-mode agents claim from `mac task ready`. Use
 `mac dispatch tick` for an immediate dispatcher pass, or `mac task claim` /
 `mac task start` when assigning a specific agent manually.
 
+## CodeGraph Runtime Baseline
+
+CodeGraph is a legitimate runtime assumption in the default agent environment.
+Fleet deploy installs `codegraph`, runs `codegraph install`, and fails the
+deploy if CodeGraph cannot be prepared; the OpenShell agent image does the same
+at image build time. Agents may use CodeGraph to understand repository APIs,
+code behavior, call relationships, and skills that benefit from code structure.
+Use it as analysis support, not as a replacement for reading source files and
+running tests.
+
+When analyzing a repository, run `codegraph init` if the index is absent or
+stale. `.codegraph/` is generated local state: do not commit it, include it in
+deliverables, or treat it as the task ledger.
+
 ## Mandatory Pre-Push Test Gate (all code executor tasks)
 
 Every code-executor worker (`mac-worker-python-coder-opencode` and any

@@ -38,7 +38,14 @@ from mac.deploy_env import parse_env_text
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
-from mac.worker import MacWorker, SubprocessExecutor, WorkerExecution, build_parser, register_worker
+from mac.worker import (
+    MacWorker,
+    SubprocessExecutor,
+    WorkerExecution,
+    _detect_command_inventory,
+    build_parser,
+    register_worker,
+)
 
 
 def api_transport(client: TestClient):
@@ -2229,6 +2236,26 @@ def test_register_worker_reports_command_inventory_without_command_capability(
     heartbeat_resources = worker._maybe_command_inventory_resources()
     assert heartbeat_resources is not None
     assert {"git", "gh", "python3"} <= set(heartbeat_resources["commands"]["available"])
+
+
+def test_command_inventory_explicitly_probes_codegraph_when_scan_truncated(
+    tmp_path: Path,
+    monkeypatch,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codegraph = bin_dir / "codegraph"
+    codegraph.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codegraph.chmod(0o755)
+    # Force the directory scan to stop almost immediately. The explicit command
+    # probe list must still discover baseline tools that matter for repo work.
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_MAX", "1")
+
+    commands = _detect_command_inventory()
+
+    assert "codegraph" in commands["available"]
+    assert commands["paths"]["codegraph"] == str(codegraph)
 
 
 def test_register_worker_binds_agent_to_hermes_instance():
