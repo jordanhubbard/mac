@@ -165,12 +165,25 @@ network_policies:
       - { path: /usr/lib/git-core/git-remote-https }
       - { path: /usr/bin/curl }
 
-  # --- OPTIONAL: package installs during a task. Commented out by default —
-  # uncomment only if your tasks legitimately need to fetch dependencies, and
-  # prefer pinning to your internal mirror over the public index. ---
-  # python_packages:
-  #   name: python-packages
-  #   endpoints:
-  #     - { host: __PYPI_MIRROR_HOST__, port: 443, protocol: rest, enforcement: enforce, access: read-only }
-  #   binaries:
-  #     - { path: /home/__AGENT_USER__/.mac/venv/bin/python }
+  # --- Python package installs for repository bootstrap. ---
+  # Repository contracts may legitimately create task-local virtualenvs and run
+  # `pip install -e .[dev]` before tests. Keep this read-only and scoped to the
+  # Python package index hosts needed by pip's default resolver.
+  python_packages:
+    name: python-packages
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/local/bin/python3 }
+      - { path: /usr/local/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: __RUNTIME_PY__ }

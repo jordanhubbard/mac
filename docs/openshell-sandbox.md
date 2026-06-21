@@ -192,9 +192,10 @@ the sandbox**:
    `gh`, and `codegraph`; custom images must provide the same baseline if they
    are used for repository work.
 4. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
-   provider host (e.g. `api.anthropic.com`) in addition to the hub/gateway. The
-   bundled fail-closed default denies all egress, so the preflight fails closed
-   there by design.
+   hub/gateway, provider host (e.g. `api.anthropic.com`), git host, and Python
+   package index hosts used by repository bootstrap (`pypi.org` and
+   `files.pythonhosted.org` in the standard policy). The bundled fail-closed
+   default denies all egress, so the preflight fails closed there by design.
 
 ### Environment knobs
 

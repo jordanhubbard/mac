@@ -91,6 +91,11 @@ def test_real_operator_template_renders(tmp_path):
     assert doc["network_policies"]["mac_hub"]["endpoints"][0]["port"] == 8789
     assert doc["network_policies"]["qdrant"]["endpoints"][0]["port"] == 6333
     assert doc["network_policies"]["firecrawl"]["endpoints"][0]["host"] == "100.125.137.89"
+    package_hosts = {
+        endpoint["host"]
+        for endpoint in doc["network_policies"]["python_packages"]["endpoints"]
+    }
+    assert {"pypi.org", "files.pythonhosted.org"} <= package_hosts
     # operator policy is best_effort (OpenShell egress-proxy incompatibility with
     # hard_requirement); the executor's Landlock precheck recovers fail-closed.
     assert doc["landlock"]["compatibility"] == "best_effort"
@@ -134,3 +139,13 @@ def test_image_runtime_uses_in_image_paths_and_tmp_caches():
     py = doc["network_policies"]["mac_hub"]["binaries"][0]["path"]
     assert py == "/opt/mac-venv/bin/python"
     assert doc["network_policies"]["qdrant"]["binaries"][0]["path"] == "/opt/mac-venv/bin/python"
+    package_bins = {
+        item["path"]
+        for item in doc["network_policies"]["python_packages"]["binaries"]
+    }
+    assert {
+        "/usr/local/bin/python3",
+        "/usr/local/bin/python",
+        "/usr/bin/python3",
+        "/opt/mac-venv/bin/python",
+    } <= package_bins
