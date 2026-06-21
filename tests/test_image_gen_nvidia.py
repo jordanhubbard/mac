@@ -56,6 +56,17 @@ _PNG_B64 = (
 )
 
 
+def _clear_gateway_image_env(monkeypatch):
+    for key in (
+        "MAC_HERMES_GATEWAY_API_KEY",
+        "OPENAI_API_KEY",
+        "MAC_HERMES_GATEWAY_BASE_URL",
+        "OPENAI_BASE_URL",
+        "NVIDIA_IMAGE_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_extract_b64_handles_all_nvidia_shapes():
     mod = _load_plugin()
     assert mod._extract_b64({"artifacts": [{"base64": "AAAA"}]}) == "AAAA"
@@ -87,6 +98,7 @@ def test_build_payload_dialects_and_aspect():
 
 def test_generate_requires_api_key(monkeypatch):
     mod = _load_plugin()
+    _clear_gateway_image_env(monkeypatch)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     result = mod.NvidiaImageGenProvider().generate("a fox", "square")
     assert result["success"] is False
@@ -95,6 +107,7 @@ def test_generate_requires_api_key(monkeypatch):
 
 def test_generate_success_saves_image(monkeypatch, tmp_path):
     mod = _load_plugin()
+    _clear_gateway_image_env(monkeypatch)
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
@@ -125,6 +138,7 @@ def test_generate_success_saves_image(monkeypatch, tmp_path):
 
 def test_generate_honors_explicit_model_kwarg(monkeypatch, tmp_path):
     mod = _load_plugin()
+    _clear_gateway_image_env(monkeypatch)
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
@@ -146,6 +160,7 @@ def test_generate_honors_explicit_model_kwarg(monkeypatch, tmp_path):
 
 def test_generate_surfaces_http_error_with_hint(monkeypatch, tmp_path):
     mod = _load_plugin()
+    _clear_gateway_image_env(monkeypatch)
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
