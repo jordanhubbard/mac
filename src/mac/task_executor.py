@@ -1346,7 +1346,7 @@ def _mcp_serve_argv() -> List[str]:
 _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "MAC_HUB_URL,MAC_URL,MAC_WORKER_TOKEN,MAC_TOKEN,MAC_API_TOKEN,"
     "MAC_WORKER_AGENT_ID,MAC_WORKER_AGENT_NAME,MAC_AGENT_ID,"
-    "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY,"
+    "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY,HERMES_YOLO_MODE,"
     # Model-gateway base_url + api_key live in the agent's ~/.hermes/.env, which
     # is NOT in the sandbox image; the gateway requires auth. Forward them so the
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
@@ -1961,6 +1961,7 @@ def _build_sandbox_create_argv(
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sub),
+            'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && [ ! -e /sandbox/mac-clone ]; then ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone || true; fi',
             _sandbox_toolchain_setup_shell(),
             "mac_sandbox_toolchain_setup || true",
             "exec %s" % shlex.join(agent_argv),

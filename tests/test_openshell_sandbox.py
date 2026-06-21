@@ -237,6 +237,11 @@ def test_env_passthrough_default_list_used(monkeypatch):
     assert "MAC_HUB_URL=http://hub:8789" in _build()
 
 
+def test_env_passthrough_defaults_include_yolo_bypass(monkeypatch):
+    monkeypatch.setenv("HERMES_YOLO_MODE", "1")
+    assert "HERMES_YOLO_MODE=1" in _build()
+
+
 # ---------------------------------------------------------------------------
 # sandbox lifecycle orchestration: create -> download -> always delete
 # ---------------------------------------------------------------------------
@@ -359,6 +364,13 @@ def test_env_flags_rewrite_loopback_urls(monkeypatch):
     flags = te._openshell_env_flags()
     assert "MAC_HUB_URL=http://host.openshell.internal:8789" in flags
     assert "MAC_WORKER_TOKEN=tok-127.0.0.1-abc" in flags
+
+
+def test_repo_worktree_aliases_hermes_clone_path(monkeypatch):
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", "/work/task-7/repo-lease")
+    inner = _inner(_build())
+    assert "/sandbox/mac-clone" in inner
+    assert 'ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone' in inner
 
 
 def test_host_alias_override(monkeypatch):
