@@ -63,3 +63,31 @@ def test_finding_rejects_invalid_severity():
 
     with pytest.raises(ValueError):
         diagnostics.Finding("x", "catastrophic", "nope")
+
+
+def test_expired_active_leases_check():
+    cp = ControlPlane.in_memory()
+
+    # Clean fleet: no leases at all -> the check reports ok.
+    clean = diagnostics.run_diagnostics(cp, names=["expired-active-leases"])
+    assert clean and all(f.check == "expired-active-leases" for f in clean)
+    assert clean[0].severity == "ok"
+
+    # Seed a real lease by claiming a task, then force it expired-but-active.
+    m = cp.register_machine("h", resources={"cpu": 4, "memory_gb": 8})
+    a = cp.register_agent(m.id, "n", capabilities=[])
+    t = cp.create_task("title", project="p")
+    _task, lease = cp.claim_task(t.id, a.id)
+
+    past_iso = "2000-01-01T00:00:00.000000+00:00"
+    cp.store.execute(
+        "UPDATE leases SET status='active', expires_at=? WHERE id=?",
+        (past_iso, lease.id),
+    )
+
+    findings = diagnostics.run_diagnostics(cp, names=["expired-active-leases"])
+    assert findings and all(f.check == "expired-active-leases" for f in findings)
+    finding = findings[0]
+    assert finding.severity == "warn"
+    assert lease.id in finding.detail["lease_ids"]
+    assert any(entry["id"] == lease.id and entry["task_id"] == t.id for entry in finding.detail["leases"])
