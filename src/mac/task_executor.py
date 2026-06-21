@@ -1150,8 +1150,8 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
 # ---------------------------------------------------------------------------
 
 
-def _hermes_argv(prompt: str) -> List[str]:
-    """The agent invocation.
+def _hermes_python() -> str:
+    """Resolve the interpreter that can import ``hermes_cli``.
 
     Host mode: the vendored Hermes runtime under ``~/.mac`` — set PYTHONPATH so
     ``hermes_cli`` resolves. Sandbox image mode: ``MAC_HERMES_PYTHON`` points at
@@ -1161,12 +1161,22 @@ def _hermes_argv(prompt: str) -> List[str]:
     """
     override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
     if override:
-        hermes_py = override
-    else:
-        hermes_py = str(Path.home() / ".mac" / "venv" / "bin" / "python")
-        hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
-        os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
-    return [hermes_py, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
+        return override
+    hermes_py = str(Path.home() / ".mac" / "venv" / "bin" / "python")
+    hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
+    os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
+    return hermes_py
+
+
+def _hermes_argv(prompt: str) -> List[str]:
+    """The vendored-Hermes-runtime agent invocation (the fallback runner)."""
+    return [_hermes_python(), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
+
+
+def _mcp_serve_argv() -> List[str]:
+    """The vendored messaging MCP server command (registered with a coding-agent
+    CLI for messaging-tool parity, where the CLI supports per-invocation MCP)."""
+    return [_hermes_python(), "-m", "hermes_cli.main", "mcp", "serve"]
 
 
 # ---------------------------------------------------------------------------
@@ -1221,7 +1231,11 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
     # loopback rewritten to the sandbox host alias by _openshell_env_flags).
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
-    "OPENAI_BASE_URL,OPENAI_API_KEY"
+    "OPENAI_BASE_URL,OPENAI_API_KEY,"
+    # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
+    # agent authenticates via these env keys; file-based creds (~/.claude.json,
+    # ~/.codex/auth.json, ~/.cursor) must be uploaded via MAC_OPENSHELL_CREATE_ARGS.
+    "ANTHROPIC_API_KEY,CURSOR_API_KEY"
 )
 
 
@@ -1766,31 +1780,93 @@ def _force_child_yolo_env() -> None:
     os.environ["HERMES_YOLO_MODE"] = "1"
 
 
-def _unsandboxed_agent_argv(prompt: str) -> List[str]:
-    """The agent argv for an UNSANDBOXED run, gated by the yolo escape hatch.
+def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
+    """Gate an already-built agent argv for an UNSANDBOXED run.
 
-    --yolo disables Hermes' own approval (sandbox-01); running it unsandboxed is
-    unguarded, permitted ONLY via ``MAC_ALLOW_UNSANDBOXED_YOLO`` (default "1" to
-    preserve the current live fleet; "0" fails closed). Raises when fail-closed.
-    The sandboxed path does not go through here — see :func:`_invoke_agent`.
+    The agent runs with its own approval bypass (Hermes ``--yolo`` or a coding
+    agent's ``--dangerously-*``); running that unsandboxed is unguarded,
+    permitted ONLY via ``MAC_ALLOW_UNSANDBOXED_YOLO`` (default "1" to preserve
+    the current live fleet; "0" fails closed). Raises when fail-closed. The
+    sandboxed path does not go through here — see :func:`_invoke_agent`.
     """
-    argv = _hermes_argv(prompt)  # includes --yolo
     default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
     if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", default_unsandboxed)):
         _force_child_yolo_env()
         sys.stderr.write(
-            "[executor] WARNING: launching a --yolo agent WITHOUT an OpenShell "
-            "sandbox (MAC_OPENSHELL_SANDBOX unset) — Hermes approval is disabled "
-            "and there is no sandbox confinement. Enable MAC_OPENSHELL_SANDBOX=1 "
-            "(with a policy), or set MAC_ALLOW_UNSANDBOXED_YOLO=0 to fail closed.\n"
+            "[executor] WARNING: launching an approval-bypassed agent WITHOUT an "
+            "OpenShell sandbox (MAC_OPENSHELL_SANDBOX unset) — the agent's own "
+            "approval gate is disabled and there is no sandbox confinement. Enable "
+            "MAC_OPENSHELL_SANDBOX=1 (with a policy), or set "
+            "MAC_ALLOW_UNSANDBOXED_YOLO=0 to fail closed.\n"
         )
-        return argv
+        return agent_argv
     raise RuntimeError(
-        "refusing to launch a --yolo agent without an OpenShell sandbox: "
+        "refusing to launch an approval-bypassed agent without an OpenShell sandbox: "
         "MAC_OPENSHELL_SANDBOX is unset and MAC_ALLOW_UNSANDBOXED_YOLO is disabled. "
         "Set MAC_OPENSHELL_SANDBOX=1 with a policy to enforce silently, or "
         "MAC_ALLOW_UNSANDBOXED_YOLO=1 to explicitly allow unsandboxed YOLO."
     )
+
+
+def _record_runner_choice(choice: Any) -> None:
+    """Make the coding-agent-vs-gateway routing decision legible (best-effort).
+
+    Mirrors :func:`mac.agent_provider.record_provider_decision`: a secret-free
+    line so an operator (or the agent) can answer "why did this task run on
+    Claude / Codex / Cursor / the gateway?" rather than facing a silent choice.
+    """
+    target = choice.agent or "hermes-gateway"
+    sys.stderr.write(
+        "[executor] coding-agent routing: %s (%s)\n"
+        % (target, "; ".join(choice.rationale) or "no rationale")
+    )
+    try:
+        emit_telemetry("runner_selected", level="info", **choice.observable())
+    except Exception:  # noqa: BLE001 - telemetry must never break execution
+        pass
+
+
+def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]:
+    """Materialize an MCP config registering the messaging server, return its path.
+
+    Only when messaging-MCP is enabled and the agent supports per-invocation MCP
+    (Claude Code). Best-effort: any failure returns ``None`` — hub parity via the
+    ``mac`` CLI + runtime context is unaffected.
+    """
+    try:
+        from . import coding_agent as _ca
+
+        if not (_ca.messaging_mcp_enabled(os.environ) and _ca.supports_per_invocation_mcp(choice.agent)):
+            return None
+        doc = _ca.mcp_config_document(_mcp_serve_argv(), name="hermes")
+        path = workspace / ".mac-coding-agent-mcp.json"
+        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        return str(path)
+    except Exception:  # noqa: BLE001 - MCP wiring is best-effort parity, not required
+        return None
+
+
+def _agent_argv(prompt: str, workspace: Path) -> List[str]:
+    """Pick the agent runner: a coding-agent CLI when one is available + authed,
+    else the vendored Hermes -> LLM gateway argv.
+
+    Coding-agent CLIs (Claude Code, Codex, Cursor) authenticate against a
+    subscription/seat rather than a metered API token, so they are preferred for
+    cost (see :mod:`mac.coding_agent`). Full mac-runtime parity on this path: the
+    CLI runs in the prepared checkout (the ``mac`` CLI + runtime context + hub
+    env give it the same hub tool surface Hermes has), receives the same
+    structured task/evidence prompt, and — where the CLI supports per-invocation
+    MCP — the messaging MCP server. When no coding agent qualifies, this falls
+    back to ``_hermes_argv`` unchanged.
+    """
+    from . import coding_agent as _ca
+
+    choice = _ca.resolve_coding_agent()
+    _record_runner_choice(choice)
+    if not choice.available:
+        return _hermes_argv(prompt)
+    mcp_path = _coding_agent_mcp_config_path(workspace, choice)
+    return _ca.coding_agent_argv(choice, prompt, mcp_config_path=mcp_path)
 
 
 def _executor_backend() -> str:
@@ -2011,20 +2087,24 @@ def _invoke_agent(
 ) -> Any:
     """Run the agent for one task, atomically coupling --yolo to enforcement.
 
-    Invariant: --yolo (Hermes' own approval bypass) is only used when the run is
-    confined by OpenShell, so we never launch an *unguarded* YOLO agent.
+    Invariant: an approval-bypassed agent (Hermes ``--yolo`` or a coding agent's
+    ``--dangerously-*``) is only used when the run is confined by OpenShell, so we
+    never launch an *unguarded* bypass agent.
       * backend=acp      -> drive an external ACP agent (ADR 0006); confinement
         is the OpenShell sandbox + the permission bridge.
       * sandbox enabled  -> full OpenShell lifecycle (upload workspace, run the
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
       * sandbox disabled -> direct run, gated by MAC_ALLOW_UNSANDBOXED_YOLO.
+    The agent argv is a detected coding-agent CLI when one is available + authed,
+    else the Hermes -> gateway argv (see :func:`_agent_argv`).
     Returns the runner's result (carries .returncode)."""
     if _executor_backend() == "acp":
         return _invoke_acp_agent(prompt, workspace, audit_id, opts)
+    agent_argv = _agent_argv(prompt, workspace)
     if _openshell_enabled():
-        return _run_sandboxed(runner, _hermes_argv(prompt), workspace, audit_id, opts)
-    return runner(_unsandboxed_agent_argv(prompt), workspace, audit_id, opts)
+        return _run_sandboxed(runner, agent_argv, workspace, audit_id, opts)
+    return runner(_unsandboxed_agent_argv(agent_argv), workspace, audit_id, opts)
 
 
 def _agent_timeout() -> Optional[float]:

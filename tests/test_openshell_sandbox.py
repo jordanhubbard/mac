@@ -281,19 +281,21 @@ def test_invoke_sandboxed_keep_skips_delete(monkeypatch):
 
 
 def test_unsandboxed_allowed_by_default(monkeypatch):
-    argv = te._unsandboxed_agent_argv("do the thing")
+    # _unsandboxed_agent_argv now gates an already-built agent argv (the runner
+    # selection happens upstream in _agent_argv); pass the Hermes argv here.
+    argv = te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
     assert "openshell" not in argv[0] and argv[0].endswith("python") and "--yolo" in argv
 
 
 def test_unsandboxed_explicit_allow(monkeypatch):
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
-    assert "--yolo" in te._unsandboxed_agent_argv("do the thing")
+    assert "--yolo" in te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
 
 
 def test_unsandboxed_fail_closed_raises(monkeypatch):
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
-        te._unsandboxed_agent_argv("do the thing")
+        te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
 
 
 def test_invoke_unsandboxed_fail_closed_raises(monkeypatch):

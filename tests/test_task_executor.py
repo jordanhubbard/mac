@@ -479,6 +479,11 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
 
+    # This test exercises the Hermes -> gateway runner (asserts the --query argv);
+    # pin coding-agent preference off so it is independent of which coding-agent
+    # CLIs happen to be installed on the dev/CI machine.
+    monkeypatch.setenv("MAC_CODING_AGENT", "off")
+
     posts = []
     monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
     monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [{"content": "push before reporting"}])
@@ -503,6 +508,61 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     # memory feed recorded a deployment lesson
     memory = [p for p in posts if p[0] == "/memory"]
     assert memory and memory[0][1]["record_type"] == "deployment_learning:demo"
+
+
+# ---------------------------------------------------------------------------
+# Coding-agent runner selection (_invoke_agent routes through the resolver)
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatch):
+    """When a coding-agent CLI is available + authed, _invoke_agent runs THAT
+    (in the checkout, with the same prompt + a materialized MCP config), instead
+    of the Hermes -> gateway argv."""
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    # Force a Claude choice deterministically (no real PATH/home probing).
+    choice = ca.CodingAgentChoice(
+        agent="claude", available=True, binary="/usr/local/bin/claude", auth_source="ANTHROPIC_API_KEY"
+    )
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+
+    captured = {}
+
+    def fake_runner(argv, cwd, task_id, metadata):
+        captured["argv"] = argv
+        return _FakeResult(0, stdout="done\n")
+
+    te._invoke_agent(fake_runner, "fix the bug", tmp_path, "tid", {})
+    argv = captured["argv"]
+    assert argv[0] == "/usr/local/bin/claude"
+    assert "-p" in argv and argv[-1] == "fix the bug"
+    assert "--dangerously-skip-permissions" in argv
+    # Messaging MCP config was materialized in the workspace and wired in (Claude).
+    assert "--mcp-config" in argv
+    assert (tmp_path / ".mac-coding-agent-mcp.json").is_file()
+
+
+def test_invoke_agent_falls_back_to_hermes_when_no_coding_agent(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    none = ca.CodingAgentChoice(agent="", available=False)
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: none)
+
+    captured = {}
+    te._invoke_agent(
+        lambda argv, cwd, task_id, metadata: captured.update(argv=argv) or _FakeResult(0),
+        "do it",
+        tmp_path,
+        "tid",
+        {},
+    )
+    # Fell back to the Hermes -> gateway argv.
+    assert "--query" in captured["argv"] and "hermes_cli.main" in captured["argv"]
 
 
 # ---------------------------------------------------------------------------
