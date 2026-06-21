@@ -15,6 +15,7 @@ bootstrap:
   creates:
     - .venv/bin/python
     - .venv/bin/pytest
+    - .venv/bin/coverage
 test:
   command: scripts/run-contract-tests.sh
 evidence:

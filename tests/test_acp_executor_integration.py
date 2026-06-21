@@ -119,6 +119,9 @@ def test_invoke_acp_agent_survives_backend_exception(monkeypatch, tmp_path):
 def test_permission_handler_auto_approves_allow_option(monkeypatch):
     posted = []
     monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: False)
+    monkeypatch.setattr("mac.acp.permission.load_openshell_policy", lambda *a, **k: None)
+    monkeypatch.delenv("MAC_ACP_PERMISSION_MODE", raising=False)
     handler = task_executor._acp_permission_handler("task_9")
     params = RequestPermissionParams(
         session_id="s1",
