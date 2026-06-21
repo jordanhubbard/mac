@@ -45,7 +45,18 @@ The bootstrap script owns this contract:
   `openshell-gateway` on every run, replacing older binaries instead of
   tolerating version drift;
 - build `localhost/mac-hermes:net` with the same Docker daemon the gateway uses;
-- write only the Docker driver section in `~/.mac/openshell/gateway.toml`.
+- write only the Docker driver section in `~/.mac/openshell/gateway.toml`;
+- smoke-test the image through `openshell sandbox create` before reporting
+  success, proving the runtime-visible image contains `gh`, `codex`, and
+  `codegraph`.
+
+Compatibility note: OpenShell 0.0.62 can accept the Docker-driver config above
+while the gateway logs still show `openshell_driver_podman` and it consults the
+user's Podman image store. Until that upstream/runtime mismatch is eliminated,
+the bootstrap mirrors the Docker-built `localhost/mac-hermes:net` tag into the
+runtime-visible image store and then runs the OpenShell smoke test. This is a
+deployment reconciliation step; Docker Engine/Moby remains the authoritative
+build path and `podman-docker` is still rejected.
 
 ## Consequences
 

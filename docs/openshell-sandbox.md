@@ -68,6 +68,14 @@ Landlock). On non-Linux developer machines, run a Linux VM/container with OSS
 Docker Engine/Moby and validate there; the production architecture does not
 depend on Docker Desktop licensing or behavior.
 
+OpenShell 0.0.62 has a runtime-driver mismatch on some Linux hosts: the gateway
+can be configured with only `[openshell.drivers.docker]` while still logging
+`openshell_driver_podman` and reading the sandbox image from the user's Podman
+image store. `bootstrap-openshell.sh` handles this outside the agents by
+mirroring the Docker-built image into the runtime-visible store, then running an
+`openshell sandbox create` smoke test that verifies `gh`, `codex`, and
+`codegraph` are visible before the node is considered ready.
+
 ```bash
 deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
 docker info             # must be a real Docker Engine/Moby daemon, not Podman

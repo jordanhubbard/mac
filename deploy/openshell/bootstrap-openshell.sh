@@ -17,6 +17,7 @@
 #   MAC_HOME            default $HOME/.mac
 #   MAC_SRC             default $MAC_HOME/src/mac    — mac source tree (image build context)
 #   OSH_DOCKER_BIN      default docker       — Docker Engine/Moby CLI path
+#   OSH_IMAGE_TAG       default localhost/mac-hermes:net — sandbox image tag
 #   OSH_GPU             auto|yes|no          — auto: detect nvidia-smi
 #   OSH_HUB_URL         default from mac.env MAC_HUB_URL — the hub the sandbox egresses to
 #   OSH_FIREWALL_NIC    default: the default-route NIC
@@ -27,6 +28,7 @@ OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.62}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
 OSH_DOCKER_BIN="${OSH_DOCKER_BIN:-docker}"
+OSH_IMAGE_TAG="${OSH_IMAGE_TAG:-localhost/mac-hermes:net}"
 OSH_GPU="${OSH_GPU:-auto}"
 ENVF="$MAC_HOME/mac.env"
 OSH_DIR="$MAC_HOME/openshell"
@@ -113,6 +115,46 @@ ensure_docker_engine() {
 ensure_docker_engine
 log "arch=$ARCH gpu=$OSH_GPU driver=docker-engine version=$OPENSHELL_VERSION docker=$("$OSH_DOCKER_BIN" --version 2>&1 | head -1)"
 
+mirror_image_for_openshell_runtime() {
+  # OpenShell 0.0.62 accepts a Docker-driver config but the deployed gateway
+  # still logs `openshell_driver_podman` and reads its runtime image from the
+  # user's Podman store. Docker Engine/Moby remains the authoritative build
+  # path; this compatibility mirror prevents a stale runtime-visible image from
+  # silently defeating the deployment. The smoke test below proves which image
+  # OpenShell actually executes.
+  if command -v podman >/dev/null 2>&1; then
+    log "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store"
+    "$OSH_DOCKER_BIN" image save "$OSH_IMAGE_TAG" | podman load >/dev/null
+  fi
+}
+
+validate_openshell_runtime_image() {
+  [ "$DO_ENABLE" = 1 ] || return 0
+  smoke_name="mac-runtime-smoke-$$"
+  smoke_log="$OSH_DIR/runtime-image-smoke.log"
+  rm -f "$smoke_log"
+  gpu_flag=()
+  [ "$OSH_GPU" = yes ] && gpu_flag=(--gpu)
+  if "$BIN/openshell" sandbox create \
+      --no-auto-providers \
+      --policy "$MAC_HOME/openshell-policy.yaml" \
+      --name "$smoke_name" \
+      --from "$OSH_IMAGE_TAG" \
+      "${gpu_flag[@]}" \
+      --env HOME=/tmp \
+      -- bash -lc 'set -eu; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version' \
+      > "$smoke_log" 2>&1; then
+    "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
+    log "runtime image smoke: gh/codex/codegraph visible through OpenShell"
+  else
+    rc=$?
+    "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
+    echo "ERROR: OpenShell runtime image smoke failed; see $smoke_log" >&2
+    tail -80 "$smoke_log" >&2 || true
+    exit "$rc"
+  fi
+}
+
 # --- 1. openshell CLI (uv tool, else pip venv) ------------------------------
 tool_version() {
   "$1" --version 2>/dev/null | awk 'NR==1 {print $NF}'
@@ -168,8 +210,9 @@ fi
 # --- 4. mac-hermes image (native build; multi-arch Containerfile) -----------
 if [ "$SKIP_IMAGE" = 0 ]; then
   cf="$(cd "$(dirname "$0")" && pwd)/mac-hermes.Containerfile"
-  log "building localhost/mac-hermes:net with Docker Engine/Moby from $MAC_SRC"
-  ( cd "$MAC_SRC" && "$OSH_DOCKER_BIN" build -t localhost/mac-hermes:net -f "$cf" . )
+  log "building $OSH_IMAGE_TAG with Docker Engine/Moby from $MAC_SRC"
+  ( cd "$MAC_SRC" && "$OSH_DOCKER_BIN" build -t "$OSH_IMAGE_TAG" -f "$cf" . )
+  mirror_image_for_openshell_runtime
 fi
 
 # --- 5. JWT signing keys ----------------------------------------------------
@@ -192,7 +235,7 @@ signing_key_path = "$OSH_DIR/pki/jwt/signing.pem"
 public_key_path = "$OSH_DIR/pki/jwt/public.pem"
 kid_path = "$OSH_DIR/pki/jwt/kid"
 [openshell.drivers.docker]
-default_image = "localhost/mac-hermes:net"
+default_image = "$OSH_IMAGE_TAG"
 supervisor_image = "ghcr.io/nvidia/openshell/supervisor:latest"
 network_name = "openshell-docker"
 grpc_endpoint = "http://host.openshell.internal:17670"
@@ -279,11 +322,12 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HER
   echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from localhost/mac-hermes:net$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads --env HOME=/tmp\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads --env HOME=/tmp\""
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)
 ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }
+validate_openshell_runtime_image
 
 log "DONE. sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED"
 [ "$DO_ENABLE" = 1 ] && log "restart the agent to apply: sudo systemctl restart mac-agent.service (then validate a real task)" \
