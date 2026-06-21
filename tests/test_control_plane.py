@@ -3405,6 +3405,28 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
 
 
+def test_shallow_repository_execution_contract_gets_registered_project_contract(cp, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+    task = cp.create_task(
+        "Direct repository task with shallow contract",
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+        metadata={"execution_contract": {"type": "repository"}},
+    )
+
+    contract = task.metadata["execution_contract"]
+    assert contract["type"] == "repository"
+    assert contract["quality"] == "strong"
+    assert contract["evidence_type"] == "repo_change"
+    assert contract["repository_contract"]["project"] == "repo-beads-mac"
+    assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
+    assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+
+
 def test_existing_repository_execution_contract_gets_repo_change_evidence_default(cp):
     task = cp.create_task(
         "Existing repository contract",

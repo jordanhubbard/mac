@@ -3212,18 +3212,60 @@ class ControlPlane:
         existing_contract = normalized.get("execution_contract")
         if isinstance(existing_contract, dict) and existing_contract.get("type"):
             contract_type = str(existing_contract.get("type") or "").strip().lower()
-            if (
-                (
-                    contract_type == "repository"
-                    or existing_contract.get("repository_required") is True
-                    or isinstance(existing_contract.get("repository_contract"), dict)
-                )
-                and not str(existing_contract.get("evidence_type") or "").strip()
-            ):
-                normalized["execution_contract"] = {
-                    **existing_contract,
-                    "evidence_type": "repo_change",
-                }
+            repo_like = (
+                contract_type == "repository"
+                or existing_contract.get("repository_required") is True
+                or isinstance(existing_contract.get("repository_contract"), dict)
+            )
+            if repo_like:
+                merged_contract = dict(existing_contract)
+                merged_contract.setdefault("schema", "mac.task_execution_contract.v1")
+                merged_contract.setdefault("type", "repository")
+                merged_contract.setdefault("evidence_type", "repo_change")
+                repository_contract = merged_contract.get("repository_contract")
+                if not isinstance(repository_contract, dict) or not repository_contract.get("schema"):
+                    origin_contract = origin_dict.get("repository_contract")
+                    if isinstance(origin_contract, dict) and origin_contract.get("schema"):
+                        merged_contract["repository_contract"] = origin_contract
+                    else:
+                        repo = self._repository_for_project(project)
+                        if repo is not None:
+                            contract = repo.metadata.get("repository_contract")
+                            if not isinstance(contract, dict) or not contract.get("schema"):
+                                contract = self._repository_contract_for_repo(repo)
+                            origin_dict.setdefault("type", "direct_task")
+                            origin_dict.setdefault("repository_id", repo.id)
+                            origin_dict.setdefault("repository_name", repo.name)
+                            origin_dict.setdefault("repository_path", repo.path)
+                            origin_dict.setdefault("source", repo.source)
+                            origin_dict["repository_contract"] = contract
+                            normalized["origin"] = origin_dict
+                            acc_metadata = (
+                                dict(normalized.get("acc_metadata"))
+                                if isinstance(normalized.get("acc_metadata"), dict)
+                                else {}
+                            )
+                            acc_metadata.setdefault("repo_beads_workflow", True)
+                            acc_metadata.setdefault("workflow_role", "work")
+                            acc_metadata.setdefault("repository_contract_schema", contract["schema"])
+                            acc_metadata.setdefault("repository_contract_project", contract["project"])
+                            normalized["acc_metadata"] = acc_metadata
+                            merged_contract.setdefault("quality", "strong")
+                            merged_contract.setdefault("source", "registered_project")
+                            merged_contract["repository_id"] = repo.id
+                            merged_contract["repository_path"] = repo.path
+                            merged_contract["repository_contract"] = contract
+                        else:
+                            project_repository_url = self._project_repository_url(project)
+                            if project_repository_url and not origin_dict.get("onboarding"):
+                                raise ValidationError(
+                                    "project %s advertises repository_url %s but has no registered "
+                                    "repository contract; complete onboarding, ensure .mac/project.yaml "
+                                    "exists in the hub-visible checkout, then run `mac bridge repository "
+                                    "register <name> <path> --project %s` before creating normal tasks"
+                                    % (project, project_repository_url, project)
+                                )
+                normalized["execution_contract"] = merged_contract
             return normalized
         repository_contract = origin_dict.get("repository_contract")
         if isinstance(repository_contract, dict) and repository_contract.get("schema"):
