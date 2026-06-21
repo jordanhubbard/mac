@@ -41,9 +41,14 @@ RUN apt-get update \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \
     && curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh -o /tmp/codegraph-install.sh \
-    && CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin sh /tmp/codegraph-install.sh \
+    && CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin sh /tmp/codegraph-install.sh \
     && rm -f /tmp/codegraph-install.sh \
-    && chmod -R a+rX /opt/codegraph \
+    && CG_BIN="$(readlink -f /usr/local/bin/codegraph)" \
+    && CG_HOME="$(dirname "$(dirname "$CG_BIN")")" \
+    && printf '#!/bin/sh\nexec "%s/node" --liftoff-only "%s/lib/dist/bin/codegraph.js" "$@"\n' "$CG_HOME" "$CG_HOME" > /usr/local/bin/codegraph \
+    && chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph \
+    && chmod -R a+rX /usr/local/lib/codegraph \
+    && chmod 0755 /usr/local/bin/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*

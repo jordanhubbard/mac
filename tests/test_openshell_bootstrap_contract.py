@@ -48,9 +48,13 @@ def test_openshell_image_installs_codegraph_baseline():
         "-o /tmp/codegraph-install.sh"
     ) in containerfile
     assert (
-        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
+        "CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
         "sh /tmp/codegraph-install.sh"
     ) in containerfile
     assert "rm -f /tmp/codegraph-install.sh" in containerfile
-    assert "chmod -R a+rX /opt/codegraph" in containerfile
+    assert 'CG_BIN="$(readlink -f /usr/local/bin/codegraph)"' in containerfile
+    assert 'CG_HOME="$(dirname "$(dirname "$CG_BIN")")"' in containerfile
+    assert "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph" in containerfile
+    assert "chmod -R a+rX /usr/local/lib/codegraph" in containerfile
+    assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
     assert "codegraph install --yes" in containerfile

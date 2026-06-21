@@ -42,9 +42,13 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
     assert CODEGRAPH_INSTALL in deploy
     assert CODEGRAPH_IMAGE_INSTALL in containerfile
     assert (
-        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
+        "CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
         "sh /tmp/codegraph-install.sh"
     ) in containerfile
+    assert 'CG_BIN="$(readlink -f /usr/local/bin/codegraph)"' in containerfile
+    assert 'CG_HOME="$(dirname "$(dirname "$CG_BIN")")"' in containerfile
+    assert "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph" in containerfile
+    assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
     assert "codegraph install --yes" in deploy
     assert "codegraph install --yes" in containerfile
     assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in deploy
