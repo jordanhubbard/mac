@@ -891,9 +891,31 @@ def test_agent_argv_sandboxed_falls_back_when_not_verified(tmp_path, monkeypatch
     assert "--query" in argv and "hermes_cli.main" in argv
 
 
-def test_agent_argv_sandboxed_repo_task_fails_closed_when_not_verified(tmp_path, monkeypatch):
+def test_agent_argv_sandboxed_repo_task_falls_back_when_not_verified(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_agent_argv_sandboxed_repo_task_falls_back_when_no_coding_agent(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(agent="", available=False, rationale=["no coding agent"])
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_not_verified(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
@@ -904,9 +926,10 @@ def test_agent_argv_sandboxed_repo_task_fails_closed_when_not_verified(tmp_path,
     assert "require a verified in-sandbox coding agent" in joined
 
 
-def test_agent_argv_sandboxed_repo_task_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
+def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     choice = ca.CodingAgentChoice(agent="", available=False, rationale=["no coding agent"])
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     task = {"metadata": {"execution_contract": {"type": "repository"}}}
@@ -949,6 +972,36 @@ def test_sandbox_verify_runs_probe_once_and_caches(monkeypatch):
     assert te._coding_agent_sandbox_ok(choice) is True
     assert te._coding_agent_sandbox_ok(choice) is True  # second call served from cache
     assert calls == ["claude"]
+
+
+def test_sandbox_verify_skips_codex_rotating_file_auth_by_default(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
+    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", raising=False)
+    te._SANDBOX_PREFLIGHT_CACHE.clear()
+    monkeypatch.setattr(
+        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+    )
+    choice = ca.CodingAgentChoice(
+        agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
+    )
+    assert te._coding_agent_sandbox_ok(choice) is False
+
+
+def test_sandbox_verify_can_opt_into_codex_file_auth_probe(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
+    te._SANDBOX_PREFLIGHT_CACHE.clear()
+    calls = []
+    monkeypatch.setattr(te, "_run_coding_agent_preflight", lambda c: calls.append(c.agent) or True)
+    choice = ca.CodingAgentChoice(
+        agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
+    )
+    assert te._coding_agent_sandbox_ok(choice) is True
+    assert calls == ["codex"]
 
 
 def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):

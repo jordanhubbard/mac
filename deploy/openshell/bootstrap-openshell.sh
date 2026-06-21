@@ -39,6 +39,7 @@ for a in "$@"; do case "$a" in
   --enable) DO_ENABLE=1;; --fail-closed) DO_FAILCLOSED=1; DO_ENABLE=1;; --skip-image) SKIP_IMAGE=1;;
   *) echo "unknown arg: $a" >&2; exit 2;; esac; done
 log(){ printf '[bootstrap-openshell] %s\n' "$*"; }
+truthy(){ case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p "$OSH_DIR" "$BIN"
 
@@ -307,11 +308,15 @@ chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 gpuarg=""; [ "$OSH_GPU" = yes ] && gpuarg=" --gpu"
 codex_uploads=""
-if [ -s "$HOME/.codex/auth.json" ]; then
-  codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
-fi
-if [ -s "$HOME/.codex/config.toml" ]; then
-  codex_uploads="$codex_uploads --upload $HOME/.codex/config.toml:/tmp/.codex/config.toml"
+if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
+  if [ -s "$HOME/.codex/auth.json" ]; then
+    codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
+  fi
+  if [ -s "$HOME/.codex/config.toml" ]; then
+    codex_uploads="$codex_uploads --upload $HOME/.codex/config.toml:/tmp/.codex/config.toml"
+  fi
+else
+  log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d' "$ENVF"

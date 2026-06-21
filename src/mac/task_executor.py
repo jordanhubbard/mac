@@ -1333,8 +1333,10 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
     "OPENAI_BASE_URL,OPENAI_API_KEY,"
     # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
-    # agent authenticates via these env keys; file-based creds (~/.claude.json,
-    # ~/.codex/auth.json, ~/.cursor) must be uploaded via MAC_OPENSHELL_CREATE_ARGS.
+    # agent authenticates safely via these env keys. File-based Codex auth is not
+    # forwarded by default because OpenShell uploads are copies: a throwaway
+    # sandbox can consume and rotate the refresh token without persisting the
+    # replacement back to the host.
     "ANTHROPIC_API_KEY,CURSOR_API_KEY"
 )
 
@@ -1984,13 +1986,21 @@ def _record_runner_choice(target: str, rationale: List[str]) -> None:
 
 
 def _repo_requires_verified_coding_agent(task: Any) -> bool:
-    """Repository work under OpenShell needs a real coding CLI in the sandbox.
+    """Whether repo work must fail closed without a verified coding CLI.
 
-    The Hermes gateway path can produce patch-like text without mutating the
-    prepared git worktree, which is not valid repo evidence. Non-repository
-    operator/investigation tasks may still use Hermes when confined.
+    Default false: Hermes also runs inside the OpenShell sandbox against the
+    uploaded worktree, and the deterministic finalizer rejects patch-text-only
+    runs because they leave no changed files/tests/evidence. Requiring a coding
+    CLI by default made the fleet depend on copied Codex OAuth files, whose
+    refresh tokens rotate inside throwaway sandboxes and then break later tasks.
+
+    Operators can restore the old strict behavior with
+    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1`` after provisioning a durable
+    in-sandbox coding-agent auth mechanism.
     """
-    return isinstance(task, dict) and task_is_repo_coupled(task)
+    if not (isinstance(task, dict) and task_is_repo_coupled(task)):
+        return False
+    return _truthy(os.environ.get("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT"))
 
 
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
@@ -2000,6 +2010,29 @@ def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     )
     code = "import sys; sys.stderr.write(%r + '\\n'); raise SystemExit(42)" % msg
     return [_hermes_python(), "-c", code]
+
+
+def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
+    """Whether the selected coding-agent auth can be copied into OpenShell safely.
+
+    Codex OAuth state in ``~/.codex/auth.json`` is a rotating credential. Because
+    OpenShell currently supports upload-copy semantics rather than a persistent
+    writable mount for this path, a preflight or task sandbox can consume the
+    refresh token and leave the host copy stale. Treat that auth source as
+    unavailable under OpenShell unless the operator explicitly opts into the
+    risk for a one-off debug run.
+    """
+    if (
+        getattr(choice, "agent", "") == "codex"
+        and getattr(choice, "auth_source", "") == "~/.codex/auth.json"
+        and not _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH"))
+    ):
+        sys.stderr.write(
+            "[executor] coding-agent sandbox preflight (codex): skipped "
+            "(~/.codex/auth.json is rotating file auth; using Hermes gateway)\n"
+        )
+        return False
+    return True
 
 
 def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]:
@@ -2099,6 +2132,8 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
         return False
     if mode in {"trust", "1", "true", "yes", "skip"}:
         return True
+    if not _coding_agent_auth_is_safe_for_openshell(choice):
+        return False
     key = (choice.agent, choice.binary)
     if key not in _SANDBOX_PREFLIGHT_CACHE:
         _SANDBOX_PREFLIGHT_CACHE[key] = _run_coding_agent_preflight(choice)
@@ -2122,10 +2157,12 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
     (a real in-sandbox preflight by default), because a host-side ``which``/cred
     check does NOT prove the agent works inside the confined sandbox. When the
-    agent is unavailable, or confined but not verified, non-repository work
-    falls back to ``_hermes_argv`` unchanged. Repository work fails closed under
-    OpenShell so we do not accept gateway-generated diffs that never touched the
-    prepared git worktree.
+    agent is unavailable, or confined but not verified, work falls back to
+    ``_hermes_argv`` unchanged. Repository work is still run inside OpenShell
+    against the uploaded worktree; the deterministic finalizer rejects runs that
+    do not produce real changed files/tests/evidence. Operators may opt back
+    into the older fail-closed coding-CLI requirement with
+    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1``.
     """
     from . import coding_agent as _ca
 

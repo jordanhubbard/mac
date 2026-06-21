@@ -158,17 +158,22 @@ against a subscription/seat instead of a metered API token (see
 Hermes run — inside the same OpenShell sandbox, under the same policy — so the
 guardrails are unchanged.
 
-**Working outside the sandbox is not sufficient to enable it.** When OpenShell
-confinement is in effect (the per-task wrap *or* the supervisor — i.e.
+**Working outside the sandbox is not sufficient to enable a coding CLI.** When
+OpenShell confinement is in effect (the per-task wrap *or* the supervisor — i.e.
 `MAC_OPENSHELL_REQUIRED` truthy / the agent is required), coding-agent
 enablement is **gated on a real in-sandbox preflight**: a throwaway sandbox runs
 the CLI under the live policy + forwarded env and must echo a sentinel back,
 proving end-to-end that the **binary exists, credentials resolve, and egress to
-the provider is permitted** in the sandbox. If the preflight fails (or cannot
-run, e.g. nested), repository tasks fail closed because the Hermes → gateway
-path can produce patch text without mutating the prepared git worktree.
-Non-repository tasks may still fall back to Hermes, which is known to work
-confined. The preflight verdict is cached per worker process.
+the provider is permitted** in the sandbox.
+
+If the preflight fails, or if the selected CLI uses non-durable sandbox
+credentials, tasks fall back to the in-image Hermes runtime. Hermes still runs
+inside OpenShell against the uploaded worktree; the deterministic finalizer is
+the evidence gate and rejects repository runs that leave no changed files,
+passing tests/checks, or evidence manifest. Operators may restore the older
+fail-closed behavior with `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1` after
+they provision durable in-sandbox coding-agent credentials. The preflight
+verdict is cached per worker process.
 
 For a coding agent to pass the preflight, the deployment must ensure, **inside
 the sandbox**:
@@ -176,11 +181,13 @@ the sandbox**:
 1. **Binary present** — `claude` / `codex` / `cursor-agent` is in the sandbox
    image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`). The standard MAC image
    installs `codex`.
-2. **Credentials reachable** — env-key auth (`ANTHROPIC_API_KEY`, `CURSOR_API_KEY`)
-   is forwarded automatically; file-based auth (`~/.claude.json`,
-   `~/.codex/auth.json`, `~/.cursor`) must be baked into the image or uploaded.
-   `bootstrap-openshell.sh` uploads `~/.codex/auth.json` and
-   `~/.codex/config.toml` when present.
+2. **Credentials reachable and durable** — env-key auth (`ANTHROPIC_API_KEY`,
+   `CURSOR_API_KEY`) is forwarded automatically. File-based Codex OAuth state
+   (`~/.codex/auth.json`) is not uploaded by default because OpenShell upload is
+   copy-only: a throwaway sandbox can consume and rotate the refresh token while
+   the replacement is lost with the sandbox. `bootstrap-openshell.sh` only
+   uploads Codex file auth when `MAC_OPENSHELL_UPLOAD_CODEX_AUTH=1`, and the
+   executor only probes that auth when `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1`.
 3. **Baseline repo tools present** — the MAC OpenShell image installs `git`,
    `gh`, and `codegraph`; custom images must provide the same baseline if they
    are used for repository work.
@@ -199,6 +206,9 @@ the sandbox**:
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | `180` | seconds for the in-sandbox preflight |
 | `MAC_CODING_AGENT_<AGENT>_CMD` | _(built-in)_ | override a CLI's invocation (shlex-split); prompt appended as the trailing arg |
 | `MAC_CODING_AGENT_MESSAGING_MCP` | `1` | register the messaging MCP server (unconfined path only, Claude) |
+| `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | `0` | strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox |
+| `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | `0` | bootstrap opt-in to upload `~/.codex/auth.json` / `config.toml` into sandboxes |
+| `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | `0` | executor opt-in to probe/use uploaded Codex file auth despite refresh-token rotation risk |
 
 Set `MAC_CODING_AGENT_SANDBOX=trust` only after validating the image+policy out
 of band; it skips the per-task proof. `python -m mac.coding_agent` prints the
