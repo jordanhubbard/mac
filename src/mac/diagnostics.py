@@ -119,3 +119,49 @@ def summarize(findings: Sequence[Finding]) -> Dict[str, Any]:
 def _database_reachable(control_plane: Any) -> List[Finding]:
     control_plane.store.query_one("SELECT 1")
     return [Finding("database-reachable", "ok", "database answered SELECT 1")]
+
+
+@register("stale-agents", "agents whose last_seen_at is older than the staleness threshold")
+def _stale_agents(control_plane: Any, threshold_seconds: int = 3600) -> List[Finding]:
+    from datetime import timedelta
+
+    from mac.models import parse_time, utcnow
+
+    # ISO-8601 UTC strings sort chronologically, so a lexicographic cutoff
+    # comparison is equivalent to a chronological one. utcnow() returns the
+    # canonical ISO string; parse it, subtract the threshold, re-render in the
+    # same timespec so the comparison stays apples-to-apples.
+    cutoff = (parse_time(utcnow()) - timedelta(seconds=threshold_seconds)).isoformat(
+        timespec="microseconds"
+    )
+    rows = control_plane.store.query_all(
+        "SELECT id, name, last_seen_at FROM agents "
+        "WHERE last_seen_at IS NOT NULL AND last_seen_at < ?",
+        (cutoff,),
+    )
+    if not rows:
+        return [
+            Finding(
+                "stale-agents",
+                "ok",
+                "no stale agents",
+                {"threshold_seconds": threshold_seconds, "cutoff": cutoff},
+            )
+        ]
+    stale = [
+        {"id": row["id"], "name": row["name"], "last_seen_at": row["last_seen_at"]}
+        for row in rows
+    ]
+    return [
+        Finding(
+            "stale-agents",
+            "warn",
+            "%d stale agent(s) (last seen before %s)" % (len(stale), cutoff),
+            {
+                "threshold_seconds": threshold_seconds,
+                "cutoff": cutoff,
+                "count": len(stale),
+                "agents": stale,
+            },
+        )
+    ]
