@@ -280,8 +280,16 @@ def _default_argv(agent: str, binary: str, prompt: str) -> List[str]:
         return [binary, "--dangerously-skip-permissions", "--output-format", "text", "-p", prompt]
     if agent == "codex":
         # `exec` = non-interactive; bypass Codex's own approval + sandbox since
-        # OpenShell provides confinement.
-        return [binary, "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
+        # OpenShell provides confinement. The executor's OpenShell preflight runs
+        # without uploading a git worktree, so allow that probe to reach the real
+        # auth/provider check instead of failing on Codex's repo guard first.
+        return [
+            binary,
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            prompt,
+        ]
     if agent == "cursor":
         return [binary, "-p", "--force", prompt]
     raise ValueError("unknown coding agent: %r" % agent)

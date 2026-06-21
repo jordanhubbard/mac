@@ -169,6 +169,7 @@ def test_codex_default_argv_uses_exec_and_bypass():
     argv = coding_agent_argv(choice, "fix bug", env={})
     assert argv[:2] == ["/b/codex", "exec"]
     assert "--dangerously-bypass-approvals-and-sandbox" in argv
+    assert "--skip-git-repo-check" in argv
     assert argv[-1] == "fix bug"
 
 
