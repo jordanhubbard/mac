@@ -636,8 +636,6 @@ class MacWorker:
             pass
 
     def run_once(self) -> WorkerRunResult:
-        self._heartbeat()
-        self._maybe_sync_service_claims()
         control_result = self._process_agentbus_control()
         self._poll_debug_terminal_sessions()
         if control_result and control_result.get("restart_requested"):
@@ -647,6 +645,8 @@ class MacWorker:
                 evidence=control_result,
                 error=control_result.get("summary"),
             )
+        self._heartbeat()
+        self._maybe_sync_service_claims()
         review_result = self._process_review_nudges()
         if review_result is not None:
             return review_result

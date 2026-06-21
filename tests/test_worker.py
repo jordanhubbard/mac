@@ -1830,6 +1830,45 @@ def test_mac_worker_processes_agentbus_repo_update_and_requests_restart(tmp_path
     assert chunks[0].payload["request_id"] == "req-1"
 
 
+def test_mac_worker_repo_update_preempts_idle_heartbeat_failure(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    sender_machine = cp.register_machine("sender-host")
+    sender = cp.register_agent(sender_machine.id, "sender")
+    agent = register_worker_fixture(cp)
+    seed, work = _git_fixture(tmp_path)
+    expected = _commit_fixture_update(seed, "two\n")
+    cp.publish_agentbus_content(
+        sender.id,
+        recipient_agent_id=agent.id,
+        content_type=REPO_UPDATE_CONTENT_TYPE,
+        topic=REPO_UPDATE_TOPIC,
+        payload={
+            "schema": REPO_UPDATE_SCHEMA,
+            "remote": "origin",
+            "branch": "main",
+            "restart": True,
+        },
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def heartbeat_fails(method: str, path: str, payload: Optional[Dict[str, Any]]) -> Any:
+        if method == "POST" and path.endswith(f"/agents/{agent.id}/heartbeat"):
+            raise MacApiError("agent cannot report idle while holding an active lease")
+        return api_transport(client)(method, path, payload)
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=heartbeat_fails),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+        self_update_repo=work,
+    )
+    result = worker.run_once()
+
+    assert result.status == "self_update_restart"
+    assert _git(work, "rev-parse", "HEAD") == expected
+
+
 def test_mac_worker_processes_agentbus_hermes_config_apply(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     sender_machine = cp.register_machine("sender-host")
