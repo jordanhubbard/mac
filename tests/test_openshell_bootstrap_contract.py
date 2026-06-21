@@ -44,8 +44,13 @@ def test_openshell_image_installs_codegraph_baseline():
     ).read_text(encoding="utf-8")
 
     assert (
-        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
-        "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh"
+        "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
+        "-o /tmp/codegraph-install.sh"
     ) in containerfile
+    assert (
+        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
+        "sh /tmp/codegraph-install.sh"
+    ) in containerfile
+    assert "rm -f /tmp/codegraph-install.sh" in containerfile
     assert "chmod -R a+rX /opt/codegraph" in containerfile
     assert "codegraph install --yes" in containerfile

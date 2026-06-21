@@ -7,6 +7,10 @@ from mac.worker import DEFAULT_COMMAND_INVENTORY_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
 CODEGRAPH_INSTALL = "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh"
+CODEGRAPH_IMAGE_INSTALL = (
+    "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
+    "-o /tmp/codegraph-install.sh"
+)
 
 
 def test_codegraph_is_documented_as_agent_runtime_baseline():
@@ -36,7 +40,11 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
     )
 
     assert CODEGRAPH_INSTALL in deploy
-    assert CODEGRAPH_INSTALL in containerfile
+    assert CODEGRAPH_IMAGE_INSTALL in containerfile
+    assert (
+        "CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
+        "sh /tmp/codegraph-install.sh"
+    ) in containerfile
     assert "codegraph install --yes" in deploy
     assert "codegraph install --yes" in containerfile
     assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in deploy

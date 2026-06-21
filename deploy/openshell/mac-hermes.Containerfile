@@ -40,7 +40,9 @@ RUN apt-get update \
     && npm install -g pnpm \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \
-    && CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh \
+    && curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh -o /tmp/codegraph-install.sh \
+    && CODEGRAPH_INSTALL_DIR=/opt/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin sh /tmp/codegraph-install.sh \
+    && rm -f /tmp/codegraph-install.sh \
     && chmod -R a+rX /opt/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
