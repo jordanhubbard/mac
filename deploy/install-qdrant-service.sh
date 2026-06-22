@@ -12,8 +12,33 @@ WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 FLEET_NAME="${FLEET_NAME:-mac}"
 UNIT_TEMPLATE="${WORKSPACE}/deploy/systemd/mac-qdrant.service"
 UNIT_DEST="/etc/systemd/system/${FLEET_NAME}-qdrant.service"
-ENV_DEST="/etc/${FLEET_NAME}/qdrant.env"
 SUPERVISOR_KIND="${QDRANT_SUPERVISOR:-${MAC_SUPERVISOR_KIND:-auto}}"
+
+# Platform handling. macOS has no /etc service-config tree and no
+# passwordless sudo over a non-interactive deploy, so service env files live
+# under $MAC_HOME; Docker Desktop is not on the launchd/ssh PATH by default,
+# so add it explicitly. Linux is unchanged (/etc + sudo).
+OS_NAME="$(uname -s)"
+if [ "$OS_NAME" = "Darwin" ]; then
+  ENV_CONF_DIR="$MAC_HOME/service-env"
+  for _docker_dir in /Applications/Docker.app/Contents/Resources/bin /opt/homebrew/bin /usr/local/bin; do
+    if [ -x "$_docker_dir/docker" ]; then
+      case ":$PATH:" in *":$_docker_dir:"*) ;; *) PATH="$_docker_dir:$PATH" ;; esac
+    fi
+  done
+  export PATH
+else
+  ENV_CONF_DIR="/etc/${FLEET_NAME}"
+fi
+ENV_DEST="$ENV_CONF_DIR/qdrant.env"
+
+maybe_sudo() {
+  if [ "$OS_NAME" = "Darwin" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 QDRANT_IMAGE="${QDRANT_IMAGE:-docker.io/qdrant/qdrant:latest}"
 
@@ -35,7 +60,11 @@ default_qdrant_bind_addr() {
 
 QDRANT_BIND_ADDR="${QDRANT_BIND_ADDR:-$(default_qdrant_bind_addr)}"
 QDRANT_PORT="${QDRANT_PORT:-6333}"
-QDRANT_DATA_DIR="${QDRANT_DATA_DIR:-/var/lib/${FLEET_NAME}/qdrant}"
+if [ "$OS_NAME" = "Darwin" ]; then
+  QDRANT_DATA_DIR="${QDRANT_DATA_DIR:-$MAC_HOME/qdrant}"
+else
+  QDRANT_DATA_DIR="${QDRANT_DATA_DIR:-/var/lib/${FLEET_NAME}/qdrant}"
+fi
 QDRANT_MEMORY_LIMIT="${QDRANT_MEMORY_LIMIT:-2g}"
 QDRANT_CONTAINER_NAME="${QDRANT_CONTAINER_NAME:-${FLEET_NAME}-qdrant}"
 LOG_DIR="${LOG_DIR:-$MAC_HOME/logs}"
@@ -113,8 +142,13 @@ USE_NATIVE_BINARY=0
 _container_works() {
   command -v "$1" >/dev/null 2>&1 || return 1
   "$1" info >/dev/null 2>&1 || return 1
-  # Empty cgroupControllers means no cgroup delegation — containers can't start
-  "$1" info 2>/dev/null | grep -qE 'cgroupControllers:.*\S'
+  # podman rootless without cgroup delegation can't start containers (empty
+  # cgroupControllers). Docker (Engine or Desktop) manages cgroups inside its
+  # own daemon/VM and never prints that podman-specific field, so a successful
+  # `docker info` is sufficient.
+  if [ "$1" = "podman" ]; then
+    "$1" info 2>/dev/null | grep -qE 'cgroupControllers:.*\S'
+  fi
 }
 
 for _candidate in podman docker; do
@@ -129,6 +163,12 @@ if [ -z "$CONTAINER_CMD" ] && command -v apt-get >/dev/null 2>&1; then
   if command -v podman >/dev/null 2>&1 && _container_works podman; then
     CONTAINER_CMD="podman"
   fi
+fi
+if [ -z "$CONTAINER_CMD" ] && [ "$OS_NAME" = "Darwin" ]; then
+  echo "[qdrant] ERROR: Docker is required on macOS but no working 'docker' was found." >&2
+  echo "[qdrant] Start Docker Desktop so 'docker info' succeeds, then re-run." >&2
+  echo "[qdrant] (the Linux native-binary fallback is not usable on macOS)" >&2
+  exit 1
 fi
 if [ -z "$CONTAINER_CMD" ]; then
   if [ -x "$QDRANT_BINARY" ]; then
@@ -165,17 +205,31 @@ if [ -z "$CONTAINER_CMD" ]; then
   fi
 fi
 
+# Absolute path to the container runtime so the launchd/systemd wrapper finds
+# it under a minimal PATH (Docker Desktop lives outside the default PATH).
+if [ -n "$CONTAINER_CMD" ]; then
+  CONTAINER_CMD_ABS="$(command -v "$CONTAINER_CMD" 2>/dev/null || printf '%s' "$CONTAINER_CMD")"
+else
+  CONTAINER_CMD_ABS="$CONTAINER_CMD"
+fi
+
 SUPERVISOR_KIND="$(detect_supervisor)"
 
+# Portable in-place upsert of KEY=VALUE (GNU `sed -i` and BSD `sed -i ''`
+# differ, so avoid sed entirely).
 set_env_key() {
-  local file="$1" key="$2" value="$3"
+  local file="$1" key="$2" value="$3" tmp
   mkdir -p "$(dirname "$file")"
   if [ ! -f "$file" ]; then
     : > "$file"
     chmod 600 "$file"
   fi
   if grep -q "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$file" > "$tmp"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
   else
     printf '%s=%s\n' "$key" "$value" >> "$file"
   fi
@@ -185,9 +239,9 @@ service_url="http://${QDRANT_BIND_ADDR}:${QDRANT_PORT}"
 
 echo "[qdrant] Installing Qdrant under ${SUPERVISOR_KIND}"
 echo "[qdrant] Binding Qdrant to ${QDRANT_BIND_ADDR}:${QDRANT_PORT}"
-sudo install -d -m 0755 "/etc/${FLEET_NAME}"
-sudo install -d -m 0750 "$QDRANT_DATA_DIR"
-sudo chown "$USER" "$QDRANT_DATA_DIR" || true
+maybe_sudo install -d -m 0755 "$ENV_CONF_DIR"
+maybe_sudo install -d -m 0750 "$QDRANT_DATA_DIR"
+maybe_sudo chown "$USER" "$QDRANT_DATA_DIR" || true
 mkdir -p "$MAC_HOME/bin" "$LOG_DIR"
 
 tmp_env="$(mktemp)"
@@ -199,7 +253,7 @@ QDRANT_PORT=${QDRANT_PORT}
 QDRANT_DATA_DIR=${QDRANT_DATA_DIR}
 QDRANT_MEMORY_LIMIT=${QDRANT_MEMORY_LIMIT}
 EOF
-sudo install -m 0644 "$tmp_env" "$ENV_DEST"
+maybe_sudo install -m 0644 "$tmp_env" "$ENV_DEST"
 rm -f "$tmp_env"
 
 set_env_key "${MAC_HOME}/mac.env" QDRANT_URL "$service_url"
@@ -220,7 +274,7 @@ set -a
 set +a
 : "\${QDRANT_BIND_ADDR:=127.0.0.1}"
 : "\${QDRANT_PORT:=6333}"
-: "\${QDRANT_DATA_DIR:=/var/lib/${FLEET_NAME}/qdrant}"
+: "\${QDRANT_DATA_DIR:=${QDRANT_DATA_DIR}}"
 mkdir -p "\$QDRANT_DATA_DIR"
 export QDRANT__SERVICE__HOST="\${QDRANT_BIND_ADDR}"
 export QDRANT__SERVICE__HTTP_PORT="\${QDRANT_PORT}"
@@ -239,9 +293,9 @@ set +a
 : "\${QDRANT_CONTAINER_NAME:=${FLEET_NAME}-qdrant}"
 : "\${QDRANT_BIND_ADDR:=127.0.0.1}"
 : "\${QDRANT_PORT:=6333}"
-: "\${QDRANT_DATA_DIR:=/var/lib/${FLEET_NAME}/qdrant}"
+: "\${QDRANT_DATA_DIR:=${QDRANT_DATA_DIR}}"
 : "\${QDRANT_MEMORY_LIMIT:=2g}"
-exec ${CONTAINER_CMD} run --rm --name "\$QDRANT_CONTAINER_NAME" --pull=missing \
+exec ${CONTAINER_CMD_ABS} run --rm --name "\$QDRANT_CONTAINER_NAME" --pull=missing \
   --security-opt=no-new-privileges --pids-limit=512 \
   --memory="\$QDRANT_MEMORY_LIMIT" \
   -p "\$QDRANT_BIND_ADDR:\$QDRANT_PORT:6333" \

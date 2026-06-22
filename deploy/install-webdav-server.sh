@@ -10,9 +10,26 @@ MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 FLEET_NAME="${FLEET_NAME:-mac}"
 SERVICE_NAME="${FLEET_NAME}-webdav.service"
-ENV_DEST="/etc/${FLEET_NAME}/webdav.env"
 SUPERVISOR_KIND="${WEBDAV_SUPERVISOR:-${MAC_SUPERVISOR_KIND:-auto}}"
 LOG_DIR="${LOG_DIR:-$MAC_HOME/logs}"
+
+# Platform handling. macOS has no /etc service-config tree and no passwordless
+# sudo over a non-interactive deploy, so service env files live under $MAC_HOME.
+OS_NAME="$(uname -s)"
+if [ "$OS_NAME" = "Darwin" ]; then
+  ENV_CONF_DIR="$MAC_HOME/service-env"
+else
+  ENV_CONF_DIR="/etc/${FLEET_NAME}"
+fi
+ENV_DEST="$ENV_CONF_DIR/webdav.env"
+
+maybe_sudo() {
+  if [ "$OS_NAME" = "Darwin" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 WEBDAV_BIND_ADDR="${WEBDAV_BIND_ADDR:-0.0.0.0}"
 WEBDAV_PORT="${WEBDAV_PORT:-80}"
@@ -91,7 +108,12 @@ set_env_key() {
     chmod 600 "$file"
   fi
   if grep -q "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    local tmp
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$file" > "$tmp"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
   else
     printf '%s=%s\n' "$key" "$value" >> "$file"
   fi
@@ -126,7 +148,7 @@ SUPERVISOR_KIND="$(detect_supervisor)"
 echo "[webdav] Installing public artifact server under ${SUPERVISOR_KIND}"
 echo "[webdav] Binding server to ${WEBDAV_BIND_ADDR}:${WEBDAV_PORT}"
 echo "[webdav] Public read URL ${WEBDAV_PUBLIC_URL}"
-sudo install -d -m 0755 "/etc/${FLEET_NAME}"
+maybe_sudo install -d -m 0755 "$ENV_CONF_DIR"
 mkdir -p "$MAC_HOME/bin" "$LOG_DIR" "$WEBDAV_ROOT"
 chmod 0755 "$WEBDAV_ROOT"
 
@@ -144,7 +166,7 @@ MAC_PUBLISH_WEBDAV_ENABLED=1
 MAC_PUBLISH_WEBDAV_URL=${WEBDAV_PUBLIC_URL}
 MAC_WEBDAV_MAX_UPLOAD_BYTES=${WEBDAV_MAX_UPLOAD_BYTES}
 EOF
-sudo install -m 0644 "$tmp_env" "$ENV_DEST"
+maybe_sudo install -m 0644 "$tmp_env" "$ENV_DEST"
 rm -f "$tmp_env"
 
 set_env_key "${MAC_HOME}/mac.env" MAC_PUBLISH_WEBDAV_ENABLED "1"

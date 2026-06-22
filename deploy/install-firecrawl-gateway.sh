@@ -11,9 +11,26 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 FLEET_NAME="${FLEET_NAME:-mac}"
 SERVICE_NAME="${FLEET_NAME}-firecrawl-gateway.service"
-ENV_DEST="/etc/${FLEET_NAME}/firecrawl-gateway.env"
 SUPERVISOR_KIND="${FIRECRAWL_SUPERVISOR:-${MAC_SUPERVISOR_KIND:-auto}}"
 LOG_DIR="${LOG_DIR:-$MAC_HOME/logs}"
+
+# Platform handling. macOS has no /etc service-config tree and no passwordless
+# sudo over a non-interactive deploy, so service env files live under $MAC_HOME.
+OS_NAME="$(uname -s)"
+if [ "$OS_NAME" = "Darwin" ]; then
+  ENV_CONF_DIR="$MAC_HOME/service-env"
+else
+  ENV_CONF_DIR="/etc/${FLEET_NAME}"
+fi
+ENV_DEST="$ENV_CONF_DIR/firecrawl-gateway.env"
+
+maybe_sudo() {
+  if [ "$OS_NAME" = "Darwin" ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 detect_tailscale_ip() {
   if command -v tailscale >/dev/null 2>&1; then
@@ -113,7 +130,12 @@ set_env_key() {
     chmod 600 "$file"
   fi
   if grep -q "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    local tmp
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$file" > "$tmp"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
   else
     printf '%s=%s\n' "$key" "$value" >> "$file"
   fi
@@ -124,7 +146,7 @@ SUPERVISOR_KIND="$(detect_supervisor)"
 
 echo "[firecrawl-gateway] Installing gateway under ${SUPERVISOR_KIND}"
 echo "[firecrawl-gateway] Binding gateway to ${FIRECRAWL_BIND_ADDR}:${FIRECRAWL_PORT}"
-sudo install -d -m 0755 "/etc/${FLEET_NAME}"
+maybe_sudo install -d -m 0755 "$ENV_CONF_DIR"
 mkdir -p "$MAC_HOME/bin" "$LOG_DIR"
 
 tmp_env="$(mktemp)"
@@ -135,7 +157,7 @@ FIRECRAWL_API_URL=${service_url}
 FIRECRAWL_GATEWAY_URL=${service_url}
 FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY:-none}
 EOF
-sudo install -m 0644 "$tmp_env" "$ENV_DEST"
+maybe_sudo install -m 0644 "$tmp_env" "$ENV_DEST"
 rm -f "$tmp_env"
 
 set_env_key "${MAC_HOME}/mac.env" FIRECRAWL_API_URL "$service_url"
