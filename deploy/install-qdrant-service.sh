@@ -285,6 +285,9 @@ EOF
     cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# Keep the container runtime's own dir on PATH so its credential helper
+# (e.g. docker-credential-desktop) is found under a minimal launchd PATH.
+export PATH="$(dirname "$CONTAINER_CMD_ABS"):\$PATH"
 set -a
 [ -f ${ENV_DEST} ] && . ${ENV_DEST}
 [ -f "\$HOME/.mac/qdrant.env" ] && . "\$HOME/.mac/qdrant.env"
