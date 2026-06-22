@@ -69,3 +69,34 @@ dependency.
 Podman can remain installed on a host for unrelated work, but it is not part of
 MAC/OpenShell runtime selection and must not be exposed as `docker` via
 `podman-docker`.
+
+## Amendment (2026-06): macOS fleet nodes via Docker
+
+The original decision treated non-Linux machines as developer-only ("validate
+in a Linux VM"). A macOS host (e.g. an Apple-Silicon workstation with large
+RAM/cores) is now a supported **production fleet node** — including the hub —
+using Docker on macOS, under these constraints:
+
+- **Runtime is still Docker Engine/Moby**, accessed through the macOS Docker
+  daemon. Docker Desktop is acceptable for a single-owner macOS node (it ships
+  a Moby engine in a LinuxKit VM); `podman-docker` remains rejected. The
+  `compute_drivers = ["docker"]` + `[openshell.drivers.docker]` contract is
+  unchanged.
+- **The gateway (a Linux ELF) runs inside a Linux container** on that Docker
+  daemon, with the Docker socket mounted, creating sandbox + supervisor
+  *sibling* containers. The gateway's data dir is mounted at an **identical host
+  path** (`-e HOME=$DIR -v $DIR:$DIR`) so the supervisor-binary bind mounts it
+  emits resolve on the Docker host. The host-side `openshell` CLI (a Python
+  package, `uv tool install`) drives it over a published loopback port.
+- **Landlock is waived on macOS.** Docker Desktop's LinuxKit kernel does not
+  surface `/sys/kernel/security/lsm` to containers, so the operator policy's
+  `landlock: best_effort` filesystem confinement is not enforced. seccomp,
+  namespaces, and the deny-by-default L7 egress proxy still enforce. macOS nodes
+  therefore set `MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1` (an audited, documented
+  posture for a single-owner fleet, not a silent fallback). `task_executor`'s
+  `_ensure_landlock_or_fail` recognizes darwin and honors this override with a
+  macOS-specific message; `deploy/openshell/bootstrap-openshell.sh` has a
+  self-contained darwin branch that installs the CLI, builds the image, runs the
+  gateway container, renders the policy, and writes this env recipe.
+
+Linux fleet nodes are unchanged (native Landlock, systemd-managed gateway).

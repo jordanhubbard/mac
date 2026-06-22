@@ -677,6 +677,9 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
         src_target=src,
         dst_target=args.to_target,
         fleet=fleet,
+        fleet_name=(fleets[fleet].get("fleet_name") or fleet),
+        to_os=args.to_os,
+        src_os=(cur.get("os") or "linux"),
         keep_source=args.keep_source,
         retire_source_agent=args.retire_source_agent,
     )

@@ -1601,15 +1601,33 @@ def _ensure_landlock_or_fail() -> None:
     """Fail closed if the kernel can't enforce Landlock: the operator policy is
     best_effort (forced by OpenShell's proxy/hard_requirement incompatibility),
     which would otherwise run UNCONFINED on a Landlock-less kernel. Override only
-    for a deliberate, audited exception."""
-    if not _kernel_has_landlock() and not _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")):
+    for a deliberate, audited exception.
+
+    On macOS the host kernel is *never* the enforcement point — OpenShell
+    sandboxes run as Linux containers inside the Docker (Desktop) Linux VM, whose
+    LinuxKit kernel does not surface ``/sys/kernel/security/lsm`` to containers.
+    seccomp + namespaces + the deny-by-default egress proxy still enforce there;
+    Landlock path-confinement is the only piece waived. macOS Docker-based fleet
+    nodes therefore set ``MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1`` as the documented
+    posture (see ADR 0008 amendment / docs/openshell-sandbox.md)."""
+    if _kernel_has_landlock() or _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")):
+        return
+    if sys.platform == "darwin":
         raise RuntimeError(
-            "OpenShell sandboxing is enabled but the kernel does not expose "
-            "Landlock (/sys/kernel/security/lsm has no 'landlock'); the policy's "
-            "filesystem confinement (best_effort) would not be enforced. Refusing "
-            "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
-            "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."
+            "OpenShell sandboxing is enabled on macOS, where the host kernel "
+            "cannot expose Landlock (sandboxes run in the Docker Desktop Linux "
+            "VM; its LinuxKit kernel does not surface /sys/kernel/security/lsm). "
+            "seccomp + namespaces + the egress proxy still enforce. Set "
+            "MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to accept this posture (the "
+            "documented default for macOS Docker fleet nodes)."
         )
+    raise RuntimeError(
+        "OpenShell sandboxing is enabled but the kernel does not expose "
+        "Landlock (/sys/kernel/security/lsm has no 'landlock'); the policy's "
+        "filesystem confinement (best_effort) would not be enforced. Refusing "
+        "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
+        "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."
+    )
 
 
 def _sandbox_toolchain_setup_shell() -> str:

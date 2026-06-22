@@ -75,21 +75,61 @@ def retarget_fleet_agent(
     raise KeyError("agent %r not found in fleet %r" % (name, fleet))
 
 
+def _launchd_labels(fleet_name: str) -> List[str]:
+    """The launchd labels the deploy installs on a darwin host, in the order
+    deploy-mac-fleet.sh uses (control-plane / hermes-gateway / agent). The deploy
+    keys these on the fleet's ``fleet_name`` field, not the registry key."""
+    return [
+        "com.%s.control-plane" % fleet_name,
+        "com.%s.hermes-gateway" % fleet_name,
+        "com.%s.agent" % fleet_name,
+    ]
+
+
+def _darwin_restore_cmd(dst_target: str, tgz: str, fleet_name: str) -> str:
+    """launchctl-based restore-soul for a darwin destination: bootout the agents,
+    unpack the soul tar, kickstart them back. Mirrors deploy-mac-fleet.sh's
+    gui/$uid/<label> bootout+kickstart shapes."""
+    labels = " ".join(_launchd_labels(fleet_name))
+    return (
+        "ssh %s 'uid=$(id -u); "
+        "for L in %s; do launchctl bootout gui/$uid/$L 2>/dev/null || true; done; "
+        "cd \"$HOME\" && tar xzf %s; "
+        "for L in %s; do launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done'"
+        % (dst_target, labels, tgz, labels)
+    )
+
+
 def migration_plan(
     name: str,
     *,
     src_target: str,
     dst_target: str,
     fleet: str,
+    fleet_name: Optional[str] = None,
+    to_os: str = "linux",
+    src_os: str = "linux",
     deploy_cmd: str = "deploy/deploy-mac-fleet.sh",
     keep_source: bool = False,
     retire_source_agent: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
     """Ordered ``(step, command)`` runbook for the migration. Pure — builds the
-    exact shell the operator (or ``execute_migration``) runs, soul-clobber-safe."""
+    exact shell the operator (or ``execute_migration``) runs, soul-clobber-safe.
+
+    ``to_os``/``src_os`` select the destination/source service manager:
+    ``linux`` uses systemd; ``darwin`` uses launchctl (the deploy installs
+    ``com.<fleet_name>.*`` launchd agents). ``fleet_name`` defaults to ``fleet``
+    when not given (the registry key and fleet_name usually match)."""
+    fn = (fleet_name or fleet)
     tgz = "/tmp/%s-soul.tgz" % name
     excludes = " ".join(soul_backup_tar_excludes())
     svcs = " ".join(_FLEET_SERVICES)
+    if to_os == "darwin":
+        restore_cmd = _darwin_restore_cmd(dst_target, tgz, fn)
+    else:
+        restore_cmd = (
+            "ssh %s 'sudo systemctl stop %s; cd \"$HOME\" && tar xzf %s; "
+            "sudo systemctl start %s'" % (dst_target, svcs, tgz, svcs))
     steps: List[Tuple[str, str]] = [
         ("backup-soul",
          "ssh %s 'cd \"$HOME\" && tar czf %s %s .hermes'" % (src_target, tgz, excludes)),
@@ -99,17 +139,19 @@ def migration_plan(
          "(fleets.yaml) set agent %r target=%s" % (name, dst_target)),
         ("deploy",
          "%s --hub %s %s" % (deploy_cmd, fleet, name)),
-        ("restore-soul",
-         "ssh %s 'sudo systemctl stop %s; cd \"$HOME\" && tar xzf %s; "
-         "sudo systemctl start %s'" % (dst_target, svcs, tgz, svcs)),
+        ("restore-soul", restore_cmd),
         ("verify",
          "compare sha256 ~/.hermes/SOUL.md on %s vs %s; mac agent list" % (src_target, dst_target)),
     ]
     if not keep_source:
-        steps.append((
-            "decommission-source",
-            "ssh %s 'launchctl unload ~/Library/LaunchAgents/com.mac*.plist 2>/dev/null "
-            "|| sudo systemctl stop %s'" % (src_target, svcs)))
+        if src_os == "darwin":
+            labels = " ".join(_launchd_labels(fn))
+            decommission = (
+                "ssh %s 'uid=$(id -u); for L in %s; do "
+                "launchctl bootout gui/$uid/$L 2>/dev/null || true; done'" % (src_target, labels))
+        else:
+            decommission = "ssh %s 'sudo systemctl stop %s'" % (src_target, svcs)
+        steps.append(("decommission-source", decommission))
     if retire_source_agent:
         steps.append(("retire-source-agent", "mac agent delete %s" % retire_source_agent))
     return steps
