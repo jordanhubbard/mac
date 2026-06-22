@@ -672,17 +672,31 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     if not src:
         raise SystemExit("no source target for %r; pass --from" % args.name)
 
+    # Hub migration moves the durable hub state (DB + Qdrant + secret key), not
+    # just the soul. Auto-detect when the agent IS the fleet's hub/shared-service
+    # manager; --hub/--no-hub override.
+    fleet_cfg = fleets[fleet]
+    is_hub_agent = args.name in (
+        fleet_cfg.get("hub_agent"),
+        fleet_cfg.get("shared_services_manager_agent"),
+    )
+    hub = is_hub_agent if args.hub is None else args.hub
+    src_os = args.src_os or (cur.get("os") or "linux")
+
     steps = am.migration_plan(
         args.name,
         src_target=src,
         dst_target=args.to_target,
         fleet=fleet,
-        fleet_name=(fleets[fleet].get("fleet_name") or fleet),
+        fleet_name=(fleet_cfg.get("fleet_name") or fleet),
         to_os=args.to_os,
-        src_os=(cur.get("os") or "linux"),
+        src_os=src_os,
         keep_source=args.keep_source,
         retire_source_agent=args.retire_source_agent,
+        hub=hub,
     )
+    if hub:
+        print("# HUB migration: moving soul + mac.db + Qdrant + MAC_SECRET_KEY/MAC_API_TOKEN")
     if not args.execute:
         print(am.render_plan(args.name, steps))
         return
@@ -2904,6 +2918,15 @@ def build_parser() -> argparse.ArgumentParser:
     agent_migrate.add_argument("--execute", action="store_true", help="run it (default: print the plan)")
     agent_migrate.add_argument("--keep-source", action="store_true", help="don't decommission the source host")
     agent_migrate.add_argument("--retire-source-agent", help="agent_id to `mac agent delete` after migration")
+    hub_grp = agent_migrate.add_mutually_exclusive_group()
+    hub_grp.add_argument(
+        "--hub", dest="hub", action="store_true", default=None,
+        help="full-fidelity HUB migration: also move mac.db + Qdrant + MAC_SECRET_KEY "
+             "(auto-detected when the agent is the fleet's hub_agent/shared_services_manager)")
+    hub_grp.add_argument(
+        "--no-hub", dest="hub", action="store_false",
+        help="force soul-only (spoke) migration even if the agent looks like the hub")
+    agent_migrate.add_argument("--src-os", help="source service manager (default: from fleets.yaml, else linux)")
     _set(cmd_agent_migrate, agent_migrate)
 
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(

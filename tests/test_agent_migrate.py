@@ -76,11 +76,58 @@ def test_plan_is_ordered_and_soul_safe():
     )
     order = [s for s, _ in steps]
     # backup must precede transfer/deploy; restore must come AFTER deploy
-    assert order.index("backup-soul") < order.index("transfer") < order.index("deploy")
+    assert order.index("backup-soul") < order.index("transfer-soul") < order.index("deploy")
     assert order.index("deploy") < order.index("restore-soul") < order.index("verify")
     # default decommissions the source
     assert "decommission-source" in order
     assert "retire-source-agent" not in order
+
+
+def test_spoke_plan_is_soul_only():
+    """A non-hub (spoke) migration must NOT touch the DB/Qdrant/secrets — those
+    live on the shared hub and stay put."""
+    steps = dict(am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky"))
+    for hub_step in ("backup-db-source", "backup-qdrant-source", "transfer-db",
+                     "transfer-qdrant", "seed-hub-secrets", "stage-db-dest", "stage-qdrant-dest"):
+        assert hub_step not in steps
+
+
+def test_hub_plan_moves_db_qdrant_and_secrets_before_deploy():
+    steps = am.migration_plan(
+        "rocky", src_target="jkh@do-host1", dst_target="jkh@puck.local",
+        fleet="mac", fleet_name="mac", to_os="darwin", src_os="linux", hub=True,
+    )
+    order = [s for s, _ in steps]
+    cmds = dict(steps)
+    # the full-fidelity hub artifacts are present
+    for step in ("stop-source-hub", "backup-db-source", "backup-qdrant-source",
+                 "transfer-db", "transfer-qdrant", "seed-hub-secrets",
+                 "stage-db-dest", "stage-qdrant-dest"):
+        assert step in order, step
+    # staged on the destination BEFORE the deploy (so the deploy sees the vault)
+    assert order.index("seed-hub-secrets") < order.index("deploy")
+    assert order.index("stage-db-dest") < order.index("deploy")
+    assert order.index("stage-qdrant-dest") < order.index("deploy")
+    # source quiesced before its DB/Qdrant are snapshotted
+    assert order.index("stop-source-hub") < order.index("backup-db-source")
+    # consistent online DB backup via the sqlite3 module (no sqlite3 CLI needed)
+    assert "sqlite3" in cmds["backup-db-source"] and ".backup(" in cmds["backup-db-source"]
+    # darwin destination qdrant dir; linux source qdrant dir under /var/lib
+    assert "~/.mac/qdrant" in cmds["stage-qdrant-dest"]
+    assert "/var/lib/mac/qdrant" in cmds["backup-qdrant-source"]
+    # secret seed copies BOTH the encryption key and the api token
+    assert "MAC_SECRET_KEY" in cmds["seed-hub-secrets"]
+    assert "MAC_API_TOKEN" in cmds["seed-hub-secrets"]
+
+
+def test_hub_plan_darwin_source_qdrant_user_path():
+    """A darwin->linux hub move reads the macOS user qdrant dir on the source."""
+    steps = dict(am.migration_plan(
+        "x", src_target="a@b", dst_target="a@c", fleet="mac", fleet_name="mac",
+        to_os="linux", src_os="darwin", hub=True,
+    ))
+    assert "~/.mac/qdrant" in steps["backup-qdrant-source"]
+    assert "/var/lib/mac/qdrant" in steps["stage-qdrant-dest"]
 
 
 def test_plan_keep_source_skips_decommission():
@@ -129,4 +176,4 @@ def test_execute_stops_on_first_failure():
 
     res = am.execute_migration("x", steps, runner=runner)
     assert res["ok"] is False
-    assert res["failed_step"] == "transfer"
+    assert res["failed_step"] == "transfer-soul"
