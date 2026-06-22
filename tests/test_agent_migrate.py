@@ -130,6 +130,44 @@ def test_hub_plan_darwin_source_qdrant_user_path():
     assert "/var/lib/mac/qdrant" in steps["stage-qdrant-dest"]
 
 
+def test_darwin_restore_uses_bootstrap_not_only_kickstart():
+    """bootout unloads the service from the launchd domain, so restore must
+    bootstrap it back (kickstart alone can't start an unloaded job)."""
+    steps = dict(am.migration_plan(
+        "x", src_target="a@b", dst_target="a@c", fleet="mac", fleet_name="mac", to_os="darwin"))
+    rc = steps["restore-soul"]
+    assert "launchctl bootout" in rc
+    assert "launchctl bootstrap gui/$uid" in rc
+
+
+def test_reconcile_identity_runs_after_restore_and_sets_agent_name():
+    """Every migration reconciles the destination's Hermes AGENT_NAME to the
+    migrated agent (re-hosting onto a box that ran a different agent leaves a
+    stale AGENT_NAME that the deploy doesn't reset)."""
+    steps = am.migration_plan(
+        "rocky", src_target="a@b", dst_target="a@c", fleet="rocky", fleet_name="mac", to_os="darwin")
+    order = [s for s, _ in steps]
+    assert order.index("restore-soul") < order.index("reconcile-identity") < order.index("verify")
+    cmd = dict(steps)["reconcile-identity"]
+    assert "AGENT_NAME" in cmd and "config.yaml" in cmd and ".hermes" in cmd
+    assert "rocky" in cmd
+
+
+def test_python_over_ssh_steps_are_shell_safe():
+    """The python-over-ssh steps must parse as valid local shell. The naive
+    `ssh t 'python3 -c '+shlex.quote(code)` nests single quotes and leaves the
+    snippet's ; ( ) unquoted -> a shell syntax error that execute_migration
+    would hit at runtime. bash -n parses without executing."""
+    import subprocess
+    steps = dict(am.migration_plan(
+        "rocky", src_target="jkh@do-host1", dst_target="jkh@puck.local",
+        fleet="rocky", fleet_name="mac", to_os="darwin", src_os="linux", hub=True,
+    ))
+    for s in ("backup-db-source", "seed-hub-secrets", "reconcile-identity"):
+        r = subprocess.run(["bash", "-nc", steps[s]], capture_output=True, text=True)
+        assert r.returncode == 0, "%s is not shell-safe: %s" % (s, r.stderr)
+
+
 def test_plan_keep_source_skips_decommission():
     steps = am.migration_plan(
         "x", src_target="a@b", dst_target="a@c", fleet="rocky", keep_source=True

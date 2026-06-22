@@ -73,6 +73,19 @@ HUB_ENV_SECRETS = ["MAC_SECRET_KEY", "MAC_API_TOKEN"]
 _FLEET_SERVICES = ["mac-agent", "mac-hermes-gateway", "mac", "mac-gen-server"]
 
 
+def _ssh_python(target: str, code: str, *args: str) -> str:
+    """Build a shell-safe ``ssh <target> python3 -c <code> [args...]``.
+
+    The remote command (``python3 -c <code> ...``) is assembled with each token
+    shlex-quoted FOR THE REMOTE shell, then the whole remote command is
+    shlex-quoted again FOR THE LOCAL shell. Single quotes do not nest, so the
+    naive ``ssh t 'python3 -c %s' % shlex.quote(code)`` leaves the code's own
+    metacharacters (``;`` ``(`` ``)``) unquoted and bombs — this double-quote is
+    the correct construction for piping a python snippet through ssh."""
+    remote = " ".join(shlex.quote(p) for p in (["python3", "-c", code] + list(args)))
+    return "ssh %s %s" % (target, shlex.quote(remote))
+
+
 def _qdrant_dir(os_kind: str, fleet_name: str) -> str:
     return (DEFAULT_QDRANT_DIR_DARWIN if os_kind == "darwin"
             else DEFAULT_QDRANT_DIR_LINUX.format(fleet_name=fleet_name))
@@ -131,8 +144,33 @@ def _seed_hub_secrets_cmd(src_target: str, dst_target: str, env_path: str) -> st
         "p.write_text(chr(10).join(kept+incoming)+chr(10));"
         "os.chmod(p,0o600)" % env_path
     )
-    return ("ssh %s 'grep -E \"^(%s)=\" %s' | ssh %s 'python3 -c %s'"
-            % (src_target, keys, env_path, dst_target, shlex.quote(upsert)))
+    return ("ssh %s 'grep -E \"^(%s)=\" %s' | %s"
+            % (src_target, keys, env_path, _ssh_python(dst_target, upsert)))
+
+
+def _reconcile_identity_cmd(dst_target: str, name: str) -> str:
+    """Force the destination's Hermes identity to the migrated agent.
+
+    ``~/.hermes/config.yaml`` + ``.env`` are host-local (soul-excluded,
+    deploy-managed), but they carry ``AGENT_NAME`` — which the MAC deploy does
+    NOT reset. Re-hosting an agent onto a box that previously ran a DIFFERENT
+    agent (e.g. rocky -> a host that used to be bullwinkle) therefore leaves a
+    stale ``AGENT_NAME``. The MAC runtime context overrides it at runtime, but
+    it's a latent identity mismatch, so we rewrite every existing ``AGENT_NAME``
+    occurrence to the migrated name. Idempotent; only updates existing keys."""
+    script = (
+        "import os,sys,re,pathlib;"
+        "n=sys.argv[1];"
+        "h=pathlib.Path(os.path.expanduser('~/.hermes'));"
+        "e=h/'.env';"
+        "e.exists() and e.write_text(chr(10).join("
+        "('AGENT_NAME='+n) if l.startswith('AGENT_NAME=') else l "
+        "for l in e.read_text().splitlines())+chr(10));"
+        "c=h/'config.yaml';"
+        "c.exists() and c.write_text("
+        "re.sub(r'(?m)^(\\s*)AGENT_NAME:.*$', r'\\1AGENT_NAME: '+n, c.read_text()))"
+    )
+    return _ssh_python(dst_target, script, name)
 
 
 def soul_backup_tar_excludes() -> List[str]:
@@ -178,15 +216,19 @@ def _launchd_labels(fleet_name: str) -> List[str]:
 
 def _darwin_restore_cmd(dst_target: str, tgz: str, fleet_name: str) -> str:
     """launchctl-based restore-soul for a darwin destination: bootout the agents,
-    unpack the soul tar, kickstart them back. Mirrors deploy-mac-fleet.sh's
-    gui/$uid/<label> bootout+kickstart shapes."""
+    unpack the soul tar, then BOOTSTRAP them back. (``bootout`` unloads the
+    service from the domain, so ``kickstart`` — which only restarts an
+    already-loaded job — cannot bring it back; ``bootstrap`` re-loads it and
+    RunAtLoad starts it. kickstart is kept only as a fallback.)"""
     labels = " ".join(_launchd_labels(fleet_name))
+    la = "$HOME/Library/LaunchAgents"
     return (
         "ssh %s 'uid=$(id -u); "
         "for L in %s; do launchctl bootout gui/$uid/$L 2>/dev/null || true; done; "
         "cd \"$HOME\" && tar xzf %s; "
-        "for L in %s; do launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done'"
-        % (dst_target, labels, tgz, labels)
+        "for L in %s; do launchctl bootstrap gui/$uid \"%s/$L.plist\" 2>/dev/null "
+        "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done'"
+        % (dst_target, labels, tgz, labels, la)
     )
 
 
@@ -257,8 +299,7 @@ def migration_plan(
             "s=sqlite3.connect(os.path.expanduser(%r));"
             "d=sqlite3.connect(%r);"
             "s.backup(d);d.close();s.close()" % (db_path, db_tgz))
-        steps.append(("backup-db-source",
-                      "ssh %s 'python3 -c %s'" % (src_target, shlex.quote(db_backup))))
+        steps.append(("backup-db-source", _ssh_python(src_target, db_backup)))
         # 3. Qdrant storage snapshot (Linux /var/lib needs sudo + chown for scp).
         if src_os == "darwin":
             qd_cmd = "tar czf %s -C %s ." % (qd_tgz, sq)
@@ -293,8 +334,10 @@ def migration_plan(
     steps.append(("retarget-fleet", "(fleets.yaml) set agent %r target=%s" % (name, dst_target)))
     steps.append(("deploy", "%s --hub %s --hub-os %s %s" % (deploy_cmd, fleet, to_os, name)))
 
-    # 9. Restore soul over the deploy's fresh ~/.hermes, then verify.
+    # 9. Restore soul over the deploy's fresh ~/.hermes, reconcile the host's
+    #    Hermes identity to the migrated agent, then verify.
     steps.append(("restore-soul", restore_cmd))
+    steps.append(("reconcile-identity", _reconcile_identity_cmd(dst_target, name)))
     if hub:
         verify = ("compare sha256 ~/.hermes/SOUL.md on %s vs %s; "
                   "mac agent list (decrypts); "
