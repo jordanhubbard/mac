@@ -2131,7 +2131,6 @@ required = [
     "mac-hermes agents",
     "shell_execution",
     "workspace_file_access",
-    "hgmac agents list",
     "mac task ready",
     "git push",
 ]
