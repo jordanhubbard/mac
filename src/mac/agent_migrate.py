@@ -342,7 +342,10 @@ def migration_plan(
         verify = ("compare sha256 ~/.hermes/SOUL.md on %s vs %s; "
                   "mac agent list (decrypts); "
                   "row counts match src for agents/personas/memory_records/messages; "
-                  "qdrant /collections vector counts match" % (src_target, dst_target))
+                  "qdrant /collections vector counts match; "
+                  "THEN restart the OTHER spokes' mac-agent (their DB records reverted "
+                  "to this snapshot, so they read 'degraded' until they re-register fresh "
+                  "resources)" % (src_target, dst_target))
     else:
         verify = "compare sha256 ~/.hermes/SOUL.md on %s vs %s; mac agent list" % (src_target, dst_target)
     steps.append(("verify", verify))
