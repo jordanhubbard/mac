@@ -2487,6 +2487,12 @@ class MacWorker:
         head_sha = str(repo.get("head_sha") or "").strip()
         if not GIT_SHA_RE.match(head_sha):
             return None
+        # Carry the executor's TRUE base so the review can compute a non-empty
+        # diff. Without this the review base defaulted to head_sha, making
+        # base==head and files_changed always []. (mac review-worktree fix)
+        base_sha = str(repo.get("base_sha") or "").strip()
+        if base_sha and not GIT_SHA_RE.match(base_sha):
+            base_sha = ""
         remote_ref = str(repo.get("remote_ref") or "").strip()
         remote_url = str(
             repo.get("remote_url")
@@ -2567,7 +2573,7 @@ class MacWorker:
             "repository_worktree": str(review_repo),
             "repository_source_path": str(repo.get("path") or ""),
             "repository_branch": remote_ref or branch or "",
-            "repository_base_sha": head_sha,
+            "repository_base_sha": base_sha or head_sha,
             "repository_origin_remote": remote_url,
             "repository_review_id": review_id,
             "repository_executor_evidence_id": executor_evidence_id,
@@ -4018,7 +4024,12 @@ def _enrich_verification_manifest_from_repository_context(
         "base_sha": context.get("repository_base_sha"),
     }
     if context.get("repository_branch"):
-        defaults["remote_ref"] = "refs/heads/%s" % context.get("repository_branch")
+        _branch = str(context.get("repository_branch"))
+        # repository_branch may already be a full ref (refs/heads/...); don't
+        # re-prefix it into refs/heads/refs/heads/... (mac review-worktree fix)
+        defaults["remote_ref"] = (
+            _branch if _branch.startswith("refs/") else "refs/heads/%s" % _branch
+        )
     for key, value in defaults.items():
         if value not in {None, ""}:
             repo[key] = value
@@ -4064,7 +4075,12 @@ def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
         "branch": branch,
         "base_sha": context.get("repository_base_sha"),
         "head_sha": context.get("repository_base_sha"),
-        "remote_ref": "refs/heads/%s" % branch if branch else "",
+        # branch may already be a full ref; avoid doubling the prefix.
+        "remote_ref": (
+            branch if branch.startswith("refs/") else "refs/heads/%s" % branch
+        )
+        if branch
+        else "",
         "dirty": True,
         "pushed": False,
         "files_changed": [],

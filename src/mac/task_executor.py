@@ -718,7 +718,15 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
             manifest = {}
     evidence_type = str(manifest.get("evidence_type") or task_evidence_type(task))
     repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-    tests = manifest.get("tests") if isinstance(manifest.get("tests"), dict) else None
+    # verification.tests is canonically a LIST of result objects (mac-wjy3), but
+    # accept a bare dict for backward compatibility with older manifests.
+    tests_raw = manifest.get("tests")
+    if isinstance(tests_raw, list):
+        test_items = [t for t in tests_raw if isinstance(t, dict)]
+    elif isinstance(tests_raw, dict):
+        test_items = [tests_raw]
+    else:
+        test_items = []
     checks = manifest.get("checks") if isinstance(manifest.get("checks"), list) else []
     checks_pass = bool(checks) and all(
         (c.get("returncode", 0) == 0 or str(c.get("status", "")).lower() == "pass")
@@ -726,8 +734,15 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
         if isinstance(c, dict)
     )
     tests_state = None
-    if isinstance(tests, dict):
-        tests_state = "pass" if (tests.get("returncode") == 0 or tests.get("status") == "pass") else "fail"
+    if test_items:
+        tests_state = (
+            "pass"
+            if all(
+                (t.get("returncode") == 0 or t.get("status") == "pass")
+                for t in test_items
+            )
+            else "fail"
+        )
     # ``repo`` is {} for non-repo evidence (operator_result/documentation/...);
     # in that case pushed/files_changed are N/A (None), NOT False — otherwise a
     # legitimate planning result would be mis-graded a failure.
@@ -1195,7 +1210,11 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "files_changed": files_changed,
         },
         "codegraph": codegraph,
-        "tests": tests,
+        # mac-wjy3: verification.tests is the CANONICAL list of test-result
+        # objects. The strict evidence validator rejects a bare dict (treats it
+        # as tests:null/missing), so a require_tests task whose finalizer ran the
+        # suite once must still present a one-element LIST, not the raw dict.
+        "tests": [tests] if tests is not None else None,
         "push": push_evidence,
         "checks": (
             ([codegraph_audit_check(codegraph)] if str(codegraph.get("status") or "") != "skipped" else [])
@@ -1302,7 +1321,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
                 "status": "pass" if independent_pass else "fail",
             }
         ],
-        "tests": tests,
+        # mac-wjy3: canonical list shape (see run_deterministic_git_finalizer).
+        "tests": [tests] if tests is not None else None,
         "signed_by": reviewer_agent_id,
     }
     if bootstrap is not None:

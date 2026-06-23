@@ -922,7 +922,10 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert (work / ".venv/bin/python").exists()
     assert manifest["bootstrap"]["status"] == "pass"
-    assert manifest["tests"]["returncode"] == 0
+    # mac-wjy3: verification.tests must be a LIST of result objects so the strict
+    # evidence validator accepts it (a bare dict reads as tests:null/missing).
+    assert isinstance(manifest["tests"], list)
+    assert manifest["tests"][0]["returncode"] == 0
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
@@ -982,7 +985,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is False
     assert manifest["bootstrap"]["status"] == "fail"
-    assert manifest["tests"]["status"] == "pass"
+    assert manifest["tests"][0]["status"] == "pass"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
@@ -1057,7 +1060,7 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
     assert (work / ".venv/bin/python").exists()
     assert manifest["verdict"] == "approved"
     assert manifest["bootstrap"]["status"] == "pass"
-    assert manifest["tests"]["returncode"] == 0
+    assert manifest["tests"][0]["returncode"] == 0
 
 
 # ---------------------------------------------------------------------------
