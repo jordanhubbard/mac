@@ -1151,6 +1151,11 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
     tests_ok = tests is None or tests.get("returncode") == 0
     _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
+    # Record the diff base (origin/main) so the reviewer can compute a non-empty
+    # base..head diff. Without base_sha the review fell back to head_sha, making
+    # base==head and the review snapshot's files_changed always [] (which the
+    # repo_change validator rejects as "requires changed files").
+    base_sha = _git(["rev-parse", "origin/main"], worktree_path).stdout.strip()
     diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
     files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
     codegraph = run_codegraph_audit(worktree_path, files_changed)
@@ -1203,6 +1208,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "summary": "Deterministic finalizer: commit+test+push for %s" % task.get("id"),
         "repo": {
             "head_sha": head_sha,
+            "base_sha": base_sha,
             "pushed": pushed,
             "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
             "push_remote": push_remote_display,

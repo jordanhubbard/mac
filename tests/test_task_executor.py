@@ -984,6 +984,10 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is False
+    # mac-wjy3 review fix: base_sha records origin/main so the reviewer can
+    # compute a non-empty base..head diff (base != head here).
+    assert len(manifest["repo"]["base_sha"]) == 40
+    assert manifest["repo"]["base_sha"] != manifest["repo"]["head_sha"]
     assert manifest["bootstrap"]["status"] == "fail"
     assert manifest["tests"][0]["status"] == "pass"
     assert manifest["push"]["status"] == "skipped"
