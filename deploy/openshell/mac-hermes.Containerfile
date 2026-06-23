@@ -29,6 +29,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # image should cover ordinary polyglot repos without mutating the host fleet.
 # build-essential: a C/C++ toolchain (cc/gcc/g++) for repos that compile native
 #   code (e.g. nanolang's 3-stage `make build`); Debian-slim ships none.
+# libssl-dev: OpenSSL headers + libcrypto. nanolang's src/sign.c #includes
+#   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
+#   `make build` fails and a coding agent will destructively stub sign.c just to
+#   compile. A real build dependency belongs in the base image.
 # nodejs from NodeSource (v22 LTS), NOT Debian's nodejs (v18): current pnpm
 #   refuses Node < v22.13 ("This version of pnpm requires at least Node.js
 #   v22.13"), which silently breaks every `pnpm install` repo bootstrap.
@@ -43,7 +47,7 @@ RUN apt-get update \
     && bash /tmp/nodesource_setup.sh \
     && rm -f /tmp/nodesource_setup.sh \
     && apt-get update \
-    && apt-get install -y --no-install-recommends iproute2 iptables git gh make build-essential nodejs openjdk-17-jre-headless \
+    && apt-get install -y --no-install-recommends iproute2 iptables git gh make build-essential libssl-dev nodejs openjdk-17-jre-headless \
     && npm install -g @openai/codex@0.140.0 \
     && npm install -g pnpm \
     && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
