@@ -2663,17 +2663,23 @@ class MacWorker:
         # No-op unless the worktree is dirty AND its tracked content matches the
         # pushed branch exactly; a genuinely-dirty/unpushed worktree is left
         # alone so the dirty-worktree contract still blocks it.
+        adopted = False
         worktree_raw = str(context.get("repository_worktree") or "").strip()
         worktree = Path(worktree_raw).expanduser() if worktree_raw else None
         if worktree is not None and worktree.exists() and _repository_worktree_is_dirty(worktree):
-            self._adopt_pushed_branch_if_worktree_matches(
+            adopted = self._adopt_pushed_branch_if_worktree_matches(
                 _task_payload_from_workspace(task_dir),
                 worktree,
                 str(context.get("repository_branch") or "").strip(),
                 context,
             )
         manifest_path = task_dir / "mac-evidence.json"
-        if manifest_path.exists():
+        # When we adopted an already-pushed branch, the agent-authored manifest
+        # describes its throwaway in-sandbox clone — notably its tests may be in a
+        # non-canonical shape the strict validator treats as missing. Re-finalize
+        # from the adopted host worktree to re-run the contract test and emit a
+        # valid manifest. Otherwise keep an existing agent manifest untouched.
+        if manifest_path.exists() and not adopted:
             return False
 
         try:
