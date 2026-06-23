@@ -2651,11 +2651,29 @@ class MacWorker:
         task_dir: Path,
         execution: WorkerExecution,
     ) -> bool:
-        manifest_path = task_dir / "mac-evidence.json"
-        if manifest_path.exists():
-            return False
         context = _load_repository_context(task_dir)
         if not context:
+            return False
+        # If the coding agent pushed this task's branch from a throwaway
+        # in-sandbox clone (it does that when the uploaded worktree's gitlink is
+        # unusable inside the sandbox), the HOST worktree holds the same edits
+        # UNCOMMITTED while the work already exists on the remote. Reset the host
+        # worktree onto the pushed tip so independent host-side verification sees
+        # a clean, already-pushed HEAD instead of false-blocking finished work.
+        # No-op unless the worktree is dirty AND its tracked content matches the
+        # pushed branch exactly; a genuinely-dirty/unpushed worktree is left
+        # alone so the dirty-worktree contract still blocks it.
+        worktree_raw = str(context.get("repository_worktree") or "").strip()
+        worktree = Path(worktree_raw).expanduser() if worktree_raw else None
+        if worktree is not None and worktree.exists() and _repository_worktree_is_dirty(worktree):
+            self._adopt_pushed_branch_if_worktree_matches(
+                _task_payload_from_workspace(task_dir),
+                worktree,
+                str(context.get("repository_branch") or "").strip(),
+                context,
+            )
+        manifest_path = task_dir / "mac-evidence.json"
+        if manifest_path.exists():
             return False
 
         try:
@@ -2801,6 +2819,48 @@ class MacWorker:
         if problems:
             manifest["problems"] = problems
         return manifest
+
+    def _adopt_pushed_branch_if_worktree_matches(
+        self,
+        task: JsonDict,
+        worktree: Path,
+        branch: str,
+        context: JsonDict,
+    ) -> bool:
+        """Adopt an already-pushed task branch when the host worktree matches it.
+
+        The sandboxed coding agent pushes the task branch from a throwaway clone
+        when the uploaded worktree's gitlink is unusable inside the sandbox; the
+        host worktree then holds the same edits uncommitted. Committing locally
+        would fork the branch and the finalizer's push would be rejected
+        non-fast-forward. When the working tree's tracked content is identical to
+        the already-pushed tip, reset onto it so the finalizer sees a clean,
+        already-pushed HEAD instead. Returns True iff the branch was adopted.
+        """
+        if not branch:
+            return False
+        push_remote, _ = _repository_push_remote(task, context)
+        fetch = _run_git(worktree, ["fetch", push_remote, "refs/heads/%s" % branch])
+        if fetch.returncode != 0:
+            return False
+        # `git diff --quiet FETCH_HEAD --` exits 0 iff the working tree (tracked
+        # files) is identical to the pushed tip — i.e. the agent already pushed
+        # exactly this work. Untracked build artifacts are not counted.
+        if _run_git(worktree, ["diff", "--quiet", "FETCH_HEAD", "--"]).returncode != 0:
+            return False
+        reset = _run_git(worktree, ["reset", "--hard", "FETCH_HEAD"])
+        if reset.returncode != 0:
+            return False
+        self._observe_log(
+            "worker.repository.adopted_pushed_branch",
+            subject_type="task",
+            subject_id=str(task.get("id") or ""),
+            detail={
+                "repository_branch": branch,
+                "head_sha": _git_stdout(worktree, ["rev-parse", "HEAD"]),
+            },
+        )
+        return True
 
     def _commit_dirty_repository_worktree(
         self,

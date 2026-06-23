@@ -1357,6 +1357,57 @@ def test_mac_worker_fails_dirty_repository_worktree_after_success(tmp_path: Path
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
+def test_mac_worker_adopts_agent_pushed_branch_when_worktree_matches(tmp_path: Path):
+    """A sandboxed agent whose worktree gitlink is unusable commits + pushes the
+    task branch from a throwaway in-sandbox clone; the HOST worktree keeps the
+    same edits UNCOMMITTED. The worker must adopt the already-pushed tip (the
+    work is durably on the remote) instead of false-blocking it as dirty."""
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    origin = tmp_path / "origin.git"
+    task = cp.create_task(
+        "Agent pushed from sandbox clone",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
+        runtime = task_payload["metadata"]["runtime"]
+        worktree = Path(runtime["repository_worktree"])
+        branch = runtime["repository_branch"]
+        # Agent's in-sandbox fresh-clone push: the same edit, committed + pushed
+        # to the task branch on origin from a SIDE clone, so the host worktree
+        # never advances (mirrors the unusable-gitlink workaround in the sandbox).
+        side = tmp_path / "agent-side-clone"
+        subprocess.run(["git", "clone", str(origin), str(side)], check=True, capture_output=True)
+        _git(side, "config", "user.email", "agent@example.invalid")
+        _git(side, "config", "user.name", "agent")
+        _git(side, "checkout", "-b", branch)
+        (side / "README.md").write_text("agent edit\n", encoding="utf-8")
+        _git(side, "add", "-A")
+        _git(side, "commit", "-m", "agent work")
+        _git(side, "push", "origin", "HEAD:refs/heads/%s" % branch)
+        # Host worktree carries the SAME edit, uncommitted.
+        (worktree / "README.md").write_text("agent edit\n", encoding="utf-8")
+        _write_repo_worker_manifest(task_dir, worktree)
+        return WorkerExecution(0, "agent pushed from sandbox clone", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "submitted_for_review", result.error
+    assert cp.get_task(task.id).state != TaskState.BLOCKED.value
+
+
 def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
