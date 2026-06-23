@@ -125,7 +125,11 @@ EOF
     --agent-user "$USER" --hub-host "$POLICY_HUB" --hub-port "$HUB_PORT" \
     --image-runtime /opt/mac-venv --into "$MAC_HOME/openshell-policy.yaml" >/dev/null
   chmod 600 "$MAC_HOME/openshell-policy.yaml"
-  [ -f "$HOME/.hermes/config.yaml" ] && { sed 's#127\.0\.0\.1#host.openshell.internal#g' "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"; chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"; }
+  # Normalize the mac-hub gateway endpoint (hub port) to THIS node's current hub
+  # authority ($POLICY_HUB): loopback -> host.openshell.internal, and a STALE hub
+  # host (e.g. a pre-migration tailnet IP) -> the live hub instead of passing
+  # through. Non-hub-port providers (other services, external APIs) are untouched.
+  [ -f "$HOME/.hermes/config.yaml" ] && { sed -E "s#(https?://)[^/@:]+(:${HUB_PORT}/)#\1${POLICY_HUB}\2#g" "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"; chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"; }
   # 8. env recipe (BSD sed -i '')
   cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
   sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d' "$ENVF" 2>/dev/null || true
@@ -417,8 +421,11 @@ log "policy egress hub: $POLICY_HUB:$HUB_PORT"
 chmod 600 "$MAC_HOME/openshell-policy.yaml"
 
 # --- 10. rewritten hermes config for the sandbox ----------------------------
-# Loopback base_url -> host.openshell.internal (a remote hub IP passes through).
-sed 's#127\.0\.0\.1#host.openshell.internal#g' "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"
+# Normalize the mac-hub gateway endpoint (hub port) to THIS node's current hub
+# authority ($POLICY_HUB): loopback -> host.openshell.internal, and a STALE hub
+# host (e.g. a pre-migration tailnet IP) -> the live hub instead of passing
+# through. Non-hub-port providers (other services, external APIs) are untouched.
+sed -E "s#(https?://)[^/@:]+(:${HUB_PORT}/)#\1${POLICY_HUB}\2#g" "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"
 chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
