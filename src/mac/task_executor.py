@@ -1097,6 +1097,15 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
     push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
+    # Purge synced build artifacts before the host build. The agent built in the
+    # task SANDBOX (e.g. Linux); those object files / binaries sync back into this
+    # worktree, but this finalizer runs on the EXECUTOR HOST, which may be a
+    # different OS/arch (a macOS host with a Linux sandbox). A stale foreign
+    # bin/nano makes `..._if_needed` skip the rebuild and then the tests run a
+    # binary the host can't execute -> spurious "tests failed". `git clean -Xdf`
+    # removes only gitignored files (obj/, bin/, caches) and keeps the agent's
+    # new untracked SOURCE files, forcing a clean native rebuild.
+    _git(["clean", "-Xdf"], worktree_path)
     bootstrap = _run_repository_bootstrap_if_needed(worktree_path, task)
     test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
     tests = None
