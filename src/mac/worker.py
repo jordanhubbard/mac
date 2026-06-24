@@ -2889,13 +2889,23 @@ class MacWorker:
                 str(context.get("repository_branch") or "").strip(),
                 context,
             )
+        # Rescue "agent did the work but forgot to commit": when the worktree
+        # holds UNTRACKED new files (created but never `git add`ed), re-finalize so
+        # they are committed, the contract test is re-run, and the branch is pushed
+        # ONLY if that test passes. Tracked-but-modified-uncommitted edits are NOT
+        # rescued here — they stay blocked by the dirty-worktree contract.
+        has_untracked = (
+            worktree is not None
+            and worktree.exists()
+            and _repository_worktree_has_untracked_files(worktree)
+        )
         manifest_path = task_dir / "mac-evidence.json"
         # When we adopted an already-pushed branch, the agent-authored manifest
         # describes its throwaway in-sandbox clone — notably its tests may be in a
         # non-canonical shape the strict validator treats as missing. Re-finalize
         # from the adopted host worktree to re-run the contract test and emit a
         # valid manifest. Otherwise keep an existing agent manifest untouched.
-        if manifest_path.exists() and not adopted:
+        if manifest_path.exists() and not adopted and not has_untracked:
             return False
 
         try:
@@ -4363,6 +4373,19 @@ def _git_stdout(worktree: Path, args: List[str]) -> str:
 def _repository_worktree_is_dirty(worktree: Path) -> bool:
     status = _run_git(worktree, ["status", "--porcelain"])
     return status.returncode != 0 or bool(status.stdout.strip())
+
+
+def _repository_worktree_has_untracked_files(worktree: Path) -> bool:
+    """True when the worktree carries UNTRACKED new files (``?? path``).
+
+    Distinguishes "the agent created files but forgot to ``git add``/commit them"
+    (rescuable: commit + test + push-if-passing) from "tracked files left
+    modified-but-uncommitted" (left blocked by the dirty-worktree contract).
+    """
+    status = _run_git(worktree, ["status", "--porcelain", "--untracked-files=all"])
+    if status.returncode != 0:
+        return False
+    return any(line.startswith("??") for line in status.stdout.splitlines())
 
 
 def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
