@@ -390,6 +390,21 @@ def _detect_command_inventory() -> JsonDict:
 def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
+    # Stamp the sandbox requirement so it survives worker (re)registration. The
+    # hub uses resources["openshell_required"] for dispatch toolchain eligibility
+    # (a sandboxed agent only needs host PRIMITIVES, not the full repo toolchain),
+    # but registration REPLACES the resources dict — so a worker that doesn't
+    # report this drops any reconciled value on every restart, and tasks needing
+    # sandbox-provisioned tools (lein/pnpm/...) become unclaimable again. Report
+    # it from the local env (MAC_OPENSHELL_REQUIRED / name) so it stays sticky.
+    try:
+        from mac.openshell_runtime import openshell_required_for_local_agent
+
+        merged.setdefault(
+            "openshell_required", openshell_required_for_local_agent(os.environ)
+        )
+    except Exception:  # noqa: BLE001 - resource stamping must never break registration
+        pass
     return merged
 
 
