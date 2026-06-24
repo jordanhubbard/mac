@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import subprocess
 import sys
+import threading
 import time
 import types
 from typing import Any, Dict, Optional
@@ -1435,6 +1436,39 @@ def test_openshell_containerfile_changed_detects_sandbox_image_drift(tmp_path: P
     assert _openshell_containerfile_changed(repo, base, after_cf) is True
     assert _openshell_containerfile_changed(repo, after_cf, after_other) is False
     assert _openshell_containerfile_changed(repo, base, base) is False
+
+
+def test_lease_renewal_ticker_heartbeats_busy_agent_so_it_is_not_marked_stale(tmp_path: Path):
+    """The execution-time lease-renewal ticker must also heartbeat the agent
+    (status=busy) so a long task doesn't let the worker's last_seen_at go stale --
+    which would otherwise get it dropped as a reviewer (reviewer_stale)."""
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        lambda *a, **k: WorkerExecution(0, "ok"),
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    posts: list = []
+    stop = threading.Event()
+    real_post = worker.client.post
+
+    def recording_post(path, body=None):
+        posts.append((path, body))
+        if path.endswith("/heartbeat"):
+            stop.set()  # end the ticker loop after its first heartbeat
+        return real_post(path, body)
+
+    worker.client.post = recording_post  # type: ignore[assignment]
+    # lease id need not exist: renew fails (caught), then the heartbeat must fire.
+    worker._renew_lease_until_stopped("lease_missing", "task_x", stop, 0.01)
+
+    heartbeats = [body for path, body in posts if path.endswith("/heartbeat")]
+    assert heartbeats, "lease-renewal ticker did not heartbeat the agent"
+    assert heartbeats[0] == {"status": "busy"}
 
 
 def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_path: Path):

@@ -929,6 +929,20 @@ class MacWorker:
                     subject_id=task_id,
                     detail={"lease_id": lease_id, "error": str(exc)},
                 )
+            # Keep last_seen_at fresh while this single-threaded worker is busy.
+            # The agent heartbeat is otherwise only sent between tasks (run_once),
+            # so a task longer than the reviewer-stale window (default 300s) makes
+            # this alive, lease-renewing agent look `reviewer_stale` and get
+            # dropped/retracted as a reviewer under load. Send status=busy -- the
+            # agent IS busy; idle would wrongly free it for new dispatch. Best
+            # effort: never let a liveness ping disturb execution.
+            try:
+                self.client.post(
+                    "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
+                    {"status": "busy"},  # AgentStatus.BUSY; literal avoids an import
+                )
+            except Exception:  # noqa: BLE001 - liveness ping is best-effort
+                pass
 
     def _claim_next_for_agent(self) -> Optional[JsonDict]:
         return self.client.post(
