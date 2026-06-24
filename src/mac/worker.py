@@ -2770,7 +2770,43 @@ class MacWorker:
         self._post_task_activity(
             task_id, "worker", self._execution_activity_summary(task_dir, execution)
         )
+        env_summary = self._execution_env_summary(task_dir)
+        if env_summary:
+            self._post_task_activity(task_id, "env", env_summary)
         return evidence_result
+
+    def _execution_env_summary(self, task_dir: Path) -> str:
+        """Note environment changes needed to build/test the task (toolchain
+        bootstrap, installed/missing deps) for the per-task narrative. Returns ""
+        when nothing notable changed. Best-effort."""
+        try:
+            manifest = ensure_json_object(
+                json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+            )
+        except Exception:  # noqa: BLE001 - env note is best-effort
+            return ""
+        parts: List[str] = []
+        bootstrap = manifest.get("bootstrap")
+        if isinstance(bootstrap, dict):
+            cmd = str(bootstrap.get("command") or "").strip()
+            if cmd:
+                rc = bootstrap.get("returncode")
+                parts.append("bootstrap: %s%s" % (cmd, "" if rc is None else " (rc %s)" % rc))
+        for test in manifest.get("tests") or []:
+            if not isinstance(test, dict):
+                continue
+            delta = test.get("environment_delta")
+            if not isinstance(delta, dict):
+                continue
+            for label in ("installed", "added"):
+                vals = delta.get(label)
+                if isinstance(vals, list) and vals:
+                    parts.append("%s: %s" % (label, ", ".join(str(v) for v in vals[:8])))
+            for label in ("missing", "missing_commands"):
+                vals = delta.get(label)
+                if isinstance(vals, list) and vals:
+                    parts.append("missing: %s" % ", ".join(str(v) for v in vals[:8]))
+        return "; ".join(parts[:4])
 
     def _post_task_activity(self, task_id: str, phase: str, summary: str) -> None:
         """Append a short, human-readable activity entry to the task's narrative
@@ -2791,8 +2827,7 @@ class MacWorker:
         """A few-line 'what the worker did': the coding agent's closing words
         (stdout tail) plus the build/test/push outcome from the finalized
         evidence manifest."""
-        lines = [ln.rstrip() for ln in (execution.stdout or "").splitlines() if ln.strip()]
-        tail = lines[-4:]
+        tail = _prose_tail(execution.stdout, 4)
         try:
             manifest = ensure_json_object(
                 json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
@@ -3327,7 +3362,7 @@ class MacWorker:
             encoding="utf-8",
         )
         artifacts = _durable_evidence_artifacts(task_dir, result_path)
-        return self.client.post(
+        evidence_result = self.client.post(
             "/tasks/%s/evidence" % quote(task_id, safe=""),
             {
                 "kind": "review",
@@ -3346,6 +3381,20 @@ class MacWorker:
                 },
             },
         )
+        # The reviewer's findings in its own words. The approved/rejected verdict
+        # line is recorded separately when the workflow finalizes (submit_review);
+        # this captures what the reviewer actually looked at / found. Best-effort.
+        self._post_task_activity(task_id, "review", self._review_activity_summary(execution))
+        return evidence_result
+
+    def _review_activity_summary(self, execution: WorkerExecution) -> str:
+        """The reviewer's closing words (prose tail), or a harness-failure note."""
+        body = "\n".join(_prose_tail(execution.stdout, 4)).strip()
+        if body:
+            return body
+        if not execution.succeeded:
+            return "review harness did not produce a verdict (rc %s)" % execution.returncode
+        return (execution.summary or "").strip()
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = dict(execution.metadata)
@@ -4903,6 +4952,29 @@ def _truncate_process_text(value: str, limit: int = 4000) -> str:
 
 def _env_truthy(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _prose_tail(text: str, n: int = 4) -> List[str]:
+    """The last ``n`` natural-language lines of agent output — the agent's closing
+    summary, skipping diff/patch/code noise so the per-task narrative reads like a
+    person's recap rather than a raw diff. Falls back to the last non-empty lines
+    if nothing looks like prose."""
+    prose: List[str] = []
+    nonempty: List[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        nonempty.append(line)
+        if line[0] in "+-@" or line.startswith(("diff ", "index ", "---", "+++", "@@", "```")):
+            continue  # diff / patch / fence noise
+        if " " not in line:
+            continue  # a bare token / path / code symbol, not prose
+        letters = sum(ch.isalpha() for ch in line)
+        if letters < max(3, len(line) // 3):
+            continue  # mostly punctuation / code
+        prose.append(line)
+    return (prose or nonempty)[-n:]
 
 
 #: Path (relative to the self-update repo root) of the OpenShell sandbox image

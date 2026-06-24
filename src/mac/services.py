@@ -11791,6 +11791,13 @@ class ControlPlane:
         project_target = self._project_publication_target(task)
         if project_target:
             return project_target
+        # Fleet-wide default (opt-in): when set, routine approved tasks publish
+        # via this target and auto-complete instead of parking in REVIEWING for
+        # want of a per-task/per-project destination. Unset => unchanged (mac-w29
+        # hold). e.g. MAC_DEFAULT_PUBLICATION_TARGET=git://main
+        fleet_default = (os.environ.get("MAC_DEFAULT_PUBLICATION_TARGET") or "").strip()
+        if fleet_default:
+            return fleet_default
         return None
 
     def _project_publication_target(self, task: Task) -> Optional[str]:

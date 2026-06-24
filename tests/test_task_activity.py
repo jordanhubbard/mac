@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mac.services import ControlPlane
+from mac.worker import _prose_tail
 
 
 def _activity(cp: ControlPlane, task_id: str):
@@ -40,3 +41,35 @@ def test_append_task_activity_is_additive_not_evidence():
     # narrative lives in task.metadata.activity, not in the evidence list
     assert (data["task"]["metadata"]["activity"][-1]["phase"]) == "env"
     assert not data.get("evidence"), "activity append must not create evidence rows"
+
+
+def test_prose_tail_prefers_agent_prose_over_diff_noise():
+    """Worker narrative should read like the agent's recap, not raw diff lines."""
+    out = "\n".join([
+        "Created sandbox: mac-task-x",
+        "+    } else {}",
+        '     (println "ALL OK")',
+        "diff --git a/x b/x",
+        "I added mathx_lcm and a shadow test; make test-quick passes.",
+        "Pushed the branch and recorded evidence.",
+    ])
+    tail = _prose_tail(out, 2)
+    assert tail == [
+        "I added mathx_lcm and a shadow test; make test-quick passes.",
+        "Pushed the branch and recorded evidence.",
+    ]
+    # all-noise input still yields something (fallback to non-empty lines)
+    assert _prose_tail("+a\n-b\n@@ c", 2)
+
+
+def test_fleet_default_publication_target_env_fallback(monkeypatch):
+    """Opt-in fleet default lets routine tasks auto-complete; explicit targets win."""
+    cp = ControlPlane.in_memory()
+    t = cp.create_task("pub target task", required_capabilities=[])
+    monkeypatch.delenv("MAC_DEFAULT_PUBLICATION_TARGET", raising=False)
+    assert cp._default_publication_target(cp.get_task(t.id)) is None
+    monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://main")
+    assert cp._default_publication_target(cp.get_task(t.id)) == "git://main"
+    # an explicit per-task target still takes precedence over the fleet default
+    cp.update_task(t.id, metadata={"publication_target": "git://origin/main"})
+    assert cp._default_publication_target(cp.get_task(t.id)) == "git://origin/main"
