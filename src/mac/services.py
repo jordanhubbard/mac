@@ -11795,10 +11795,33 @@ class ControlPlane:
         # via this target and auto-complete instead of parking in REVIEWING for
         # want of a per-task/per-project destination. Unset => unchanged (mac-w29
         # hold). e.g. MAC_DEFAULT_PUBLICATION_TARGET=git://main
+        #
+        # A *git* fleet-default only applies where the HUB can actually publish
+        # (origin pins a clonable url, or a hub-local repository_path exists);
+        # applying it to a non-publishable task would raise in the git publish
+        # (_publish_git_target_if_needed) and block the task. Non-git defaults
+        # apply to all.
         fleet_default = (os.environ.get("MAC_DEFAULT_PUBLICATION_TARGET") or "").strip()
-        if fleet_default:
+        if fleet_default and (
+            not fleet_default.startswith("git://") or self._task_git_publishable(task)
+        ):
             return fleet_default
         return None
+
+    def _task_git_publishable(self, task: Task) -> bool:
+        """True if the hub can perform a git publish/merge for this task: the
+        origin pins a clonable remote URL, or a local repository_path that exists
+        on the hub host."""
+        origin = ensure_json_object(ensure_json_object(task.metadata).get("origin"))
+        if str(origin.get("repository_url") or "").strip():
+            return True
+        repo_path = str(origin.get("repository_path") or "").strip()
+        if repo_path:
+            try:
+                return Path(repo_path).expanduser().exists()
+            except OSError:
+                return False
+        return False
 
     def _project_publication_target(self, task: Task) -> Optional[str]:
         project_name = str(getattr(task, "project", "") or "").strip()

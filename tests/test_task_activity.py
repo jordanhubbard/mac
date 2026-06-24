@@ -63,13 +63,29 @@ def test_prose_tail_prefers_agent_prose_over_diff_noise():
 
 
 def test_fleet_default_publication_target_env_fallback(monkeypatch):
-    """Opt-in fleet default lets routine tasks auto-complete; explicit targets win."""
+    """Opt-in fleet default lets HUB-publishable tasks auto-complete; it is gated
+    away from non-publishable tasks (would break the git publish), and explicit
+    per-task targets always win."""
     cp = ControlPlane.in_memory()
-    t = cp.create_task("pub target task", required_capabilities=[])
     monkeypatch.delenv("MAC_DEFAULT_PUBLICATION_TARGET", raising=False)
-    assert cp._default_publication_target(cp.get_task(t.id)) is None
+    repo = cp.create_task(
+        "repo task",
+        required_capabilities=[],
+        metadata={"origin": {"repository_url": "git@github.com:o/r.git"}},
+    )
+    plain = cp.create_task("plain task", required_capabilities=[])  # no repo origin
+
+    assert cp._default_publication_target(cp.get_task(repo.id)) is None
     monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://main")
-    assert cp._default_publication_target(cp.get_task(t.id)) == "git://main"
+    # publishable task gets the fleet default; non-repo task is gated out (stays None)
+    assert cp._default_publication_target(cp.get_task(repo.id)) == "git://main"
+    assert cp._default_publication_target(cp.get_task(plain.id)) is None
     # an explicit per-task target still takes precedence over the fleet default
-    cp.update_task(t.id, metadata={"publication_target": "git://origin/main"})
-    assert cp._default_publication_target(cp.get_task(t.id)) == "git://origin/main"
+    cp.update_task(
+        repo.id,
+        metadata={
+            "origin": {"repository_url": "git@github.com:o/r.git"},
+            "publication_target": "git://origin/main",
+        },
+    )
+    assert cp._default_publication_target(cp.get_task(repo.id)) == "git://origin/main"
