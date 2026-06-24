@@ -8747,31 +8747,10 @@ class ControlPlane:
         # local repository_path on the hub. Rather than refuse to publish, merge
         # via a transient authed clone of the remote so K8s-mode work can reach
         # main. The clone is cleaned up before returning (best-effort on errors).
-        tmp_clone: Optional[Path] = None
-        if not repo_path_raw and repository_url:
-            from . import gitops as _gitops
-
-            auth_url = _gitops.inject_git_remote_auth(repository_url)
-            tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
-            clone = self._git_output(
-                tmp_clone, ["clone", "--branch", "main", "--", auth_url, "."], timeout=240
-            )
-            if clone["returncode"] != 0:
-                shutil.rmtree(tmp_clone, ignore_errors=True)
-                raise ValidationError(
-                    "git publication could not clone remote for merge: %s"
-                    % (clone.get("stderr") or clone.get("stdout") or repository_url)
-                )
-            repo_path = tmp_clone
-        elif repo_path_raw:
-            repo_path = Path(repo_path_raw).expanduser()
-            if not repo_path.exists():
-                raise ValidationError("git publication repository path does not exist: %s" % repo_path)
-        else:
-            raise ValidationError(
-                "git publication requires task origin.repository_path or origin.repository_url"
-            )
-
+        # Read the executor evidence first: its repo block records the remote the
+        # worker actually pushed the task branch to, which lets us publish a
+        # local-repo task (origin has only an agent-side repository_path that does
+        # not exist on the hub) by cloning that remote.
         evidence = self.get_evidence(evidence_id)
         manifest = ensure_json_object(evidence.metadata.get("verification"))
         repo = ensure_json_object(manifest.get("repo"))
@@ -8782,6 +8761,41 @@ class ControlPlane:
         source_branch = _remote_branch_from_ref(remote_ref)
         if not source_branch:
             raise ValidationError("git publication requires branch-like repo.remote_ref")
+
+        # Resolve a hub-usable repo: prefer a local path that exists on the hub,
+        # else clone a remote URL — origin's, or (for local-repo tasks) the remote
+        # the worker pushed to, recorded in the evidence.
+        tmp_clone: Optional[Path] = None
+        local_path: Optional[Path] = None
+        if repo_path_raw:
+            candidate = Path(repo_path_raw).expanduser()
+            if candidate.exists():
+                local_path = candidate
+        clone_url = repository_url or str(
+            repo.get("remote_url") or repo.get("push_remote") or ""
+        ).strip()
+        if local_path is not None:
+            repo_path = local_path
+        elif clone_url:
+            from . import gitops as _gitops
+
+            auth_url = _gitops.inject_git_remote_auth(clone_url)
+            tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
+            clone = self._git_output(
+                tmp_clone, ["clone", "--branch", "main", "--", auth_url, "."], timeout=240
+            )
+            if clone["returncode"] != 0:
+                shutil.rmtree(tmp_clone, ignore_errors=True)
+                raise ValidationError(
+                    "git publication could not clone remote for merge: %s"
+                    % (clone.get("stderr") or clone.get("stdout") or clone_url)
+                )
+            repo_path = tmp_clone
+        else:
+            raise ValidationError(
+                "git publication requires a hub-reachable repo: origin.repository_url, "
+                "a hub-local origin.repository_path, or evidence repo.remote_url"
+            )
 
         top = self._git_output(repo_path, ["rev-parse", "--show-toplevel"])
         if top["returncode"] != 0 or not top.get("stdout"):
@@ -11809,19 +11823,22 @@ class ControlPlane:
         return None
 
     def _task_git_publishable(self, task: Task) -> bool:
-        """True if the hub can perform a git publish/merge for this task: the
-        origin pins a clonable remote URL, or a local repository_path that exists
-        on the hub host."""
+        """True if a git publish/merge can be attempted for this task — i.e. it is
+        a repo task (origin pins a repo url/path, or a repository_contract). The
+        publish resolves a hub-usable repo from origin.repository_url, a hub-local
+        origin.repository_path, or the remote the worker pushed to (from the
+        evidence), so a repo task need not have a hub-local path. Non-repo
+        (operator) tasks return False so a git fleet-default never blocks them."""
         origin = ensure_json_object(ensure_json_object(task.metadata).get("origin"))
         if str(origin.get("repository_url") or "").strip():
             return True
-        repo_path = str(origin.get("repository_path") or "").strip()
-        if repo_path:
-            try:
-                return Path(repo_path).expanduser().exists()
-            except OSError:
-                return False
-        return False
+        if str(origin.get("repository_path") or "").strip():
+            return True
+        contract = ensure_json_object(origin.get("repository_contract"))
+        return bool(
+            str(contract.get("project") or "").strip()
+            or str(contract.get("canonical_remote_url") or "").strip()
+        )
 
     def _project_publication_target(self, task: Task) -> Optional[str]:
         project_name = str(getattr(task, "project", "") or "").strip()

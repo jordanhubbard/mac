@@ -73,12 +73,20 @@ def test_fleet_default_publication_target_env_fallback(monkeypatch):
         required_capabilities=[],
         metadata={"origin": {"repository_url": "git@github.com:o/r.git"}},
     )
+    localrepo = cp.create_task(
+        "local repo task",
+        required_capabilities=[],
+        metadata={"origin": {"repository_path": "/agent/only/path/nanolang"}},
+    )
     plain = cp.create_task("plain task", required_capabilities=[])  # no repo origin
 
     assert cp._default_publication_target(cp.get_task(repo.id)) is None
     monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://main")
-    # publishable task gets the fleet default; non-repo task is gated out (stays None)
+    # repo tasks get the fleet default (incl. a local-repo task with only an
+    # agent-side path: the publish can clone the remote the worker pushed to)
     assert cp._default_publication_target(cp.get_task(repo.id)) == "git://main"
+    assert cp._default_publication_target(cp.get_task(localrepo.id)) == "git://main"
+    # a non-repo (operator) task is gated out -- a git default would break it
     assert cp._default_publication_target(cp.get_task(plain.id)) is None
     # an explicit per-task target still takes precedence over the fleet default
     cp.update_task(
