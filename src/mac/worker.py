@@ -2748,7 +2748,7 @@ class MacWorker:
         )
         metadata = self._execution_metadata(task_dir, execution)
         artifacts = _durable_evidence_artifacts(task_dir, result_path)
-        return self.client.post(
+        evidence_result = self.client.post(
             "/tasks/%s/evidence" % quote(task_id, safe=""),
             {
                 "kind": "log",
@@ -2764,6 +2764,65 @@ class MacWorker:
                 },
             },
         )
+        # Glanceable per-task narrative (additive to the evidence/logs above):
+        # what the worker actually did, in the agent's own closing words plus the
+        # build/test/push outcome. Best-effort -- never disturbs the evidence post.
+        self._post_task_activity(
+            task_id, "worker", self._execution_activity_summary(task_dir, execution)
+        )
+        return evidence_result
+
+    def _post_task_activity(self, task_id: str, phase: str, summary: str) -> None:
+        """Append a short, human-readable activity entry to the task's narrative
+        (`mac task summary`). Additive to the durable evidence/logs; a failure
+        here must never disturb task execution."""
+        summary = (summary or "").strip()
+        if not summary:
+            return
+        try:
+            self.client.post(
+                "/tasks/%s/activity" % quote(task_id, safe=""),
+                {"phase": phase, "actor": self.agent_id, "summary": summary},
+            )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
+
+    def _execution_activity_summary(self, task_dir: Path, execution: WorkerExecution) -> str:
+        """A few-line 'what the worker did': the coding agent's closing words
+        (stdout tail) plus the build/test/push outcome from the finalized
+        evidence manifest."""
+        lines = [ln.rstrip() for ln in (execution.stdout or "").splitlines() if ln.strip()]
+        tail = lines[-4:]
+        try:
+            manifest = ensure_json_object(
+                json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+            )
+        except Exception:  # noqa: BLE001 - facts are best-effort enrichment
+            manifest = {}
+        repo = ensure_json_object(manifest.get("repo"))
+        facts: List[str] = []
+        files_changed = repo.get("files_changed")
+        if isinstance(files_changed, list) and files_changed:
+            facts.append("%d file(s) changed" % len(files_changed))
+        tests = manifest.get("tests")
+        if isinstance(tests, list):
+            for test in tests:
+                if isinstance(test, dict) and test.get("command"):
+                    facts.append(
+                        "%s %s"
+                        % (test.get("command"), "passed" if test.get("returncode") == 0 else "FAILED")
+                    )
+        if repo.get("pushed") is True:
+            facts.append("branch pushed")
+        problems = manifest.get("problems")
+        if isinstance(problems, list) and problems:
+            facts.append("problems: " + "; ".join(str(p) for p in problems[:2]))
+        parts: List[str] = []
+        if tail:
+            parts.append("\n".join(tail))
+        if facts:
+            parts.append("— " + "; ".join(facts[:5]))
+        return "\n".join(parts).strip() or (execution.summary or "").strip()
 
     def _write_missing_repository_evidence_manifest(
         self,

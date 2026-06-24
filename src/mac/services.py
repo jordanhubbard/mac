@@ -3607,6 +3607,52 @@ class ControlPlane:
         )
         return updated
 
+    def append_task_activity(
+        self,
+        task_id: str,
+        phase: str,
+        actor: str,
+        summary: str,
+        *,
+        max_entries: int = 24,
+    ) -> Task:
+        """Append a short, human-readable entry to the task's per-task activity
+        narrative (``task.metadata['activity']``).
+
+        This is a glanceable, additive record of what happened on a task -- what
+        the worker did, what the reviewer found/fixed, environment changes made to
+        build/test -- a few lines per phase, the way a person watching the
+        claude/codex/cursor CLI would summarize it. It deliberately does NOT touch
+        evidence, history, or the verification pipeline (those remain the durable
+        forensic logs); it is surfaced by ``mac task summary`` / ``task show``.
+        """
+        summary = str(summary or "").strip()
+        if not summary:
+            return self.get_task(task_id)
+        phase = (str(phase or "").strip().lower() or "note")[:24]
+        # Keep it glanceable: a few lines, bounded length.
+        lines = [ln.rstrip() for ln in summary.splitlines() if ln.strip()][:6]
+        summary = "\n".join(lines)[:1200]
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        activity = metadata.get("activity")
+        if not isinstance(activity, list):
+            activity = []
+        activity.append(
+            {
+                "phase": phase,
+                "actor": str(actor or "")[:120],
+                "summary": summary,
+                "at": utcnow(),
+            }
+        )
+        metadata["activity"] = activity[-max_entries:]
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), task_id),
+        )
+        return self.get_task(task_id)
+
     def release_task(self, task_id: str, *, actor: str = "human") -> Task:
         """Clear a per-task dispatch hold (``no_dispatch``), un-staging it.
 
@@ -8614,6 +8660,20 @@ class ControlPlane:
         current = self.get_agent(str(reviewer_agent_id))
         if current.current_task_id == review.task_id:
             self._set_agent_idle(str(reviewer_agent_id))
+        # Glanceable per-task narrative: record what the reviewer concluded.
+        # Only real verdicts (not pending/retracted churn); best-effort.
+        try:
+            verdict = str(review.status or "").strip()
+            if verdict.lower() in {"approved", "rejected", "changes_requested", "changes"}:
+                reason = str(getattr(review, "reason", "") or "").strip()
+                self.append_task_activity(
+                    review.task_id,
+                    "review",
+                    str(reviewer_agent_id),
+                    "%s — %s" % (verdict, reason) if reason else verdict,
+                )
+        except Exception:  # noqa: BLE001 - narrative is best-effort
+            pass
         return review
 
     def get_review(self, review_id: str) -> Review:

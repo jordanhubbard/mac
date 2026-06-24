@@ -1612,6 +1612,11 @@ edges:
             "actor": "operator",
         },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
+        ("POST", "/tasks/{task_id}/activity"): {
+            "phase": "worker",
+            "actor": "operator",
+            "summary": "route coverage activity entry",
+        },
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {
         ("POST", "/tasks/{task_id}/claim"): {

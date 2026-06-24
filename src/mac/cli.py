@@ -467,6 +467,39 @@ def cmd_task_show(args: argparse.Namespace) -> None:
     _print(_plane(args).task_detail(args.task_id))
 
 
+def cmd_task_summary(args: argparse.Namespace) -> None:
+    """Glanceable per-task activity narrative: what the worker did, what the
+    reviewer found/fixed, and any environment changes — a few lines per phase.
+    Additive to the durable evidence/logs (see `task show` for those)."""
+    detail = _plane(args).task_detail(args.task_id)
+    data = detail.to_dict() if hasattr(detail, "to_dict") else detail
+    task = (data.get("task") if isinstance(data, dict) else None) or data
+    metadata = (task.get("metadata") if isinstance(task, dict) else None) or {}
+    activity = metadata.get("activity") if isinstance(metadata, dict) else None
+    out: List[str] = []
+    out.append("Task %s  [%s]" % (task.get("id", args.task_id), task.get("state", "?")))
+    title = str(task.get("title") or "").strip()
+    if title:
+        out.append("  %s" % title)
+    if not activity:
+        out.append("")
+        out.append("(no activity recorded yet — see `mac task show` for full evidence/logs)")
+    else:
+        out.append("")
+        out.append("Activity:")
+        for entry in activity:
+            if not isinstance(entry, dict):
+                continue
+            phase = str(entry.get("phase") or "note")
+            actor = str(entry.get("actor") or "")
+            at = str(entry.get("at") or "")[:19]
+            label = phase + ((" / " + actor) if actor else "") + ((" @ " + at) if at else "")
+            out.append("  • %s" % label)
+            for line in str(entry.get("summary") or "").splitlines():
+                out.append("      %s" % line)
+    sys.stdout.write("\n".join(out) + "\n")
+
+
 def cmd_task_ready(args: argparse.Namespace) -> None:
     """List tasks ready to work — state=open, all dependencies completed,
     unclaimed. Works in hub mode (parity-ready-http-01) and local --db mode."""
@@ -2516,6 +2549,14 @@ def build_parser() -> argparse.ArgumentParser:
     show = task.add_parser("show")
     show.add_argument("task_id")
     _set(cmd_task_show, show)
+
+    summary = task.add_parser(
+        "summary",
+        help="glanceable per-task activity narrative (what the worker did, what "
+        "the reviewer found/fixed, env changes) — additive to `task show` logs",
+    )
+    summary.add_argument("task_id")
+    _set(cmd_task_summary, summary)
 
     ready = task.add_parser("ready", help="list open tasks ready to work (all deps completed, unclaimed)")
     ready.add_argument("--limit", type=int, default=0)

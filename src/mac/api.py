@@ -333,6 +333,12 @@ class TaskRelease(BaseModel):
     actor: str = "human"
 
 
+class TaskActivityAppend(BaseModel):
+    phase: str
+    actor: str
+    summary: str
+
+
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -3980,6 +3986,15 @@ def create_app(
     @app.post("/tasks/{task_id}/release")
     def release_task(task_id: str, body: TaskRelease = TaskRelease()) -> Dict[str, Any]:
         return cp.release_task(task_id, actor=body.actor).to_dict()
+
+    @app.post("/tasks/{task_id}/activity")
+    def append_task_activity(task_id: str, body: TaskActivityAppend) -> Dict[str, Any]:
+        return cp.append_task_activity(
+            task_id,
+            phase=body.phase,
+            actor=body.actor,
+            summary=body.summary,
+        ).to_dict()
 
     @app.post("/tasks/{task_id}/submit-for-review")
     def submit_for_review(
