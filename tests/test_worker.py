@@ -44,6 +44,7 @@ from mac.worker import (
     SubprocessExecutor,
     WorkerExecution,
     _detect_command_inventory,
+    _openshell_containerfile_changed,
     build_parser,
     register_worker,
 )
@@ -1406,6 +1407,34 @@ def test_mac_worker_adopts_agent_pushed_branch_when_worktree_matches(tmp_path: P
 
     assert result.status == "submitted_for_review", result.error
     assert cp.get_task(task.id).state != TaskState.BLOCKED.value
+
+
+def test_openshell_containerfile_changed_detects_sandbox_image_drift(tmp_path: Path):
+    """The drift detector flags a pull that changed the sandbox Containerfile (so
+    refresh-source rebuilds the image) and ignores unrelated changes / no-ops."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    (repo / "README.md").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    cf = repo / "deploy" / "openshell"
+    cf.mkdir(parents=True)
+    (cf / "mac-hermes.Containerfile").write_text("FROM scratch\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add containerfile")
+    after_cf = _git(repo, "rev-parse", "HEAD")
+    (repo / "README.md").write_text("two\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "unrelated change")
+    after_other = _git(repo, "rev-parse", "HEAD")
+
+    assert _openshell_containerfile_changed(repo, base, after_cf) is True
+    assert _openshell_containerfile_changed(repo, after_cf, after_other) is False
+    assert _openshell_containerfile_changed(repo, base, base) is False
 
 
 def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_path: Path):
