@@ -6,7 +6,7 @@ LOCAL_BIN ?= $(HOME)/.local/bin
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: require-python install-hooks setup deploy test coverage test-api test-cli test-ui desktop-install desktop-check desktop-package desktop-dist build publish link-cli
+.PHONY: require-python install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 
 require-python:
 	@if [ -z "$(PYTHON)" ]; then \
@@ -46,6 +46,11 @@ test-cli:
 
 test-ui:
 	uv run --extra dev pytest -q -m ui tests/
+
+# Print CLI subcommand coverage ratio: (tested / total) * 100.
+# Uses the same discovery logic as tests/cli/test_cli_coverage_gate.py.
+cli-coverage:
+	@$(VENV)/bin/python scripts/cli-coverage.py
 
 desktop-install:
 	cd desktop && npm ci
