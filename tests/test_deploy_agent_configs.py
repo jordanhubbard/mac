@@ -672,7 +672,10 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     assert 'probe_http(qdrant_url, "/collections", qdrant_headers)' in script
     assert generated_env["MAC_REVIEW_TICK_HUB_AGENT"] == "hub-a"
     assert "mac-qdrant.service" in qdrant_installer
-    assert 'ENV_DEST="/etc/${FLEET_NAME}/qdrant.env"' in qdrant_installer
+    # The installer derives the env path via an intermediate ENV_CONF_DIR so the
+    # macOS branch can override it; assert the fleet-scoped result either way.
+    assert 'ENV_CONF_DIR="/etc/${FLEET_NAME}"' in qdrant_installer
+    assert 'ENV_DEST="$ENV_CONF_DIR/qdrant.env"' in qdrant_installer
     assert 's|/etc/mac/qdrant.env|${env_dest_sed}|g' in qdrant_installer
     assert 'com.${FLEET_NAME}.qdrant' in qdrant_installer
     assert '[program:${FLEET_NAME}-qdrant]' in qdrant_installer
@@ -695,7 +698,9 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     assert cfg["defaults"]["firecrawl"]["required"] is True
     assert cfg["defaults"]["firecrawl"]["port"] == 3002
     assert "mac.firecrawl_gateway" in firecrawl_installer
-    assert 'ENV_DEST="/etc/${FLEET_NAME}/firecrawl-gateway.env"' in firecrawl_installer
+    # Same ENV_CONF_DIR indirection as the qdrant installer (macOS overrides it).
+    assert 'ENV_CONF_DIR="/etc/${FLEET_NAME}"' in firecrawl_installer
+    assert 'ENV_DEST="$ENV_CONF_DIR/firecrawl-gateway.env"' in firecrawl_installer
     assert "Firecrawl-compatible web search gateway" in firecrawl_installer
     assert env_example["MAC_REQUIRE_FIRECRAWL"] == "1"
     assert env_example["FIRECRAWL_API_URL"] == "http://hub.example.internal:3002"

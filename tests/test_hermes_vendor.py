@@ -81,6 +81,13 @@ def test_vendored_gateway_honors_mac_provider_override(monkeypatch):
         "MAC_HERMES_GATEWAY_MODEL", "ACC_HERMES_GATEWAY_MODEL", "HERMES_INFERENCE_MODEL",
         "ACC_LLM_MODEL", "MAC_HERMES_GATEWAY_PROVIDER", "MAC_HERMES_GATEWAY_BASE_URL",
         "TOKENHUB_URL", "OPENAI_BASE_URL",
+        # A deployed hub/worker also exports the ACC_* base_url and the gateway
+        # API keys; without clearing these the "no override" case picks up the
+        # live deployment and _mac_provider_decision() returns non-None, failing
+        # this test in the contract sandbox. Clear every input the decision reads.
+        "ACC_HERMES_GATEWAY_BASE_URL", "MAC_HERMES_GATEWAY_API_KEY",
+        "ACC_HERMES_GATEWAY_API_KEY", "ACC_HERMES_GATEWAY_PROVIDER",
+        "MAC_LLM_MODEL", "MAC_LLM_PROVIDER", "ACC_LLM_PROVIDER",
     ):
         monkeypatch.delenv(k, raising=False)
 

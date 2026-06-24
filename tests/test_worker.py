@@ -88,6 +88,10 @@ def _codegraph_fixture(files: list[str]) -> Dict[str, Any]:
 def test_mac_worker_cli_defaults_to_deployed_hub_env(monkeypatch):
     monkeypatch.delenv("MAC_URL", raising=False)
     monkeypatch.delenv("MAC_TOKEN", raising=False)
+    # MAC_WORKER_HERMES_INSTANCE_ID takes precedence over MAC_HERMES_INSTANCE_ID
+    # in the parser default; a deployed worker host leaks its own value here, so
+    # clear it to keep this assertion about MAC_HERMES_INSTANCE_ID hermetic.
+    monkeypatch.delenv("MAC_WORKER_HERMES_INSTANCE_ID", raising=False)
     monkeypatch.setenv("MAC_HUB_URL", "http://hub.example.internal:8789")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-token")
     monkeypatch.setenv("MAC_HERMES_INSTANCE_ID", "hermes_rocky")

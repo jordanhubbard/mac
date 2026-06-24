@@ -88,9 +88,15 @@ def test_flush_noop_does_not_raise():
 # ---------------------------------------------------------------------------
 
 
-def test_is_available_returns_false_when_nemo_relay_absent():
-    """Default test env has no nemo-relay; seam must report unavailable."""
-    assert ro._NEMO_RELAY_AVAILABLE is False
+def test_is_available_returns_false_when_nemo_relay_absent(monkeypatch):
+    """When the nemo-relay package is absent, the seam reports unavailable.
+
+    Force the "absent" condition rather than asserting on the real import state:
+    on a GPU host the nemo-relay package may actually be installed, which used to
+    make this fail in the contract sandbox. Pinning the flag keeps the behavior
+    under test (is_available honors the availability flag) hermetic.
+    """
+    monkeypatch.setattr(ro, "_NEMO_RELAY_AVAILABLE", False)
     assert ro.is_available() is False
 
 

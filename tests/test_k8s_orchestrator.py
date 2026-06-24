@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional
 import pytest
 import yaml
 
+# The k8s orchestrator imports the optional `kubernetes` client at module load.
+# It is an opt-in extra (`mac[k8s]`); without it the import raises and every
+# test here ERRORs at collection. Skip the whole module when the extra is absent
+# so the contract suite stays green in a clean sandbox that didn't install k8s.
+pytest.importorskip("kubernetes", reason="requires the optional mac[k8s] extra")
+
 import mac.k8s.orchestrator as orchestrator
 
 class _StubMac:
