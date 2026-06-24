@@ -298,8 +298,14 @@ set +a
 : "\${QDRANT_PORT:=6333}"
 : "\${QDRANT_DATA_DIR:=${QDRANT_DATA_DIR}}"
 : "\${QDRANT_MEMORY_LIMIT:=2g}"
+# Qdrant (actix/tokio) sizes its thread pools from /proc/cpuinfo, which on a
+# cgroup-CPU-limited pod reports the FULL node core count (e.g. 192), not the
+# container's CPU quota. A low pids-limit then makes thread spawn fail with
+# EAGAIN ("Cannot spawn Arbiter's thread: WouldBlock") and Qdrant panics at
+# startup. Keep a guardrail, but high enough for big nodes; override if needed.
+: "\${QDRANT_PIDS_LIMIT:=4096}"
 exec ${CONTAINER_CMD_ABS} run --rm --name "\$QDRANT_CONTAINER_NAME" --pull=missing \
-  --security-opt=no-new-privileges --pids-limit=512 \
+  --security-opt=no-new-privileges --pids-limit="\$QDRANT_PIDS_LIMIT" \
   --memory="\$QDRANT_MEMORY_LIMIT" \
   -p "\$QDRANT_BIND_ADDR:\$QDRANT_PORT:6333" \
   -v "\$QDRANT_DATA_DIR:/qdrant/storage" "\$QDRANT_IMAGE"

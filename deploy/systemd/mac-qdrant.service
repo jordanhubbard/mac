@@ -19,7 +19,7 @@ EnvironmentFile=-/etc/mac/qdrant.env
 
 ExecStartPre=/bin/bash -lc 'install -d -m 0750 "$QDRANT_DATA_DIR"'
 ExecStartPre=-/bin/bash -lc 'podman rm -f "$QDRANT_CONTAINER_NAME"'
-ExecStart=/bin/bash -lc 'exec podman run --rm --name "$QDRANT_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges --pids-limit=512 --memory="$QDRANT_MEMORY_LIMIT" -p "$QDRANT_BIND_ADDR:$QDRANT_PORT:6333" -v "$QDRANT_DATA_DIR:/qdrant/storage" "$QDRANT_IMAGE"'
+ExecStart=/bin/bash -lc 'exec podman run --rm --name "$QDRANT_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges --pids-limit="${QDRANT_PIDS_LIMIT:-4096}" --memory="$QDRANT_MEMORY_LIMIT" -p "$QDRANT_BIND_ADDR:$QDRANT_PORT:6333" -v "$QDRANT_DATA_DIR:/qdrant/storage" "$QDRANT_IMAGE"'
 ExecStop=/bin/bash -lc 'podman stop -t 15 "$QDRANT_CONTAINER_NAME"'
 
 Restart=on-failure
