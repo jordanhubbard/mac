@@ -1032,6 +1032,14 @@ def _lessons_section(lessons: List[str]) -> str:
     )
 
 
+# Marker lines the executor asks the coding agent / reviewer to wrap its plain
+# recap in, so the worker can capture a clean human summary for the per-task
+# activity log (mac task summary) instead of scraping raw stdout. The worker's
+# _extract_marked_summary matches these tolerantly (see worker.py).
+MAC_TASK_SUMMARY_BEGIN = "=== MAC TASK SUMMARY ==="
+MAC_TASK_SUMMARY_END = "=== END MAC TASK SUMMARY ==="
+
+
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
@@ -1048,6 +1056,12 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "When you add task-local dependencies, include verification.environment_delta in mac-evidence.json with package_manager, commands, added_dependencies, lockfile_path, lockfile_digest, base_runtime_digest when known, and reason. MAC records that as a proposed runtime delta; it does not mutate the fleet runtime until an operator validates and promotes it.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
+    parts.append(
+        "Finally, for the per-task activity log, print a short plain-language recap "
+        "of what you did and how you verified it (1-3 sentences, no code or diff), "
+        "wrapped EXACTLY in these two marker lines:\n%s\n<your recap here>\n%s"
+        % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END)
+    )
     plan_section = _plan_detection_section(task)
     if plan_section:
         parts.append(plan_section)
@@ -1074,6 +1088,10 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
             'A review verdict must also include repo copied from the executor verification repo object, with the same repo.head_sha, plus at least one independent passing check as checks=[{"name":"...","returncode":0}] or status="pass".',
             "Include worktree_digest as sha256:<64 lowercase hex chars>. If you cannot independently verify the executor result, write verdict=rejected and explain the blocker instead of omitting repo/check fields.",
             "Read the original task from executor-task.json and the executor evidence from executor-evidence.json in your workspace (%s)." % str(task_workspace),
+            "Finally, for the per-task activity log, print a short plain-language recap "
+            "of what you checked and found and whether you'd approve and why (1-3 "
+            "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
+            "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
         ]
     )
 

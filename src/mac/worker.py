@@ -2827,7 +2827,9 @@ class MacWorker:
         """A few-line 'what the worker did': the coding agent's closing words
         (stdout tail) plus the build/test/push outcome from the finalized
         evidence manifest."""
-        tail = _prose_tail(execution.stdout, 4)
+        recap = _extract_marked_summary(execution.stdout) or "\n".join(
+            _prose_tail(execution.stdout, 4)
+        )
         try:
             manifest = ensure_json_object(
                 json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
@@ -2853,8 +2855,8 @@ class MacWorker:
         if isinstance(problems, list) and problems:
             facts.append("problems: " + "; ".join(str(p) for p in problems[:2]))
         parts: List[str] = []
-        if tail:
-            parts.append("\n".join(tail))
+        if recap:
+            parts.append(recap)
         if facts:
             parts.append("— " + "; ".join(facts[:5]))
         return "\n".join(parts).strip() or (execution.summary or "").strip()
@@ -3388,7 +3390,11 @@ class MacWorker:
         return evidence_result
 
     def _review_activity_summary(self, execution: WorkerExecution) -> str:
-        """The reviewer's closing words (prose tail), or a harness-failure note."""
+        """The reviewer's recap: its delimited summary block, else a prose tail,
+        else a harness-failure note."""
+        recap = _extract_marked_summary(execution.stdout)
+        if recap:
+            return recap
         body = "\n".join(_prose_tail(execution.stdout, 4)).strip()
         if body:
             return body
@@ -4975,6 +4981,27 @@ def _prose_tail(text: str, n: int = 4) -> List[str]:
             continue  # mostly punctuation / code
         prose.append(line)
     return (prose or nonempty)[-n:]
+
+
+def _extract_marked_summary(text: str) -> str:
+    """The agent/reviewer's delimited recap — the plain-prose block it was told to
+    print (see task_executor.MAC_TASK_SUMMARY_BEGIN/END) — or "" if absent. Strips
+    ANSI and matches the markers tolerantly so it survives CLI formatting. This is
+    the clean human summary; _prose_tail is the fallback when the agent omits it."""
+    if not text:
+        return ""
+    import re
+
+    clean = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)  # strip ANSI/CSI escapes
+    match = re.search(
+        r"=== *MAC TASK SUMMARY *===\s*(.*?)\s*=== *END MAC TASK SUMMARY *===",
+        clean,
+        re.DOTALL,
+    )
+    if not match:
+        return ""
+    lines = [ln.strip() for ln in match.group(1).splitlines() if ln.strip()]
+    return "\n".join(lines[:6]).strip()
 
 
 #: Path (relative to the self-update repo root) of the OpenShell sandbox image

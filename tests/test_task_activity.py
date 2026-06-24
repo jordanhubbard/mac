@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from mac.services import ControlPlane
-from mac.worker import _prose_tail
+from mac.worker import _extract_marked_summary, _prose_tail
+from mac.task_executor import MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END
 
 
 def _activity(cp: ControlPlane, task_id: str):
@@ -60,6 +61,29 @@ def test_prose_tail_prefers_agent_prose_over_diff_noise():
     ]
     # all-noise input still yields something (fallback to non-empty lines)
     assert _prose_tail("+a\n-b\n@@ c", 2)
+
+
+def test_extract_marked_summary_prefers_the_agents_delimited_recap():
+    """The definitive prose: parse the agent's delimited summary block (clean
+    recap) rather than scraping diff/setup noise; matches the real markers the
+    executor injects, tolerates ANSI, and returns '' when absent (so the caller
+    falls back to _prose_tail)."""
+    recap = "Added mathx_lcm + a shadow test; make test-quick passed; pushed the branch."
+    out = "\n".join([
+        "Created sandbox: x",
+        "+ some diff line",
+        '(println "ALL OK")',
+        MAC_TASK_SUMMARY_BEGIN,
+        recap,
+        MAC_TASK_SUMMARY_END,
+        "make test-quick: 6 passed",  # trailing test output AFTER the block
+    ])
+    assert _extract_marked_summary(out) == recap
+    # tolerant of ANSI styling around the markers
+    ansi = "\x1b[1m%s\x1b[0m\nclean recap line\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END)
+    assert _extract_marked_summary(ansi) == "clean recap line"
+    # absent -> empty so the caller falls back to _prose_tail
+    assert _extract_marked_summary("no markers here, just output") == ""
 
 
 def test_fleet_default_publication_target_env_fallback(monkeypatch):
