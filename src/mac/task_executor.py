@@ -1808,13 +1808,19 @@ PYGH
         mac_install_gh_local
         ;;
       pnpm)
+        # Pin pnpm to a version compatible with the sandbox's Node. pnpm@latest
+        # (v10) demands Node >=22.13, but the base sandbox image ships Node 18, so
+        # `pnpm` aborts ("requires at least Node.js v22.13") and every Node test
+        # target fails. pnpm@9 supports Node >=18.12, so it runs on the sandbox's
+        # Node 18 and on newer Node alike. Override with MAC_SANDBOX_PNPM_VERSION.
+        pnpm_ver="${MAC_SANDBOX_PNPM_VERSION:-9}"
         if command -v corepack >/dev/null 2>&1; then
           corepack enable --install-directory "$MAC_TOOLCHAIN_BIN" >> "$mac_log" 2>&1 || true
-          corepack prepare pnpm@latest --activate >> "$mac_log" 2>&1 || true
+          corepack prepare "pnpm@${pnpm_ver}" --activate >> "$mac_log" 2>&1 || true
         fi
         command -v pnpm >/dev/null 2>&1 && return 0
         command -v npm >/dev/null 2>&1 || return 1
-        npm install --prefix "$MAC_TOOLCHAIN_ROOT" pnpm >> "$mac_log" 2>&1
+        npm install --prefix "$MAC_TOOLCHAIN_ROOT" "pnpm@${pnpm_ver}" >> "$mac_log" 2>&1
         ;;
       lein)
         command -v curl >/dev/null 2>&1 || return 1
