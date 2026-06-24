@@ -1794,6 +1794,39 @@ PYGH
     ln -sf "$MAC_TOOLCHAIN_ROOT/gh/bin/gh" "$MAC_TOOLCHAIN_BIN/gh"
     export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
   }
+  mac_install_node_local() {
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v tar >/dev/null 2>&1 || return 1
+    narch="$(uname -m 2>/dev/null || echo x64)"
+    case "$narch" in
+      x86_64|amd64) narch="x64" ;;
+      aarch64|arm64) narch="arm64" ;;
+      *) return 1 ;;
+    esac
+    nver="${MAC_SANDBOX_NODE_VERSION:-v22.12.0}"
+    mkdir -p "$MAC_TOOLCHAIN_ROOT/node"
+    curl -fsSL "https://nodejs.org/dist/${nver}/node-${nver}-linux-${narch}.tar.xz" -o "$MAC_TOOLCHAIN_ROOT/node.tar.xz" >> "$mac_log" 2>&1 || return 1
+    tar -xJf "$MAC_TOOLCHAIN_ROOT/node.tar.xz" -C "$MAC_TOOLCHAIN_ROOT/node" --strip-components=1 >> "$mac_log" 2>&1 || return 1
+    for b in node npm npx corepack; do
+      [ -x "$MAC_TOOLCHAIN_ROOT/node/bin/$b" ] && ln -sf "$MAC_TOOLCHAIN_ROOT/node/bin/$b" "$MAC_TOOLCHAIN_BIN/$b"
+    done
+    export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+    [ -x "$MAC_TOOLCHAIN_BIN/node" ] || return 1
+  }
+  mac_ensure_modern_node() {
+    # The base sandbox ships Node 18, but modern pnpm (v10, the corepack/repo
+    # default) requires Node >=22 and aborts otherwise, failing every Node test
+    # target. If node is missing or older than v20, install a pinned Node 22 into
+    # the task toolchain and shadow the stale one on PATH (MAC_TOOLCHAIN_BIN is
+    # already PATH-first). Override the version with MAC_SANDBOX_NODE_VERSION.
+    nmajor="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+    case "$nmajor" in ''|*[!0-9]*) nmajor=0 ;; esac
+    if [ "$nmajor" -ge 20 ] 2>/dev/null; then
+      return 0
+    fi
+    mac_note "node major=$nmajor (<20); installing pinned modern node"
+    mac_install_node_local || mac_note "could not provision modern node"
+  }
   mac_install_command() {
     cmd="$1"
     case "$cmd" in
@@ -1848,6 +1881,12 @@ PYGH
         ;;
     esac
   }
+  # Force a modern Node BEFORE the per-command loop: node may already be present
+  # (so the loop would skip it) yet be too old for the repo's pnpm. Only for repos
+  # whose toolchain actually uses Node, to avoid an unnecessary download.
+  case " $MAC_REPO_REQUIRED_COMMANDS " in
+    *" node "*|*" npm "*|*" pnpm "*) mac_ensure_modern_node ;;
+  esac
   for cmd in $MAC_REPO_REQUIRED_COMMANDS; do
     command -v "$cmd" >/dev/null 2>&1 && continue
     mac_note "missing command before provisioning: $cmd"
