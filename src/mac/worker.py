@@ -944,6 +944,31 @@ class MacWorker:
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
 
+    def _review_heartbeat_interval_seconds(self) -> float:
+        """Cadence for the review liveness ticker — well inside the stale window."""
+        interval = self.lease_renew_interval_seconds
+        if interval is None or interval <= 0:
+            interval = max(5.0, min(60.0, float(self.lease_seconds or 120) / 4.0))
+        return float(interval)
+
+    def _heartbeat_until_stopped(self, stop: threading.Event, interval_seconds: float) -> None:
+        """Heartbeat busy on a background thread while a long REVIEW runs.
+
+        Reviews have no lease (so no lease ticker), yet a heavy review rebuilds and
+        runs the full contract suite for minutes, blocking this single-threaded
+        worker. Without this ping the hub flips the agent out of IDLE/BUSY and
+        retracts the review claim as `reviewer_not_available` before the verdict
+        lands. Best effort: a liveness ping must never disturb the review.
+        """
+        while not stop.wait(interval_seconds):
+            try:
+                self.client.post(
+                    "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
+                    {"status": "busy"},  # AgentStatus.BUSY; literal avoids an import
+                )
+            except Exception:  # noqa: BLE001 - liveness ping is best-effort
+                pass
+
     def _claim_next_for_agent(self) -> Optional[JsonDict]:
         return self.client.post(
             "/agents/%s/claim-next" % quote(self.agent_id, safe=""),
@@ -1161,19 +1186,32 @@ class MacWorker:
                 claim if isinstance(claim, dict) else {},
             )
             started = time.monotonic()
-            execution = self._call_executor(
-                self._review_task_payload(task_dir),
-                task_dir,
-                {
-                    "task_id": task_id,
-                    "metadata": {
-                        "execution_kind": "review",
-                        "review_id": review_id,
-                        "executor_evidence_id": executor_evidence_id,
-                        "nudge_message_id": message.get("id"),
-                    },
-                },
+            # Keep this agent alive while the (minutes-long) review runs, so the
+            # hub does not retract the claim as reviewer_not_available mid-review.
+            review_hb_stop = threading.Event()
+            review_hb = threading.Thread(
+                target=self._heartbeat_until_stopped,
+                args=(review_hb_stop, self._review_heartbeat_interval_seconds()),
+                daemon=True,
             )
+            review_hb.start()
+            try:
+                execution = self._call_executor(
+                    self._review_task_payload(task_dir),
+                    task_dir,
+                    {
+                        "task_id": task_id,
+                        "metadata": {
+                            "execution_kind": "review",
+                            "review_id": review_id,
+                            "executor_evidence_id": executor_evidence_id,
+                            "nudge_message_id": message.get("id"),
+                        },
+                    },
+                )
+            finally:
+                review_hb_stop.set()
+                review_hb.join(timeout=1.0)
             duration_ms = (time.monotonic() - started) * 1000.0
             self._observe_metric(
                 "worker.review.duration_ms",
