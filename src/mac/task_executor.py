@@ -1937,13 +1937,38 @@ EOF
   if [ "$needs_bootstrap" = "1" ] && [ -d "$worktree" ]; then
     bootstrap_ran=1
     mac_note "running bootstrap.command: $MAC_REPO_BOOTSTRAP_COMMAND"
+    # pnpm >=10.16 reads install tuning ONLY from pnpm-workspace.yaml (camelCase) —
+    # NOT .npmrc, env vars, or `pnpm config set --global` (all verified ignored).
+    # The deny-by-default L7 egress proxy resets high-concurrency registry fetches
+    # (UND_ERR_SOCKET / ERR_PNPM_META_FETCH_FAIL) and pnpm's release-age supply-
+    # chain pass amplifies it by fetching metadata for every lockfile entry. Cap
+    # network concurrency + disable the release-age pass DURING install by
+    # appending to pnpm-workspace.yaml, then RESTORE the file so the worktree stays
+    # clean for the contract dirty-check (installed node_modules persist). Gated on
+    # the file existing, so non-pnpm repos are untouched. See ADR 0009.
+    mac_ws_yaml="$worktree/pnpm-workspace.yaml"
+    mac_ws_tuned=0
+    if [ -f "$mac_ws_yaml" ] && ! grep -q "networkConcurrency:" "$mac_ws_yaml" 2>/dev/null; then
+      if cp "$mac_ws_yaml" "$MAC_TOOLCHAIN_ROOT/pnpm-workspace.yaml.macbak" 2>/dev/null; then
+        mac_ws_tuned=1
+        {
+          printf '\n# mac: temporary install tuning for the constrained sandbox egress proxy\n'
+          printf 'networkConcurrency: %s\n' "${MAC_SANDBOX_NETWORK_CONCURRENCY:-2}"
+          printf 'minimumReleaseAge: 0\n'
+        } >> "$mac_ws_yaml"
+        mac_note "tuned pnpm-workspace.yaml for install (networkConcurrency=${MAC_SANDBOX_NETWORK_CONCURRENCY:-2}, minimumReleaseAge=0)"
+      fi
+    fi
     # `bash -lc` runs the login profile, which RESETS PATH to the system default
-    # and discards the toolchain bin we prepended above — so a repo `pnpm install`
-    # would resolve the system pnpm@10 (needs Node 22) instead of our pinned
-    # pnpm@9. Re-assert the toolchain PATH (and clear bash's command hash) INSIDE
-    # the login shell, after the profile runs, so the pinned tools win.
+    # and discards the toolchain bin we prepended above. Re-assert the toolchain
+    # PATH (and clear bash's command hash) INSIDE the login shell, after the
+    # profile runs, so the pinned tools win.
     ( cd "$worktree" && bash -lc 'export PATH="${MAC_TOOLCHAIN_BIN:+$MAC_TOOLCHAIN_BIN:}${MAC_TOOLCHAIN_ROOT:+$MAC_TOOLCHAIN_ROOT/node_modules/.bin:}${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
     bootstrap_returncode=$?
+    # Restore the original pnpm-workspace.yaml so the worktree is not left dirty.
+    if [ "$mac_ws_tuned" = "1" ]; then
+      mv -f "$MAC_TOOLCHAIN_ROOT/pnpm-workspace.yaml.macbak" "$mac_ws_yaml" 2>/dev/null || true
+    fi
     if [ "$bootstrap_returncode" = "0" ]; then
       bootstrap_status="pass"
     else
