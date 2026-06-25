@@ -1937,7 +1937,12 @@ EOF
   if [ "$needs_bootstrap" = "1" ] && [ -d "$worktree" ]; then
     bootstrap_ran=1
     mac_note "running bootstrap.command: $MAC_REPO_BOOTSTRAP_COMMAND"
-    ( cd "$worktree" && bash -lc "$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
+    # `bash -lc` runs the login profile, which RESETS PATH to the system default
+    # and discards the toolchain bin we prepended above — so a repo `pnpm install`
+    # would resolve the system pnpm@10 (needs Node 22) instead of our pinned
+    # pnpm@9. Re-assert the toolchain PATH (and clear bash's command hash) INSIDE
+    # the login shell, after the profile runs, so the pinned tools win.
+    ( cd "$worktree" && bash -lc 'export PATH="${MAC_TOOLCHAIN_BIN:+$MAC_TOOLCHAIN_BIN:}${MAC_TOOLCHAIN_ROOT:+$MAC_TOOLCHAIN_ROOT/node_modules/.bin:}${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
     bootstrap_returncode=$?
     if [ "$bootstrap_returncode" = "0" ]; then
       bootstrap_status="pass"
@@ -1985,6 +1990,16 @@ workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
 bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
+# `bash -lc` re-runs the login profile, which resets PATH to the system default
+# and drops the toolchain bin we prepended during setup — so repo bootstrap/test
+# commands would resolve a stale system tool (e.g. pnpm@10 that demands Node 22)
+# instead of the pinned toolchain one (pnpm@9). Re-assert the toolchain PATH (and
+# clear bash's command hash) INSIDE the login shell so the pinned tools win.
+_TC_PATH_PREFIX = (
+    'export PATH="${MAC_TOOLCHAIN_BIN:+$MAC_TOOLCHAIN_BIN:}'
+    '${MAC_TOOLCHAIN_ROOT:+$MAC_TOOLCHAIN_ROOT/node_modules/.bin:}'
+    '${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"; hash -r 2>/dev/null || true; '
+)
 bootstrap_creates = [
     item.strip()
     for item in os.environ.get("MAC_REPO_BOOTSTRAP_CREATES", "").splitlines()
@@ -2047,7 +2062,7 @@ if bootstrap_command:
             timeout = 600.0
         try:
             proc = subprocess.run(
-                ["bash", "-lc", bootstrap_command],
+                ["bash", "-lc", _TC_PATH_PREFIX + bootstrap_command],
                 cwd=worktree,
                 env=os.environ.copy(),
                 capture_output=True,
@@ -2111,7 +2126,7 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
 else:
     started = time.time()
     proc = subprocess.run(
-        ["bash", "-lc", command],
+        ["bash", "-lc", _TC_PATH_PREFIX + command],
         cwd=worktree,
         env=os.environ.copy(),
         capture_output=True,
