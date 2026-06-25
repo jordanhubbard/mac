@@ -65,6 +65,31 @@ RUN apt-get update \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && rm -rf /var/lib/apt/lists/*
 
+# pnpm/npm: tune for a constrained L7 egress proxy. A large monorepo install
+# (1000+ deps) opens many concurrent TLS connections to the registry; OpenShell's
+# deny-by-default egress proxy resets them at high concurrency (UND_ERR_SOCKET /
+# ERR_PNPM_META_FETCH_FAIL), and pnpm's release-age supply-chain pass amplifies it
+# by fetching metadata for every entry. Cap network concurrency, raise
+# retries/timeouts, and disable the release-age check. A world-readable global
+# config + env vars so the non-root `sandbox` user (HOME=/tmp) honors it too.
+RUN printf '%s\n' \
+      'network-concurrency=2' \
+      'child-concurrency=2' \
+      'fetch-retries=6' \
+      'fetch-retry-mintimeout=20000' \
+      'fetch-retry-maxtimeout=120000' \
+      'fetch-timeout=300000' \
+      'minimum-release-age=0' \
+      > /etc/npmrc \
+    && chmod 0644 /etc/npmrc
+ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
+    npm_config_network_concurrency=2 \
+    npm_config_fetch_retries=6 \
+    npm_config_fetch_retry_mintimeout=20000 \
+    npm_config_fetch_retry_maxtimeout=120000 \
+    npm_config_fetch_timeout=300000 \
+    npm_config_minimum_release_age=0
+
 RUN python3 -m venv /opt/mac-venv && /opt/mac-venv/bin/pip install --no-cache-dir --upgrade pip
 
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at
