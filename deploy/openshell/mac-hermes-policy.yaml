@@ -165,6 +165,38 @@ network_policies:
       - { path: /usr/lib/git-core/git-remote-https }
       - { path: /usr/bin/curl }
 
+  # --- Node / pnpm package installs for repository bootstrap. ---
+  # TypeScript/Node repos run `pnpm install` (or npm/yarn) before their tests,
+  # which fetch from the npm registry. Without this block every Node install is
+  # denied by the deny-by-default proxy and `make test` can never bootstrap.
+  # The socket-opening process for an npm/pnpm fetch is `node`, so the registry
+  # is paired with the system node binaries (+ the npm/npx/corepack wrappers).
+  #
+  # Scope note: registry.npmjs.org ONLY — deliberately NOT nodejs.org. The image
+  # ships Node 18; the toolchain provisioner pins a Node-18-compatible pnpm
+  # (pnpm@9) installed from this registry and runs it under the *system* node at
+  # the known /usr/bin/node path, so no Node tarball download (nodejs.org) and no
+  # dynamic per-task toolchain-node path need to be allowlisted. If a repo ever
+  # genuinely requires a newer Node, install it to a FIXED, allowlisted path and
+  # add that path here rather than opening nodejs.org + a writable /tmp binary.
+  node_packages:
+    name: node-packages
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/npm }
+      - { path: /usr/local/bin/npm }
+      - { path: /usr/bin/npx }
+      - { path: /usr/local/bin/npx }
+      - { path: /usr/bin/corepack }
+      - { path: /usr/local/bin/corepack }
+
   # --- Python package installs for repository bootstrap. ---
   # Repository contracts may legitimately create task-local virtualenvs and run
   # `pip install -e .[dev]` before tests. Keep this read-only and scoped to the
