@@ -187,6 +187,15 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: read-only
+      # node-gyp downloads the Node headers tarball from nodejs.org to compile
+      # native modules (e.g. @vscode/sqlite3's `node-gyp rebuild`). Without it the
+      # build fails "403 downloading .../node-vXX-headers.tar.gz". The fetch is
+      # done by `node` (node-gyp.js), already listed below. Read-only.
+      - host: nodejs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
     binaries:
       - { path: /usr/bin/node }
       - { path: /usr/local/bin/node }
