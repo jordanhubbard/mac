@@ -413,6 +413,67 @@ DEFAULT_MAX_DECOMPOSE_DEPTH = 2
 
 
 
+def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Map a block/fail transition to a glanceable 'Problem / Remediation' note.
+
+    Failures should explain themselves ON the task (surfaced by `mac task show`/
+    `summary`) instead of forcing an operator to SSH and dig through logs. Returns
+    a short two-line string for the per-task activity log, or None when the
+    transition is not a diagnosable failure. Signature-matched against the failure
+    modes seen on the live fleets; falls back to a generic note.
+    """
+    if target_state not in (TaskState.BLOCKED.value, TaskState.FAILED.value):
+        return None
+    detail = detail or {}
+    reason = str(detail.get("reason") or "").strip()
+    error = str(detail.get("error") or "").strip()
+    problems = detail.get("problems") or []
+    problems_text = "; ".join(str(p) for p in problems) if isinstance(problems, list) else str(problems)
+    blob = " ".join([reason, error, problems_text]).lower()
+
+    def note(problem: str, remediation: str) -> str:
+        return "Problem: %s\nRemediation: %s" % (problem.strip(), remediation.strip())
+
+    if "could not clone" in blob or "authentication failed" in blob or "saml" in blob or (
+        "clone" in blob and ("denied" in blob or "invalid username" in blob or "403" in blob or "sso" in blob)
+    ):
+        return note(
+            "Repository clone/auth failed — the agent could not fetch the repo (%s)." % (error or reason or "git clone error"),
+            "The fleet's git token isn't authorized for this repo/org (often SAML SSO). Provision an SSO-authorized token as GH_TOKEN (deploy with MAC_DEPLOY_GH_TOKEN) or SSO-authorize the deploy key; onboard with the https URL so the token is injected.",
+        )
+    if "heartbeat_offline" in blob or "lease_expired" in blob or "lease expired" in blob:
+        return note(
+            "Agent went offline mid-task (lease expired / heartbeat lost).",
+            "Check agent<->hub connectivity (reverse tunnel), agent process health (crash/restart/OOM), or a long synchronous op (e.g. a large clone during repo-prep) blocking the heartbeat. Often transient during a deploy/restart — retry once agents are idle+healthy.",
+        )
+    if "timed out" in blob or "timeout" in blob or "rc=124" in blob or "returncode 124" in blob or "code: 124" in blob:
+        return note(
+            "Agent run timed out — the task is likely too large for one run.",
+            "Raise MAC_EXECUTOR_AGENT_TIMEOUT for heavier work and/or split into child tasks (add_child_tasks / decompose-on-failure). Pre-bake slow toolchains into the sandbox image so setup doesn't consume the budget.",
+        )
+    if reason == "verification_contract_failed" or "refusing to push" in blob or "pushed=true" in blob or "contract" in blob:
+        return note(
+            "Contract verification failed — work was not pushed/accepted (%s)." % (problems_text or error or "see evidence")[:280],
+            "Run the repository contract test in the worktree and make it pass cleanly (incl. lint/guard/docs tests), commit ALL changes (no untracked files), and push the branch before declaring done.",
+        )
+    if "review_retraction_cap_hit" in blob or "review_verdict_wait_cap_hit" in blob or "reviewer" in blob:
+        return note(
+            "Review never completed (reviewer unavailable or timed out).",
+            "Ensure a free, fresh reviewer (don't run every agent executing at once); raise MAC_REVIEW_RETRACTION_CAP / MAC_REVIEW_VERDICT_WAIT_CAP / MAC_DEFAULT_REVIEWER_STALE_AFTER_SECONDS. Heavy reviews need the review heartbeat to stay alive.",
+        )
+    if "max attempt" in blob:
+        return note(
+            "Task failed after exhausting its retry budget (max_attempts).",
+            "Inspect the per-attempt failures in history for the recurring cause; fix it, then `mac task reopen` (resets attempts) to retry, or decompose if the task is too large.",
+        )
+    if reason or problems_text or error:
+        return note(
+            "Task %s: %s" % (target_state, reason or problems_text or error),
+            "Inspect the task evidence + history (`mac task show`) and the agent workspace logs for the root cause.",
+        )
+    return None
+
+
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-._").lower()
     return slug or "repo"
@@ -5349,6 +5410,16 @@ class ControlPlane:
                     )
         if drain_outbox:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
+        # Self-documenting failures: on a block/fail, append a glanceable
+        # 'Problem / Remediation' note to the task's activity log so the cause +
+        # fix are visible in `mac task show`/`summary` without digging through
+        # logs. Best-effort: diagnostics must never break the transition.
+        try:
+            diagnosis = _failure_diagnosis(target, detail)
+            if diagnosis:
+                self.append_task_activity(task_id, "diagnosis", actor, diagnosis)
+        except Exception:  # noqa: BLE001 - diagnostics are advisory only
+            pass
         transitioned = self.get_task(task_id)
         return transitioned
 
