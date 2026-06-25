@@ -1825,7 +1825,16 @@ PYGH
       return 0
     fi
     mac_note "node major=$nmajor (<20); installing pinned modern node"
-    mac_install_node_local || mac_note "could not provision modern node"
+    if mac_install_node_local; then
+      return 0
+    fi
+    # Modern Node couldn't be fetched (e.g. nodejs.org is not on the sandbox
+    # egress allowlist -> curl 403). Fall back to a Node-18-compatible pnpm
+    # (pnpm@9, installed from the allowlisted npm registry via corepack) placed
+    # in MAC_TOOLCHAIN_BIN so it SHADOWS any system pnpm@10 that would reject
+    # Node 18 ("requires Node >=22"). Lets pnpm install / Node tests run on 18.
+    mac_note "modern node unavailable; pinning Node-18-compatible pnpm instead"
+    mac_install_command pnpm || mac_note "could not pin Node-18-compatible pnpm"
   }
   mac_install_command() {
     cmd="$1"
