@@ -12277,3 +12277,14 @@ class ControlPlane:
                 )
         for row in rows:
             self.drain_task_transition_outbox(task_id=row["task_id"], limit=20)
+            # Self-documenting: a lease expiry means the agent stopped heartbeating
+            # mid-task (offline / crash / long synchronous op like a big clone).
+            # Record the cause + remediation on the task (visible in `mac task
+            # show`/`summary`) whether it was requeued (OPEN) or failed out. The
+            # BLOCKED target arg only selects the matching note text.
+            try:
+                diag = _failure_diagnosis(TaskState.BLOCKED.value, {"reason": reason})
+                if diag:
+                    self.append_task_activity(row["task_id"], "diagnosis", "dispatcher", diag)
+            except Exception:  # noqa: BLE001 - advisory only
+                pass
