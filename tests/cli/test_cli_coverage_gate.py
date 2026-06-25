@@ -222,38 +222,20 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("journal", "list"),
         ("journal", "restore"),
         ("journal", "snapshot"),
-        # memory domain
-        ("memory", "add"),
+        # memory domain -- recall-dreams and backfill need external deps
         ("memory", "backfill"),
-        ("memory", "decay"),
         ("memory", "embed"),
-        ("memory", "health"),
-        ("memory", "recall"),
         ("memory", "recall-dreams"),
-        ("memory", "search"),
-        ("memory", "summarize-actions"),
         # message domain
         ("message", "inbox"),
         ("message", "send"),
         # migrate domain
         ("migrate", "acc"),
         ("migrate", "import"),
-        # mood domain
-        ("mood", "clear"),
-        ("mood", "history"),
-        ("mood", "set"),
-        ("mood", "show"),
-        # nap domain
-        ("nap", "begin"),
-        ("nap", "complete"),
-        ("nap", "configure"),
+        # nap consolidate/cycle require an LLM for memory summarisation;
+        # the simpler nap lifecycle commands are covered in test_cli_nap.py
         ("nap", "consolidate"),
         ("nap", "cycle"),
-        ("nap", "due"),
-        ("nap", "fail"),
-        ("nap", "list"),
-        ("nap", "next"),
-        ("nap", "show"),
         # notifier domain
         ("notifier", "configure"),
         ("notifier", "delete"),
@@ -293,20 +275,13 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("secret", "audits"),
         ("secret", "delete"),
         ("secret", "rotate"),
-        # task sub-commands
-        ("task", "claim"),
+        # task sub-commands -- only genuinely untested ones remain
         ("task", "convert-ticketing"),
         ("task", "detect-beads"),
         ("task", "detect-ticketing"),
-        ("task", "evidence"),
         ("task", "force-complete"),
         ("task", "migrate-beads"),
-        ("task", "release"),
-        ("task", "reopen"),
-        ("task", "start"),
-        ("task", "stats"),
         ("task", "submit-review"),
-        ("task", "summary"),
         # user domain
         ("user", "register"),
         # workflow domain

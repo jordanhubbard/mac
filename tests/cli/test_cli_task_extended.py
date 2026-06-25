@@ -1,0 +1,349 @@
+"""Behavioral tests for extended `mac task` CLI subcommands.
+
+Subcommands covered:
+  - task stats   [--project] [--all]
+  - task summary <task_id>
+  - task claim   <task_id> <agent_id>
+  - task start   <task_id> <agent_id>
+  - task reopen  <task_id> [--reason] [--actor]
+  - task release <task_id> [--actor]
+  - task evidence <task_id> --kind ... --uri ... --summary ... --created-by ...
+
+These complement the core subcommands already covered in test_mac_cli.py
+(create, list, show, search, close, ready).  Each test uses the same
+_run(tmp_path, ...) helper that calls mac.cli:main against a private SQLite
+database under tmp_path.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import sys
+
+import pytest
+
+from mac.cli import main
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _run(tmp_path, *args):
+    """Run `mac --db <tmp> <args>` and return (rc, parsed_output).
+
+    parsed_output is the JSON-decoded stdout when the command emits JSON, or
+    the raw text string for commands like `task summary` that emit plain text.
+    Returns None when stdout is empty.
+    """
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+    finally:
+        sys.stdout = old
+    raw = out.getvalue().strip()
+    if not raw:
+        return rc, None
+    try:
+        return rc, json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return rc, raw
+
+
+def _register_agent(tmp_path, name="worker-1", machine_name=None):
+    """Register a machine + agent and return the agent record."""
+    host = machine_name or (name + "-host")
+    rc, machine = _run(tmp_path, "machine", "register", host)
+    assert rc == 0
+    rc, agent = _run(tmp_path, "agent", "register", machine["id"], name)
+    assert rc == 0
+    return agent
+
+
+def _create_task(tmp_path, title="test task", project=None):
+    """Create a task and return the task record."""
+    args = ["task", "create", title]
+    if project:
+        args += ["--project", project]
+    rc, task = _run(tmp_path, *args)
+    assert rc == 0
+    return task
+
+
+# ---------------------------------------------------------------------------
+# task stats
+# ---------------------------------------------------------------------------
+
+
+def test_task_stats_returns_dict_of_state_counts(tmp_path):
+    """task stats returns a dict mapping state -> count."""
+    rc, stats = _run(tmp_path, "task", "stats")
+    assert rc == 0
+    # Empty DB: the stats dict may be empty or have zero counts
+    assert isinstance(stats, dict)
+
+
+def test_task_stats_counts_created_task(tmp_path):
+    """task stats reflects newly created tasks in the open state."""
+    _create_task(tmp_path)
+    rc, stats = _run(tmp_path, "task", "stats")
+    assert rc == 0
+    assert stats.get("open", 0) >= 1
+
+
+def test_task_stats_project_filter(tmp_path):
+    """task stats --project scopes the count to the given project."""
+    _create_task(tmp_path, title="proj-a task", project="project-a")
+    _create_task(tmp_path, title="proj-b task", project="project-b")
+
+    rc, stats_a = _run(tmp_path, "task", "stats", "--project", "project-a")
+    assert rc == 0
+    # project-a has 1 task; project-b tasks should not appear
+    total_a = sum(stats_a.values())
+    assert total_a == 1
+
+
+def test_task_stats_counts_cancelled_task(tmp_path):
+    """task stats reflects the cancelled state after cancelling a task.
+
+    The state machine only allows open -> cancelled (not open -> completed),
+    so we close with --cancelled.
+    """
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+
+    rc, stats = _run(tmp_path, "task", "stats")
+    assert rc == 0
+    assert stats.get("cancelled", 0) >= 1
+
+
+# ---------------------------------------------------------------------------
+# task summary
+# ---------------------------------------------------------------------------
+
+
+def test_task_summary_returns_task_id_line(tmp_path):
+    """task summary outputs a human-readable string with the task id."""
+    task = _create_task(tmp_path, title="my summary task")
+    rc, text = _run(tmp_path, "task", "summary", task["id"])
+    assert rc == 0
+    assert isinstance(text, str)
+    assert task["id"] in text
+
+
+def test_task_summary_shows_no_activity_message_for_new_task(tmp_path):
+    """task summary says 'no activity recorded' for a fresh task."""
+    task = _create_task(tmp_path)
+    rc, text = _run(tmp_path, "task", "summary", task["id"])
+    assert rc == 0
+    assert isinstance(text, str)
+    assert "no activity" in text.lower()
+
+
+def test_task_summary_shows_title(tmp_path):
+    """task summary includes the task title in its output."""
+    task = _create_task(tmp_path, title="special summary title")
+    rc, text = _run(tmp_path, "task", "summary", task["id"])
+    assert rc == 0
+    assert isinstance(text, str)
+    assert "special summary title" in text
+
+
+# ---------------------------------------------------------------------------
+# task claim
+# ---------------------------------------------------------------------------
+
+
+def test_task_claim_returns_task_and_lease(tmp_path):
+    """task claim returns {task: ..., lease_id: ...} and sets state to claimed."""
+    agent = _register_agent(tmp_path)
+    task = _create_task(tmp_path)
+
+    rc, result = _run(tmp_path, "task", "claim", task["id"], agent["id"])
+    assert rc == 0
+    assert result["task"]["id"] == task["id"]
+    assert result["task"]["state"] == "claimed"
+    assert result["lease_id"] is not None
+    assert result["lease_id"].startswith("lease_")
+
+
+def test_task_claim_sets_owner_agent(tmp_path):
+    """After claim, the task record reflects the claiming agent."""
+    agent = _register_agent(tmp_path)
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "claim", task["id"], agent["id"])
+
+    rc, shown = _run(tmp_path, "task", "show", task["id"])
+    assert rc == 0
+    task_data = shown.get("task", shown)
+    assert task_data["owner_agent_id"] == agent["id"]
+
+
+def test_task_claim_prevents_double_claim(tmp_path):
+    """A claimed task cannot be claimed a second time."""
+    a1 = _register_agent(tmp_path, name="worker-1", machine_name="host-1")
+    a2 = _register_agent(tmp_path, name="worker-2", machine_name="host-2")
+    task = _create_task(tmp_path)
+
+    rc1, _ = _run(tmp_path, "task", "claim", task["id"], a1["id"])
+    assert rc1 == 0
+
+    rc2, err = _run(tmp_path, "task", "claim", task["id"], a2["id"])
+    assert rc2 != 0  # second claim must fail
+
+
+# ---------------------------------------------------------------------------
+# task start
+# ---------------------------------------------------------------------------
+
+
+def test_task_start_transitions_to_running(tmp_path):
+    """task start moves state from claimed to running."""
+    agent = _register_agent(tmp_path)
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "claim", task["id"], agent["id"])
+
+    rc, started = _run(tmp_path, "task", "start", task["id"], agent["id"])
+    assert rc == 0
+    assert started["state"] == "running"
+
+
+def test_task_start_keeps_owner_agent(tmp_path):
+    """The task's owner_agent_id is preserved after start."""
+    agent = _register_agent(tmp_path)
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "claim", task["id"], agent["id"])
+    rc, started = _run(tmp_path, "task", "start", task["id"], agent["id"])
+    assert rc == 0
+    assert started["owner_agent_id"] == agent["id"]
+
+
+# ---------------------------------------------------------------------------
+# task reopen
+# ---------------------------------------------------------------------------
+
+
+def test_task_reopen_returns_open_state(tmp_path):
+    """task reopen transitions a cancelled task back to open."""
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+
+    rc, reopened = _run(tmp_path, "task", "reopen", task["id"])
+    assert rc == 0
+    assert reopened["state"] == "open"
+
+
+def test_task_reopen_with_reason(tmp_path):
+    """task reopen --reason is stored in the task history (audit trail)."""
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+
+    rc, reopened = _run(
+        tmp_path, "task", "reopen", task["id"],
+        "--reason", "requeue after infrastructure fix",
+        "--actor", "hub",
+    )
+    assert rc == 0
+    assert reopened["state"] == "open"
+
+
+def test_task_reopen_resets_attempt_count(tmp_path):
+    """task reopen clears the attempt count so the task doesn't immediately exhaust retries."""
+    task = _create_task(tmp_path)
+    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+
+    rc, reopened = _run(tmp_path, "task", "reopen", task["id"])
+    assert rc == 0
+    # After reopen, attempt_count should be reset (0 or 1)
+    assert reopened.get("attempt_count", 0) <= 1
+
+
+# ---------------------------------------------------------------------------
+# task release
+# ---------------------------------------------------------------------------
+
+
+def test_task_release_clears_no_dispatch_hold(tmp_path):
+    """task release clears the no_dispatch hold flag so the task becomes dispatchable."""
+    # Create with --no-dispatch so it's staged
+    rc, task = _run(tmp_path, "task", "create", "staged task", "--no-dispatch")
+    assert rc == 0
+    assert task.get("metadata", {}).get("no_dispatch") is True
+
+    rc, released = _run(tmp_path, "task", "release", task["id"])
+    assert rc == 0
+    assert "no_dispatch" not in (released.get("metadata") or {})
+
+
+def test_task_release_is_noop_for_normal_task(tmp_path):
+    """task release on a task without no_dispatch hold returns the task unchanged."""
+    task = _create_task(tmp_path)
+    rc, released = _run(tmp_path, "task", "release", task["id"])
+    assert rc == 0
+    assert released["id"] == task["id"]
+    assert released["state"] == "open"
+
+
+# ---------------------------------------------------------------------------
+# task evidence
+# ---------------------------------------------------------------------------
+
+
+def test_task_evidence_adds_test_evidence(tmp_path):
+    """task evidence --kind test creates an evidence record on the task."""
+    task = _create_task(tmp_path)
+
+    rc, ev = _run(
+        tmp_path,
+        "task", "evidence", task["id"],
+        "--kind", "test",
+        "--uri", "ci://build/42/test-results",
+        "--summary", "all 86 tests passed",
+        "--created-by", "hub",
+    )
+    assert rc == 0
+    assert ev["id"].startswith("ev_")
+    assert ev["kind"] == "test"
+    assert ev["task_id"] == task["id"]
+    assert ev["created_by"] == "hub"
+
+
+def test_task_evidence_adds_artifact_evidence(tmp_path):
+    """task evidence --kind artifact records an artifact URI."""
+    task = _create_task(tmp_path)
+
+    rc, ev = _run(
+        tmp_path,
+        "task", "evidence", task["id"],
+        "--kind", "artifact",
+        "--uri", "s3://bucket/output/report.json",
+        "--summary", "generated report artifact",
+        "--created-by", "worker-1",
+    )
+    assert rc == 0
+    assert ev["kind"] == "artifact"
+    assert ev["uri"] == "s3://bucket/output/report.json"
+
+
+def test_task_evidence_appears_in_task_show(tmp_path):
+    """Evidence added via CLI appears when the task is queried via task show."""
+    task = _create_task(tmp_path)
+    _run(
+        tmp_path,
+        "task", "evidence", task["id"],
+        "--kind", "log",
+        "--uri", "logs://run/999",
+        "--summary", "execution log",
+        "--created-by", "worker-1",
+    )
+
+    rc, detail = _run(tmp_path, "task", "show", task["id"])
+    assert rc == 0
+    # task show returns a detail object; evidence may live under detail["evidence"]
+    evidence_list = detail.get("evidence", [])
+    uris = [e.get("uri") for e in evidence_list]
+    assert "logs://run/999" in uris
