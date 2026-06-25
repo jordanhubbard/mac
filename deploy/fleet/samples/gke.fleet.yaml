@@ -58,6 +58,13 @@ network:
 # own deploy-time validation hits 127.0.0.1 and the reverse tunnel's hub
 # endpoint (-R 127.0.0.1:16333:127.0.0.1:6333) forwards to them; network=none
 # spokes auto-rewrite their URLs to the tunnel-forwarded 127.0.0.1:16333/13002.
+#
+# High-core nodes: Qdrant sizes its thread pools from /proc/cpuinfo (the FULL
+# node core count, not the pod's CPU quota), so on a small-quota pod on a big
+# node (e.g. 4 CPU on 192 cores) it can blow past the container PID cap and
+# panic at startup ("Cannot spawn Arbiter's thread"). The deploy defaults the
+# cap to QDRANT_PIDS_LIMIT=4096; raise it in the fleet env if a larger node still
+# trips it. See docs/production-deployment.md -> Troubleshooting.
 qdrant:
   install: auto
   bind_addr: "127.0.0.1"

@@ -66,6 +66,7 @@ backends ship in the same wheel/image; pick at deploy time.
 | `QDRANT_URL` / `QDRANT_ADDRESS` / `QDRANT_FLEET_URL` | no | Shared Qdrant level-2 memory endpoint. When set, Hermes startup readiness validates `/collections`. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | no | Set `1` to require shared Qdrant memory readiness. Fleet deploy enables this by default. |
 | `MAC_QDRANT_MEMORY_ALLOW_DEGRADED` | no | Temporary operator override that allows startup when required Qdrant is missing or unreachable. |
+| `QDRANT_PIDS_LIMIT` | no | Container PID/thread cap for the hub-managed Qdrant (supervisord wrapper + systemd unit). Default `4096`. Raise on very-high-core nodes; see Troubleshooting. |
 
 Generate a secret key once:
 
@@ -732,6 +733,39 @@ and provides a `json_extract` SQL function shim so the ~50 service
 modules need no per-backend branching. See
 [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md) for the
 Phase 3-5 roadmap.
+
+## Troubleshooting
+
+### Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)
+
+On a node where the container's CPU cgroup quota is small but the host exposes
+many cores (a common Kubernetes shape — e.g. a 4-CPU pod on a 192-core node),
+Qdrant sizes its actix/tokio thread pools from `/proc/cpuinfo` (the **full** node
+core count, not the cgroup quota) and tries to spawn far more threads than the
+container's PID cap allows. Thread creation then fails with `EAGAIN` and Qdrant
+panics at startup:
+
+```
+ERROR qdrant::startup: Panic ... Cannot spawn Arbiter's thread:
+  "actix-rt|system:0|arbiter:NNN": Os { code: 11, kind: WouldBlock,
+  message: "Resource temporarily unavailable" }
+```
+
+`mac-qdrant-run` (or the systemd unit) exits immediately, supervisord/systemd
+marks the program FATAL, and the deploy aborts because Qdrant is mandatory on
+the hub. The fix ships by default: the container PID cap is now
+**`QDRANT_PIDS_LIMIT` (default 4096)** instead of a hardcoded 512. If an even
+larger node still hits this, raise it in the fleet env, e.g. `QDRANT_PIDS_LIMIT=8192`,
+and redeploy. Quick check on the affected host: `--pids-limit=512` → panic /
+`curl :6333/collections` returns 000; raised limit → `200`.
+
+### supervisord pods: `supervisorctl` permission errors
+
+On pods where `supervisord` runs as root (PID 1) with a root-only control socket
+(`srwx------`), `supervisorctl` as the deploy user gets
+`PermissionError ... xmlrpc.py`. The deploy already prefers `sudo supervisorctl`
+(`run_supervisorctl`); ensure the deploy user has passwordless sudo. A bare
+`supervisorctl ...` in a manual session needs `sudo`.
 
 ## Known limitations
 
