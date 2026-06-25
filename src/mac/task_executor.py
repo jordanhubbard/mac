@@ -1855,14 +1855,26 @@ PYGH
         # `pnpm` aborts ("requires at least Node.js v22.13") and every Node test
         # target fails. pnpm@9 supports Node >=18.12, so it runs on the sandbox's
         # Node 18 and on newer Node alike. Override with MAC_SANDBOX_PNPM_VERSION.
+        # Install a REAL pnpm@<ver> binary into the toolchain bin (PATH-first) so
+        # it SHADOWS any system/corepack pnpm. A `corepack prepare ... --activate`
+        # only leaves a shim that RE-RESOLVES to the newer version at run time
+        # (which is why pnpm install kept hitting "requires Node v22" even after
+        # we "pinned" 9), so prefer a concrete npm-installed binary.
         pnpm_ver="${MAC_SANDBOX_PNPM_VERSION:-9}"
+        if command -v npm >/dev/null 2>&1; then
+          npm install --no-fund --no-audit --prefix "$MAC_TOOLCHAIN_ROOT" "pnpm@${pnpm_ver}" >> "$mac_log" 2>&1
+          if [ -x "$MAC_TOOLCHAIN_ROOT/node_modules/.bin/pnpm" ]; then
+            ln -sf "$MAC_TOOLCHAIN_ROOT/node_modules/.bin/pnpm" "$MAC_TOOLCHAIN_BIN/pnpm"
+            export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+            command -v pnpm >/dev/null 2>&1 && return 0
+          fi
+        fi
         if command -v corepack >/dev/null 2>&1; then
           corepack enable --install-directory "$MAC_TOOLCHAIN_BIN" >> "$mac_log" 2>&1 || true
           corepack prepare "pnpm@${pnpm_ver}" --activate >> "$mac_log" 2>&1 || true
         fi
         command -v pnpm >/dev/null 2>&1 && return 0
-        command -v npm >/dev/null 2>&1 || return 1
-        npm install --prefix "$MAC_TOOLCHAIN_ROOT" "pnpm@${pnpm_ver}" >> "$mac_log" 2>&1
+        return 1
         ;;
       lein)
         command -v curl >/dev/null 2>&1 || return 1
