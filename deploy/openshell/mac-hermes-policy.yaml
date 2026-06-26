@@ -206,6 +206,36 @@ network_policies:
       - { path: /usr/bin/corepack }
       - { path: /usr/local/bin/corepack }
 
+  # --- Declared external read-only APIs (per-repo egress contract; see ADR 0009).
+  # Deny-by-default egress is the right default, but a real app legitimately READS
+  # from external APIs — the allowlist is part of the repo's environment contract,
+  # not a wall. These are the aviation suite's integration data sources. access:
+  # read-only so a confused/compromised --yolo agent cannot exfiltrate through
+  # them (host-allowlisting is the axis: a GET to an untrusted host is still
+  # exfiltration). The fetch is performed by `node` (app/test runtime). Until
+  # per-repo egress rendering lands (ADR 0009), these are declared fleet-wide.
+  aviation_apis:
+    name: aviation-apis
+    endpoints:
+      - host: opensky-network.org   # ADS-B live state vectors (flight-tracker)
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+      - host: aviationweather.gov   # SIGMET / AIRMET (hazard layer)
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+      - host: tfr.faa.gov           # Temporary Flight Restrictions
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
   # --- Python package installs for repository bootstrap. ---
   # Repository contracts may legitimately create task-local virtualenvs and run
   # `pip install -e .[dev]` before tests. Keep this read-only and scoped to the

