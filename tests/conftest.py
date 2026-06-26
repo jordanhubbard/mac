@@ -24,6 +24,23 @@ def pytest_collection_modifyitems(items: list) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _mac_cli_json_output():
+    """The `mac` CLI now defaults to human-readable text (one-liners); `--json`
+    switches to JSON. The suite asserts the JSON contract (json.loads of CLI
+    stdout), so force JSON output for every test. Production default stays text.
+    The pure text renderer is exercised directly via `cli._render_text` tests,
+    which don't go through this flag."""
+    try:
+        from mac import cli as _mac_cli
+
+        _mac_cli._set_output_json(True)
+        yield
+        _mac_cli._set_output_json(False)
+    except Exception:
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _no_ticket_mirror(monkeypatch):
     """Stop any test that drives `mac task create/close` from auto-emitting real
     `.tickets/<id>.md` files into the working repo.

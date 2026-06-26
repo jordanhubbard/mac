@@ -1,8 +1,21 @@
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
+from mac import cli as _mac_cli
 from mac.cli import main as mac_cli_main
+
+
+@pytest.fixture(autouse=True)
+def _mac_cli_json_output():
+    """These tests assert the `mac` CLI's JSON contract; text is now the CLI
+    default, so force JSON output (the `--json` path) for the file's duration."""
+    _mac_cli._set_output_json(True)
+    try:
+        yield
+    finally:
+        _mac_cli._set_output_json(False)
 from mac.api import create_app
 from mac.hermes_adapter import (
     ConversationTaskInput,

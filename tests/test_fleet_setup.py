@@ -168,6 +168,7 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
             sys.executable,
             "-m",
             "mac.cli",
+            "--json",
             "fleet",
             "doctor",
             "--spec",

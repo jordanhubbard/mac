@@ -70,6 +70,94 @@ def _read_json_arg(
         raise SystemExit("invalid JSON in %s: %s" % (label, exc))
 
 
+# Output mode. Text (human-readable one-liners) is the DEFAULT; the global
+# --json flag switches every command to JSON. Set from main().
+_OUTPUT_JSON = False
+
+
+def _set_output_json(enabled: bool) -> None:
+    global _OUTPUT_JSON
+    _OUTPUT_JSON = bool(enabled)
+
+
+def _unwrap(value: Any) -> Any:
+    to_dict = getattr(value, "to_dict", None)
+    return to_dict() if callable(to_dict) else value
+
+
+def _trunc(text: Any, n: int = 72) -> str:
+    s = "" if text is None else str(text).replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _one_liner(value: Any) -> str:
+    """A single compact line for one record (task / agent / generic dict)."""
+    d = _unwrap(value)
+    if not isinstance(d, dict):
+        return str(d)
+    ident = d.get("id") or d.get("name") or d.get("key") or ""
+    is_task = str(d.get("id", "")).startswith("task_") or (
+        "state" in d and "status" not in d
+    )
+    if is_task:
+        return "%-36s %-12s %-10s %s" % (
+            ident,
+            d.get("state", "?"),
+            (d.get("project") or "-"),
+            _trunc(d.get("title", "")),
+        )
+    if "status" in d and ("name" in d or "current_task_id" in d or "capabilities" in d):
+        cur = d.get("current_task_id")
+        return "%-16s %-9s %s" % (
+            d.get("name") or ident,
+            d.get("status", "?"),
+            ("▶ " + str(cur)) if cur else "idle",
+        )
+    scal = [
+        "%s=%s" % (k, _trunc(v, 40))
+        for k, v in d.items()
+        if not isinstance(v, (dict, list)) and k not in ("id", "name", "key")
+    ]
+    line = (str(ident) + ("  " + "  ".join(scal) if scal else "")).strip()
+    return line or _trunc(d, 120)
+
+
+def _render_text(value: Any) -> str:
+    value = _unwrap(value)
+    if value is None:
+        return "(none)"
+    if isinstance(value, list):
+        return "\n".join(_one_liner(v) for v in value) if value else "(none)"
+    if isinstance(value, dict):
+        # Detail wrapper (e.g. `task show` -> {task, evidence, history, reviews,
+        # publications}). Show the headline + compact counts, not the full blob.
+        if isinstance(value.get("task"), dict):
+            t = value["task"]
+            lines = [_one_liner(t)]
+            for k in ("assignee", "attempt_count", "max_attempts"):
+                if t.get(k) not in (None, ""):
+                    lines.append("  %s: %s" % (k, t.get(k)))
+            for k in ("dependencies", "evidence", "reviews", "publications", "history"):
+                v = value.get(k, t.get(k))
+                if isinstance(v, list) and v:
+                    lines.append("  %s: %d" % (k, len(v)))
+            return "\n".join(lines)
+        if str(value.get("id", "")).startswith("task_") or "state" in value or (
+            "status" in value and ("name" in value or "current_task_id" in value)
+        ):
+            return _one_liner(value)
+        out = []
+        for k, v in value.items():
+            if isinstance(v, dict):
+                out.append("%s: {%d keys}" % (k, len(v)))
+            elif isinstance(v, list):
+                out.append("%s: [%d]" % (k, len(v)))
+            else:
+                out.append("%s: %s" % (k, v))
+        return "\n".join(out) if out else "(empty)"
+    return str(value)
+
+
 def _print(value: Any) -> None:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
@@ -86,7 +174,10 @@ def _print(value: Any) -> None:
             "Object of type %s is not JSON serializable" % type(obj).__name__
         )
 
-    print(json.dumps(value, indent=2, sort_keys=True, default=_to_serializable))
+    if _OUTPUT_JSON:
+        print(json.dumps(value, indent=2, sort_keys=True, default=_to_serializable))
+    else:
+        print(_render_text(value))
 
 
 def _plane(args: argparse.Namespace) -> Any:
@@ -2392,6 +2483,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fleet name; selects MAC_API_TOKEN__<FLEET> and "
         "~/.mac/fleets.yaml entry.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of the default human-readable text. Works in any "
+        "position (e.g. `mac task list --json` or `mac --json task list`).",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     diagnostics_parser = sub.add_parser(
@@ -4247,8 +4344,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
+    raw = list(argv) if argv is not None else list(sys.argv[1:])
+    # --json is position-independent: strip it before argparse (so it works after
+    # the subcommand too) and switch output mode. Text is the default.
+    if "--json" in raw:
+        _set_output_json(True)
+        raw = [a for a in raw if a != "--json"]
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(raw)
     try:
         args.func(args)
     except MACError as exc:
