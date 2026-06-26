@@ -1,5 +1,6 @@
 import Editor from "@monaco-editor/react";
 import { type TaskDetail } from "../api/mac";
+import { TaskPipeline } from "./TaskPipeline";
 
 function renderDoc(detail: TaskDetail | null): string {
   if (!detail) {
@@ -40,6 +41,7 @@ export function EditorArea({ detail }: { detail: TaskDetail | null }) {
       <div className="tabs">
         <div className="tab active">{tabName.slice(0, 48)}</div>
       </div>
+      <TaskPipeline detail={detail} />
       <div className="editor-mono">
         <Editor
           theme="vs-dark"

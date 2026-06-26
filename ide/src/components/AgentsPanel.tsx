@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { api, type Agent } from "../api/mac";
+import { api, type Agent, type Task } from "../api/mac";
+import { agentRole } from "./TaskPipeline";
 
 export function AgentsPanel({
   agents,
+  tasks,
   onDispatched,
 }: {
   agents: Agent[];
+  tasks: Task[];
   onDispatched: () => void;
 }) {
   const [text, setText] = useState("");
@@ -54,18 +57,22 @@ export function AgentsPanel({
           </div>
         </div>
 
-        {agents.map((a) => (
-          <div className="agent-card" key={a.id}>
-            <div>
-              <span className={"dot " + (a.current_task_id ? "running" : a.status || "open")} />{" "}
-              <b>{a.name || a.id.replace("agent_", "")}</b>{" "}
-              <span className="muted">{a.status}</span>
+        {agents.map((a) => {
+          const { role, cls } = agentRole(a, tasks);
+          return (
+            <div className="agent-card" key={a.id}>
+              <div>
+                <span className={"dot " + (a.current_task_id ? "running" : a.status || "open")} />{" "}
+                <b>{a.name || a.id.replace("agent_", "")}</b>{" "}
+                <span className={"role-badge " + cls}>{role}</span>{" "}
+                <span className="muted">{a.status}</span>
+              </div>
+              <div className="muted" style={{ fontSize: 11 }}>
+                {a.current_task_id ? "▶ " + a.current_task_id.slice(0, 20) : "idle"}
+              </div>
             </div>
-            <div className="muted" style={{ fontSize: 11 }}>
-              {a.current_task_id ? "▶ " + a.current_task_id.slice(0, 20) : "idle"}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

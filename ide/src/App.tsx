@@ -86,7 +86,7 @@ export function App() {
               </Allotment>
             </Allotment.Pane>
             <Allotment.Pane minSize={240} preferredSize={320}>
-              <AgentsPanel agents={agents} onDispatched={refresh} />
+              <AgentsPanel agents={agents} tasks={tasks} onDispatched={refresh} />
             </Allotment.Pane>
           </Allotment>
         </div>

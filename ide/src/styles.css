@@ -80,3 +80,30 @@ button.btn.primary { background: var(--accent); color: var(--accent-fg); border-
 .activity-entry .head { color: var(--fg-dim); font-size: 11px; }
 .activity-entry pre { margin: 4px 0 0; white-space: pre-wrap; font: inherit; }
 .bottom-tabs { display: flex; background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+
+/* Compact per-task pipeline ribbon: dispatch -> work -> review -> publish */
+.pipeline {
+  display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 4px 12px; background: var(--bg-alt); border-bottom: 1px solid var(--border);
+  font-size: 11px; min-height: 26px;
+}
+.pstage { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); }
+.pedge { width: 16px; height: 1px; background: var(--border); margin: 0 2px; }
+.pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-dim); flex: none; }
+.plabel { letter-spacing: .3px; }
+.pwho { color: var(--accent-fg); background: var(--accent); border-radius: 3px; padding: 0 5px; font-size: 10px; }
+.pstage.done .pdot { background: var(--green); }
+.pstage.done { color: var(--fg); }
+.pstage.done .pedge { background: var(--green); }
+.pstage.active .pdot { background: var(--yellow); box-shadow: 0 0 0 3px rgba(233,164,74,.25); }
+.pstage.active { color: var(--fg); font-weight: 600; }
+.pstage.error .pdot { background: var(--red); box-shadow: 0 0 0 3px rgba(244,135,113,.25); }
+.pstage.error { color: var(--red); }
+.pstate { margin-left: auto; text-transform: lowercase; }
+
+/* Live role each agent is playing, in the Agents panel */
+.role-badge { font-size: 10px; border-radius: 3px; padding: 0 5px; border: 1px solid var(--border); }
+.role-badge.work { color: #1e1e1e; background: var(--yellow); border-color: var(--yellow); }
+.role-badge.review { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.role-badge.publish { color: #1e1e1e; background: var(--green); border-color: var(--green); }
+.role-badge.idle { color: var(--fg-dim); }
