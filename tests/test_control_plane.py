@@ -859,6 +859,56 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
+def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
+    """An approved task whose auto-publish fails (e.g. a merge conflict) must NOT
+    silently park in REVIEWING — it surfaces a Problem/Remediation diagnosis and a
+    publish_failed observation so an operator sees why (mac task_51a777c2)."""
+    from mac.models import ValidationError
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Implement thing",
+        required_capabilities=["python"],
+        metadata={"publication_target": "git://main"},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp.advance_default_review_workflow(task.id)  # assign reviewer
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+
+    # Simulate auto-publish failing on a merge conflict.
+    def _boom(*_a, **_k):
+        raise ValidationError(
+            "git publication merge_source failed: CONFLICT (content): Merge conflict in Makefile"
+        )
+
+    monkeypatch.setattr(cp, "publish_task", _boom)
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "publish_failed"
+    assert result["target"] == "git://main"
+    # Approved, still REVIEWING (not silently dropped, not falsely completed).
+    parked = cp.get_task(task.id)
+    assert parked.state == TaskState.REVIEWING.value
+    # A glanceable diagnosis is on the task.
+    activity = (parked.metadata or {}).get("activity", [])
+    assert any(
+        "Auto-publish" in (e.get("summary") or "") and "Remediation" in (e.get("summary") or "")
+        for e in activity
+    ), "expected a publish-failure diagnosis in task activity"
+    # And an observation for telemetry.
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.publish_failed" in names
+    assert "workflow.default_review.published" not in names
+
+
 
 
 

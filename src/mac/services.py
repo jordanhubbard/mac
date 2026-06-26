@@ -9582,12 +9582,59 @@ class ControlPlane:
                 "status": "waiting_for_publication_target",
                 "review_id": review.id,
             }
-        publication = self.publish_task(
-            task_id,
-            target,
-            review.reviewer_agent_id,
-            evidence_id=evidence.id,
-        )
+        try:
+            publication = self.publish_task(
+                task_id,
+                target,
+                review.reviewer_agent_id,
+                evidence_id=evidence.id,
+            )
+        except (ValidationError, MACError) as exc:
+            # Auto-publish failed AFTER a genuine approval — most often the
+            # reviewed branch no longer merges cleanly into main (a stale branch
+            # base / merge conflict). Previously this exception propagated and was
+            # swallowed, leaving the task silently parked in REVIEWING with no
+            # explanation (approved but never published). Surface it instead: an
+            # observation for telemetry AND a glanceable Problem/Remediation
+            # diagnosis on the task (via `mac task show`/`summary`), so the
+            # operator knows exactly why it didn't merge and how to recover.
+            # (mac task_51a777c2)
+            detail = str(exc)
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.publish_failed",
+                "warning",
+                {
+                    "review_id": review.id,
+                    "evidence_id": evidence.id,
+                    "target": target,
+                    "error": detail[:500],
+                },
+                actor,
+            )
+            try:
+                self.append_task_activity(
+                    task_id,
+                    "diagnosis",
+                    actor,
+                    "Problem: Auto-publish to %s failed after approval — the "
+                    "reviewed branch could not be merged into main (usually a "
+                    "merge conflict from a stale branch base). The task is "
+                    "approved but stays in REVIEWING, unpublished.\n"
+                    "Remediation: Re-drive the task from current main so its "
+                    "branch merges cleanly and let review->publish re-run, or an "
+                    "operator resolves the conflict and re-publishes. Error: %s"
+                    % (target, detail[:300]),
+                )
+            except Exception:
+                pass
+            return {
+                "task_id": task_id,
+                "status": "publish_failed",
+                "review_id": review.id,
+                "target": target,
+                "error": detail,
+            }
         self._record_default_review_observation(
             task_id,
             "workflow.default_review.published",
