@@ -1331,7 +1331,12 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
     assert cp.list_reviews(task.id) == []
 
 
-def test_mac_worker_fails_dirty_repository_worktree_after_success(tmp_path: Path):
+def test_mac_worker_rescues_dirty_worktree_when_contract_test_passes(tmp_path: Path):
+    """An agent that edits TRACKED files and passes its contract test but forgets
+    to `git commit` leaves the worktree dirty. The worker must commit the verified
+    work, re-run the contract test, and push it (mac task_94aa4ed5) — not block it.
+    Previously only UNTRACKED new files were rescued, so a modified-tracked edit
+    was wrongly blocked despite passing tests (it even wrote a 'done' manifest)."""
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     _seed, repo = _git_fixture(tmp_path)
@@ -1345,8 +1350,10 @@ def test_mac_worker_fails_dirty_repository_worktree_after_success(tmp_path: Path
     def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
         worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
         _write_repo_worker_manifest(task_dir, worktree)
-        (worktree / "README.md").write_text("dirty output\n", encoding="utf-8")
-        return WorkerExecution(0, "left a dirty tree", stdout="ok\n")
+        # Modified TRACKED file, left uncommitted: the agent did the work and the
+        # contract test passes, but it slipped on `git commit`.
+        (worktree / "README.md").write_text("verified but uncommitted\n", encoding="utf-8")
+        return WorkerExecution(0, "did the work, forgot to commit", stdout="ok\n")
 
     worker = MacWorker(
         MacApiClient("http://mac.test", transport=api_transport(client)),
@@ -1358,9 +1365,64 @@ def test_mac_worker_fails_dirty_repository_worktree_after_success(tmp_path: Path
 
     result = worker.run_once()
 
-    assert result.status == "blocked"
-    assert "uncommitted changes" in (result.error or "")
+    assert result.status == "submitted_for_review", result.error
+    assert cp.get_task(task.id).state != TaskState.BLOCKED.value
+    # The uncommitted edit is durably committed + pushed (not lost to a dirty block).
+    evidence = cp.list_evidence(task.id)[0]
+    manifest = evidence.metadata["verification"]
+    repo_anchor = manifest["repo"]
+    assert manifest["tests"][0]["returncode"] == 0
+    assert repo_anchor["dirty"] is False
+    assert repo_anchor["pushed"] is True
+    assert repo_anchor["files_changed"] == ["README.md"]
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]).startswith(
+        repo_anchor["head_sha"]
+    )
+
+
+def test_mac_worker_blocks_dirty_worktree_when_contract_test_fails(tmp_path: Path):
+    """The dirty-worktree rescue is test-gated: when the contract test does NOT
+    pass after committing the agent's uncommitted edits, the worker commits but
+    REFUSES to push and blocks the task. Unverified dirt is never silently
+    accepted — the test-pass gate is what makes the rescue safe (mac task_94aa4ed5)."""
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    metadata = _repository_task_metadata(repo)
+    # Contract test fails -> the rescue must commit but refuse to push.
+    metadata["execution_contract"]["repository_contract"]["test"]["command"] = "false"
+    task = cp.create_task(
+        "Dirty result, failing contract test",
+        required_capabilities=["python"],
+        metadata=metadata,
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        _write_repo_worker_manifest(task_dir, worktree)
+        (worktree / "README.md").write_text("unverified dirty edit\n", encoding="utf-8")
+        return WorkerExecution(0, "left dirty tree, test will fail", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked", result.error
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    evidence = cp.list_evidence(task.id)[0]
+    manifest = evidence.metadata["verification"]
+    repo_anchor = manifest["repo"]
+    problems = " ".join(manifest.get("problems") or [])
+    assert repo_anchor["pushed"] is False
+    assert "refusing to push" in problems
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]) == ""
 
 
 def test_mac_worker_adopts_agent_pushed_branch_when_worktree_matches(tmp_path: Path):

@@ -2942,15 +2942,20 @@ class MacWorker:
                 str(context.get("repository_branch") or "").strip(),
                 context,
             )
-        # Rescue "agent did the work but forgot to commit": when the worktree
-        # holds UNTRACKED new files (created but never `git add`ed), re-finalize so
-        # they are committed, the contract test is re-run, and the branch is pushed
-        # ONLY if that test passes. Tracked-but-modified-uncommitted edits are NOT
-        # rescued here — they stay blocked by the dirty-worktree contract.
-        has_untracked = (
+        # Rescue "agent did the work but forgot to commit": when the worktree is
+        # DIRTY (untracked new files AND/OR modified tracked files left
+        # uncommitted), re-finalize so ALL changes are committed, the contract test
+        # is re-run on the result, and the branch is pushed ONLY if that test
+        # passes. This covers an agent that edited tracked files and passed
+        # `make test` but slipped on `git commit` (mac task_94aa4ed5) — previously
+        # only untracked files were rescued, so a tracked-but-uncommitted edit was
+        # blocked despite passing tests. Safe because the finalizer refuses to push
+        # when the contract test does not pass (it records the failure), so
+        # unverified/incomplete dirt is never silently accepted.
+        is_dirty = (
             worktree is not None
             and worktree.exists()
-            and _repository_worktree_has_untracked_files(worktree)
+            and _repository_worktree_is_dirty(worktree)
         )
         manifest_path = task_dir / "mac-evidence.json"
         # When we adopted an already-pushed branch, the agent-authored manifest
@@ -2958,7 +2963,7 @@ class MacWorker:
         # non-canonical shape the strict validator treats as missing. Re-finalize
         # from the adopted host worktree to re-run the contract test and emit a
         # valid manifest. Otherwise keep an existing agent manifest untouched.
-        if manifest_path.exists() and not adopted and not has_untracked:
+        if manifest_path.exists() and not adopted and not is_dirty:
             return False
 
         try:
@@ -4426,19 +4431,6 @@ def _git_stdout(worktree: Path, args: List[str]) -> str:
 def _repository_worktree_is_dirty(worktree: Path) -> bool:
     status = _run_git(worktree, ["status", "--porcelain"])
     return status.returncode != 0 or bool(status.stdout.strip())
-
-
-def _repository_worktree_has_untracked_files(worktree: Path) -> bool:
-    """True when the worktree carries UNTRACKED new files (``?? path``).
-
-    Distinguishes "the agent created files but forgot to ``git add``/commit them"
-    (rescuable: commit + test + push-if-passing) from "tracked files left
-    modified-but-uncommitted" (left blocked by the dirty-worktree contract).
-    """
-    status = _run_git(worktree, ["status", "--porcelain", "--untracked-files=all"])
-    if status.returncode != 0:
-        return False
-    return any(line.startswith("??") for line in status.stdout.splitlines())
 
 
 def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
