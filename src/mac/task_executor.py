@@ -1908,6 +1908,28 @@ PYGH
   case " $MAC_REPO_REQUIRED_COMMANDS " in
     *" node "*|*" npm "*|*" pnpm "*) mac_ensure_modern_node ;;
   esac
+  # Pin a pnpm that READS the repo's declared config. The base image ships pnpm
+  # 11, which DROPPED reading pnpm settings from package.json (onlyBuiltDependencies
+  # etc.) and from .npmrc — so repos that declare config there get a broken/
+  # incomplete install: native build scripts are ignored ("ERR_PNPM_IGNORED_BUILDS")
+  # and devDeps like jest/vitest end up half-linked ("Cannot find module .../jest").
+  # pnpm 9 reads package.json + .npmrc config and installs completely on Node 18-22,
+  # and (unlike pnpm 11) does not run the high-concurrency release-age metadata pass
+  # that the egress proxy can't sustain. When pnpm is required and the system pnpm
+  # is >=10, install a task-local pnpm@<ver> PATH-first so the repo's config is
+  # honored. Override/opt out with MAC_SANDBOX_PNPM_VERSION.
+  case " $MAC_REPO_REQUIRED_COMMANDS " in
+    *" pnpm "*)
+      mac_pnpm_major="$(pnpm --version 2>/dev/null | cut -d. -f1)"
+      case "$mac_pnpm_major" in ''|*[!0-9]*) mac_pnpm_major=0 ;; esac
+      mac_pnpm_want="${MAC_SANDBOX_PNPM_VERSION:-9}"
+      if [ "$mac_pnpm_want" != "system" ] && [ "$mac_pnpm_major" -ge 10 ] 2>/dev/null \
+         && [ ! -x "$MAC_TOOLCHAIN_BIN/pnpm" ]; then
+        mac_install_command pnpm && mac_note "pinned task-local pnpm@${mac_pnpm_want} (image pnpm ${mac_pnpm_major} ignores package.json/.npmrc config)" \
+          || mac_note "could not pin compatible pnpm; using system pnpm ${mac_pnpm_major}"
+      fi
+      ;;
+  esac
   for cmd in $MAC_REPO_REQUIRED_COMMANDS; do
     command -v "$cmd" >/dev/null 2>&1 && continue
     mac_note "missing command before provisioning: $cmd"
@@ -1948,7 +1970,12 @@ EOF
     # the file existing, so non-pnpm repos are untouched. See ADR 0009.
     mac_ws_yaml="$worktree/pnpm-workspace.yaml"
     mac_ws_tuned=0
-    if [ -f "$mac_ws_yaml" ] && ! grep -q "networkConcurrency:" "$mac_ws_yaml" 2>/dev/null; then
+    # Only relevant for pnpm >=10 (which reads these from pnpm-workspace.yaml and
+    # runs the release-age pass). Under the pinned pnpm 9 the file isn't consulted
+    # for these keys, so skip the edit to avoid an unknown-setting warning.
+    mac_eff_pnpm="$(pnpm --version 2>/dev/null | cut -d. -f1)"
+    case "$mac_eff_pnpm" in ''|*[!0-9]*) mac_eff_pnpm=0 ;; esac
+    if [ "$mac_eff_pnpm" -ge 10 ] 2>/dev/null && [ -f "$mac_ws_yaml" ] && ! grep -q "networkConcurrency:" "$mac_ws_yaml" 2>/dev/null; then
       if cp "$mac_ws_yaml" "$MAC_TOOLCHAIN_ROOT/pnpm-workspace.yaml.macbak" 2>/dev/null; then
         mac_ws_tuned=1
         {
