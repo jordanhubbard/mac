@@ -132,6 +132,7 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import openshell_required_for_identity
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
+from mac.retention_service import RetentionService
 from mac.service_role_service import ServiceRoleService
 from mac.review_service import ReviewService, cross_llm_review_problems
 from mac.roles_service import RolesService
@@ -996,6 +997,10 @@ class ControlPlane:
         self.observability = ObservabilityService(
             self.store,
             action_event_recorder=self.action_events.project_observability,
+        )
+        self.retention = RetentionService(
+            self.store,
+            observability_recorder=self._retention_obs_recorder,
         )
         self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
         self.agentbus = AgentBusService(self.store, self.observability)
@@ -4532,6 +4537,41 @@ class ControlPlane:
 
     def observability_summary(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.observability.summary(*args, **kwargs)
+
+    # Retention service façade -------------------------------------------
+
+    def _retention_obs_recorder(self, name: str, *, detail: Any = None) -> None:
+        """Bridge from RetentionService audit callbacks to observability.
+
+        RetentionService calls this as ``obs_recorder(name, detail=...)``.
+        We forward it as an info-level log so the audit trail is visible
+        in the same observability stream as every other MAC operation.
+        """
+        try:
+            self.observability.record_log(
+                name,
+                level="info",
+                layer="control_plane",
+                source="retention",
+                detail=detail or {},
+            )
+        except Exception:
+            pass  # audit must never raise
+
+    def retention_stats(self, record_class: Optional[str] = None) -> List[JsonDict]:
+        return self.retention.stats(record_class=record_class)
+
+    def retention_dry_run(self, record_class: str, *, actor: str = "operator") -> JsonDict:
+        return self.retention.dry_run(record_class, actor=actor).to_dict()
+
+    def retention_prune(self, record_class: str, *, actor: str = "operator") -> JsonDict:
+        return self.retention.prune(record_class, actor=actor).to_dict()
+
+    def retention_prune_all(self, *, actor: str = "operator") -> List[JsonDict]:
+        return self.retention.prune_all(actor=actor)
+
+    def retention_list_policies(self) -> List[JsonDict]:
+        return self.retention.list_policies()
 
     # OpenShell policies / action events --------------------------------
 
