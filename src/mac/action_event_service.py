@@ -32,6 +32,13 @@ from mac.models import (
 
 ACTION_EVENT_SCHEMA = "mac.action_event.v1"
 
+# retention-prereq: cap the serialised attributes JSON on action events so
+# they don't bypass the observability detail-size cap and bloat the table.
+# Action events project observability detail verbatim into the attributes
+# column, which previously had no size guard.  The cap mirrors
+# ObservabilityService.MAX_DETAIL_BYTES so both tables stay bounded.
+ACTION_EVENT_MAX_ATTRIBUTES_BYTES = 64 * 1024
+
 
 def _clean_optional(value: Any) -> Optional[str]:
     if value is None:
@@ -61,6 +68,24 @@ def _normalize_outcome(value: str) -> str:
 
 def _stable_hex(value: str, length: int = 16) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
+
+
+def _cap_attributes(attrs: dict) -> dict:
+    """Cap serialised attributes to ACTION_EVENT_MAX_ATTRIBUTES_BYTES.
+
+    If the JSON representation exceeds the cap, replace the payload with a
+    truncation marker that preserves the top-level keys so operators can still
+    diagnose which emitter produced the oversized event.
+    """
+    serialised = json_dumps(attrs)
+    if len(serialised.encode("utf-8")) <= ACTION_EVENT_MAX_ATTRIBUTES_BYTES:
+        return attrs
+    return {
+        "_truncated": True,
+        "_max_bytes": ACTION_EVENT_MAX_ATTRIBUTES_BYTES,
+        "_original_bytes": len(serialised.encode("utf-8")),
+        "_keys": list(attrs.keys())[:50],
+    }
 
 
 class ActionEventService:
@@ -439,7 +464,7 @@ class ActionEventService:
             policy_version=int(policy_version) if policy_version is not None else None,
             command_id=_clean_optional(raw.get("command_id")),
             parent_event_id=_clean_optional(raw.get("parent_event_id")),
-            attributes=ensure_json_object(raw.get("attributes") or {}),
+            attributes=_cap_attributes(ensure_json_object(raw.get("attributes") or {})),
             redaction_state=str(raw.get("redaction_state") or "redacted"),
         )
 
