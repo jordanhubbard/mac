@@ -57,6 +57,10 @@ class RolloutService:
         create_task: Callable[..., Task],
         add_memory: Callable[..., Any],
         task_from_row: Callable[[Any], Task],
+        deploy_artifact: Optional[Callable[[str, str, str], Any]] = None,
+        get_artifact_by_digest: Optional[Callable[[str], Any]] = None,
+        get_environment: Optional[Callable[[str], Any]] = None,
+        current_deployment: Optional[Callable[[str], Any]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -66,6 +70,10 @@ class RolloutService:
         self._create_task = create_task
         self._add_memory = add_memory
         self._task_from_row = task_from_row
+        self._deploy_artifact = deploy_artifact
+        self._get_artifact_by_digest = get_artifact_by_digest
+        self._get_environment = get_environment
+        self._current_deployment = current_deployment
 
     # Rollout lifecycle -------------------------------------------------
 
@@ -82,6 +90,7 @@ class RolloutService:
         artifact_hash: Optional[str] = None,
         health_policy: Optional[Dict[str, Any]] = None,
         required_eval_set_id: Optional[str] = None,
+        deploy_environment_id: Optional[str] = None,
     ) -> Rollout:
         if not version:
             raise ValidationError("rollout version is required")
@@ -105,6 +114,8 @@ class RolloutService:
             self._validate_artifact_hash(artifact_hash)
         if required_eval_set_id is not None:
             self._get_eval_set(required_eval_set_id)
+        if deploy_environment_id is not None and self._get_environment is not None:
+            self._get_environment(deploy_environment_id)
         policy = ensure_json_object(health_policy)
         # mac-jmjc: a rollout without an explicit required_checks list
         # would let the health gate trivially pass on any caller input.
@@ -126,8 +137,8 @@ class RolloutService:
             INSERT INTO rollouts (
                 id, version, strategy, status, target_percent, tenant_id, channel,
                 runtime_environment_id, artifact_uri, artifact_hash, health_policy,
-                required_eval_set_id, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                required_eval_set_id, deploy_environment_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rollout_id,
@@ -142,6 +153,7 @@ class RolloutService:
                 artifact_hash,
                 json_dumps(policy),
                 required_eval_set_id,
+                deploy_environment_id,
                 created_by,
                 now,
                 now,
@@ -405,6 +417,16 @@ class RolloutService:
                 {"actor": actor, **detail},
                 now,
             )
+        # mac-kg8y (follow-up): now that the status row is committed, perform the
+        # actual environment deployment.  We do this outside the SQLite transaction
+        # because deploy_artifact opens its own transaction; nesting is fine but
+        # some adapters do not support it.  If the deployment fails we record an
+        # error event and re-raise so the caller knows the rollout status was
+        # committed but the environment deployment did not succeed.
+        if status == RolloutStatus.PROMOTED.value:
+            self._execute_promote_deployment(rollout, actor, detail)
+        elif status == RolloutStatus.ROLLED_BACK.value:
+            self._execute_rollback_deployment(rollout, actor, detail)
         return self.get_rollout(rollout_id)
 
     def evaluate_rollout_health(
@@ -473,6 +495,7 @@ class RolloutService:
         detail: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Rollout, Task]:
         rollout = self.get_rollout(rollout_id)
+        prior_status = rollout.status
         now = utcnow()
         self.store.execute(
             "UPDATE rollouts SET status = ?, target_percent = ?, updated_at = ? WHERE id = ?",
@@ -505,9 +528,131 @@ class RolloutService:
             None,
             actor,
         )
+        # mac-kg8y: when rescuing from PROMOTED the environment is actively
+        # serving the just-promoted artifact.  Immediately revert to the
+        # prior known-good deployment so the environment is not left in a
+        # broken state while the rescue task is pending.
+        if prior_status == RolloutStatus.PROMOTED.value:
+            self._execute_rollback_deployment(rollout, actor, rescue_detail)
         return self.get_rollout(rollout_id), task
 
     # Internal helpers --------------------------------------------------
+
+    def _execute_promote_deployment(
+        self,
+        rollout: Rollout,
+        actor: str,
+        detail: Dict[str, Any],
+    ) -> None:
+        """Deploy the rollout's artifact to the linked deploy environment.
+
+        Called after the rollout row is committed to PROMOTED.  If no
+        ``deploy_environment_id`` is set the call is a no-op so that
+        rollouts without an explicit environment linkage continue to work.
+        If the deployment call fails we record a ``rollout.deploy_failed``
+        event and re-raise so the caller sees the failure.
+        """
+        if not rollout.deploy_environment_id:
+            return
+        if self._deploy_artifact is None or self._get_artifact_by_digest is None:
+            return
+        if not rollout.artifact_hash:
+            return
+        try:
+            artifact = self._get_artifact_by_digest(rollout.artifact_hash)
+            deployment = self._deploy_artifact(
+                rollout.deploy_environment_id, artifact.id, actor
+            )
+            self._record_event(
+                rollout.id,
+                "rollout.deployed",
+                actor,
+                {
+                    "deploy_environment_id": rollout.deploy_environment_id,
+                    "deployment_id": deployment.id if hasattr(deployment, "id") else str(deployment),
+                    "artifact_id": artifact.id,
+                    "artifact_hash": rollout.artifact_hash,
+                },
+            )
+        except Exception as exc:
+            self._record_event(
+                rollout.id,
+                "rollout.deploy_failed",
+                actor,
+                {
+                    "deploy_environment_id": rollout.deploy_environment_id,
+                    "artifact_hash": rollout.artifact_hash,
+                    "error": str(exc),
+                },
+            )
+            raise
+
+    def _execute_rollback_deployment(
+        self,
+        rollout: Rollout,
+        actor: str,
+        detail: Dict[str, Any],
+    ) -> None:
+        """Reactivate the prior known-good deployment in the linked environment.
+
+        Called after a rollout is moved to ROLLED_BACK or when rescue is
+        triggered from PROMOTED.  Looks up the second-most-recent (retired)
+        deployment in the environment and redeploys it.  If no prior
+        deployment exists or no environment is linked the call is a no-op.
+        """
+        if not rollout.deploy_environment_id:
+            return
+        if self._deploy_artifact is None or self._current_deployment is None:
+            return
+        try:
+            # Find the most-recently-retired deployment in this environment as
+            # the known-good prior artifact to restore.
+            prior_row = self.store.query_one(
+                """
+                SELECT artifact_id FROM deployments
+                WHERE environment_id = ? AND retired_at IS NOT NULL
+                ORDER BY retired_at DESC, id DESC
+                LIMIT 1
+                """,
+                (rollout.deploy_environment_id,),
+            )
+            if prior_row is None:
+                # No prior deployment — nothing to roll back to; record and return.
+                self._record_event(
+                    rollout.id,
+                    "rollout.rollback_skipped",
+                    actor,
+                    {
+                        "deploy_environment_id": rollout.deploy_environment_id,
+                        "reason": "no_prior_deployment",
+                    },
+                )
+                return
+            prior_artifact_id = prior_row["artifact_id"]
+            deployment = self._deploy_artifact(
+                rollout.deploy_environment_id, prior_artifact_id, actor
+            )
+            self._record_event(
+                rollout.id,
+                "rollout.rolled_back_deployed",
+                actor,
+                {
+                    "deploy_environment_id": rollout.deploy_environment_id,
+                    "deployment_id": deployment.id if hasattr(deployment, "id") else str(deployment),
+                    "prior_artifact_id": prior_artifact_id,
+                },
+            )
+        except Exception as exc:
+            self._record_event(
+                rollout.id,
+                "rollout.rollback_deploy_failed",
+                actor,
+                {
+                    "deploy_environment_id": rollout.deploy_environment_id,
+                    "error": str(exc),
+                },
+            )
+            raise
 
     def _record_event(
         self,
@@ -617,6 +762,9 @@ class RolloutService:
         required_eval_set_id = (
             row["required_eval_set_id"] if "required_eval_set_id" in keys else None
         )
+        deploy_environment_id = (
+            row["deploy_environment_id"] if "deploy_environment_id" in keys else None
+        )
         return Rollout(
             row["id"],
             row["version"],
@@ -630,6 +778,7 @@ class RolloutService:
             row["artifact_hash"],
             json_loads(row["health_policy"], {}),
             required_eval_set_id,
+            deploy_environment_id,
             row["created_by"],
             row["created_at"],
             row["updated_at"],

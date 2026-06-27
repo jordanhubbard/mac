@@ -1095,6 +1095,10 @@ class ControlPlane:
             create_task=self.create_task,
             add_memory=self.add_memory,
             task_from_row=self._task_from_row,
+            deploy_artifact=self.deploy.deploy_artifact,
+            get_artifact_by_digest=self.deploy.get_artifact,
+            get_environment=self.deploy.get_environment,
+            current_deployment=self.deploy.current_deployment,
         )
 
     @classmethod
