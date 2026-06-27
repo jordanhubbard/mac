@@ -1,3 +1,16 @@
+// =============================================================================
+// DEPRECATED — MAINTENANCE-ONLY MODULE
+// =============================================================================
+// src/mac/ui (this file and its siblings) is in MAINTENANCE-ONLY mode.
+// No new features should be added here. Critical bug fixes only.
+//
+// The canonical Fleet UI is the Fleet IDE located in ide/.
+// All new browser and desktop UI work must target ide/ instead.
+//
+// See docs/adr/0010-fleet-ide-cutover-parity-matrix.md for the cut-over plan
+// and parity matrix.
+// =============================================================================
+
 export function normalizeApiBaseUrl(raw) {
     const value = String(raw || "").trim();
     if (!value || value === "/")
