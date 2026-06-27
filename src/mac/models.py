@@ -1579,6 +1579,7 @@ class Rollout:
     artifact_hash: Optional[str]
     health_policy: JsonDict
     required_eval_set_id: Optional[str]
+    deploy_environment_id: Optional[str]
     created_by: str
     created_at: str
     updated_at: str

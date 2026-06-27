@@ -1085,6 +1085,7 @@ class SQLiteStore:
                     artifact_uri TEXT,
                     artifact_hash TEXT,
                     health_policy TEXT NOT NULL DEFAULT '{}',
+                    deploy_environment_id TEXT,
                     created_by TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -1457,6 +1458,7 @@ class SQLiteStore:
         self._ensure_column("rollouts", "artifact_hash", "artifact_hash TEXT")
         self._ensure_column("rollouts", "health_policy", "health_policy TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("rollouts", "required_eval_set_id", "required_eval_set_id TEXT")
+        self._ensure_column("rollouts", "deploy_environment_id", "deploy_environment_id TEXT")
         self._ensure_column("agents", "running_digest", "running_digest TEXT")
         self._ensure_column("agents", "role_id", "role_id TEXT")
         self._ensure_column("agents", "hermes_instance_id", "hermes_instance_id TEXT")

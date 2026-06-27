@@ -7579,3 +7579,206 @@ def test_force_complete_overrides_review_gate_for_stranded_task(cp):
     assert hist[-1].event_type == "task.force_completed"
     assert hist[-1].detail.get("reason") == "merged via PR #181"
     assert hist[-1].detail.get("from_state") == TaskState.FAILED.value
+
+
+# ---------------------------------------------------------------------------
+# mac-kg8y: Rollout promotion / rollback must atomically deploy to environment
+# ---------------------------------------------------------------------------
+
+def _create_linked_rollout(cp, version="10.0", artifact_hash="sha256:aabbccdd"):
+    """Create a rollout with a linked deploy environment and a pre-registered artifact."""
+    runtime = create_runtime(cp, "runtime-linked-%s" % version)
+    env = cp.register_environment("env-rollout-%s" % version, channel="fleet")
+    artifact = cp.register_artifact(
+        "image",
+        artifact_hash,
+        "artifact://mac/%s" % version,
+        "human",
+    )
+    rollout = cp.create_rollout(
+        version,
+        "canary",
+        10,
+        "human",
+        runtime_environment_id=runtime.id,
+        artifact_uri=artifact.uri,
+        artifact_hash=artifact_hash,
+        deploy_environment_id=env.id,
+    )
+    return rollout, env, artifact
+
+
+def test_rollout_promotion_deploys_artifact_to_linked_environment(cp):
+    """mac-kg8y: promote must deploy the rollout artifact to deploy_environment_id."""
+    rollout, env, artifact = _create_linked_rollout(cp, "11.0", "sha256:promo001")
+
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    promoted = cp.advance_rollout(rollout.id, "promote", "human")
+
+    assert promoted.status == RolloutStatus.PROMOTED.value
+    # The environment must now have an active deployment for our artifact.
+    active = cp.current_deployment(env.id)
+    assert active is not None, "environment has no active deployment after promote"
+    assert active.artifact_id == artifact.id
+    assert active.status == "active"
+
+
+def test_rollout_promotion_records_deployed_event(cp):
+    """mac-kg8y: a rollout.deployed event is recorded after a successful promote."""
+    rollout, env, artifact = _create_linked_rollout(cp, "11.1", "sha256:promo002")
+
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    cp.advance_rollout(rollout.id, "promote", "human")
+
+    events = cp.list_rollout_events(rollout.id)
+    event_types = [e["event_type"] for e in events]
+    assert "rollout.deployed" in event_types, "expected rollout.deployed event, got: %s" % event_types
+    deployed_evt = next(e for e in events if e["event_type"] == "rollout.deployed")
+    assert deployed_evt["detail"]["artifact_id"] == artifact.id
+    assert deployed_evt["detail"]["deploy_environment_id"] == env.id
+
+
+def test_rollout_without_deploy_environment_still_promotes(cp):
+    """Rollouts with no deploy_environment_id must still promote successfully (no-op deploy)."""
+    rollout = create_verified_rollout(cp, "12.0")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    promoted = cp.advance_rollout(rollout.id, "promote", "human")
+    assert promoted.status == RolloutStatus.PROMOTED.value
+    assert promoted.deploy_environment_id is None
+
+
+def test_rollout_rollback_redeploys_prior_artifact(cp):
+    """mac-kg8y: rollback must redeploy the prior known-good artifact."""
+    rollout, env, artifact_v1 = _create_linked_rollout(cp, "13.0", "sha256:rollback01")
+
+    # Pre-deploy artifact_v1 as the prior known-good deployment.
+    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
+
+    # Create v2 artifact, promote it.
+    artifact_v2 = cp.register_artifact(
+        "image", "sha256:rollback02", "artifact://mac/13.0-v2", "human"
+    )
+    cp.verify_rollout_artifact(
+        rollout.id, artifact_v2.uri, artifact_v2.digest, "human"
+    )
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    cp.advance_rollout(rollout.id, "promote", "human")
+
+    # Now rollback — should redeploy the prior artifact (v1).
+    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
+    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
+
+    active = cp.current_deployment(env.id)
+    assert active is not None
+    assert active.artifact_id == artifact_v1.id, (
+        "expected prior artifact %s, got %s" % (artifact_v1.id, active.artifact_id)
+    )
+
+
+def test_rollout_rollback_records_rolled_back_deployed_event(cp):
+    """mac-kg8y: a rollout.rolled_back_deployed event is recorded on successful rollback."""
+    rollout, env, artifact_v1 = _create_linked_rollout(cp, "13.1", "sha256:rollbackevt1")
+    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
+
+    artifact_v2 = cp.register_artifact(
+        "image", "sha256:rollbackevt2", "artifact://mac/13.1-v2", "human"
+    )
+    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    cp.advance_rollout(rollout.id, "promote", "human")
+    cp.advance_rollout(rollout.id, "rollback", "human")
+
+    events = cp.list_rollout_events(rollout.id)
+    event_types = [e["event_type"] for e in events]
+    assert "rollout.rolled_back_deployed" in event_types, (
+        "expected rollout.rolled_back_deployed event, got: %s" % event_types
+    )
+
+
+def test_rollout_rollback_without_deploy_environment_is_noop(cp):
+    """Rollouts with no deploy_environment_id must still transition to ROLLED_BACK (no deploy)."""
+    rollout = create_verified_rollout(cp, "14.0")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
+    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
+
+
+def test_rollout_rollback_with_no_prior_deployment_records_skipped_event(cp):
+    """When no prior deployment exists, rollback records rollout.rollback_skipped."""
+    rollout, env, artifact_v1 = _create_linked_rollout(cp, "14.1", "sha256:nopriordeploy")
+    # Do NOT pre-deploy anything; only the rollout promotion creates the first deployment.
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    cp.advance_rollout(rollout.id, "promote", "human")
+    # Now rollback — no prior deployment to revert to.
+    rolledback = cp.advance_rollout(rollout.id, "rollback", "human")
+    assert rolledback.status == RolloutStatus.ROLLED_BACK.value
+
+    events = cp.list_rollout_events(rollout.id)
+    event_types = [e["event_type"] for e in events]
+    assert "rollout.rollback_skipped" in event_types, (
+        "expected rollout.rollback_skipped event, got: %s" % event_types
+    )
+
+
+def test_rollout_rescue_from_promoted_redeploys_prior_artifact(cp):
+    """mac-kg8y: rescuing a PROMOTED rollout must immediately revert the environment."""
+    rollout, env, artifact_v1 = _create_linked_rollout(cp, "15.0", "sha256:rescue01")
+    cp.deploy_artifact(env.id, artifact_v1.id, "prior-release")
+
+    artifact_v2 = cp.register_artifact(
+        "image", "sha256:rescue02", "artifact://mac/15.0-v2", "human"
+    )
+    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
+    cp.advance_rollout(rollout.id, "promote", "human")
+
+    # At this point env serves artifact_v2. Rescue should revert to artifact_v1.
+    rescued, rescue_task = cp.rescue_rollout(rollout.id, "ops-bot", "service degraded after promote")
+    assert rescued.status == RolloutStatus.RESCUING.value
+
+    active = cp.current_deployment(env.id)
+    assert active is not None
+    assert active.artifact_id == artifact_v1.id, (
+        "expected prior artifact %s after rescue, got %s" % (artifact_v1.id, active.artifact_id)
+    )
+
+
+def test_rollout_rescue_from_canarying_does_not_deploy(cp):
+    """Rescuing from CANARYING (not PROMOTED) should not attempt environment redeployment."""
+    rollout, env, artifact = _create_linked_rollout(cp, "15.1", "sha256:rescue03")
+    cp.advance_rollout(rollout.id, "start_canary", "human")
+    # Rescue from CANARYING — env was never promoted, so no redeployment expected.
+    rescued, _ = cp.rescue_rollout(rollout.id, "ops-bot", "canary health failed")
+    assert rescued.status == RolloutStatus.RESCUING.value
+    # Environment should have no active deployment (rollout never promoted).
+    assert cp.current_deployment(env.id) is None
+
+
+def test_rollout_create_with_deploy_environment_id_validates_environment_exists(cp):
+    """Creating a rollout with a non-existent deploy_environment_id must fail."""
+    runtime = create_runtime(cp, "runtime-validate-env")
+    with pytest.raises(NotFoundError):
+        cp.create_rollout(
+            "20.0",
+            "canary",
+            10,
+            "human",
+            runtime_environment_id=runtime.id,
+            artifact_uri="artifact://mac/20.0",
+            artifact_hash="sha256:validenv01",
+            deploy_environment_id="env_does_not_exist",
+        )
+
+
+def test_rollout_deploy_environment_id_round_trips(cp):
+    """deploy_environment_id is persisted and returned on get_rollout."""
+    rollout, env, _ = _create_linked_rollout(cp, "21.0", "sha256:roundtrip01")
+    fetched = cp.get_rollout(rollout.id)
+    assert fetched.deploy_environment_id == env.id

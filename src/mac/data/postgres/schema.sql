@@ -963,6 +963,7 @@ CREATE TABLE IF NOT EXISTS rollouts (
     artifact_hash TEXT,
     health_policy TEXT NOT NULL DEFAULT '{}',
     required_eval_set_id TEXT,
+    deploy_environment_id TEXT,
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
