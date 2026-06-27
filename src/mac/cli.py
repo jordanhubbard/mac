@@ -876,6 +876,85 @@ def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
 
+def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
+    """Move an agent between fleets: rewrite fleets.yaml + optionally redeploy.
+
+    Dry-run by default (prints the plan).  Pass --execute to actually mutate
+    fleets.yaml, create a backup, and print the redeploy + DB reconcile commands.
+    """
+    from mac.fleet_move import (
+        execute_fleet_move,
+        plan_fleet_move,
+        render_move_plan,
+    )
+    from mac.hermes_config_surface import registry_path
+
+    reg_path = registry_path()
+
+    try:
+        import yaml  # type: ignore[import]
+    except ImportError as exc:
+        raise SystemExit("PyYAML is required for fleet move-agent") from exc
+
+    registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
+
+    from_fleet = args.from_fleet
+    to_fleet = args.to_fleet
+    agent_name = args.agent
+
+    # Auto-detect source fleet when --from is omitted.
+    if not from_fleet:
+        from mac.fleet_move import find_agent_fleet
+
+        from_fleet = find_agent_fleet(registry, agent_name)
+        if not from_fleet:
+            raise SystemExit(
+                "agent %r not found in any fleet in %s; "
+                "pass --from to specify the source fleet" % (agent_name, reg_path)
+            )
+        print("auto-detected source fleet: %s" % from_fleet)
+
+    if not args.execute:
+        # Dry-run: print the plan and the proposed registry diff.
+        steps = plan_fleet_move(agent_name, from_fleet, to_fleet, registry,
+                                reconcile_db=not args.no_db_reconcile)
+        print(render_move_plan(agent_name, from_fleet, to_fleet, steps))
+        return
+
+    result = execute_fleet_move(
+        agent_name,
+        from_fleet,
+        to_fleet,
+        fleets_config=reg_path,
+        to_os=args.to_os,
+        dry_run=False,
+        reconcile_db=not args.no_db_reconcile,
+        hub_url=args.hub_url or None,
+    )
+
+    if not result.get("ok"):
+        raise SystemExit("fleet move-agent failed: %s" % result.get("error"))
+
+    if result.get("idempotent"):
+        print(result["message"])
+        return
+
+    print("agent %r moved: %s -> %s" % (agent_name, from_fleet, to_fleet))
+    if result.get("backup"):
+        print("registry backed up to %s" % result["backup"])
+    if result.get("registry_written"):
+        print("registry written to %s" % result["registry_written"])
+    print("")
+    print("Next steps:")
+    for step in result.get("next_steps") or []:
+        print("  %s" % step)
+    if result.get("db_reconcile_cmds"):
+        print("")
+        print("DB reconcile (run after agent re-registers):")
+        for cmd in result["db_reconcile_cmds"]:
+            print("  %s" % cmd)
+
+
 def _sender_agent_id(args: argparse.Namespace) -> str:
     sender = (
         getattr(args, "sender_agent_id", None)
@@ -3313,6 +3392,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="client env file to update (default ~/.mac/.env)",
     )
     _set(cmd_fleet_rotate_token, fleet_rotate_token)
+
+    fleet_move = fleet.add_parser(
+        "move-agent",
+        help=(
+            "move an agent between fleets: rewrite fleets.yaml entry, "
+            "print redeploy command, and emit DB reconcile commands. "
+            "Dry-run by default; pass --execute to mutate fleets.yaml."
+        ),
+    )
+    fleet_move.add_argument(
+        "--agent",
+        required=True,
+        help="agent name to move (e.g. worker-1)",
+    )
+    fleet_move.add_argument(
+        "--from",
+        dest="from_fleet",
+        default=None,
+        help="source fleet hub-name (default: auto-detect from fleets.yaml)",
+    )
+    fleet_move.add_argument(
+        "--to",
+        dest="to_fleet",
+        required=True,
+        help="target fleet hub-name",
+    )
+    fleet_move.add_argument(
+        "--to-os",
+        default="linux",
+        choices=["linux", "darwin"],
+        help="OS of the agent on the destination (default: linux)",
+    )
+    fleet_move.add_argument(
+        "--hub-url",
+        default="",
+        help=(
+            "override the hub_url written into the agent entry "
+            "(default: inherit from target fleet)"
+        ),
+    )
+    fleet_move.add_argument(
+        "--no-db-reconcile",
+        action="store_true",
+        help="skip DB fleet membership reconcile steps",
+    )
+    fleet_move.add_argument(
+        "--execute",
+        action="store_true",
+        help="actually mutate fleets.yaml (default: dry-run plan only)",
+    )
+    _set(cmd_fleet_move_agent, fleet_move)
 
     mood = sub.add_parser(
         "mood",
