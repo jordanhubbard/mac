@@ -14,6 +14,32 @@ GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 WORKTREE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+def normalize_manifest_tests(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Normalize ``verification.tests`` so it is always a list of result objects.
+
+    The canonical shape is a list (mac-wjy3).  Some executors historically
+    emitted a single result *dict* instead of a one-element list, which caused
+    ``RepoChangeValidator`` to treat the dict as tests:null/missing and reject
+    otherwise-passing evidence at submit-for-review time.
+
+    Rules:
+    - ``tests`` already a list → returned unchanged (pass-through).
+    - ``tests`` is a dict (single result object) → wrapped in a list.
+    - ``tests`` is None / absent / any other type → left as-is so the
+      fail-closed "missing tests" path still triggers when no tests ran.
+
+    The function returns a *new* mapping with the normalised ``tests`` value;
+    it never mutates ``raw``.
+    """
+    tests = raw.get("tests")
+    if isinstance(tests, dict):
+        # Single structured result — wrap it so the list check passes.
+        normalised: Dict[str, Any] = dict(raw)
+        normalised["tests"] = [tests]
+        return normalised
+    return raw
+
+
 # mem-13: when evidence claims pushed=true with a remote_url + remote_ref,
 # the validator runs `git ls-remote <url> <ref>` and refuses the evidence
 # if the ref doesn't resolve. This closes the validator gap that let
@@ -99,7 +125,7 @@ class VerificationManifest:
     def parse(cls, raw: Any) -> "VerificationManifest":
         if not isinstance(raw, dict):
             raise ValidationError("verification manifest must be an object")
-        data = ensure_json_object(raw)
+        data = ensure_json_object(normalize_manifest_tests(raw))
         return cls(
             raw=data,
             schema=str(data.get("schema") or "").strip(),
