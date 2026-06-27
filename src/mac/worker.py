@@ -2432,55 +2432,247 @@ class MacWorker:
                 % source_root
             )
 
-        head = _run_git(source_root, ["rev-parse", "HEAD"])
-        if head.returncode != 0 or not head.stdout.strip():
-            raise RuntimeError(
-                "could not resolve repository source HEAD: %s"
-                % ((head.stderr or head.stdout or "").strip() or source_root)
-            )
-        base_sha = head.stdout.strip()
-        branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
-        worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
-        if worktree_dir.exists():
-            existing_head = _run_git(worktree_dir, ["rev-parse", "HEAD"])
-            if existing_head.returncode == 0 and existing_head.stdout.strip():
+        # --- Canonical-base fetch (mac-stale-base fix) ---
+        # Resolve the canonical remote and branch from the task contract.
+        # Precedence: canonical_remote_url > origin.default_branch (for branch) / "origin" (for remote).
+        # An explicit canonical URL that fails validation is a hard error (fail closed);
+        # we do NOT silently fall back to the local "origin" remote so that an
+        # operator misconfiguration cannot recreate the stale-HEAD problem.
+        canonical_remote = _repository_contract_canonical_remote(task)
+        if not canonical_remote:
+            canonical_remote = str(origin.get("repository_url") or "").strip()
+        # No explicit URL: resolve the real URL of the named "origin" remote so we
+        # can validate and redact it.  An invalid or missing URL fails closed.
+        if not canonical_remote:
+            _origin_url_result = _run_git(source_root, ["remote", "get-url", "origin"])
+            if _origin_url_result.returncode != 0 or not _origin_url_result.stdout.strip():
                 raise RuntimeError(
-                    "repository task worktree already exists for this lease: %s" % worktree_dir
+                    "could not resolve URL for named 'origin' remote in %s; "
+                    "refusing to fetch without a validated remote URL" % source_root
                 )
-            shutil.rmtree(worktree_dir)
-        # mac-3qv6: prune any orphaned worktree registration in
-        # source_root/.git/worktrees that points at the now-deleted
-        # directory. Without this, `git worktree add` below fails with
-        # "already exists" even though the on-disk directory is gone.
-        _run_git(source_root, ["worktree", "prune"])
+            canonical_remote = _origin_url_result.stdout.strip()
 
-        add = _run_git(
-            source_root,
-            ["worktree", "add", "-b", branch, str(worktree_dir), base_sha],
-        )
-        if add.returncode != 0:
+        # Validate the resolved remote URL; raises ValueError on bad URL (fail closed).
+        _validate_git_remote_url(canonical_remote)
+        fetch_remote = _inject_git_remote_auth(canonical_remote)
+        canonical_remote_display = _redact_git_remote_auth(fetch_remote)
+
+        canonical_branch = str(origin.get("default_branch") or "").strip()
+        if not canonical_branch:
+            canonical_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
+        if not canonical_branch:
+            canonical_branch = "main"
+        _validate_git_ref(canonical_branch)
+
+        # Determine the per-lease fetch ref name before acquiring the lock so the
+        # finally clause can reference it unconditionally.
+        lease_id = str(lease.get("id") or "lease")
+        tmp_ref = "refs/mac/fetch/%s" % _safe_path_component(lease_id)
+
+        # Resolve the common git directory correctly even when .git is a file
+        # (linked worktree).  Failure is a hard error — we must not fall back to
+        # source_root, which would create a non-shared lock that cannot protect
+        # concurrent access to the same shared git object store.
+        _git_common_dir_result = _run_git(source_root, ["rev-parse", "--git-common-dir"])
+        if _git_common_dir_result.returncode != 0 or not _git_common_dir_result.stdout.strip():
             raise RuntimeError(
-                "could not create repository task worktree: %s"
-                % ((add.stderr or add.stdout or "").strip() or worktree_dir)
+                "could not resolve git common directory for %s: %s"
+                % (
+                    source_root,
+                    (_git_common_dir_result.stderr or _git_common_dir_result.stdout or "").strip(),
+                )
             )
-        remote = _run_git(source_root, ["remote", "get-url", "origin"])
-        context: JsonDict = {
-            "schema": "mac.repository_task_worktree.v1",
-            "checkout_policy": "task_owned_git_worktree",
-            "repository_declared_path": str(origin.get("repository_path") or ""),
-            "repository_source_path": str(source_root),
-            "repository_worktree": str(worktree_dir),
-            "repository_branch": branch,
-            "repository_base_sha": base_sha,
-            "repository_origin_remote": remote.stdout.strip() if remote.returncode == 0 else "",
-        }
-        self._observe_log(
-            "worker.repository.worktree_prepared",
-            subject_type="task",
-            subject_id=str(task.get("id") or ""),
-            detail=context,
+        _raw_gcd = _git_common_dir_result.stdout.strip()
+        _gcd = (
+            (source_root / _raw_gcd).resolve()
+            if not Path(_raw_gcd).is_absolute()
+            else Path(_raw_gcd)
         )
-        return context
+        if not _gcd.exists():
+            raise RuntimeError(
+                "git common directory %r does not exist for repository %s" % (str(_gcd), source_root)
+            )
+        # Correction 1: require the resolved common git path to be a directory.
+        # A path that exists but is a file must fail closed; we must never lock
+        # its parent directory because that would create a non-shared lock that
+        # cannot protect concurrent access to the same shared git object store.
+        if not _gcd.is_dir():
+            raise RuntimeError(
+                "git common directory %r is not a directory for repository %s; "
+                "refusing to lock its parent (fail closed)" % (str(_gcd), source_root)
+            )
+        _lock_dir = _gcd
+        _lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = _lock_dir / "mac_prepare_worktree.lock"
+        lock_fh = open(lock_path, "w")  # noqa: WPS515
+        try:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+
+            # Resolve local prior SHA inside the lock so no concurrent fetch can
+            # race the read.  A missing or unresolvable HEAD is a hard error.
+            head = _run_git(source_root, ["rev-parse", "HEAD"])
+            if head.returncode != 0 or not head.stdout.strip():
+                raise RuntimeError(
+                    "could not resolve repository source HEAD: %s"
+                    % ((head.stderr or head.stdout or "").strip() or source_root)
+                )
+            local_prior_sha = head.stdout.strip()
+            if not re.match(r"^[0-9a-f]{40}$", local_prior_sha):
+                raise RuntimeError(
+                    "repository source HEAD is not a valid commit SHA: %r" % local_prior_sha
+                )
+
+            # Fetch the canonical branch into a per-lease named ref to avoid
+            # sharing FETCH_HEAD across concurrent preparations.
+            fetch = _run_git(
+                source_root,
+                ["fetch", "--no-tags", fetch_remote,
+                 "+refs/heads/%s:%s" % (canonical_branch, tmp_ref)],
+            )
+            if fetch.returncode != 0:
+                raise RuntimeError(
+                    "could not fetch canonical remote branch %r from remote for task worktree base; "
+                    "refusing to use potentially-stale local HEAD: %s"
+                    % (
+                        canonical_branch,
+                        (fetch.stderr or fetch.stdout or "").strip() or str(source_root),
+                    )
+                )
+
+            fetched_sha_result = _run_git(source_root, ["rev-parse", tmp_ref])
+            if fetched_sha_result.returncode != 0 or not fetched_sha_result.stdout.strip():
+                raise RuntimeError(
+                    "could not resolve fetched ref %r after fetch from remote: %s"
+                    % (
+                        tmp_ref,
+                        (fetched_sha_result.stderr or fetched_sha_result.stdout or "").strip(),
+                    )
+                )
+            base_sha = fetched_sha_result.stdout.strip()
+            # Validate the fetched SHA is a well-formed commit SHA before using it.
+            if not re.match(r"^[0-9a-f]{40}$", base_sha):
+                raise RuntimeError(
+                    "fetched ref %r resolved to an invalid commit SHA: %r" % (tmp_ref, base_sha)
+                )
+
+            # Correction 3: Verify the fetched ref resolves to a commit object,
+            # not merely a well-formed 40-hex SHA.  Tags, blobs, and trees
+            # resolve to 40-hex SHAs via rev-parse but are not commit objects;
+            # a task worktree must always be based on a real commit.
+            commit_verify_result = _run_git(
+                source_root, ["rev-parse", "--verify", "%s^{commit}" % tmp_ref]
+            )
+            if commit_verify_result.returncode != 0:
+                raise RuntimeError(
+                    "fetched ref %r does not resolve to a commit object; "
+                    "refusing to create task worktree on a non-commit object" % tmp_ref
+                )
+
+            # Correction 2: Require rev-list ahead/behind to succeed and parse
+            # exactly two non-negative integers.  Failure or malformed output is
+            # a hard error — evidence must never emit null counts.
+            ahead_behind_result = _run_git(
+                source_root,
+                ["rev-list", "--left-right", "--count",
+                 "%s...%s" % (local_prior_sha, base_sha)],
+            )
+            if ahead_behind_result.returncode != 0 or not ahead_behind_result.stdout.strip():
+                raise RuntimeError(
+                    "could not compute ahead/behind counts for %s...%s: %s"
+                    % (
+                        local_prior_sha,
+                        base_sha,
+                        (ahead_behind_result.stderr or ahead_behind_result.stdout or "").strip(),
+                    )
+                )
+            _ab_parts = ahead_behind_result.stdout.strip().split()
+            if len(_ab_parts) != 2:
+                raise RuntimeError(
+                    "rev-list --left-right --count produced malformed output %r "
+                    "(expected exactly two integers)" % ahead_behind_result.stdout.strip()
+                )
+            try:
+                ahead_count: int = int(_ab_parts[0])
+                behind_count: int = int(_ab_parts[1])
+            except ValueError as _exc:
+                raise RuntimeError(
+                    "rev-list --left-right --count produced non-integer output %r: %s"
+                    % (ahead_behind_result.stdout.strip(), _exc)
+                ) from _exc
+            if ahead_count < 0 or behind_count < 0:
+                raise RuntimeError(
+                    "rev-list --left-right --count produced negative counts %r; "
+                    "this is unexpected and indicates a corrupt result" % ahead_behind_result.stdout.strip()
+                )
+
+            self._observe_log(
+                "worker.repository.worktree_base_fetched",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail={
+                    "local_prior_sha": local_prior_sha,
+                    "base_sha": base_sha,
+                    "canonical_remote": canonical_remote_display,
+                    "canonical_branch": canonical_branch,
+                    "ahead": ahead_count,
+                    "behind": behind_count,
+                    "source": "fetch_named_ref",
+                },
+            )
+
+            branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
+            worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
+            if worktree_dir.exists():
+                existing_head = _run_git(worktree_dir, ["rev-parse", "HEAD"])
+                if existing_head.returncode == 0 and existing_head.stdout.strip():
+                    raise RuntimeError(
+                        "repository task worktree already exists for this lease: %s" % worktree_dir
+                    )
+                shutil.rmtree(worktree_dir)
+            # mac-3qv6: prune any orphaned worktree registration in
+            # source_root/.git/worktrees that points at the now-deleted
+            # directory. Without this, `git worktree add` below fails with
+            # "already exists" even though the on-disk directory is gone.
+            _run_git(source_root, ["worktree", "prune"])
+
+            add = _run_git(
+                source_root,
+                ["worktree", "add", "-b", branch, str(worktree_dir), base_sha],
+            )
+            if add.returncode != 0:
+                raise RuntimeError(
+                    "could not create repository task worktree: %s"
+                    % ((add.stderr or add.stdout or "").strip() or worktree_dir)
+                )
+            context: JsonDict = {
+                "schema": "mac.repository_task_worktree.v1",
+                "checkout_policy": "task_owned_git_worktree",
+                "repository_declared_path": str(origin.get("repository_path") or ""),
+                "repository_source_path": str(source_root),
+                "repository_worktree": str(worktree_dir),
+                "repository_branch": branch,
+                "repository_base_sha": base_sha,
+                "repository_local_prior_sha": local_prior_sha,
+                "repository_canonical_branch": canonical_branch,
+                "repository_canonical_remote": canonical_remote_display,
+                "repository_ahead": ahead_count,
+                "repository_behind": behind_count,
+                "repository_origin_remote": canonical_remote_display,
+            }
+            self._observe_log(
+                "worker.repository.worktree_prepared",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail=context,
+            )
+            return context
+        finally:
+            try:
+                # Delete the tmp fetch ref to keep the source repo tidy.
+                _run_git(source_root, ["update-ref", "-d", tmp_ref])
+            except Exception:  # noqa: BLE001
+                pass
+            lock_fh.close()
 
     def _resolve_repository_source_path(self, origin: JsonDict) -> Path:
         for candidate in _repository_source_candidates(origin, self.self_update_repo):
