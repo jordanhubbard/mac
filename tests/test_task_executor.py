@@ -786,7 +786,10 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
         "id": "t1",
         "metadata": {
             "publication_target": "git://main",
-            "origin": {"repository_contract": {"test": {"command": "true"}}},
+            "origin": {"repository_contract": {
+                "canonical_remote_url": origin.as_uri(),
+                "test": {"command": "true"},
+            }},
         },
     }
     te.run_deterministic_git_finalizer(ws, task)
@@ -812,6 +815,8 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
     _git(work, "commit", "-m", "init")
     _git(work, "branch", "-M", "main")
     _git(work, "push", "origin", "main")
+    # Push main to canonical so the freshness fetch can resolve it.
+    _git(work, "push", canonical.as_uri(), "main")
     _git(work, "checkout", "-b", "task/canonical")
     (work / "feature.py").write_text("print('canonical')\n", encoding="utf-8")
 
@@ -907,6 +912,7 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
             "publication_target": "git://main",
             "origin": {
                 "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
                     "bootstrap": {
                         "command": "python3 scripts/bootstrap-project.py",
                         "creates": [".venv/bin/python"],
@@ -973,6 +979,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
             "publication_target": "git://main",
             "origin": {
                 "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
                     "bootstrap": {"command": "false"},
                     "test": {"command": "true"},
                 }
@@ -984,8 +991,8 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is False
-    # mac-wjy3 review fix: base_sha records origin/main so the reviewer can
-    # compute a non-empty base..head diff (base != head here).
+    # base_sha records the canonical tip so the reviewer can compute a
+    # non-empty base..head diff (base != head here).
     assert len(manifest["repo"]["base_sha"]) == 40
     assert manifest["repo"]["base_sha"] != manifest["repo"]["head_sha"]
     assert manifest["bootstrap"]["status"] == "fail"
@@ -993,6 +1000,306 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+
+
+# ---------------------------------------------------------------------------
+# Canonical freshness check tests
+# ---------------------------------------------------------------------------
+
+
+def _setup_two_repo_worktree(tmp_path):
+    """Helper: return (origin_bare, canonical_bare, work_clone, main_sha).
+
+    origin and canonical both start with main at the same SHA.
+    work is checked out on a feature branch one commit ahead of main.
+    """
+    origin = tmp_path / "origin.git"
+    canonical = tmp_path / "canonical.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "init", "--bare", str(canonical))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "push", canonical.as_uri(), "main")
+    # Ensure the bare repos advertise main as the default branch so that
+    # subsequent clones of them check out main (not the bare-repo default master).
+    _git(origin, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(canonical, "symbolic-ref", "HEAD", "refs/heads/main")
+    main_sha = _git(work, "rev-parse", "main").stdout.strip()
+    _git(work, "checkout", "-b", "task/feature")
+    (work / "feature.py").write_text("print('feature')\n", encoding="utf-8")
+    return origin, canonical, work, main_sha
+
+
+def test_git_finalizer_blocks_when_canonical_fetch_fails(tmp_path, monkeypatch):
+    """Fetch failure is fail-closed: push must be skipped with freshness_error."""
+    origin, canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    # Point canonical_remote_url at a non-existent path to force a fetch failure.
+    task = {
+        "id": "t-fetch-fail",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "file:///nonexistent-repo-does-not-exist",
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is False
+    assert manifest["push"]["status"] == "skipped"
+    assert manifest["push"]["reason"] == "canonical freshness check failed"
+    assert "freshness_error" in manifest
+    assert "fetch" in manifest["freshness_error"].lower() or "nonexistent" in manifest["freshness_error"].lower() or manifest["freshness_error"]
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+
+
+def test_git_finalizer_blocks_unrebased_task_head(tmp_path, monkeypatch):
+    """A task branch that diverges from canonical (omits new canonical commits) is blocked."""
+    origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
+    # Advance canonical with a new commit AFTER the task branch was created.
+    # Push a new commit directly to canonical that the task branch does NOT have.
+    advance_dir = tmp_path / "advance"
+    _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
+    _git(advance_dir, "config", "user.email", "t@t")
+    _git(advance_dir, "config", "user.name", "t")
+    (advance_dir / "canonical_advance.py").write_text("# canonical advance\n", encoding="utf-8")
+    _git(advance_dir, "add", "-A")
+    _git(advance_dir, "commit", "-m", "advance canonical")
+    _git(advance_dir, "push", "origin", "main")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-stale",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is False, "stale task HEAD must not be pushed"
+    assert manifest["push"]["status"] == "skipped"
+    assert manifest["push"]["reason"] == "canonical freshness check failed"
+    assert "freshness_error" in manifest
+    assert "ancestor" in manifest["freshness_error"].lower() or "rebase" in manifest["freshness_error"].lower()
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+
+
+def test_git_finalizer_passes_rebased_task_head(tmp_path, monkeypatch):
+    """A task branch rebased onto the new canonical tip must be accepted."""
+    origin, canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
+    # Advance canonical.
+    advance_dir = tmp_path / "advance"
+    _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
+    _git(advance_dir, "config", "user.email", "t@t")
+    _git(advance_dir, "config", "user.name", "t")
+    (advance_dir / "canonical_advance.py").write_text("# canonical advance\n", encoding="utf-8")
+    _git(advance_dir, "add", "-A")
+    _git(advance_dir, "commit", "-m", "advance canonical")
+    _git(advance_dir, "push", "origin", "main")
+    new_canonical_sha = _git(advance_dir, "rev-parse", "HEAD").stdout.strip()
+
+    # Rebase the task branch onto the new canonical tip.
+    # Fetch the new canonical commit into work and rebase.
+    _git(work, "fetch", canonical.as_uri(), "main")
+    _git(work, "rebase", "FETCH_HEAD")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-rebased",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is True, "rebased task HEAD must be accepted"
+    assert manifest["repo"]["base_sha"] == new_canonical_sha
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
+
+
+def test_git_finalizer_blocks_invalid_canonical_remote_url(tmp_path, monkeypatch):
+    """An invalid canonical_remote_url fails validation; push is blocked."""
+    origin, _canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-invalid-remote",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "not-a-valid-url",
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is False
+    # The manifest records either a fetch failure or validation failure.
+    assert manifest["push"]["status"] == "skipped"
+    assert "freshness_error" in manifest or manifest["push"].get("reason") == "canonical freshness check failed"
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+
+
+def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
+    """Non-main canonical branch (e.g. 'develop') is respected; not hardcoded to 'main'."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "develop")
+    _git(work, "push", "origin", "develop")
+    _git(work, "checkout", "-b", "task/feature-develop")
+    (work / "feature.py").write_text("print('develop-feature')\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-develop",
+        "metadata": {
+            "publication_target": "git://develop",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "default_branch": "develop",
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is True
+    assert "feature.py" in manifest["repo"]["files_changed"]
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
+
+
+def test_git_finalizer_blocks_when_no_remote_context(tmp_path, monkeypatch):
+    """No canonical remote in contract or env: fetch attempt fails closed (no silent pass)."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/no-remote")
+    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    # No canonical_remote_url, no env override — finalizer must not silently pass.
+    task = {
+        "id": "t-no-remote",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    # Without a resolvable canonical remote, the freshness check must fail closed.
+    assert manifest["repo"]["pushed"] is False
+    assert manifest["push"]["status"] == "skipped"
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
+
+
+def test_repository_contract_canonical_branch_reads_from_contract(tmp_path):
+    """_repository_contract_canonical_branch reads default_branch from contract."""
+    task = {
+        "metadata": {
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "https://github.com/org/repo.git",
+                    "default_branch": "develop",
+                }
+            }
+        }
+    }
+    assert te._repository_contract_canonical_branch(task) == "develop"
+
+
+def test_repository_contract_canonical_branch_reads_from_runtime(tmp_path):
+    """_repository_contract_canonical_branch falls back to runtime context."""
+    task = {
+        "metadata": {
+            "runtime": {
+                "repository_canonical_branch": "release",
+            }
+        }
+    }
+    assert te._repository_contract_canonical_branch(task) == "release"
+
+
+def test_repository_contract_canonical_branch_empty_when_absent():
+    """_repository_contract_canonical_branch returns '' when no branch info."""
+    assert te._repository_contract_canonical_branch({}) == ""
+    assert te._repository_contract_canonical_branch({"metadata": {}}) == ""
 
 
 def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):

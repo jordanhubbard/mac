@@ -922,6 +922,31 @@ def _repository_contract_canonical_remote(task: Dict[str, Any]) -> str:
     return ""
 
 
+def _repository_contract_canonical_branch(task: Dict[str, Any]) -> str:
+    """Return the canonical branch from the task contract, or empty string if absent.
+
+    Precedence mirrors worker.py: execution_contract > origin > runtime context.
+    Callers that resolve a fallback (e.g. from env or default) must do so themselves.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        return ""
+    candidates = [
+        _nested_dict(metadata, "execution_contract", "repository_contract"),
+        _nested_dict(metadata, "origin", "repository_contract"),
+        _nested_dict(metadata, "repository_contract"),
+    ]
+    for candidate in candidates:
+        branch = str(candidate.get("default_branch") or "").strip()
+        if branch:
+            return branch
+    # Also check runtime context (written by worker preparation).
+    runtime_raw = metadata.get("runtime")
+    runtime: Dict[str, Any] = runtime_raw if isinstance(runtime_raw, dict) else {}
+    branch = str(runtime.get("repository_canonical_branch") or "").strip()
+    return branch
+
+
 def _repository_push_remote(task: Dict[str, Any], fallback_remote: str = "") -> tuple[str, str]:
     remote = _repository_contract_canonical_remote(task) or str(fallback_remote or "").strip() or "origin"
     authed = _inject_git_remote_auth(remote)
@@ -1104,6 +1129,35 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
 # Deterministic finalizers + fail-closed fallback (ported, behavior preserved)
 # ---------------------------------------------------------------------------
 
+# Compiled once for the finalizer git-validation helpers below.
+_TE_GIT_SHA_RE = _re.compile(r"^[0-9a-fA-F]{40}$")
+_TE_GIT_REMOTE_URL_RE = _re.compile(
+    r"^(?:https?://|ssh://|git://|file://|git@|/)[A-Za-z0-9._\-:/@%+~?=&]*$"
+)
+_TE_GIT_REF_RE = _re.compile(r"^[A-Za-z0-9._/\-]+$")
+
+
+def _te_validate_git_remote_url(value: str) -> str:
+    """Reject git remote URLs that could smuggle argv flags or be empty."""
+    if not value or value.startswith("-"):
+        raise ValueError("git remote URL is empty or looks like a flag: %r" % value)
+    if len(value) > 2048:
+        raise ValueError("git remote URL exceeds 2048 byte limit")
+    if not _TE_GIT_REMOTE_URL_RE.match(value):
+        raise ValueError("git remote URL does not match a recognised scheme: %r" % value)
+    return value
+
+
+def _te_validate_git_ref(value: str) -> str:
+    """Reject git refs that could be confused with argv flags."""
+    if not value or value.startswith("-"):
+        raise ValueError("git ref is empty or looks like a flag: %r" % value)
+    if len(value) > 512:
+        raise ValueError("git ref exceeds 512 byte limit")
+    if not _TE_GIT_REF_RE.match(value):
+        raise ValueError("git ref contains disallowed characters: %r" % value)
+    return value
+
 
 def _git(args, cwd):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
@@ -1172,14 +1226,148 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         }
     bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
     tests_ok = tests is None or tests.get("returncode") == 0
-    _git(["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"], worktree_path)
-    # Record the diff base (origin/main) so the reviewer can compute a non-empty
-    # base..head diff. Without base_sha the review fell back to head_sha, making
-    # base==head and the review snapshot's files_changed always [] (which the
-    # repo_change validator rejects as "requires changed files").
-    base_sha = _git(["rev-parse", "origin/main"], worktree_path).stdout.strip()
-    diff = _git(["diff", "--name-only", "origin/main..HEAD"], worktree_path)
-    files_changed = [f for f in (diff.stdout or "").splitlines() if f.strip()]
+    # --- Canonical freshness check (fail-closed) ---
+    # Resolve the canonical remote and branch from the task contract.
+    # An explicit value that fails validation is a hard error; we do not
+    # fall back to cached state or local origin/main.
+    canonical_remote_raw = _repository_contract_canonical_remote(task)
+    if not canonical_remote_raw:
+        canonical_remote_raw = os.environ.get("MAC_TASK_REPO_REMOTE", "").strip()
+    if not canonical_remote_raw:
+        canonical_remote_raw = os.environ.get("MAC_TASK_CANONICAL_REMOTE", "").strip()
+    canonical_branch = _repository_contract_canonical_branch(task)
+    if not canonical_branch:
+        canonical_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
+    if not canonical_branch:
+        canonical_branch = "main"
+    try:
+        _te_validate_git_ref(canonical_branch)
+    except ValueError as exc:
+        base_sha = ""
+        files_changed: List[str] = []
+        codegraph = run_codegraph_audit(worktree_path, files_changed)
+        codegraph_ok = not codegraph_audit_manifest_problems(
+            {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
+        )
+        push_evidence = {
+            "remote": "",
+            "returncode": 1,
+            "status": "skipped",
+            "reason": "canonical branch failed validation: %s" % exc,
+        }
+        manifest: Dict[str, Any] = {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "summary": "Deterministic finalizer: blocked — canonical branch validation failed",
+            "freshness_error": str(exc),
+            "repo": {
+                "head_sha": head_sha,
+                "base_sha": base_sha,
+                "pushed": False,
+                "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
+                "push_remote": "",
+                "dirty": bool(_git(["status", "--porcelain"], worktree_path).stdout.strip()),
+                "files_changed": files_changed,
+            },
+            "codegraph": codegraph,
+            "tests": [tests] if tests is not None else None,
+            "push": push_evidence,
+            "checks": (
+                ([codegraph_audit_check(codegraph)] if str(codegraph.get("status") or "") != "skipped" else [])
+                + [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+            ),
+        }
+        if bootstrap is not None:
+            manifest["bootstrap"] = bootstrap
+        (task_workspace / "mac-evidence.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return
+    # Fetch the canonical branch into a per-task isolated ref so the check
+    # never touches refs/remotes/origin/* or any cached tracking state.
+    # Failure is fail-closed: any fetch, resolve, or ancestry failure blocks push.
+    _canonical_fetch_ref = "refs/mac/finalizer/%s" % safe_path_component(
+        str(task.get("id") or "task")
+    )
+    canonical_fetch_remote = canonical_remote_raw
+    canonical_fetch_remote_authed = _inject_git_remote_auth(canonical_fetch_remote)
+    canonical_fetch_remote_display = _redact_git_remote_auth(canonical_fetch_remote_authed)
+    # The canonical_remote_url is allowed to use SSH (git@) — don't validate
+    # scheme when the remote was taken from the contract (trusted), but DO
+    # validate it is not empty or a flag.
+    freshness_error: Optional[str] = None
+    base_sha = ""
+    canonical_tip_sha = ""
+    if canonical_remote_raw:
+        try:
+            _te_validate_git_remote_url(canonical_remote_raw)
+        except ValueError as exc:
+            freshness_error = "canonical remote URL failed validation: %s" % exc
+    if freshness_error is None:
+        fetch = _git(
+            ["fetch", "--no-tags", canonical_fetch_remote_authed,
+             "+refs/heads/%s:%s" % (canonical_branch, _canonical_fetch_ref)],
+            worktree_path,
+        )
+        if fetch.returncode != 0:
+            freshness_error = (
+                "fetch of canonical branch %r from %s failed: %s"
+                % (
+                    canonical_branch,
+                    canonical_fetch_remote_display,
+                    _redact_git_remote_auth_in_text(
+                        (fetch.stderr or fetch.stdout or "").strip()
+                    ) or "non-zero exit",
+                )
+            )
+    if freshness_error is None:
+        resolve = _git(["rev-parse", _canonical_fetch_ref], worktree_path)
+        if resolve.returncode != 0 or not resolve.stdout.strip():
+            freshness_error = (
+                "could not resolve fetched canonical ref %r: %s"
+                % (
+                    _canonical_fetch_ref,
+                    (resolve.stderr or resolve.stdout or "").strip() or "empty SHA",
+                )
+            )
+        else:
+            canonical_tip_sha = resolve.stdout.strip()
+            if not _TE_GIT_SHA_RE.match(canonical_tip_sha):
+                freshness_error = (
+                    "fetched canonical ref %r resolved to an invalid SHA: %r"
+                    % (_canonical_fetch_ref, canonical_tip_sha)
+                )
+    if freshness_error is None:
+        # Ancestry check: canonical tip must be an ancestor of task HEAD.
+        # Accepts a correctly rebased/merged branch; rejects a stale branch
+        # that omits newly published canonical commits.
+        ancestor_check = _git(
+            ["merge-base", "--is-ancestor", canonical_tip_sha, "HEAD"],
+            worktree_path,
+        )
+        if ancestor_check.returncode != 0:
+            freshness_error = (
+                "canonical tip %s is not an ancestor of task HEAD %s; "
+                "rebase or merge the canonical branch before pushing"
+                % (canonical_tip_sha[:12], head_sha[:12])
+            )
+        else:
+            base_sha = canonical_tip_sha
+    # Clean up the temporary fetch ref (best-effort; failure is non-fatal).
+    _git(["update-ref", "-d", _canonical_fetch_ref], worktree_path)
+    # Compute files_changed from the resolved canonical tip when available;
+    # fall back to comparing with HEAD only when the freshness check failed
+    # (so the manifest still records a useful diff for diagnostics).
+    if base_sha:
+        diff_result = _git(["diff", "--name-only", "%s..HEAD" % base_sha], worktree_path)
+        files_changed = [f for f in (diff_result.stdout or "").splitlines() if f.strip()]
+    else:
+        diff_result = _git(["diff", "--name-only", "HEAD~1..HEAD"], worktree_path) if head_sha else None
+        files_changed = [f for f in ((diff_result.stdout or "") if diff_result else "").splitlines() if f.strip()]
+    # Record the diff base (canonical tip) so the reviewer can compute a
+    # non-empty base..head diff. Without base_sha the review snapshot's
+    # files_changed is always [] (which the repo_change validator rejects).
     codegraph = run_codegraph_audit(worktree_path, files_changed)
     codegraph_problems = codegraph_audit_manifest_problems(
         {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
@@ -1187,12 +1375,13 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     codegraph_ok = not codegraph_problems
     final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
     clean = not bool(final_status)
+    freshness_ok = freshness_error is None
     pushed = False
     push_remote, push_remote_display = _repository_push_remote(
         task,
         os.environ.get("MAC_TASK_REPO_REMOTE", "").strip(),
     )
-    if bootstrap_ok and tests_ok and codegraph_ok and clean:
+    if bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok:
         push = _git(["push", push_remote, "HEAD:%s" % push_target], worktree_path)
         pushed = push.returncode == 0
         push_evidence = {
@@ -1216,6 +1405,14 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "reason": "codegraph audit failed",
             "problems": codegraph_problems,
         }
+    elif not freshness_ok:
+        push_evidence = {
+            "remote": push_remote_display,
+            "returncode": 1,
+            "status": "skipped",
+            "reason": "canonical freshness check failed",
+            "freshness_error": freshness_error,
+        }
     else:
         push_evidence = {
             "remote": push_remote_display,
@@ -1223,6 +1420,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "skipped",
             "reason": "bootstrap/tests failed",
         }
+    all_ok = pushed and bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -1249,11 +1447,13 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             + [
             {
                 "name": "git_finalizer",
-                "returncode": 0 if pushed and bootstrap_ok and tests_ok and codegraph_ok and clean else 1,
-                "status": "pass" if pushed and bootstrap_ok and tests_ok and codegraph_ok and clean else "fail",
+                "returncode": 0 if all_ok else 1,
+                "status": "pass" if all_ok else "fail",
             }
         ]),
     }
+    if freshness_error is not None:
+        manifest["freshness_error"] = freshness_error
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
     (task_workspace / "mac-evidence.json").write_text(
