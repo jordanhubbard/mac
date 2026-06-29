@@ -1246,7 +1246,12 @@ def test_mac_worker_finalizes_missing_repository_manifest(tmp_path: Path):
 
 def test_mac_worker_blocks_publication_when_canonical_advances_after_preparation(
     tmp_path: Path,
+    monkeypatch,
 ):
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -1281,7 +1286,13 @@ def test_mac_worker_blocks_publication_when_canonical_advances_after_preparation
     assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]) == ""
 
 
-def test_mac_worker_publishes_after_merging_new_canonical_tip(tmp_path: Path):
+def test_mac_worker_publishes_after_merging_new_canonical_tip(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)

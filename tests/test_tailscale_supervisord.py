@@ -55,6 +55,15 @@ def test_detect_supervisor_picks_supervisord_when_systemd_dir_absent():
     → must resolve to 'supervisord'.
     """
     fn = _extract("detect_supervisor")
+    # Keep the production default literal covered by the source assertion
+    # below, but make this behavioral test independent of the CI host's init
+    # system. GitHub's Linux runners do have /run/systemd/system, whereas the
+    # target container nodes intentionally do not.
+    fn = fn.replace(
+        "[ -d /run/systemd/system ]",
+        '[ -d "$SYSTEMD_RUNTIME_DIR" ]',
+        1,
+    )
     # Override PATH so that a fake 'systemctl' and 'supervisorctl' are found
     # but NOT launchctl, and /run/systemd/system does not exist.
     snippet = r"""
@@ -62,30 +71,19 @@ SUPERVISOR_KIND=auto
 %(fn)s
 
 PATH_OVERRIDE="$(mktemp -d)"
+SYSTEMD_RUNTIME_DIR="$PATH_OVERRIDE/missing-systemd-runtime"
 # Fake supervisorctl (present) and systemctl (present but no /run/systemd/system)
 printf '#!/bin/sh\nexit 0\n' > "$PATH_OVERRIDE/supervisorctl"
 printf '#!/bin/sh\nexit 0\n' > "$PATH_OVERRIDE/systemctl"
 chmod +x "$PATH_OVERRIDE/supervisorctl" "$PATH_OVERRIDE/systemctl"
 
-# Ensure /run/systemd/system definitely does not exist in our fake env by
-# using a temp dir that has no such path; override the check by injecting an
-# environment variable that the test shim honours.
+# The rewritten test-only path definitely does not exist.
 PATH="$PATH_OVERRIDE" SUPERVISOR_KIND=auto detect_supervisor
 """ % {"fn": fn}
-    # We can't easily mock [ -d /run/systemd/system ] in bash without rewriting
-    # the function.  Instead use a scratch PATH and verify behaviour directly:
-    # on the real test machine /run/systemd/system is absent (GKE container),
-    # so the real binary check will hit the supervisord branch when our fake
-    # supervisorctl is on PATH.
     result = _run_bash(snippet)
-    # If we're on a real GKE container the output should be supervisord
-    # (or launchd on macOS CI, which we accept as a valid non-systemd path).
-    # The important assertion is: it must NOT be systemd.
     assert result.returncode == 0, result.stderr
     supervisor = result.stdout.strip()
-    assert supervisor in {"supervisord", "launchd"}, (
-        "Expected non-systemd supervisor, got: %r" % supervisor
-    )
+    assert supervisor == "supervisord"
 
 
 def test_detect_supervisor_requires_systemd_dir_not_just_systemctl():
