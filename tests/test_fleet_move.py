@@ -14,12 +14,16 @@ from typing import Any, Dict
 import pytest
 import yaml
 
+from types import SimpleNamespace
+
 from mac.fleet_move import (
     execute_fleet_move,
     find_agent_fleet,
+    fleet_hub_url,
     move_agent_in_registry,
     plan_fleet_move,
     render_move_plan,
+    resolve_fleet_key,
 )
 
 
@@ -199,18 +203,16 @@ def test_plan_contains_required_steps():
         assert expected in order, "missing step %r" % expected
 
 
-def test_plan_contains_db_reconcile_steps_by_default():
+def test_plan_contains_db_reconcile_note_by_default():
     steps = plan_fleet_move("worker-1", "old-hub", "mac", _registry())
     order = [s for s, _ in steps]
-    assert "reconcile-db-add" in order
-    assert "reconcile-db-remove" in order
+    assert "reconcile-db" in order
 
 
 def test_plan_skips_db_reconcile_when_disabled():
     steps = plan_fleet_move("worker-1", "old-hub", "mac", _registry(), reconcile_db=False)
     order = [s for s, _ in steps]
-    assert "reconcile-db-add" not in order
-    assert "reconcile-db-remove" not in order
+    assert "reconcile-db" not in order
 
 
 def test_plan_redeploy_step_references_target_fleet():
@@ -225,12 +227,12 @@ def test_plan_verify_step_references_target_fleet():
     assert "worker-1" in steps["verify"]
 
 
-def test_plan_db_reconcile_references_both_fleets():
+def test_plan_db_reconcile_note_references_both_fleets_and_no_fake_cmd():
     steps = dict(plan_fleet_move("worker-1", "old-hub", "mac", _registry()))
-    assert "mac" in steps["reconcile-db-add"]
-    assert "worker-1" in steps["reconcile-db-add"]
-    assert "old-hub" in steps["reconcile-db-remove"]
-    assert "worker-1" in steps["reconcile-db-remove"]
+    note = steps["reconcile-db"]
+    assert "mac" in note and "worker-1" in note and "old-hub" in note
+    # honest: never emit the non-existent `mac fleet update --add-agent` command
+    assert "mac fleet update" not in note
 
 
 def test_render_move_plan_is_human_readable():
@@ -289,12 +291,13 @@ def test_execute_dry_run_includes_redeploy_cmd(tmp_path):
     assert "mac" in result["redeploy_cmd"]
 
 
-def test_execute_dry_run_includes_db_reconcile_cmds(tmp_path):
+def test_execute_dry_run_includes_db_reconcile_note(tmp_path):
     p = _write_registry(tmp_path, _registry())
     result = execute_fleet_move("worker-1", "old-hub", "mac", fleets_config=p, dry_run=True)
-    cmds = result.get("db_reconcile_cmds") or []
-    assert any("mac" in c and "worker-1" in c for c in cmds)
-    assert any("old-hub" in c and "worker-1" in c for c in cmds)
+    note = result.get("db_reconcile") or ""
+    assert "re-registration" in note and "mac" in note
+    # the old fake-command field must be gone
+    assert "db_reconcile_cmds" not in result
 
 
 def test_execute_dry_run_error_source_fleet_missing(tmp_path):
@@ -395,13 +398,137 @@ def test_execute_live_includes_next_steps_with_redeploy(tmp_path):
     assert "worker-1" in steps_text
 
 
-def test_execute_live_includes_db_reconcile_in_next_steps(tmp_path):
+def test_execute_live_includes_db_reconcile_note(tmp_path):
+    # dry_run=False with the default run_redeploy=False: writes the registry +
+    # emits the redeploy, runs no subprocess, and notes the auto DB reconcile.
     p = _write_registry(tmp_path, _registry())
     result = execute_fleet_move("worker-1", "old-hub", "mac", fleets_config=p, dry_run=False)
-    steps_text = " ".join(result.get("next_steps") or [])
-    assert "reconcile" in steps_text.lower() or any(
-        "fleet update" in c for c in (result.get("db_reconcile_cmds") or [])
+    note = result.get("db_reconcile") or ""
+    assert "re-register" in note.lower()
+    assert "mac fleet update" not in note
+    assert result.get("redeployed") is None  # no redeploy ran (run_redeploy=False)
+
+
+# ---------------------------------------------------------------------------
+# resolve_fleet_key / fleet_hub_url (accept fleet_name OR registry key)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_fleet_key_by_registry_key():
+    assert resolve_fleet_key(_registry(), "old-hub") == "old-hub"
+
+
+def test_resolve_fleet_key_by_fleet_name():
+    # 'old-fleet' is the fleet_name; its registry KEY is 'old-hub'.
+    assert resolve_fleet_key(_registry(), "old-fleet") == "old-hub"
+    # 'mac' resolves to itself (key == fleet_name here).
+    assert resolve_fleet_key(_registry(), "mac") == "mac"
+
+
+def test_resolve_fleet_key_unknown_returns_none():
+    assert resolve_fleet_key(_registry(), "nope") is None
+    assert resolve_fleet_key(_registry(), "") is None
+
+
+def test_fleet_hub_url_lookup():
+    assert fleet_hub_url(_registry(), "mac") == "http://100.72.16.110:8789"
+    assert fleet_hub_url(_registry(), "missing") == ""
+
+
+# ---------------------------------------------------------------------------
+# Loud validation: hubless / unknown target (no "<target-hub-url>" placeholder)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_fails_loudly_when_target_has_no_hub_url(tmp_path):
+    reg = _registry()
+    reg["fleets"]["mac"].pop("hub_url")  # target fleet without a hub_url
+    p = _write_registry(tmp_path, reg)
+    result = execute_fleet_move("worker-1", "old-hub", "mac", fleets_config=p, dry_run=True)
+    assert result["ok"] is False
+    assert "hub_url" in result["error"]
+    # nothing written
+    assert yaml.safe_load(p.read_text())["fleets"]["old-hub"]["agents"]  # unchanged
+
+
+def test_execute_hub_url_override_satisfies_validation(tmp_path):
+    reg = _registry()
+    reg["fleets"]["mac"].pop("hub_url")
+    p = _write_registry(tmp_path, reg)
+    result = execute_fleet_move(
+        "worker-1", "old-hub", "mac", fleets_config=p, dry_run=True,
+        hub_url="http://10.0.0.9:8789",
     )
+    assert result["ok"] is True
+    assert result["target_hub_url"] == "http://10.0.0.9:8789"
+
+
+# ---------------------------------------------------------------------------
+# --execute runs the redeploy (via an injected runner — no real subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_runs_redeploy_with_injected_runner(tmp_path):
+    p = _write_registry(tmp_path, _registry())
+    calls = []
+
+    def fake_runner(cmd, cwd=None):
+        calls.append((cmd, cwd))
+        return SimpleNamespace(returncode=0, stderr="")
+
+    result = execute_fleet_move(
+        "worker-1", "old-hub", "mac", fleets_config=p,
+        dry_run=False, run_redeploy=True, runner=fake_runner,
+    )
+    assert result["ok"] is True
+    assert result["redeployed"] is True
+    assert result["redeploy_returncode"] == 0
+    # the deploy was invoked with the target fleet + agent
+    assert len(calls) == 1
+    cmd, _cwd = calls[0]
+    assert "--hub" in cmd and "mac" in cmd and "worker-1" in cmd
+    assert cmd[0].endswith("deploy/deploy-mac-fleet.sh")
+    # fleets.yaml actually moved the agent
+    reg = yaml.safe_load(p.read_text())
+    names = lambda fk: [a["name"] for a in reg["fleets"][fk]["agents"]]
+    assert "worker-1" not in names("old-hub")
+    assert "worker-1" in names("mac")
+
+
+def test_execute_redeploy_failure_surfaces_loudly(tmp_path):
+    p = _write_registry(tmp_path, _registry())
+
+    def failing_runner(cmd, cwd=None):
+        return SimpleNamespace(returncode=2, stderr="boom: deploy blew up")
+
+    result = execute_fleet_move(
+        "worker-1", "old-hub", "mac", fleets_config=p,
+        dry_run=False, run_redeploy=True, runner=failing_runner,
+    )
+    assert result["ok"] is False
+    assert result["redeploy_returncode"] == 2
+    assert "boom" in result["error"]
+    # the registry move still landed + backup retained (operator can revert)
+    assert result.get("registry_written")
+    assert result.get("backup")
+
+
+def test_execute_no_redeploy_emits_command_only(tmp_path):
+    p = _write_registry(tmp_path, _registry())
+    sentinel = []
+
+    def runner(cmd, cwd=None):
+        sentinel.append(cmd)
+        return SimpleNamespace(returncode=0)
+
+    result = execute_fleet_move(
+        "worker-1", "old-hub", "mac", fleets_config=p,
+        dry_run=False, run_redeploy=False, runner=runner,
+    )
+    assert result["ok"] is True
+    assert sentinel == []  # runner NOT invoked
+    assert result.get("redeployed") is None
+    assert any("deploy-mac-fleet.sh" in s for s in result.get("next_steps") or [])
 
 
 # ---------------------------------------------------------------------------

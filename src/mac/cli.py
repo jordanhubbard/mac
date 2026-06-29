@@ -884,8 +884,11 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
     """
     from mac.fleet_move import (
         execute_fleet_move,
+        find_agent_fleet,
+        fleet_hub_url,
         plan_fleet_move,
         render_move_plan,
+        resolve_fleet_key,
     )
     from mac.hermes_config_surface import registry_path
 
@@ -898,14 +901,17 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
 
     registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
 
-    from_fleet = args.from_fleet
-    to_fleet = args.to_fleet
     agent_name = args.agent
 
-    # Auto-detect source fleet when --from is omitted.
-    if not from_fleet:
-        from mac.fleet_move import find_agent_fleet
-
+    # Resolve --from: explicit (registry KEY or fleet_name), else auto-detect.
+    if args.from_fleet:
+        from_fleet = resolve_fleet_key(registry, args.from_fleet)
+        if not from_fleet:
+            raise SystemExit(
+                "source fleet %r not found in %s (by registry key or fleet_name)"
+                % (args.from_fleet, reg_path)
+            )
+    else:
         from_fleet = find_agent_fleet(registry, agent_name)
         if not from_fleet:
             raise SystemExit(
@@ -913,6 +919,21 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
                 "pass --from to specify the source fleet" % (agent_name, reg_path)
             )
         print("auto-detected source fleet: %s" % from_fleet)
+
+    # Resolve --to (registry KEY or fleet_name); fail loudly — never emit a
+    # "<target-hub-url>" placeholder plan for an unresolvable / hubless target.
+    to_fleet = resolve_fleet_key(registry, args.to_fleet)
+    if not to_fleet:
+        raise SystemExit(
+            "target fleet %r not found in %s (by registry key or fleet_name)"
+            % (args.to_fleet, reg_path)
+        )
+    if not ((args.hub_url or "").strip() or fleet_hub_url(registry, to_fleet)):
+        raise SystemExit(
+            "target fleet %r has no hub_url (pass --hub-url to override)" % to_fleet
+        )
+    if args.from_fleet not in (None, from_fleet) or args.to_fleet != to_fleet:
+        print("resolved fleets: %s -> %s" % (from_fleet, to_fleet))
 
     if not args.execute:
         # Dry-run: print the plan and the proposed registry diff.
@@ -930,9 +951,17 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
         dry_run=False,
         reconcile_db=not args.no_db_reconcile,
         hub_url=args.hub_url or None,
+        run_redeploy=not args.no_redeploy,
     )
 
     if not result.get("ok"):
+        if result.get("registry_written"):
+            # The move landed in fleets.yaml but the live redeploy failed —
+            # surface both so the operator can re-run or revert from the backup.
+            print("registry moved (%s -> %s); backup: %s"
+                  % (from_fleet, to_fleet, result.get("backup")))
+            print("redeploy FAILED (rc=%s); re-run: %s"
+                  % (result.get("redeploy_returncode"), result.get("redeploy_cmd")))
         raise SystemExit("fleet move-agent failed: %s" % result.get("error"))
 
     if result.get("idempotent"):
@@ -944,15 +973,13 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
         print("registry backed up to %s" % result["backup"])
     if result.get("registry_written"):
         print("registry written to %s" % result["registry_written"])
-    print("")
-    print("Next steps:")
+    if result.get("redeployed"):
+        print("redeployed at hub %s (--hub %s)"
+              % (result.get("target_hub_url"), to_fleet))
+    if result.get("db_reconcile"):
+        print("DB: %s" % result["db_reconcile"])
     for step in result.get("next_steps") or []:
-        print("  %s" % step)
-    if result.get("db_reconcile_cmds"):
-        print("")
-        print("DB reconcile (run after agent re-registers):")
-        for cmd in result["db_reconcile_cmds"]:
-            print("  %s" % cmd)
+        print("next: %s" % step)
 
 
 def _sender_agent_id(args: argparse.Namespace) -> str:
@@ -3435,12 +3462,21 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_move.add_argument(
         "--no-db-reconcile",
         action="store_true",
-        help="skip DB fleet membership reconcile steps",
+        help="skip the DB fleet-membership reconcile note",
+    )
+    fleet_move.add_argument(
+        "--no-redeploy",
+        action="store_true",
+        help=(
+            "with --execute, only rewrite fleets.yaml and EMIT the redeploy "
+            "command instead of running it (inspect-first; default is to run "
+            "the redeploy end-to-end)"
+        ),
     )
     fleet_move.add_argument(
         "--execute",
         action="store_true",
-        help="actually mutate fleets.yaml (default: dry-run plan only)",
+        help="actually mutate fleets.yaml + run the redeploy (default: dry-run plan only)",
     )
     _set(cmd_fleet_move_agent, fleet_move)
 
