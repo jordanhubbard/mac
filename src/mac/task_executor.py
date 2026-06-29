@@ -55,14 +55,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
+from mac.agent_command import PROMPT_SENTINEL
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -70,9 +73,10 @@ from mac.codegraph_audit import (
     run_codegraph_audit,
 )
 from mac.gitops import (
-    inject_git_remote_auth as _inject_git_remote_auth,
-    redact_git_remote_auth as _redact_git_remote_auth,
-    redact_git_remote_auth_in_text as _redact_git_remote_auth_in_text,
+    CanonicalFreshnessResult,
+    check_canonical_freshness,
+    guarded_push,
+    resolve_canonical_publication_target,
 )
 from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
@@ -598,6 +602,11 @@ def emit_telemetry(event: str, *, task_id: Optional[str] = None, level: str = "i
 # ---------------------------------------------------------------------------
 
 DEPLOYMENT_LEARNING_PREFIX = "deployment_learning"
+_LESSON_PROMPT_BUDGET = 1600
+_LESSON_STOPWORDS = {
+    "add", "build", "change", "create", "deploy", "deployment", "fix", "implement",
+    "improve", "make", "next", "task", "test", "the", "this", "update", "with",
+}
 
 
 def _task_project(task: Dict[str, Any]) -> str:
@@ -620,6 +629,26 @@ def _format_learning_content(raw: str) -> str:
     if outcome == "failure" and err:
         line += " — failed: %s" % err
     return line[:300]
+
+
+def _lesson_terms(value: str) -> set[str]:
+    return {
+        token
+        for token in _re.findall(r"[a-z0-9][a-z0-9_-]{2,}", value.lower())
+        if token not in _LESSON_STOPWORDS
+    }
+
+
+def _append_lesson_with_budget(lessons: List[str], value: str) -> bool:
+    lesson = value.strip()
+    if not lesson:
+        return True
+    used = sum(len(item) for item in lessons)
+    remaining = _LESSON_PROMPT_BUDGET - used
+    if remaining <= 0:
+        return False
+    lessons.append(lesson if len(lesson) <= remaining else lesson[: max(0, remaining - 3)] + "...")
+    return sum(len(item) for item in lessons) < _LESSON_PROMPT_BUDGET
 
 
 def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[str]:
@@ -650,21 +679,38 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
             if not isinstance(item, dict):
                 continue
             text = str(item.get("content") or item.get("text") or item.get("summary") or "").strip()
-            if text:
-                lessons.append(text if len(text) <= 500 else text[:497] + "...")
+            if text and not _append_lesson_with_budget(
+                lessons, text if len(text) <= 500 else text[:497] + "..."
+            ):
+                break
     if lessons:
         return lessons[:limit]
 
     records = _hub_get("/memory?%s" % urlencode({"subject_type": "project", "subject_id": project}))
     if isinstance(records, list):
+        query_terms = _lesson_terms(
+            " ".join(
+                [
+                    title,
+                    str(task.get("description") or "")[:1000],
+                    str(task.get("project") or ""),
+                ]
+            )
+        )
         learnings = [
             r
             for r in records
             if isinstance(r, dict) and str(r.get("record_type") or "").startswith(DEPLOYMENT_LEARNING_PREFIX)
         ]
         learnings.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
-        for record in learnings[:limit]:
-            lessons.append(_format_learning_content(str(record.get("content") or "")))
+        for record in learnings:
+            content = str(record.get("content") or "")
+            if not query_terms.intersection(_lesson_terms(content)):
+                continue
+            if not _append_lesson_with_budget(lessons, _format_learning_content(content)):
+                break
+            if len(lessons) >= limit:
+                break
     return lessons[:limit]
 
 
@@ -816,19 +862,28 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             "No repository runtime contract is attached and no checkout was provided. "
             "Do not guess bootstrap or test commands; report this as a task contract failure."
         )
-    summary = {
-        "schema": contract.get("schema"),
-        "project": contract.get("project"),
-        "contract_path": contract.get("contract_path"),
-        "platforms": contract.get("platforms"),
-        "toolchain": contract.get("toolchain"),
-        "bootstrap": contract.get("bootstrap"),
-        "test": contract.get("test"),
-        "evidence": contract.get("evidence"),
-    }
+    toolchain = contract.get("toolchain") if isinstance(contract.get("toolchain"), dict) else {}
+    bootstrap = contract.get("bootstrap") if isinstance(contract.get("bootstrap"), dict) else {}
+    test = contract.get("test") if isinstance(contract.get("test"), dict) else {}
+    required_commands = [
+        str(item).strip()
+        for item in (toolchain.get("required_commands") or [])
+        if str(item).strip()
+    ]
+    summary = "; ".join(
+        item
+        for item in (
+            "project=%s" % contract.get("project") if contract.get("project") else "",
+            "required_commands=%s" % ",".join(required_commands) if required_commands else "",
+            "bootstrap=%s" % bootstrap.get("command") if bootstrap.get("command") else "",
+            "test=%s" % test.get("command") if test.get("command") else "",
+        )
+        if item
+    )
     return "\n".join(
         [
-            json.dumps(summary, indent=2, sort_keys=True),
+            "Repository contract summary: %s" % (summary or "see task.json"),
+            "The complete repository and execution contracts remain in task.json; read them there when more detail is needed.",
             "For normal repository tasks, MAC prepares a task-owned git worktree before the executor starts.",
             "Use $MAC_TASK_REPO_WORKTREE, or metadata.runtime.repository_worktree in task.json, as the only writable checkout.",
             "Treat origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only registered source state; do not edit it for feature or bug work.",
@@ -944,13 +999,45 @@ def _repository_contract_canonical_branch(task: Dict[str, Any]) -> str:
     runtime_raw = metadata.get("runtime")
     runtime: Dict[str, Any] = runtime_raw if isinstance(runtime_raw, dict) else {}
     branch = str(runtime.get("repository_canonical_branch") or "").strip()
-    return branch
+    if branch:
+        return branch
+    return os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
 
 
-def _repository_push_remote(task: Dict[str, Any], fallback_remote: str = "") -> tuple[str, str]:
-    remote = _repository_contract_canonical_remote(task) or str(fallback_remote or "").strip() or "origin"
-    authed = _inject_git_remote_auth(remote)
-    return authed, _redact_git_remote_auth(authed)
+def _repository_publication_remote(task: Dict[str, Any]) -> str:
+    canonical = _repository_contract_canonical_remote(task)
+    if canonical:
+        return canonical
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    origin = metadata.get("origin") if isinstance(metadata, dict) else {}
+    if isinstance(origin, dict):
+        remote = str(origin.get("repository_url") or "").strip()
+        if remote:
+            return remote
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+    if isinstance(runtime, dict):
+        remote = str(runtime.get("repository_canonical_remote_url") or "").strip()
+        if remote:
+            return remote
+    return os.environ.get("MAC_TASK_CANONICAL_REMOTE", "").strip()
+
+
+def _repository_prepared_base(task: Dict[str, Any]) -> str:
+    value = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+    if value:
+        return value
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+    return str(runtime.get("repository_base_sha") or "").strip() if isinstance(runtime, dict) else ""
+
+
+def _repository_lease_id(task: Dict[str, Any]) -> str:
+    value = os.environ.get("MAC_TASK_REPO_LEASE_ID", "").strip()
+    if value:
+        return value
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+    return str(runtime.get("repository_lease_id") or "").strip() if isinstance(runtime, dict) else ""
 
 
 def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -1068,21 +1155,9 @@ MAC_TASK_SUMMARY_END = "=== END MAC TASK SUMMARY ==="
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
-        "You are AUTONOMOUS: never ask the operator for confirmation or permission, and never end your turn with a question. If the task is underspecified, make the most reasonable assumption, proceed, and record the assumption in your evidence. Ending with 'should I proceed?' instead of doing the work is a failed run.",
-        "Use the task JSON as the source of truth. Preserve secrets and do not print bearer tokens.",
-        "When you finish, report the exact outcome, files changed, tests run, and any blockers.",
-        "Also write a verifiable evidence manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
-        "Use schema mac.worker_evidence.v1 with status=complete and evidence_type set to one of repo_change, documentation, investigation, deployment, test, artifact, no_change, or operator_result.",
-        "For tasks with a repository runtime contract, default to evidence_type=repo_change. Use operator_result only for tasks that are not tied to a repository contract.",
-        "For no-repository planning or operator directive work, use evidence_type=operator_result with summary and result fields describing the completed work.",
-        "For repo/code work include repo.head_sha, repo.remote_ref or repo.pr_url, repo.pushed=true, repo.dirty=false, repo.files_changed, and passing tests/checks. Passing tests/checks should use returncode=0, status=pass, result=passed, or boolean/count fields that make success unambiguous. For deployments include targets/services plus passing checks. If you cannot produce this manifest, say why; MAC will not auto-publish unverifiable work.",
-        "For repo/code work that changes source, build, dependency, or runtime config files, include a passing codegraph audit object in mac-evidence.json. Docs-only/media-only changes may omit it or record codegraph.status=skipped with reason=non_code_change.",
-        "Before you declare the task done, RUN the repository contract test command yourself in the worktree and make it pass cleanly. The worker re-runs the exact same suite at finalize and REFUSES TO PUSH if anything fails, which blocks the task. Fix every failure you introduce, including lint/guard/docs tests, not just the feature tests.",
-        "COMMIT your work: after the changes pass, run `git add -A && git commit` in the worktree so your new/edited files are committed (a single commit is fine). The worker treats an uncommitted worktree as incomplete and blocks it; do not leave new files untracked.",
-        "Do the task yourself in THIS task — do NOT split it into child/sub tasks unless it is genuinely too large for one run; a normal 'add a test suite' or 'implement X' task should be completed as a single unit, not decomposed into many tasks that overload the fleet.",
-        "Any docs, comments, or examples you add or edit must read generically for ANY fleet owner: use readable role names (hub, worker-1, worker-2, gpu-worker) and placeholders like <user> / <host> / <mesh-ip>. Never hard-code real agent names, hostnames, usernames, or personal paths from this fleet into checked-in docs/skills/deploy markdown -- repos commonly lint for exactly that, and a single leaked name fails the contract test and blocks the push.",
-        "If the task needs new software, install it only in the task workspace or project worktree, such as a task-local .venv, uv project env, or project-local npm/pnpm install. Do not use sudo, host package managers, global npm/pip/pipx installs, or the shared Hermes/worker virtualenv.",
-        "When you add task-local dependencies, include verification.environment_delta in mac-evidence.json with package_manager, commands, added_dependencies, lockfile_path, lockfile_digest, base_runtime_digest when known, and reason. MAC records that as a proposed runtime delta; it does not mutate the fleet runtime until an operator validates and promotes it.",
+        "You are AUTONOMOUS: never ask the operator for confirmation or permission. Make a reasonable assumption, proceed, and record it when necessary.",
+        "First read the versioned execution policy at $MAC_TASK_WORKSPACE/.mac-executor-policy.txt, then read task.json as the source of truth.",
+        "Repository tasks default to evidence_type=repo_change; use operator_result only when no repository contract exists. Deterministic host code enforces tests, CodeGraph, cleanliness, and publication.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
     parts.append(
@@ -1129,36 +1204,6 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
 # Deterministic finalizers + fail-closed fallback (ported, behavior preserved)
 # ---------------------------------------------------------------------------
 
-# Compiled once for the finalizer git-validation helpers below.
-_TE_GIT_SHA_RE = _re.compile(r"^[0-9a-fA-F]{40}$")
-_TE_GIT_REMOTE_URL_RE = _re.compile(
-    r"^(?:https?://|ssh://|git://|file://|git@|/)[A-Za-z0-9._\-:/@%+~?=&]*$"
-)
-_TE_GIT_REF_RE = _re.compile(r"^[A-Za-z0-9._/\-]+$")
-
-
-def _te_validate_git_remote_url(value: str) -> str:
-    """Reject git remote URLs that could smuggle argv flags or be empty."""
-    if not value or value.startswith("-"):
-        raise ValueError("git remote URL is empty or looks like a flag: %r" % value)
-    if len(value) > 2048:
-        raise ValueError("git remote URL exceeds 2048 byte limit")
-    if not _TE_GIT_REMOTE_URL_RE.match(value):
-        raise ValueError("git remote URL does not match a recognised scheme: %r" % value)
-    return value
-
-
-def _te_validate_git_ref(value: str) -> str:
-    """Reject git refs that could be confused with argv flags."""
-    if not value or value.startswith("-"):
-        raise ValueError("git ref is empty or looks like a flag: %r" % value)
-    if len(value) > 512:
-        raise ValueError("git ref exceeds 512 byte limit")
-    if not _TE_GIT_REF_RE.match(value):
-        raise ValueError("git ref contains disallowed characters: %r" % value)
-    return value
-
-
 def _git(args, cwd):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
 
@@ -1187,7 +1232,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         )
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
-    push_target = "refs/heads/%s" % branch if branch != "HEAD" else "refs/heads/auto/%s" % (task.get("id") or "task")
     # Purge synced build artifacts before the host build. The agent built in the
     # task SANDBOX (e.g. Linux); those object files / binaries sync back into this
     # worktree, but this finalizer runs on the EXECUTOR HOST, which may be a
@@ -1226,145 +1270,34 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         }
     bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
     tests_ok = tests is None or tests.get("returncode") == 0
-    # --- Canonical freshness check (fail-closed) ---
-    # Resolve the canonical remote and branch from the task contract.
-    # An explicit value that fails validation is a hard error; we do not
-    # fall back to cached state or local origin/main.
-    canonical_remote_raw = _repository_contract_canonical_remote(task)
-    if not canonical_remote_raw:
-        canonical_remote_raw = os.environ.get("MAC_TASK_REPO_REMOTE", "").strip()
-    if not canonical_remote_raw:
-        canonical_remote_raw = os.environ.get("MAC_TASK_CANONICAL_REMOTE", "").strip()
+    canonical_remote_raw = _repository_publication_remote(task)
     canonical_branch = _repository_contract_canonical_branch(task)
-    if not canonical_branch:
-        canonical_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
-    if not canonical_branch:
-        canonical_branch = "main"
+    prepared_base_sha = _repository_prepared_base(task)
+    lease_id = _repository_lease_id(task)
+    destination_branch = branch if branch != "HEAD" else ""
+    publication_target = None
     try:
-        _te_validate_git_ref(canonical_branch)
-    except ValueError as exc:
-        base_sha = ""
-        files_changed: List[str] = []
-        codegraph = run_codegraph_audit(worktree_path, files_changed)
-        codegraph_ok = not codegraph_audit_manifest_problems(
-            {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
+        if not lease_id:
+            raise ValueError("repository context is missing repository_lease_id")
+        publication_target = resolve_canonical_publication_target(
+            worktree=worktree_path,
+            canonical_remote=canonical_remote_raw,
+            canonical_branch=canonical_branch,
+            destination_branch=destination_branch,
+            prepared_base_sha=prepared_base_sha,
+            isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
         )
-        push_evidence = {
-            "remote": "",
-            "returncode": 1,
-            "status": "skipped",
-            "reason": "canonical branch failed validation: %s" % exc,
-        }
-        manifest: Dict[str, Any] = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "repo_change",
-            "summary": "Deterministic finalizer: blocked — canonical branch validation failed",
-            "freshness_error": str(exc),
-            "repo": {
-                "head_sha": head_sha,
-                "base_sha": base_sha,
-                "pushed": False,
-                "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
-                "push_remote": "",
-                "dirty": bool(_git(["status", "--porcelain"], worktree_path).stdout.strip()),
-                "files_changed": files_changed,
-            },
-            "codegraph": codegraph,
-            "tests": [tests] if tests is not None else None,
-            "push": push_evidence,
-            "checks": (
-                ([codegraph_audit_check(codegraph)] if str(codegraph.get("status") or "") != "skipped" else [])
-                + [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
-            ),
-        }
-        if bootstrap is not None:
-            manifest["bootstrap"] = bootstrap
-        (task_workspace / "mac-evidence.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        freshness = check_canonical_freshness(publication_target)
+    except (OSError, ValueError) as exc:
+        freshness = CanonicalFreshnessResult(
+            False,
+            publication_target,
+            head_sha=head_sha,
+            error=str(exc),
         )
-        return
-    # Fetch the canonical branch into a per-task isolated ref so the check
-    # never touches refs/remotes/origin/* or any cached tracking state.
-    # Failure is fail-closed: any fetch, resolve, or ancestry failure blocks push.
-    _canonical_fetch_ref = "refs/mac/finalizer/%s" % safe_path_component(
-        str(task.get("id") or "task")
-    )
-    canonical_fetch_remote = canonical_remote_raw
-    canonical_fetch_remote_authed = _inject_git_remote_auth(canonical_fetch_remote)
-    canonical_fetch_remote_display = _redact_git_remote_auth(canonical_fetch_remote_authed)
-    # The canonical_remote_url is allowed to use SSH (git@) — don't validate
-    # scheme when the remote was taken from the contract (trusted), but DO
-    # validate it is not empty or a flag.
-    freshness_error: Optional[str] = None
-    base_sha = ""
-    canonical_tip_sha = ""
-    if canonical_remote_raw:
-        try:
-            _te_validate_git_remote_url(canonical_remote_raw)
-        except ValueError as exc:
-            freshness_error = "canonical remote URL failed validation: %s" % exc
-    if freshness_error is None:
-        fetch = _git(
-            ["fetch", "--no-tags", canonical_fetch_remote_authed,
-             "+refs/heads/%s:%s" % (canonical_branch, _canonical_fetch_ref)],
-            worktree_path,
-        )
-        if fetch.returncode != 0:
-            freshness_error = (
-                "fetch of canonical branch %r from %s failed: %s"
-                % (
-                    canonical_branch,
-                    canonical_fetch_remote_display,
-                    _redact_git_remote_auth_in_text(
-                        (fetch.stderr or fetch.stdout or "").strip()
-                    ) or "non-zero exit",
-                )
-            )
-    if freshness_error is None:
-        resolve = _git(["rev-parse", _canonical_fetch_ref], worktree_path)
-        if resolve.returncode != 0 or not resolve.stdout.strip():
-            freshness_error = (
-                "could not resolve fetched canonical ref %r: %s"
-                % (
-                    _canonical_fetch_ref,
-                    (resolve.stderr or resolve.stdout or "").strip() or "empty SHA",
-                )
-            )
-        else:
-            canonical_tip_sha = resolve.stdout.strip()
-            if not _TE_GIT_SHA_RE.match(canonical_tip_sha):
-                freshness_error = (
-                    "fetched canonical ref %r resolved to an invalid SHA: %r"
-                    % (_canonical_fetch_ref, canonical_tip_sha)
-                )
-    if freshness_error is None:
-        # Ancestry check: canonical tip must be an ancestor of task HEAD.
-        # Accepts a correctly rebased/merged branch; rejects a stale branch
-        # that omits newly published canonical commits.
-        ancestor_check = _git(
-            ["merge-base", "--is-ancestor", canonical_tip_sha, "HEAD"],
-            worktree_path,
-        )
-        if ancestor_check.returncode != 0:
-            freshness_error = (
-                "canonical tip %s is not an ancestor of task HEAD %s; "
-                "rebase or merge the canonical branch before pushing"
-                % (canonical_tip_sha[:12], head_sha[:12])
-            )
-        else:
-            base_sha = canonical_tip_sha
-    # Clean up the temporary fetch ref (best-effort; failure is non-fatal).
-    _git(["update-ref", "-d", _canonical_fetch_ref], worktree_path)
-    # Compute files_changed from the resolved canonical tip when available;
-    # fall back to comparing with HEAD only when the freshness check failed
-    # (so the manifest still records a useful diff for diagnostics).
-    if base_sha:
-        diff_result = _git(["diff", "--name-only", "%s..HEAD" % base_sha], worktree_path)
-        files_changed = [f for f in (diff_result.stdout or "").splitlines() if f.strip()]
-    else:
-        diff_result = _git(["diff", "--name-only", "HEAD~1..HEAD"], worktree_path) if head_sha else None
-        files_changed = [f for f in ((diff_result.stdout or "") if diff_result else "").splitlines() if f.strip()]
+    freshness_error: Optional[str] = None if freshness.ok else freshness.error
+    base_sha = freshness.canonical_tip_sha or prepared_base_sha
+    files_changed = list(freshness.files_changed)
     # Record the diff base (canonical tip) so the reviewer can compute a
     # non-empty base..head diff. Without base_sha the review snapshot's
     # files_changed is always [] (which the repo_change validator rejects).
@@ -1377,18 +1310,29 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     clean = not bool(final_status)
     freshness_ok = freshness_error is None
     pushed = False
-    push_remote, push_remote_display = _repository_push_remote(
-        task,
-        os.environ.get("MAC_TASK_REPO_REMOTE", "").strip(),
+    publication: Optional[CanonicalFreshnessResult] = None
+    push_remote_display = (
+        freshness.target.remote_display if freshness.target is not None else ""
     )
     if bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok:
-        push = _git(["push", push_remote, "HEAD:%s" % push_target], worktree_path)
-        pushed = push.returncode == 0
+        assert publication_target is not None
+        publication = guarded_push(publication_target)
+        push_remote_display = (
+            publication.target.remote_display
+            if publication.target is not None
+            else push_remote_display
+        )
+        pushed = publication.ok and publication.remote_verified
+        if publication.canonical_tip_sha:
+            base_sha = publication.canonical_tip_sha
+        if not publication.ok:
+            freshness_error = publication.error
+            freshness_ok = False
         push_evidence = {
             "remote": push_remote_display,
-            "returncode": int(push.returncode),
-            "status": "pass" if push.returncode == 0 else "fail",
-            "stderr": _redact_git_remote_auth_in_text(push.stderr or "")[:4000],
+            "returncode": int(publication.push_returncode or (0 if pushed else 1)),
+            "status": "pass" if pushed else "fail",
+            "stderr": (publication.push_stderr or publication.error)[:4000],
         }
     elif not clean:
         push_evidence = {
@@ -1430,10 +1374,11 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "head_sha": head_sha,
             "base_sha": base_sha,
             "pushed": pushed,
-            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else push_target,
+            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else "",
             "push_remote": push_remote_display,
             "dirty": bool(final_status),
             "files_changed": files_changed,
+            "freshness": (publication or freshness).evidence(),
         },
         "codegraph": codegraph,
         # mac-wjy3: verification.tests is the CANONICAL list of test-result
@@ -1621,6 +1566,77 @@ def _hermes_argv(prompt: str) -> List[str]:
     return [_hermes_python(), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
 
 
+@dataclass(frozen=True)
+class _AgentCommandBundle:
+    workspace: Path
+    prompt_file: Path
+    command_file: Path
+    policy_file: Path
+    interpreter: str
+
+    def argv(self, *, sandbox_workspace: Optional[str] = None) -> List[str]:
+        if sandbox_workspace:
+            command_file = "%s/%s" % (sandbox_workspace.rstrip("/"), self.command_file.name)
+            prompt_file = "%s/%s" % (sandbox_workspace.rstrip("/"), self.prompt_file.name)
+            interpreter = (
+                os.environ.get("MAC_HERMES_PYTHON") or "/opt/mac-venv/bin/python"
+            )
+        else:
+            command_file = str(self.command_file)
+            prompt_file = str(self.prompt_file)
+            interpreter = self.interpreter
+        return [
+            interpreter,
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            command_file,
+            "--prompt-file",
+            prompt_file,
+        ]
+
+    def cleanup(self) -> None:
+        self.command_file.unlink(missing_ok=True)
+        self.prompt_file.unlink(missing_ok=True)
+        self.policy_file.unlink(missing_ok=True)
+
+
+def _write_agent_command_bundle(
+    workspace: Path, prompt: str, agent_argv: List[str]
+) -> _AgentCommandBundle:
+    import uuid
+
+    if agent_argv.count(PROMPT_SENTINEL) != 1:
+        raise ValueError("agent argv must contain exactly one private-prompt sentinel")
+    workspace.mkdir(parents=True, exist_ok=True)
+    nonce = uuid.uuid4().hex
+    prompt_file = workspace / (".mac-agent-prompt-%s" % nonce)
+    command_file = workspace / (".mac-agent-command-%s.json" % nonce)
+    policy_file = workspace / ".mac-executor-policy.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    command_file.write_text(
+        json.dumps({"schema": "mac.agent_command.v1", "argv": agent_argv}),
+        encoding="utf-8",
+    )
+    prompt_file.chmod(0o600)
+    command_file.chmod(0o600)
+    policy_file.write_text(
+        (Path(__file__).resolve().parent / "executor-policy.txt").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    policy_file.chmod(0o600)
+    interpreter = agent_argv[0] if agent_argv[1:3] == ["-m", "hermes_cli.main"] else sys.executable
+    return _AgentCommandBundle(
+        workspace=workspace,
+        prompt_file=prompt_file,
+        command_file=command_file,
+        policy_file=policy_file,
+        interpreter=interpreter,
+    )
+
+
 def _mcp_serve_argv() -> List[str]:
     """The vendored messaging MCP server command (registered with a coding-agent
     CLI for messaging-tool parity, where the CLI supports per-invocation MCP)."""
@@ -1660,7 +1676,8 @@ def _mcp_serve_argv() -> List[str]:
 #                                 "--from my-image" or "--upload /src:/src" used to
 #                                 make the Hermes runtime + workspace available
 #                                 inside the sandbox
-#   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names forwarded via --env
+#   MAC_OPENSHELL_ENV_PASSTHROUGH comma list of env names copied through a
+#                                 private mode-0600 workspace file
 #   MAC_ALLOW_UNSANDBOXED_YOLO    truthy (default "1") -> allow --yolo with no
 #                                 sandbox (current fleet, logs a warning). Set
 #                                 "0" to fail closed: refuse unguarded YOLO so
@@ -1677,7 +1694,7 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # Model-gateway base_url + api_key live in the agent's ~/.hermes/.env, which
     # is NOT in the sandbox image; the gateway requires auth. Forward them so the
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
-    # loopback rewritten to the sandbox host alias by _openshell_env_flags).
+    # loopback rewritten to the sandbox host alias in the private env file).
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
     "OPENAI_BASE_URL,OPENAI_API_KEY,"
     # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
@@ -1717,15 +1734,11 @@ def _rewrite_host_local_url(value: str, alias: str) -> str:
     return out
 
 
-def _openshell_env_flags() -> List[str]:
-    """``--env NAME=VALUE`` flags for each *set* passthrough variable.
-
-    URL-valued vars have a host loopback rewritten to the sandbox host alias
-    (see :func:`_rewrite_host_local_url`) so a forwarded ``http://127.0.0.1:PORT``
-    hub/gateway URL is reachable from inside the sandbox."""
+def _openshell_environment() -> Dict[str, str]:
+    """Environment copied through a private workspace file, never process argv."""
     names = os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
     alias = _openshell_host_alias()
-    flags: List[str] = []
+    values: Dict[str, str] = {}
     seen = set()
     for raw in names.split(","):
         name = raw.strip()
@@ -1735,9 +1748,8 @@ def _openshell_env_flags() -> List[str]:
         val = os.environ.get(name)
         if val is None:
             continue
-        val = _rewrite_host_local_url(val, alias)
-        flags += ["--env", "%s=%s" % (name, val)]
-    return flags
+        values[name] = _rewrite_host_local_url(val, alias)
+    return values
 
 
 def _kernel_has_landlock() -> bool:
@@ -1838,20 +1850,27 @@ def _sandbox_path_for_workspace_child(workspace: Path, sandbox_workspace: str, v
     return "%s/%s" % (sandbox_workspace.rstrip("/"), str(rel).replace(os.sep, "/"))
 
 
-def _sandbox_repository_env_flags(workspace: Path, sandbox_workspace: str) -> List[str]:
-    flags: List[str] = []
+def _sandbox_repository_environment(workspace: Path, sandbox_workspace: str) -> Dict[str, str]:
+    values: Dict[str, str] = {}
     mapped_worktree = _sandbox_path_for_workspace_child(
         workspace,
         sandbox_workspace,
         os.environ.get("MAC_TASK_REPO_WORKTREE", ""),
     )
     if mapped_worktree:
-        flags += ["--env", "MAC_TASK_REPO_WORKTREE=%s" % mapped_worktree]
-    for name in ("MAC_TASK_REPO_BRANCH", "MAC_TASK_REPO_BASE_SHA", "MAC_TASK_REPO_REMOTE"):
+        values["MAC_TASK_REPO_WORKTREE"] = mapped_worktree
+    for name in (
+        "MAC_TASK_REPO_BRANCH",
+        "MAC_TASK_REPO_LEASE_ID",
+        "MAC_TASK_REPO_BASE_SHA",
+        "MAC_TASK_REPO_REMOTE",
+        "MAC_TASK_CANONICAL_REMOTE",
+        "MAC_TASK_REPO_DEFAULT_BRANCH",
+    ):
         value = os.environ.get(name)
         if value:
-            flags += ["--env", "%s=%s" % (name, value)]
-    return flags
+            values[name] = value
+    return values
 
 
 def _ensure_landlock_or_fail() -> None:
@@ -2408,6 +2427,36 @@ PY''',
     )
 
 
+def _write_private_shell_env(path: Path, values: Mapping[str, str]) -> Path:
+    env_lines = [
+        "export %s=%s" % (name, shlex.quote(value))
+        for name, value in sorted(values.items())
+        if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+    ]
+    path.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def _write_sandbox_runtime_files(
+    workspace: Path, sandbox_workspace: str
+) -> tuple[Path, Path]:
+    env_values: Dict[str, str] = {
+        **_openshell_environment(),
+        **_sandbox_repository_environment(workspace, sandbox_workspace),
+        "MAC_TASK_WORKSPACE": sandbox_workspace,
+        "MAC_TASK_FILE": "%s/task.json" % sandbox_workspace.rstrip("/"),
+    }
+    env_file = _write_private_shell_env(
+        workspace / ".mac-openshell-env.sh", env_values
+    )
+
+    toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
+    toolchain_file.write_text(_sandbox_toolchain_setup_shell(), encoding="utf-8")
+    toolchain_file.chmod(0o700)
+    return env_file, toolchain_file
+
+
 def _build_sandbox_create_argv(
     name: str, workspace: Path, basename: str, agent_argv: List[str]
 ) -> List[str]:
@@ -2420,27 +2469,35 @@ def _build_sandbox_create_argv(
     the agent runs there with $MAC_TASK_WORKSPACE/$MAC_TASK_FILE repointed at the
     in-sandbox paths (the host paths don't exist inside the sandbox), so its
     evidence manifest is written where ``download`` later fetches it. The agent
-    argv is shell-quoted (shlex.join) into the cd-wrapper — the prompt is task
-    text and must never be able to break out of the command.
+    ``agent_argv`` is the private-file wrapper, not the underlying prompt-bearing
+    command. Secrets and the toolchain body are sourced from uploaded mode-0600
+    files, keeping the host's process list small and credential-free.
     """
+    if "mac.agent_command" not in agent_argv:
+        raise ValueError("sandbox agent argv must use the private-file command wrapper")
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
-    argv += _openshell_env_flags()
-    argv += [
-        "--env", "MAC_TASK_WORKSPACE=%s" % sub,
-        "--env", "MAC_TASK_FILE=%s/task.json" % sub,
-    ]
-    argv += _sandbox_repository_env_flags(workspace, sub)
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
-        argv += shlex.split(extra)
+        extra_argv = shlex.split(extra)
+        if "--env" in extra_argv or "--" in extra_argv:
+            raise ValueError(
+                "MAC_OPENSHELL_CREATE_ARGS may not contain --env or --; "
+                "use MAC_OPENSHELL_ENV_PASSTHROUGH for private environment transfer"
+            )
+        argv += extra_argv
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sub),
+            "set -a",
+            ". ./.mac-openshell-env.sh",
+            "set +a",
+            "rm -f ./.mac-openshell-env.sh",
             'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && [ ! -e /sandbox/mac-clone ]; then ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone || true; fi',
-            _sandbox_toolchain_setup_shell(),
+            ". ./.mac-sandbox-toolchain.sh",
+            "rm -f ./.mac-sandbox-toolchain.sh",
             "mac_sandbox_toolchain_setup || true",
             "exec %s" % shlex.join(agent_argv),
         ]
@@ -2622,11 +2679,13 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
                 shutil.copy2(src, dst)
 
 
-def _sandbox_run_repository_verification(name: str, basename: str, workspace: Path, task: Any) -> None:
+def _sandbox_run_repository_verification(
+    name: str, basename: str, workspace: Path, task: Any
+) -> Optional[bool]:
     if not isinstance(task, dict) or not task_is_repo_coupled(task):
-        return
+        return None
     if not _repository_contract_test_command(task):
-        return
+        return None
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     script_path = workspace / ".mac-sandbox-repository-verify.sh"
     script_path.write_text(_sandbox_repository_verification_shell() + "\n", encoding="utf-8")
@@ -2638,7 +2697,7 @@ def _sandbox_run_repository_verification(name: str, basename: str, workspace: Pa
     )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
-        return
+        return False
     try:
         timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
     except ValueError:
@@ -2661,6 +2720,7 @@ def _sandbox_run_repository_verification(name: str, basename: str, workspace: Pa
     )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox repository verification failed: %s\n" % msg)
+    return ok
 
 
 def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
@@ -2686,10 +2746,195 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
     return ok
 
 
-def _sandbox_delete(name: str) -> None:
+def _sandbox_delete(name: str) -> bool:
     ok, msg = _sandbox_step(["delete", name], timeout=120.0)
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox delete failed (possible leak): %s\n" % msg)
+    return ok
+
+
+def _sandbox_progress_interval() -> float:
+    raw = (os.environ.get("MAC_OPENSHELL_PROGRESS_INTERVAL") or "5").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 5.0
+
+
+def _sandbox_progress_snapshot(
+    name: str, basename: str, workspace: Path
+) -> Optional[Dict[str, str]]:
+    sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    mapped_repo = _sandbox_path_for_workspace_child(
+        workspace, sub, os.environ.get("MAC_TASK_REPO_WORKTREE", "")
+    )
+    repo = mapped_repo or ""
+    base = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+    script = "\n".join(
+        [
+            "set -eu",
+            "repo=%s" % shlex.quote(repo),
+            "base=%s" % shlex.quote(base),
+            "head=",
+            "changed_count=0",
+            "changed_digest=",
+            'if [ -n "$repo" ] && [ -d "$repo" ]; then',
+            '  head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"',
+            '  changed="$( { git -C "$repo" status --porcelain 2>/dev/null; [ -n "$base" ] && git -C "$repo" diff --name-only "$base..HEAD" 2>/dev/null || true; } | sort -u )"',
+            '  changed_count="$(printf %s "$changed" | sed "/^$/d" | wc -l | tr -d " ")"',
+            '  changed_digest="$(printf %s "$changed" | sha256sum 2>/dev/null | cut -d" " -f1 || true)"',
+            "fi",
+            'printf "ready=1\\nhead=%%s\\nchanged_count=%%s\\nchanged_digest=%%s\\nmanifest=%%s\\n" "$head" "$changed_count" "$changed_digest" "$( [ -f %s/mac-evidence.json ] && echo 1 || echo 0 )"'
+            % shlex.quote(sub),
+        ]
+    )
+    ok, output = _sandbox_step(
+        [
+            "exec",
+            "--name",
+            name,
+            "--workdir",
+            sub,
+            "--timeout",
+            "15",
+            "--no-tty",
+            "--",
+            "bash",
+            "-lc",
+            script,
+        ],
+        timeout=30.0,
+    )
+    if not ok:
+        return None
+    snapshot: Dict[str, str] = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in {
+            "ready",
+            "head",
+            "changed_count",
+            "changed_digest",
+            "manifest",
+        }:
+            snapshot[key] = value.strip()
+    return snapshot if snapshot.get("ready") == "1" else None
+
+
+class _SandboxProgressMonitor:
+    """Transition-based observer of the real sandbox workspace."""
+
+    def __init__(self, name: str, basename: str, workspace: Path, task_id: Any) -> None:
+        self.name = name
+        self.basename = basename
+        self.workspace = workspace
+        self.task_id = str(task_id) if task_id else None
+        self.interval = _sandbox_progress_interval()
+        self.stop_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.ready = False
+        self.mutated = False
+        self.manifest_seen = False
+        self.last_head = ""
+        self.changed_file_count = 0
+        self.changed_file_digest = ""
+        self.stopped = False
+
+    def start(self) -> None:
+        if self.interval <= 0:
+            return
+        self.thread = threading.Thread(
+            target=self._loop,
+            name="mac-sandbox-progress-%s" % self.name,
+            daemon=True,
+        )
+        self.thread.start()
+
+    def _loop(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            self.observe()
+
+    def observe(self) -> None:
+        snapshot = _sandbox_progress_snapshot(
+            self.name, self.basename, self.workspace
+        )
+        if snapshot is None:
+            return
+        if not self.ready:
+            self.ready = True
+            emit_telemetry(
+                "sandbox_ready",
+                task_id=self.task_id,
+                sandbox=self.name,
+                state="ready",
+            )
+        head = snapshot.get("head", "")
+        try:
+            changed_count = int(snapshot.get("changed_count") or 0)
+        except ValueError:
+            changed_count = 0
+        changed = changed_count > 0 or (
+            bool(head)
+            and bool(os.environ.get("MAC_TASK_REPO_BASE_SHA"))
+            and head != os.environ.get("MAC_TASK_REPO_BASE_SHA")
+        )
+        self.changed_file_count = changed_count
+        self.changed_file_digest = snapshot.get("changed_digest", "")
+        if changed and not self.mutated:
+            self.mutated = True
+            emit_telemetry(
+                "sandbox_first_mutation",
+                task_id=self.task_id,
+                sandbox=self.name,
+                state="sandbox_dirty",
+                changed_file_count=changed_count,
+                changed_file_digest=snapshot.get("changed_digest", ""),
+                head_sha=head,
+            )
+        if head and head != self.last_head:
+            self.last_head = head
+            emit_telemetry(
+                "sandbox_head_observed",
+                task_id=self.task_id,
+                sandbox=self.name,
+                head_sha=head,
+            )
+        if snapshot.get("manifest") == "1" and not self.manifest_seen:
+            self.manifest_seen = True
+            emit_telemetry(
+                "sandbox_manifest_observed",
+                task_id=self.task_id,
+                sandbox=self.name,
+            )
+
+    def stop(self) -> None:
+        if self.stopped:
+            return
+        self.stopped = True
+        if self.interval <= 0:
+            return
+        self.observe()
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=min(2.0, self.interval + 0.5))
+        if not self.mutated:
+            emit_telemetry(
+                "sandbox_no_effect",
+                task_id=self.task_id,
+                level="warning",
+                sandbox=self.name,
+                state="sandbox_clean",
+            )
+
+    def evidence(self) -> Dict[str, object]:
+        return {
+            "ready_observed": self.ready,
+            "mutation_observed": self.mutated,
+            "manifest_observed": self.manifest_seen,
+            "head_sha": self.last_head,
+            "changed_file_count": self.changed_file_count,
+            "changed_file_digest": self.changed_file_digest,
+        }
 
 
 def _run_sandboxed(
@@ -2697,20 +2942,109 @@ def _run_sandboxed(
 ) -> Any:
     """Run the agent through the OpenShell sandbox lifecycle: create (upload the
     workspace + run the agent, keep) -> download results -> delete. The agent
-    runs confined; teardown ALWAYS happens (finally), even on failure."""
+    runs confined. Harvest is attempted before teardown on every exit path,
+    including runner exceptions and cancellation, so a useful partial patch or
+    evidence manifest is not destroyed with the sandbox."""
     _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
     _ensure_landlock_or_fail()
     name = _sandbox_name()
     basename = _workspace_basename(workspace)
-    create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
+    sandbox_workspace = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    runtime_files = _write_sandbox_runtime_files(workspace, sandbox_workspace)
+    try:
+        create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
+    except Exception:
+        for path in runtime_files:
+            path.unlink(missing_ok=True)
+        raise
+    runner_completed = False
+    harvested = False
+    kept = _truthy(os.environ.get("MAC_OPENSHELL_KEEP"))
+    emit_telemetry(
+        "sandbox_started",
+        task_id=str(audit_id) if audit_id else None,
+        sandbox=name,
+        workspace=basename,
+    )
+    progress = _SandboxProgressMonitor(name, basename, workspace, audit_id)
+    progress.start()
     try:
         result = runner(create_argv, workspace, audit_id, opts)
-        _sandbox_run_repository_verification(name, basename, workspace, opts.get("task"))
-        _sandbox_download(name, basename, workspace)
+        runner_completed = True
+        progress.stop()
+        emit_telemetry(
+            "sandbox_agent_completed",
+            task_id=str(audit_id) if audit_id else None,
+            level="info" if int(getattr(result, "returncode", 1)) == 0 else "warning",
+            sandbox=name,
+            returncode=int(getattr(result, "returncode", 1)),
+        )
+        verification_expected = (
+            isinstance(opts.get("task"), dict)
+            and task_is_repo_coupled(opts["task"])
+            and bool(_repository_contract_test_command(opts["task"]))
+        )
+        if verification_expected:
+            emit_telemetry(
+                "sandbox_verification_started",
+                task_id=str(audit_id) if audit_id else None,
+                sandbox=name,
+            )
+        verification = _sandbox_run_repository_verification(
+            name, basename, workspace, opts.get("task")
+        )
+        if verification is not None:
+            emit_telemetry(
+                "sandbox_verification_completed",
+                task_id=str(audit_id) if audit_id else None,
+                level="info" if verification else "warning",
+                sandbox=name,
+                passed=verification,
+            )
         return result
     finally:
-        if not _truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
-            _sandbox_delete(name)
+        active_error = sys.exc_info()[1]
+        progress.stop()
+        harvested = _sandbox_download(name, basename, workspace)
+        salvage = {
+            "schema": "mac.openshell_salvage.v1",
+            "sandbox": name,
+            "runner_completed": runner_completed,
+            "harvest_attempted": True,
+            "harvested": harvested,
+            "kept": kept,
+            "error": str(active_error) if active_error is not None else "",
+            "progress": progress.evidence(),
+            "at": utcnow(),
+        }
+        try:
+            (workspace / "openshell-salvage.json").write_text(
+                json.dumps(salvage, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            sys.stderr.write("[executor] WARNING: could not write sandbox salvage record: %s\n" % exc)
+        emit_telemetry(
+            "sandbox_harvested",
+            task_id=str(audit_id) if audit_id else None,
+            level="info" if harvested else "warning",
+            sandbox=name,
+            runner_completed=runner_completed,
+            harvested=harvested,
+        )
+        deleted = False
+        if not kept:
+            deleted = _sandbox_delete(name)
+            emit_telemetry(
+                "sandbox_deleted",
+                task_id=str(audit_id) if audit_id else None,
+                level="info" if deleted else "warning",
+                sandbox=name,
+                deleted=deleted,
+            )
+        for path in runtime_files:
+            path.unlink(missing_ok=True)
+        (workspace / ".mac-sandbox-repository-verify.sh").unlink(missing_ok=True)
 
 
 def _force_child_yolo_env() -> None:
@@ -2867,17 +3201,33 @@ def _coding_agent_preflight_timeout() -> float:
         return 180.0
 
 
-def _build_sandbox_probe_argv(name: str, agent_argv: List[str]) -> List[str]:
-    """A minimal ``openshell sandbox create`` argv that runs ``agent_argv`` under
-    the SAME policy + env-forwarding + create-args as a real task run, but with no
-    workspace upload — used only to verify the coding agent works in-sandbox."""
+def _build_sandbox_probe_argv(
+    name: str, agent_argv: List[str], private_dir: Path
+) -> List[str]:
+    """Build a credential-free process argv for the coding-agent probe."""
+    if "mac.agent_command" not in agent_argv:
+        raise ValueError("sandbox probe must use the private-file command wrapper")
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
-    argv += _openshell_env_flags()
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
-        argv += shlex.split(extra)
-    argv += ["--", "bash", "-lc", "exec %s" % shlex.join(agent_argv)]
+        extra_argv = shlex.split(extra)
+        if "--env" in extra_argv or "--" in extra_argv:
+            raise ValueError("MAC_OPENSHELL_CREATE_ARGS may not contain --env or --")
+        argv += extra_argv
+    sandbox_dir = "/sandbox/%s" % private_dir.name
+    argv += ["--upload", "%s:/sandbox" % private_dir]
+    inner = "\n".join(
+        [
+            "cd %s" % shlex.quote(sandbox_dir),
+            "set -a",
+            ". ./.mac-openshell-env.sh",
+            "set +a",
+            "rm -f ./.mac-openshell-env.sh",
+            "exec %s" % shlex.join(agent_argv),
+        ]
+    )
+    argv += ["--", "bash", "-lc", inner]
     return argv
 
 
@@ -2900,11 +3250,28 @@ def _run_coding_agent_preflight(choice: Any) -> bool:
     from . import coding_agent as _ca
 
     name = "mac-codingcap-%s-%d" % (choice.agent, os.getpid())
-    probe_argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
-    try:
-        rc, out = _openshell_probe(_build_sandbox_probe_argv(name, probe_argv), timeout=_coding_agent_preflight_timeout())
-    finally:
-        _sandbox_step(["delete", name], timeout=60.0)
+    with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
+        private_dir = Path(tmp)
+        probe_argv = _ca.coding_agent_argv(choice, PROMPT_SENTINEL)
+        bundle = _write_agent_command_bundle(
+            private_dir, _ca.PREFLIGHT_PROMPT, probe_argv
+        )
+        _write_private_shell_env(
+            private_dir / ".mac-openshell-env.sh", _openshell_environment()
+        )
+        sandbox_dir = "/sandbox/%s" % private_dir.name
+        try:
+            rc, out = _openshell_probe(
+                _build_sandbox_probe_argv(
+                    name,
+                    bundle.argv(sandbox_workspace=sandbox_dir),
+                    private_dir,
+                ),
+                timeout=_coding_agent_preflight_timeout(),
+            )
+        finally:
+            bundle.cleanup()
+            _sandbox_step(["delete", name], timeout=60.0)
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
     sys.stderr.write(
         "[executor] coding-agent sandbox preflight (%s): %s\n"
@@ -3232,10 +3599,28 @@ def _invoke_agent(
     # enablement is gated on `confined`, not `wrap`.
     wrap = _openshell_enabled()
     confined = wrap or _openshell_required_for_local_agent()
-    agent_argv = _agent_argv(prompt, workspace, confined=confined, task=opts.get("task"))
-    if wrap:
-        return _run_sandboxed(runner, agent_argv, workspace, audit_id, opts)
-    return runner(_unsandboxed_agent_argv(agent_argv), workspace, audit_id, opts)
+    agent_argv = _agent_argv(
+        PROMPT_SENTINEL, workspace, confined=confined, task=opts.get("task")
+    )
+    bundle = _write_agent_command_bundle(workspace, prompt, agent_argv)
+    try:
+        if wrap:
+            sandbox_workspace = "%s/%s" % (
+                _SANDBOX_WORKDIR,
+                _workspace_basename(workspace),
+            )
+            return _run_sandboxed(
+                runner,
+                bundle.argv(sandbox_workspace=sandbox_workspace),
+                workspace,
+                audit_id,
+                opts,
+            )
+        return runner(
+            _unsandboxed_agent_argv(bundle.argv()), workspace, audit_id, opts
+        )
+    finally:
+        bundle.cleanup()
 
 
 def _agent_timeout() -> Optional[float]:

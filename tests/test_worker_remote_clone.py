@@ -119,7 +119,11 @@ def test_remote_clone_happy_path_creates_branch(tmp_path: Path, monkeypatch: pyt
     assert ctx is not None
     assert ctx["schema"] == "mac.repository_task_worktree.v1"
     assert ctx["checkout_policy"] == "k8s_task_owned_clone"
-    assert ctx["repository_origin_remote"] == "https://gitea.omv.test/org/repo.git"
+    assert ctx["repository_origin_remote"] == (
+        "https://x-access-token:<redacted>@gitea.omv.test/org/repo.git"
+    )
+    assert ctx["repository_canonical_remote"] == ctx["repository_origin_remote"]
+    assert ctx["repository_canonical_branch"] == "main"
     assert ctx["repository_base_sha"] == "a" * 40
     assert ctx["repository_branch"].startswith("mac/")
 
@@ -486,9 +490,7 @@ def test_local_worktree_uses_fetched_canonical_head_not_stale_local(
     # Context must carry audit fields.
     assert ctx["repository_local_prior_sha"] == stale_sha
     assert ctx["repository_canonical_branch"] == "main"
-    # Canonical remote must be redacted (not a raw URL with credentials).
     assert ctx["repository_canonical_remote"] != ""
-    assert "x-access-token" not in str(ctx["repository_canonical_remote"])
     # ahead/behind must be structured integers.
     assert isinstance(ctx.get("repository_ahead"), int), "repository_ahead must be int"
     assert isinstance(ctx.get("repository_behind"), int), "repository_behind must be int"
@@ -951,6 +953,12 @@ def test_local_worktree_context_carries_redacted_remote_and_integer_audit_fields
     task_dir = tmp_path / "tasks" / "task-audit-ctx"
     task_dir.mkdir(parents=True)
 
+    test_token = "mac-hermetic-redaction-secret"
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITEA_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_TASK_GIT_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", test_token)
+
     ctx = worker._prepare_repository_worktree(task, lease, task_dir)
     assert ctx is not None
     # canonical_remote must NOT be the literal placeholder '<remote>'.
@@ -958,8 +966,9 @@ def test_local_worktree_context_carries_redacted_remote_and_integer_audit_fields
         "canonical_remote must be a real redacted URL, not the placeholder '<remote>'"
     )
     # It must be a valid (possibly redacted) URL that doesn't leak raw credentials.
-    assert ctx["repository_canonical_remote"] != ""
-    assert "x-access-token" not in str(ctx["repository_canonical_remote"])
+    display = str(ctx["repository_canonical_remote"])
+    assert test_token not in display
+    assert "x-access-token:<redacted>@" in display
     # Audit fields.
     assert ctx["repository_local_prior_sha"] == prior_sha
     assert ctx["repository_canonical_branch"] == "main"

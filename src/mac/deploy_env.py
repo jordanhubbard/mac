@@ -490,18 +490,16 @@ def _apply_inproc_router_hub(
         values["MAC_ROUTER_DEFAULT_MODEL"] = router["default_model"]
     if router["wildcard_models"]:
         values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
-    if router["providers"]:
-        values["MAC_ROUTER_PROVIDERS"] = router["providers"]
-        local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
-        values["OPENAI_BASE_URL"] = local_router_v1
-        values["CUSTOM_BASE_URL"] = local_router_v1
-        values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
-        values["ACC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
-        local_token = values.get("MAC_API_TOKEN") or ""
-        if local_token:
-            values["OPENAI_API_KEY"] = local_token
-            values["MAC_HERMES_GATEWAY_API_KEY"] = local_token
-            values["ACC_HERMES_GATEWAY_API_KEY"] = local_token
+    values["MAC_ROUTER_PROVIDERS"] = router["providers"]
+    local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
+    values["OPENAI_BASE_URL"] = local_router_v1
+    values["CUSTOM_BASE_URL"] = local_router_v1
+    values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
+    values["ACC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
+    local_token = values["MAC_API_TOKEN"]
+    values["OPENAI_API_KEY"] = local_token
+    values["MAC_HERMES_GATEWAY_API_KEY"] = local_token
+    values["ACC_HERMES_GATEWAY_API_KEY"] = local_token
     # Modality reverse-proxies (image/audio/video): set the upstream + vault key
     # ref when a key for that modality is available. The image key is DISTINCT
     # from the chat key — prefer NVIDIA_IMAGE_API_KEY (set at cluster init), fall
@@ -524,16 +522,10 @@ def _apply_inproc_router_hub(
 
 def _apply_inproc_router_spoke(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
     """Spoke: route the gateway (chat + image) through the hub's /v1 with the
-    hub-facing token and hold no upstream keys. Leaves the gateway unconfigured
-    when there is no usable hub token — never points at the hub with the
-    degenerate local token."""
+    validated hub-facing token and hold no upstream keys."""
     hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").rstrip("/")
     local_token = values.get("MAC_API_TOKEN") or ""
-    hub_token = cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or ""
-    if hub_token and hub_token == local_token:
-        hub_token = ""
-    if not hub_base or not hub_token:
-        return
+    hub_token = (cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or "").strip()
     hub_v1 = "%s/v1" % hub_base
     values["OPENAI_BASE_URL"] = hub_v1
     values["CUSTOM_BASE_URL"] = hub_v1
@@ -551,6 +543,38 @@ def _apply_inproc_router(
 ) -> None:
     """Clear stale routing/provider state, then configure the hub to run the
     router or a spoke to route through it (credentials centralize on the hub)."""
+    router = _deploy_router_config(env)
+    if cfg.identity.is_hub:
+        if not router["providers"]:
+            raise ValueError(
+                "inproc router hub requires MAC_DEPLOY_ROUTER_PROVIDERS"
+            )
+        invalid_specs = [
+            spec
+            for spec in router["providers"].split(";")
+            if spec.strip() and "key=secret:" not in spec
+        ]
+        if invalid_specs:
+            raise ValueError(
+                "inproc router providers must use key=secret:<name>: %s"
+                % ";".join(invalid_specs)
+            )
+        if not (values.get("MAC_API_TOKEN") or "").strip():
+            raise ValueError("inproc router hub requires a local MAC_API_TOKEN")
+    else:
+        hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").strip()
+        local_token = (values.get("MAC_API_TOKEN") or "").strip()
+        hub_token = (
+            cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or ""
+        ).strip()
+        if not hub_base:
+            raise ValueError("inproc router spoke requires MAC_HUB_URL")
+        if not hub_token:
+            raise ValueError("inproc router spoke requires a hub-facing token")
+        if hub_token == local_token:
+            raise ValueError(
+                "inproc router spoke requires a hub-facing token distinct from MAC_API_TOKEN"
+            )
     _clear(values, INPROC_MANAGED_KEYS)
     if cfg.identity.is_hub:
         _apply_inproc_router_hub(values, cfg, env)

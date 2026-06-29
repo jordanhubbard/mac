@@ -89,8 +89,11 @@ REPO_URL=""
 REPO_BRANCH="main"
 PROJECT=""
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
-    task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
-        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
+    task_json="$(curl -fsS --config - \
+        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
+header = "Authorization: Bearer ${MAC_WORKER_TOKEN}"
+CURL
+)"
     if [ -n "${task_json}" ]; then
         eval "$(printf '%s' "${task_json}" | python3 -c '
 import json, shlex, sys
@@ -144,8 +147,11 @@ print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
     fi
     # If task didn't carry the repo URL, fall back to project metadata. GET /projects/{name} returns a wrapper {project, summary, record, tasks,...}; the project record (with its metadata) is nested under `record`.
     if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then
-        project_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
-            "${MAC_URL}/projects/${PROJECT}" 2>/dev/null || true)"
+        project_json="$(curl -fsS --config - \
+            "${MAC_URL}/projects/${PROJECT}" 2>/dev/null <<CURL || true
+header = "Authorization: Bearer ${MAC_WORKER_TOKEN}"
+CURL
+)"
         if [ -n "${project_json}" ]; then
             eval "$(printf '%s' "${project_json}" | python3 -c '
 import json, shlex, sys

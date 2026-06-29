@@ -85,8 +85,11 @@ fi
 
 PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET})"
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
-    task_json="$(curl -fsS -H "Authorization: Bearer ${MAC_WORKER_TOKEN}" \
-        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null || true)"
+    task_json="$(curl -fsS --config - \
+        "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
+header = "Authorization: Bearer ${MAC_WORKER_TOKEN}"
+CURL
+)"
     if [ -n "${task_json}" ]; then
         PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
 d=json.load(sys.stdin)

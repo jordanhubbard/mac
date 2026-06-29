@@ -315,6 +315,16 @@ def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
             ),
             encoding="utf-8",
         )
+        (task_dir / "openshell-salvage.json").write_text(
+            json.dumps(
+                {
+                    "schema": "mac.openshell_salvage.v1",
+                    "harvested": True,
+                    "progress": {"changed_file_digest": "sha256:test"},
+                }
+            ),
+            encoding="utf-8",
+        )
         return WorkerExecution(
             0,
             "captured output",
@@ -336,7 +346,14 @@ def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
     evidence = cp.list_evidence(task.id)[0]
     index = evidence.metadata["durable_artifacts"]["artifacts"]
     by_name = {item["name"]: item for item in index}
-    assert {"worker-result.json", "stdout.txt", "stderr.txt", "mac-evidence.json"} <= set(by_name)
+    assert {
+        "worker-result.json",
+        "stdout.txt",
+        "stderr.txt",
+        "mac-evidence.json",
+        "openshell-salvage.json",
+    } <= set(by_name)
+    assert by_name["openshell-salvage.json"]["sha256"].startswith("sha256:")
     assert "content_base64" not in by_name["stdout.txt"]
     stdout_artifact = cp.get_evidence_artifact(evidence.id, by_name["stdout.txt"]["id"])
     stderr_artifact = cp.get_evidence_artifact(evidence.id, by_name["stderr.txt"]["id"])
@@ -1129,7 +1146,7 @@ def test_mac_worker_derives_repo_anchor_for_documentation_evidence(tmp_path: Pat
     assert repo_anchor["files_changed"] == ["docs/implementation-plan.md"]
 
 
-def test_mac_worker_auto_publishes_repository_worktree_when_enabled(tmp_path: Path):
+def test_mac_worker_finalizes_dirty_repository_despite_incomplete_manifest(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     _seed, repo = _git_fixture(tmp_path)
@@ -1137,9 +1154,8 @@ def test_mac_worker_auto_publishes_repository_worktree_when_enabled(tmp_path: Pa
     _git(repo, "config", "user.name", "mac tests")
     metadata = _repository_task_metadata(repo)
     metadata["execution_contract"]["evidence_type"] = "documentation"
-    metadata["repository_auto_publish"] = True
     task = cp.create_task(
-        "Repository docs auto-publish task",
+        "Repository docs finalization task",
         required_capabilities=["python"],
         metadata=metadata,
     )
@@ -1228,6 +1244,92 @@ def test_mac_worker_finalizes_missing_repository_manifest(tmp_path: Path):
     )
 
 
+def test_mac_worker_blocks_publication_when_canonical_advances_after_preparation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    seed, repo = _git_fixture(tmp_path)
+    task = cp.create_task(
+        "Repository task prepared on stale base",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        (worktree / "feature.py").write_text("feature\n", encoding="utf-8")
+        _commit_fixture_update(seed, "canonical advanced\n")
+        return WorkerExecution(0, "changed repo after canonical advanced", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+    assert manifest["repo"]["pushed"] is False
+    assert manifest["repo"]["freshness"]["ok"] is False
+    assert "not an ancestor" in manifest["repo"]["freshness"]["error"]
+    assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]) == ""
+
+
+def test_mac_worker_publishes_after_merging_new_canonical_tip(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    seed, repo = _git_fixture(tmp_path)
+    task = cp.create_task(
+        "Repository task refreshes canonical base",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        _commit_fixture_update(seed, "canonical advanced\n")
+        _git(worktree, "fetch", "origin", "main")
+        _git(worktree, "merge", "--ff-only", "FETCH_HEAD")
+        (worktree / "feature.py").write_text("feature\n", encoding="utf-8")
+        return WorkerExecution(0, "merged canonical and changed repo", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "submitted_for_review"
+    manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["freshness"]["ok"] is True
+    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(
+        seed, "rev-parse", "HEAD"
+    )
+
+
 def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
@@ -1287,7 +1389,6 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
         "README.md",
         "docs/demo-story.md",
     ]
-    metadata["repository_auto_publish"] = True
     task = cp.create_task(
         "Repository docs task with required files",
         required_capabilities=["python"],
