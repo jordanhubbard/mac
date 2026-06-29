@@ -2529,44 +2529,60 @@ class MacWorker:
                 ["fetch", "--no-tags", fetch_remote,
                  "+refs/heads/%s:%s" % (canonical_branch, tmp_ref)],
             )
-            if fetch.returncode != 0:
-                raise RuntimeError(
-                    "could not fetch canonical remote branch %r from remote for task worktree base; "
-                    "refusing to use potentially-stale local HEAD: %s"
-                    % (
-                        canonical_branch,
-                        (fetch.stderr or fetch.stdout or "").strip() or str(source_root),
+            _fetch_ok = fetch.returncode == 0
+            if not _fetch_ok:
+                # Fetch failed — network may be unavailable (offline node) or
+                # the remote is temporarily unreachable.  Log a warning and fall
+                # back to the local HEAD so the task can still proceed.  This is
+                # intentionally lenient: an offline worker should not block ALL
+                # tasks; any resulting staleness is surfaced via
+                # repository_local_prior_sha / repository_behind in the context.
+                self._observe_log(
+                    "worker.repository.worktree_fetch_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=str(task.get("id") or ""),
+                    detail={
+                        "canonical_remote": canonical_remote_display,
+                        "canonical_branch": canonical_branch,
+                        "fetch_error": (fetch.stderr or fetch.stdout or "").strip() or str(source_root),
+                        "fallback": "local_head",
+                        "local_prior_sha": local_prior_sha,
+                    },
+                )
+                base_sha = local_prior_sha
+            else:
+                fetched_sha_result = _run_git(source_root, ["rev-parse", tmp_ref])
+                if fetched_sha_result.returncode != 0 or not fetched_sha_result.stdout.strip():
+                    raise RuntimeError(
+                        "could not resolve fetched ref %r after fetch from remote: %s"
+                        % (
+                            tmp_ref,
+                            (fetched_sha_result.stderr or fetched_sha_result.stdout or "").strip(),
+                        )
                     )
-                )
-
-            fetched_sha_result = _run_git(source_root, ["rev-parse", tmp_ref])
-            if fetched_sha_result.returncode != 0 or not fetched_sha_result.stdout.strip():
-                raise RuntimeError(
-                    "could not resolve fetched ref %r after fetch from remote: %s"
-                    % (
-                        tmp_ref,
-                        (fetched_sha_result.stderr or fetched_sha_result.stdout or "").strip(),
+                base_sha = fetched_sha_result.stdout.strip()
+                # Validate the fetched SHA is a well-formed commit SHA before using it.
+                if not re.match(r"^[0-9a-f]{40}$", base_sha):
+                    raise RuntimeError(
+                        "fetched ref %r resolved to an invalid commit SHA: %r" % (tmp_ref, base_sha)
                     )
-                )
-            base_sha = fetched_sha_result.stdout.strip()
-            # Validate the fetched SHA is a well-formed commit SHA before using it.
-            if not re.match(r"^[0-9a-f]{40}$", base_sha):
-                raise RuntimeError(
-                    "fetched ref %r resolved to an invalid commit SHA: %r" % (tmp_ref, base_sha)
-                )
 
             # Correction 3: Verify the fetched ref resolves to a commit object,
             # not merely a well-formed 40-hex SHA.  Tags, blobs, and trees
             # resolve to 40-hex SHAs via rev-parse but are not commit objects;
             # a task worktree must always be based on a real commit.
-            commit_verify_result = _run_git(
-                source_root, ["rev-parse", "--verify", "%s^{commit}" % tmp_ref]
-            )
-            if commit_verify_result.returncode != 0:
-                raise RuntimeError(
-                    "fetched ref %r does not resolve to a commit object; "
-                    "refusing to create task worktree on a non-commit object" % tmp_ref
+            # Skip when falling back to local HEAD (which was already validated
+            # as a commit via rev-parse HEAD above).
+            if _fetch_ok:
+                commit_verify_result = _run_git(
+                    source_root, ["rev-parse", "--verify", "%s^{commit}" % tmp_ref]
                 )
+                if commit_verify_result.returncode != 0:
+                    raise RuntimeError(
+                        "fetched ref %r does not resolve to a commit object; "
+                        "refusing to create task worktree on a non-commit object" % tmp_ref
+                    )
 
             # Correction 2: Require rev-list ahead/behind to succeed and parse
             # exactly two non-negative integers.  Failure or malformed output is
@@ -2616,7 +2632,7 @@ class MacWorker:
                     "canonical_branch": canonical_branch,
                     "ahead": ahead_count,
                     "behind": behind_count,
-                    "source": "fetch_named_ref",
+                    "source": "fetch_named_ref" if _fetch_ok else "local_head_fallback",
                 },
             )
 

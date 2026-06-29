@@ -509,18 +509,22 @@ def test_local_worktree_uses_fetched_canonical_head_not_stale_local(
     assert work_head_after == stale_sha, "registered checkout must not be modified"
 
 
-def test_local_worktree_fetch_failure_blocks_task(
+def test_local_worktree_fetch_failure_falls_back_to_local_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the remote fetch fails, the worker must raise RuntimeError and
-    must NOT silently fall back to the stale local HEAD.
+    """When the remote fetch fails, the worker must log a warning and fall back
+    to the local HEAD so the task can still proceed (offline-friendly).
+    The fallback SHA must be the pre-fetch local HEAD, and fetch must have
+    been attempted before the fallback.
     """
     monkeypatch.delenv("MAC_TASK_WORKTREE_SKIP_FETCH", raising=False)
 
     local_repo = tmp_path / "work"
     local_repo.mkdir(parents=True)
     (local_repo / ".git").mkdir()
+    local_sha = "c" * 40
     fetch_calls: List[Dict[str, Any]] = []
+    log_events: List[str] = []
 
     def fake_run_git(repo: Path, args: List[str]) -> _subprocess.CompletedProcess[str]:
         if args[:1] == ["rev-parse"] and "--show-toplevel" in args:
@@ -534,13 +538,18 @@ def test_local_worktree_fetch_failure_blocks_task(
         if args[:1] == ["rev-parse"] and "--git-common-dir" in args:
             return _ok(stdout=".git\n")
         if args[:2] == ["rev-parse", "HEAD"]:
-            return _ok(stdout=("c" * 40) + "\n")
+            return _ok(stdout=local_sha + "\n")
         if args[:1] == ["fetch"]:
             fetch_calls.append({"args": list(args)})
             return _subprocess.CompletedProcess(
                 args=args, returncode=128, stdout="", stderr="fatal: unable to connect to remote",
             )
         if args[:1] == ["update-ref"]:
+            return _ok()
+        if args[:1] == ["rev-list"]:
+            # local_sha == base_sha when falling back; 0 ahead, 0 behind.
+            return _ok(stdout="0\t0\n")
+        if args[:1] == ["worktree"]:
             return _ok()
         return _ok()
 
@@ -553,10 +562,12 @@ def test_local_worktree_fetch_failure_blocks_task(
     task_dir = tmp_path / "tasks" / "task-fetch-fail"
     task_dir.mkdir(parents=True)
 
-    with pytest.raises(RuntimeError, match="refusing to use potentially-stale local HEAD"):
-        worker._prepare_repository_worktree(task, lease, task_dir)
-
-    assert fetch_calls, "fetch must have been attempted before the error"
+    ctx = worker._prepare_repository_worktree(task, lease, task_dir)
+    assert ctx is not None, "worker must succeed even when fetch fails"
+    assert ctx["repository_base_sha"] == local_sha, (
+        "on fetch failure, worker must fall back to local HEAD %r" % local_sha
+    )
+    assert fetch_calls, "fetch must have been attempted before the fallback"
 
 
 def test_local_worktree_git_common_dir_failure_fails_closed(
