@@ -44,9 +44,8 @@ def test_build_task_prompt_injects_recalled_lessons():
     task = {"id": "t1", "title": "Do a thing", "project": "demo"}
     base = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
     assert "Lessons from prior runs" not in base
-    assert "verification.environment_delta" in base
-    assert "task-local .venv" in base
-    assert "shared Hermes/worker virtualenv" in base
+    assert ".mac-executor-policy.txt" in base
+    assert "verification.environment_delta" not in base
     with_lessons = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=["push before reporting", "run the contract tests"])
     assert "Lessons from prior runs" in with_lessons
     assert "push before reporting" in with_lessons
@@ -61,6 +60,22 @@ def test_build_task_prompt_demands_autonomy():
     assert "never ask the operator for confirmation" in prompt
 
 
+def test_agent_bundle_materializes_owner_only_versioned_policy(tmp_path):
+    bundle = te._write_agent_command_bundle(
+        tmp_path,
+        "small prompt",
+        te._hermes_argv(te.PROMPT_SENTINEL),
+    )
+    try:
+        assert bundle.policy_file.stat().st_mode & 0o777 == 0o600
+        policy = bundle.policy_file.read_text(encoding="utf-8")
+        assert policy.startswith("mac.executor_policy.v1")
+        assert "verification.environment_delta" in policy
+        assert "small prompt" not in policy
+    finally:
+        bundle.cleanup()
+
+
 def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     task = {
         "id": "t1",
@@ -70,8 +85,8 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     }
     prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
     assert "default to evidence_type=repo_change" in prompt
-    assert "Use operator_result only for tasks that are not tied to a repository contract" in prompt
-    assert "codegraph audit object" in prompt
+    assert "use operator_result only when no repository contract exists" in prompt
+    assert "Deterministic host code enforces tests, CodeGraph" in prompt
 
 
 def test_repository_contract_section_no_repository_is_a_failure():
@@ -115,10 +130,29 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "mac/test")
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
 
-    argv = te._build_sandbox_create_argv("sb", workspace, "task", ["python", "-m", "agent"])
+    env_file, _toolchain_file = te._write_sandbox_runtime_files(
+        workspace, "/sandbox/task"
+    )
+    argv = te._build_sandbox_create_argv(
+        "sb",
+        workspace,
+        "task",
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+    )
 
-    assert "MAC_TASK_REPO_WORKTREE=/sandbox/task/repo-lease" in argv
-    assert "MAC_TASK_REPO_BRANCH=mac/test" in argv
+    private_env = env_file.read_text(encoding="utf-8")
+    assert "MAC_TASK_REPO_WORKTREE=/sandbox/task/repo-lease" in private_env
+    assert "MAC_TASK_REPO_BRANCH=mac/test" in private_env
+    assert str(repo) not in " ".join(argv)
+    assert "MAC_TASK_REPO_BRANCH=mac/test" not in " ".join(argv)
     assert "mac_sandbox_toolchain_setup" in argv[-1]
 
 
@@ -392,6 +426,7 @@ PY''',
 def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeypatch):
     workspace = tmp_path / "task"
     workspace.mkdir()
+    monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
     monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
     monkeypatch.setattr(te, "_sandbox_name", lambda: "sb")
@@ -421,14 +456,28 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
         },
     }
 
-    result = te._run_sandboxed(fake_runner, ["python", "-m", "agent"], workspace, "t1", {"task": task})
+    result = te._run_sandboxed(
+        fake_runner,
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+        workspace,
+        "t1",
+        {"task": task},
+    )
 
     assert result.returncode == 0
     assert steps[0][0] == "runner"
     assert steps[1][:2] == ["upload", "sb"]
     verify_script = Path(steps[1][2])
     assert verify_script.name == ".mac-sandbox-repository-verify.sh"
-    assert "mac-sandbox-verification.json" in verify_script.read_text(encoding="utf-8")
+    assert not verify_script.exists(), "executor-only verification script should be cleaned"
     assert steps[1][3] == "/sandbox/task/.mac-sandbox-repository-verify.sh"
     assert steps[2][:2] == ["exec", "--name"]
     assert steps[2][-2:] == ["bash", "/sandbox/task/.mac-sandbox-repository-verify.sh"]
@@ -694,7 +743,7 @@ def test_recall_falls_back_to_direct_memory_records(monkeypatch):
     # deployment_learning records so the very next task still gets hindsight.
     learning = json.dumps({
         "schema": "mac.deployment_learning.v1",
-        "task_title": "Earlier task",
+        "task_title": "Router deployment failure",
         "evidence_type": "repo_change",
         "outcome": "failure",
         "error_signature": "check:git_finalizer rc=1",
@@ -704,13 +753,28 @@ def test_recall_falls_back_to_direct_memory_records(monkeypatch):
         if path.startswith("/v1/memory/recall"):
             return []  # vector tier not populated yet
         return [
+            {
+                "record_type": "deployment_learning:demo",
+                "content": json.dumps(
+                    {
+                        "schema": "mac.deployment_learning.v1",
+                        "task_title": "Unrelated spreadsheet export",
+                        "outcome": "success",
+                    }
+                ),
+                "created_at": "2026-06-01T00:00:00Z",
+            },
             {"record_type": "deployment_learning:demo", "content": learning, "created_at": "2026-05-31T00:00:00Z"},
             {"record_type": "other", "content": "ignored", "created_at": "2026-05-31T01:00:00Z"},
         ]
 
     monkeypatch.setattr(te, "_hub_get", fake_get)
-    lessons = te.recall_deployment_lessons({"title": "Next task", "project": "demo"})
-    assert lessons == ["[failure] Earlier task (repo_change) — failed: check:git_finalizer rc=1"]
+    lessons = te.recall_deployment_lessons(
+        {"title": "Fix router deployment", "project": "demo"}
+    )
+    assert lessons == [
+        "[failure] Router deployment failure (repo_change) — failed: check:git_finalizer rc=1"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -758,6 +822,18 @@ def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
     )
     script.chmod(0o755)
     monkeypatch.setenv("MAC_CODEGRAPH_BIN", str(script))
+    # Finalizer tests model a worker-prepared repository context. The worker
+    # records the canonical base before the agent starts; make that contract
+    # explicit instead of relying on the old finalizer's implicit HEAD~1/main.
+    work = tmp_path / "work"
+    if work.is_dir():
+        for base_ref in ("main", "develop"):
+            base = _git(work, "rev-parse", "--verify", base_ref)
+            if base.returncode == 0 and base.stdout.strip():
+                monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", base.stdout.strip())
+                monkeypatch.setenv("MAC_TASK_REPO_DEFAULT_BRANCH", base_ref)
+                monkeypatch.setenv("MAC_TASK_REPO_LEASE_ID", "lease-test")
+                break
     return script
 
 
@@ -852,24 +928,6 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
         .stdout.strip()
         == ""
     )
-
-
-def test_repository_push_remote_uses_auth_but_reports_redacted(monkeypatch):
-    monkeypatch.setenv("GH_TOKEN", "secret-token")
-    task = {
-        "metadata": {
-            "origin": {
-                "repository_contract": {
-                    "canonical_remote_url": "https://github.com/org/repo.git",
-                },
-            },
-        },
-    }
-
-    remote, display = te._repository_push_remote(task, "origin")
-
-    assert remote == "https://x-access-token:secret-token@github.com/org/repo.git"
-    assert display == "https://x-access-token:<redacted>@github.com/org/repo.git"
 
 
 def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatch):
@@ -1227,8 +1285,8 @@ def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
-def test_git_finalizer_blocks_when_no_remote_context(tmp_path, monkeypatch):
-    """No canonical remote in contract or env: fetch attempt fails closed (no silent pass)."""
+def test_git_finalizer_blocks_when_canonical_remote_is_missing(tmp_path, monkeypatch):
+    """A named-origin guess cannot replace the prepared canonical target."""
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))
     work = tmp_path / "work"
@@ -1247,7 +1305,7 @@ def test_git_finalizer_blocks_when_no_remote_context(tmp_path, monkeypatch):
     ws.mkdir()
     _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
-    # No canonical_remote_url, no env override — finalizer must not silently pass.
+    # No canonical_remote_url or prepared canonical URL: fail closed.
     task = {
         "id": "t-no-remote",
         "metadata": {
@@ -1263,9 +1321,9 @@ def test_git_finalizer_blocks_when_no_remote_context(tmp_path, monkeypatch):
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    # Without a resolvable canonical remote, the freshness check must fail closed.
     assert manifest["repo"]["pushed"] is False
     assert manifest["push"]["status"] == "skipped"
+    assert "remote URL" in manifest["freshness_error"]
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
 
 
@@ -1400,13 +1458,16 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     seen = {}
 
     def fake_runner(argv, cwd, task_id, metadata):
-        seen["prompt"] = argv[argv.index("--query") + 1]
+        prompt_file = Path(argv[argv.index("--prompt-file") + 1])
+        seen["prompt"] = prompt_file.read_text(encoding="utf-8")
+        seen["argv"] = list(argv)
         return _FakeResult(0, stdout="Produced the rollout plan and mapped the dependencies.\n")
 
     rc = te.main(runner=fake_runner)
     assert rc == 0
     # recalled lesson reached the prompt
     assert "push before reporting" in seen["prompt"]
+    assert "push before reporting" not in seen["argv"]
     # fallback wrote an unverified operator_result
     manifest = json.loads((ws / "mac-evidence.json").read_text())
     assert manifest["evidence_type"] == "operator_result"
@@ -1443,15 +1504,22 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
 
     def fake_runner(argv, cwd, task_id, metadata):
         captured["argv"] = argv
+        command_file = Path(argv[argv.index("--command-file") + 1])
+        captured["agent_argv"] = json.loads(
+            command_file.read_text(encoding="utf-8")
+        )["argv"]
         return _FakeResult(0, stdout="done\n")
 
     te._invoke_agent(fake_runner, "fix the bug", tmp_path, "tid", {})
     argv = captured["argv"]
-    assert argv[0] == "/usr/local/bin/claude"
-    assert "-p" in argv and argv[-1] == "fix the bug"
-    assert "--dangerously-skip-permissions" in argv
+    agent_argv = captured["agent_argv"]
+    assert "mac.agent_command" in argv
+    assert "fix the bug" not in argv
+    assert agent_argv[0] == "/usr/local/bin/claude"
+    assert "-p" in agent_argv and agent_argv[-1] == te.PROMPT_SENTINEL
+    assert "--dangerously-skip-permissions" in agent_argv
     # Messaging MCP config was materialized in the workspace and wired in (Claude).
-    assert "--mcp-config" in argv
+    assert "--mcp-config" in agent_argv
     assert (tmp_path / ".mac-coding-agent-mcp.json").is_file()
 
 
@@ -1472,8 +1540,9 @@ def test_invoke_agent_falls_back_to_hermes_when_no_coding_agent(tmp_path, monkey
         "tid",
         {},
     )
-    # Fell back to the Hermes -> gateway argv.
-    assert "--query" in captured["argv"] and "hermes_cli.main" in captured["argv"]
+    # Fell back to Hermes, still behind the private-prompt wrapper.
+    assert "mac.agent_command" in captured["argv"]
+    assert "do it" not in captured["argv"]
 
 
 # ---------------------------------------------------------------------------
@@ -1633,10 +1702,14 @@ def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: deleted.append(args) or (True, ""))
     choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/usr/bin/claude")
     assert te._run_coding_agent_preflight(choice) is True
-    # The probe ran the real CLI with the preflight prompt, inside `sandbox create`.
+    # The probe runs through private files: neither prompt nor underlying agent
+    # command/credentials appear in the host's long-lived create argv.
     assert "create" in seen["argv"]
     joined = " ".join(seen["argv"])
-    assert "/usr/bin/claude" in joined and ca.PREFLIGHT_SENTINEL in joined
+    assert "mac.agent_command" in joined
+    assert "/usr/bin/claude" not in joined
+    assert ca.PREFLIGHT_PROMPT not in joined
+    assert ca.PREFLIGHT_SENTINEL not in joined
     # The throwaway sandbox is always deleted.
     assert deleted and deleted[0][0] == "delete"
 

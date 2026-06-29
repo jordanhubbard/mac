@@ -5,6 +5,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 from mac.deploy_env import (
     ControlConfig,
     DEFAULT_WORKER_CAPABILITIES,
@@ -948,30 +950,54 @@ def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
     assert "nvapi-SECRET" not in "\n".join(out.values())
 
 
-def test_env_writer_spoke_without_hub_token_leaves_gateway_unconfigured(tmp_path):
-    # No configured hub token → MAC_WORKER_TOKEN degenerates to the local token.
-    out = _run_env_writer(
-        tmp_path, agent="natasha", hub_agent="rocky",
-        hub_url="http://hub.example:8789", hub_token="",
-        extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": ""},
-        existing_env_text=(
-            "OPENAI_BASE_URL=https://old.example/v1\n"
-            "OPENAI_API_KEY=OLD_OPENAI\n"
-            "MAC_HERMES_GATEWAY_BASE_URL=https://old.example/v1\n"
-            "MAC_HERMES_GATEWAY_API_KEY=OLD_GATEWAY\n"
-            "NVIDIA_API_KEY=OLD_NVIDIA\n"
-            "MAC_ROUTER_PROVIDERS=nvidia=https://old.example/v1,0,key=old\n"
-        ),
-    )
-    # do NOT point the gateway at the hub with a broken local-token credential
-    assert out.get("OPENAI_BASE_URL") != "http://hub.example:8789/v1"
-    local = out.get("MAC_API_TOKEN")
-    assert out.get("OPENAI_API_KEY") != local  # never the local token
-    assert out.get("MAC_HERMES_GATEWAY_API_KEY") != local
-    assert "OLD_OPENAI" not in out.values()
-    assert "OLD_GATEWAY" not in out.values()
-    assert "OLD_NVIDIA" not in out.values()
-    assert "MAC_ROUTER_PROVIDERS" not in out
+def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):
+    with pytest.raises(ValueError, match="hub-facing token distinct"):
+        _run_env_writer(
+            tmp_path, agent="natasha", hub_agent="rocky",
+            hub_url="http://hub.example:8789", hub_token="",
+            extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": ""},
+        )
+
+
+def test_env_writer_hub_without_providers_fails_fast(tmp_path):
+    with pytest.raises(ValueError, match="MAC_DEPLOY_ROUTER_PROVIDERS"):
+        _run_env_writer(
+            tmp_path, agent="rocky", hub_agent="rocky",
+            hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+            extra_env={
+                "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+                "MAC_DEPLOY_ROUTER_PROVIDERS": "",
+            },
+        )
+
+
+def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    load = '. "$DEPLOY_ENV_FILE"'
+    assert 'DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"' in script
+    assert load in script
+    assert script.index(load) < script.index('GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"')
+
+
+def test_router_topology_preflight_runs_before_remote_mutation():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    main_body = script.split("main() {", 1)[1].split("\n}\n\nmain", 1)[0]
+
+    assert "validate_router_topology_spec()" in script
+    validation = main_body.index('validate_router_topology_spec "$spec" "$hub_token"')
+    assert validation < main_body.index("install_reverse_tunnel_on_hub")
+    assert validation < main_body.index('deploy_host "$spec"')
+
+
+def test_agent_service_reads_worker_token_from_environment_not_process_argv():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+
+    assert ': "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"' in wrapper
+    assert '--token "$MAC_WORKER_TOKEN"' not in wrapper
 
 
 def _extract_bash_fn(name):
@@ -1667,7 +1693,12 @@ def test_executor_prompt_includes_repository_runtime_contract():
     assert "origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only" in script
     assert "bootstrap.command" in script
     assert "test.command" in script
-    assert "returncode=0, status=pass, result=passed" in script
+    assert ".mac-executor-policy.txt" in script
+    policy = (ROOT / "src" / "mac" / "executor-policy.txt").read_text(
+        encoding="utf-8"
+    )
+    assert policy.startswith("mac.executor_policy.v1")
+    assert "Write $MAC_TASK_WORKSPACE/mac-evidence.json" in policy
 
 
 def test_reviewer_prompt_includes_verdict_contract():

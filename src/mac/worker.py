@@ -54,6 +54,12 @@ from mac.codegraph_audit import (
 )
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.hermes_config_surface import apply_hermes_surface_payload
+from mac.gitops import (
+    guarded_push,
+    resolve_canonical_publication_target,
+    validate_git_ref,
+    validate_git_remote_url,
+)
 
 
 JsonDict = Dict[str, Any]
@@ -64,14 +70,6 @@ SAFE_GIT_REF_RE = r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$"
 SAFE_SYSTEMD_SERVICE_RE = r"^[A-Za-z0-9][A-Za-z0-9_.@:\-]{0,126}\.service$"
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-# mac-raud: validate git remote URLs supplied by upstream evidence
-# before passing to ``git clone``. We accept https/http, ssh://, git://,
-# git@host:path forms; nothing that could be parsed as a flag.
-_GIT_REMOTE_URL_RE = re.compile(
-    r"^(?:https?://|ssh://|git://|file://|git@|/)[A-Za-z0-9._\-:/@%+~?=&]*$"
-)
-# Git ref name rules (simplified — see git-check-ref-format).
-_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 DEFAULT_COMMAND_INVENTORY_NAMES = (
     "bash",
     "codegraph",
@@ -92,27 +90,11 @@ DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS = 300.0
 
 
 def _validate_git_remote_url(value: str) -> str:
-    """Reject git remote URLs that could smuggle argv flags or escape
-    the URL shape entirely (mac-raud).
-    """
-    if not value or value.startswith("-"):
-        raise ValueError("git remote URL is empty or looks like a flag: %r" % value)
-    if len(value) > 2048:
-        raise ValueError("git remote URL exceeds 2048 byte limit")
-    if not _GIT_REMOTE_URL_RE.match(value):
-        raise ValueError("git remote URL does not match a recognised scheme: %r" % value)
-    return value
+    return validate_git_remote_url(value)
 
 
 def _validate_git_ref(value: str) -> str:
-    """Reject git refs that could be confused with argv flags."""
-    if not value or value.startswith("-"):
-        raise ValueError("git ref is empty or looks like a flag: %r" % value)
-    if len(value) > 512:
-        raise ValueError("git ref exceeds 512 byte limit")
-    if not _GIT_REF_RE.match(value):
-        raise ValueError("git ref contains disallowed characters: %r" % value)
-    return value
+    return validate_git_ref(value)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -2667,9 +2649,11 @@ class MacWorker:
                 "repository_source_path": str(source_root),
                 "repository_worktree": str(worktree_dir),
                 "repository_branch": branch,
+                "repository_lease_id": lease_id,
                 "repository_base_sha": base_sha,
                 "repository_local_prior_sha": local_prior_sha,
                 "repository_canonical_branch": canonical_branch,
+                "repository_canonical_remote_url": canonical_remote,
                 "repository_canonical_remote": canonical_remote_display,
                 "repository_ahead": ahead_count,
                 "repository_behind": behind_count,
@@ -2740,6 +2724,7 @@ class MacWorker:
         _validate_git_ref(default_branch)
 
         auth_url = _inject_git_remote_auth(remote_url)
+        remote_display = _redact_git_remote_auth(auth_url)
         clone_args = ["clone", "--depth=1", "--branch", default_branch, "--", auth_url, str(worktree_dir)]
         # ``git -C`` requires an existing directory; clone runs from the
         # parent so we use a separate code path (the helper expects the
@@ -2778,8 +2763,12 @@ class MacWorker:
             "repository_source_path": str(worktree_dir),
             "repository_worktree": str(worktree_dir),
             "repository_branch": branch,
+            "repository_lease_id": str(lease.get("id") or ""),
             "repository_base_sha": base_sha,
-            "repository_origin_remote": remote_url,
+            "repository_canonical_branch": default_branch,
+            "repository_canonical_remote_url": remote_url,
+            "repository_canonical_remote": remote_display,
+            "repository_origin_remote": remote_display,
         }
         self._observe_log(
             "worker.repository.worktree_prepared",
@@ -2987,13 +2976,11 @@ class MacWorker:
         (task_dir / "stdout.txt").write_text(execution.stdout, encoding="utf-8")
         (task_dir / "stderr.txt").write_text(execution.stderr, encoding="utf-8")
         if execution.succeeded:
-            finalized_missing_manifest = self._write_missing_repository_evidence_manifest(
+            self._write_missing_repository_evidence_manifest(
                 task_id,
                 task_dir,
                 execution,
             )
-            if not finalized_missing_manifest:
-                self._auto_publish_repository_worktree(task_id, task_dir)
         result_path = task_dir / "worker-result.json"
         result_path.write_text(
             json.dumps(
@@ -3242,10 +3229,39 @@ class MacWorker:
         repo["pushed"] = False
         if branch:
             repo["remote_ref"] = "refs/heads/%s" % branch
-        push_remote, push_remote_display = _repository_push_remote(task, context)
-        repo["push_remote"] = push_remote_display
+        canonical_remote = _repository_publication_remote(task, context)
+        canonical_branch = str(context.get("repository_canonical_branch") or "").strip()
+        prepared_base_sha = str(context.get("repository_base_sha") or "").strip()
+        repo["push_remote"] = _redact_git_remote_auth(
+            _inject_git_remote_auth(canonical_remote)
+        )
         codegraph = run_codegraph_audit(worktree, files_changed)
         repo["dirty"] = _repository_worktree_is_dirty(worktree)
+
+        publication_target = None
+        target_error = ""
+        try:
+            lease_id = str(context.get("repository_lease_id") or "").strip()
+            if not lease_id:
+                raise ValueError("repository context is missing repository_lease_id")
+            publication_target = resolve_canonical_publication_target(
+                worktree=worktree,
+                canonical_remote=canonical_remote,
+                canonical_branch=canonical_branch,
+                destination_branch=branch,
+                prepared_base_sha=prepared_base_sha,
+                isolation_key="%s-%s" % (task_id, lease_id),
+            )
+        except (OSError, ValueError) as exc:
+            target_error = str(exc)
+            repo["freshness"] = {
+                "ok": False,
+                "remote": repo["push_remote"],
+                "canonical_branch": canonical_branch,
+                "prepared_base_sha": prepared_base_sha,
+                "task_head_sha": repo["head_sha"],
+                "error": target_error,
+            }
 
         pushed = False
         push_item: Optional[JsonDict] = None
@@ -3261,36 +3277,29 @@ class MacWorker:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
         elif test_item.get("returncode") == 0:
-            if branch:
-                push = _run_git(worktree, ["push", push_remote, "HEAD:refs/heads/%s" % branch])
-                push_item = _process_check_item(
-                    "git push",
-                    push.returncode,
-                    command="git push %s HEAD:refs/heads/%s" % (push_remote_display, branch),
-                    stdout=_redact_git_remote_auth_in_text(push.stdout),
-                    stderr=_redact_git_remote_auth_in_text(push.stderr),
+            if publication_target is not None:
+                publication = guarded_push(publication_target)
+                display = (
+                    publication.target.remote_display
+                    if publication.target is not None
+                    else repo["push_remote"]
                 )
-                if push.returncode == 0:
-                    pushed = _repository_context_head_is_pushed(
-                        worktree,
-                        {
-                            "head_sha": _git_stdout(worktree, ["rev-parse", "HEAD"]),
-                            "remote_ref": "refs/heads/%s" % branch,
-                            "remote_url": push_remote,
-                        },
-                    )
-                    if not pushed:
-                        problems.append("repository push succeeded but remote HEAD verification failed")
-                else:
-                    problems.append(
-                        "repository push failed: %s"
-                        % (
-                            _redact_git_remote_auth_in_text((push.stderr or push.stdout or "").strip())
-                            or branch
-                        )
-                    )
+                repo["push_remote"] = display
+                if publication.canonical_tip_sha:
+                    repo["base_sha"] = publication.canonical_tip_sha
+                repo["freshness"] = publication.evidence()
+                push_item = _process_check_item(
+                    "guarded git push",
+                    0 if publication.ok and publication.remote_verified else 1,
+                    command="guarded git push %s HEAD:refs/heads/%s" % (display, branch),
+                    stdout=publication.push_stdout,
+                    stderr=publication.push_stderr or publication.error,
+                )
+                pushed = publication.ok and publication.remote_verified
+                if not pushed:
+                    problems.append("repository publication blocked: %s" % publication.error)
             else:
-                problems.append("repository context is missing repository_branch")
+                problems.append("repository publication target invalid: %s" % target_error)
         else:
             problems.append("repository contract test failed; refusing to push")
 
@@ -3467,96 +3476,6 @@ class MacWorker:
             command=command,
             stdout=proc.stdout,
             stderr=proc.stderr,
-        )
-
-    def _auto_publish_repository_worktree(self, task_id: str, task_dir: Path) -> None:
-        task = _task_payload_from_workspace(task_dir)
-        metadata = ensure_json_object(task.get("metadata"))
-        if not (
-            metadata.get("repository_auto_publish") is True
-            or metadata.get("auto_commit_repository") is True
-            or os.environ.get("MAC_WORKER_REPOSITORY_AUTO_PUBLISH", "").lower()
-            in {"1", "true", "yes"}
-        ):
-            return
-        context = _load_repository_context(task_dir)
-        if not context:
-            return
-        worktree = Path(str(context.get("repository_worktree") or "")).expanduser()
-        if not worktree.exists():
-            raise RuntimeError("repository auto-publish worktree missing: %s" % worktree)
-        branch = str(context.get("repository_branch") or "").strip()
-        if not branch:
-            raise RuntimeError("repository auto-publish missing repository_branch")
-
-        status = _run_git(worktree, ["status", "--porcelain"])
-        if status.returncode != 0:
-            raise RuntimeError(
-                "repository auto-publish status failed: %s"
-                % ((status.stderr or status.stdout or "").strip() or worktree)
-            )
-        if status.stdout.strip():
-            add = _run_git(worktree, ["add", "-A"])
-            if add.returncode != 0:
-                raise RuntimeError(
-                    "repository auto-publish add failed: %s"
-                    % ((add.stderr or add.stdout or "").strip() or worktree)
-                )
-            staged = _run_git(worktree, ["diff", "--cached", "--quiet"])
-            if staged.returncode == 1:
-                title = str(task.get("title") or task_id).strip() or task_id
-                commit = _run_git(
-                    worktree,
-                    ["commit", "-m", "MAC task %s: %s" % (task_id, title[:120])],
-                )
-                if commit.returncode != 0:
-                    raise RuntimeError(
-                        "repository auto-publish commit failed: %s"
-                        % ((commit.stderr or commit.stdout or "").strip() or worktree)
-                    )
-            elif staged.returncode != 0:
-                raise RuntimeError(
-                    "repository auto-publish staged diff failed: %s"
-                    % ((staged.stderr or staged.stdout or "").strip() or worktree)
-                )
-
-        files_changed = _repository_context_changed_files(worktree, context)
-        codegraph = run_codegraph_audit(worktree, files_changed)
-        if not codegraph_audit_passed(codegraph):
-            raise RuntimeError(
-                "repository auto-publish codegraph audit failed: %s"
-                % (codegraph.get("reason") or "unknown")
-            )
-        if _repository_worktree_is_dirty(worktree):
-            raise RuntimeError("repository auto-publish worktree dirty after codegraph audit")
-
-        push_remote, push_remote_display = _repository_push_remote(task, context)
-        push = _run_git(worktree, ["push", push_remote, "HEAD:refs/heads/%s" % branch])
-        if push.returncode != 0:
-            raise RuntimeError(
-                "repository auto-publish push failed: %s"
-                % (
-                    _redact_git_remote_auth_in_text((push.stderr or push.stdout or "").strip())
-                    or branch
-                )
-            )
-        head = _run_git(worktree, ["rev-parse", "HEAD"])
-        remote = _run_git(worktree, ["ls-remote", push_remote, "refs/heads/%s" % branch])
-        remote_sha = (remote.stdout.split() or [""])[0] if remote.returncode == 0 else ""
-        if head.returncode != 0 or not head.stdout.strip() or remote_sha != head.stdout.strip():
-            raise RuntimeError("repository auto-publish remote verification failed for %s" % branch)
-
-        self._observe_log(
-            "worker.repository.auto_published",
-            subject_type="task",
-            subject_id=task_id,
-            detail={
-                "repository_worktree": str(worktree),
-                "repository_branch": branch,
-                "head_sha": head.stdout.strip(),
-                "remote_ref": "refs/heads/%s" % branch,
-                "push_remote": push_remote_display,
-            },
         )
 
     def _execution_submission_problems(self, task_dir: Path, evidence: JsonDict) -> List[str]:
@@ -4395,6 +4314,7 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "stderr.txt", "stderr.txt", "stderr"),
         (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
         (task_dir / "mac-sandbox-verification.json", "mac-sandbox-verification.json", "sandbox_verification"),
+        (task_dir / "openshell-salvage.json", "openshell-salvage.json", "sandbox_salvage"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
         (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
         (task_dir / "executor-task.json", "executor-task.json", "review_context"),
@@ -4543,8 +4463,11 @@ def _repository_context_env(context: JsonDict) -> Dict[str, str]:
         "MAC_TASK_REPO_WORKTREE": context.get("repository_worktree"),
         "MAC_TASK_REPO_SOURCE": context.get("repository_source_path"),
         "MAC_TASK_REPO_BRANCH": context.get("repository_branch"),
+        "MAC_TASK_REPO_LEASE_ID": context.get("repository_lease_id"),
         "MAC_TASK_REPO_BASE_SHA": context.get("repository_base_sha"),
         "MAC_TASK_REPO_REMOTE": context.get("repository_origin_remote"),
+        "MAC_TASK_CANONICAL_REMOTE": context.get("repository_canonical_remote_url"),
+        "MAC_TASK_REPO_DEFAULT_BRANCH": context.get("repository_canonical_branch"),
     }
     return {key: str(value) for key, value in mapping.items() if value not in {None, ""}}
 
@@ -4742,9 +4665,29 @@ def _repository_contract_canonical_remote(task: JsonDict) -> str:
     return ""
 
 
+def _repository_publication_remote(task: JsonDict, context: Optional[JsonDict] = None) -> str:
+    """Return the explicit task/preparation canonical URL, without fallback.
+
+    The prepared context intentionally stores only a display-safe URL. Reading
+    the raw target from the task contract keeps credentials out of workspace
+    metadata while allowing the publication guard to resolve the exact remote.
+    """
+    canonical = _repository_contract_canonical_remote(task)
+    if canonical:
+        return canonical
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    origin = metadata.get("origin") if isinstance(metadata, dict) else {}
+    if isinstance(origin, dict):
+        remote = str(origin.get("repository_url") or "").strip()
+        if remote:
+            return remote
+    if isinstance(context, dict):
+        return str(context.get("repository_canonical_remote_url") or "").strip()
+    return ""
+
+
 def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str]:
-    fallback = str(context.get("repository_origin_remote") or "").strip()
-    remote = _repository_contract_canonical_remote(task) or fallback or "origin"
+    remote = _repository_publication_remote(task, context)
     authed = _inject_git_remote_auth(remote)
     return authed, _redact_git_remote_auth(authed)
 

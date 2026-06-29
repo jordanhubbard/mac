@@ -20,7 +20,15 @@ import pytest
 
 from mac import task_executor as te
 
-_ARGV = ["/home/x/.mac/venv/bin/python", "-m", "hermes_cli.main", "chat", "--query", "do it", "--yolo"]
+_ARGV = [
+    "/opt/mac-venv/bin/python",
+    "-m",
+    "mac.agent_command",
+    "--command-file",
+    "/sandbox/task-7/.mac-agent-command.json",
+    "--prompt-file",
+    "/sandbox/task-7/.mac-agent-prompt",
+]
 
 _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_SANDBOX",
@@ -32,6 +40,7 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
     "MAC_OPENSHELL_HOST_ALIAS",
+    "MAC_OPENSHELL_PROGRESS_INTERVAL",
     "MAC_HERMES_PYTHON",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
     "HERMES_YOLO_MODE",
@@ -49,6 +58,7 @@ def _clean(monkeypatch, tmp_path):
     # Tests run on non-Landlock hosts (Mac/CI); bypass the kernel precheck so the
     # orchestration tests exercise the lifecycle. The precheck has its own tests.
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
     monkeypatch.setattr(te, "_merge_sandbox_download_tree", lambda download_root, workspace: None)
     yield
 
@@ -116,13 +126,16 @@ def test_enabled_default_off():
 # ---------------------------------------------------------------------------
 
 
-def test_invoke_unsandboxed_runs_plain_argv():
+def test_invoke_unsandboxed_uses_private_prompt_wrapper(tmp_path):
     r = FakeRunner()
-    te._invoke_agent(r, "do the thing", Path("/work/t"), "tid", {})
+    workspace = tmp_path / "t"
+    workspace.mkdir()
+    te._invoke_agent(r, "do the thing", workspace, "tid", {})
     assert len(r.calls) == 1
     argv = r.calls[0][0]
     assert "openshell" not in argv[0] and argv[0].endswith("python")
-    assert "--yolo" in argv
+    assert "mac.agent_command" in argv
+    assert "do the thing" not in argv
 
 
 # ---------------------------------------------------------------------------
@@ -177,18 +190,25 @@ def test_build_uploads_workspace_to_sandbox_root():
     assert "/work/task-7:/sandbox" in out
 
 
-def test_build_runs_agent_in_workspace_subdir_with_yolo():
+def test_build_runs_private_agent_wrapper_in_workspace_subdir():
     inner = _inner(_build("/work/task-7"))
     assert inner.startswith("cd /sandbox/task-7\n")
     assert "mac_sandbox_toolchain_setup" in inner
     assert "\nexec " in inner
-    assert "hermes_cli.main" in inner and "--yolo" in inner
+    assert "mac.agent_command" in inner
+    assert "hermes_cli.main" not in inner
 
 
-def test_build_repoints_workspace_env_into_sandbox():
-    out = _build("/work/task-7")
-    assert "MAC_TASK_WORKSPACE=/sandbox/task-7" in out
-    assert "MAC_TASK_FILE=/sandbox/task-7/task.json" in out
+def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
+    workspace = tmp_path / "task-7"
+    workspace.mkdir()
+    env_file, toolchain_file = te._write_sandbox_runtime_files(
+        workspace, "/sandbox/task-7"
+    )
+    content = env_file.read_text(encoding="utf-8")
+    assert "MAC_TASK_WORKSPACE=/sandbox/task-7" in content
+    assert "MAC_TASK_FILE=/sandbox/task-7/task.json" in content
+    assert toolchain_file.stat().st_mode & 0o777 == 0o700
 
 
 def test_build_separator_appears_once_before_command():
@@ -203,23 +223,26 @@ def test_build_bin_override(monkeypatch):
 
 
 def test_build_create_args_spliced(monkeypatch):
-    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from img --upload /a:/b --env HOME=/tmp")
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from img --upload /a:/b")
     out = _build()
-    for tok in ("--from", "img", "--upload", "/a:/b", "--env", "HOME=/tmp"):
+    for tok in ("--from", "img", "--upload", "/a:/b"):
         assert tok in out
         assert out.index(tok) < out.index("bash")
 
 
-def test_build_quotes_prompt_safely():
-    # A shell-hostile prompt must not be able to break out of the cd-wrapper.
-    argv = te._hermes_argv("do; rm -rf / # $(whoami)")
-    inner = _inner(_build(argv=argv))
-    # the dangerous text is single-quoted inside the exec'd command, not bare
-    assert "rm -rf /" not in inner.replace("'do; rm -rf / # $(whoami)'", "")
+def test_build_rejects_direct_prompt_bearing_agent_argv():
+    with pytest.raises(ValueError, match="private-file command wrapper"):
+        _build(argv=te._hermes_argv("do; rm -rf / # $(whoami)"))
+
+
+def test_build_rejects_env_values_in_extra_argv(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from img --env TOKEN=secret")
+    with pytest.raises(ValueError, match="may not contain --env"):
+        _build()
 
 
 # ---------------------------------------------------------------------------
-# env passthrough (forwarded into the sandbox via --env)
+# env passthrough (copied into the sandbox via a private file)
 # ---------------------------------------------------------------------------
 
 
@@ -227,19 +250,18 @@ def test_env_passthrough_only_set_vars(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "FOO,BAR,FOO")
     monkeypatch.setenv("FOO", "fooval")
     monkeypatch.delenv("BAR", raising=False)
-    out = _build()
-    assert out.count("FOO=fooval") == 1
-    assert not any(tok.startswith("BAR=") for tok in out)
+    values = te._openshell_environment()
+    assert values == {"FOO": "fooval"}
 
 
 def test_env_passthrough_default_list_used(monkeypatch):
     monkeypatch.setenv("MAC_HUB_URL", "http://hub:8789")
-    assert "MAC_HUB_URL=http://hub:8789" in _build()
+    assert te._openshell_environment()["MAC_HUB_URL"] == "http://hub:8789"
 
 
 def test_env_passthrough_defaults_include_yolo_bypass(monkeypatch):
     monkeypatch.setenv("HERMES_YOLO_MODE", "1")
-    assert "HERMES_YOLO_MODE=1" in _build()
+    assert te._openshell_environment()["HERMES_YOLO_MODE"] == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -247,13 +269,21 @@ def test_env_passthrough_defaults_include_yolo_bypass(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch):
+def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "sb1")
     steps = []
+    events = []
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args) or (True, "")))
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: events.append((event, detail)) or True,
+    )
     r = FakeRunner()
-    te._invoke_agent(r, "do it", Path("/work/task-7"), "tid", {})
+    workspace = tmp_path / "task-7"
+    workspace.mkdir()
+    te._invoke_agent(r, "do it", workspace, "tid", {})
     # 1 audited create call (runs the agent), then download + delete out-of-band
     assert len(r.calls) == 1
     create = r.calls[0][0]
@@ -261,24 +291,107 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch):
     assert steps[0][:3] == ["download", "sb1", "/sandbox/task-7"]
     assert Path(steps[0][3]).name.startswith(".task-7-openshell-download-")
     assert steps[1] == ["delete", "sb1"]
+    salvage = (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
+    assert '"harvested": true' in salvage
+    assert [event for event, _detail in events if event.startswith("sandbox_")] == [
+        "sandbox_started",
+        "sandbox_agent_completed",
+        "sandbox_harvested",
+        "sandbox_deleted",
+    ]
 
 
-def test_invoke_sandboxed_tears_down_on_agent_failure(monkeypatch):
+def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "mac-super-secret-token")
+    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
+    workspace = tmp_path / "task-large"
+    prompt = "private-task-prompt-" + ("x" * 25000)
+    runner = FakeRunner()
+
+    te._invoke_agent(runner, prompt, workspace, "tid", {})
+
+    create = runner.calls[0][0]
+    joined = " ".join(create)
+    assert "mac-super-secret-token" not in joined
+    assert "private-task-prompt" not in joined
+    assert "--env" not in create
+    assert len(joined) < 4000
+
+
+def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(
+    monkeypatch, tmp_path
+):
+    snapshots = iter(
+        [
+            {
+                "ready": "1",
+                "head": "a" * 40,
+                "changed_count": "0",
+                "changed_digest": "clean",
+                "manifest": "0",
+            },
+            {
+                "ready": "1",
+                "head": "b" * 40,
+                "changed_count": "2",
+                "changed_digest": "digest-2",
+                "manifest": "1",
+            },
+        ]
+    )
+    events = []
+    monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
+    monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "a" * 40)
+    monkeypatch.setattr(
+        te, "_sandbox_progress_snapshot", lambda *args: next(snapshots)
+    )
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: events.append((event, detail)) or True,
+    )
+    monitor = te._SandboxProgressMonitor("sb", "task", tmp_path, "tid")
+
+    monitor.observe()
+    monitor.observe()
+
+    assert [event for event, _detail in events] == [
+        "sandbox_ready",
+        "sandbox_head_observed",
+        "sandbox_first_mutation",
+        "sandbox_head_observed",
+        "sandbox_manifest_observed",
+    ]
+    assert monitor.evidence()["changed_file_digest"] == "digest-2"
+    assert monitor.evidence()["manifest_observed"] is True
+
+
+def test_invoke_sandboxed_harvests_then_tears_down_on_agent_failure(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "sb2")
     steps = []
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args[0]) or (True, "")))
+    workspace = tmp_path / "task-7"
+    workspace.mkdir()
     with pytest.raises(RuntimeError, match="agent boom"):
-        te._invoke_agent(FakeRunner(raises=True), "do it", Path("/work/task-7"), "tid", {})
-    assert "delete" in steps  # teardown still ran (finally)
+        te._invoke_agent(FakeRunner(raises=True), "do it", workspace, "tid", {})
+    assert steps[-2:] == ["download", "delete"]
+    assert '"runner_completed": false' in (
+        workspace / "openshell-salvage.json"
+    ).read_text(encoding="utf-8")
 
 
-def test_invoke_sandboxed_keep_skips_delete(monkeypatch):
+def test_invoke_sandboxed_keep_skips_delete(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_KEEP", "1")
     steps = []
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args[0]) or (True, "")))
-    te._invoke_agent(FakeRunner(), "do it", Path("/work/task-7"), "tid", {})
+    workspace = tmp_path / "task-7"
+    workspace.mkdir()
+    te._invoke_agent(FakeRunner(), "do it", workspace, "tid", {})
     assert "download" in steps and "delete" not in steps
 
 
@@ -305,20 +418,20 @@ def test_unsandboxed_fail_closed_raises(monkeypatch):
         te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
 
 
-def test_invoke_unsandboxed_fail_closed_raises(monkeypatch):
+def test_invoke_unsandboxed_fail_closed_raises(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
-        te._invoke_agent(FakeRunner(), "do it", Path("/work/t"), "tid", {})
+        te._invoke_agent(FakeRunner(), "do it", tmp_path / "t", "tid", {})
 
 
-def test_invoke_sandbox_overrides_failclosed_hatch(monkeypatch):
+def test_invoke_sandbox_overrides_failclosed_hatch(monkeypatch, tmp_path):
     # sandbox on -> safe regardless of the unsandboxed hatch (no raise)
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
-    te._invoke_agent(r, "do it", Path("/work/t"), "tid", {})
+    te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
     assert r.calls[0][0][0] == "openshell"
 
 
@@ -361,9 +474,9 @@ def test_env_flags_rewrite_loopback_urls(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "MAC_HUB_URL,MAC_WORKER_TOKEN")
     monkeypatch.setenv("MAC_HUB_URL", "http://127.0.0.1:8789")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "tok-127.0.0.1-abc")  # not a URL -> untouched
-    flags = te._openshell_env_flags()
-    assert "MAC_HUB_URL=http://host.openshell.internal:8789" in flags
-    assert "MAC_WORKER_TOKEN=tok-127.0.0.1-abc" in flags
+    values = te._openshell_environment()
+    assert values["MAC_HUB_URL"] == "http://host.openshell.internal:8789"
+    assert values["MAC_WORKER_TOKEN"] == "tok-127.0.0.1-abc"
 
 
 def test_repo_worktree_aliases_hermes_clone_path(monkeypatch):
@@ -383,43 +496,43 @@ def test_host_alias_override(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_landlock_precheck_fail_closed(monkeypatch):
+def test_landlock_precheck_fail_closed(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
     monkeypatch.setattr(te, "_kernel_has_landlock", lambda: False)
-    with pytest.raises(RuntimeError, match="does not expose .*Landlock"):
-        te._invoke_agent(FakeRunner(), "do it", Path("/work/t"), "tid", {})
+    with pytest.raises(RuntimeError, match="Landlock"):
+        te._invoke_agent(FakeRunner(), "do it", tmp_path / "t", "tid", {})
 
 
-def test_landlock_precheck_passes_when_present(monkeypatch):
+def test_landlock_precheck_passes_when_present(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
     monkeypatch.setattr(te, "_kernel_has_landlock", lambda: True)
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
-    te._invoke_agent(r, "do it", Path("/work/t"), "tid", {})
+    te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
     assert r.calls[0][0][:3] == ["openshell", "sandbox", "create"]
 
 
 # --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---
 
 
-def test_sets_child_yolo_env_when_sandboxed(monkeypatch):
+def test_sets_child_yolo_env_when_sandboxed(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
-    te._invoke_agent(FakeRunner(), "x", Path("/work/t"), "tid", {})
+    te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
     assert os.environ.get("HERMES_YOLO_MODE") == "1"
 
 
-def test_sets_child_yolo_env_when_unsandboxed_allowed(monkeypatch):
+def test_sets_child_yolo_env_when_unsandboxed_allowed(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
-    te._invoke_agent(FakeRunner(), "x", Path("/work/t"), "tid", {})
+    te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
     assert os.environ.get("HERMES_YOLO_MODE") == "1"
 
 
-def test_failclosed_does_not_set_yolo_env(monkeypatch):
+def test_failclosed_does_not_set_yolo_env(monkeypatch, tmp_path):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError):
-        te._invoke_agent(FakeRunner(), "x", Path("/work/t"), "tid", {})
+        te._invoke_agent(FakeRunner(), "x", tmp_path / "t", "tid", {})
     assert os.environ.get("HERMES_YOLO_MODE") != "1"

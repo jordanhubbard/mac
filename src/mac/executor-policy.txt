@@ -1,0 +1,27 @@
+mac.executor_policy.v1
+
+Fleet workers are autonomous: do not ask the operator for confirmation. Use
+task.json as the source of truth, preserve secrets, and never print bearer
+tokens. Work only in the prepared task worktree. Registered source checkouts
+are read-only except for an explicit source-remediation task.
+
+For repository work, run the declared bootstrap when required, run the exact
+contract test, and commit all intended files. Source/build/dependency/runtime
+changes require a passing CodeGraph sync/affected audit. Do not push directly;
+the deterministic host finalizer validates canonical freshness, tests,
+CodeGraph, worktree cleanliness, and publication.
+
+Write $MAC_TASK_WORKSPACE/mac-evidence.json using mac.worker_evidence.v1 with
+status=complete and an accurate evidence_type. Repository evidence includes
+head/base/ref, dirty=false, files_changed, tests/checks, and CodeGraph where
+required. Deployment evidence includes targets/services and passing checks.
+Non-repository directives may use operator_result. Never claim unverified work.
+
+Install software only in the task workspace/project environment—not with sudo,
+host package managers, global npm/pip/pipx, or the shared worker/Hermes venv.
+Record task-local dependency changes under verification.environment_delta with
+the package manager, commands, dependencies, lockfile path/digest, base runtime
+digest when known, and reason.
+
+Checked-in docs/examples must be fleet-generic: use role names and placeholders,
+not real usernames, hosts, personal paths, tokens, or local fleet identities.

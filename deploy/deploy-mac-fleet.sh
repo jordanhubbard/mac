@@ -2,6 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Direct fleet deploys use the same authoritative operator configuration as
+# setup.py. Load it before any deployment defaults are derived so callers do
+# not have to remember a separate `source ~/.mac/.env` step.
+DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"
+if [ -f "$DEPLOY_ENV_FILE" ]; then
+  set -a
+  . "$DEPLOY_ENV_FILE"
+  set +a
+fi
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.$$"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
@@ -1008,6 +1017,50 @@ exec "$bs" $MAC_DEPLOY_OPENSHELL_ARGS
 REMOTE
   then
     echo "==> ${agent}: WARNING: OpenShell bootstrap exited non-zero (non-fatal; re-run $mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh by hand)" >&2
+  fi
+}
+
+validate_router_topology_spec() {
+  # Local, read-only preflight. Run before tunnels, archive copies, or remote
+  # service/source mutation so an incomplete inproc topology cannot replace a
+  # working deployment with a process-healthy but model-dead configuration.
+  local spec="$1" hub_token="${2:-}" agent hub_url shared_services_manager
+  local router_backend router_backend_lc router_providers local_token
+  IFS='|' read -r agent _ _ _ _ _ _ hub_url _ _ _ _ _ _ _ shared_services_manager _ <<<"$spec"
+  router_backend="$(fleet_scoped_env MAC_ROUTER_BACKEND "$agent")"
+  router_backend_lc="$(printf '%s' "$router_backend" | tr 'A-Z' 'a-z')"
+  [ "$router_backend_lc" = "inproc" ] || return 0
+  if [ "$agent" = "$shared_services_manager" ]; then
+    router_providers="$(fleet_scoped_env MAC_ROUTER_PROVIDERS "$agent")"
+    if [ -z "$router_providers" ]; then
+      echo "ERROR: ${agent}: inproc router hub requires MAC_ROUTER_PROVIDERS (exported remotely as MAC_DEPLOY_ROUTER_PROVIDERS)" >&2
+      return 1
+    fi
+    local provider_spec
+    while IFS= read -r provider_spec; do
+      [ -n "$provider_spec" ] || continue
+      case ",$provider_spec," in
+        *,key=secret:*) ;;
+        *)
+          echo "ERROR: ${agent}: every inproc router provider must use key=secret:<name>" >&2
+          return 1
+          ;;
+      esac
+    done < <(printf '%s' "$router_providers" | tr ';' '\n')
+    return 0
+  fi
+  if [ -z "$hub_url" ]; then
+    echo "ERROR: ${agent}: inproc router spoke requires a hub URL" >&2
+    return 1
+  fi
+  if [ -z "$hub_token" ]; then
+    echo "ERROR: ${agent}: inproc router spoke requires a hub-facing token" >&2
+    return 1
+  fi
+  local_token="$(fleet_scoped_env MAC_API_TOKEN "$agent")"
+  if [ -n "$local_token" ] && [ "$hub_token" = "$local_token" ]; then
+    echo "ERROR: ${agent}: inproc router spoke hub token must differ from its local MAC_API_TOKEN" >&2
+    return 1
   fi
 }
 
@@ -4561,10 +4614,12 @@ mark_worker_offline() {
   local agent_id
   agent_id="${MAC_WORKER_AGENT_ID:-$(stable_agent_id)}"
   curl -fsS --max-time 10 -X POST \
-    -H "Authorization: Bearer $MAC_WORKER_TOKEN" \
     -H "Content-Type: application/json" \
+    --config - \
     --data '{"status":"offline","health_status":"degraded"}' \
-    "$MAC_HUB_URL/agents/$agent_id/heartbeat" >/dev/null || true
+    "$MAC_HUB_URL/agents/$agent_id/heartbeat" >/dev/null <<CURL || true
+header = "Authorization: Bearer $MAC_WORKER_TOKEN"
+CURL
 }
 trap mark_worker_offline TERM INT
 
@@ -4575,7 +4630,6 @@ fi
 common=(
   "$HOME/.mac/venv/bin/mac-agent"
   --url "$MAC_HUB_URL"
-  --token "$MAC_WORKER_TOKEN"
   --register
   --agent-id "${MAC_AGENT_ID:-$(stable_agent_id)}"
   --agent-name "$agent_name"
@@ -5484,8 +5538,10 @@ verify_hub_registration() {
   log "verifying mac-agent registration with hub ${check_url}"
   local attempt
   for attempt in $(seq 1 10); do
-    if curl -fsS --max-time 10 -H "Authorization: Bearer $token" \
-      "${check_url}/agents" > "$LOG_DIR/hub-agents.json"; then
+    if curl -fsS --max-time 10 --config - \
+      "${check_url}/agents" > "$LOG_DIR/hub-agents.json" <<CURL; then
+header = "Authorization: Bearer $token"
+CURL
       if "$PY" - "$LOG_DIR/hub-agents.json" "${MAC_WORKER_AGENT_NAME:-$AGENT}" <<'PY'; then
 import json
 import sys
@@ -5542,9 +5598,11 @@ fi
 
 log "verifying mac health and Hermes startup report"
 curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
-curl -fsS -H "Authorization: Bearer $MAC_API_TOKEN" \
+curl -fsS --config - \
   "http://127.0.0.1:$MAC_PORT/startup/hermes" \
-  > "$LOG_DIR/startup-hermes.json"
+  > "$LOG_DIR/startup-hermes.json" <<CURL
+header = "Authorization: Bearer $MAC_API_TOKEN"
+CURL
 "$PY" - "$LOG_DIR/startup-hermes.json" <<'PY'
 import json
 import sys
@@ -5818,6 +5876,7 @@ main() {
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
     fi
+    validate_router_topology_spec "$spec" "$hub_token"
     allow_degraded_services=0
     if [ "$agent" != "$hub_agent" ] && [ "$direct_mesh_hub" != "1" ]; then
       # Detect brand-new nodes: if the remote mac API is unreachable before deploy,
