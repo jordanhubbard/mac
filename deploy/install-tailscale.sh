@@ -27,6 +27,12 @@ TAILSCALE_AUTH_KEY="${MAC_DEPLOY_TAILSCALE_AUTH_KEY:-}"
 TAILSCALE_HOSTNAME_PREFIX="${TAILSCALE_HOSTNAME_PREFIX:-}"
 TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME_PREFIX}${AGENT_NAME}"
 
+# Under supervisord the daemon runs with a fleet-scoped socket path so that
+# multiple fleets can coexist on the same host without socket collisions.
+# All tailscale(1) client commands must point at the same socket; we compute
+# it once after detect_supervisor() so every helper reads the same value.
+TAILSCALE_SOCKET=""  # filled by compute_tailscale_socket() after supervisor detection
+
 set_env_key() {
   local file="$1" key="$2" value="$3"
   mkdir -p "$(dirname "$file")"
@@ -47,6 +53,10 @@ detect_supervisor() {
     auto|"") ;;
     *) echo "[tailscale] ERROR: unsupported supervisor: $SUPERVISOR_KIND" >&2; exit 1 ;;
   esac
+  # Prefer systemd only when it really is the init system (PID 1 owns
+  # /run/systemd/system).  On container nodes (e.g. GKE pods) systemctl may be
+  # present on PATH but PID 1 is supervisord; the directory check correctly
+  # excludes those nodes so they fall through to the supervisord branch.
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     printf '%s\n' "systemd"; return
   fi
@@ -58,6 +68,30 @@ detect_supervisor() {
   fi
   echo "[tailscale] ERROR: could not detect systemd, launchd, or supervisord" >&2
   exit 1
+}
+
+# Compute the tailscaled unix socket path for this fleet.
+# Under supervisord we use a fleet-scoped path to avoid collisions.
+# Under systemd/launchd tailscaled uses its default path; passing the flag
+# with the same default is harmless but we omit it to stay close to stock.
+compute_tailscale_socket() {
+  local supervisor="$1"
+  case "$supervisor" in
+    supervisord)
+      printf '%s\n' "/run/tailscale/${FLEET_NAME}.sock"
+      ;;
+    *)
+      # Default tailscaled socket; empty means "let tailscale use its default"
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+# Build --socket flag (empty string -> no flag, so systemd/launchd are unaffected)
+tailscale_socket_flag() {
+  if [ -n "$TAILSCALE_SOCKET" ]; then
+    printf '%s\n' "--socket=$TAILSCALE_SOCKET"
+  fi
 }
 
 supervisord_conf_dir() {
@@ -82,7 +116,8 @@ run_supervisorctl() {
 
 tailscale_connected() {
   command -v tailscale >/dev/null 2>&1 || return 1
-  tailscale status --json 2>/dev/null \
+  # shellcheck disable=SC2046
+  tailscale $(tailscale_socket_flag) status --json 2>/dev/null \
     | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('BackendState')=='Running' else 1)" 2>/dev/null
 }
 
@@ -90,7 +125,8 @@ wait_for_tailscale_ip() {
   local i
   for i in $(seq 1 20); do
     local ip
-    ip="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+    # shellcheck disable=SC2046
+    ip="$(tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
     if [ -n "$ip" ]; then
       printf '%s\n' "$ip"
       return 0
@@ -117,8 +153,13 @@ else
 fi
 
 # -- Already connected? --
+# Note: TAILSCALE_SOCKET is empty at this point (set after detect_supervisor below),
+# so tailscale_connected uses the default socket path for the early idempotency check.
+# This is intentional: if tailscale is already connected we skip everything including
+# supervisor detection, which avoids unnecessary socket/conf-dir probing.
 if tailscale_connected; then
-  ts_ip="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+  # shellcheck disable=SC2046
+  ts_ip="$(tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
   echo "[tailscale] Already connected (IP: ${ts_ip:-unknown})"
   if [ -n "$ts_ip" ]; then
     set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
@@ -150,6 +191,7 @@ fi
 
 # -- Start tailscaled under the detected supervisor --
 SUPERVISOR_KIND="$(detect_supervisor)"
+TAILSCALE_SOCKET="$(compute_tailscale_socket "$SUPERVISOR_KIND")"
 echo "[tailscale] Starting tailscaled under ${SUPERVISOR_KIND}"
 mkdir -p "$LOG_DIR"
 
@@ -188,7 +230,8 @@ esac
 
 # Wait for tailscaled socket to be ready
 for i in $(seq 1 10); do
-  if tailscale status >/dev/null 2>&1; then
+  # shellcheck disable=SC2046
+  if tailscale $(tailscale_socket_flag) status >/dev/null 2>&1; then
     break
   fi
   sleep 2
@@ -198,14 +241,16 @@ done
 echo "[tailscale] Joining as hostname='${TAILSCALE_HOSTNAME}'"
 
 if [ "$control_mode" = "headscale" ]; then
-  tailscale up \
+  # shellcheck disable=SC2046
+  tailscale $(tailscale_socket_flag) up \
     --login-server="$HEADSCALE_URL" \
     --auth-key="$HEADSCALE_PREAUTHKEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
     --accept-dns=true
 else
-  tailscale up \
+  # shellcheck disable=SC2046
+  tailscale $(tailscale_socket_flag) up \
     --auth-key="$TAILSCALE_AUTH_KEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
@@ -216,7 +261,8 @@ fi
 ts_ip="$(wait_for_tailscale_ip || true)"
 if [ -z "$ts_ip" ]; then
   echo "[tailscale] ERROR: did not get a Tailscale IP after joining" >&2
-  tailscale status >&2 || true
+  # shellcheck disable=SC2046
+  tailscale $(tailscale_socket_flag) status >&2 || true
   exit 1
 fi
 
