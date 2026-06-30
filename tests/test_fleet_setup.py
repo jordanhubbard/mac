@@ -106,19 +106,56 @@ def test_declarative_webdav_enabled_without_dns_name_fails(tmp_path):
 
 
 def test_declarative_setup_plan_reports_missing_provider_env(tmp_path):
+    env_file = tmp_path / ".env"
     plan = build_setup_plan(
         _spec(),
         root=ROOT,
         fleets_config=tmp_path / "fleets.yaml",
-        env_file=tmp_path / ".env",
+        env_file=env_file,
         env={},
     )
 
+    assert not env_file.exists()
     assert plan["status"] == "fail"
     assert plan["required_env"] == ["NVIDIA_API_KEY"]
     env_check = [check for check in plan["checks"] if check["name"] == "env.required"][0]
     assert env_check["status"] == "fail"
     assert "NVIDIA_API_KEY" in env_check["detail"]
+
+
+def test_declarative_setup_plan_reads_required_provider_from_env_file(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("NVIDIA_API_KEY=env-file-secret\n", encoding="utf-8")
+
+    plan = build_setup_plan(
+        _spec(),
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=env_file,
+        env={},
+    )
+
+    assert plan["status"] == "pass"
+    assert plan["env_values"]["NVIDIA_API_KEY"] == "env-file-secret"
+    rendered = json.dumps(public_plan(plan))
+    assert "env-file-secret" not in rendered
+    assert public_plan(plan)["env_values"]["NVIDIA_API_KEY"] == "<set>"
+
+
+def test_live_environment_overrides_persisted_env_file(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("NVIDIA_API_KEY=persisted-secret\n", encoding="utf-8")
+    monkeypatch.setenv("NVIDIA_API_KEY", "live-secret")
+
+    plan = build_setup_plan(
+        _spec(),
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env_file=env_file,
+    )
+
+    assert plan["status"] == "pass"
+    assert plan["env_values"]["NVIDIA_API_KEY"] == "live-secret"
 
 
 def test_setup_fleet_spec_mode_writes_registry_and_env(tmp_path):
@@ -160,8 +197,11 @@ def test_setup_fleet_spec_mode_writes_registry_and_env(tmp_path):
 
 def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
     spec_path = tmp_path / "fleet.yaml"
+    env_file = tmp_path / ".env"
     spec_path.write_text(yaml.safe_dump(_spec()), encoding="utf-8")
-    env = {**os.environ, "NVIDIA_API_KEY": "nv-secret"}
+    env_file.write_text("NVIDIA_API_KEY=doctor-file-secret\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("NVIDIA_API_KEY", None)
 
     result = subprocess.run(
         [
@@ -176,7 +216,7 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
             "--fleets-config",
             str(tmp_path / "fleets.yaml"),
             "--env-file",
-            str(tmp_path / ".env"),
+            str(env_file),
         ],
         cwd=ROOT,
         env=env,
@@ -191,6 +231,44 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
     assert report["status"] == "pass"
     assert report["hub"] == "horde-hub"
     assert any(check["name"] == "router.providers" for check in report["checks"])
+
+
+def test_mac_fleet_validate_reads_and_redacts_env_file(tmp_path):
+    spec_path = tmp_path / "fleet.yaml"
+    env_file = tmp_path / ".env"
+    spec_path.write_text(yaml.safe_dump(_spec()), encoding="utf-8")
+    env_file.write_text("NVIDIA_API_KEY=validate-file-secret\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("NVIDIA_API_KEY", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mac.cli",
+            "--json",
+            "fleet",
+            "validate",
+            "--spec",
+            str(spec_path),
+            "--fleets-config",
+            str(tmp_path / "fleets.yaml"),
+            "--env-file",
+            str(env_file),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "validate-file-secret" not in result.stdout
+    assert "validate-file-secret" not in result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "pass"
+    assert report["env_values"]["NVIDIA_API_KEY"] == "<set>"
 
 
 def test_spec_path_materializes_default_model_never_blank(tmp_path):
