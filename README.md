@@ -88,8 +88,36 @@ The identity framework reflects that split:
 ## Quick Start
 
 ```bash
-python3 scripts/bootstrap-project.py
-PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+# See every supported lifecycle target. Bare `make` prints the same help.
+make help
+
+# Install/link the CLI and prepare the canonical Fleet IDE.
+make install
+
+# Verify the checkout, or launch the GUI against a hub.
+make test
+make run-gui IDE_API_URL=http://127.0.0.1:8789
+```
+
+The common lifecycle is deliberately conventional:
+
+```bash
+make install       # CLI + canonical Fleet IDE
+make build         # Python wheel + production IDE bundle
+make clean         # generated artifacts only
+make distclean     # also remove .venv and node_modules
+```
+
+Use `make install-cli` or `make install-gui` when only one surface is needed.
+Installation requires Python 3.11+, Git, GitHub CLI (`gh`), npm, and CodeGraph;
+build and test targets also require `uv`.
+Every source-consuming build, install, run, and test target refreshes CodeGraph
+first; the installed pre-push hook does the same. Fleet configuration/deployment
+is intentionally separate under `make setup` and `make deploy`.
+
+For local SQLite/API development after installation:
+
+```bash
 
 # Required: a 32+ char secret used to derive the Fernet key for the secrets table.
 # Without it, the CLI and API both refuse to start.
@@ -166,15 +194,16 @@ Key route groups:
 The React + Monaco fleet IDE lives in `ide/`. From the repository root:
 
 ```bash
-make ide-install
-make ide-run IDE_API_URL=http://127.0.0.1:8789
-make ide-build
-make ide-package
+make install-gui
+make run-gui IDE_API_URL=http://127.0.0.1:8789
+make build-gui
+make package-gui
 ```
 
-`make ide-run` starts Vite on `http://127.0.0.1:5273`. `make ide-package`
+`make run-gui` starts Vite on `http://127.0.0.1:5273`. `make package-gui`
 writes a static web bundle to `dist/mac-ide-web.tar.gz`. This is separate from
-the optional Electron dashboard wrapper in `desktop/`.
+the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
+`ide-*` target names remain as compatibility aliases.
 
 ## Tell Agents To Work On A Project
 

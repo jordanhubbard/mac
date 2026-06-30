@@ -12,7 +12,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VENV = ROOT / ".venv"
+VENV = Path(os.environ.get("MAC_VENV") or ".venv").expanduser()
+if not VENV.is_absolute():
+    VENV = ROOT / VENV
 BIN_DIR = "Scripts" if os.name == "nt" else "bin"
 VENV_PYTHON = VENV / BIN_DIR / ("python.exe" if os.name == "nt" else "python")
 REQUIRED_COMMANDS = ("python3", "git", "gh")
