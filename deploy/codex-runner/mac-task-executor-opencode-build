@@ -88,6 +88,7 @@ PROMPT="Task ${MAC_TASK_ID}"
 REPO_URL=""
 REPO_BRANCH="main"
 PROJECT=""
+REPO_ERROR=""
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
     task_json="$(curl -fsS --config - \
         "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
@@ -96,7 +97,7 @@ CURL
 )"
     if [ -n "${task_json}" ]; then
         eval "$(printf '%s' "${task_json}" | python3 -c '
-import json, shlex, sys
+import json, shlex, sys, urllib.parse
 
 def render_feedback(task):
     meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
@@ -137,13 +138,69 @@ if feedback:
     prompt = prompt + "\n\n" + feedback
 print("PROMPT=%s" % shlex.quote(prompt))
 print("PROJECT=%s" % shlex.quote(t.get("project") or ""))
-origin = (t.get("metadata") or {}).get("origin") or {}
-print("REPO_URL=%s" % shlex.quote(origin.get("repository_url") or ""))
+meta = (t.get("metadata") or {})
+origin = meta.get("origin") or {}
+
+def nested_dict(root, *path):
+    node = root
+    for key in path:
+        if not isinstance(node, dict):
+            return {}
+        node = node.get(key)
+    return node if isinstance(node, dict) else {}
+
+repo_url = str(origin.get("repository_url") or "").strip()
+repo_source = "origin.repository_url"
+if not repo_url:
+    contracts = [
+        nested_dict(meta, "execution_contract", "repository_contract"),
+        nested_dict(meta, "origin", "repository_contract"),
+        nested_dict(meta, "repository_contract"),
+    ]
+    for contract in contracts:
+        repo_url = str(contract.get("canonical_remote_url") or "").strip()
+        if repo_url:
+            repo_source = "repository contract canonical_remote_url"
+            break
+
+def valid_repo_url(value):
+    if not value or value.startswith("-") or len(value) > 2048:
+        return False
+    if any(char.isspace() for char in value):
+        return False
+    if value.startswith("/"):
+        return True
+    if value.startswith("git@"):
+        return ":" in value.partition("@")[2]
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return False
+    if parsed.scheme == "file":
+        return bool(parsed.path)
+    if parsed.scheme not in {"http", "https", "ssh", "git"} or not parsed.hostname:
+        return False
+    if parsed.scheme in {"http", "https"} and parsed.username:
+        return False
+    return True
+
+repo_error = ""
+if repo_url and not valid_repo_url(repo_url):
+    repo_error = (
+        "%s is invalid (value redacted); expected a supported git remote "
+        "without embedded credentials" % repo_source
+    )
+    repo_url = ""
+print("REPO_URL=%s" % shlex.quote(repo_url))
+print("REPO_ERROR=%s" % shlex.quote(repo_error))
 print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
 print("CHECKOUT_BRANCH=%s" % shlex.quote(origin.get("checkout_branch") or ""))
-meta = (t.get("metadata") or {})
 print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
 ' || true)"
+    fi
+    if [ -n "${REPO_ERROR}" ]; then
+        echo "[FATAL] ${REPO_ERROR}" >&2
+        exit 2
     fi
     # If task didn't carry the repo URL, fall back to project metadata. GET /projects/{name} returns a wrapper {project, summary, record, tasks,...}; the project record (with its metadata) is nested under `record`.
     if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then

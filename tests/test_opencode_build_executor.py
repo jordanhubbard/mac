@@ -474,6 +474,80 @@ def _findings_by_kind(manifest: dict) -> Dict[str, dict]:
     return out
 
 
+def test_k8s_executor_uses_contract_remote_when_registered_path_is_hub_only(
+    tmp_path: Path,
+) -> None:
+    bindir = tmp_path / "bin"
+    canonical = "https://github.com/NVIDIA-dev/ova.git"
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": canonical,
+    }
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"}) + "\n",
+        task_metadata={
+            "origin": {
+                "repository_path": "/hub-only/src/ova",
+                "repository_contract": contract,
+            },
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": contract,
+            },
+        },
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    assert result.returncode == 0, result.stderr
+    assert manifest_path.exists()
+    assert "REPO_URL:         %s" % canonical in result.stdout
+    assert "git clone --depth=1 --branch=main %s" % canonical in result.stdout
+
+
+def test_k8s_executor_rejects_invalid_contract_remote_without_leaking_secret(
+    tmp_path: Path,
+) -> None:
+    bindir = tmp_path / "bin"
+    redaction_marker = "test-only-redaction-marker"
+    credential_url = (
+        "https://"
+        + "operator:"
+        + redaction_marker
+        + "@"
+        + "github.com/NVIDIA-dev/ova.git"
+    )
+    _make_fake_bin(
+        bindir,
+        opencode_stdout="",
+        task_metadata={
+            "origin": {
+                "repository_path": "/hub-only/src/ova",
+                "repository_contract": {"schema": "mac.repository_contract.v1"},
+            },
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "canonical_remote_url": credential_url,
+                },
+            },
+        },
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(bindir=bindir, manifest_path=manifest_path)
+
+    assert result.returncode == 2
+    assert "repository contract canonical_remote_url is invalid" in result.stderr
+    assert redaction_marker not in result.stdout
+    assert redaction_marker not in result.stderr
+    assert "git clone" not in result.stdout
+    assert not manifest_path.exists()
+
+
 def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
     # Build a JSON-lines stream using the REAL opencode event shapes:

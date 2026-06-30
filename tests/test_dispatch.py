@@ -663,7 +663,7 @@ def test_remote_dispatch_task_show_via_cli(monkeypatch):
 
 
 def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
-    """`task claim` reads `task` and `lease.id` from a two-field response."""
+    """`task claim` sends the API's query contract and reads its response."""
     import io
     import json as _json
     import sys
@@ -710,6 +710,75 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
     # cli.cmd_task_claim builds {"task": ..., "lease_id": lease.id if lease else None}
     assert body["task"]["id"] == "task_xyz"
     assert body["lease_id"] == "lease_42"
+    method, url, request_body, _token = fake.calls[0]
+    from urllib.parse import parse_qs, urlsplit
+
+    assert method == "POST"
+    assert urlsplit(url).path == "/tasks/task_xyz/claim"
+    assert parse_qs(urlsplit(url).query) == {"agent_id": ["agent_natasha"]}
+    assert request_body == {}
+
+
+def test_remote_cli_task_claim_matches_live_api_and_persists_lease(monkeypatch):
+    """Exercise the documented CLI through RemoteDispatch and the real API."""
+    import json as _json
+    from urllib.parse import urlsplit
+
+    from fastapi.testclient import TestClient
+
+    from mac.api import create_app
+    from mac.cli import main
+    from mac.http_client import HubClient
+    from mac.services import ControlPlane
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    plane = ControlPlane.in_memory()
+    machine = plane.register_machine("claim-host")
+    agent = plane.register_agent(machine.id, "claim-worker", capabilities=["python"])
+    task = plane.create_task("claim through remote CLI", required_capabilities=["python"])
+    api = TestClient(create_app(control_plane=plane))
+
+    def api_transport(method, url, body, _token):
+        parts = urlsplit(url)
+        target = parts.path + (("?" + parts.query) if parts.query else "")
+        response = api.request(method, target, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    original_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: original_init(
+            self, base_url, token=token, transport=api_transport
+        ),
+    )
+
+    output = io.StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = output
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "task",
+                "claim",
+                task.id,
+                agent.id,
+            ]
+        )
+    finally:
+        sys.stdout = old_stdout
+
+    assert rc == 0
+    result = _json.loads(output.getvalue())
+    assert result["task"]["state"] == "claimed"
+    assert result["task"]["owner_agent_id"] == agent.id
+    lease = plane.get_lease(result["lease_id"])
+    assert lease.task_id == task.id
+    assert lease.agent_id == agent.id
 
 
 def test_remote_dispatch_nap_cycle_via_cli_uses_hub_writer(monkeypatch):

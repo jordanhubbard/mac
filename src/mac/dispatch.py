@@ -280,14 +280,17 @@ class RemoteDispatch:
         lease_seconds: Optional[int] = None,
         sync_beads: Optional[bool] = None,
     ) -> tuple:  # type: ignore[type-arg]
-        body = _drop_none(
+        # The hub endpoint models these as query parameters. ``sync_beads`` is
+        # intentionally local-only; remote claims always use the hub's
+        # one-way-migration-safe behavior.
+        path = "/tasks/%s/claim" % quote(task_id, safe="")
+        path += _query(
             {
                 "agent_id": agent_id,
                 "lease_seconds": lease_seconds,
-                "sync_beads": sync_beads,
             }
         )
-        resp = self._post("/tasks/%s/claim" % quote(task_id, safe=""), body)
+        resp = self._post(path)
         task_payload = resp.get("task") if isinstance(resp, dict) else None
         lease_payload = resp.get("lease") if isinstance(resp, dict) else None
         return _Dictish(task_payload or {}), _Dictish(lease_payload or {})
