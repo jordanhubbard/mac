@@ -777,6 +777,54 @@ def test_recall_falls_back_to_direct_memory_records(monkeypatch):
     ]
 
 
+def test_recall_includes_structured_common_fleet_learning(monkeypatch):
+    success = {
+        "schema": "mac.fleet_learning.v1",
+        "kind": "repository_access",
+        "project": "demo",
+        "repository_host": "github.com",
+        "transport": "https",
+        "operation": "review_clone",
+        "agent_id": "agent_success",
+        "credential_source": "env:GH_TOKEN",
+        "outcome": "success",
+        "failure_class": "",
+        "error_signature": "",
+        "recommendation": "Prefer this known-successful reviewer pattern.",
+    }
+
+    def fake_get(path, *, timeout=5.0):
+        if path.startswith("/memory?") and "fleet_learning" in path:
+            return [
+                {
+                    "record_type": "fleet_learning:repository_access",
+                    "content": json.dumps(success),
+                    "created_at": "2026-06-30T00:00:00Z",
+                }
+            ]
+        if path.startswith("/v1/memory/recall"):
+            return []
+        return []
+
+    monkeypatch.setattr(te, "_hub_get", fake_get)
+    lessons = te.recall_deployment_lessons(
+        {
+            "title": "Review private repository",
+            "project": "demo",
+            "metadata": {
+                "origin": {
+                    "repository_url": "https://github.com/acme/private.git"
+                }
+            },
+        }
+    )
+
+    assert len(lessons) == 1
+    assert "[fleet success] review_clone on github.com" in lessons[0]
+    assert "env:GH_TOKEN" in lessons[0]
+    assert "Prefer this known-successful reviewer pattern" in lessons[0]
+
+
 # ---------------------------------------------------------------------------
 # git finalizer against a real temp repo
 # ---------------------------------------------------------------------------

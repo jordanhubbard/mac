@@ -3978,7 +3978,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory_decay = memory.add_parser(
         "decay",
         help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
-        "curated knowledge (user/project/feedback/deployment_learning/dream/beads_memory) is preserved",
+        "curated knowledge (user/project/feedback/deployment_learning/fleet_learning/dream/beads_memory) is preserved",
     )
     memory_decay.add_argument("--ttl-days", type=float, default=90.0)
     memory_decay.add_argument("--limit", type=int, default=500)

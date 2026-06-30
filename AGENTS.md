@@ -57,6 +57,20 @@ mac task detect-beads <repo>
 mac task migrate-beads <repo> --project=<name> --tickets-only
 ```
 
+## Fleet Operational Learning
+
+Treat operational outcomes as shared control inputs, not disposable log lines.
+Repository-access attempts record secret-free `mac.fleet_learning.v1` memories;
+reviewer routing prefers recent success and temporarily avoids a newer
+authentication failure. Do not repeatedly retry the same credential pattern on
+the same agent. Allow the workflow to choose a peer with a proven success, or
+repair the credential and supersede the failure with a successful attempt.
+
+Never store credential values, authenticated URLs, or raw secret-bearing
+command output in memory. Store only the credential source name, redacted host,
+operation, outcome, classified failure, and actionable remediation. See
+`docs/fleet-operational-learning.md` for the schema and lifecycle contract.
+
 > Pass multi-line / shell-hostile content (parens, backticks, `$VAR`, newlines) via the `--<name>-file` variants instead of inline quotes. `--<name>-file -` reads from stdin.
 
 `no_dispatch` is a hold flag, not a lifecycle state. The held form is

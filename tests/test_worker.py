@@ -37,6 +37,12 @@ from mac.agentbus_control import (
 from mac.api import create_app
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.deploy_env import parse_env_text
+from mac.fleet_learning import (
+    REPOSITORY_ACCESS_RECORD_TYPE,
+    build_repository_access_learning,
+    build_repository_access_memory_payload,
+    parse_repository_access_learning,
+)
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
@@ -575,6 +581,7 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
         review_worktree = Path(runtime["repository_worktree"])
         assert review_worktree.is_dir()
         assert _git(review_worktree, "rev-parse", "HEAD") == reviewed_head
+        assert _git(review_worktree, "remote", "get-url", "origin") == remote_url
         assert context["review_repository_worktree"]["repository_worktree"] == str(review_worktree)
         manifest = {
             "schema": "mac.worker_evidence.v1",
@@ -624,6 +631,224 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     assert _git(repo, "rev-parse", "HEAD") == reviewed_head
     _git(repo, "fetch", "origin", "main")
     assert _git(repo, "rev-parse", "origin/main") == reviewed_head
+    learnings = cp.search_memory(
+        subject_type="agent",
+        subject_id=reviewer.id,
+        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
+    )
+    parsed = [parse_repository_access_learning(item.content) for item in learnings]
+    assert [item["outcome"] for item in parsed if item is not None] == ["success"]
+    assert parsed[0] is not None and parsed[0]["credential_source"] == "local"
+
+
+def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
+    tmp_path: Path,
+    monkeypatch,
+):
+    remote_url = "https://github.com/acme/private.git"
+    token = "review-token-secret"
+    head_sha = "abc123abc123abc123abc123abc123abc123abcd"
+    task_detail = {
+        "task": {"id": "task-private", "project": "demo"},
+        "evidence": [
+            {
+                "id": "ev-private",
+                "metadata": {
+                    "verification": {
+                        "repo": {
+                            "head_sha": head_sha,
+                            "base_sha": "def456def456def456def456def456def456def4",
+                            "remote_ref": "refs/heads/mac/private-review",
+                            "remote_url": remote_url,
+                        }
+                    }
+                },
+            }
+        ],
+    }
+
+    class RecordingClient:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            return {"id": "mem-private"} if path == "/memory" else {}
+
+    client = RecordingClient()
+    worker = MacWorker(client, "agent-reviewer", tmp_path, lambda *_args: None)
+    commands = []
+
+    def successful_git(argv, *args, **kwargs):
+        command = list(argv)
+        commands.append(command)
+        if command[:3] == ["git", "clone", "--no-checkout"]:
+            Path(command[-1]).mkdir(parents=True)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setenv("GH_TOKEN", token)
+    monkeypatch.setattr("mac.worker.subprocess.run", successful_git)
+    task_dir = tmp_path / "review"
+    task_dir.mkdir()
+
+    context = worker._prepare_review_repository_worktree(
+        task_dir,
+        task_detail,
+        "ev-private",
+        "review-private",
+    )
+
+    clone = next(command for command in commands if command[:3] == ["git", "clone", "--no-checkout"])
+    assert "x-access-token:%s@github.com" % token in clone[4]
+    scrub = next(command for command in commands if "set-url" in command)
+    assert scrub[-1] == remote_url
+    fetch = next(command for command in commands if "fetch" in command)
+    assert any("x-access-token:%s@github.com" % token in arg for arg in fetch)
+    assert context is not None and context["repository_origin_remote"] == remote_url
+    serialized_context = (task_dir / "repository-worktree.json").read_text(
+        encoding="utf-8"
+    )
+    assert token not in serialized_context
+    memory_payload = next(payload for path, payload in client.posts if path == "/memory")
+    assert token not in json.dumps(memory_payload, sort_keys=True)
+    learning = parse_repository_access_learning(memory_payload["content"])
+    assert learning is not None
+    assert learning["outcome"] == "success"
+    assert learning["credential_source"] == "env:GH_TOKEN"
+
+
+def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
+    tmp_path: Path,
+    monkeypatch,
+):
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("review-host")
+    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
+    failing_reviewer = cp.register_agent(machine.id, "a-failing", capabilities=["review"])
+    successful_reviewer = cp.register_agent(machine.id, "b-success", capabilities=["review"])
+    remote_url = "https://github.com/acme/private.git"
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "demo",
+        "canonical_remote_url": remote_url,
+    }
+    task = cp.create_task(
+        "Review private repository",
+        project="demo",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://publish",
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": contract,
+            },
+            "origin": {
+                "repository_url": remote_url,
+                "repository_contract": contract,
+            },
+        },
+    )
+    cp.claim_task(task.id, executor_agent.id)
+    cp.start_task(task.id, executor_agent.id)
+    executor_manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {
+            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
+            "base_sha": "def456def456def456def456def456def456def4",
+            "remote_ref": "refs/heads/mac/review-proof",
+            "remote_url": remote_url,
+            "pushed": True,
+            "dirty": False,
+            "files_changed": ["src/example.py"],
+        },
+        "codegraph": _codegraph_fixture(["src/example.py"]),
+        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
+        "signed_by": executor_agent.id,
+    }
+    executor_manifest["signature"] = sign_verification_manifest(
+        cp._agent_attestation_key(executor_agent.id), executor_manifest
+    )
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "0")
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "file:///tmp/executor-result.json",
+        "executor completed",
+        executor_agent.id,
+        metadata={"returncode": 0, "verification": executor_manifest},
+    )
+    cp.submit_for_review(task.id, executor_agent.id)
+
+    known_success = build_repository_access_learning(
+        project="demo",
+        remote=remote_url,
+        operation="review_clone",
+        agent_id=successful_reviewer.id,
+        outcome="success",
+        credential_source="env:GH_TOKEN",
+    )
+    cp.add_memory(**build_repository_access_memory_payload(known_success))
+    first_review = cp.request_review(
+        task.id,
+        failing_reviewer.id,
+        actor="test",
+    )
+    first_tick = cp.advance_default_review_workflow(task.id)
+    assert first_tick["review_id"] == first_review.id
+    assert first_tick["executor_evidence_id"] == evidence.id
+
+    client = TestClient(create_app(control_plane=cp))
+    real_run = subprocess.run
+
+    def fail_private_clone(argv, *args, **kwargs):
+        if list(argv[:3]) == ["git", "clone", "--no-checkout"]:
+            return subprocess.CompletedProcess(
+                argv,
+                128,
+                "",
+                "fatal: could not read Username for 'https://github.com': "
+                "No such device or address",
+            )
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr("mac.worker.subprocess.run", fail_private_clone)
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        failing_reviewer.id,
+        tmp_path / "workspaces",
+        lambda *_args: pytest.fail("review executor must not run after clone failure"),
+        attestation_key=cp._agent_attestation_key(failing_reviewer.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "review_verdict_failed"
+    assert "could not read Username" in (result.error or "")
+    assert not (
+        tmp_path / "workspaces" / "_reviews" / first_review.id / "review-repo"
+    ).exists()
+    reviews = cp.list_reviews(task.id)
+    assert [review.status for review in reviews] == [
+        ReviewStatus.RETRACTED.value,
+        ReviewStatus.PENDING.value,
+    ]
+    assert reviews[0].reviewer_agent_id == failing_reviewer.id
+    assert "reviewer_repository_access_authentication:github.com" in (
+        reviews[0].reason or ""
+    )
+    assert reviews[1].reviewer_agent_id == successful_reviewer.id
+    memories = cp.search_memory(
+        subject_type="agent",
+        subject_id=failing_reviewer.id,
+        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
+    )
+    failure = parse_repository_access_learning(memories[-1].content)
+    assert failure is not None
+    assert failure["outcome"] == "failure"
+    assert failure["failure_class"] == "authentication"
+    assert "No such device or address" in failure["error_signature"]
 
 
 def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):

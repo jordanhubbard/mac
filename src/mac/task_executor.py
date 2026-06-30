@@ -72,6 +72,12 @@ from mac.codegraph_audit import (
     codegraph_audit_passed,
     run_codegraph_audit,
 )
+from mac.fleet_learning import (
+    REPOSITORY_ACCESS_RECORD_TYPE,
+    parse_repository_access_learning,
+    repository_host,
+    task_repository_remote,
+)
 from mac.gitops import (
     CanonicalFreshnessResult,
     check_canonical_freshness,
@@ -615,6 +621,27 @@ def _task_project(task: Dict[str, Any]) -> str:
 
 def _format_learning_content(raw: str) -> str:
     """Render a stored ``mac.deployment_learning.v1`` blob as a one-line lesson."""
+    fleet_learning = parse_repository_access_learning(raw)
+    if fleet_learning is not None:
+        outcome = str(fleet_learning.get("outcome") or "?")
+        operation = str(fleet_learning.get("operation") or "repository access")
+        host = str(fleet_learning.get("repository_host") or "repository host")
+        agent_id = str(fleet_learning.get("agent_id") or "unknown agent")
+        source = str(fleet_learning.get("credential_source") or "unknown mechanism")
+        failure = str(fleet_learning.get("failure_class") or "").strip()
+        recommendation = str(fleet_learning.get("recommendation") or "").strip()
+        line = "[fleet %s] %s on %s by %s using %s" % (
+            outcome,
+            operation,
+            host,
+            agent_id,
+            source,
+        )
+        if failure:
+            line += " — %s" % failure
+        if recommendation:
+            line += "; %s" % recommendation
+        return line[:500]
     try:
         data = json.loads(raw)
     except Exception:
@@ -670,6 +697,41 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
     from urllib.parse import urlencode
 
     lessons: List[str] = []
+    # Structured operational learnings are exact routing facts and should not
+    # wait for embedding. Pull the common fleet records first, scoped to this
+    # project and repository host, then enrich them with semantic recall.
+    task_host = repository_host(task_repository_remote(task))
+    fleet_records = _hub_get(
+        "/memory?%s"
+        % urlencode(
+            {
+                "record_type": REPOSITORY_ACCESS_RECORD_TYPE,
+                "order": "desc",
+                "limit": 50,
+            }
+        )
+    )
+    if isinstance(fleet_records, list):
+        for record in fleet_records:
+            if not isinstance(record, dict):
+                continue
+            learning = parse_repository_access_learning(record.get("content"))
+            if learning is None:
+                continue
+            if str(learning.get("project") or "default") != project:
+                continue
+            learning_host = str(learning.get("repository_host") or "")
+            if task_host and learning_host != task_host:
+                continue
+            rendered = _format_learning_content(str(record.get("content") or ""))
+            if rendered in lessons:
+                continue
+            if not _append_lesson_with_budget(lessons, rendered):
+                break
+            if len(lessons) >= limit:
+                return lessons[:limit]
+
+    semantic_added = False
     results = _hub_get(
         "/v1/memory/recall?%s"
         % urlencode({"q": title, "project": project, "tier": "medium", "limit": max(1, int(limit))})
@@ -683,7 +745,11 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
                 lessons, text if len(text) <= 500 else text[:497] + "..."
             ):
                 break
-    if lessons:
+            if text:
+                semantic_added = True
+            if len(lessons) >= limit:
+                break
+    if semantic_added:
         return lessons[:limit]
 
     records = _hub_get("/memory?%s" % urlencode({"subject_type": "project", "subject_id": project}))
@@ -707,7 +773,10 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
             content = str(record.get("content") or "")
             if not query_terms.intersection(_lesson_terms(content)):
                 continue
-            if not _append_lesson_with_budget(lessons, _format_learning_content(content)):
+            rendered = _format_learning_content(content)
+            if rendered in lessons:
+                continue
+            if not _append_lesson_with_budget(lessons, rendered):
                 break
             if len(lessons) >= limit:
                 break

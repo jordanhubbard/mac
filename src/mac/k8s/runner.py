@@ -219,6 +219,7 @@ def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
 _OPTIONAL_SECRET_ENV_KEYS = (
     "INFERENCE_HUB_API_KEY",
     "GH_TOKEN",
+    "GITHUB_TOKEN",
     "GITEA_TOKEN",
     "GITEA_USER",
 )
@@ -794,14 +795,17 @@ def build_review_job_spec(
                 "value": str(cfg.executor_timeout_seconds),
             }
         )
-    # Reviewer doesn't push to remotes — exclude the git-host token block.
+    # Reviewers do not need MAC_SECRET_KEY, but they do need read access to
+    # private repositories. Give them the same optional Git-host credentials
+    # used by task Jobs; the worker injects a token only for the Git command
+    # and immediately scrubs it from origin.
     container_env = _build_executor_container_env(
         cfg,
         base_env=base_env,
         executor_cmd=executor_cmd,
         attestation_secret=attestation_secret,
         include_secret_key=False,
-        optional_secret_keys=("INFERENCE_HUB_API_KEY",),
+        optional_secret_keys=_OPTIONAL_SECRET_ENV_KEYS,
     )
 
     job_labels = {

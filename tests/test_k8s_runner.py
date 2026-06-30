@@ -1249,6 +1249,10 @@ def test_build_review_job_spec_sets_required_env() -> None:
         == "/usr/local/bin/mac-task-executor-opencode-review"
     )
     assert "MAC_LEASE_ID" not in envs, "review Jobs are not lease-bound"
+    assert "GH_TOKEN" in envs
+    assert "GITHUB_TOKEN" in envs
+    assert "GITEA_TOKEN" in envs
+    assert "MAC_SECRET_KEY" not in envs
     assert spec["metadata"]["labels"]["mac.review.id"]
     assert spec["metadata"]["labels"]["app.kubernetes.io/component"] == "review-executor"
 

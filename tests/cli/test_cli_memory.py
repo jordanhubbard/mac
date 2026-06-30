@@ -281,7 +281,7 @@ def test_memory_decay_protected_prefixes_preserved(tmp_path):
     assert rc == 0
     protected = result["protected_prefixes"]
     # Core curated types must always be protected.
-    for prefix in ("beads_memory", "deployment_learning", "dream", "user"):
+    for prefix in ("beads_memory", "deployment_learning", "fleet_learning", "dream", "user"):
         assert any(p == prefix or p.startswith(prefix) for p in protected), \
             f"expected '{prefix}' in protected_prefixes"
 

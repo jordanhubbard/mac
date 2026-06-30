@@ -67,6 +67,7 @@ from mac.models import (
     MACError,
     Machine,
     MemoryRecord,
+    MessageStatus,
     MessageType,
     NotFoundError,
     NotifierChannel,
@@ -124,6 +125,12 @@ from mac.deploy_service import DeployService
 from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
+from mac.fleet_learning import (
+    REPOSITORY_ACCESS_RECORD_TYPE,
+    repository_access_state,
+    repository_host,
+    task_repository_remote,
+)
 from mac.identity_service import IdentityService
 from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
@@ -11398,30 +11405,41 @@ class ControlPlane:
         # mac-ykkc: cap the number of times this review can be
         # re-nudged. Without the cap a reviewer that keeps failing to
         # produce a verdict (e.g. because the executor's lease branch
-        # never made it to origin) ends up with hundreds of
-        # task.review_claimed rows as the dispatcher recreates the
-        # nudge on every tick. After the cap, retract the review with
+        # never made it to origin) ends up with hundreds of delivered
+        # nudges as the dispatcher recreates the message on every tick.
+        # Count those durable delivery attempts directly: review claims are
+        # idempotent and therefore cannot serve as an attempt counter. After
+        # the cap, retract the review with
         # a clear reason so the parent task transitions back to OPEN
         # or FAILED instead of spinning forever.
         try:
             attempt_count = int(os.environ.get("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "10"))
         except ValueError:
             attempt_count = 10
-        claim_row = self.store.query_one(
+        attempt_row = self.store.query_one(
             """
-            SELECT COUNT(*) AS n FROM task_history
+            SELECT COUNT(*) AS n FROM messages
             WHERE task_id = ?
-              AND event_type = 'task.review_claimed'
-              AND json_extract(detail, '$.review_id') = ?
+              AND recipient_agent_id = ?
+              AND message_type = ?
+              AND status = ?
+              AND json_extract(payload, '$.reason') = 'produce_review_verdict'
+              AND json_extract(payload, '$.review_id') = ?
             """,
-            (task_id, review.id),
+            (
+                task_id,
+                review.reviewer_agent_id,
+                MessageType.NUDGE.value,
+                MessageStatus.DELIVERED.value,
+                review.id,
+            ),
         )
-        prior_claims = int(claim_row["n"]) if claim_row else 0
-        if prior_claims >= attempt_count:
+        prior_attempts = int(attempt_row["n"]) if attempt_row else 0
+        if prior_attempts >= attempt_count:
             self._retract_default_review(
                 review,
                 "dispatcher",
-                "reviewer_unable_to_produce_verdict_after_%d_attempts" % prior_claims,
+                "reviewer_unable_to_produce_verdict_after_%d_attempts" % prior_attempts,
             )
             self.record_log(
                 "workflow.default_review.nudge_capped",
@@ -11433,7 +11451,7 @@ class ControlPlane:
                 detail={
                     "review_id": review.id,
                     "reviewer_agent_id": review.reviewer_agent_id,
-                    "attempt_count": prior_claims,
+                    "attempt_count": prior_attempts,
                     "cap": attempt_count,
                 },
             )
@@ -11757,6 +11775,7 @@ class ControlPlane:
         )
 
         candidates: List[Agent] = []
+        access_states: Dict[str, str] = {}
         for agent in self.list_agents():
             if self._default_reviewer_unavailable_reason(
                 task,
@@ -11769,10 +11788,15 @@ class ControlPlane:
             ) is not None:
                 continue
             candidates.append(agent)
+            access_states[agent.id] = self._reviewer_repository_access_state(
+                task,
+                agent.id,
+            )[0]
         if not candidates:
             return None
         candidates.sort(
             key=lambda agent: (
+                0 if access_states.get(agent.id) == "success" else 1,
                 0 if agent.status == AgentStatus.IDLE.value else 1,
                 agent.name,
                 agent.id,
@@ -11874,7 +11898,64 @@ class ControlPlane:
             and agent_persona_slug == executor_persona_slug
         ):
             return "reviewer_same_persona"
+        access_state, learning = self._reviewer_repository_access_state(task, agent.id)
+        if access_state == "failure":
+            host = str((learning or {}).get("repository_host") or "unknown")
+            failure_class = str(
+                (learning or {}).get("failure_class") or "authentication"
+            )
+            return "reviewer_repository_access_%s:%s" % (failure_class, host)
         return None
+
+    def _reviewer_repository_access_state(
+        self,
+        task: Task,
+        reviewer_agent_id: str,
+    ) -> Tuple[str, Optional[JsonDict]]:
+        remote = task_repository_remote(task)
+        host = repository_host(remote)
+        if not host or host == "local":
+            return "unknown", None
+        try:
+            failure_cooldown = max(
+                0,
+                int(
+                    os.environ.get(
+                        "MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS",
+                        "1800",
+                    )
+                ),
+            )
+        except ValueError:
+            failure_cooldown = 1800
+        try:
+            success_ttl = max(
+                0,
+                int(
+                    os.environ.get(
+                        "MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS",
+                        "86400",
+                    )
+                ),
+            )
+        except ValueError:
+            success_ttl = 86400
+        records = self.memory.search_memory(
+            subject_type="agent",
+            subject_id=reviewer_agent_id,
+            record_type=REPOSITORY_ACCESS_RECORD_TYPE,
+            limit=50,
+            order="desc",
+        )
+        state, learning = repository_access_state(
+            records,
+            project=task.project or "default",
+            host=host,
+            operation="review_clone",
+            failure_cooldown_seconds=failure_cooldown,
+            success_ttl_seconds=success_ttl,
+        )
+        return state, learning
 
     def _default_reviewer_stale_after_seconds(self) -> int:
         raw = (

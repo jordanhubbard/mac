@@ -19,7 +19,7 @@ Three logical tiers, mapped to the storage backends already in the fleet:
 | Tier | Storage | Latency target | Retention | What lands here |
 |---|---|---|---|---|
 | **Short-term** | SQLite `mac.db` (existing) | < 10ms reads | per-table prune (mem-02) | Live task ledger, evidence, conversation summaries, observability metrics |
-| **Medium-term** | Qdrant collection `mac_memory_medium` | < 100ms similarity search | rolling 90 days (TTL via nap consolidator) | Closed task summaries, completed-evidence digests, conversation-thread summaries — anything an agent might semantically recall within ~quarter |
+| **Medium-term** | Qdrant collection `mac_memory_medium` | < 100ms similarity search | rolling 90 days (TTL via nap consolidator) | Closed task summaries, completed-evidence digests, conversation-thread summaries, and structured fleet operational learnings — anything an agent might semantically recall within ~quarter |
 | **Long-term** | Qdrant collection `mac_memory_long` | < 200ms similarity search | indefinite, operator-managed | Distilled lessons (nap-summaries older than 1y), historic incidents, ratified architecture decisions |
 
 The split between medium and long is **not** a hot-vs-cold cache. It's
@@ -95,6 +95,12 @@ is the artifact's concise `summary` while the full JSON remains in
 `memory_records` in SQLite) lets the recall API render results without a
 SQLite round-trip per hit, at the cost of duplicating a small string.
 Worth it.
+
+Structured operational outcomes use `record_type` values under
+`fleet_learning:`. They remain durable in SQLite, carry no credential values,
+and may be embedded into the medium tier for prompt recall. Deterministic
+routing reads the authoritative SQLite record directly, so a newly learned
+success or failure affects the next task without waiting for vector backfill.
 
 **Decided:** `schema` is a literal string, not a versioned shape. When
 we need v2, we'll add it as `mac.memory.v2` and the writer will dual-write

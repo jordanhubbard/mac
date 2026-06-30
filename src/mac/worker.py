@@ -52,6 +52,13 @@ from mac.codegraph_audit import (
     codegraph_audit_passed,
     run_codegraph_audit,
 )
+from mac.fleet_learning import (
+    RepositoryAccessError,
+    build_repository_access_learning,
+    build_repository_access_memory_payload,
+    classify_repository_access_failure,
+    resolve_git_remote_access,
+)
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
@@ -1255,6 +1262,16 @@ class MacWorker:
                 error=None if execution.succeeded else execution.summary,
             )
         except Exception as exc:
+            if isinstance(exc, RepositoryAccessError):
+                # The repository-access learning is written before the
+                # exception is raised. Re-run reviewer selection immediately
+                # so the control plane can prefer a known-successful peer
+                # instead of re-nudging this reviewer with the same pattern.
+                self._advance_review_workflow_after_verdict(task_id)
+                try:
+                    self._heartbeat()
+                except Exception:  # noqa: BLE001 - the failure is already recorded.
+                    pass
             self._observe_log(
                 "worker.review_nudge.exception",
                 level="error",
@@ -1265,6 +1282,7 @@ class MacWorker:
                     "review_id": review_id,
                     "executor_evidence_id": executor_evidence_id,
                     "error": str(exc),
+                    "failure_class": getattr(exc, "failure_class", ""),
                 },
             )
             return WorkerRunResult(status="review_verdict_failed", error=str(exc))
@@ -2904,23 +2922,55 @@ class MacWorker:
             except ValueError as exc:
                 raise RuntimeError("refusing review clone: %s" % exc) from None
 
+        task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+        task_id = str(task.get("id") or "").strip()
+        project = str(task.get("project") or "default").strip() or "default"
+        access = resolve_git_remote_access(remote_url)
+
+        def fail_repository_access(action: str, result: subprocess.CompletedProcess[str]) -> None:
+            detail = _redact_git_remote_auth_in_text(
+                (result.stderr or result.stdout or "non-zero exit").strip()
+            )
+            message = "%s %s: %s" % (action, access.display, detail)
+            failure_class = classify_repository_access_failure(message)
+            # A failed clone may leave a partial .git/config containing the
+            # command-only credential. Remove the incomplete checkout before
+            # writing or reporting anything about the failure.
+            if review_repo.exists():
+                shutil.rmtree(review_repo, ignore_errors=True)
+            self._record_repository_access_learning(
+                project=project,
+                task_id=task_id,
+                review_id=review_id,
+                remote=remote_url,
+                credential_source=access.credential_source,
+                outcome="failure",
+                error=message,
+                failure_class=failure_class,
+            )
+            raise RepositoryAccessError(message, failure_class=failure_class)
+
         review_repo = task_dir / "review-repo"
         if review_repo.exists():
             shutil.rmtree(review_repo)
         # `--` separator means a remote_url that survives validation
         # still cannot be parsed as a git option.
         clone = subprocess.run(
-            ["git", "clone", "--no-checkout", "--", remote_url, str(review_repo)],
+            ["git", "clone", "--no-checkout", "--", access.remote, str(review_repo)],
             capture_output=True,
             text=True,
             timeout=120,
             check=False,
         )
         if clone.returncode != 0:
-            raise RuntimeError(
-                "could not clone review repository %s: %s"
-                % (remote_url, (clone.stderr or clone.stdout or "").strip())
-            )
+            fail_repository_access("could not clone review repository", clone)
+
+        # ``git clone`` persists its source as origin. Scrub the command-only
+        # credential immediately, then pass the authenticated URL explicitly
+        # to later fetches so no token survives in the review checkout.
+        scrub_origin = _run_git(review_repo, ["remote", "set-url", "origin", remote_url])
+        if scrub_origin.returncode != 0:
+            fail_repository_access("could not sanitize review repository origin", scrub_origin)
 
         branch = _remote_branch_from_ref(remote_ref)
         if branch:
@@ -2928,28 +2978,31 @@ class MacWorker:
                 review_repo,
                 [
                     "fetch",
-                    "origin",
+                    access.remote,
                     "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch),
                 ],
             )
         elif remote_ref:
             # remote_ref was validated above; `--` guards against any
             # ref that pattern-matched a flag (mac-raud).
-            fetch = _run_git(review_repo, ["fetch", "origin", "--", remote_ref])
+            fetch = _run_git(review_repo, ["fetch", access.remote, "--", remote_ref])
         else:
-            fetch = _run_git(review_repo, ["fetch", "origin"])
+            fetch = _run_git(review_repo, ["fetch", access.remote])
         if fetch.returncode != 0:
-            raise RuntimeError(
-                "could not fetch reviewed ref %s: %s"
-                % (remote_ref or "origin", (fetch.stderr or fetch.stdout or "").strip())
-            )
+            fail_repository_access("could not fetch reviewed ref %s from" % (remote_ref or "origin"), fetch)
 
         checkout = _run_git(review_repo, ["checkout", "--detach", head_sha])
         if checkout.returncode != 0:
-            raise RuntimeError(
-                "could not checkout reviewed head %s: %s"
-                % (head_sha, (checkout.stderr or checkout.stdout or "").strip())
-            )
+            fail_repository_access("could not checkout reviewed head %s from" % head_sha, checkout)
+
+        self._record_repository_access_learning(
+            project=project,
+            task_id=task_id,
+            review_id=review_id,
+            remote=remote_url,
+            credential_source=access.credential_source,
+            outcome="success",
+        )
         context: JsonDict = {
             "schema": "mac.review_repository_worktree.v1",
             "checkout_policy": "review_git_worktree",
@@ -2974,6 +3027,67 @@ class MacWorker:
             detail=context,
         )
         return context
+
+    def _record_repository_access_learning(
+        self,
+        *,
+        project: str,
+        task_id: str,
+        review_id: str,
+        remote: str,
+        credential_source: str,
+        outcome: str,
+        error: str = "",
+        failure_class: str = "",
+    ) -> Optional[JsonDict]:
+        learning = build_repository_access_learning(
+            project=project,
+            remote=remote,
+            operation="review_clone",
+            agent_id=self.agent_id,
+            outcome=outcome,
+            credential_source=credential_source,
+            task_id=task_id or None,
+            review_id=review_id or None,
+            error=error,
+            failure_class=failure_class or None,
+        )
+        try:
+            result = self.client.post(
+                "/memory",
+                build_repository_access_memory_payload(learning),
+            )
+        except Exception as exc:  # noqa: BLE001 - learning is best-effort.
+            self._observe_log(
+                "worker.repository_access_learning.failed",
+                level="warning",
+                subject_type="task" if task_id else None,
+                subject_id=task_id or None,
+                detail={
+                    "schema": learning["schema"],
+                    "operation": learning["operation"],
+                    "outcome": outcome,
+                    "repository_host": learning["repository_host"],
+                    "error": str(exc),
+                },
+            )
+            return None
+        self._observe_log(
+            "worker.repository_access_learning.recorded",
+            level="info" if outcome == "success" else "warning",
+            subject_type="task" if task_id else None,
+            subject_id=task_id or None,
+            detail={
+                "schema": learning["schema"],
+                "memory_id": result.get("id") if isinstance(result, dict) else None,
+                "operation": learning["operation"],
+                "outcome": outcome,
+                "failure_class": learning["failure_class"],
+                "repository_host": learning["repository_host"],
+                "credential_source": learning["credential_source"],
+            },
+        )
+        return result if isinstance(result, dict) else None
 
     def _review_task_payload(self, task_dir: Path) -> JsonDict:
         loaded = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))

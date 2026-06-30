@@ -12,6 +12,10 @@ import pytest
 
 import mac.services as services
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
+from mac.fleet_learning import (
+    build_repository_access_learning,
+    build_repository_access_memory_payload,
+)
 from mac.models import (
     AgentStatus,
     AuthorizationError,
@@ -1454,6 +1458,53 @@ def test_default_review_workflow_reuses_pending_verdict_nudge(cp):
     assert len(nudges) == 1
 
 
+def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claims(
+    cp,
+    monkeypatch,
+):
+    monkeypatch.setenv("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "2")
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Bound review retries",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://publish"},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    first = cp.advance_default_review_workflow(task.id)
+    assert len(cp.deliver_messages(reviewer.id)) >= 1
+    second = cp.advance_default_review_workflow(task.id)
+    assert second["review_id"] == first["review_id"]
+    delivered = [
+        message
+        for message in cp.deliver_messages(reviewer.id)
+        if message.message_type == MessageType.NUDGE.value
+    ]
+    assert len(delivered) == 1
+
+    cp.advance_default_review_workflow(task.id)
+
+    review = cp.list_reviews(task.id)[0]
+    assert review.status == ReviewStatus.RETRACTED.value
+    assert review.reason == "reviewer_unable_to_produce_verdict_after_2_attempts"
+    assert not any(
+        event.event_type == "task.review_claimed" for event in cp.task_history(task.id)
+    )
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.nudge_capped" in names
+
+
 def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
     from tests.conftest import submit_review_verdict
 
@@ -2289,6 +2340,116 @@ def test_default_review_reassigns_stale_pending_reviewer(cp):
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.retracted" in names
     assert "workflow.default_review.assigned" in names
+
+
+def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
+    cp,
+    monkeypatch,
+):
+    worker = register_agent(cp, "worker", ["python"])
+    failed = register_agent(cp, "a-failed", ["review"])
+    cooldown_reviewer = register_agent(cp, "m-cooldown", ["review"])
+    successful = register_agent(cp, "z-successful", ["review"])
+    remote = "https://github.com/acme/private.git"
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "demo",
+        "canonical_remote_url": remote,
+    }
+    task = cp.create_task(
+        "Use learned reviewer access",
+        project="demo",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://r",
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": contract,
+            },
+            "origin": {
+                "repository_url": remote,
+                "repository_contract": contract,
+            },
+        },
+    )
+    failure = build_repository_access_learning(
+        project="demo",
+        remote=remote,
+        operation="review_clone",
+        agent_id=failed.id,
+        outcome="failure",
+        credential_source="ambient:https",
+        failure_class="authentication",
+        error="could not read Username for https://github.com",
+    )
+    success = build_repository_access_learning(
+        project="demo",
+        remote=remote,
+        operation="review_clone",
+        agent_id=successful.id,
+        outcome="success",
+        credential_source="env:GH_TOKEN",
+    )
+    cp.add_memory(**build_repository_access_memory_payload(failure))
+    cp.add_memory(**build_repository_access_memory_payload(success))
+
+    selected = cp._select_default_reviewer(task, executor_agent_id=worker.id)
+
+    assert selected is not None and selected.id == successful.id
+    reason = cp._default_reviewer_unavailable_reason_for_id(
+        task,
+        failed.id,
+        executor_agent_id=worker.id,
+    )
+    assert reason == "reviewer_repository_access_authentication:github.com"
+
+    later_success = build_repository_access_learning(
+        project="demo",
+        remote=remote,
+        operation="review_clone",
+        agent_id=failed.id,
+        outcome="success",
+        credential_source="env:GITHUB_TOKEN",
+    )
+    cp.add_memory(**build_repository_access_memory_payload(later_success))
+    assert (
+        cp._default_reviewer_unavailable_reason_for_id(
+            task,
+            failed.id,
+            executor_agent_id=worker.id,
+        )
+        is None
+    )
+
+    # A failure is a cooldown, not a permanent ban.
+    cooldown_failure = build_repository_access_learning(
+        project="demo",
+        remote=remote,
+        operation="review_clone",
+        agent_id=cooldown_reviewer.id,
+        outcome="failure",
+        credential_source="ambient:https",
+        failure_class="authentication",
+    )
+    memory = cp.add_memory(**build_repository_access_memory_payload(cooldown_failure))
+    assert cp._default_reviewer_unavailable_reason_for_id(
+        task,
+        cooldown_reviewer.id,
+        executor_agent_id=worker.id,
+    ) == "reviewer_repository_access_authentication:github.com"
+    cp.store.execute(
+        "UPDATE memory_records SET created_at = ? WHERE id = ?",
+        ("2020-01-01T00:00:00+00:00", memory.id),
+    )
+    monkeypatch.setenv("MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS", "1")
+    assert (
+        cp._default_reviewer_unavailable_reason_for_id(
+            task,
+            cooldown_reviewer.id,
+            executor_agent_id=worker.id,
+        )
+        is None
+    )
 
 
 def test_default_review_waits_when_only_reviewer_is_stale(cp):
