@@ -2355,8 +2355,8 @@ class MacWorker:
             candidate = self._resolve_repository_source_path(origin)
             if candidate.exists():
                 local_source = candidate
-        remote_url = self._resolve_repository_remote_url(origin)
         if local_source is None:
+            remote_url = self._resolve_repository_remote_url(task, origin)
             if remote_url:
                 return self._prepare_repository_worktree_from_remote(
                     task, lease, task_dir, origin, remote_url
@@ -2374,7 +2374,8 @@ class MacWorker:
                 )
             raise RuntimeError(
                 "repository task origin has neither a local repository_path "
-                "nor a repository_url (or MAC_TASK_REPO_URL env)"
+                "nor a repository_url, repository contract canonical_remote_url, "
+                "or MAC_TASK_REPO_URL env"
             )
         source = local_source
 
@@ -2680,19 +2681,31 @@ class MacWorker:
                 return candidate
         return Path(str(origin.get("repository_path") or "")).expanduser()
 
-    def _resolve_repository_remote_url(self, origin: JsonDict) -> str:
-        """Return the remote clone URL for the K8s clone path, or "".
+    def _resolve_repository_remote_url(self, task: JsonDict, origin: JsonDict) -> str:
+        """Return the remote clone URL for a worker without a local source.
 
-        The task ``origin.repository_url`` takes precedence; if the task
-        does not carry one, ``MAC_TASK_REPO_URL`` from the environment is
-        consulted (the K8s Job pod injects this). Empty string means
-        "no remote URL available."""
+        An explicit ``origin.repository_url`` is the task-level override. The
+        durable repository contract is next, followed by the legacy
+        ``MAC_TASK_REPO_URL`` runtime fallback. Empty string means no remote is
+        available. Invalid values fail closed without echoing possible secrets.
+        """
         raw = str(origin.get("repository_url") or "").strip()
+        source = "origin.repository_url"
+        if not raw:
+            raw = _repository_contract_canonical_remote(task)
+            source = "repository contract canonical_remote_url"
         if not raw:
             raw = os.environ.get("MAC_TASK_REPO_URL", "").strip()
+            source = "MAC_TASK_REPO_URL"
         if not raw:
             return ""
-        return _validate_git_remote_url(raw)
+        try:
+            return _validate_git_remote_url(raw)
+        except ValueError:
+            raise ValueError(
+                "%s is invalid (value redacted); expected a supported git remote "
+                "without embedded credentials" % source
+            ) from None
 
     def _prepare_repository_worktree_from_remote(
         self,

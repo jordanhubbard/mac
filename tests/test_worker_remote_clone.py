@@ -143,6 +143,99 @@ def test_remote_clone_happy_path_creates_branch(tmp_path: Path, monkeypatch: pyt
     assert checkout_calls[0]["args"][1] == "-b"
 
 
+def test_remote_clone_uses_contract_when_registered_path_is_hub_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = _make_worker(tmp_path)
+    fake = _FakeGit(head_sha="c" * 40)
+    monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
+    monkeypatch.setattr("mac.worker._run_git", fake.run_git)
+    monkeypatch.delenv("MAC_TASK_REPO_URL", raising=False)
+
+    canonical = "https://github.com/NVIDIA-dev/ova.git"
+    task = _repo_task(repository_path="/hub-only/src/ova")
+    task["metadata"]["origin"]["repository_name"] = "ova"
+    task["metadata"]["origin"]["repository_contract"]["project"] = "ova"
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": canonical,
+    }
+    lease = {"id": "lease-contract"}
+    task_dir = tmp_path / "tasks" / "task-contract"
+    task_dir.mkdir(parents=True)
+
+    ctx = worker._prepare_repository_worktree(task, lease, task_dir)
+
+    assert ctx is not None
+    assert ctx["checkout_policy"] == "k8s_task_owned_clone"
+    assert ctx["repository_declared_path"] == "/hub-only/src/ova"
+    assert ctx["repository_canonical_remote_url"] == canonical
+    assert fake.calls[0]["args"][-2].endswith("github.com/NVIDIA-dev/ova.git")
+
+
+def test_remote_clone_explicit_origin_url_overrides_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = _make_worker(tmp_path)
+    fake = _FakeGit()
+    monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
+    monkeypatch.setattr("mac.worker._run_git", fake.run_git)
+    monkeypatch.delenv("MAC_TASK_REPO_URL", raising=False)
+
+    explicit = "https://gitea.omv.test/org/override.git"
+    task = _repo_task(
+        repository_url=explicit,
+        repository_path="/hub-only/src/repo",
+    )
+    task["metadata"]["origin"]["repository_name"] = "external-repo"
+    task["metadata"]["origin"]["repository_contract"]["project"] = "external-repo"
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": "https://github.com/org/canonical.git",
+    }
+    lease = {"id": "lease-override"}
+    task_dir = tmp_path / "tasks" / "task-override"
+    task_dir.mkdir(parents=True)
+
+    ctx = worker._prepare_repository_worktree(task, lease, task_dir)
+
+    assert ctx is not None
+    assert ctx["repository_canonical_remote_url"] == explicit
+
+
+def test_remote_clone_invalid_contract_url_fails_closed_without_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = _make_worker(tmp_path)
+    fake = _FakeGit()
+    monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
+    monkeypatch.setattr("mac.worker._run_git", fake.run_git)
+    monkeypatch.delenv("MAC_TASK_REPO_URL", raising=False)
+
+    redaction_marker = "test-only-redaction-marker"
+    credential_url = (
+        "https://" + "operator:" + redaction_marker + "@" + "github.com/org/repo.git"
+    )
+    task = _repo_task(repository_path="/hub-only/src/repo")
+    task["metadata"]["origin"]["repository_name"] = "external-repo"
+    task["metadata"]["origin"]["repository_contract"]["project"] = "external-repo"
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": credential_url,
+    }
+    lease = {"id": "lease-invalid-contract"}
+    task_dir = tmp_path / "tasks" / "task-invalid-contract"
+    task_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError) as raised:
+        worker._prepare_repository_worktree(task, lease, task_dir)
+
+    message = str(raised.value)
+    assert "repository contract canonical_remote_url is invalid" in message
+    assert redaction_marker not in message
+    assert fake.calls == []
+
+
 def test_remote_clone_prefers_local_path_when_both_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
