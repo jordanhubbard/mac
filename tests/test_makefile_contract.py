@@ -81,6 +81,20 @@ def test_make_dry_run_builds_both_supported_surfaces() -> None:
     assert "scripts/sync-codegraph.sh" in result.stdout
 
 
+def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "IDE_FLEET ?=" in makefile
+    assert "run-gui: ide-run" in makefile
+    assert 'if [ -f "$$HOME/.mac/.env" ]' in makefile
+    assert 'key="MAC_API_TOKEN__$$suffix"' in makefile
+    assert 'token="$${MAC_DEPLOY_HUB_TOKEN}"' in makefile
+    assert 'token="$${MAC_API_TOKEN}"' in makefile
+    assert 'IDE auth token source: %s' in makefile
+    assert 'VITE_MAC_TOKEN="$$token"' in makefile
+    assert "IDE auth token: %s" not in makefile
+
+
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:
     monkeypatch.setenv("MAC_VENV", "custom-venv")
 

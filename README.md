@@ -205,6 +205,12 @@ writes a static web bundle to `dist/mac-ide-web.tar.gz`. This is separate from
 the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
 `ide-*` target names remain as compatibility aliases.
 
+For local auth, `make run-gui` sources `~/.mac/.env` and passes a token to Vite
+without printing it. Set `IDE_FLEET=<fleet>` to prefer the matching
+`MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls back to
+`MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run` compatibility
+alias uses the same launcher.
+
 ## Tell Agents To Work On A Project
 
 Agents work on dispatchable tasks, not on repositories by implication. The

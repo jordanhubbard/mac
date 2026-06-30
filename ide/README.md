@@ -16,10 +16,16 @@ A VS Code / Cursor-style shell over the MAC control plane. Replaces the legacy
 From the repository root:
 
 ```bash
-make ide-install
-make ide-run IDE_API_URL=http://100.72.16.110:8789
+make install-gui
+make run-gui IDE_API_URL=http://100.72.16.110:8789
 # open http://127.0.0.1:5273, paste a hub bearer token when prompted
 ```
+
+`make run-gui` reads `~/.mac/.env` and passes a token to Vite when it can. If
+`IDE_FLEET=<fleet>` or `MAC_FLEET=<fleet>` is set, the launcher prefers
+`MAC_API_TOKEN__<FLEET>`; otherwise it falls back to `MAC_DEPLOY_HUB_TOKEN` and
+then `MAC_API_TOKEN`. It prints the selected key name, never the token value.
+The existing `make ide-run` target is a compatibility alias.
 
 Or from this package:
 
@@ -38,9 +44,9 @@ MAC_API_URL=http://100.72.16.110:8789 npm run dev   # hub to talk to
 From the repository root:
 
 ```bash
-make ide-build
-make ide-preview      # serves the production build at http://127.0.0.1:5273
-make ide-package      # writes dist/mac-ide-web.tar.gz
+make build-gui
+make ide-preview       # serves the production build at http://127.0.0.1:5273
+make package-gui       # writes dist/mac-ide-web.tar.gz
 ```
 
 Or from this package:

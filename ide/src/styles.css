@@ -64,6 +64,7 @@ body {
 .editor-mono { flex: 1; min-height: 0; }
 .agents { padding: 8px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
 .composer { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.login-card { width: min(460px, calc(100vw - 32px)); margin-top: 20vh; }
 .composer textarea {
   width: 100%; min-height: 64px; background: transparent; border: none; color: var(--fg);
   resize: vertical; font: inherit; outline: none;
@@ -74,6 +75,12 @@ select, input, button.btn {
   border-radius: 4px; padding: 4px 8px; font: inherit;
 }
 button.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); cursor: pointer; }
+button.btn:disabled { cursor: default; opacity: .55; }
+.login-error { color: var(--red); margin: 8px 0 0; }
+.status-link {
+  background: transparent; border: 0; color: #fff; cursor: pointer; font: inherit;
+  padding: 0; text-decoration: underline; text-underline-offset: 2px;
+}
 .agent-card { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
 .muted { color: var(--fg-dim); }
 .activity-entry { padding: 6px 12px; border-bottom: 1px solid var(--border); }

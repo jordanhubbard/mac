@@ -11,8 +11,23 @@ export function getToken(): string {
     ""
   );
 }
-export function setToken(t: string): void {
-  localStorage.setItem("mac.token", t.trim());
+
+export function normalizeTokenInput(raw: string): string {
+  let token = raw.trim();
+  token = token.replace(/^authorization:\s*/i, "").trim();
+  token = token.replace(/^bearer\s+/i, "").trim();
+  return token;
+}
+
+export function setToken(t: string): string {
+  const token = normalizeTokenInput(t);
+  if (token) localStorage.setItem("mac.token", token);
+  else localStorage.removeItem("mac.token");
+  return token;
+}
+
+export function clearToken(): void {
+  localStorage.removeItem("mac.token");
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {

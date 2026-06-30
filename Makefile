@@ -10,6 +10,7 @@ UV ?= uv
 CODEGRAPH ?= codegraph
 IDE_DIR ?= ide
 IDE_API_URL ?= http://127.0.0.1:8789
+IDE_FLEET ?=
 IDE_HOST ?= 127.0.0.1
 IDE_PORT ?= 5273
 IDE_PACKAGE ?= dist/mac-ide-web.tar.gz
@@ -231,7 +232,25 @@ cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 ide-install: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE dependencies.
 
 ide-run ide-dev: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the Fleet IDE development server.
-	cd $(IDE_DIR) && MAC_API_URL="$(IDE_API_URL)" $(NPM) run dev -- --host $(IDE_HOST) --port $(IDE_PORT)
+	cd $(IDE_DIR) && \
+	if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
+	token="$${IDE_TOKEN:-$${VITE_MAC_TOKEN:-}}"; \
+	token_source="$${IDE_TOKEN:+IDE_TOKEN}"; \
+	if [ -z "$$token_source" ] && [ -n "$${VITE_MAC_TOKEN:-}" ]; then token_source="VITE_MAC_TOKEN"; fi; \
+	fleet="$(IDE_FLEET)"; \
+	if [ -z "$$fleet" ]; then fleet="$${MAC_FLEET:-}"; fi; \
+	if [ -z "$$token" ] && [ -n "$$fleet" ]; then \
+		suffix="$$(printf '%s' "$$fleet" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$$//')"; \
+		if [ -n "$$suffix" ]; then \
+			key="MAC_API_TOKEN__$$suffix"; \
+			candidate="$$(printenv "$$key" 2>/dev/null || true)"; \
+			if [ -n "$$candidate" ]; then token="$$candidate"; token_source="$$key"; fi; \
+		fi; \
+	fi; \
+	if [ -z "$$token" ] && [ -n "$${MAC_DEPLOY_HUB_TOKEN:-}" ]; then token="$${MAC_DEPLOY_HUB_TOKEN}"; token_source="MAC_DEPLOY_HUB_TOKEN"; fi; \
+	if [ -z "$$token" ] && [ -n "$${MAC_API_TOKEN:-}" ]; then token="$${MAC_API_TOKEN}"; token_source="MAC_API_TOKEN"; fi; \
+	if [ -n "$$token_source" ]; then printf 'IDE auth token source: %s\n' "$$token_source"; else printf 'IDE auth token source: none (paste a token in the browser)\n'; fi; \
+	MAC_API_URL="$(IDE_API_URL)" VITE_MAC_TOKEN="$$token" $(NPM) run dev -- --host $(IDE_HOST) --port $(IDE_PORT)
 
 ide-check: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE.
 	cd $(IDE_DIR) && $(NPM) run typecheck
