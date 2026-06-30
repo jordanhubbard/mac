@@ -13,15 +13,46 @@ A VS Code / Cursor-style shell over the MAC control plane. Replaces the legacy
 
 ## Run (dev)
 
+From the repository root:
+
+```bash
+make ide-install
+make ide-run IDE_API_URL=http://100.72.16.110:8789
+# open http://127.0.0.1:5273, paste a hub bearer token when prompted
+```
+
+Or from this package:
+
 ```bash
 cd ide
-npm install
+npm ci
 MAC_API_URL=http://100.72.16.110:8789 npm run dev   # hub to talk to
 # open http://localhost:5273, paste a hub bearer token when prompted
 ```
 
 `/api/*` is proxied to the hub (see `vite.config.ts`). The token is stored in
 `localStorage["mac.token"]` (or set `VITE_MAC_TOKEN`).
+
+## Build and package
+
+From the repository root:
+
+```bash
+make ide-build
+make ide-preview      # serves the production build at http://127.0.0.1:5273
+make ide-package      # writes dist/mac-ide-web.tar.gz
+```
+
+Or from this package:
+
+```bash
+npm run build
+npm run preview
+npm run package
+```
+
+`npm run package` and `make ide-package` create a static web bundle, not a
+native Electron app. The Electron wrapper is still tracked as follow-up work.
 
 ## Status — first increment
 

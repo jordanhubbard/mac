@@ -161,6 +161,21 @@ Key route groups:
 - `/agents/{id}/mood`, `/agents/{id}/mood/history` — agent-self-reported emotional state (warm/cheerful/sad/curt/cold/irritated/angry/enraged) with reason + optional TTL; transitions flow through `/events` as `subject_type=agent`
 - `/agents/{id}/nap-schedule`, `/agents/{id}/nap-schedule/next`, `/nap-schedules`, `/nap-runs`, `/nap-runs/{id}/complete`, `/nap-runs/{id}/fail` — daily memory-consolidation lifecycle. Offset defaults to `md5(agent.name) %% 360` minutes (spreads the fleet across the 0–6h UTC window). mac coordinates `begin → DRAINING → complete/fail`; summarization and vector storage are off-process and linked via `evidence` + `vector_refs`.
 
+## Fleet IDE
+
+The React + Monaco fleet IDE lives in `ide/`. From the repository root:
+
+```bash
+make ide-install
+make ide-run IDE_API_URL=http://127.0.0.1:8789
+make ide-build
+make ide-package
+```
+
+`make ide-run` starts Vite on `http://127.0.0.1:5273`. `make ide-package`
+writes a static web bundle to `dist/mac-ide-web.tar.gz`. This is separate from
+the optional Electron dashboard wrapper in `desktop/`.
+
 ## Tell Agents To Work On A Project
 
 Agents work on dispatchable tasks, not on repositories by implication. The

@@ -3,10 +3,16 @@ ARGS ?=
 HUB ?=
 VENV ?= .venv
 LOCAL_BIN ?= $(HOME)/.local/bin
+NPM ?= npm
+IDE_DIR ?= ide
+IDE_API_URL ?=
+IDE_HOST ?= 127.0.0.1
+IDE_PORT ?= 5273
+IDE_PACKAGE ?= dist/mac-ide-web.tar.gz
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: require-python install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage desktop-install desktop-check desktop-package desktop-dist build publish link-cli
+.PHONY: require-python install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package desktop-install desktop-check desktop-package desktop-dist build publish link-cli
 
 require-python:
 	@if [ -z "$(PYTHON)" ]; then \
@@ -51,6 +57,26 @@ test-ui:
 # Uses the same discovery logic as tests/cli/test_cli_coverage_gate.py.
 cli-coverage:
 	@$(VENV)/bin/python scripts/cli-coverage.py
+
+ide-install:
+	cd $(IDE_DIR) && $(NPM) ci
+
+ide-run ide-dev:
+	cd $(IDE_DIR) && MAC_API_URL="$(IDE_API_URL)" $(NPM) run dev -- --host $(IDE_HOST) --port $(IDE_PORT)
+
+ide-check:
+	cd $(IDE_DIR) && $(NPM) run typecheck
+
+ide-build:
+	cd $(IDE_DIR) && $(NPM) run build
+
+ide-preview: ide-build
+	cd $(IDE_DIR) && $(NPM) run preview -- --host $(IDE_HOST) --port $(IDE_PORT)
+
+ide-package: ide-build
+	mkdir -p "$$(dirname "$(IDE_PACKAGE)")"
+	tar -czf "$(IDE_PACKAGE)" -C "$(IDE_DIR)/dist" .
+	@echo "packaged IDE web bundle: $(IDE_PACKAGE)"
 
 desktop-install:
 	cd desktop && npm ci

@@ -5,8 +5,10 @@
   "type": "module",
   "description": "MAC control plane as an IDE — VS Code/Cursor-style shell over the fleet (file/task tree, Monaco editor, activity/evidence panel, Agents panel).",
   "scripts": {
+    "start": "vite",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "package": "npm run build && mkdir -p ../dist && tar -czf ../dist/mac-ide-web.tar.gz -C dist .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
