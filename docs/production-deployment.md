@@ -60,6 +60,12 @@ backends ship in the same wheel/image; pick at deploy time.
 | `MAC_HERMES_WORKSPACE` | no | Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet deploy sets this to `$MAC_HOME/src/mac`. |
 | `MAC_PROJECT_CONTRACT_FILE` | no | Repository contract file for the Hermes direct-session capability bridge. Fleet deploy sets this to `$MAC_HERMES_WORKSPACE/.mac/project.yaml`. |
 | `MAC_WORKER_EXECUTOR` | no | Executor command used by loop-mode workers. The default `~/.mac/bin/mac-hermes-task-executor` is part of the Hermes direct-session capability proof. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | no | GitHub HTTPS credential used by task, review, publication, and pushed-ref verification commands. The credential may appear only in the individual Git command and must not persist in `origin`, evidence, logs, or memory. |
+| `GITEA_TOKEN` | no | Gitea HTTPS credential for the same Git operations. `MAC_TASK_GIT_TOKEN` is the host-mode fallback when no host-specific token is set. |
+| `MAC_DEPLOY_GH_TOKEN` | no | Fleet-deploy input copied into the managed runtime as `GH_TOKEN`. Keep it in the host-local `~/.mac/.env`, never in `fleets.yaml` or a committed spec. |
+| `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | no | How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default `1800`. |
+| `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning receives reviewer-selection preference. Default `86400`. |
+| `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | no | Maximum durable delivered verdict nudges for one review before it is retracted. Default `10`. |
 | `MAC_SUPERVISOR_KIND` | no | Runtime supervisor selected by fleet deploy: `systemd`, `launchd`, or `supervisord`. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | no | Hermes-visible memory topology JSON. Default `~/.hermes/mac-memory-topology.json`. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | no | Agent that owns hub-managed shared services. Defaults to the configured fleet hub. |
@@ -212,6 +218,31 @@ it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.
 The hub control plane binds to `hub_url` as declared in `~/.mac/fleets.yaml`.
 How you reach it from a client machine depends on the network topology.
 
+> **Current client-bootstrap status:** `mac login` is not registered in the
+> shipped CLI. SSH-first enrollment, a portable least-privilege client profile,
+> revocation, and reconnectable tunnel lifecycle are tracked by
+> `task_de953ca70ba14b21b34ab48b36e98bc4` and its prerequisites. Until they land,
+> the supported path is explicit operator provisioning of a hub URL plus scoped
+> API token, or an existing `~/.mac/fleets.yaml` entry plus
+> `mac fleet sync-token --fleet <name>`. Do not copy the hub's `~/.mac`, admin
+> token, `mac.db`, `MAC_SECRET_KEY`, provider keys, or SSH private keys to a new
+> client.
+
+For a directly reachable hub, the interim client setup is:
+
+```bash
+export MAC_API_URL=https://mac.example.internal
+export MAC_API_TOKEN=<scoped-client-token>
+mac diagnostics
+mac task stats
+mac agent list
+```
+
+Use a mode-`0600` env file or a process environment supplied by a secret
+manager. `--token` exists for automation/recovery but is not the preferred
+interactive path because argv can be visible in shell history and process
+inspection.
+
 ### Direct access (same network or VPN)
 
 Hub is directly routable — no tunnel needed:
@@ -236,10 +267,13 @@ Host my-hub
     HostName my-hub.cluster.local
     User horde
     ProxyJump horde@bastion.example.com:2222
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
+    StrictHostKeyChecking yes
     ForwardAgent yes
 ```
+
+Provision and verify the hub and bastion host keys in `~/.ssh/known_hosts`
+before opening the tunnel. Disabling host-key verification is not a supported
+bootstrap substitute.
 
 ```bash
 # Forward hub control port to localhost and open the UI
@@ -249,7 +283,9 @@ ssh -L 8789:127.0.0.1:8789 my-hub
 ```
 
 Set `hub_url: http://127.0.0.1:8789` in the fleet registry when using this
-pattern — the deploy script reaches the hub through the forwarded port.
+pattern — the deploy script reaches the hub through the forwarded port. The
+tunnel does not enroll the client or issue a token; provision the scoped API
+credential separately until `mac login` ships.
 
 ### Tailscale mesh (`provider: tailscale`)
 
@@ -336,8 +372,13 @@ that is the available process supervisor. The selected value is written to
 Fleet deploy mirrors each configured per-agent model into `ACC_HERMES_GATEWAY_MODEL`,
 `HERMES_INFERENCE_MODEL`, and `ACC_LLM_MODEL` so upstream Hermes gateway turns
 and `mac-hermes-task-executor` oneshot work use the same per-agent identity.
-Credentials remain in TokenHub or inherited host-local env files; mac only
-writes model/provider selectors.
+Provider credentials remain in TokenHub or inherited host-local env files.
+Git-host credentials are a separate execution concern: when
+`MAC_DEPLOY_GH_TOKEN` is present in the operator's `~/.mac/.env`, deploy writes
+it to each managed runtime as `GH_TOKEN`. Do not put the value in
+`~/.mac/fleets.yaml`, a fleet spec, task metadata, or source control. A vault
+record by itself does not populate a worker environment; deploy or the
+Kubernetes runner Secret must inject the corresponding environment key.
 
 It ships this repository to each host, installs `mac` into `~/.mac/venv`,
 redeploys upstream `NousResearch/hermes-agent` into `~/.mac/hermes-agent`,
@@ -438,6 +479,56 @@ has never owned the task as reviewer, then waits for a separate signed
 `review_verdict` evidence row from that reviewer. It publishes/completes the
 task only when both executor evidence and reviewer verdict are verifiable.
 Failed executions fail the task with evidence attached.
+
+### Repository credential learning and reviewer routing
+
+Every completed remote review preparation writes an authoritative
+`fleet_learning:repository_access` memory record. The JSON content uses schema
+`mac.fleet_learning.v1` and records only routing-safe facts: project,
+repository host, operation, agent, credential source name, outcome, failure
+class, bounded redacted error signature, recommendation, and task/review IDs.
+It never stores a credential value or authenticated URL.
+
+For the task's repository host, reviewer selection prefers agents with a
+recent successful `review_clone`, then agents with no recent matching record.
+An agent whose newest matching record is an authentication or authorization
+failure is ineligible during the configured cooldown. A newer success restores
+eligibility immediately; cooldown expiry returns the agent to unknown status.
+This lookup reads SQLite directly, so routing changes immediately and does not
+wait for Qdrant vector backfill.
+
+Review Jobs receive optional Git-host keys from the runner's configured Secret
+(default `mac-api-config`): `GH_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, and
+`GITEA_USER`. Missing keys are allowed for public repositories. Review Jobs do
+not receive `MAC_SECRET_KEY`. Host-mode workers also recognize
+`MAC_TASK_GIT_TOKEN` as a fallback. The worker injects an HTTPS token only into
+the Git command and restores the checkout's `origin` to the clean remote URL.
+
+The pushed-ref evidence check uses the same environment-backed resolver. An
+authentication, authorization, or network failure on the control-plane host is
+indeterminate: it does not prove that the pushed ref is absent. A successful
+lookup with no matching ref still rejects phantom-push evidence, and the
+independent reviewer must still verify the executor's work.
+
+Inspect the routing inputs and resulting review state:
+
+```bash
+mac --json memory search \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 50
+
+mac --json memory search \
+  --subject-type agent --subject-id agent_... \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 20
+
+mac --json task show task_...
+```
+
+Do not hand-edit or invent success records to force routing. Repair the agent's
+credential, run a real repository operation, and let the resulting success
+supersede the failure. Multiple success records can exist when a review is
+retried; only the newest matching record controls eligibility.
 
 Every mac-managed subprocess records a short-retention command audit event on
 the hub. The log captures `command_id`, agent, task, sanitized `argv`, `cwd`,
@@ -767,12 +858,47 @@ On pods where `supervisord` runs as root (PID 1) with a root-only control socket
 (`run_supervisorctl`); ensure the deploy user has passwordless sudo. A bare
 `supervisorctl ...` in a manual session needs `sudo`.
 
+### Private repository review is retracted or remains in `reviewing`
+
+Start with the task and shared learning records:
+
+```bash
+mac --json task show task_...
+mac --json memory search \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 50
+```
+
+Interpret the review reason before retrying:
+
+- `reviewer_unavailable:reviewer_repository_access_authentication:<host>` means
+  MAC learned that the selected reviewer could not authenticate, retracted it,
+  and will prefer a recent successful peer. Repair that agent's host-specific
+  token before expecting it to be selected during the cooldown.
+- `reviewer_unavailable:reviewer_repository_access_authorization:<host>` means
+  the credential was recognized but lacks access to the repository or
+  organization. For GitHub organizations using SSO, authorize the token for the
+  organization rather than rotating it blindly.
+- `reviewer_unable_to_produce_verdict_after_<N>_attempts` means repository
+  access may have succeeded but the reviewer executor did not emit a valid
+  signed verdict. Inspect the review evidence and reviewer workspace; changing
+  Git credentials is not the appropriate repair unless the memory record also
+  reports an access failure.
+
+The delivered-nudge cap prevents an unparseable or crashing reviewer from
+spinning forever. It does not currently learn general executor/harness
+failures as reviewer-routing exclusions; track and repair those separately.
+
 ## Known limitations
 
 - SQLite topology is single-writer. Use the Kubernetes + Postgres
   topology for multi-replica deployments.
 - No built-in TLS. Put a reverse proxy in front.
 - `MAC_SECRET_KEY` rotation is manual.
+- Operational success-first routing is currently enforced for repository access
+  during autonomous review. General executor, sandbox, and verdict-production
+  failures are bounded and visible but are not yet learned as reviewer-routing
+  exclusions.
 - Live SQLite → Postgres data migration tool is not yet shipped (K8s
   Phase 3.7 — pending). Greenfield Postgres deploys start with an
   empty schema applied automatically by `PostgresStore.initialize()`;

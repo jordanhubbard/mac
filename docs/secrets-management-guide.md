@@ -167,6 +167,37 @@ cp.secrets.create_secret(
 Any new deploy agent automatically gains access when it's registered with the
 `deploy` or `image-builder` capability.
 
+### Git-Host Credential Pattern
+
+Repository credentials have two distinct layers:
+
+1. The encrypted MAC secret record controls durable storage and audited reveal.
+2. The worker or Kubernetes Job environment supplies the host-specific variable
+   that Git operations actually resolve.
+
+Creating a vault secret named `github.token` does **not** automatically place it
+in a worker process. Fleet deploy accepts `MAC_DEPLOY_GH_TOKEN` from the
+operator's host-local `~/.mac/.env` and writes it to managed runtimes as
+`GH_TOKEN`. Kubernetes task and review Jobs read optional `GH_TOKEN`,
+`GITHUB_TOKEN`, and `GITEA_TOKEN` keys from the runner's configured Secret
+(default `mac-api-config`). Keep Git tokens out of `fleets.yaml`, committed
+fleet specs, task metadata, and operator CLI arguments. The internal resolver
+may place a credential in the argv of the one Git subprocess that needs it;
+process inspection on an execution host is therefore privileged access.
+
+At runtime, GitHub HTTPS access resolves `GH_TOKEN`, then `GITHUB_TOKEN`, then
+the host-mode `MAC_TASK_GIT_TOKEN` fallback. Gitea resolves `GITEA_TOKEN`, then
+the fallback. The credential is injected only into the individual Git command;
+the worker restores a credential-free `origin` immediately afterward. Review
+Jobs receive the optional Git-host keys but deliberately do not receive
+`MAC_SECRET_KEY`.
+
+Repository access writes `fleet_learning:repository_access` common-memory
+records so reviewer routing can reuse proven success and avoid a recent auth
+failure. Those records contain only the credential source *name* (for example
+`env:GH_TOKEN`), never its value. They are operational routing data, not a
+replacement secret store. See [Fleet Operational Learning](fleet-operational-learning.md).
+
 ### Tenant-Isolated Secret Pattern
 
 A credential that belongs to one tenant's workload should be scoped to that
@@ -328,3 +359,6 @@ allow the name to be reclaimed later.
 - **Key rotation**: `MAC_SECRET_KEY` is used to derive the Fernet key. If the
   environment key is rotated, all existing ciphertext becomes unreadable until
   the secrets are re-encrypted. Plan key rotation carefully.
+- **Operational memory is not a secret store**: repository-access learnings may
+  name `env:GH_TOKEN` or another mechanism, but must never contain token values,
+  authenticated URLs, or raw secret-bearing Git output.

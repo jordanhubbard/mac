@@ -204,6 +204,81 @@ uv run mac --db mac.db task claim task_... agent_...
 uv run mac --db mac.db task start task_... agent_...
 ```
 
+## How Reviewers Learn Repository Access
+
+For a repository-backed task, MAC does not pick every healthy reviewer as if
+its Git credentials were interchangeable. A review clone writes a shared,
+secret-free `fleet_learning:repository_access` record containing the project,
+repository host, operation, agent, credential source *name*, outcome, and a
+redacted failure class. Credential values and authenticated URLs are never
+stored in memory or task evidence.
+
+Reviewer routing uses the newest matching record:
+
+- a recent successful `review_clone` is preferred;
+- a newer authentication or authorization failure temporarily excludes that
+  agent for the same project and repository host;
+- a later success immediately supersedes the failure;
+- an expired failure cooldown returns the agent to unknown/eligible rather
+  than banning it permanently.
+
+Inspect the records in the local demo database below. For a configured fleet,
+omit `--db mac.db` and use the selected hub profile (for example
+`mac --fleet my-fleet --json memory search ...`):
+
+```bash
+uv run mac --db mac.db --json memory search \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 50
+
+uv run mac --db mac.db --json memory search \
+  --subject-type agent --subject-id agent_... \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 20
+```
+
+Repository access and review verdict production are separate stages. A
+successful clone proves only that the reviewer can read that repository. If
+the review executor later fails to create signed `review_verdict` evidence,
+the review is retracted after the delivered-nudge cap and the task remains
+visible for repair; MAC does not reinterpret that executor failure as a Git
+credential failure.
+
+## Connect A New Client Today
+
+The intended SSH-first `mac login` bootstrap is designed and tracked, but it is
+not present in the current `mac --help`. In particular, there is no shipped
+`mac login`, `mac login status`, renewal, or revoking logout command yet. The
+implementation task is `task_de953ca70ba14b21b34ab48b36e98bc4`.
+
+For now, a client needs a hub URL and a scoped API token provisioned out of
+band:
+
+```bash
+export MAC_API_URL=https://mac.example.internal
+export MAC_API_TOKEN=<scoped-client-token>
+
+mac diagnostics
+mac task stats
+mac agent list
+```
+
+If the client already has a home-scoped `~/.mac/fleets.yaml` entry with a
+verified SSH route to the hub, it can refresh the fleet-scoped token and use
+the profile selector:
+
+```bash
+mac fleet sync-token --fleet my-fleet
+mac --fleet my-fleet diagnostics
+mac --fleet my-fleet task stats
+```
+
+This is an interim operator-provisioned connection, not an enrollment flow. Do
+not copy `mac.db`, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a
+different operator's complete `~/.mac` directory. Use a least-privilege client
+token and mode-`0600` local env file. Once `mac login` ships, this section must
+be replaced by the SSH enrollment flow rather than keeping both as equal paths.
+
 ## Run The API And Dashboard
 
 Start the API:
@@ -340,6 +415,20 @@ MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. TokenHub,
 Qdrant, Firecrawl, the MAC API, worker services, and Hermes bridge files are
 bootstrapped as part of the fleet service picture.
 
+Private GitHub HTTPS repositories require a credential on every host or task
+runner that performs Git work. Keep it in the host-local `~/.mac/.env` (mode
+`0600`), never in `~/.mac/fleets.yaml` or a committed fleet spec:
+
+```bash
+# ~/.mac/.env -- placeholder only; supply the real value out of band.
+MAC_DEPLOY_GH_TOKEN=<github-token-authorized-for-the-organization>
+```
+
+Fleet deploy writes that value to the managed runtime as `GH_TOKEN`. Kubernetes
+task and review Jobs instead read optional `GH_TOKEN`, `GITHUB_TOKEN`, and
+`GITEA_TOKEN` keys from the runner's configured Kubernetes Secret. Review Jobs
+do not receive `MAC_SECRET_KEY`.
+
 ## Where To Go Next
 
 - [Hermes Integration](hermes-integration.md): how Hermes learns and uses the
@@ -349,5 +438,7 @@ bootstrapped as part of the fleet service picture.
   operations detail.
 - [Repository Runtime Contract](repository-runtime-contract.md): how registered
   project checkouts declare bootstrap and test commands.
+- [Fleet Operational Learning](fleet-operational-learning.md): how repository
+  access outcomes influence reviewer routing without storing credentials.
 - [Soul Preservation Runbook](soul-preservation-runbook.md): how to restart
   agents without losing their Hermes identity and memory.

@@ -77,6 +77,14 @@ as the primary target dropdown. The dashboard's URL field is reserved for the
 `Testing URL` target so local or throwaway API endpoints can still be checked
 without making URL entry part of normal fleet usage.
 
+The current package consumes profiles that were already provisioned; it does
+not enroll a fresh client. `mac login`/logout/revocation and IDE integration
+with the resulting portable client profile are tracked but are not shipped in
+the current CLI or Electron package. Until that work lands, provision
+`~/.mac/fleets.yaml`, a verified SSH route, and the scoped token source out of
+band. Do not copy a hub's complete `~/.mac` directory or admin credential into
+the desktop client.
+
 Electron mode exposes visible `Fleet hub` and `Bearer token` controls in the
 top bar. The renderer sees token-source labels only; token values loaded from
 `~/.mac/.env` remain in Electron main and are injected by the local proxy.

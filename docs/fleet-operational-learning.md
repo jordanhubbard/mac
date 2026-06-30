@@ -1,6 +1,6 @@
 # Fleet operational learning
 
-Status: accepted design and implementation plan, 2026-06-30.
+Status: implemented, tested, and deployed, 2026-06-30.
 
 ## Decision
 
@@ -86,6 +86,45 @@ The prompt shows the outcome and actionable recommendation, not credentials or
 raw command output. Deterministic routing remains authoritative; prompt recall
 helps agents apply the same lesson inside their implementation work.
 
+## Operator inspection and recovery
+
+Read the records through the MAC API/CLI rather than opening the database or
+editing `.oompah/tasks`/task files:
+
+```bash
+mac --json memory search \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 50
+
+mac --json memory search \
+  --subject-type agent --subject-id agent_... \
+  --record-type fleet_learning:repository_access \
+  --order desc --limit 20
+
+mac --json task show task_...
+```
+
+The `content` field is JSON text. Relevant routing fields are `project`,
+`repository_host`, `operation`, `agent_id`, `credential_source`, `outcome`,
+`failure_class`, and `at`. Multiple successes are normal when a reviewer is
+nudged more than once; the newest matching record controls routing.
+
+For credential repair, update the agent's host-specific environment or the
+Kubernetes runner Secret, restart/redeploy the affected runtime, and let a real
+Git operation write the superseding success. Do not fabricate a success memory
+record. A vault record alone does not populate `GH_TOKEN`/`GITEA_TOKEN` in a
+worker process.
+
+Review status distinguishes repository access from later execution:
+
+- `reviewer_repository_access_authentication` or `_authorization` is a learned
+  Git access failure and affects reviewer eligibility.
+- `reviewer_unable_to_produce_verdict_after_<N>_attempts` means the repository
+  may have cloned successfully, but the reviewer executor failed to emit a
+  valid signed verdict. That failure is bounded and visible, but it is not
+  currently converted into a repository-access failure or a general
+  reviewer-harness routing exclusion.
+
 ## Acceptance Criteria
 
 - [x] Review jobs receive optional Git-host credentials while `MAC_SECRET_KEY`
@@ -108,5 +147,5 @@ helps agents apply the same lesson inside their implementation work.
 - [x] CodeGraph reports a passing affected-code audit for all changed source
   files.
 
-Implementation tracking: `task_f16df80ee0b4404091fa9f86fcba64da`. Close it
-only after the verified implementation is committed and pushed.
+Implementation tracking: `task_f16df80ee0b4404091fa9f86fcba64da` (completed).
+Core implementation commits: `7cf4e3d` and `7503ba0`.

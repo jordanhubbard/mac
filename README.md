@@ -133,6 +133,35 @@ CLI selects a configured hub (`--hub-url`, `MAC_API_URL`, `MAC_URL`,
 `MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise refuses to run instead of
 silently creating a stray `./mac.db`.
 
+### Client bootstrap status
+
+`mac login` is **not shipped in the current CLI**. The SSH-first
+`login`/`status`/`renew`/`logout --revoke` workflow is tracked by
+`task_de953ca70ba14b21b34ab48b36e98bc4` and remains blocked on the portable
+client-profile, fleet SSH-routing, and hub enrollment contracts. Do not copy an
+entire `~/.mac` directory or an admin token to approximate login.
+
+Until that work lands, an operator must provision the hub endpoint and a
+scoped bearer token out of band, either in the process environment or in the
+home-scoped `~/.mac/fleets.yaml` plus `~/.mac/.env` files:
+
+```bash
+export MAC_API_URL=https://mac.example.internal
+export MAC_API_TOKEN=<scoped-client-token>
+mac diagnostics
+mac task stats
+
+# If a fleet registry with a verified SSH hub route is already present, refresh
+# its fleet-scoped token without copying another operator's ~/.mac directory.
+mac fleet sync-token --fleet my-fleet
+mac --fleet my-fleet diagnostics
+```
+
+Prefer environment or mode-`0600` files over `--token`, which can expose a
+token through shell history or process inspection. See
+[Production Deployment](docs/production-deployment.md#reaching-the-hub-node)
+for the current manual connection contract.
+
 ## API
 
 Run the REST API with `MAC_SECRET_KEY` set:
@@ -256,14 +285,33 @@ For repository-backed work, the production path is:
    verification manifest. Repository work must report pushed/clean git state
    and passing checks before it can enter review.
 5. The default review workflow assigns a healthy reviewer-capable agent that
-   has not owned the task, waits for signed `review_verdict` evidence, then
-   publishes only after executor and reviewer evidence both verify.
-6. Publication completes the mac task. Failed tasks are reopened with a bounded
+   has not owned the task. For remote repositories it consults shared
+   `fleet_learning:repository_access` memory: a recent successful clone is
+   preferred, while a newer authentication or authorization failure makes that
+   agent temporarily ineligible for the same project, host, and operation.
+6. Review workers resolve Git-host credentials from their environment for the
+   individual Git command, immediately restore a credential-free `origin`, and
+   record a secret-free success or failure learning. An authentication failure
+   triggers immediate reviewer re-evaluation instead of repeating the same
+   credential pattern.
+7. The workflow waits for signed `review_verdict` evidence and publishes only
+   after executor and reviewer evidence both verify. Review nudges are capped
+   by durable delivered attempts, so a reviewer that cannot produce a verdict
+   is retracted instead of being nudged indefinitely.
+8. Publication completes the mac task. Failed tasks are reopened with a bounded
    retry policy; exhausted retries remain failed and visible.
 
 mac records the complete ledger in task history, evidence, reviews, publications,
 command audit, observability, and notifications — all in the mac task store,
 which is authoritative. Lease renewals stay internal to avoid noise.
+
+Repository-access failure cooldown defaults to 30 minutes
+(`MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS=1800`), successful access is
+preferred for 24 hours (`MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS=86400`), and
+review verdict nudges default to 10 delivered attempts
+(`MAC_REVIEW_NUDGE_MAX_ATTEMPTS=10`). See
+[Fleet Operational Learning](docs/fleet-operational-learning.md) for the record
+schema, credential boundaries, inspection commands, and failure semantics.
 
 ## Workflow Orchestration
 
@@ -302,6 +350,10 @@ mac --db mac.db interaction task hermes_... "Investigate deployment failure" --p
 mac --db mac.db task create "Implement feature" --required-capabilities python
 mac --db mac.db dispatch tick
 mac --db mac.db task show task_...
+
+# Inspect secret-free repository-access outcomes used by reviewer routing.
+mac --db mac.db --json memory search \
+    --record-type fleet_learning:repository_access --order desc --limit 50
 
 # Secrets: prefer stdin or file input over argv to keep values out of shell history.
 echo -n "$GH_TOKEN" | mac --db mac.db secret set github-token \
@@ -416,6 +468,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Hermes Integration](docs/hermes-integration.md)
 - [Production Deployment](docs/production-deployment.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
+- [Fleet Operational Learning](docs/fleet-operational-learning.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/scaling-plan.md)
