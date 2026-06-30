@@ -48,6 +48,12 @@ Every completed remote preparation writes one success or failure learning.
 Authentication and authorization failures trigger an immediate default-review
 workflow tick after the memory write.
 
+The control plane's pushed-ref evidence check uses the same authentication
+resolver. A control-plane authentication, authorization, or network failure is
+treated as indeterminate rather than as proof that a pushed ref is absent; the
+independently routed reviewer remains responsible for verification. A
+successful lookup with no matching ref still rejects phantom-push evidence.
+
 ### Success-first reviewer routing
 
 For the task's repository host, reviewer candidates are ordered as follows:
@@ -95,6 +101,9 @@ helps agents apply the same lesson inside their implementation work.
   are idempotent.
 - [x] Executor prompts include relevant structured fleet-learning
   recommendations.
+- [x] Pushed-ref verification reuses environment-backed Git authentication,
+  redacts credentials, and does not misclassify a verifier auth failure as a
+  missing ref.
 - [x] Focused tests and `scripts/run-contract-tests.sh` pass.
 - [x] CodeGraph reports a passing affected-code audit for all changed source
   files.

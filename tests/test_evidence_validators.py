@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
@@ -376,6 +378,95 @@ def test_remote_ref_resolution_best_effort_on_network_failure(monkeypatch):
         manifest,
         passed_check_count=_passed_check_count,
     ) == []
+
+
+def test_remote_ref_resolution_uses_environment_backed_auth(monkeypatch):
+    import mac.evidence_validators as ev
+
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="abcdef refs/heads/private\n",
+            stderr="",
+        )
+
+    monkeypatch.setenv("GH_TOKEN", "top-secret")
+    monkeypatch.setattr(ev.subprocess, "run", fake_run)
+
+    assert (
+        ev._verify_remote_ref_resolves(
+            "https://github.com/acme/private.git",
+            "refs/heads/private",
+        )
+        is None
+    )
+    assert captured["argv"][2].startswith("https://x-access-token:top-secret@")
+    assert captured["kwargs"]["timeout"] == ev._REMOTE_REF_VERIFY_TIMEOUT_SEC
+
+
+def test_remote_ref_auth_failure_is_indeterminate_and_secret_free(monkeypatch):
+    import mac.evidence_validators as ev
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_TASK_GIT_TOKEN", raising=False)
+    monkeypatch.setattr(
+        ev.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            128,
+            stdout="",
+            stderr=(
+                "fatal: unable to access "
+                "https://x-access-token:top-secret@github.com/acme/private.git: "
+                "could not read Username for 'https://github.com'"
+            ),
+        ),
+    )
+
+    assert (
+        ev._verify_remote_ref_resolves(
+            "https://github.com/acme/private.git",
+            "refs/heads/private",
+        )
+        is None
+    )
+
+
+def test_remote_ref_definitive_failure_redacts_embedded_credentials(monkeypatch):
+    import mac.evidence_validators as ev
+
+    monkeypatch.setattr(
+        ev.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            128,
+            stdout="",
+            stderr=(
+                "fatal: repository "
+                "https://x-access-token:top-secret@github.com/acme/missing.git "
+                "not found"
+            ),
+        ),
+    )
+
+    failure = ev._verify_remote_ref_resolves(
+        "https://x-access-token:top-secret@github.com/acme/missing.git",
+        "refs/heads/private",
+    )
+
+    assert failure is not None
+    assert "does not resolve" in failure
+    assert "not found" in failure
+    assert "top-secret" not in failure
+    assert "<redacted>" in failure
 
 
 # ---------------------------------------------------------------------------

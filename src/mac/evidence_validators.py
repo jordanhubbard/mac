@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac.codegraph_audit import codegraph_audit_manifest_problems
+from mac.fleet_learning import (
+    AUTH_FAILURE_CLASSES,
+    classify_repository_access_failure,
+    resolve_git_remote_access,
+)
+from mac.gitops import redact_git_remote_auth_in_text
 from mac.models import JsonDict, ValidationError, ensure_json_object
 
 
@@ -58,13 +64,20 @@ def _remote_ref_verification_enabled() -> bool:
 
 def _verify_remote_ref_resolves(remote_url: str, remote_ref: str) -> Optional[str]:
     """Return None if the ref resolves on the remote; a string problem
-    description otherwise. Returns None on network failure (best-effort)
-    so a flaky CI doesn't reject legitimate evidence."""
+    description otherwise.
+
+    Repository authentication is resolved through the same environment-backed
+    path as worker Git operations.  Authentication, authorization, and network
+    failures remain best-effort: they prove only that this control-plane
+    process could not inspect the ref, not that the executor's ref is absent.
+    A successful lookup with no matching ref still rejects phantom evidence.
+    """
     if not remote_url or not remote_ref:
         return None
+    access = resolve_git_remote_access(remote_url)
     try:
         completed = subprocess.run(
-            ["git", "ls-remote", remote_url, remote_ref],
+            ["git", "ls-remote", access.remote, remote_ref],
             capture_output=True,
             text=True,
             timeout=_REMOTE_REF_VERIFY_TIMEOUT_SEC,
@@ -72,16 +85,19 @@ def _verify_remote_ref_resolves(remote_url: str, remote_ref: str) -> Optional[st
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None  # best-effort: we can't reach git or network
     if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
+        stderr = redact_git_remote_auth_in_text((completed.stderr or "").strip())
+        failure_class = classify_repository_access_failure(stderr)
+        if failure_class in {*AUTH_FAILURE_CLASSES, "network"}:
+            return None
         return (
             "repo.remote_ref %s does not resolve on %s (git ls-remote "
             "returncode=%d: %s)"
-            % (remote_ref, remote_url, completed.returncode, stderr[:200])
+            % (remote_ref, access.display, completed.returncode, stderr[:200])
         )
     if not (completed.stdout or "").strip():
         return (
             "repo.remote_ref %s did not match any ref on %s "
-            "(git ls-remote returned no output)" % (remote_ref, remote_url)
+            "(git ls-remote returned no output)" % (remote_ref, access.display)
         )
     return None
 
