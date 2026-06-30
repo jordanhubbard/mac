@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from mac.fleet_deploy import normalize_ssh_target
+from mac.fleet_env import parse_env_file
 from mac.providers import ROUTER_PROVIDERS, router_secret_name
 
 SETUP_SPEC_SCHEMA = "mac.fleet_setup.v1"
@@ -83,9 +84,15 @@ def build_setup_plan(
     """Build a machine-readable setup plan from a declarative spec.
 
     The returned object intentionally contains no side effects. Callers decide
-    whether to write files, dry-run, validate only, or deploy.
+    whether to write files, dry-run, validate only, or deploy. Values from
+    ``env_file`` fill gaps in the effective environment; an explicit ``env``
+    mapping (or the live process environment when ``env`` is omitted) wins so
+    a caller can intentionally override persisted operator configuration.
     """
-    env_map = dict(os.environ if env is None else env)
+    env_map: Dict[str, str] = {}
+    if env_file is not None:
+        env_map.update(parse_env_file(Path(env_file).expanduser()))
+    env_map.update(os.environ if env is None else env)
     errors: List[str] = []
     warnings: List[str] = []
     schema = str(spec.get("schema") or "").strip()
