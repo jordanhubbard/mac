@@ -392,9 +392,12 @@ grpc_endpoint = "http://host.openshell.internal:17670"
 image_pull_policy = "IfNotPresent"
 EOF
 
-# --- 7. gateway systemd --user service + register ---------------------------
-mkdir -p "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/openshell-gateway.service" <<EOF
+# --- 7. gateway service + register ------------------------------------------
+gateway_manager=""
+gateway_state="unknown"
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  mkdir -p "$HOME/.config/systemd/user"
+  cat > "$HOME/.config/systemd/user/openshell-gateway.service" <<EOF
 [Unit]
 Description=OpenShell gateway (Docker Engine/Moby driver)
 [Service]
@@ -404,12 +407,38 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-systemctl --user daemon-reload
-systemctl --user enable --now openshell-gateway >/dev/null 2>&1
+  systemctl --user daemon-reload
+  systemctl --user enable --now openshell-gateway >/dev/null 2>&1
+  gateway_manager="systemd-user"
+  gateway_state="$(systemctl --user is-active openshell-gateway)"
+elif command -v supervisorctl >/dev/null 2>&1; then
+  sudo tee /etc/supervisor/conf.d/openshell-gateway.conf >/dev/null <<EOF
+[program:openshell-gateway]
+command=$BIN/openshell-gateway --config $OSH_DIR/gateway.toml
+directory=$OSH_DIR
+user=$USER
+environment=HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin"
+autostart=true
+autorestart=true
+startsecs=2
+stopasgroup=true
+killasgroup=true
+stdout_logfile=$OSH_DIR/gateway-supervisor.log
+redirect_stderr=true
+EOF
+  sudo supervisorctl reread >/dev/null
+  sudo supervisorctl update >/dev/null
+  sudo supervisorctl restart openshell-gateway >/dev/null 2>&1 || sudo supervisorctl start openshell-gateway >/dev/null
+  gateway_manager="supervisord"
+  gateway_state="$(sudo supervisorctl status openshell-gateway 2>/dev/null | awk '{print tolower($2)}')"
+else
+  echo "ERROR: OpenShell gateway requires a working systemd user manager or supervisord" >&2
+  exit 1
+fi
 sleep 3
 openshell gateway add http://127.0.0.1:17670 >/dev/null 2>&1 || true
 openshell gateway select openshell >/dev/null 2>&1 || true
-log "gateway: $(systemctl --user is-active openshell-gateway) | listening: $(ss -tlnp 2>/dev/null | grep -c :17670)"
+log "gateway: manager=$gateway_manager state=$gateway_state | listening: $(ss -tlnp 2>/dev/null | grep -c :17670)"
 
 # --- 8. firewall :17670 (block public/LAN NIC; persistent) ------------------
 NIC="${OSH_FIREWALL_NIC:-$(ip route show default 2>/dev/null | grep -oP 'dev \K\S+' | head -1)}"
@@ -421,7 +450,8 @@ for ipt in iptables ip6tables; do command -v \$ipt >/dev/null || continue
 done
 EOF
   sudo chmod +x /usr/local/sbin/mac-openshell-firewall.sh
-  sudo tee /etc/systemd/system/mac-openshell-firewall.service >/dev/null <<'EOF'
+  if command -v systemctl >/dev/null 2>&1 && sudo systemctl show-environment >/dev/null 2>&1; then
+    sudo tee /etc/systemd/system/mac-openshell-firewall.service >/dev/null <<'EOF'
 [Unit]
 Description=Block external access to the OpenShell gateway (:17670)
 After=network-online.target
@@ -433,7 +463,26 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-  sudo systemctl daemon-reload && sudo systemctl enable --now mac-openshell-firewall.service >/dev/null 2>&1
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now mac-openshell-firewall.service >/dev/null 2>&1
+  elif command -v supervisorctl >/dev/null 2>&1; then
+    sudo tee /etc/supervisor/conf.d/mac-openshell-firewall.conf >/dev/null <<'EOF'
+[program:mac-openshell-firewall]
+command=/usr/local/sbin/mac-openshell-firewall.sh
+user=root
+autostart=true
+autorestart=false
+startsecs=0
+exitcodes=0
+stdout_logfile=/var/log/mac-openshell-firewall.log
+redirect_stderr=true
+EOF
+    sudo supervisorctl reread >/dev/null
+    sudo supervisorctl update >/dev/null
+    sudo supervisorctl start mac-openshell-firewall >/dev/null 2>&1 || true
+  else
+    sudo /usr/local/sbin/mac-openshell-firewall.sh
+  fi
   log "firewall: $NIC :17670 ($(sudo iptables -S INPUT 2>/dev/null | grep -c 17670) rules)"
 fi
 
@@ -487,5 +536,12 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HER
 validate_openshell_runtime_image
 
 log "DONE. sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED"
-[ "$DO_ENABLE" = 1 ] && log "restart the agent to apply: sudo systemctl restart mac-agent.service (then validate a real task)" \
-                     || log "set up but NOT enforcing yet; re-run with --enable (then --fail-closed once a real task validates)"
+if [ "$DO_ENABLE" = 1 ]; then
+  if [ "$gateway_manager" = "supervisord" ]; then
+    log "restart the agent to apply: sudo supervisorctl restart mac-agent (then validate a real task)"
+  else
+    log "restart the agent to apply: sudo systemctl restart mac-agent.service (then validate a real task)"
+  fi
+else
+  log "set up but NOT enforcing yet; re-run with --enable (then --fail-closed once a real task validates)"
+fi

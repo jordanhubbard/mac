@@ -34,6 +34,12 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "Python wheel is incompatible with this host" in script
     assert "--retry 5 --retry-all-errors" in script
     assert "--connect-timeout 15 --max-time 120" in script
+    assert "systemctl --user show-environment" in script
+    assert "[program:openshell-gateway]" in script
+    assert "sudo supervisorctl restart openshell-gateway" in script
+    assert "[program:mac-openshell-firewall]" in script
+    assert "sudo systemctl show-environment" in script
+    assert "manager=$gateway_manager state=$gateway_state" in script
     assert 'MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0' in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
     create_arg_lines = [
