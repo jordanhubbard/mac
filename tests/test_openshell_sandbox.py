@@ -94,9 +94,9 @@ def _build(workspace="/work/task-7", argv=None):
 
 
 def _inner(out):
-    """The `bash -lc <inner>` command string after the `--` separator."""
+    """The non-login `bash -c <inner>` command after the `--` separator."""
     i = out.index("--")
-    assert out[i + 1 : i + 3] == ["bash", "-lc"]
+    assert out[i + 1 : i + 3] == ["bash", "-c"]
     return out[i + 3]
 
 

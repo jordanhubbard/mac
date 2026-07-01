@@ -431,10 +431,16 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
     monkeypatch.setattr(te, "_sandbox_name", lambda: "sb")
     monkeypatch.setattr(te, "_merge_sandbox_download_tree", lambda download_root, workspace: None)
+    repo = workspace / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
     steps = []
+    uploaded_scripts = []
 
     def fake_step(args, *, timeout):
         steps.append(args)
+        if args[0] == "upload":
+            uploaded_scripts.append(Path(args[2]).read_text(encoding="utf-8"))
         return True, ""
 
     def fake_runner(argv, cwd, audit_id, opts):
@@ -482,6 +488,9 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert steps[2][:2] == ["exec", "--name"]
     assert steps[2][-2:] == ["bash", "/sandbox/task/.mac-sandbox-repository-verify.sh"]
     assert all("\n" not in str(arg) and "\r" not in str(arg) for arg in steps[2])
+    assert "export MAC_TASK_FILE=/sandbox/task/task.json" in uploaded_scripts[0]
+    assert "export MAC_TASK_WORKSPACE=/sandbox/task" in uploaded_scripts[0]
+    assert "export MAC_TASK_REPO_WORKTREE=/sandbox/task/repo" in uploaded_scripts[0]
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
     assert steps[3][0] == "download"
     assert steps[4][0] == "delete"

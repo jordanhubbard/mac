@@ -154,7 +154,7 @@ EOF
     sm="mac-runtime-smoke-$$"
     if "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
         --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
-        -- bash -lc 'command -v gh && command -v codegraph && command -v python3' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
+        -- bash -c 'set -eu; command -v gh; command -v codegraph; command -v python3; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
       "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
       log "runtime image smoke: gh/codegraph/python visible through OpenShell on Docker Desktop"
     else
@@ -267,7 +267,7 @@ validate_openshell_runtime_image() {
       --from "$OSH_IMAGE_TAG" \
       "${gpu_flag[@]}" \
       --env HOME=/tmp \
-      -- bash -lc 'set -eu; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version' \
+      -- bash -c 'set -eu; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
     log "runtime image smoke: gh/codex/codegraph visible through OpenShell"

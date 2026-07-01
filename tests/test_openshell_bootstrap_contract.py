@@ -23,6 +23,8 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
     assert "podman load" in script
     assert "runtime image smoke: gh/codex/codegraph visible through OpenShell" in script
+    assert script.count('import mac.agent_command') >= 2
+    assert "-- bash -c" in script
     assert 'current_openshell_version" != "$OPENSHELL_VERSION"' in script
     assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
     assert 'uv tool install --force "openshell==$OPENSHELL_VERSION"' in script

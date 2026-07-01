@@ -379,14 +379,15 @@ def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership(
     assert "registered_configured_agent_ids" in script
 
 
-def test_fleet_deploy_drain_agent_lookup_does_not_pipe_json_into_python_stdin():
+def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     agent_id_for_drain = script.split("agent_id_for_drain() {", 1)[1].split(
         "wait_for_agent_active_leases() {", 1
     )[0]
 
-    assert 'response="$(mac_api_json GET "/agents")"' in agent_id_for_drain
-    assert "json.loads(sys.argv[2])" in agent_id_for_drain
+    assert 'mac_api_json GET "/agents" > "$response_file"' in agent_id_for_drain
+    assert '"$PY" - "$AGENT" "$response_file"' in agent_id_for_drain
+    assert "agents = json.load(handle)" in agent_id_for_drain
     assert 'mac_api_json GET "/agents" |' not in agent_id_for_drain
 
 

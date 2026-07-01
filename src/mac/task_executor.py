@@ -2481,9 +2481,21 @@ PY
 '''
 
 
-def _sandbox_repository_verification_shell() -> str:
+def _sandbox_repository_verification_shell(
+    environment: Optional[Mapping[str, str]] = None,
+) -> str:
+    # Verification runs through a fresh ``openshell sandbox exec`` process, so
+    # it does not inherit the private environment sourced by the agent process.
+    # Re-export only non-secret workspace/repository paths needed to re-read the
+    # task's repository contract and run its test gate.
+    exports = [
+        "export %s=%s" % (name, shlex.quote(value))
+        for name, value in sorted((environment or {}).items())
+        if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+    ]
     return "\n".join(
         [
+            *exports,
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
@@ -2739,7 +2751,7 @@ def _build_sandbox_create_argv(
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "bash", "-lc", inner]
+    argv += ["--", "bash", "-c", inner]
     return argv
 
 
@@ -2925,7 +2937,16 @@ def _sandbox_run_repository_verification(
         return None
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     script_path = workspace / ".mac-sandbox-repository-verify.sh"
-    script_path.write_text(_sandbox_repository_verification_shell() + "\n", encoding="utf-8")
+    verification_environment = {
+        **_sandbox_repository_environment(workspace, sub),
+        "HOME": _SANDBOX_HOME,
+        "MAC_TASK_FILE": "%s/task.json" % sub,
+        "MAC_TASK_WORKSPACE": sub,
+    }
+    script_path.write_text(
+        _sandbox_repository_verification_shell(verification_environment) + "\n",
+        encoding="utf-8",
+    )
     script_path.chmod(0o700)
     sandbox_script = "%s/%s" % (sub, script_path.name)
     ok, msg = _sandbox_step(
@@ -3037,7 +3058,7 @@ def _sandbox_progress_snapshot(
             "--no-tty",
             "--",
             "bash",
-            "-lc",
+            "-c",
             script,
         ],
         timeout=30.0,

@@ -2753,20 +2753,32 @@ PY
 }
 
 agent_id_for_drain() {
-  local response
-  response="$(mac_api_json GET "/agents")" || return 1
-  "$PY" - "$AGENT" "$response" <<'PY'
+  local response_file status
+  response_file="$(mktemp "${TMPDIR:-/tmp}/mac-deploy-agents.XXXXXX")"
+  if ! mac_api_json GET "/agents" > "$response_file"; then
+    rm -f "$response_file"
+    return 1
+  fi
+  if "$PY" - "$AGENT" "$response_file" <<'PY'
 import json
 import sys
 
 expected = sys.argv[1]
-agents = json.loads(sys.argv[2])
+with open(sys.argv[2], encoding="utf-8") as handle:
+    agents = json.load(handle)
 for agent in agents:
     if agent.get("name") == expected or agent.get("id") == expected:
         print(agent.get("id"))
         raise SystemExit(0)
 raise SystemExit(1)
 PY
+  then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$response_file"
+  return "$status"
 }
 
 wait_for_agent_active_leases() {
