@@ -1846,3 +1846,15 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert "GH_TOKEN" not in bare
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     assert "add_remote_env MAC_DEPLOY_GH_TOKEN" in script
+
+
+def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    for name in (
+        "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE",
+        "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS",
+        "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS",
+        "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
+    ):
+        assert 'add_remote_env %s "${%s:-}"' % (name, name) in script

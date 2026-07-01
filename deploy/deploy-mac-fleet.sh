@@ -1166,6 +1166,13 @@ deploy_host() {
   # mac-selfdrive: hub self-drives its tick loop (review->merge->dispatch) on
   # this cadence so the autonomous loop needs no external clock. 30s; 0 disables.
   add_remote_env MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS "${MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS:-30}"
+  # The hub-owned repository-ref reconciler is configured by the caller but
+  # materialized on the remote host by mac.deploy_env. Forward every setting
+  # explicitly so audit-first rollouts and non-default schedules survive SSH.
+  add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE:-}"
+  add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS:-}"
+  add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS:-}"
+  add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
