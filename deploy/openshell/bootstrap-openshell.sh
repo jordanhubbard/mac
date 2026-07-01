@@ -141,7 +141,7 @@ EOF
     echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
     echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
     echo "MAC_OPENSHELL_BIN=$OSH_CLI"
-    echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml --env HOME=/tmp\""
+    echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml\""
     [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
   } >> "$ENVF"
   ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }
@@ -450,7 +450,7 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HER
   echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads --env HOME=/tmp\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads\""
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)

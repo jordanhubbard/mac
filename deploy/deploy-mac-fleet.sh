@@ -422,6 +422,19 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
+DEFAULT_WORKER_CAPABILITIES = "ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+LEGACY_WORKER_CAPABILITIES = {
+    "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
+}
+
+
+def worker_capabilities_field(value: Any) -> str:
+    items = [item.strip() for item in text_field(value).split(",") if item.strip()]
+    if not items or set(items) == LEGACY_WORKER_CAPABILITIES:
+        return DEFAULT_WORKER_CAPABILITIES
+    return ",".join(items)
+
+
 def model_field(value: Any) -> str:
     value = text_field(value)
     return "" if value == "*" else value
@@ -749,7 +762,7 @@ for name in selected:
         hub_url,
         control_bind_host,
         text_field(worker.get("mode") or "heartbeat"),
-        text_field(worker.get("capabilities") or "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"),
+        worker_capabilities_field(worker.get("capabilities")),
         text_field(worker.get("allowed_projects")),
         text_field(worker.get("required_metadata")),
         bool_field(worker.get("require_canary"), True),
@@ -1218,7 +1231,7 @@ HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
 WORKER_MODE="${MAC_DEPLOY_WORKER_MODE:-heartbeat}"
-WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl}"
+WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_REQUIRE_CANARY="${MAC_DEPLOY_WORKER_REQUIRE_CANARY:-1}"
@@ -2261,6 +2274,7 @@ write_deploy_manifest() {
   "$PY" - "$stage" "$path" <<'PY'
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -4608,7 +4622,7 @@ agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
-capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 # Hardware capability probes: append gpu/cuda if nvidia-smi sees GPUs; always append cpu.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "^GPU"; then
   capabilities="$capabilities,gpu,cuda"
@@ -4881,6 +4895,7 @@ problems: list[str] = []
 checks: dict[str, object] = {
     "identity_env": False,
     "runtime_context": False,
+    "openshell_executor_config": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
     "hermes_chat": False,
@@ -4889,6 +4904,23 @@ runtime_provider: dict[str, object] = {}
 chat_output = ""
 chat_returncode: int | None = None
 hermes_failure_class = ""
+
+openshell_create_args = str(os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+if truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")) and openshell_create_args:
+    try:
+        openshell_create_argv = shlex.split(openshell_create_args)
+    except ValueError as exc:
+        problems.append(f"MAC_OPENSHELL_CREATE_ARGS is invalid: {safe_error(exc)}")
+    else:
+        forbidden = sorted({arg for arg in openshell_create_argv if arg in {"--env", "--"}})
+        if forbidden:
+            problems.append(
+                "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments: "
+                + ", ".join(forbidden)
+            )
+checks["openshell_executor_config"] = not any(
+    problem.startswith("MAC_OPENSHELL_CREATE_ARGS") for problem in problems
+)
 
 for key, value in {
     "MAC_WORKER_AGENT_NAME": agent_name,

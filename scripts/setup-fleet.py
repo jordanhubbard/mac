@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
-from mac.deploy_env import build_router_provider_spec  # noqa: E402
+from mac.deploy_env import DEFAULT_WORKER_CAPABILITIES, build_router_provider_spec  # noqa: E402
 from mac.fleet_setup import (  # noqa: E402
     DEFAULT_GATEWAY_MODEL,
     build_setup_plan,
@@ -332,7 +332,7 @@ def init_from_sample(name: str, fleet: str, *, force: bool, specs_dir: Path) -> 
 
 
 def _default_worker_capabilities() -> List[str]:
-    return ["ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"]
+    return DEFAULT_WORKER_CAPABILITIES.split(",")
 
 
 # Known OpenAI-compatible upstreams the wizard can wire into the in-mac router,

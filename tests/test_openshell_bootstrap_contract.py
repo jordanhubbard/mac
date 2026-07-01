@@ -28,6 +28,11 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert 'uv tool install --force "openshell==$OPENSHELL_VERSION"' in script
     assert 'MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0' in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
+    create_arg_lines = [
+        line for line in script.splitlines() if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
+    ]
+    assert create_arg_lines
+    assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
 
 
 def test_openshell_image_docs_do_not_advertise_podman_builds():

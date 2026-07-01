@@ -44,6 +44,18 @@ def test_ready_excludes_held_includes_normal(cp):
     assert held.id not in ready_ids     # staged task is hidden from the ready queue
 
 
+def test_project_summary_does_not_report_held_task_as_ready(cp):
+    held = _held(cp)
+    normal = _normal(cp)
+    [summary] = cp._hermes_project_contexts(
+        cp.list_tasks(), [], [], [], []
+    )
+    assert summary["ready_count"] == 1
+    assert summary["held_count"] == 1
+    assert [task["id"] for task in summary["frontier_tasks"]] == [normal.id]
+    assert held.id not in {task["id"] for task in summary["frontier_tasks"]}
+
+
 def test_claim_policy_rejects_held(cp):
     ok, reason = cp._task_matches_worker_claim_policy(_held(cp), {})
     assert ok is False

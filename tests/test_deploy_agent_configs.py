@@ -10,6 +10,7 @@ import pytest
 from mac.deploy_env import (
     ControlConfig,
     DEFAULT_WORKER_CAPABILITIES,
+    LEGACY_WORKER_CAPABILITIES,
     DeployEnvConfig,
     DeployIdentity,
     DeployPaths,
@@ -20,6 +21,7 @@ from mac.deploy_env import (
     config_from_legacy_args,
     parse_env_text,
     render_env,
+    normalize_worker_capabilities,
 )
 from mac.fleet_deploy import cleanup_path_strings, parse_ssh_target
 from mac.providers import ROUTER_PROVIDERS, provider_key_env, spoke_scrub_env_vars, upstream_provider_env_vars
@@ -291,9 +293,13 @@ def test_sample_fleet_config_supports_home_channel_and_model_diversity():
 def test_fleet_agent_configs_enable_review_capability_by_default():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     cfg = load_sample_fleet_config()
-    expected = "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
+    expected = (
+        "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+        "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+    )
 
-    assert f'text_field(worker.get("capabilities") or "{expected}")' in script
+    assert "worker_capabilities_field(worker.get(\"capabilities\"))" in script
+    assert f'DEFAULT_WORKER_CAPABILITIES = "{expected}"' in script
     assert f'WORKER_CAPABILITIES="${{MAC_DEPLOY_WORKER_CAPABILITIES:-{expected}}}"' in script
     assert DEFAULT_WORKER_CAPABILITIES == expected
     assert f'capabilities="${{MAC_WORKER_CAPABILITIES:-{expected}}}"' in script
@@ -302,11 +308,31 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
         "python",
         "hermes",
         "review",
+        "api",
+        "architecture",
+        "cli",
+        "docs",
+        "security",
+        "testing",
+        "typescript",
+        "ui",
         "web_search",
         "web_extract",
         "web_crawl",
         "firecrawl",
     ]
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "setup_fleet_capabilities", ROOT / "scripts" / "setup-fleet.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module._default_worker_capabilities() == expected.split(",")
+
+    assert normalize_worker_capabilities(LEGACY_WORKER_CAPABILITIES) == expected
+    assert normalize_worker_capabilities("python,custom") == "python,custom"
 
 
 def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
@@ -1249,6 +1275,14 @@ def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
     assert "--fleets-config" in script
     assert "--hub <hub-node>" in script
     assert "multiple fleets are configured" in script
+
+
+def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    assert '"openshell_executor_config": False' in script
+    assert "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments" in script
+    assert 'arg in {"--env", "--"}' in script
     assert "--site-config" not in script
     assert "MAC_DEPLOY_FLEET_SITE_CONFIG" not in script
     assert "FLEET_SITE_CONFIG" not in script

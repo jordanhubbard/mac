@@ -21,8 +21,20 @@ from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provide
 
 
 DEFAULT_WORKER_CAPABILITIES = (
+    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+)
+LEGACY_WORKER_CAPABILITIES = (
     "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
 )
+
+
+def normalize_worker_capabilities(value: str) -> str:
+    """Upgrade the former fleet default without overriding real customization."""
+    items = [item.strip() for item in str(value or "").split(",") if item.strip()]
+    if not items or set(items) == set(LEGACY_WORKER_CAPABILITIES.split(",")):
+        return DEFAULT_WORKER_CAPABILITIES
+    return ",".join(items)
 
 
 PROVIDERS = tuple(ROUTER_PROVIDERS)
@@ -831,7 +843,7 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
         ),
         worker=WorkerConfig(
             mode=a.worker_mode.strip() or "heartbeat",
-            capabilities=a.worker_capabilities.strip() or DEFAULT_WORKER_CAPABILITIES,
+            capabilities=normalize_worker_capabilities(a.worker_capabilities),
             allowed_projects=a.worker_allowed_projects.strip(),
             required_metadata=a.worker_required_metadata.strip(),
             require_canary=a.worker_require_canary.strip() or "1",

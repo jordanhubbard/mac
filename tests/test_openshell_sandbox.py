@@ -206,6 +206,7 @@ def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
         workspace, "/sandbox/task-7"
     )
     content = env_file.read_text(encoding="utf-8")
+    assert "HOME=/tmp" in content
     assert "MAC_TASK_WORKSPACE=/sandbox/task-7" in content
     assert "MAC_TASK_FILE=/sandbox/task-7/task.json" in content
     assert toolchain_file.stat().st_mode & 0o777 == 0o700

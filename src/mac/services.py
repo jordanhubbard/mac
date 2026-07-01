@@ -2225,6 +2225,7 @@ class ControlPlane:
                     "task_count": 0,
                     "active_count": 0,
                     "ready_count": 0,
+                    "held_count": 0,
                     "blocked_count": 0,
                     "review_count": 0,
                     "completed_count": 0,
@@ -2299,7 +2300,16 @@ class ControlPlane:
                             }
                         )
             compact = self._hermes_task_context(task)
-            if task.state == TaskState.OPEN.value and not waiting_on:
+            dispatch_held = self._task_dispatch_held(task)
+            project_paused = self._project_dispatch_paused(task.project)
+            if task.state == TaskState.OPEN.value and dispatch_held:
+                item["held_count"] += 1
+            if (
+                task.state == TaskState.OPEN.value
+                and not waiting_on
+                and not dispatch_held
+                and not project_paused
+            ):
                 item["ready_count"] += 1
                 if len(item["frontier_tasks"]) < 10:
                     item["frontier_tasks"].append(compact)

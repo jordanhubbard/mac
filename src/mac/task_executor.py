@@ -2046,6 +2046,7 @@ def _resolve_openshell_policy() -> str:
 # does not copy files. /sandbox is OpenShell's writable workspace root (uploads
 # and downloads must live under it).
 _SANDBOX_WORKDIR = "/sandbox"
+_SANDBOX_HOME = "/tmp"
 _SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
 
 
@@ -2677,6 +2678,11 @@ def _write_sandbox_runtime_files(
         **_sandbox_repository_environment(workspace, sandbox_workspace),
         "MAC_TASK_WORKSPACE": sandbox_workspace,
         "MAC_TASK_FILE": "%s/task.json" % sandbox_workspace.rstrip("/"),
+        # OpenShell runs the image as its unprivileged sandbox user. Hermes'
+        # uploaded config is deliberately rooted under /tmp, so HOME belongs in
+        # the private environment file rather than the process-visible
+        # MAC_OPENSHELL_CREATE_ARGS argv.
+        "HOME": _SANDBOX_HOME,
     }
     env_file = _write_private_shell_env(
         workspace / ".mac-openshell-env.sh", env_values
@@ -3488,7 +3494,8 @@ def _run_coding_agent_preflight(choice: Any) -> bool:
             private_dir, _ca.PREFLIGHT_PROMPT, probe_argv
         )
         _write_private_shell_env(
-            private_dir / ".mac-openshell-env.sh", _openshell_environment()
+            private_dir / ".mac-openshell-env.sh",
+            {**_openshell_environment(), "HOME": _SANDBOX_HOME},
         )
         sandbox_dir = "/sandbox/%s" % private_dir.name
         try:
