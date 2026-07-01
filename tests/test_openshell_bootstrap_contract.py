@@ -73,6 +73,10 @@ def test_openshell_image_installs_codegraph_baseline():
     ) in containerfile
     assert 'ARG MAC_CURL_FLAGS="--retry 5 --retry-all-errors' in containerfile
     assert "--connect-timeout 15 --max-time 120" in containerfile
+    assert 'ARG GH_VERSION="2.95.0"' in containerfile
+    assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in containerfile
+    assert 'gh_${GH_VERSION}_linux_${gh_arch}.tar.gz' in containerfile
+    assert "https://cli.github.com/packages" not in containerfile
     assert (
         "CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
         "sh /tmp/codegraph-install.sh"

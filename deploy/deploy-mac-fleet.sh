@@ -952,8 +952,9 @@ REMOTE
 # so existing deploys are unchanged. Enable with MAC_DEPLOY_OPENSHELL=1; pass
 # flags via MAC_DEPLOY_OPENSHELL_ARGS (e.g. "--enable" then, once a real task
 # validates, "--enable --fail-closed"). Default (no args) sets everything up but
-# does NOT flip enforcement. Non-fatal: a failure logs a warning, never aborts
-# the deploy (the bootstrap is idempotent and re-runnable by hand).
+# does NOT flip enforcement. An opted-in bootstrap is part of the deployment
+# transaction: failure leaves the worker stopped and drained instead of exposing
+# a half-configured executor to the dispatcher.
 run_openshell_bootstrap() {
   local agent="$1" target="$2" ssh_parts=() ssh_args=() ssh_target last_index
   case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
@@ -965,7 +966,7 @@ run_openshell_bootstrap() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   echo "==> ${agent}: OpenShell bootstrap (MAC_DEPLOY_OPENSHELL=1, args='${MAC_DEPLOY_OPENSHELL_ARGS:-}')"
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "${MAC_DEPLOY_OPENSHELL_ARGS:-}") bash -s" <<'REMOTE'
 set -euo pipefail
 mac_home="${MAC_HOME:-$HOME/.mac}"
@@ -973,9 +974,46 @@ bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
 [ -x "$bs" ] || { echo "OpenShell bootstrap not found/executable at $bs" >&2; exit 1; }
 exec "$bs" $MAC_DEPLOY_OPENSHELL_ARGS
 REMOTE
-  then
-    echo "==> ${agent}: WARNING: OpenShell bootstrap exited non-zero (non-fatal; re-run ~/.mac/src/mac/deploy/openshell/bootstrap-openshell.sh on the node)" >&2
-  fi
+}
+
+set_remote_mac_agent_service() {
+  local agent="$1" supervisor="$2" fleet_name="$3" action="$4"
+  local ssh_parts=() ssh_args=() ssh_target last_index item
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_SERVICE_ACTION=$(shell_quote "$action") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") bash -s" <<'REMOTE'
+set -euo pipefail
+action="${MAC_DEPLOY_SERVICE_ACTION:?}"
+case "${MAC_DEPLOY_SUPERVISOR:?}" in
+  supervisord)
+    if [ "$action" = "stop" ]; then
+      sudo supervisorctl stop mac-agent >/dev/null 2>&1 || true
+    else
+      sudo supervisorctl restart mac-agent >/dev/null
+    fi
+    ;;
+  systemd)
+    if [ "$action" = "stop" ]; then
+      sudo systemctl stop mac-agent.service >/dev/null 2>&1 || true
+    else
+      sudo systemctl restart mac-agent.service >/dev/null
+    fi
+    ;;
+  launchd)
+    label="com.${MAC_DEPLOY_FLEET_NAME:?}.agent"
+    domain="gui/$(id -u)"
+    if [ "$action" = "stop" ]; then
+      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+    else
+      launchctl kickstart -k "$domain/$label"
+    fi
+    ;;
+  *) echo "unsupported supervisor: $MAC_DEPLOY_SUPERVISOR" >&2; exit 1 ;;
+esac
+REMOTE
 }
 
 validate_router_topology_spec() {
@@ -1072,7 +1110,10 @@ deploy_host() {
   scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
-  local remote_env=() remote_cmd
+  local remote_env=() remote_cmd openshell_enabled=0
+  case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
+    1|true|yes|on) openshell_enabled=1 ;;
+  esac
   add_remote_env() { remote_env+=("$1=$(shell_quote "$2")"); }
   add_remote_env MAC_DEPLOY_AGENT "$agent"
   add_remote_env MAC_DEPLOY_OS "$os"
@@ -1139,6 +1180,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"
   add_remote_env MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DRAIN_POLL_SECONDS "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}"
+  add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
   add_remote_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
@@ -1290,6 +1332,7 @@ MAC_DEPLOY_TARGET="${MAC_DEPLOY_TARGET:-}"
 DRAIN_MODE="${MAC_DEPLOY_DRAIN_MODE:-wait}"
 DRAIN_TIMEOUT_SECONDS="${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}"
 DRAIN_POLL_SECONDS="${MAC_DEPLOY_DRAIN_POLL_SECONDS:-10}"
+DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 SRC_DIR="$MAC_HOME/src/mac"
@@ -5762,7 +5805,10 @@ if data.get("warnings"):
 PY
 
 verify_hub_registration
-clear_mac_agent_drain_after_deploy
+case "$(printf '%s' "$DEFER_CLEAR_DRAIN" | tr 'A-Z' 'a-z')" in
+  1|true|yes|on) log "keeping drain state until post-deploy OpenShell validation completes" ;;
+  *) clear_mac_agent_drain_after_deploy ;;
+esac
 
 write_deploy_manifest "post" "$MANIFEST_POST"
 cp -f "$MANIFEST_POST" "$LOG_DIR/deploy-manifest-latest.json"
@@ -5772,7 +5818,17 @@ REMOTE
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
     reconcile_remote_deploy "$agent" "$target"
   fi
-  run_openshell_bootstrap "$agent" "$target"
+  if [ "$openshell_enabled" = "1" ]; then
+    echo "==> ${agent}: keeping mac-agent stopped while OpenShell validates"
+    set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop
+    if run_openshell_bootstrap "$agent" "$target"; then
+      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
+    else
+      echo "==> ${agent}: ERROR: OpenShell bootstrap failed; mac-agent remains stopped and drained" >&2
+      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop || true
+      return 1
+    fi
+  fi
 }
 
 hub_target() {
