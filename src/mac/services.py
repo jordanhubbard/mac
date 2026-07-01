@@ -3397,7 +3397,6 @@ class ControlPlane:
                                 if isinstance(normalized.get("acc_metadata"), dict)
                                 else {}
                             )
-                            acc_metadata.setdefault("repo_beads_workflow", True)
                             acc_metadata.setdefault("workflow_role", "work")
                             acc_metadata.setdefault("repository_contract_schema", contract["schema"])
                             acc_metadata.setdefault("repository_contract_project", contract["project"])
@@ -3447,7 +3446,6 @@ class ControlPlane:
                 if isinstance(normalized.get("acc_metadata"), dict)
                 else {}
             )
-            acc_metadata.setdefault("repo_beads_workflow", True)
             acc_metadata.setdefault("workflow_role", "work")
             acc_metadata.setdefault("repository_contract_schema", contract["schema"])
             acc_metadata.setdefault("repository_contract_project", contract["project"])

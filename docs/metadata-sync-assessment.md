@@ -57,8 +57,8 @@ sync work.
 
 ## What still lives in `task.metadata` from the bd era
 
-Today's tasks still carry these vestigial fields, populated by
-existing task-creation code paths:
+Some vestigial fields from the beads era remain for tolerant reads of
+imported/legacy records:
 
 - `metadata.origin.bead_id` — set when the task was imported from a
   beads issue. Read by `_run_bd_for_task` (gated off now) and by
@@ -68,20 +68,25 @@ existing task-creation code paths:
 - `metadata.acc_metadata.beads_sync_claim_on_claim` /
   `beads_sync_close_on_complete` — booleans that gated the writeback;
   no-ops with the bridge off.
-- `metadata.acc_metadata.repo_beads_workflow` — feature flag enabling
-  the bd-style ledger comments.
+- `metadata.acc_metadata.repo_beads_workflow` — **no longer emitted**
+  by `_normalize_task_execution_contract` for native tasks (removed in
+  this cleanup). Tolerated on read for imported legacy records.
 
-These are read-only with the bridge off. They are not actively kept
-in sync across hosts (the hub is the source of truth). Newly-created
-tasks via `mac task create` from the new CLI no longer set
-`origin.bead_id` (it's only set when the task was bridged in from a
-beads issue).
+Newly-created tasks via `mac task create` from the new CLI no longer
+set `origin.bead_id` (it's only set when the task was bridged in from
+a beads issue). Repository metadata for native tasks is fully
+represented by the typed `execution_contract` and `origin` objects;
+`acc_metadata` retains only `workflow_role`, `repository_contract_schema`,
+and `repository_contract_project` for compatibility surfaces that still
+read those fields.
 
-**Recommendation:** leave them in place for now. A follow-up
-"task.metadata schema simplification" can drop `acc_metadata.*` and
-`origin.bead_id` once the new CLI surface has run for a few weeks
-without bridge-era code referencing them. Filing that as a separate
-issue rather than blocking the migration on it.
+**Compatibility boundary:** tolerant readers must not treat the absence
+of `repo_beads_workflow` as an error. Explicit beads import/migration
+paths may still set the flag on one-way import.
+
+**Remaining cleanup:** drop `acc_metadata.beads_*` and `origin.bead_id`
+from newly-created tasks; rename `beads_repositories` table to
+`registered_repositories`. Cosmetic; low priority.
 
 ## What the new system requires for cross-host parity
 
@@ -105,7 +110,7 @@ issue rather than blocking the migration on it.
 - `mac-zpku` (P0): worker-1 macOS push auth (resolved on inspection;
   deploy key is installed and `ssh -T git@github.com` works; v2
   failure was Hermes choosing not to push, not auth)
-- Schema cleanup (not yet filed): drop `acc_metadata.beads_*` and
+- Schema cleanup (partially done — `repo_beads_workflow` emission removed): drop remaining `acc_metadata.beads_*` and
   `origin.bead_id` from newly-created tasks; rename
   `beads_repositories` table to `registered_repositories`. Cosmetic;
   low priority.

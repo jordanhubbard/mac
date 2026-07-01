@@ -4134,6 +4134,36 @@ def test_shallow_repository_execution_contract_gets_registered_project_contract(
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
 
 
+def test_native_repository_task_does_not_emit_repo_beads_workflow(cp, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+    # Direct task (no pre-existing execution_contract)
+    task_direct = cp.create_task(
+        "Native direct task",
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+    )
+    acc = task_direct.metadata.get("acc_metadata", {})
+    assert "repo_beads_workflow" not in acc, (
+        "Native direct tasks must not carry repo_beads_workflow; got acc_metadata=%r" % acc
+    )
+
+    # Shallow contract task
+    task_shallow = cp.create_task(
+        "Native shallow contract task",
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+        metadata={"execution_contract": {"type": "repository"}},
+    )
+    acc2 = task_shallow.metadata.get("acc_metadata", {})
+    assert "repo_beads_workflow" not in acc2, (
+        "Native shallow-contract tasks must not carry repo_beads_workflow; got acc_metadata=%r" % acc2
+    )
+
+
 def test_existing_repository_execution_contract_gets_repo_change_evidence_default(cp):
     task = cp.create_task(
         "Existing repository contract",
