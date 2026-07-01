@@ -1619,6 +1619,8 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
             return "task migration import"
         if migrate_command == "acc" and getattr(args, "mode", "dry-run") == "import":
             return "ACC task migration"
+        if migrate_command == "local-ledger" and getattr(args, "execute", False):
+            return "local ledger migration"
     if command != "task":
         return None
     task_command = getattr(args, "task_command", None)

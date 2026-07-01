@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -240,6 +241,23 @@ def _login_profile(args: argparse.Namespace, *, fleet: Optional[str] = None) -> 
     )
 
 
+def _local_ledger_notice_payload() -> Optional[Dict[str, Any]]:
+    from mac.local_ledger_migration import (
+        LocalLedgerMigrationError,
+        local_ledger_notice,
+    )
+
+    try:
+        return local_ledger_notice()
+    except (LocalLedgerMigrationError, OSError, sqlite3.Error) as exc:
+        return {
+            "status": "inspection_failed",
+            "source_db": str(Path.home() / ".mac" / "mac.db"),
+            "message": str(exc),
+            "next_command": "mac migrate local-ledger",
+        }
+
+
 def cmd_login(args: argparse.Namespace) -> None:
     from mac.client_login import (
         ClientLoginError,
@@ -295,6 +313,10 @@ def cmd_login(args: argparse.Namespace) -> None:
             )
     except (ClientLoginError, ClientProfileError, OSError) as exc:
         raise MACError(str(exc)) from exc
+    notice = _local_ledger_notice_payload()
+    if notice and isinstance(result, dict):
+        result = dict(result)
+        result["local_ledger"] = notice
     _print(result)
 
 
@@ -1012,6 +1034,9 @@ def cmd_diagnostics(args: argparse.Namespace) -> None:
     report = diagnostics.summarize(
         diagnostics.run_diagnostics(cp, names=getattr(args, "check", None) or None)
     )
+    notice = _local_ledger_notice_payload()
+    if notice:
+        report["client_local_ledger"] = notice
     _print(report)
 
 
@@ -2353,6 +2378,42 @@ def cmd_migrate_acc(args: argparse.Namespace) -> None:
             encoding="utf-8",
         )
     _print(report)
+
+
+def cmd_migrate_local_ledger(args: argparse.Namespace) -> None:
+    from mac.dispatch import RemoteDispatch
+    from mac.local_ledger_migration import (
+        LocalLedgerMigrationError,
+        inspect_local_ledger,
+        migrate_local_ledger,
+    )
+
+    if args.db:
+        raise MACError(
+            "--db selects the migration target authority, not the source ledger; "
+            "use --source-db for the local SQLite file and select the hub with "
+            "--profile, --fleet, or --hub-url"
+        )
+    plan = inspect_local_ledger(args.source_db)
+    if not args.execute:
+        _print(plan.to_dict())
+        return
+    target = _plane(args)
+    if not isinstance(target, RemoteDispatch):
+        raise MACError(
+            "local-ledger migration requires a remote hub target. Unset MAC_DB, "
+            "run `mac login`, and select the resulting --profile or --fleet."
+        )
+    try:
+        result = migrate_local_ledger(
+            target,
+            source_db=args.source_db,
+            archive_dir=args.archive_dir,
+            actor=args.actor,
+        )
+    except (LocalLedgerMigrationError, OSError, sqlite3.Error) as exc:
+        raise MACError(str(exc)) from exc
+    _print(result.to_dict())
 
 
 def cmd_env_register(args: argparse.Namespace) -> None:
@@ -5124,6 +5185,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_acc.add_argument("--report", help="write the migration report JSON to this path")
     _set(cmd_migrate_acc, migrate_acc)
+    migrate_local_ledger = migrate.add_parser(
+        "local-ledger",
+        help="inspect or explicitly transfer active tasks from an isolated local "
+        "SQLite authority to the selected hub, verify them, cancel the local "
+        "records, and archive the source database",
+    )
+    migrate_local_ledger.add_argument(
+        "--source-db",
+        default=str(Path.home() / ".mac" / "mac.db"),
+        help="isolated local SQLite ledger (default: ~/.mac/mac.db)",
+    )
+    migrate_local_ledger.add_argument(
+        "--archive-dir",
+        default=str(Path.home() / ".mac" / "archive"),
+        help="directory for the verified database archive and manifest",
+    )
+    migrate_local_ledger.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform the one-way transfer; without this flag the command is read-only",
+    )
+    migrate_local_ledger.add_argument("--actor", default="local-ledger-migrator")
+    _set(cmd_migrate_local_ledger, migrate_local_ledger)
 
     workflow = sub.add_parser(
         "workflow",

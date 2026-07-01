@@ -162,6 +162,13 @@ local migration/compatibility state, not another execution authority. Bridges
 may create a hub task from an external issue, but the resulting `mac task`
 record in the selected control-plane authority is what agents claim and run.
 
+If an operator client already has active tasks in `~/.mac/mac.db`, inspect and
+transfer them with `mac --json migrate local-ledger`, then execute against a
+selected hub profile with `mac --profile <name> migrate local-ledger --execute`.
+The command verifies hub copies before cancelling local records and
+removes the live database only after creating a checked archive and manifest.
+See [Local Ledger Authority Transfer](docs/local-ledger-migration.md).
+
 ### Client bootstrap status
 
 `mac login` bootstraps a new client from verified SSH access to the hub. It

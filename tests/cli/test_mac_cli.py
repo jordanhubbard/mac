@@ -67,6 +67,25 @@ def test_home_db_task_create_requires_explicit_local_authority(
     assert not db_path.exists()
 
 
+def test_mac_cli_migrate_local_ledger_distinguishes_source_from_target(
+    tmp_path, capsys
+):
+    source = tmp_path / "source.db"
+    source.touch()
+
+    rc, result = _run(
+        tmp_path,
+        "migrate",
+        "local-ledger",
+        "--source-db",
+        str(source),
+    )
+
+    assert rc == 1
+    assert result is None
+    assert "--db selects the migration target authority" in capsys.readouterr().err
+
+
 def test_print_serializes_list_of_dictish():
     # Regression: hub-mode list commands (e.g. `mac project list`) return
     # list[_Dictish]; _print only unwrapped a single top-level to_dict object,

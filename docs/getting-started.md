@@ -128,6 +128,12 @@ remote hub. Relative or temporary database paths are appropriate for this
 tutorial; task-producing commands against `~/.mac/mac.db` require the explicit
 `--local-authority` acknowledgement.
 
+If this machine is becoming a client of a remote fleet and the default local
+database already contains work, run `mac --json migrate local-ledger` before
+discarding it. After `mac login`, execute the one-way transfer with
+`mac --profile <name> --json migrate local-ledger --execute`. See
+[Local Ledger Authority Transfer](local-ledger-migration.md).
+
 Create a practice project and task:
 
 ```bash

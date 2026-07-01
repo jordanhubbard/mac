@@ -70,6 +70,11 @@ files. If that path already contains tasks, task-producing commands refuse to
 add more unless `--local-authority` explicitly declares that the file is the
 database used by a standalone API, dispatcher, and worker set.
 
+Successful login and login-status output include a `local_ledger` notice when
+that database contains active work. The notice is read-only and points to
+`mac migrate local-ledger`; migration remains an explicit `--execute` action
+that verifies hub copies before cancelling and archiving local records.
+
 The managed SSH PID is recorded under `$MAC_HOME/sessions`; bearer material is
 not. Every profile-backed CLI command checks the session. A dead tunnel is
 restarted from the pinned profile and its bearer is validated before the

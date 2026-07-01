@@ -5,6 +5,7 @@ import json
 import sys
 from types import SimpleNamespace
 
+from mac import cli as mac_cli
 from mac import client_login
 from mac.cli import main
 
@@ -24,6 +25,7 @@ def _run(_tmp_path, *args):
 def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
     spec = SimpleNamespace(control_port=8789)
     captured = {}
+    monkeypatch.setattr(mac_cli, "_local_ledger_notice_payload", lambda: None)
     monkeypatch.setattr(
         client_login,
         "resolve_login_spec",
