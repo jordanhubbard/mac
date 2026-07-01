@@ -119,9 +119,11 @@ class ReviewService:
         get_agent: Callable[[str], Agent],
         get_evidence: Callable[[str], Evidence],
         transition_task: Callable[..., Task],
+        transition_task_in_transaction: Optional[Callable[..., Task]] = None,
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
         reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
+        drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -130,6 +132,7 @@ class ReviewService:
         self._get_agent = get_agent
         self._get_evidence = get_evidence
         self._transition_task = transition_task
+        self._transition_task_in_transaction = transition_task_in_transaction
         self._record_history = record_history
         # mac-5u1f: optional verdict-evidence finder. When provided,
         # submit_review uses it to enforce that an APPROVED status
@@ -137,6 +140,7 @@ class ReviewService:
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
         self._reviewer_eligibility_check = reviewer_eligibility_check
+        self._drain_task_transition_outbox = drain_task_transition_outbox
         # Compatibility alias for integrations that temporarily disabled the
         # older independence-only hook.  It now points at the complete shared
         # eligibility policy.
@@ -149,30 +153,40 @@ class ReviewService:
     ) -> Review:
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
-        if "review" not in set(reviewer.capabilities):
-            raise AuthorizationError("reviewer agent requires the review capability")
-        if self.agent_has_owned_task(task_id, reviewer_agent_id):
-            raise AuthorizationError(
-                "reviewer cannot review a task it currently or previously owned"
-            )
-        if self.latest_executor_evidence_author(task_id) == reviewer_agent_id:
-            raise AuthorizationError("reviewer cannot review its own latest evidence")
-        eligibility_check = self._reviewer_independence_check
-        if eligibility_check is not None:
-            problem = eligibility_check(task, reviewer)
-            if problem:
-                raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
-        if task.state == TaskState.NEEDS_REVIEW.value:
-            self._transition_task(
-                task_id,
-                TaskState.REVIEWING.value,
-                actor,
-                {"reviewer_agent_id": reviewer_agent_id},
-            )
-        elif task.state != TaskState.REVIEWING.value:
+        self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
+        if task.state not in {
+            TaskState.NEEDS_REVIEW.value,
+            TaskState.REVIEWING.value,
+        }:
             raise TransitionError("task must need review before requesting review")
         now = utcnow()
+        review_id: Optional[str] = None
+        created = False
         with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("task not found: %s" % task_id)
+            current = conn.execute(
+                "SELECT state FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            current_state = str(current["state"])
+            if current_state == TaskState.NEEDS_REVIEW.value:
+                if self._transition_task_in_transaction is None:
+                    raise TransitionError(
+                        "transactional task transition is unavailable"
+                    )
+                self._transition_task_in_transaction(
+                    conn,
+                    task_id,
+                    TaskState.REVIEWING.value,
+                    actor,
+                    {"reviewer_agent_id": reviewer_agent_id},
+                )
+            elif current_state != TaskState.REVIEWING.value:
+                raise TransitionError("task must need review before requesting review")
             existing = conn.execute(
                 """
                 SELECT * FROM reviews
@@ -183,24 +197,30 @@ class ReviewService:
                 (task_id, reviewer_agent_id, ReviewStatus.PENDING.value),
             ).fetchone()
             if existing is not None:
-                return self._review_from_row(existing)
-            review_id = new_id("review")
-            conn.execute(
-                """
-                INSERT INTO reviews (id, task_id, reviewer_agent_id, status, reason, evidence_id, created_at, completed_at)
-                VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)
-                """,
-                (review_id, task_id, reviewer_agent_id, ReviewStatus.PENDING.value, now),
-            )
-            self._record_history(
-                task_id,
-                "task.review_requested",
-                actor,
-                None,
-                None,
-                {"review_id": review_id},
-                conn=conn,
-            )
+                review_id = str(existing["id"])
+            else:
+                review_id = new_id("review")
+                conn.execute(
+                    """
+                    INSERT INTO reviews (id, task_id, reviewer_agent_id, status, reason, evidence_id, created_at, completed_at)
+                    VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)
+                    """,
+                    (review_id, task_id, reviewer_agent_id, ReviewStatus.PENDING.value, now),
+                )
+                self._record_history(
+                    task_id,
+                    "task.review_requested",
+                    actor,
+                    None,
+                    None,
+                    {"review_id": review_id},
+                    conn=conn,
+                )
+                created = True
+        if self._drain_task_transition_outbox is not None:
+            self._drain_task_transition_outbox(task_id=task_id, limit=20)
+        if not created:
+            return self.get_review(review_id)
         # Notify the reviewer via the control-channel. Imported here to
         # avoid a tight bidirectional dep; messaging is composed in.
         from mac.models import MessageType
@@ -213,6 +233,31 @@ class ReviewService:
             task_id=task_id,
         )
         return self.get_review(review_id)
+
+    def _ensure_reviewer_eligible(
+        self,
+        task: Task,
+        reviewer: Agent,
+        reviewer_agent_id: Optional[str] = None,
+    ) -> None:
+        reviewer_id = str(
+            getattr(reviewer, "id", None) or reviewer_agent_id or ""
+        ).strip()
+        if not reviewer_id:
+            raise AuthorizationError("reviewer agent identity is required")
+        if "review" not in set(reviewer.capabilities):
+            raise AuthorizationError("reviewer agent requires the review capability")
+        if self.agent_has_owned_task(task.id, reviewer_id):
+            raise AuthorizationError(
+                "reviewer cannot review a task it currently or previously owned"
+            )
+        if self.latest_executor_evidence_author(task.id) == reviewer_id:
+            raise AuthorizationError("reviewer cannot review its own latest evidence")
+        eligibility_check = self._reviewer_independence_check
+        if eligibility_check is not None:
+            problem = eligibility_check(task, reviewer)
+            if problem:
+                raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
 
     def submit_review(
         self,
@@ -299,6 +344,13 @@ class ReviewService:
                         "review approval requires a different reviewer LLM: %s"
                         % "; ".join(llm_problems)
                     )
+        reviewed_task = self._get_task(review.task_id)
+        reviewer = self._get_agent(reviewer_agent_id)
+        self._ensure_reviewer_eligible(
+            reviewed_task,
+            reviewer,
+            reviewer_agent_id,
+        )
         rejected_feedback = None
         if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
             rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
@@ -307,16 +359,55 @@ class ReviewService:
         # history row were two bare store.execute calls — a crash between
         # them left the review APPROVED with no audit row. Wrap them in
         # one transaction so either both land or neither does.
-        task_for_feedback = self._get_task(review.task_id) if rejected_feedback is not None else None
+        task_for_feedback = reviewed_task if rejected_feedback is not None else None
+        transition_target: Optional[str] = None
+        transition_detail: Optional[Dict[str, Any]] = None
+        if status_value in {
+            ReviewStatus.CHANGES_REQUESTED.value,
+            ReviewStatus.REJECTED.value,
+        }:
+            exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
+            transition_target = (
+                TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
+            )
+            transition_detail = {
+                "review_id": review_id,
+                "review_status": status_value,
+                "reason": "review rejected after max attempts"
+                if exhausted
+                else "review rejected",
+            }
+            if exhausted:
+                transition_detail["manual_repair_required"] = True
         with self.store.transaction() as conn:
-            conn.execute(
+            locked_task = conn.execute(
+                """
+                UPDATE tasks SET updated_at = updated_at
+                WHERE id = ? AND state = ?
+                """,
+                (review.task_id, TaskState.REVIEWING.value),
+            )
+            if locked_task.rowcount != 1:
+                raise TransitionError(
+                    "reviewed task state changed during submission; retry"
+                )
+            changed = conn.execute(
                 """
                 UPDATE reviews
                 SET status = ?, reason = ?, evidence_id = ?, completed_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = ?
                 """,
-                (status_value, reason, evidence_id, now, review_id),
+                (
+                    status_value,
+                    reason,
+                    evidence_id,
+                    now,
+                    review_id,
+                    ReviewStatus.PENDING.value,
+                ),
             )
+            if changed.rowcount != 1:
+                raise ValidationError("review state changed during submission; retry")
             if rejected_feedback is not None:
                 metadata = dict(task_for_feedback.metadata)
                 block = metadata.get("review_feedback") if isinstance(metadata.get("review_feedback"), dict) else {}
@@ -341,28 +432,21 @@ class ReviewService:
                 {"review_id": review_id, "status": status_value, "reason": reason},
                 conn=conn,
             )
-        if status_value in {
-            ReviewStatus.CHANGES_REQUESTED.value,
-            ReviewStatus.REJECTED.value,
-        }:
-            task = self._get_task(review.task_id)
-            exhausted = task.attempt_count >= task.max_attempts
-            target = TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
-            detail = {
-                "review_id": review_id,
-                "review_status": status_value,
-                "reason": "review rejected after max attempts"
-                if exhausted
-                else "review rejected",
-            }
-            if exhausted:
-                detail["manual_repair_required"] = True
-            self._transition_task(
-                review.task_id,
-                target,
-                reviewer_agent_id,
-                detail,
-            )
+            if transition_target is not None:
+                if self._transition_task_in_transaction is None:
+                    raise TransitionError(
+                        "transactional task transition is unavailable"
+                    )
+                self._transition_task_in_transaction(
+                    conn,
+                    review.task_id,
+                    transition_target,
+                    reviewer_agent_id,
+                    transition_detail,
+                )
+        if transition_target is not None:
+            if self._drain_task_transition_outbox is not None:
+                self._drain_task_transition_outbox(task_id=review.task_id, limit=20)
         return self.get_review(review_id)
 
     def get_review(self, review_id: str) -> Review:

@@ -2355,6 +2355,198 @@ def test_manual_reviewer_assignment_uses_full_eligibility_policy(cp):
     assert assigned.reviewer_agent_id == qualified.id
 
 
+def test_request_review_rolls_back_task_transition_when_review_write_fails(
+    cp, monkeypatch
+):
+    executor = register_agent(cp, "review-atomic-executor", ["python"])
+    reviewer = register_agent(cp, "review-atomic-reviewer", ["review"])
+    task = cp.create_task("atomic review request", required_capabilities=["python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://atomic-review-request",
+        "ready",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    original_record_history = cp.reviews._record_history
+
+    def fail_review_history(*args, **kwargs):
+        if len(args) > 1 and args[1] == "task.review_requested":
+            raise RuntimeError("simulated review insert crash")
+        return original_record_history(*args, **kwargs)
+
+    monkeypatch.setattr(cp.reviews, "_record_history", fail_review_history)
+
+    with pytest.raises(RuntimeError, match="simulated review insert crash"):
+        cp.request_review(task.id, reviewer.id, actor="manual")
+
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.list_reviews(task.id) == []
+
+
+def test_concurrent_review_requests_reuse_one_pending_review(cp):
+    executor = register_agent(cp, "review-race-executor", ["python"])
+    reviewer = register_agent(cp, "review-race-reviewer", ["review"])
+    task = cp.create_task("concurrent review request", required_capabilities=["python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://review-race",
+        "ready",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    start = threading.Barrier(3)
+    results = []
+    errors = []
+
+    def request():
+        start.wait()
+        try:
+            results.append(cp.request_review(task.id, reviewer.id, actor="race"))
+        except Exception as exc:  # noqa: BLE001 - surfaced below for the assertion.
+            errors.append(exc)
+
+    threads = [threading.Thread(target=request) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert len(results) == 2
+    assert results[0].id == results[1].id
+    assert [review.id for review in cp.list_reviews(task.id)] == [results[0].id]
+
+
+def test_submit_review_revalidates_reviewer_eligibility(cp):
+    executor = register_agent(cp, "verdict-policy-executor", ["python"])
+    reviewer = register_agent(cp, "verdict-policy-reviewer", ["review"])
+    task = cp.create_task("verdict policy", required_capabilities=["python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://verdict-policy",
+        "ready",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    review = cp.request_review(task.id, reviewer.id, actor="manual")
+    cp.store.execute(
+        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
+        ("2020-01-01T00:00:00+00:00", reviewer.id),
+    )
+
+    with pytest.raises(AuthorizationError, match="reviewer stale"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.REJECTED.value,
+            reviewer.id,
+            reason="not acceptable",
+        )
+
+    assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+
+
+def test_submit_review_compare_and_swap_rejects_stale_writer(cp, monkeypatch):
+    executor = register_agent(cp, "verdict-cas-executor", ["python"])
+    reviewer = register_agent(cp, "verdict-cas-reviewer", ["review"])
+    task = cp.create_task("verdict CAS", required_capabilities=["python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://verdict-cas",
+        "ready",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    review = cp.request_review(task.id, reviewer.id, actor="manual")
+
+    def race_review_status(*args, **kwargs):
+        cp.store.execute(
+            "UPDATE reviews SET status = ?, reason = ? WHERE id = ?",
+            (ReviewStatus.RETRACTED.value, "concurrent writer", review.id),
+        )
+        return None
+
+    monkeypatch.setattr(
+        cp.reviews,
+        "_review_feedback_from_evidence",
+        race_review_status,
+    )
+
+    with pytest.raises(ValidationError, match="review state changed during submission"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.REJECTED.value,
+            reviewer.id,
+            reason="stale verdict",
+        )
+
+    assert cp.get_review(review.id).status == ReviewStatus.RETRACTED.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    assert not any(
+        item.event_type == "task.review_completed"
+        for item in cp.task_history(task.id)
+    )
+
+
+def test_rejected_review_and_task_transition_roll_back_together(cp, monkeypatch):
+    executor = register_agent(cp, "reject-atomic-executor", ["python"])
+    reviewer = register_agent(cp, "reject-atomic-reviewer", ["review"])
+    task = cp.create_task("atomic rejection", required_capabilities=["python"])
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://atomic-rejection",
+        "ready",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    review = cp.request_review(task.id, reviewer.id, actor="manual")
+    original_transition = cp.reviews._transition_task_in_transaction
+
+    def fail_after_task_transition(*args, **kwargs):
+        original_transition(*args, **kwargs)
+        raise RuntimeError("simulated rejection transition crash")
+
+    monkeypatch.setattr(
+        cp.reviews,
+        "_transition_task_in_transaction",
+        fail_after_task_transition,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated rejection transition crash"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.REJECTED.value,
+            reviewer.id,
+            reason="needs changes",
+        )
+
+    assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+
+
 def test_default_review_reassigns_stale_pending_reviewer(cp):
     worker = register_agent(cp, "worker", ["python"])
     stale_reviewer = register_agent(cp, "operator-reviewer", ["review"])

@@ -145,6 +145,10 @@ Move from single-task routing to coordinated agent work:
 - Workflow node advancement reserves a deterministic next-task ID, creates the
   task and its workflow linkage atomically, recovers stale reservations
   idempotently, and commits pre-decision history only with final advancement.
+- Workflow cancellation and rejected-review handling commit their task state,
+  domain row, history, and outbox together. Review creation and verdict updates
+  use compare-and-swap guards, and verdict submission rechecks the assignment's
+  current reviewer eligibility.
 - Observability now includes low-level metrics/logs, integration findings,
   operator notifications, command audit, and Beads `mac-ledger v1` issue
   comments for human-facing task milestones.

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from mac.models import NotFoundError, TaskState, ValidationError
+from mac.models import NotFoundError, TaskState, TransitionError, ValidationError
 from mac.services import ControlPlane
 from tests.conftest import bind_soul
 
@@ -464,6 +464,46 @@ def test_cancel_run_cancels_current_task_and_marks_run_cancelled(cp):
     assert cancelled.state == "cancelled"
     # The current task got cancelled too.
     assert cp.get_task(first_task_id).state == TaskState.CANCELLED.value
+    workflow_tasks = [
+        task
+        for task in cp.list_tasks()
+        if task.metadata.get("workflow_run_id") == run.id
+    ]
+    assert [task.id for task in workflow_tasks] == [first_task_id]
+    assert cancelled.current_task_id == first_task_id
+
+
+def test_cancel_run_rolls_back_task_when_run_compare_and_swap_loses(
+    cp, monkeypatch
+):
+    _two_node_workflow(cp, slug="cancel-race")
+    run = cp.workflow_runtime.start_run("cancel-race", started_by="ops")
+    task_id = run.current_task_id
+    original_transition = cp.workflow_runtime._transition_task_in_transaction
+
+    def steal_run_after_task_transition(conn, *args, **kwargs):
+        transitioned = original_transition(conn, *args, **kwargs)
+        conn.execute(
+            "UPDATE workflow_runs SET updated_at = ? WHERE id = ?",
+            ("2099-01-01T00:00:00+00:00", run.id),
+        )
+        return transitioned
+
+    monkeypatch.setattr(
+        cp.workflow_runtime,
+        "_transition_task_in_transaction",
+        steal_run_after_task_transition,
+    )
+
+    with pytest.raises(TransitionError, match="changed during cancellation"):
+        cp.workflow_runtime.cancel_run(
+            run.id,
+            reason="lost cancellation race",
+            actor="ops",
+        )
+
+    assert cp.workflow_runtime.get_run(run.id).state == "running"
+    assert cp.get_task(task_id).state == TaskState.OPEN.value
 
 
 def test_forged_workflow_run_id_metadata_is_ignored_by_runtime(cp):

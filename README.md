@@ -326,9 +326,11 @@ For repository-backed work, the production path is:
    and passing checks before it can enter review.
 5. Every review assignment path, including manual/API requests, enforces the
    same health, freshness, capability, target-policy, repository-access, tenant,
-   persona, ownership, and cooperative-family checks. The default workflow picks
-   a reviewer-capable agent that has never owned the task or another task in the
-   same cooperative work family. For remote repositories it consults shared
+   persona, ownership, and cooperative-family checks. The policy is checked again
+   when the reviewer submits a verdict so an assignment cannot outlive revoked
+   eligibility. The default workflow picks a reviewer-capable agent that has never
+   owned the task or another task in the same cooperative work family. For remote
+   repositories it consults shared
    `fleet_learning:repository_access` memory: a recent successful clone is
    preferred, while a newer authentication or authorization failure makes that
    agent temporarily ineligible for the same project, host, and operation.
@@ -390,7 +392,9 @@ Node advancement uses a durable reservation containing the preallocated next
 task ID. Task creation, workflow linkage, and task-created history commit
 atomically; a stale reservation can therefore recreate or adopt that same task
 without duplication. Workflow history for pre-decided approval chains is staged
-until the downstream task and run transition finalize together.
+until the downstream task and run transition finalize together. Cancelling a run
+commits the run state, current-task cancellation, history, and transition outbox
+atomically, so the cancellation callback cannot create downstream work.
 
 The REST API and CLI can create, import, seed, start, cancel, and tick workflow
 runs today, and `/dashboard/state` includes workflow-run summary data for UI

@@ -1039,8 +1039,10 @@ class ControlPlane:
             self.roles,
             create_task=self.create_task,
             transition_task=self.transition_task,
+            transition_task_in_transaction=self._transition_task_in_transaction,
             get_task=self.get_task,
             record_history=self._record_history,
+            drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
         self.secrets = SecretsService(
             self.store,
@@ -1084,9 +1086,11 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
             transition_task=self.transition_task,
+            transition_task_in_transaction=self._transition_task_in_transaction,
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
             reviewer_eligibility_check=self._reviewer_assignment_problem,
+            drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
         self.agent_state = AgentStateService(
             self.store,
@@ -5456,8 +5460,52 @@ class ControlPlane:
         *,
         drain_outbox: bool = True,
     ) -> Task:
+        return self._transition_task_impl(
+            task_id,
+            target_state,
+            actor,
+            detail,
+            drain_outbox=drain_outbox,
+            conn=None,
+        )
+
+    def _transition_task_in_transaction(
+        self,
+        conn: Any,
+        task_id: str,
+        target_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Task:
+        return self._transition_task_impl(
+            task_id,
+            target_state,
+            actor,
+            detail,
+            drain_outbox=False,
+            conn=conn,
+        )
+
+    def _transition_task_impl(
+        self,
+        task_id: str,
+        target_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+        *,
+        drain_outbox: bool,
+        conn: Optional[Any],
+    ) -> Task:
         target = _state_value(target_state)
-        task = self.get_task(task_id)
+        if conn is None:
+            task = self.get_task(task_id)
+        else:
+            task_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task_row is None:
+                raise NotFoundError("task not found: %s" % task_id)
+            task = self._task_from_row(task_row)
         transition_detail = dict(detail or {})
         if target == TaskState.CANCELLED.value:
             transition_detail = normalize_cancellation_detail(transition_detail)
@@ -5475,11 +5523,14 @@ class ControlPlane:
             )
             metadata = ensure_json_object(task.metadata)
             if metadata.get("repository_ref_lifecycle") == lifecycle:
+                if drain_outbox and conn is None:
+                    self.drain_task_transition_outbox(task_id=task_id, limit=20)
                 return task
             metadata["repository_ref_lifecycle"] = lifecycle
             now = utcnow()
-            with self.store.transaction() as conn:
-                conn.execute(
+
+            def apply_lifecycle(transaction: Any) -> None:
+                transaction.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, task_id),
                 )
@@ -5490,10 +5541,10 @@ class ControlPlane:
                     target,
                     target,
                     detail,
-                    conn=conn,
+                    conn=transaction,
                 )
                 self.task_ledger.enqueue_outbox(
-                    conn,
+                    transaction,
                     task_id=task_id,
                     event_type="task.lifecycle",
                     actor=actor,
@@ -5502,9 +5553,19 @@ class ControlPlane:
                     detail=detail,
                     created_at=now,
                 )
-            if drain_outbox:
-                self.drain_task_transition_outbox(task_id=task_id, limit=20)
-            return self.get_task(task_id)
+            if conn is None:
+                with self.store.transaction() as transaction:
+                    apply_lifecycle(transaction)
+                if drain_outbox:
+                    self.drain_task_transition_outbox(task_id=task_id, limit=20)
+                return self.get_task(task_id)
+            apply_lifecycle(conn)
+            transitioned_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if transitioned_row is None:
+                raise NotFoundError("task not found: %s" % task_id)
+            return self._task_from_row(transitioned_row)
         validate_transition(task.state, target)
         review_ready_evidence: Optional[Evidence] = None
         if target == TaskState.NEEDS_REVIEW.value:
@@ -5565,30 +5626,39 @@ class ControlPlane:
             task.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}
             and target == TaskState.OPEN.value
         )
-        with self.store.transaction() as conn:
+
+        def apply_transition(conn: Any) -> None:
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (LeaseStatus.RELEASED.value, now, release_lease_id, LeaseStatus.ACTIVE.value),
                 )
             if is_requeue_from_terminal:
-                conn.execute(
+                changed = conn.execute(
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = NULL, completed_at = NULL,
                         attempt_count = 0, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND state = ?
                     """,
-                    (target, owner_agent_id, lease_id, leased_until, now, task_id),
+                    (
+                        target,
+                        owner_agent_id,
+                        lease_id,
+                        leased_until,
+                        now,
+                        task_id,
+                        task.state,
+                    ),
                 )
             else:
-                conn.execute(
+                changed = conn.execute(
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = ?, completed_at = ?, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND state = ?
                     """,
                     (
                         target,
@@ -5599,8 +5669,11 @@ class ControlPlane:
                         now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
                         now,
                         task_id,
+                        task.state,
                     ),
                 )
+            if changed.rowcount != 1:
+                raise TransitionError("task state changed during transition; retry")
             if updated_metadata is not None:
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
@@ -5638,6 +5711,17 @@ class ControlPlane:
                         detail=detail or {},
                         created_at=now,
                     )
+        if conn is None:
+            with self.store.transaction() as transaction:
+                apply_transition(transaction)
+        else:
+            apply_transition(conn)
+            transitioned_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if transitioned_row is None:
+                raise NotFoundError("task not found: %s" % task_id)
+            return self._task_from_row(transitioned_row)
         if drain_outbox:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
         # Self-documenting failures: on a block/fail, append a glanceable

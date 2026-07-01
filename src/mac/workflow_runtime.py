@@ -62,8 +62,10 @@ class WorkflowRuntime:
         *,
         create_task: Callable[..., Task],
         transition_task: Callable[..., Task],
+        transition_task_in_transaction: Optional[Callable[..., Task]] = None,
         get_task: Callable[[str], Task],
         record_history: Callable[..., None],
+        drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -71,8 +73,10 @@ class WorkflowRuntime:
         self.roles = roles
         self._create_task = create_task
         self._transition_task = transition_task
+        self._transition_task_in_transaction = transition_task_in_transaction
         self._get_task = get_task
         self._record_history = record_history
+        self._drain_task_transition_outbox = drain_task_transition_outbox
 
     # Public API --------------------------------------------------------
 
@@ -369,51 +373,84 @@ class WorkflowRuntime:
         if run.state in WORKFLOW_TERMINAL_STATES:
             return run
         now = utcnow()
-        # First cancel the current task so the on_task_completed hook
-        # doesn't bounce the run forward after we've set it cancelled.
-        if run.current_task_id:
-            try:
-                task = self._get_task(run.current_task_id)
-                if task.state not in {
+        cancelled_task_id: Optional[str] = None
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflow_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("workflow run not found: %s" % run_id)
+            current = self._run_from_row(row)
+            if current.state in WORKFLOW_TERMINAL_STATES:
+                return current
+            if current.current_task_id:
+                task_row = conn.execute(
+                    "SELECT state FROM tasks WHERE id = ?",
+                    (current.current_task_id,),
+                ).fetchone()
+                if task_row is not None and task_row["state"] not in {
                     TaskState.COMPLETED.value,
                     TaskState.FAILED.value,
                     TaskState.CANCELLED.value,
                 }:
-                    self._transition_task(
-                        task.id,
+                    if self._transition_task_in_transaction is None:
+                        raise TransitionError(
+                            "transactional task transition is unavailable"
+                        )
+                    self._transition_task_in_transaction(
+                        conn,
+                        current.current_task_id,
                         TaskState.CANCELLED.value,
                         actor,
-                        {"reason": reason, "workflow_run_id": run.id},
+                        {"reason": reason, "workflow_run_id": current.id},
                     )
-            except (NotFoundError, TransitionError):
-                pass
-        self.store.execute(
-            """
-            UPDATE workflow_runs
-            SET state = ?, updated_at = ?, completed_at = ?
-            WHERE id = ?
-            """,
-            (WorkflowState.CANCELLED.value, now, now, run.id),
-        )
-        next_seq = self._next_history_seq(run.id)
-        self.store.execute(
-            """
-            INSERT INTO workflow_run_history (
-                id, run_id, seq, from_node_key, to_node_key, condition,
-                task_id, actor, attempt_number, detail, created_at
-            ) VALUES (?, ?, ?, ?, NULL, 'cancelled', ?, ?, 1, ?, ?)
-            """,
-            (
-                new_id("wfh"),
-                run.id,
-                next_seq,
-                run.current_node_key,
-                run.current_task_id,
-                actor,
-                json_dumps({"reason": reason}),
-                now,
-            ),
-        )
+                    cancelled_task_id = current.current_task_id
+            changed = conn.execute(
+                """
+                UPDATE workflow_runs
+                SET state = ?, updated_at = ?, completed_at = ?
+                WHERE id = ? AND state = ?
+                  AND COALESCE(current_node_key, '') = ?
+                  AND COALESCE(current_task_id, '') = ? AND updated_at = ?
+                """,
+                (
+                    WorkflowState.CANCELLED.value,
+                    now,
+                    now,
+                    current.id,
+                    current.state,
+                    current.current_node_key or "",
+                    current.current_task_id or "",
+                    current.updated_at,
+                ),
+            )
+            if changed.rowcount != 1:
+                raise TransitionError("workflow run changed during cancellation; retry")
+            self._write_staged_history(
+                conn,
+                current.id,
+                [
+                    {
+                        "from_node_key": current.current_node_key,
+                        "to_node_key": None,
+                        "condition": "cancelled",
+                        "task_id": current.current_task_id,
+                        "actor": actor,
+                        "attempt_number": 1,
+                        "detail": {"reason": reason},
+                        "created_at": now,
+                    }
+                ],
+            )
+        if cancelled_task_id is not None:
+            # The transition and cancelled run committed together. Draining the
+            # durable outbox now is safe: the workflow hook observes a terminal
+            # run and cannot create downstream work.
+            if self._drain_task_transition_outbox is not None:
+                self._drain_task_transition_outbox(
+                    task_id=cancelled_task_id,
+                    limit=20,
+                )
         return self.get_run(run.id)
 
     def on_task_completed(self, task_id: str, terminal_state: str) -> Optional[WorkflowRun]:
