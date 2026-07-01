@@ -121,7 +121,7 @@ class ReviewService:
         transition_task: Callable[..., Task],
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
-        reviewer_independence_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
+        reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -136,7 +136,11 @@ class ReviewService:
         # comes with a properly signed review_verdict authored by
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
-        self._reviewer_independence_check = reviewer_independence_check
+        self._reviewer_eligibility_check = reviewer_eligibility_check
+        # Compatibility alias for integrations that temporarily disabled the
+        # older independence-only hook.  It now points at the complete shared
+        # eligibility policy.
+        self._reviewer_independence_check = reviewer_eligibility_check
 
     # Reviews -----------------------------------------------------------
 
@@ -153,10 +157,11 @@ class ReviewService:
             )
         if self.latest_executor_evidence_author(task_id) == reviewer_agent_id:
             raise AuthorizationError("reviewer cannot review its own latest evidence")
-        if self._reviewer_independence_check is not None:
-            problem = self._reviewer_independence_check(task, reviewer)
+        eligibility_check = self._reviewer_independence_check
+        if eligibility_check is not None:
+            problem = eligibility_check(task, reviewer)
             if problem:
-                raise AuthorizationError("reviewer independence check failed: %s" % problem)
+                raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
         if task.state == TaskState.NEEDS_REVIEW.value:
             self._transition_task(
                 task_id,

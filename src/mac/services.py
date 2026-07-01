@@ -1082,7 +1082,7 @@ class ControlPlane:
             transition_task=self.transition_task,
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
-            reviewer_independence_check=self._reviewer_independence_problem,
+            reviewer_eligibility_check=self._reviewer_assignment_problem,
         )
         self.agent_state = AgentStateService(
             self.store,
@@ -3105,6 +3105,9 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         max_attempts: int = 3,
         actor: str = "human",
+        _task_id: Optional[str] = None,
+        _workflow_run_id: Optional[str] = None,
+        _workflow_node_key: Optional[str] = None,
     ) -> Task:
         title = title.strip()
         if not title:
@@ -3113,7 +3116,13 @@ class ControlPlane:
         for dep_id in dep_ids:
             self.get_task(dep_id)
         now = utcnow()
-        task_id = new_id("task")
+        task_id = str(_task_id or new_id("task")).strip()
+        if not task_id:
+            raise ValidationError("task id is required")
+        if bool(_workflow_run_id) != bool(_workflow_node_key):
+            raise ValidationError(
+                "workflow-linked task creation requires both run id and node key"
+            )
         state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
         task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
@@ -3129,49 +3138,94 @@ class ControlPlane:
             task_capabilities,
             normalized_metadata,
         )
-        self.store.execute(
-            """
-            INSERT INTO tasks (
-                id, title, description, project, priority, state,
-                required_capabilities, dependencies, metadata,
-                owner_agent_id, lease_id, leased_until, attempt_count,
-                max_attempts, started_at, completed_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, ?, NULL, NULL, ?, ?)
-            """,
-            (
-                task_id,
-                title,
-                description,
-                project,
-                int(priority),
-                state,
-                json_dumps(task_capabilities),
-                json_dumps(dep_ids),
-                json_dumps(normalized_metadata),
-                int(max_attempts),
-                now,
-                now,
-            ),
-        )
-        self._record_history(
-            task_id,
-            "task.created",
-            actor,
-            None,
-            state,
-            {
-                "title": title,
-                "required_capabilities": task_capabilities,
-                "dependencies": dep_ids,
-                "execution_contract_type": (
-                    normalized_metadata.get("execution_contract", {}).get("type")
-                    if isinstance(normalized_metadata.get("execution_contract"), dict)
-                    else None
-                ),
-            },
-        )
+        created = False
+        with self.store.transaction() as conn:
+            existing = conn.execute(
+                "SELECT workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if existing is not None:
+                if not _task_id:
+                    raise ValidationError("task already exists: %s" % task_id)
+                if (
+                    str(existing["workflow_run_id"] or "")
+                    != str(_workflow_run_id or "")
+                    or str(existing["workflow_node_key"] or "")
+                    != str(_workflow_node_key or "")
+                ):
+                    raise ValidationError(
+                        "idempotent workflow task id %s belongs to a different run or node"
+                        % task_id
+                    )
+            else:
+                inserted = conn.execute(
+                    """
+                    INSERT INTO tasks (
+                        id, title, description, project, priority, state,
+                        required_capabilities, dependencies, metadata,
+                        owner_agent_id, lease_id, leased_until, attempt_count,
+                        max_attempts, started_at, completed_at, created_at, updated_at,
+                        workflow_run_id, workflow_node_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, ?, NULL, NULL, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
+                    """,
+                    (
+                        task_id,
+                        title,
+                        description,
+                        project,
+                        int(priority),
+                        state,
+                        json_dumps(task_capabilities),
+                        json_dumps(dep_ids),
+                        json_dumps(normalized_metadata),
+                        int(max_attempts),
+                        now,
+                        now,
+                        _workflow_run_id,
+                        _workflow_node_key,
+                    ),
+                )
+                if inserted.rowcount == 0:
+                    existing = conn.execute(
+                        "SELECT workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
+                        (task_id,),
+                    ).fetchone()
+                    if not _task_id or existing is None:
+                        raise ValidationError("task already exists: %s" % task_id)
+                    if (
+                        str(existing["workflow_run_id"] or "")
+                        != str(_workflow_run_id or "")
+                        or str(existing["workflow_node_key"] or "")
+                        != str(_workflow_node_key or "")
+                    ):
+                        raise ValidationError(
+                            "idempotent workflow task id %s belongs to a different run or node"
+                            % task_id
+                        )
+                else:
+                    self._record_history(
+                        task_id,
+                        "task.created",
+                        actor,
+                        None,
+                        state,
+                        {
+                            "title": title,
+                            "required_capabilities": task_capabilities,
+                            "dependencies": dep_ids,
+                            "execution_contract_type": (
+                                normalized_metadata.get("execution_contract", {}).get("type")
+                                if isinstance(normalized_metadata.get("execution_contract"), dict)
+                                else None
+                            ),
+                        },
+                        conn=conn,
+                    )
+                    created = True
         if (
-            isinstance(normalized_metadata.get("execution_contract"), dict)
+            created
+            and isinstance(normalized_metadata.get("execution_contract"), dict)
             and normalized_metadata["execution_contract"].get("quality") == "weak"
         ):
             self.record_log(
@@ -8463,6 +8517,20 @@ class ControlPlane:
             ]
         expired = [task.to_dict() for task in self.expire_leases()]
         try:
+            workflow_runs = [
+                run.to_dict()
+                for run in self.workflow_runtime.tick(actor="dispatcher.tick")
+            ]
+        except Exception as exc:  # noqa: BLE001 - one workflow must not stop fleet dispatch.
+            workflow_runs = []
+            self.record_log(
+                "workflow.recovery.failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)},
+            )
+        try:
             self.reconcile_service_roles()  # media-01: reap stale claims + signal zero-holder ops
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
@@ -8487,6 +8555,7 @@ class ControlPlane:
         return {
             "stale_agents": stale_agents,
             "expired": expired,
+            "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
             "assignments": assignments,
             "dead_letters": [task.to_dict() for task in self.list_dead_letters()],
@@ -12156,6 +12225,8 @@ class ControlPlane:
         review_policy: Optional[JsonDict] = None,
         review_required_capabilities: Optional[Iterable[str]] = None,
     ) -> Optional[str]:
+        if agent.id in self._coordination_excluded_agent_ids(task):
+            return "reviewer_cooperative_family_participant"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
@@ -12325,15 +12396,32 @@ class ControlPlane:
         slug = persona.name.strip().lower().replace(" ", "-").replace("_", "-") or None
         return instance.tenant_id, slug
 
+    def _reviewer_assignment_problem(
+        self, task: Task, reviewer: Agent
+    ) -> Optional[str]:
+        """Apply the same complete eligibility policy to every assignment path."""
+        executor_agent_id = self.reviews.latest_executor_evidence_author(task.id)
+        reason = self._default_reviewer_unavailable_reason(
+            task,
+            reviewer,
+            executor_agent_id=executor_agent_id,
+            review_policy=self._default_review_policy(task),
+        )
+        if reason is None:
+            return None
+        readable = {
+            "reviewer_same_persona": "reviewer and executor use the same persona",
+            "reviewer_wrong_tenant": "reviewer is outside the task tenant boundary",
+            "reviewer_cooperative_family_participant": (
+                "reviewer executed another task in the same cooperative work family"
+            ),
+        }
+        return readable.get(reason, reason.replace("_", " "))
+
     def _reviewer_independence_problem(
         self, task: Task, reviewer: Agent
     ) -> Optional[str]:
-        """Return a domain-level reviewer separation failure, if any.
-
-        Availability and routing preferences belong in the default selector;
-        tenant and persona separation are correctness boundaries and therefore
-        also run inside ``ReviewService.request_review`` for manual/API callers.
-        """
+        """Compatibility form of the former independence-only policy."""
         if reviewer.id in self._coordination_excluded_agent_ids(task):
             return "reviewer executed another task in the same cooperative work family"
         task_tenant = self._task_tenant_id(task)

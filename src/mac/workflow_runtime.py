@@ -16,15 +16,14 @@ itself into the workflow state machine.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
     AgentRole,
-    JsonDict,
     NotFoundError,
     Task,
     TaskState,
-    Tenant,
     TransitionError,
     ValidationError,
     NodeType,
@@ -36,6 +35,7 @@ from mac.models import (
     json_dumps,
     json_loads,
     new_id,
+    parse_time,
     utcnow,
 )
 from mac.observability_service import ObservabilityService
@@ -48,6 +48,8 @@ TASK_TERMINAL_TO_CONDITION: Dict[str, str] = {
     TaskState.BLOCKED.value: "failure",
     TaskState.CANCELLED.value: "cancelled",
 }
+
+_ADVANCEMENT_PREFIX = "__workflow_advancing__:"
 
 
 class WorkflowRuntime:
@@ -138,7 +140,54 @@ class WorkflowRuntime:
         # downstream _advance calls (mid-workflow approval nodes) can
         # read them without an extra schema column.
         context_obj: Dict[str, Any] = {"pre_decisions": pre_decisions} if pre_decisions else {}
-        spawn_node: Optional[Dict[str, Any]] = first_node
+        history_events: List[Dict[str, Any]] = [
+            {
+                "from_node_key": "",
+                "to_node_key": first_node["node_key"],
+                "condition": "success",
+                "task_id": None,
+                "actor": started_by,
+                "attempt_number": 1,
+                "detail": {"phase": "start"},
+            }
+        ]
+        spawn_node, skipped_events = self._plan_pre_decided(
+            definition,
+            first_node,
+            pre_decisions=pre_decisions,
+            actor=started_by,
+        )
+        history_events.extend(skipped_events)
+        if spawn_node is None:
+            with self.store.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO workflow_runs (
+                        id, workflow_id, workflow_version, definition_snapshot,
+                        state, current_node_key, current_task_id, input, context,
+                        tenant_id, started_by, created_at, updated_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        workflow.id,
+                        workflow.version,
+                        json_dumps(definition),
+                        WorkflowState.COMPLETED.value,
+                        json_dumps(input_obj),
+                        json_dumps(context_obj),
+                        tenant_id,
+                        started_by,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                self._write_staged_history(conn, run_id, history_events)
+            return self.get_run(run_id)
+
+        reserved_task_id = new_id("task")
+        reservation_node = self._reservation_node(reserved_task_id)
         with self.store.transaction() as conn:
             conn.execute(
                 """
@@ -146,7 +195,7 @@ class WorkflowRuntime:
                     id, workflow_id, workflow_version, definition_snapshot,
                     state, current_node_key, current_task_id, input, context,
                     tenant_id, started_by, created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     run_id,
@@ -154,6 +203,7 @@ class WorkflowRuntime:
                     workflow.version,
                     json_dumps(definition),
                     WorkflowState.RUNNING.value,
+                    reservation_node,
                     json_dumps(input_obj),
                     json_dumps(context_obj),
                     tenant_id,
@@ -162,47 +212,6 @@ class WorkflowRuntime:
                     now,
                 ),
             )
-            self._record_run_history(
-                conn,
-                run_id,
-                seq=1,
-                from_key="",
-                to_key=first_node["node_key"],
-                condition="success",
-                task_id=None,
-                actor=started_by,
-                attempt=1,
-                detail={"phase": "start"},
-            )
-            # wf-03: if the start node (or any chain of approval nodes
-            # immediately following) is pre-decided, skip them in this
-            # same transaction. The walk writes one history row per
-            # skipped approval node and returns the first non-skipped
-            # node — or None if the chain terminates the run.
-            if pre_decisions:
-                spawn_node = self._walk_through_pre_decided(
-                    run_id,
-                    definition,
-                    first_node,
-                    pre_decisions=pre_decisions,
-                    actor=started_by,
-                    conn=conn,
-                )
-                if spawn_node is None:
-                    # Pre-decisions resolved the whole run. Mark
-                    # COMPLETED and return.
-                    conn.execute(
-                        """
-                        UPDATE workflow_runs
-                        SET state = ?, current_node_key = NULL,
-                            current_task_id = NULL, updated_at = ?,
-                            completed_at = ?
-                        WHERE id = ?
-                        """,
-                        (WorkflowState.COMPLETED.value, now, now, run_id),
-                    )
-        if spawn_node is None:
-            return self.get_run(run_id)
         task = self._spawn_node_task(
             run_id,
             spawn_node,
@@ -213,15 +222,28 @@ class WorkflowRuntime:
             role_snapshots=role_snapshots or None,
             pre_decisions=pre_decisions,
             run_input=input_obj,
+            task_id=reserved_task_id,
         )
-        self.store.execute(
-            """
-            UPDATE workflow_runs
-            SET current_node_key = ?, current_task_id = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (spawn_node["node_key"], task.id, utcnow(), run_id),
-        )
+        finalized_at = utcnow()
+        with self.store.transaction() as conn:
+            finalized = conn.execute(
+                """
+                UPDATE workflow_runs
+                SET current_node_key = ?, current_task_id = ?, updated_at = ?
+                WHERE id = ? AND state = ? AND current_node_key = ?
+                  AND current_task_id IS NULL
+                """,
+                (
+                    spawn_node["node_key"],
+                    task.id,
+                    finalized_at,
+                    run_id,
+                    WorkflowState.RUNNING.value,
+                    reservation_node,
+                ),
+            )
+            if finalized.rowcount == 1:
+                self._write_staged_history(conn, run_id, history_events)
         return self.get_run(run_id)
 
     def get_run(self, run_id: str) -> WorkflowRun:
@@ -274,13 +296,33 @@ class WorkflowRuntime:
             """
             SELECT id, current_node_key, current_task_id, definition_snapshot, updated_at
             FROM workflow_runs
-            WHERE state = ? AND current_task_id IS NOT NULL
+            WHERE state = ?
             """,
             (WorkflowState.RUNNING.value,),
         )
         advanced: List[WorkflowRun] = []
         now = datetime.now(timezone.utc)
         for row in rows:
+            reserved_task_id = self._reserved_task_id(row["current_node_key"])
+            if reserved_task_id is not None:
+                run = self.get_run(row["id"])
+                if not self._reservation_is_stale(run):
+                    continue
+                origin = self._reservation_origin(run)
+                if origin is None:
+                    continue
+                from_key, condition, source_task_id = origin
+                recovered = self._advance(
+                    run,
+                    from_key,
+                    condition,
+                    source_task_id,
+                )
+                if recovered.current_node_key != row["current_node_key"]:
+                    advanced.append(recovered)
+                continue
+            if row["current_task_id"] is None:
+                continue
             definition = json_loads(row["definition_snapshot"], {})
             node = self._node_by_key(definition, row["current_node_key"])
             if node is None:
@@ -476,51 +518,74 @@ class WorkflowRuntime:
         condition: str,
         task_id: Optional[str],
     ) -> WorkflowRun:
-        """Walk the workflow DAG from the just-completed task to the next.
-
-        mac-t8ih: every state-mutating branch is wrapped in a transaction
-        whose first statement is a *guarded* UPDATE that requires the run
-        to still be in RUNNING state. If two terminal events race, the
-        second one sees rowcount=0 on the guard and returns early — only
-        one caller advances the run, no duplicate task gets spawned, no
-        orphaned history row gets written.
-        """
-        # Always arbitrate against the current durable run.  A terminal event
-        # from an older node must not advance (or finish) a run that has
-        # already moved on, and callers that observe an in-flight reservation
-        # simply leave its owner to finish the transition.
+        """Advance exactly once, with a recoverable idempotent spawn reservation."""
         run = self.get_run(run.id)
         if run.state in WORKFLOW_TERMINAL_STATES:
             return run
-        if str(run.current_node_key or "").startswith("__workflow_advancing__:"):
-            return run
+
+        reserved_task_id = self._reserved_task_id(run.current_node_key)
+        recovering = reserved_task_id is not None
         if task_id is not None and run.current_task_id != task_id:
             return run
+        if recovering:
+            if not self._reservation_is_stale(run):
+                return run
+            renewed_at = utcnow()
+            with self.store.transaction() as conn:
+                renewed = conn.execute(
+                    """
+                    UPDATE workflow_runs SET updated_at = ?
+                    WHERE id = ? AND state = ? AND current_node_key = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
+                    """,
+                    (
+                        renewed_at,
+                        run.id,
+                        WorkflowState.RUNNING.value,
+                        run.current_node_key,
+                        run.current_task_id or "",
+                        run.updated_at,
+                    ),
+                )
+            if renewed.rowcount == 0:
+                return self.get_run(run.id)
+            run = self.get_run(run.id)
 
         definition = run.definition_snapshot
         edge = self._pick_edge(definition, from_key, condition)
         if edge is None and condition != "success":
-            # Fall back to a generic success edge when a more-specific
-            # condition isn't wired.
             edge = self._pick_edge(definition, from_key, "success")
         now = utcnow()
+        expected_node = run.current_node_key
+        expected_task = run.current_task_id
+        expected_updated_at = run.updated_at
+
         if edge is None or not edge.get("to_node_key"):
-            # Terminal: success → COMPLETED, anything else → FAILED.
             final_state = (
                 WorkflowState.COMPLETED.value
                 if condition in {"success", "approved"}
                 else WorkflowState.FAILED.value
             )
+            events = [
+                {
+                    "from_node_key": from_key,
+                    "to_node_key": None,
+                    "condition": condition,
+                    "task_id": task_id,
+                    "actor": "workflow_runtime",
+                    "attempt_number": 1,
+                    "detail": {"final_state": final_state},
+                }
+            ]
             with self.store.transaction() as conn:
-                cur = conn.execute(
+                finalized = conn.execute(
                     """
                     UPDATE workflow_runs
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
                         updated_at = ?, completed_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
-                      AND COALESCE(current_task_id, '') = ?
-                      AND updated_at = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                     """,
                     (
                         final_state,
@@ -528,41 +593,57 @@ class WorkflowRuntime:
                         now,
                         run.id,
                         WorkflowState.RUNNING.value,
-                        run.current_node_key or "",
-                        run.current_task_id or "",
+                        expected_node or "",
+                        expected_task or "",
                         run.updated_at,
                     ),
                 )
-                if cur.rowcount == 0:
-                    return self.get_run(run.id)
-                next_seq = self._next_history_seq(run.id)
-                conn.execute(
-                    """
-                    INSERT INTO workflow_run_history (
-                        id, run_id, seq, from_node_key, to_node_key, condition,
-                        task_id, actor, attempt_number, detail, created_at
-                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', 1, ?, ?)
-                    """,
-                    (
-                        new_id("wfh"),
-                        run.id,
-                        next_seq,
-                        from_key,
-                        condition,
-                        task_id,
-                        json_dumps({"final_state": final_state}),
-                        now,
-                    ),
-                )
+                if finalized.rowcount == 1:
+                    self._write_staged_history(conn, run.id, events)
             return self.get_run(run.id)
-        target = self._node_by_key(definition, edge["to_node_key"])
-        if target is None:
+
+        initial_target = self._node_by_key(definition, edge["to_node_key"])
+        if initial_target is None:
             raise ValidationError(
                 "edge points at unknown node %r" % edge.get("to_node_key")
             )
-        # Enforce per-node max_attempts so a cyclic workflow cannot loop
-        # forever. We count prior history rows that landed on this node_key
-        # in this run; refuse to spawn if we'd exceed the declared cap.
+        pre_decisions = (
+            (run.context or {}).get("pre_decisions")
+            if isinstance(run.context, dict)
+            else None
+        )
+        target, skipped_events = self._plan_pre_decided(
+            definition,
+            initial_target,
+            pre_decisions=pre_decisions,
+            actor=run.started_by,
+        )
+        if target is None:
+            with self.store.transaction() as conn:
+                finalized = conn.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET state = ?, current_node_key = NULL, current_task_id = NULL,
+                        updated_at = ?, completed_at = ?
+                    WHERE id = ? AND state = ?
+                      AND COALESCE(current_node_key, '') = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
+                    """,
+                    (
+                        WorkflowState.COMPLETED.value,
+                        now,
+                        now,
+                        run.id,
+                        WorkflowState.RUNNING.value,
+                        expected_node or "",
+                        expected_task or "",
+                        run.updated_at,
+                    ),
+                )
+                if finalized.rowcount == 1:
+                    self._write_staged_history(conn, run.id, skipped_events)
+            return self.get_run(run.id)
+
         max_attempts = int(target.get("max_attempts", 1) or 1)
         prior = self.store.query_one(
             "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ? AND to_node_key = ?",
@@ -570,16 +651,31 @@ class WorkflowRuntime:
         )
         prior_attempts = int(prior["n"]) if prior else 0
         if prior_attempts >= max_attempts:
+            failure_events = list(skipped_events)
+            failure_events.append(
+                {
+                    "from_node_key": from_key,
+                    "to_node_key": None,
+                    "condition": "max_attempts_exhausted",
+                    "task_id": task_id,
+                    "actor": "workflow_runtime",
+                    "attempt_number": prior_attempts + 1,
+                    "detail": {
+                        "node_key": target["node_key"],
+                        "max_attempts": max_attempts,
+                        "prior_attempts": prior_attempts,
+                    },
+                }
+            )
             with self.store.transaction() as conn:
-                cur = conn.execute(
+                finalized = conn.execute(
                     """
                     UPDATE workflow_runs
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
                         updated_at = ?, completed_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
-                      AND COALESCE(current_task_id, '') = ?
-                      AND updated_at = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                     """,
                     (
                         WorkflowState.FAILED.value,
@@ -587,123 +683,89 @@ class WorkflowRuntime:
                         now,
                         run.id,
                         WorkflowState.RUNNING.value,
-                        run.current_node_key or "",
-                        run.current_task_id or "",
+                        expected_node or "",
+                        expected_task or "",
                         run.updated_at,
                     ),
                 )
-                if cur.rowcount == 0:
-                    return self.get_run(run.id)
-                next_seq = self._next_history_seq(run.id)
-                conn.execute(
+                if finalized.rowcount == 1:
+                    self._write_staged_history(conn, run.id, failure_events)
+            return self.get_run(run.id)
+
+        if from_key == "":
+            history_events = [
+                {
+                    "from_node_key": "",
+                    "to_node_key": initial_target["node_key"],
+                    "condition": "success",
+                    "task_id": None,
+                    "actor": run.started_by,
+                    "attempt_number": 1,
+                    "detail": {"phase": "start"},
+                },
+                *skipped_events,
+            ]
+        else:
+            history_events = [
+                *skipped_events,
+                {
+                    "from_node_key": from_key,
+                    "to_node_key": target["node_key"],
+                    "condition": condition,
+                    "task_id": None,
+                    "actor": "workflow_runtime",
+                    "attempt_number": prior_attempts + 1,
+                    "detail": {"reason": "advance"},
+                },
+            ]
+
+        prior_task_id = run.current_task_id
+        if not recovering:
+            reserved_task_id = new_id("task")
+            reservation_node = self._reservation_node(reserved_task_id)
+            reservation_at = utcnow()
+            with self.store.transaction() as conn:
+                reserved = conn.execute(
                     """
-                    INSERT INTO workflow_run_history (
-                        id, run_id, seq, from_node_key, to_node_key, condition,
-                        task_id, actor, attempt_number, detail, created_at
-                    ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'workflow_runtime', ?, ?, ?)
+                    UPDATE workflow_runs
+                    SET current_node_key = ?, updated_at = ?
+                    WHERE id = ? AND state = ?
+                      AND COALESCE(current_node_key, '') = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                     """,
                     (
-                        new_id("wfh"),
+                        reservation_node,
+                        reservation_at,
                         run.id,
-                        next_seq,
-                        from_key,
-                        "max_attempts_exhausted",
-                        task_id,
-                        prior_attempts + 1,
-                        json_dumps(
-                            {
-                                "node_key": target["node_key"],
-                                "max_attempts": max_attempts,
-                                "prior_attempts": prior_attempts,
-                            }
-                        ),
-                        now,
+                        WorkflowState.RUNNING.value,
+                        run.current_node_key or "",
+                        prior_task_id or "",
+                        run.updated_at,
                     ),
                 )
-            return self.get_run(run.id)
-        pre_decisions = (
-            (run.context or {}).get("pre_decisions")
-            if isinstance(run.context, dict)
-            else None
-        )
-        # Reserve with an explicit sentinel, not just a timestamp.  A caller
-        # that starts after this compare-and-swap can distinguish an in-flight
-        # advancement from an ordinary fresh run and cannot reserve it again.
-        prior_node_key = run.current_node_key
-        prior_task_id = run.current_task_id
-        reservation_at = utcnow()
-        reservation_token = "__workflow_advancing__:%s" % new_id("wfr")
-        with self.store.transaction() as conn:
-            reserved = conn.execute(
-                """
-                UPDATE workflow_runs
-                SET current_node_key = ?, updated_at = ?
-                WHERE id = ? AND state = ?
-                  AND COALESCE(current_node_key, '') = ?
-                  AND COALESCE(current_task_id, '') = ?
-                  AND updated_at = ?
-                """,
-                (
-                    reservation_token,
-                    reservation_at,
-                    run.id,
-                    WorkflowState.RUNNING.value,
-                    run.current_node_key or "",
-                    prior_task_id or "",
-                    run.updated_at,
-                ),
-            )
-        if reserved.rowcount == 0:
-            return self.get_run(run.id)
-        # wf-03: if the target is a pre-decided approval node (or the
-        # start of a chain of pre-decided ones), skip past them in the
-        # same transaction. Returns the first non-skipped node, or None
-        # if the chain terminates the run.
-        if (
-            pre_decisions
-            and str(target.get("node_type") or "task").strip().lower() == "approval"
-            and pre_decisions.get(target["node_key"]) in {"approved", "rejected"}
-        ):
-            with self.store.transaction() as conn:
-                spawn_target = self._walk_through_pre_decided(
-                    run.id,
-                    definition,
-                    target,
-                    pre_decisions=pre_decisions,
-                    actor=run.started_by,
-                    conn=conn,
-                )
-                if spawn_target is None:
-                    # Chain ran the workflow to a terminal state.
-                    conn.execute(
-                        """
-                        UPDATE workflow_runs
-                        SET state = ?, current_node_key = NULL,
-                            current_task_id = NULL, updated_at = ?,
-                            completed_at = ?
-                        WHERE id = ? AND state = ? AND current_node_key = ?
-                        """,
-                        (
-                            WorkflowState.COMPLETED.value,
-                            now,
-                            now,
-                            run.id,
-                            WorkflowState.RUNNING.value,
-                            reservation_token,
-                        ),
-                    )
-                    return self.get_run(run.id)
-                target = spawn_target
+            if reserved.rowcount == 0:
+                return self.get_run(run.id)
+            run = self.get_run(run.id)
+        else:
+            reservation_node = run.current_node_key
+            reservation_at = run.updated_at
+
         plan_payloads = (
             (run.context or {}).get("plan_payloads")
             if isinstance(run.context, dict)
             else None
         )
+        workflow = None
+        if from_key == "":
+            workflow = self.workflows.get_workflow(
+                run.workflow_id,
+                tenant_id=run.tenant_id,
+            )
         try:
             new_task = self._spawn_node_task(
                 run.id,
                 target,
-                workflow=None,
+                workflow=workflow,
                 started_by=run.started_by,
                 tenant_id=run.tenant_id,
                 attempt=prior_attempts + 1,
@@ -713,34 +775,45 @@ class WorkflowRuntime:
                 pre_decisions=pre_decisions,
                 plan_payloads=plan_payloads,
                 run_input=run.input if isinstance(run.input, dict) else None,
+                task_id=reserved_task_id,
             )
         except Exception:
-            self.store.execute(
-                """
-                UPDATE workflow_runs
-                SET current_node_key = ?, updated_at = ?
-                WHERE id = ? AND current_node_key = ? AND updated_at = ?
-                """,
-                (
-                    prior_node_key,
-                    run.updated_at,
-                    run.id,
-                    reservation_token,
-                    reservation_at,
-                ),
+            created = self.store.query_one(
+                "SELECT id FROM tasks WHERE id = ?",
+                (reserved_task_id,),
             )
+            if created is None:
+                self.store.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET current_node_key = ?, updated_at = ?
+                    WHERE id = ? AND state = ? AND current_node_key = ?
+                      AND COALESCE(current_task_id, '') = ? AND updated_at = ?
+                    """,
+                    (
+                        expected_node,
+                        expected_updated_at,
+                        run.id,
+                        WorkflowState.RUNNING.value,
+                        reservation_node,
+                        prior_task_id or "",
+                        reservation_at,
+                    ),
+                )
             raise
+        if from_key != "" and history_events:
+            history_events[-1] = {
+                **history_events[-1],
+                "task_id": new_task.id,
+            }
         finalized_at = utcnow()
-        reservation_lost = False
         with self.store.transaction() as conn:
-            cur = conn.execute(
+            finalized = conn.execute(
                 """
                 UPDATE workflow_runs
                 SET current_node_key = ?, current_task_id = ?, updated_at = ?
-                WHERE id = ? AND state = ?
-                  AND current_node_key = ?
-                  AND COALESCE(current_task_id, '') = ?
-                  AND updated_at = ?
+                WHERE id = ? AND state = ? AND current_node_key = ?
+                  AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                 """,
                 (
                     target["node_key"],
@@ -748,44 +821,28 @@ class WorkflowRuntime:
                     finalized_at,
                     run.id,
                     WorkflowState.RUNNING.value,
-                    reservation_token,
+                    reservation_node,
                     prior_task_id or "",
                     reservation_at,
                 ),
             )
-            if cur.rowcount == 0:
-                reservation_lost = True
-            else:
-                next_seq = self._next_history_seq(run.id)
-                conn.execute(
-                    """
-                    INSERT INTO workflow_run_history (
-                        id, run_id, seq, from_node_key, to_node_key, condition,
-                        task_id, actor, attempt_number, detail, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'workflow_runtime', ?, ?, ?)
-                    """,
-                    (
-                        new_id("wfh"),
-                        run.id,
-                        next_seq,
-                        from_key,
-                        target["node_key"],
-                        condition,
-                        new_task.id,
-                        prior_attempts + 1,
-                        json_dumps({"reason": "advance"}),
-                        finalized_at,
-                    )
-                )
-        if reservation_lost:
-            self._transition_task(
-                new_task.id,
+            if finalized.rowcount == 1:
+                self._write_staged_history(conn, run.id, history_events)
+        current = self.get_run(run.id)
+        if current.current_task_id != new_task.id:
+            if new_task.state not in {
+                TaskState.COMPLETED.value,
+                TaskState.FAILED.value,
                 TaskState.CANCELLED.value,
-                "workflow_runtime",
-                {"reason": "advancement_reservation_lost"},
-            )
+            }:
+                self._transition_task(
+                    new_task.id,
+                    TaskState.CANCELLED.value,
+                    "workflow_runtime",
+                    {"reason": "advancement_reservation_lost"},
+                )
             raise TransitionError("workflow advancement reservation was lost")
-        return self.get_run(run.id)
+        return current
 
     def _spawn_node_task(
         self,
@@ -800,7 +857,24 @@ class WorkflowRuntime:
         pre_decisions: Optional[Dict[str, str]] = None,
         plan_payloads: Optional[Dict[str, Dict[str, Any]]] = None,
         run_input: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
     ) -> Task:
+        if task_id:
+            existing = self.store.query_one(
+                "SELECT id, workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
+                (task_id,),
+            )
+            if existing is not None:
+                if (
+                    str(existing["workflow_run_id"] or "") != run_id
+                    or str(existing["workflow_node_key"] or "")
+                    != str(node["node_key"])
+                ):
+                    raise ValidationError(
+                        "reserved workflow task %s belongs to another run or node"
+                        % task_id
+                    )
+                return self._get_task(task_id)
         # wf-04: if a plan node already ran and emitted a payload for
         # this node, apply the override on a *local copy* of the node
         # dict before reading any fields. Static definition wins for
@@ -885,20 +959,126 @@ class WorkflowRuntime:
             required_capabilities=required_caps,
             metadata=metadata,
             actor=started_by,
+            _task_id=task_id,
+            _workflow_run_id=run_id,
+            _workflow_node_key=node["node_key"],
         )
-        # Stamp the workflow link on the row itself. This is the FK that
-        # ``transition_task`` consults — caller-supplied metadata is
-        # ignored, so a misbehaving agent cannot smuggle a task into the
-        # workflow state machine by setting metadata.workflow_run_id.
-        self.store.execute(
-            """
-            UPDATE tasks
-            SET workflow_run_id = ?, workflow_node_key = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (run_id, node["node_key"], utcnow(), task.id),
+        return task
+
+    def _reservation_node(self, task_id: str) -> str:
+        return "%s%s" % (_ADVANCEMENT_PREFIX, task_id)
+
+    def _reserved_task_id(self, node_key: Optional[str]) -> Optional[str]:
+        value = str(node_key or "")
+        if not value.startswith(_ADVANCEMENT_PREFIX):
+            return None
+        task_id = value[len(_ADVANCEMENT_PREFIX) :].strip()
+        return task_id or None
+
+    def _reservation_is_stale(self, run: WorkflowRun) -> bool:
+        raw = os.environ.get(
+            "MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "60"
+        ).strip()
+        try:
+            stale_after = max(0, int(raw))
+            age = (parse_time(utcnow()) - parse_time(run.updated_at)).total_seconds()
+        except (TypeError, ValueError):
+            return False
+        return age >= stale_after
+
+    def _reservation_origin(
+        self, run: WorkflowRun
+    ) -> Optional[tuple[Optional[str], str, Optional[str]]]:
+        if run.current_task_id is None:
+            return "", "success", None
+        row = self.store.query_one(
+            "SELECT state, metadata, workflow_node_key FROM tasks WHERE id = ?",
+            (run.current_task_id,),
         )
-        return self._get_task(task.id)
+        if row is None or not row["workflow_node_key"]:
+            return None
+        metadata = json_loads(row["metadata"], {})
+        condition = self._terminal_to_condition(
+            str(row["state"]), metadata=metadata
+        )
+        return str(row["workflow_node_key"]), condition, run.current_task_id
+
+    def _write_staged_history(
+        self,
+        conn: Any,
+        run_id: str,
+        events: List[Dict[str, Any]],
+    ) -> None:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM workflow_run_history WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        seq = int(row["next"]) if row is not None else 1
+        for event in events:
+            conn.execute(
+                """
+                INSERT INTO workflow_run_history (
+                    id, run_id, seq, from_node_key, to_node_key, condition,
+                    task_id, actor, attempt_number, detail, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_id("wfh"),
+                    run_id,
+                    seq,
+                    event.get("from_node_key"),
+                    event.get("to_node_key"),
+                    event.get("condition") or "success",
+                    event.get("task_id"),
+                    event.get("actor") or "workflow_runtime",
+                    int(event.get("attempt_number") or 1),
+                    json_dumps(ensure_json_object(event.get("detail"))),
+                    event.get("created_at") or utcnow(),
+                ),
+            )
+            seq += 1
+
+    def _plan_pre_decided(
+        self,
+        definition: Dict[str, Any],
+        node: Dict[str, Any],
+        *,
+        pre_decisions: Optional[Dict[str, str]],
+        actor: str,
+    ) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Plan approval skips without writing history before the spawn commits."""
+        current = node
+        events: List[Dict[str, Any]] = []
+        while True:
+            if current is None:
+                return None, events
+            if str(current.get("node_type") or "task").strip().lower() != "approval":
+                return current, events
+            decision = (pre_decisions or {}).get(current["node_key"])
+            if decision not in {"approved", "rejected"}:
+                return current, events
+            edge = self._pick_edge(definition, current["node_key"], decision)
+            if edge is None and decision == "approved":
+                edge = self._pick_edge(definition, current["node_key"], "success")
+            target = self._node_by_key(definition, edge.get("to_node_key")) if edge else None
+            events.append(
+                {
+                    "from_node_key": current["node_key"],
+                    "to_node_key": target["node_key"] if target else None,
+                    "condition": decision,
+                    "task_id": None,
+                    "actor": actor,
+                    "attempt_number": 1,
+                    "detail": {
+                        "approval_decision": decision,
+                        "pre_decision_origin": "workflow_start",
+                        "skipped": True,
+                    },
+                }
+            )
+            if target is None:
+                return None, events
+            current = target
 
     def _walk_through_pre_decided(
         self,
@@ -910,61 +1090,38 @@ class WorkflowRuntime:
         actor: str,
         conn: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Skip past any chain of pre-decided approval nodes.
-
-        ``node`` is the current approval node the run has arrived at.
-        The caller has already recorded the *entry* into ``node`` in
-        history (the start-edge history row, or _advance's edge row).
-        This helper writes one history row per *exit* from a skipped
-        approval node — ``from = approval_key``, ``to = next_key``,
-        ``condition = approved|rejected`` — then keeps walking if the
-        next node is itself a pre-decided approval.
-
-        Returns the first non-skipped node (the one a real task should
-        spawn on), or ``None`` if the chain terminates the run.
-        """
-        current = node
-        while True:
-            if current is None:
-                return None
-            if str(current.get("node_type") or "task").strip().lower() != "approval":
-                return current
-            decision = (pre_decisions or {}).get(current["node_key"])
-            if decision not in {"approved", "rejected"}:
-                return current
-            edge = self._pick_edge(definition, current["node_key"], decision)
-            if edge is None and decision == "approved":
-                edge = self._pick_edge(definition, current["node_key"], "success")
-            target = self._node_by_key(definition, edge.get("to_node_key")) if edge else None
-            next_seq = self._next_history_seq(run_id)
+        """Deprecated eager-history wrapper retained for API compatibility."""
+        target, events = self._plan_pre_decided(
+            definition,
+            node,
+            pre_decisions=pre_decisions,
+            actor=actor,
+        )
+        seq = self._next_history_seq(run_id)
+        for event in events:
             conn.execute(
                 """
                 INSERT INTO workflow_run_history (
                     id, run_id, seq, from_node_key, to_node_key, condition,
                     task_id, actor, attempt_number, detail, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_id("wfh"),
                     run_id,
-                    next_seq,
-                    current["node_key"],
-                    target["node_key"] if target else None,
-                    decision,
-                    actor,
-                    json_dumps(
-                        {
-                            "approval_decision": decision,
-                            "pre_decision_origin": "workflow_start",
-                            "skipped": True,
-                        }
-                    ),
+                    seq,
+                    event.get("from_node_key"),
+                    event.get("to_node_key"),
+                    event.get("condition") or "success",
+                    event.get("task_id"),
+                    event.get("actor") or actor,
+                    int(event.get("attempt_number") or 1),
+                    json_dumps(ensure_json_object(event.get("detail"))),
                     utcnow(),
                 ),
             )
-            if target is None:
-                return None
-            current = target
+            seq += 1
+        return target
 
     def _validate_pre_decisions(
         self,

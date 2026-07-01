@@ -2294,6 +2294,67 @@ def test_default_reviewer_honors_review_required_capabilities(cp):
     assert result["reviewer_agent_id"] == natasha.id
 
 
+def test_manual_reviewer_assignment_uses_full_eligibility_policy(cp):
+    executor = register_agent(cp, "manual-policy-executor", ["python"])
+    stale = register_agent(cp, "manual-policy-stale", ["review"])
+    unhealthy = register_agent(cp, "manual-policy-unhealthy", ["review"])
+    underqualified = register_agent(cp, "manual-policy-underqualified", ["review"])
+    qualified = register_agent(cp, "manual-policy-qualified", ["review", "qemu"])
+
+    def reviewable(title, metadata=None):
+        task = cp.create_task(
+            title,
+            required_capabilities=["python"],
+            metadata=metadata or {},
+        )
+        cp.claim_task(task.id, executor.id)
+        cp.start_task(task.id, executor.id)
+        cp.add_evidence(
+            task.id,
+            "log",
+            "artifact://%s" % task.id,
+            "ready for review",
+            executor.id,
+            metadata=verified_repo_metadata(cp, executor.id),
+        )
+        cp.submit_for_review(task.id, executor.id)
+        return task
+
+    cp.store.execute(
+        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
+        ("2020-01-01T00:00:00+00:00", stale.id),
+    )
+    with pytest.raises(AuthorizationError, match="reviewer stale"):
+        cp.request_review(reviewable("manual stale").id, stale.id, actor="manual")
+
+    cp.store.execute(
+        "UPDATE agents SET health_status = ? WHERE id = ?",
+        (HealthStatus.UNHEALTHY.value, unhealthy.id),
+    )
+    with pytest.raises(AuthorizationError, match="reviewer unhealthy"):
+        cp.request_review(
+            reviewable("manual unhealthy").id,
+            unhealthy.id,
+            actor="manual",
+        )
+
+    capability_task = reviewable(
+        "manual capability",
+        metadata={"default_review": {"required_capabilities": ["qemu"]}},
+    )
+    with pytest.raises(AuthorizationError, match="missing capabilities:qemu"):
+        cp.request_review(capability_task.id, underqualified.id, actor="manual")
+
+    target_task = reviewable(
+        "manual target",
+        metadata={"default_review": {"target_agent_id": qualified.id}},
+    )
+    with pytest.raises(AuthorizationError, match="not target agent"):
+        cp.request_review(target_task.id, underqualified.id, actor="manual")
+    assigned = cp.request_review(target_task.id, qualified.id, actor="manual")
+    assert assigned.reviewer_agent_id == qualified.id
+
+
 def test_default_review_reassigns_stale_pending_reviewer(cp):
     worker = register_agent(cp, "worker", ["python"])
     stale_reviewer = register_agent(cp, "operator-reviewer", ["review"])
@@ -2397,6 +2458,19 @@ def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
         executor_agent_id=worker.id,
     )
     assert reason == "reviewer_repository_access_authentication:github.com"
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://repository-access-review",
+        "ready for repository review",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    with pytest.raises(AuthorizationError, match="repository access authentication"):
+        cp.request_review(task.id, failed.id, actor="manual")
 
     later_success = build_repository_access_learning(
         project="demo",
@@ -5619,6 +5693,28 @@ def test_rollout_health_policy_requires_explicit_required_checks_at_create(cp):
     assert status != "healthy"
 
 
+def _recovery_two_node_workflow(cp, slug):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    return cp.workflows.create_workflow(
+        slug=slug,
+        name=slug,
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {"node_key": "investigate", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "fix", "node_type": "task", "role_required": "dev", "max_attempts": 2},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
+                {"from_node_key": "investigate", "to_node_key": "fix", "condition": "success", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+
+
 def test_workflow_advance_race_does_not_orphan_tasks(cp):
     """mac-t8ih: two concurrent terminal events on the same workflow run
     must not both spawn a next-node task. The guarded UPDATE in _advance
@@ -5676,6 +5772,159 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
     )
     b_spawns = sum(1 for r in history if r["to_node_key"] == "b")
     assert b_spawns == 1
+
+
+def test_workflow_task_linkage_and_created_history_commit_atomically(cp, monkeypatch):
+    task_id = "task_atomic_workflow_link"
+    run_id = "run_atomic_workflow_link"
+    original_record_history = cp._record_history
+
+    def fail_created_history(*args, **kwargs):
+        if len(args) >= 2 and args[1] == "task.created":
+            raise RuntimeError("simulated task history failure")
+        return original_record_history(*args, **kwargs)
+
+    monkeypatch.setattr(cp, "_record_history", fail_created_history)
+    with pytest.raises(RuntimeError, match="history failure"):
+        cp.create_task(
+            "atomic workflow task",
+            _task_id=task_id,
+            _workflow_run_id=run_id,
+            _workflow_node_key="build",
+        )
+    assert cp.store.query_one("SELECT id FROM tasks WHERE id = ?", (task_id,)) is None
+
+    monkeypatch.setattr(cp, "_record_history", original_record_history)
+    first = cp.create_task(
+        "atomic workflow task",
+        _task_id=task_id,
+        _workflow_run_id=run_id,
+        _workflow_node_key="build",
+    )
+    second = cp.create_task(
+        "atomic workflow task retry",
+        _task_id=task_id,
+        _workflow_run_id=run_id,
+        _workflow_node_key="build",
+    )
+
+    assert first.id == second.id == task_id
+    linked = cp.store.query_one(
+        "SELECT workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+    assert linked["workflow_run_id"] == run_id
+    assert linked["workflow_node_key"] == "build"
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM task_history WHERE task_id = ? AND event_type = ?",
+        (task_id, "task.created"),
+    )["n"] == 1
+
+
+def test_workflow_reservation_loss_cancels_the_unadopted_task(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "reservation-loss")
+    run = cp.workflow_runtime.start_run("reservation-loss", started_by="ops")
+    original_spawn = cp.workflow_runtime._spawn_node_task
+    spawned = {}
+
+    def steal_reservation(*args, **kwargs):
+        task = original_spawn(*args, **kwargs)
+        spawned["task"] = task
+        cp.store.execute(
+            "UPDATE workflow_runs SET current_node_key = ?, updated_at = ? WHERE id = ?",
+            ("stolen-reservation", utcnow(), run.id),
+        )
+        return task
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", steal_reservation)
+    with pytest.raises(TransitionError, match="reservation was lost"):
+        cp.workflow_runtime._advance(
+            run, "investigate", "success", run.current_task_id
+        )
+
+    assert cp.get_task(spawned["task"].id).state == TaskState.CANCELLED.value
+
+
+def test_workflow_recovery_guard_and_validation_edges(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "recovery-guards")
+    run = cp.workflow_runtime.start_run("recovery-guards", started_by="ops")
+
+    assert cp.workflow_runtime._advance(
+        run, "investigate", "success", "task-from-another-node"
+    ).current_task_id == run.current_task_id
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "invalid")
+    assert cp.workflow_runtime._reservation_is_stale(run) is False
+    assert cp.workflow_runtime._plan_pre_decided(
+        run.definition_snapshot,
+        None,
+        pre_decisions={},
+        actor="ops",
+    ) == (None, [])
+
+    original_query_one = cp.store.query_one
+
+    def missing_origin(sql, params=()):
+        if "workflow_node_key FROM tasks" in sql:
+            return None
+        return original_query_one(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_one", missing_origin)
+    assert cp.workflow_runtime._reservation_origin(run) is None
+    monkeypatch.setattr(cp.store, "query_one", original_query_one)
+
+    with pytest.raises(ValidationError, match="another run or node"):
+        cp.workflow_runtime._spawn_node_task(
+            "different-run",
+            {"node_key": "investigate", "role_required": "qa"},
+            workflow=None,
+            started_by="ops",
+            tenant_id=None,
+            attempt=1,
+            task_id=run.current_task_id,
+        )
+
+    invalid_definition = dict(run.definition_snapshot)
+    invalid_definition["edges"] = [
+        {
+            "from_node_key": "investigate",
+            "to_node_key": "missing-node",
+            "condition": "success",
+            "priority": 100,
+        }
+    ]
+    cp.store.execute(
+        "UPDATE workflow_runs SET definition_snapshot = ? WHERE id = ?",
+        (json.dumps(invalid_definition), run.id),
+    )
+    with pytest.raises(ValidationError, match="unknown node"):
+        cp.workflow_runtime._advance(
+            cp.workflow_runtime.get_run(run.id),
+            "investigate",
+            "success",
+            run.current_task_id,
+        )
+
+    cp.store.execute(
+        "UPDATE workflow_runs SET state = ? WHERE id = ?",
+        ("completed", run.id),
+    )
+    assert cp.workflow_runtime._advance(
+        cp.workflow_runtime.get_run(run.id),
+        "investigate",
+        "success",
+        run.current_task_id,
+    ).state == "completed"
+
+
+def test_start_run_skips_missing_role_snapshot_then_fails_spawn(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "missing-role-snapshot")
+
+    def missing_role(*_args, **_kwargs):
+        raise NotFoundError("role removed")
+
+    monkeypatch.setattr(cp.roles, "get_role", missing_role)
+    with pytest.raises(ValidationError, match="references missing role"):
+        cp.workflow_runtime.start_run("missing-role-snapshot", started_by="ops")
 
 
 def test_workflow_advance_reservation_blocks_staggered_caller(cp, monkeypatch):
@@ -5737,6 +5986,336 @@ def test_workflow_advance_reservation_blocks_staggered_caller(cp, monkeypatch):
     )
     assert len(spawned) == 1
     assert cp.workflow_runtime.get_run(run.id).current_task_id == spawned[0]["id"]
+
+
+def test_workflow_tick_recovers_task_created_before_advancement_crash(cp, monkeypatch):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="recover-created-task",
+        name="recover created task",
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {"node_key": "a", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "b", "node_type": "task", "role_required": "dev", "max_attempts": 2},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "a", "condition": "success", "priority": 100},
+                {"from_node_key": "a", "to_node_key": "b", "condition": "success", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run("recover-created-task", started_by="ops")
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, run.current_task_id),
+    )
+    original_spawn = cp.workflow_runtime._spawn_node_task
+
+    def create_then_crash(*args, **kwargs):
+        original_spawn(*args, **kwargs)
+        raise RuntimeError("simulated crash after atomic task creation")
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", create_then_crash)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        cp.workflow_runtime._advance(run, "a", "success", run.current_task_id)
+
+    reserved = cp.workflow_runtime.get_run(run.id)
+    assert reserved.current_node_key.startswith("__workflow_advancing__:")
+    spawned = cp.store.query_all(
+        "SELECT id, workflow_run_id, workflow_node_key FROM tasks "
+        "WHERE workflow_run_id = ? AND workflow_node_key = ?",
+        (run.id, "b"),
+    )
+    assert len(spawned) == 1
+    assert spawned[0]["workflow_run_id"] == run.id
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM workflow_run_history "
+        "WHERE run_id = ? AND to_node_key = ?",
+        (run.id, "b"),
+    )["n"] == 0
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    tick_result = cp.tick(limit=0)
+    recovered = tick_result["workflow_runs"]
+
+    assert [item["id"] for item in recovered] == [run.id]
+    final = cp.workflow_runtime.get_run(run.id)
+    assert final.current_node_key == "b"
+    assert final.current_task_id == spawned[0]["id"]
+    history_row = cp.store.query_one(
+        "SELECT COUNT(*) AS n, MAX(task_id) AS task_id FROM workflow_run_history "
+        "WHERE run_id = ? AND to_node_key = ?",
+        (run.id, "b"),
+    )
+    assert history_row["n"] == 1
+    assert history_row["task_id"] == spawned[0]["id"]
+
+
+def test_dispatch_tick_contains_workflow_recovery_and_reconcile_failures(cp, monkeypatch):
+    monkeypatch.setattr(
+        cp.workflow_runtime,
+        "tick",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("recovery failed")),
+    )
+    monkeypatch.setattr(
+        cp,
+        "reconcile_service_roles",
+        lambda: (_ for _ in ()).throw(RuntimeError("reconcile failed")),
+    )
+
+    result = cp.tick(limit=0)
+
+    assert result["workflow_runs"] == []
+    events = cp.list_observability(limit=20)
+    assert any(event.name == "workflow.recovery.failed" for event in events)
+
+
+def test_workflow_tick_skips_active_reservations_and_incomplete_rows(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "tick-nonactionable")
+    run = cp.workflow_runtime.start_run("tick-nonactionable", started_by="ops")
+    cp.store.execute(
+        "UPDATE workflow_runs SET current_node_key = ?, updated_at = ? WHERE id = ?",
+        ("__workflow_advancing__:task_future", utcnow(), run.id),
+    )
+    assert cp.workflow_runtime.tick() == []
+
+    cp.store.execute(
+        "UPDATE workflow_runs SET current_node_key = ?, current_task_id = NULL WHERE id = ?",
+        ("investigate", run.id),
+    )
+    assert cp.workflow_runtime.tick() == []
+
+    cp.store.execute(
+        "UPDATE workflow_runs SET current_node_key = ?, current_task_id = ? WHERE id = ?",
+        ("missing-node", run.current_task_id, run.id),
+    )
+    assert cp.workflow_runtime.tick() == []
+
+    definition = dict(run.definition_snapshot)
+    definition["nodes"] = [
+        {**node, "timeout_minutes": 1}
+        if node.get("node_key") == "investigate"
+        else node
+        for node in definition["nodes"]
+    ]
+    cp.store.execute(
+        "UPDATE workflow_runs SET current_node_key = ?, current_task_id = ?, "
+        "definition_snapshot = ? WHERE id = ?",
+        ("investigate", run.current_task_id, json.dumps(definition), run.id),
+    )
+    original_get_task = cp.workflow_runtime._get_task
+    monkeypatch.setattr(
+        cp.workflow_runtime,
+        "_get_task",
+        lambda *_args: (_ for _ in ()).throw(NotFoundError("missing task")),
+    )
+    assert cp.workflow_runtime.tick() == []
+    monkeypatch.setattr(cp.workflow_runtime, "_get_task", original_get_task)
+
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
+        (TaskState.OPEN.value, "not-a-timestamp", run.current_task_id),
+    )
+    assert cp.workflow_runtime.tick() == []
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, utcnow(), run.current_task_id),
+    )
+    assert cp.workflow_runtime.tick() == []
+
+    with cp.store.transaction() as conn:
+        cp.workflow_runtime._record_run_history(
+            conn,
+            run.id,
+            seq=2,
+            from_key="investigate",
+            to_key=None,
+            condition="skipped",
+            task_id=run.current_task_id,
+            actor="test",
+            attempt=1,
+            detail={"reason": "coverage of durable history helper"},
+        )
+
+
+def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypatch):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="recover-predecision-start",
+        name="recover predecision start",
+        description="d",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    original_spawn = cp.workflow_runtime._spawn_node_task
+
+    def crash_before_spawn(*_args, **_kwargs):
+        raise RuntimeError("simulated crash before task creation")
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", crash_before_spawn)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        cp.workflow_runtime.start_run(
+            "recover-predecision-start",
+            started_by="ops",
+            pre_decisions={"review": "approved"},
+        )
+
+    row = cp.store.query_one(
+        "SELECT id, current_node_key FROM workflow_runs "
+        "WHERE workflow_id = (SELECT id FROM workflows WHERE slug = ?) "
+        "ORDER BY created_at DESC LIMIT 1",
+        ("recover-predecision-start",),
+    )
+    assert row["current_node_key"].startswith("__workflow_advancing__:")
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+        (row["id"],),
+    )["n"] == 0
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    recovered = cp.workflow_runtime.tick()
+
+    assert [item.id for item in recovered] == [row["id"]]
+    final = cp.workflow_runtime.get_run(row["id"])
+    assert final.current_node_key == "build"
+    history = cp.store.query_all(
+        "SELECT to_node_key, condition FROM workflow_run_history "
+        "WHERE run_id = ? ORDER BY seq",
+        (row["id"],),
+    )
+    assert [(item["to_node_key"], item["condition"]) for item in history] == [
+        ("review", "success"),
+        ("build", "approved"),
+    ]
+    cp.workflow_runtime.tick()
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+        (row["id"],),
+    )["n"] == 2
+
+
+def test_start_run_predecision_chain_can_complete_without_spawning(cp):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="predecision-terminal",
+        name="predecision terminal",
+        description="d",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "", "condition": "approved", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+
+    run = cp.workflow_runtime.start_run(
+        "predecision-terminal",
+        started_by="ops",
+        pre_decisions={"review": "approved"},
+    )
+
+    assert run.state == "completed"
+    assert run.current_node_key is None
+    assert run.current_task_id is None
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM tasks WHERE workflow_run_id = ?",
+        (run.id,),
+    )["n"] == 0
+    history = cp.store.query_all(
+        "SELECT to_node_key, condition FROM workflow_run_history "
+        "WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    assert [(item["to_node_key"], item["condition"]) for item in history] == [
+        ("review", "success"),
+        (None, "approved"),
+    ]
+
+
+def test_midrun_predecision_history_commits_only_with_recovered_spawn(cp, monkeypatch):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="recover-predecision-midrun",
+        name="recover predecision midrun",
+        description="d",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {"node_key": "prepare", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "prepare", "condition": "success", "priority": 100},
+                {"from_node_key": "prepare", "to_node_key": "review", "condition": "success", "priority": 100},
+                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run(
+        "recover-predecision-midrun",
+        started_by="ops",
+        pre_decisions={"review": "approved"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, run.current_task_id),
+    )
+    original_spawn = cp.workflow_runtime._spawn_node_task
+
+    def crash_before_spawn(*_args, **_kwargs):
+        raise SystemExit("midrun process terminated")
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", crash_before_spawn)
+    with pytest.raises(SystemExit, match="process terminated"):
+        cp.workflow_runtime._advance(
+            run, "prepare", "success", run.current_task_id
+        )
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+        (run.id,),
+    )["n"] == 1
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    cp.tick(limit=0)
+
+    final = cp.workflow_runtime.get_run(run.id)
+    assert final.current_node_key == "build"
+    rows = cp.store.query_all(
+        "SELECT condition FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
+        (run.id,),
+    )
+    assert [row["condition"] for row in rows] == ["success", "approved", "success"]
+    cp.tick(limit=0)
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+        (run.id,),
+    )["n"] == 3
 
 
 

@@ -301,9 +301,11 @@ For repository-backed work, the production path is:
 4. The executor records typed evidence with a `mac.worker_evidence.v1`
    verification manifest. Repository work must report pushed/clean git state
    and passing checks before it can enter review.
-5. The default review workflow assigns a healthy reviewer-capable agent that
-   has never owned the task or another task in the same cooperative work
-   family. For remote repositories it consults shared
+5. Every review assignment path, including manual/API requests, enforces the
+   same health, freshness, capability, target-policy, repository-access, tenant,
+   persona, ownership, and cooperative-family checks. The default workflow picks
+   a reviewer-capable agent that has never owned the task or another task in the
+   same cooperative work family. For remote repositories it consults shared
    `fleet_learning:repository_access` memory: a recent successful clone is
    preferred, while a newer authentication or authorization failure makes that
    agent temporarily ineligible for the same project, host, and operation.
@@ -329,7 +331,9 @@ Repository-access failure cooldown defaults to 30 minutes
 (`MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS=1800`), successful access is
 preferred for 24 hours (`MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS=86400`), and
 review verdict nudges default to 10 delivered attempts
-(`MAC_REVIEW_NUDGE_MAX_ATTEMPTS=10`). See
+(`MAC_REVIEW_NUDGE_MAX_ATTEMPTS=10`). Stale workflow advancement reservations
+are recovered after 60 seconds by default
+(`MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS=60`). See
 [Fleet Operational Learning](docs/fleet-operational-learning.md) for the record
 schema, credential boundaries, inspection commands, and failure semantics.
 
@@ -358,6 +362,12 @@ dependencies: each child is assigned to a distinct executor, completed child
 evidence contributes immutable commit/ref inputs to the reopened parent, and a
 different integration executor must merge every exact child commit and
 verify the combined result before the parent can enter review.
+
+Node advancement uses a durable reservation containing the preallocated next
+task ID. Task creation, workflow linkage, and task-created history commit
+atomically; a stale reservation can therefore recreate or adopt that same task
+without duplication. Workflow history for pre-decided approval chains is staged
+until the downstream task and run transition finalize together.
 
 The REST API and CLI can create, import, seed, start, cancel, and tick workflow
 runs today, and `/dashboard/state` includes workflow-run summary data for UI

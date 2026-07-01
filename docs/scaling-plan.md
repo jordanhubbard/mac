@@ -93,6 +93,9 @@ Status: implemented.
 Move from prototype gates to production gates:
 
 - Reviewer independence from current or prior task owners is enforced.
+- Manual/API and automatic reviewer assignment share the complete eligibility
+  policy, including health, freshness, required capabilities, explicit targets,
+  repository-access cooldowns, tenancy, and persona separation.
 - Approved reviews must reference the current attempt's immutable executor
   evidence; historical approvals cannot authorize rework.
 - Evidence kinds are explicit: `test`, `review`, `artifact`, `publication`, `log`.
@@ -139,6 +142,9 @@ Move from single-task routing to coordinated agent work:
 - Cooperative decomposition is a separate fan-out/fan-in contract: child tasks
   use distinct executors, publish their evidence as integration inputs, and the
   parent is reopened as a combined integration task owned by another agent.
+- Workflow node advancement reserves a deterministic next-task ID, creates the
+  task and its workflow linkage atomically, recovers stale reservations
+  idempotently, and commits pre-decision history only with final advancement.
 - Observability now includes low-level metrics/logs, integration findings,
   operator notifications, command audit, and Beads `mac-ledger v1` issue
   comments for human-facing task milestones.
