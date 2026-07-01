@@ -3,12 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
 from mac.migration import import_jsonl, migrate_acc_sqlite
 from mac.models import MACError
+from mac.repository_hygiene import (
+    CANCELLATION_DISPOSITIONS,
+    REPOSITORY_REF_CLEANUP_SCHEMA,
+    RepositoryHygieneError,
+    RepositoryRefAudit,
+    audit_repository_refs,
+    cleanup_evidence_metadata,
+    list_managed_remote_refs,
+    prune_repository_refs,
+)
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
 
@@ -870,6 +881,13 @@ def cmd_task_close(args: argparse.Namespace) -> None:
 
     detail = {"reason": args.reason} if args.reason else {}
     target = TaskState.COMPLETED.value if args.success else TaskState.CANCELLED.value
+    if not args.success:
+        detail["disposition"] = args.disposition or "preserve"
+        detail["cleanup_grace_seconds"] = int(
+            max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60
+        )
+        if args.replacement_task:
+            detail["replacement_task_id"] = args.replacement_task
     result = cp.transition_task(args.task_id, target, args.actor, detail)
     _maybe_emit_ticket(result, args, close_reason=args.reason or None)
     _print(result)
@@ -885,6 +903,129 @@ def cmd_task_force_complete(args: argparse.Namespace) -> None:
     # Operator override: mark a task COMPLETED regardless of state/review, for
     # reconciling work done out-of-band or recovering a stranded terminal task.
     _print(_plane(args).force_complete_task(args.task_id, args.actor, args.reason or None))
+
+
+def _repository_open_pull_requests(repo: Path) -> tuple[Optional[Dict[str, str]], str]:
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                "1000",
+                "--json",
+                "headRefName,number,url",
+            ],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None, "GitHub pull request state could not be verified"
+    if result.returncode != 0:
+        return None, "GitHub pull request state could not be verified"
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None, "GitHub pull request state returned malformed JSON"
+    if not isinstance(payload, list):
+        return None, "GitHub pull request state returned an invalid response"
+    heads: Dict[str, str] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("headRefName") or "").strip()
+        if not branch:
+            continue
+        url = str(item.get("url") or "").strip()
+        number = str(item.get("number") or "").strip()
+        heads[branch] = url or (("PR #%s" % number) if number else "open pull request")
+    return heads, ""
+
+
+def _repository_ref_audit(
+    args: argparse.Namespace,
+) -> tuple[Any, list[RepositoryRefAudit], str]:
+    repo = Path(args.repo_path).expanduser().resolve()
+    if not repo.is_dir():
+        raise RepositoryHygieneError("repository path does not exist")
+    cp = _plane(args)
+    refs = list_managed_remote_refs(repo, args.remote)
+    selected_tasks = set(args.task_ids or [])
+    if selected_tasks:
+        refs = [item for item in refs if item.task_id in selected_tasks]
+    open_prs, pr_warning = _repository_open_pull_requests(repo)
+    audits = audit_repository_refs(
+        repo,
+        refs,
+        cp.task_detail,
+        base_ref=args.base_ref or ("%s/main" % args.remote),
+        default_grace_seconds=int(max(0.0, float(args.grace_days)) * 24 * 60 * 60),
+        open_pull_requests=open_prs,
+    )
+    return cp, audits, pr_warning
+
+
+def _repository_ref_report(
+    audits: Iterable[RepositoryRefAudit],
+    *,
+    pr_warning: str = "",
+) -> Dict[str, Any]:
+    items = [item.to_dict() for item in audits]
+    counts: Dict[str, int] = {}
+    for item in items:
+        classification = str(item.get("classification") or "unknown")
+        counts[classification] = counts.get(classification, 0) + 1
+    report: Dict[str, Any] = {
+        "schema": REPOSITORY_REF_CLEANUP_SCHEMA,
+        "mode": "audit",
+        "counts": counts,
+        "eligible_count": sum(1 for item in items if item.get("eligible")),
+        "refs": items,
+    }
+    if pr_warning:
+        report["warning"] = pr_warning
+    return report
+
+
+def cmd_repo_refs_audit(args: argparse.Namespace) -> None:
+    _cp, audits, warning = _repository_ref_audit(args)
+    _print(_repository_ref_report(audits, pr_warning=warning))
+
+
+def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
+    cp, audits, warning = _repository_ref_audit(args)
+    if args.execute and warning:
+        raise RepositoryHygieneError(
+            "%s; refusing executable cleanup" % warning
+        )
+
+    def record(item: RepositoryRefAudit, action: str, error: str) -> None:
+        metadata = cleanup_evidence_metadata(item, action, error=error)
+        cp.add_evidence(
+            item.task_id,
+            "artifact",
+            "urn:mac:repository-ref-cleanup:%s:%s:%s:%s"
+            % (item.task_id, item.lease_id, item.sha, action),
+            "managed repository ref cleanup %s for %s at %s"
+            % (action, item.branch, item.sha),
+            args.actor,
+            metadata=metadata,
+        )
+
+    result = prune_repository_refs(
+        Path(args.repo_path),
+        audits,
+        execute=bool(args.execute),
+        recorder=record if args.execute else None,
+    )
+    result["audit"] = _repository_ref_report(audits, pr_warning=warning)
+    _print(result)
 
 
 def cmd_task_search(args: argparse.Namespace) -> None:
@@ -3252,6 +3393,22 @@ def build_parser() -> argparse.ArgumentParser:
                        help="don't update the .tickets/<id>.md mirror on close")
     close.add_argument("--cancelled", dest="success", action="store_false",
                        help="close as CANCELLED instead of COMPLETED")
+    close.add_argument(
+        "--disposition",
+        choices=CANCELLATION_DISPOSITIONS,
+        help="why cancelled work should be preserved or eventually cleaned up "
+        "(default: preserve)",
+    )
+    close.add_argument(
+        "--replacement-task",
+        help="replacement task required for duplicate or superseded cancellations",
+    )
+    close.add_argument(
+        "--cleanup-grace-days",
+        type=float,
+        default=7.0,
+        help="delay before an eligible managed ref may be pruned (default: 7)",
+    )
     close.set_defaults(success=True)
     _set(cmd_task_close, close)
 
@@ -3357,6 +3514,60 @@ def build_parser() -> argparse.ArgumentParser:
     convert_ticketing.add_argument("--actor", default="hermes")
     convert_ticketing.add_argument("--dry-run", action="store_true")
     _set(cmd_task_convert_ticketing, convert_ticketing)
+
+    repo = sub.add_parser(
+        "repo", help="managed repository work-ref lifecycle commands"
+    ).add_subparsers(dest="repo_command", required=True)
+    repo_refs = repo.add_parser(
+        "refs", help="audit or prune task-owned remote branches"
+    ).add_subparsers(dest="repo_refs_command", required=True)
+    refs_audit = repo_refs.add_parser(
+        "audit", help="classify managed refs without changing the repository"
+    )
+    refs_prune = repo_refs.add_parser(
+        "prune", help="show or execute safe exact-SHA managed-ref cleanup"
+    )
+    for refs_parser in (refs_audit, refs_prune):
+        refs_parser.add_argument(
+            "--repo",
+            dest="repo_path",
+            default=".",
+            help="repository working tree (default: current directory)",
+        )
+        refs_parser.add_argument("--remote", default="origin")
+        refs_parser.add_argument(
+            "--base-ref",
+            help="local canonical ref used to prove completed work is merged "
+            "(default: <remote>/main)",
+        )
+        refs_parser.add_argument(
+            "--task",
+            dest="task_ids",
+            action="append",
+            help="limit to one task ID (repeatable)",
+        )
+        refs_parser.add_argument(
+            "--grace-days",
+            type=float,
+            default=7.0,
+            help="fallback grace period for legacy completed refs (default: 7)",
+        )
+    _set(cmd_repo_refs_audit, refs_audit)
+    prune_mode = refs_prune.add_mutually_exclusive_group()
+    prune_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="delete eligible unchanged refs; default is a read-only dry-run",
+    )
+    prune_mode.add_argument(
+        "--dry-run",
+        dest="execute",
+        action="store_false",
+        help="explicitly request the default read-only mode",
+    )
+    refs_prune.set_defaults(execute=False)
+    refs_prune.add_argument("--actor", default="human")
+    _set(cmd_repo_refs_prune, refs_prune)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
     project_create = project.add_parser("create")

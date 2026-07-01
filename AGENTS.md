@@ -183,7 +183,9 @@ cp -rf source dest          # NOT: cp -r source dest
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** — clear stashes, prune remote branches
+5. **Clean up** — clear stashes, then audit managed task refs with
+   `mac repo refs audit --repo .`; use `mac repo refs prune --repo . --execute`
+   only for refs the lifecycle policy marks eligible
 6. **Verify** all changes committed AND pushed
 7. **Hand off** context for next session
 

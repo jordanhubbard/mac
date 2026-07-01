@@ -50,6 +50,9 @@ This project provides durable contracts for coordinating a fleet:
 - Repository runtime contract enforcement for registered project checkouts so
   agents can bootstrap and test work on macOS, Linux, WSL2, or narrower
   declared host families without relying on accidental local state.
+- Managed repository-ref lifecycles that distinguish superseded work from
+  deferred or failed attempts, audit task-owned remote branches, and delete
+  only exact-SHA eligible refs after a grace period.
 - Role catalog, role assignment, provisioning requests, and data-driven DAG
   workflows that turn multi-step plans into durable tasks with per-node role
   requirements and run history.
@@ -176,6 +179,26 @@ token through shell history or process inspection. `fleet sync-token` copies
 the historical administrator token; do not use it for routine new-client
 onboarding. See [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 and [Production Deployment](docs/production-deployment.md#reaching-the-hub-node).
+
+### Repository branch hygiene
+
+Task cancellation records why its worker branches should be preserved or may
+eventually be removed. Missing dispositions default to `preserve`; duplicate
+and superseded work must name the replacement task. Audit and prune are
+fail-closed, and prune is read-only unless `--execute` is explicit.
+
+```bash
+mac task close task_old --cancelled --disposition superseded \
+  --replacement-task task_new --reason "replacement published"
+
+git fetch --prune origin
+mac --json repo refs audit --repo .
+mac --json repo refs prune --repo .          # dry-run
+mac --json repo refs prune --repo . --execute --actor operator
+```
+
+See [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md) for the
+disposition policy, exact-SHA deletion contract, grace periods, and recovery.
 
 ## API
 
@@ -506,6 +529,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Production Deployment](docs/production-deployment.md)
 - [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
+- [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)

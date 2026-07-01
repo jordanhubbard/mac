@@ -113,6 +113,10 @@ from mac.models import (
     validate_transition,
     WorkflowDraft,
 )
+from mac.repository_hygiene import (
+    normalize_cancellation_detail,
+    repository_ref_lifecycle_for_transition,
+)
 from mac.agent_state_service import AgentStateService
 from mac.agentbus_control import (
     ARTIFACT_PUBLISH_CONTENT_TYPE,
@@ -5454,8 +5458,53 @@ class ControlPlane:
     ) -> Task:
         target = _state_value(target_state)
         task = self.get_task(task_id)
+        transition_detail = dict(detail or {})
+        if target == TaskState.CANCELLED.value:
+            transition_detail = normalize_cancellation_detail(transition_detail)
+        detail = transition_detail
         if task.state == target:
-            return task
+            # A terminal cancellation may be re-submitted solely to backfill or
+            # correct its repository-ref disposition. Keep the original
+            # terminal timestamp so this cannot reset the grace period.
+            if target != TaskState.CANCELLED.value:
+                return task
+            lifecycle = repository_ref_lifecycle_for_transition(
+                target,
+                detail,
+                now=task.completed_at or utcnow(),
+            )
+            metadata = ensure_json_object(task.metadata)
+            if metadata.get("repository_ref_lifecycle") == lifecycle:
+                return task
+            metadata["repository_ref_lifecycle"] = lifecycle
+            now = utcnow()
+            with self.store.transaction() as conn:
+                conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(metadata), now, task_id),
+                )
+                self._record_history(
+                    task_id,
+                    "repository_ref.lifecycle_updated",
+                    actor,
+                    target,
+                    target,
+                    detail,
+                    conn=conn,
+                )
+                self.task_ledger.enqueue_outbox(
+                    conn,
+                    task_id=task_id,
+                    event_type="task.lifecycle",
+                    actor=actor,
+                    from_state=target,
+                    to_state=target,
+                    detail=detail,
+                    created_at=now,
+                )
+            if drain_outbox:
+                self.drain_task_transition_outbox(task_id=task_id, limit=20)
+            return self.get_task(task_id)
         validate_transition(task.state, target)
         review_ready_evidence: Optional[Evidence] = None
         if target == TaskState.NEEDS_REVIEW.value:
@@ -5464,13 +5513,15 @@ class ControlPlane:
             raise ValidationError("task completion requires approved review and evidence")
         now = utcnow()
         updated_metadata: Optional[JsonDict] = None
+        candidate_metadata = ensure_json_object(task.metadata)
+        metadata_changed = False
         if review_ready_evidence is not None:
-            updated_metadata = ensure_json_object(task.metadata)
-            updated_metadata["review_target"] = {
+            candidate_metadata["review_target"] = {
                 "executor_evidence_id": review_ready_evidence.id,
                 "attempt_count": task.attempt_count,
                 "recorded_at": now,
             }
+            metadata_changed = True
         elif target in {
             TaskState.OPEN.value,
             TaskState.BLOCKED.value,
@@ -5478,9 +5529,19 @@ class ControlPlane:
             TaskState.FAILED.value,
             TaskState.CANCELLED.value,
         }:
-            candidate_metadata = ensure_json_object(task.metadata)
             if candidate_metadata.pop("review_target", None) is not None:
-                updated_metadata = candidate_metadata
+                metadata_changed = True
+        repository_ref_lifecycle = repository_ref_lifecycle_for_transition(
+            target,
+            detail,
+            now=now,
+        )
+        if repository_ref_lifecycle is not None:
+            if candidate_metadata.get("repository_ref_lifecycle") != repository_ref_lifecycle:
+                candidate_metadata["repository_ref_lifecycle"] = repository_ref_lifecycle
+                metadata_changed = True
+        if metadata_changed:
+            updated_metadata = candidate_metadata
         owner_agent_id = task.owner_agent_id
         lease_id = task.lease_id
         leased_until = task.leased_until
@@ -5634,6 +5695,12 @@ class ControlPlane:
         detail: Dict[str, Any] = {"via": "operator_force_complete", "from_state": task.state}
         if reason:
             detail["reason"] = reason
+        metadata = ensure_json_object(task.metadata)
+        metadata["repository_ref_lifecycle"] = repository_ref_lifecycle_for_transition(
+            TaskState.COMPLETED.value,
+            detail,
+            now=now,
+        )
         with self.store.transaction() as conn:
             if task.lease_id:
                 conn.execute(
@@ -5646,10 +5713,10 @@ class ControlPlane:
                 """
                 UPDATE tasks
                 SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
-                    completed_at = COALESCE(completed_at, ?), updated_at = ?
+                    completed_at = COALESCE(completed_at, ?), metadata = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (TaskState.COMPLETED.value, now, now, task_id),
+                (TaskState.COMPLETED.value, now, json_dumps(metadata), now, task_id),
             )
             self._record_history(
                 task_id,
@@ -5660,6 +5727,17 @@ class ControlPlane:
                 detail,
                 conn=conn,
             )
+            self.task_ledger.enqueue_outbox(
+                conn,
+                task_id=task_id,
+                event_type="task.lifecycle",
+                actor=actor,
+                from_state=task.state,
+                to_state=TaskState.COMPLETED.value,
+                detail=detail,
+                created_at=now,
+            )
+        self.drain_task_transition_outbox(task_id=task_id, limit=20)
         return self.get_task(task_id)
 
     def claim_task(
@@ -5858,6 +5936,25 @@ class ControlPlane:
 
     def _process_task_transition_outbox_item(self, item: TaskTransitionOutbox) -> None:
         if item.event_type == "task.lifecycle":
+            task = self.get_task(item.task_id)
+            metadata = ensure_json_object(task.metadata)
+            lifecycle = ensure_json_object(metadata.get("repository_ref_lifecycle"))
+            if lifecycle:
+                self.record_log(
+                    "repository.ref.lifecycle",
+                    layer="control_plane",
+                    source="task-ledger",
+                    level="info",
+                    subject_type="task",
+                    subject_id=item.task_id,
+                    detail={
+                        "task_state": task.state,
+                        "disposition": lifecycle.get("disposition"),
+                        "status": lifecycle.get("status"),
+                        "eligible_after": lifecycle.get("eligible_after"),
+                        "replacement_task_id": lifecycle.get("replacement_task_id"),
+                    },
+                )
             return
         task = self.get_task(item.task_id)
         if item.event_type == "workflow.advance":
