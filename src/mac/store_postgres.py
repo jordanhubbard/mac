@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+import re
 from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from mac.store import StoreConnection, StoreError
@@ -50,6 +51,10 @@ def _translate_placeholders(sql: str) -> str:
     are not entered by current service-layer SQL; if a future caller needs
     them, extend this function.
     """
+    # SQLite's INDEXED BY is a query-local planner hint. PostgreSQL has no
+    # equivalent syntax and its partial-index planner can select the same index
+    # from the predicate, so remove the hint before placeholder translation.
+    sql = re.sub(r"\s+INDEXED\s+BY\s+[A-Za-z_][A-Za-z0-9_]*", "", sql, flags=re.I)
     out: List[str] = []
     i = 0
     n = len(sql)

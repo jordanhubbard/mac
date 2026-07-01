@@ -83,6 +83,9 @@ Improve dispatch without changing the core task contract:
 - Task metadata can declare numeric/list/exact `resources` requirements.
 - Expired leases retry until `max_attempts`; exhausted tasks appear in
   `/dispatch/dead-letters`.
+- Dispatch ticks run maintenance once, then assign from one bounded task/agent
+  working set. Expired leases, dependency-blocked tasks, and dead-letter reads
+  use bounded cursor pages rather than backlog-sized scans.
 - AgentBus typed streams provide ordered JSON/text/base64 chunks with durable
   reads and NDJSON tailing for high-volume agent-to-agent content exchange.
 
@@ -150,8 +153,11 @@ Move from single-task routing to coordinated agent work:
   use compare-and-swap guards, and verdict submission rechecks the assignment's
   current reviewer eligibility.
 - Workflow recovery and default-review reconciliation use indexed, bounded
-  cursor pages. Recovery isolates and records poison-run failures, while review
-  queries select only reviewable states and apply tenant filters before limits.
+  cursor pages coordinated by database leases, so cursors survive restarts and
+  replicas do not duplicate healthy work. Workflow timeouts use a persisted,
+  indexed `next_action_at` deadline. Recovery isolates and records poison-run
+  failures, while review queries select only reviewable states and apply tenant
+  filters before limits.
 - Observability now includes low-level metrics/logs, integration findings,
   operator notifications, command audit, and Beads `mac-ledger v1` issue
   comments for human-facing task milestones.

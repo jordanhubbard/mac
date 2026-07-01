@@ -404,11 +404,18 @@ until the downstream task and run transition finalize together. Cancelling a run
 commits the run state, current-task cancellation, history, and transition outbox
 atomically, so the cancellation callback cannot create downstream work.
 
-Dispatcher recovery reads bounded, oldest-first pages of stale reservations and
-timeout candidates. A malformed run records a run-scoped failure and does not
-stop later candidates. Default-review sweeps query only `needs_review` and
-`reviewing` rows; their opaque `next_cursor` provides bounded traversal without
-letting a task waiting on a verdict permanently starve the rest of the backlog.
+Dispatcher recovery reads bounded pages selected by the indexed
+`workflow_runs.next_action_at` deadline; it does not scan workflow-definition
+JSON to discover timeouts. A malformed run records a run-scoped failure and
+does not stop later candidates. Default-review sweeps query only `needs_review`
+and `reviewing` rows. Autonomous workflow/review cursors and short leases live
+in `reconciliation_state`, so traversal survives restarts and competing hub
+replicas do not process the same page.
+
+Each dispatch tick performs one bounded expired-lease page, one bounded
+blocked-task page, and one bounded task/agent inventory pass before assigning a
+batch. Dead-letter output is bounded too; `/dispatch/dead-letters/page` exposes
+its opaque `next_cursor` for complete traversal.
 
 The REST API and CLI can create, import, seed, start, cancel, and tick workflow
 runs today, and `/dashboard/state` includes workflow-run summary data for UI

@@ -105,6 +105,37 @@ def test_repository_ref_reconciler_operator_trigger_and_admin_scope(monkeypatch)
     assert seen == {"mode": "audit", "actor": "operator", "trigger": "operator"}
 
 
+def test_dead_letter_page_exposes_bounded_cursor():
+    cp = ControlPlane.in_memory()
+    for index in range(3):
+        task = cp.create_task("dead letter page %d" % index)
+        cp.store.execute(
+            "UPDATE tasks SET state = ?, attempt_count = max_attempts, updated_at = ? "
+            "WHERE id = ?",
+            (
+                "failed",
+                "2000-01-%02dT00:00:00+00:00" % (index + 1),
+                task.id,
+            ),
+        )
+    client = TestClient(create_app(control_plane=cp))
+
+    first = client.get("/dispatch/dead-letters/page", params={"limit": 2})
+    assert first.status_code == 200
+    first_body = first.json()
+    assert len(first_body["tasks"]) == 2
+    assert first_body["has_more"] is True
+    assert first_body["next_cursor"]
+
+    second = client.get(
+        "/dispatch/dead-letters/page",
+        params={"limit": 2, "cursor": first_body["next_cursor"]},
+    )
+    assert second.status_code == 200
+    assert len(second.json()["tasks"]) == 1
+    assert second.json()["has_more"] is False
+
+
 def test_well_known_acp_manifest_is_public_and_advertises_mac_extensions(monkeypatch):
     # ADR 0006 Phase 3: the discovery manifest is unauthenticated even when the
     # hub is token-protected, and carries protocolVersion + mac's _meta extensions.
@@ -2309,7 +2340,7 @@ def test_events_endpoint_returns_unified_stream():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
 
-    tenant = client.post("/tenants", json={"name": "ops"}).json()
+    client.post("/tenants", json={"name": "ops"}).json()
     machine = client.post("/machines", json={"hostname": "host-1"}).json()
     agent = client.post(
         "/agents",

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "MAC control plane as an IDE — VS Code/Cursor-style shell over the fleet (file/task tree, Monaco editor, activity/evidence panel, Agents panel).",
+  "description": "MAC Fleet Workbench — a cockpit-first, A2A-aware operator IDE for the multi-agent control plane.",
   "scripts": {
     "start": "vite",
     "dev": "vite",
@@ -13,16 +13,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@monaco-editor/react": "^4.6.0",
+    "@vscode/codicons": "^0.0.45",
+    "@xyflow/react": "^12.11.1",
     "allotment": "^1.20.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^5.5.4",
-    "vite": "^5.4.2"
+    "vite": "^8.1.2"
   }
 }

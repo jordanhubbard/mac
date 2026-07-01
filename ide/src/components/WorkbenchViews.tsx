@@ -1,0 +1,467 @@
+import { useMemo, useState } from "react";
+import { api, type Agent, type AgentCard, type DashboardState, type TaskDetail } from "../api/mac";
+import type { WorkbenchView } from "./ActivityRail";
+import { WorkGraph } from "./WorkGraph";
+
+const TERMINAL_STATES = new Set(["completed", "cancelled", "failed"]);
+
+function text(value: unknown, fallback = "—"): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (Array.isArray(value)) return value.join(", ") || fallback;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function age(value: unknown): string {
+  if (!value) return "—";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.valueOf())) return text(value);
+  const seconds = Math.max(0, Math.round((Date.now() - date.valueOf()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+export function WorkbenchViewContent({
+  view,
+  data,
+  card,
+  selectedTaskId,
+  selectedAgentId,
+  onSelectTask,
+  onSelectAgent,
+  onRefresh,
+}: {
+  view: WorkbenchView;
+  data: DashboardState;
+  card: AgentCard | null;
+  selectedTaskId: string | null;
+  selectedAgentId: string | null;
+  onSelectTask: (taskId: string) => void;
+  onSelectAgent: (agentId: string) => void;
+  onRefresh: () => void;
+}) {
+  const agents = data.agents.map((item) => item.agent);
+  switch (view) {
+    case "work":
+      return <WorkView data={data} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} />;
+    case "workflows":
+      return <WorkflowView data={data} onRefresh={onRefresh} />;
+    case "agents":
+      return <AgentsView agents={agents} onSelectAgent={onSelectAgent} selectedAgentId={selectedAgentId} />;
+    case "runtime":
+      return <RuntimeView data={data} />;
+    case "observability":
+      return <ObservabilityView data={data} />;
+    case "connections":
+      return <ConnectionsView card={card} data={data} />;
+    default:
+      return (
+        <CockpitView
+          agents={agents}
+          data={data}
+          onSelectTask={onSelectTask}
+          selectedTaskId={selectedTaskId}
+        />
+      );
+  }
+}
+
+function ViewHeader({
+  eyebrow,
+  title,
+  description,
+  actions,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <header className="view-header">
+      <div>
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      {actions ? <div className="view-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+function CockpitView({
+  data,
+  agents,
+  selectedTaskId,
+  onSelectTask,
+}: {
+  data: DashboardState;
+  agents: Agent[];
+  selectedTaskId: string | null;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const counts = data.overview.counts;
+  const states = data.overview.task_states;
+  const health = agents.length
+    ? Math.round((Number(counts.healthy_agents || 0) / agents.length) * 100)
+    : 100;
+  const active = data.tasks.filter((detail) => !TERMINAL_STATES.has(String(detail.task.state))).length;
+  return (
+    <main className="workbench-view cockpit-view">
+      <ViewHeader
+        description={`Live control plane · updated ${age(data.updated_at)}`}
+        eyebrow="Operator workbench"
+        title="Fleet cockpit"
+      />
+      <div className="telemetry-strip">
+        <Metric icon="heart-pulse" label="Fleet health" tone="good" value={`${health}`} unit="/ 100" />
+        <Metric icon="pulse" label="Active" value={active} />
+        <Metric icon="person-add" label="Review" tone="warn" value={Number(states.needs_review || 0) + Number(states.reviewing || 0)} />
+        <Metric icon="error" label="Blocked" tone="bad" value={states.blocked || 0} />
+        <Metric icon="organization" label="A2A routable" value={agents.length} />
+      </div>
+      <section className="primary-surface graph-surface">
+        <div className="surface-heading">
+          <div>
+            <span className="surface-kicker">Live work graph</span>
+            <span className="surface-note">Ledger dependencies and current execution stages</span>
+          </div>
+          <span className="live-indicator"><span /> stream connected</span>
+        </div>
+        <WorkGraph
+          agents={agents}
+          onSelectTask={onSelectTask}
+          selectedTaskId={selectedTaskId}
+          tasks={data.tasks}
+        />
+      </section>
+    </main>
+  );
+}
+
+function Metric({
+  icon,
+  label,
+  value,
+  unit,
+  tone = "info",
+}: {
+  icon: string;
+  label: string;
+  value: string | number;
+  unit?: string;
+  tone?: "info" | "good" | "warn" | "bad";
+}) {
+  return (
+    <div className={`metric tone-${tone}`}>
+      <i className={`codicon codicon-${icon}`} />
+      <span className="metric-copy">
+        <span>{label}</span>
+        <strong>{value}<small>{unit}</small></strong>
+      </span>
+    </div>
+  );
+}
+
+function WorkView({
+  data,
+  selectedTaskId,
+  onSelectTask,
+}: {
+  data: DashboardState;
+  selectedTaskId: string | null;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return data.tasks.filter(({ task }) => !needle || [task.title, task.project, task.state, task.id]
+      .some((value) => String(value || "").toLowerCase().includes(needle)));
+  }, [data.tasks, query]);
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="Search, inspect, and steer every ledger task." eyebrow="Ledger" title="Work" />
+      <div className="table-toolbar">
+        <label className="command-input compact">
+          <i className="codicon codicon-search" />
+          <input onChange={(event) => setQuery(event.target.value)} placeholder="Search task, project, or state" value={query} />
+        </label>
+        <span>{visible.length} tasks</span>
+      </div>
+      <div className="data-table task-table" role="table">
+        <div className="data-row table-head" role="row">
+          <span>State</span><span>Task</span><span>Project</span><span>Owner</span><span>Priority</span><span>Updated</span>
+        </div>
+        {visible.map(({ task }) => (
+          <button
+            className={`data-row ${task.id === selectedTaskId ? "selected" : ""}`}
+            key={task.id}
+            onClick={() => onSelectTask(task.id)}
+            role="row"
+            type="button"
+          >
+            <span><span className={`state-dot state-${task.state || "open"}`} /> {text(task.state)}</span>
+            <span className="record-title"><strong>{text(task.title, task.id)}</strong><small>{task.id}</small></span>
+            <span>{text(task.project, "unassigned")}</span>
+            <span>{text(task.owner_agent_id, "unassigned").replace(/^agent_/, "")}</span>
+            <span>P{task.priority ?? 0}</span>
+            <span>{age(task.updated_at)}</span>
+          </button>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+function WorkflowView({ data, onRefresh }: { data: DashboardState; onRefresh: () => void }) {
+  const [prompt, setPrompt] = useState("");
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const runs = Array.isArray(data.workflow_runs.latest) ? data.workflow_runs.latest as Array<Record<string, unknown>> : [];
+
+  async function generate() {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      setPreview(await api.workflowPlanPreview(prompt.trim(), { source: "fleet-workbench" }));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function accept() {
+    if (!preview) return;
+    setBusy(true);
+    try {
+      await api.workflowPlanAccept(preview);
+      setMessage("Workflow accepted and released to the ledger.");
+      setPreview(null);
+      setPrompt("");
+      onRefresh();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const nodes = preview && Array.isArray(preview.nodes) ? preview.nodes as Array<Record<string, unknown>> : [];
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="Turn an objective into an inspectable DAG, then approve it into the ledger." eyebrow="DAG automation" title="Workflow studio" />
+      <div className="split-grid workflow-layout">
+        <section className="primary-surface planner-surface">
+          <div className="surface-heading"><span className="surface-kicker">Plan with the fleet</span></div>
+          <textarea
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Describe the desired outcome, constraints, verification, and rollout policy…"
+            value={prompt}
+          />
+          <div className="form-actions">
+            <button className="button primary" disabled={busy || !prompt.trim()} onClick={generate} type="button">
+              <i className="codicon codicon-sparkle" /> {busy ? "Planning…" : "Generate graph"}
+            </button>
+            {preview ? <button className="button" disabled={busy} onClick={accept} type="button">Accept plan</button> : null}
+            <span className="form-message">{message}</span>
+          </div>
+          <div className="workflow-preview">
+            {preview ? (
+              <>
+                <div className="preview-summary">
+                  <strong>{text(preview.title || preview.name, "Proposed workflow")}</strong>
+                  <span>{nodes.length} nodes · inspect before accepting</span>
+                </div>
+                <div className="preview-nodes">
+                  {nodes.map((node, index) => (
+                    <div className="preview-node" key={text(node.id || node.key, String(index))}>
+                      <span>{index + 1}</span>
+                      <strong>{text(node.title || node.name || node.key, `Step ${index + 1}`)}</strong>
+                      <small>{text(node.required_role || node.role || node.type)}</small>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : <div className="empty-state centered"><i className="codicon codicon-type-hierarchy" /><strong>No draft graph</strong><span>Your prompt will be previewed here before anything is created.</span></div>}
+          </div>
+        </section>
+        <section className="primary-surface compact-surface">
+          <div className="surface-heading"><span className="surface-kicker">Definitions</span><span>{data.workflows.length}</span></div>
+          <RecordList records={data.workflows} primary="name" secondary="description" state="enabled" />
+          <div className="surface-heading subheading"><span className="surface-kicker">Recent runs</span><span>{runs.length}</span></div>
+          <RecordList records={runs} primary="workflow_id" secondary="current_node_key" state="state" />
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function AgentsView({
+  agents,
+  selectedAgentId,
+  onSelectAgent,
+}: {
+  agents: Agent[];
+  selectedAgentId: string | null;
+  onSelectAgent: (agentId: string) => void;
+}) {
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="Capabilities, health, workload, and interoperability at a glance." eyebrow="A2A + ACP" title="Agent mesh" />
+      <div className="agent-grid">
+        {agents.map((agent) => (
+          <button
+            className={`agent-tile ${agent.id === selectedAgentId ? "selected" : ""}`}
+            key={agent.id}
+            onClick={() => onSelectAgent(agent.id)}
+            type="button"
+          >
+            <div className="agent-tile-head">
+              <span className="agent-avatar">{(agent.name || agent.id)[0]?.toUpperCase()}</span>
+              <span><strong>{agent.name || agent.id.replace(/^agent_/, "")}</strong><small>{agent.id}</small></span>
+              <span className={`presence ${agent.health_status === "healthy" ? "online" : "offline"}`} />
+            </div>
+            <div className="capability-list">
+              {(agent.capabilities || []).slice(0, 6).map((capability) => <span key={capability}>{capability}</span>)}
+            </div>
+            <div className="agent-tile-foot"><span>{agent.current_task_id ? "active" : "idle"}</span><span>A2A routable · ACP</span></div>
+          </button>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+function RuntimeView({ data }: { data: DashboardState }) {
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="Promote validated runtime changes and watch canary health." eyebrow="Delivery" title="Runtime & rollouts" />
+      <div className="three-column-grid">
+        <RecordSection label="Runtime deltas" records={data.runtime_deltas} primary="summary" secondary="id" state="status" />
+        <RecordSection label="Active runs" records={data.runtime_runs} primary="runtime_id" secondary="id" state="status" />
+        <RecordSection label="Rollouts" records={data.rollouts} primary="version" secondary="strategy" state="status" />
+      </div>
+    </main>
+  );
+}
+
+function ObservabilityView({ data }: { data: DashboardState }) {
+  const records = [...data.events].reverse().slice(0, 100);
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="A unified stream of task, command, policy, notification, and integration events." eyebrow="Telemetry" title="Observability" />
+      <div className="observability-layout">
+        <section className="primary-surface event-surface">
+          <div className="surface-heading"><span className="surface-kicker">Control-plane event stream</span><span>{records.length}</span></div>
+          <EventLines records={records} />
+        </section>
+        <aside className="signal-sidebar">
+          <RecordSection label="Notifications" records={data.notifications} primary="title" secondary="subject_id" state="status" />
+          <RecordSection label="Integration findings" records={data.integration_findings} primary="title" secondary="source_id" state="status" />
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function ConnectionsView({ data, card }: { data: DashboardState; card: AgentCard | null }) {
+  return (
+    <main className="workbench-view">
+      <ViewHeader description="Discover protocol capabilities and adjacent fleet services without exposing credentials." eyebrow="Interoperability" title="Connections" />
+      <div className="three-column-grid">
+        <section className="primary-surface protocol-card">
+          <div className="surface-heading"><span className="surface-kicker">A2A Agent Card</span><span>{card?.protocolVersion || "unavailable"}</span></div>
+          <h2>{card?.name || "MAC control plane"}</h2>
+          <p>{card?.description || "Agent discovery is not available from this target."}</p>
+          <Definition label="Endpoint" value={card?.url} />
+          <Definition label="Streaming" value={card?.capabilities?.streaming} />
+          <Definition label="Skills" value={card?.skills?.map((skill) => skill.name || skill.id)} />
+        </section>
+        <RecordSection label="Service links" records={data.service_links} primary="name" secondary="role" state="status" />
+        <section className="primary-surface compact-surface">
+          <div className="surface-heading"><span className="surface-kicker">Secret inventory</span><span>{data.secrets.length}</span></div>
+          <p className="security-note"><i className="codicon codicon-shield-lock" /> Values remain redacted. Only scope and operational status are shown.</p>
+          <RecordList records={data.secrets} primary="name" secondary="scope" state="enabled" />
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function RecordSection({
+  label,
+  records,
+  primary,
+  secondary,
+  state,
+}: {
+  label: string;
+  records: Array<Record<string, unknown>>;
+  primary: string;
+  secondary: string;
+  state: string;
+}) {
+  return (
+    <section className="primary-surface compact-surface">
+      <div className="surface-heading"><span className="surface-kicker">{label}</span><span>{records.length}</span></div>
+      <RecordList primary={primary} records={records} secondary={secondary} state={state} />
+    </section>
+  );
+}
+
+function RecordList({
+  records,
+  primary,
+  secondary,
+  state,
+}: {
+  records: Array<Record<string, unknown>>;
+  primary: string;
+  secondary: string;
+  state: string;
+}) {
+  if (!records.length) return <div className="empty-state"><span>No records</span></div>;
+  return (
+    <div className="record-list">
+      {records.slice(0, 30).map((record, index) => (
+        <div className="record-item" key={text(record.id || record.name, String(index))}>
+          <span className={`state-dot state-${text(record[state], "open")}`} />
+          <span className="record-title"><strong>{text(record[primary], text(record.id))}</strong><small>{text(record[secondary])}</small></span>
+          <span className="record-state">{text(record[state])}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EventLines({ records }: { records: Array<Record<string, unknown>> }) {
+  if (!records.length) return <div className="empty-state centered"><span>No events yet.</span></div>;
+  return (
+    <div className="event-lines">
+      {records.map((record, index) => {
+        const detail = record.detail as Record<string, unknown> | undefined;
+        return (
+          <div className="event-line" key={text(record.id || record.sequence, String(index))}>
+            <time>{text(record.created_at || record.timestamp).slice(11, 23)}</time>
+            <span className={`event-level level-${text(record.level, "info").toLowerCase()}`}>{text(record.level, "INFO").toUpperCase()}</span>
+            <span className="event-name">{text(record.event_type || record.name || record.kind, "event")}</span>
+            <span className="event-detail">{text(detail?.summary || record.subject_id || detail)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Definition({ label, value }: { label: string; value: unknown }) {
+  return <div className="definition"><span>{label}</span><strong>{text(value)}</strong></div>;
+}
+
+export function selectedTask(data: DashboardState, taskId: string | null): TaskDetail | null {
+  return data.tasks.find((detail) => detail.task.id === taskId) || null;
+}

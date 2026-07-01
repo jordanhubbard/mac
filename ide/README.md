@@ -1,15 +1,18 @@
-# MAC — Fleet IDE (greenfield)
+# MAC — Fleet Workbench
 
-A VS Code / Cursor-style shell over the MAC control plane. Replaces the legacy
-`src/mac/ui` dashboard SPA with a React + TypeScript + Monaco app.
+A clean-slate operator IDE over the MAC control plane. It replaces the legacy
+`src/mac/ui` dashboard SPA with a React + TypeScript workbench built around the
+live task graph, agent context, A2A interoperability, and streamed operations.
 
-**Layout** (maps the Cursor template onto fleet data):
-- **Activity bar + Sidebar** — projects/repos and the task ledger as a tree.
-- **Editor (Monaco)** — task detail + the per-task activity narrative (and, next,
-  the diff a task produced).
-- **Bottom panel** — Activity / Evidence / History for the selected task.
-- **Agents panel (right)** — live fleet agents + a composer to **dispatch a task**
-  (the analogue of Cursor's "New Agent"). This is wired to `POST /tasks`.
+**Layout:**
+
+- **Activity rail + Explorer** — cockpit, work, workflow, agent, runtime,
+  observability, and connection views alongside project/task navigation.
+- **Workbench editor** — live dependency DAG plus collection and control
+  surfaces for every major operator domain.
+- **Bottom panel** — event stream, terminal sessions, evidence, and problems.
+- **Agent mesh (right)** — capability inspector, task thread, rich dispatch,
+  direct assignment, review request, and A2A Agent Card/delegation surface.
 
 ## Run (dev)
 
@@ -37,7 +40,9 @@ MAC_API_URL=http://100.72.16.110:8789 npm run dev   # hub to talk to
 ```
 
 `/api/*` is proxied to the hub (see `vite.config.ts`). The token is stored in
-`localStorage["mac.token"]` (or set `VITE_MAC_TOKEN`).
+tab-scoped `sessionStorage["mac.token"]` (with a migration fallback for an old
+local value), or set with `VITE_MAC_TOKEN`. `?t=` bootstrap values are removed
+from the URL immediately.
 
 ## Build and package
 
@@ -60,15 +65,21 @@ npm run package
 `npm run package` and `make ide-package` create a static web bundle, not a
 native Electron app. The Electron wrapper is still tracked as follow-up work.
 
-## Status — first increment
+## Status
 
-Runnable IDE shell with live data: task tree, task detail + activity in Monaco,
-activity/evidence/history panel, and the Agents panel with dispatch.
+The workbench foundation is implemented: cockpit telemetry, live task DAG,
+searchable work ledger, workflow planner, agent mesh, runtime and observability
+surfaces, connection inventory, task/evidence context, streamed invalidation,
+and A2A delegation.
+
+See [the active Fleet Workbench plan](../docs/fleet-ide-workbench-plan.md) for
+the recovered 57-workflow backlog and the OpenVSCode/Theia extension-substrate
+decision that follows this increment.
 
 ## Next
 
-- Diff view (Monaco diff) of a task's branch vs main, from the evidence repo.
-- Open real repo files in the editor (file tree → editor), not just task docs.
-- Live activity streaming (SSE) instead of 5s polling.
-- Per-agent live terminal (the AgentBus debug-terminal streams) in the bottom panel.
-- Wrap in the existing `desktop/` Electron app; retire `src/mac/ui`.
+- Complete review, workflow-run, runtime, rollout, secret, and service-link actions.
+- Upgrade Mac's A2A 0.3 surface to A2A 1.0 streaming and remote peer discovery.
+- Decide OpenVSCode Server versus Theia before adopting a standard extension
+  host, workspace filesystem, source control, and full terminal.
+- Point the desktop package at the canonical workbench artifact.

@@ -1,15 +1,141 @@
-// Thin client for the MAC hub. In dev, requests go to /api/* which Vite proxies
-// to the hub (see vite.config.ts). The bearer token is read from VITE_MAC_TOKEN
-// or localStorage("mac.token") so it can be set without rebuilding.
+// Typed client for the MAC hub. Development requests use Vite's /api proxy;
+// packaged clients can point at a remote hub by setting mac.apiBaseUrl.
 
-const BASE = "/api";
+const DEFAULT_BASE = "/api";
+const TOKEN_KEY = "mac.token";
+const API_BASE_KEY = "mac.apiBaseUrl";
 
-export function getToken(): string {
-  return (
-    localStorage.getItem("mac.token") ||
-    (import.meta as any).env?.VITE_MAC_TOKEN ||
-    ""
-  );
+export interface ActivityEntry {
+  phase: string;
+  actor: string;
+  summary: string;
+  at: string;
+}
+
+export interface Task {
+  id: string;
+  title?: string;
+  state?: string;
+  project?: string;
+  description?: string;
+  priority?: number;
+  owner_agent_id?: string | null;
+  required_capabilities?: string[];
+  dependencies?: string[];
+  created_at?: string;
+  updated_at?: string;
+  metadata?: { activity?: ActivityEntry[]; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+export interface TaskDetail {
+  task: Task;
+  evidence?: Array<Record<string, unknown>>;
+  history?: Array<Record<string, unknown>>;
+  reviews?: Array<Record<string, unknown>>;
+  publications?: Array<Record<string, unknown>>;
+}
+
+export interface Agent {
+  id: string;
+  name?: string;
+  status?: string;
+  health_status?: string;
+  current_task_id?: string | null;
+  capabilities?: string[];
+  resources?: Record<string, unknown>;
+  role_id?: string | null;
+  last_seen_at?: string;
+}
+
+export interface DashboardAgent {
+  agent: Agent;
+  machine?: Record<string, unknown> | null;
+  availability?: { eligible?: boolean; reasons?: string[] };
+  active_tasks?: Task[];
+  active_projects?: string[];
+  active_lease_count?: number;
+  capacity?: number;
+}
+
+export interface ProjectSummary {
+  id?: string;
+  name?: string;
+  project?: string;
+  status?: string;
+  ready_count?: number;
+  task_count?: number;
+  active_task_count?: number;
+  [key: string]: unknown;
+}
+
+export interface DashboardState {
+  overview: {
+    counts: Record<string, number>;
+    task_states: Record<string, number>;
+    agent_statuses: Record<string, number>;
+  };
+  project_summaries: ProjectSummary[];
+  agents: DashboardAgent[];
+  tasks: TaskDetail[];
+  fleets: Array<Record<string, unknown>>;
+  workflows: Array<Record<string, unknown>>;
+  workflow_drafts: Array<Record<string, unknown>>;
+  workflow_runs: Record<string, unknown>;
+  events: Array<Record<string, unknown>>;
+  messages: Array<Record<string, unknown>>;
+  notifications: Array<Record<string, unknown>>;
+  observability: Record<string, unknown>;
+  action_events: Array<Record<string, unknown>>;
+  command_audit: Array<Record<string, unknown>>;
+  runtimes: Array<Record<string, unknown>>;
+  runtime_deltas: Array<Record<string, unknown>>;
+  runtime_runs: Array<Record<string, unknown>>;
+  rollouts: Array<Record<string, unknown>>;
+  secrets: Array<Record<string, unknown>>;
+  secret_audits: Array<Record<string, unknown>>;
+  service_links: Array<Record<string, unknown>>;
+  integration_findings: Array<Record<string, unknown>>;
+  artifacts: Array<Record<string, unknown>>;
+  terminal_sessions: Array<Record<string, unknown>>;
+  server_time?: string;
+  updated_at?: string;
+  session?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface AgentCard {
+  name: string;
+  description?: string;
+  protocolVersion?: string;
+  url?: string;
+  version?: string;
+  capabilities?: Record<string, unknown>;
+  skills?: Array<{
+    id?: string;
+    name?: string;
+    description?: string;
+    tags?: string[];
+    examples?: string[];
+  }>;
+  [key: string]: unknown;
+}
+
+export interface TaskCreatePayload {
+  title: string;
+  description: string;
+  project?: string;
+  priority?: number;
+  required_capabilities?: string[];
+  dependencies?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+interface A2AResponse<T> {
+  jsonrpc: "2.0";
+  id: string;
+  result?: T;
+  error?: { code?: number; message?: string; data?: unknown };
 }
 
 export function normalizeTokenInput(raw: string): string {
@@ -19,69 +145,155 @@ export function normalizeTokenInput(raw: string): string {
   return token;
 }
 
-export function setToken(t: string): string {
-  const token = normalizeTokenInput(t);
-  if (token) localStorage.setItem("mac.token", token);
-  else localStorage.removeItem("mac.token");
+export function getToken(): string {
+  return (
+    sessionStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem(TOKEN_KEY) ||
+    (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_MAC_TOKEN ||
+    ""
+  );
+}
+
+export function setToken(raw: string): string {
+  const token = normalizeTokenInput(raw);
+  localStorage.removeItem(TOKEN_KEY);
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  else sessionStorage.removeItem(TOKEN_KEY);
   return token;
 }
 
 export function clearToken(): void {
-  localStorage.removeItem("mac.token");
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export function bootstrapTokenFromUrl(): string {
+  const url = new URL(window.location.href);
+  const raw = url.searchParams.get("t") || "";
+  if (!raw) return getToken();
+  const token = setToken(raw);
+  url.searchParams.delete("t");
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  return token;
+}
+
+export function getApiBaseUrl(): string {
+  return (localStorage.getItem(API_BASE_KEY) || DEFAULT_BASE).replace(/\/$/, "");
+}
+
+export function setApiBaseUrl(raw: string): string {
+  const base = raw.trim().replace(/\/$/, "") || DEFAULT_BASE;
+  if (base === DEFAULT_BASE) localStorage.removeItem(API_BASE_KEY);
+  else localStorage.setItem(API_BASE_KEY, base);
+  return base;
+}
+
+function requestUrl(path: string): string {
+  return getApiBaseUrl() + (path.startsWith("/") ? path : `/${path}`);
+}
+
+function requestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const tok = getToken();
-  if (tok) headers["Authorization"] = `Bearer ${tok}`;
-  const res = await fetch(BASE + path, {
+  const response = await fetch(requestUrl(path), {
     method,
-    headers,
+    headers: requestHeaders(),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status} ${path}: ${text.slice(0, 300)}`);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status} ${path}: ${text.slice(0, 300)}`);
   }
-  return (await res.json()) as T;
+  return (await response.json()) as T;
 }
 
-export interface ActivityEntry {
-  phase: string;
-  actor: string;
-  summary: string;
-  at: string;
+export async function streamDashboard(
+  onSignal: (signal: Record<string, unknown>) => void,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    requestUrl("/dashboard/stream?timeout_seconds=25&poll_interval_seconds=1"),
+    { headers: requestHeaders(), signal: abortSignal },
+  );
+  if (!response.ok || !response.body) {
+    throw new Error(`HTTP ${response.status} /dashboard/stream`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  while (!abortSignal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split("\n");
+    buffered = lines.pop() || "";
+    for (const line of lines) {
+      if (line.trim()) onSignal(JSON.parse(line) as Record<string, unknown>);
+    }
+  }
 }
-export interface Task {
-  id: string;
-  title?: string;
-  state?: string;
-  project?: string;
-  description?: string;
-  metadata?: { activity?: ActivityEntry[]; [k: string]: unknown };
-  [k: string]: unknown;
-}
-export interface TaskDetail {
-  task: Task;
-  evidence?: any[];
-  history?: any[];
-  reviews?: any[];
-}
-export interface Agent {
-  id: string;
-  name?: string;
-  status?: string;
-  health_status?: string;
-  current_task_id?: string | null;
-  capabilities?: string[];
+
+async function a2aCall<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  const id = `ide-${Date.now().toString(36)}`;
+  const response = await req<A2AResponse<T>>("POST", "/a2a", {
+    jsonrpc: "2.0",
+    id,
+    method,
+    params,
+  });
+  if (response.error) {
+    throw new Error(`A2A ${response.error.code ?? "error"}: ${response.error.message ?? "request failed"}`);
+  }
+  if (response.result === undefined) throw new Error("A2A response did not include a result");
+  return response.result;
 }
 
 export const api = {
+  dashboardState: () => req<DashboardState>("GET", "/dashboard/state"),
   listTasks: (state?: string) =>
     req<Task[]>("GET", `/tasks${state ? `?state=${encodeURIComponent(state)}` : ""}`),
   getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}`),
   listAgents: () => req<Agent[]>("GET", "/agents"),
-  createTask: (payload: { title: string; description: string; project: string; priority?: number }) =>
-    req<Task>("POST", "/tasks", payload),
+  createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
+  claimTask: (taskId: string, agentId: string) =>
+    req<Record<string, unknown>>(
+      "POST",
+      `/tasks/${encodeURIComponent(taskId)}/claim?agent_id=${encodeURIComponent(agentId)}`,
+    ),
   summary: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}`),
+  requestReview: (taskId: string, reviewerAgentId: string) =>
+    req<Record<string, unknown>>("POST", `/tasks/${encodeURIComponent(taskId)}/reviews`, {
+      reviewer_agent_id: reviewerAgentId,
+      actor: "human",
+    }),
+  workflowPlanPreview: (prompt: string, context: Record<string, unknown> = {}) =>
+    req<Record<string, unknown>>("POST", "/dashboard/workflow-plan/preview", {
+      goal: prompt,
+      prompt,
+      context,
+    }),
+  workflowPlanAccept: (draft: Record<string, unknown>) =>
+    req<Record<string, unknown>>("POST", "/dashboard/workflow-plan/accept", draft),
+  cancelWorkflowRun: (runId: string, reason = "Cancelled from Fleet Workbench") =>
+    req<Record<string, unknown>>("POST", `/workflows/runs/${encodeURIComponent(runId)}/cancel`, {
+      reason,
+      actor: "human",
+    }),
+  agentCard: () => req<AgentCard>("GET", "/.well-known/agent-card.json"),
+  sendA2AMessage: (text: string, contextId = "mac-fleet-workbench") =>
+    a2aCall<Record<string, unknown>>("message/send", {
+      message: {
+        kind: "message",
+        role: "user",
+        messageId: `msg-${Date.now().toString(36)}`,
+        contextId,
+        parts: [{ kind: "text", text }],
+      },
+    }),
+  getA2ATask: (taskId: string) => a2aCall<Record<string, unknown>>("tasks/get", { id: taskId }),
 };

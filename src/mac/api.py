@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -5049,8 +5049,36 @@ def create_app(
         return cp.tick(body.lease_seconds, body.limit, body.stale_after_seconds)
 
     @app.get("/dispatch/dead-letters")
-    def dead_letters(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [task.to_dict() for task in cp.list_dead_letters(tenant_id)]
+    def dead_letters(
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+        cursor: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            task.to_dict()
+            for task in cp.list_dead_letters(
+                tenant_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        ]
+
+    @app.get("/dispatch/dead-letters/page")
+    def dead_letters_page(
+        tenant_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100),
+        cursor: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        page = cp.list_dead_letters_page(
+            tenant_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        return {
+            "tasks": [task.to_dict() for task in page["tasks"]],
+            "next_cursor": page["next_cursor"],
+            "has_more": page["has_more"],
+        }
 
     @app.get("/events")
     def list_events(
@@ -5596,7 +5624,6 @@ def create_app(
     secret_rate_state: Dict[str, list] = {}
 
     def _enforce_secret_rate_limit(principal: TokenPrincipal, route: str) -> None:
-        import collections
         max_calls = 30
         window_seconds = 60
         # admin tokens are operator-driven and unlikely to enumerate

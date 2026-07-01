@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from mac.models import NotFoundError, TaskState, TransitionError, ValidationError
+from mac.models import TaskState, TransitionError, ValidationError
 from mac.services import ControlPlane
 from tests.conftest import bind_soul
 
@@ -695,13 +695,54 @@ def test_tick_times_out_stuck_node_and_advances_via_failure_edge(cp):
         created_by="human",
     )
     run = cp.workflow_runtime.start_run("bug-timeout", started_by="ops")
-    task_id = run.current_task_id
 
-    # Backdate the task so it's been "running" past the timeout.
+    # Backdate the persisted workflow deadline so it is actionable.
     cp.store.execute(
-        "UPDATE tasks SET updated_at = ? WHERE id = ?",
-        ("2000-01-01T00:00:00+00:00", task_id),
+        "UPDATE workflow_runs SET next_action_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", run.id),
     )
     advanced = cp.workflow_runtime.tick()
     assert any(r.id == run.id for r in advanced)
     assert cp.workflow_runtime.get_run(run.id).state in {"failed", "cancelled"}
+
+
+def test_indexed_deadline_and_cursor_helpers_handle_invalid_values(cp, monkeypatch):
+    runtime = cp.workflow_runtime
+
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "bad")
+    assert runtime._reservation_deadline("2026-01-01T00:00:00+00:00").startswith("9999-")
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "15")
+    assert runtime._reservation_deadline("bad-time").startswith("9999-")
+    assert runtime._reservation_deadline("2026-01-01T00:00:00+00:00").startswith(
+        "2026-01-01T00:00:15"
+    )
+
+    assert runtime._node_deadline({"timeout_minutes": 0}, "2026-01-01T00:00:00+00:00").startswith("9999-")
+    assert runtime._node_deadline({"timeout_minutes": "bad"}, "2026-01-01T00:00:00+00:00").startswith("9999-")
+    assert runtime._node_deadline({"timeout_minutes": 2}, "2026-01-01T00:00:00+00:00").startswith(
+        "2026-01-01T00:02:00"
+    )
+
+    cursor = runtime._encode_tick_cursor("2026-01-01T00:00:00+00:00", "run-1")
+    assert runtime._decode_tick_cursor(cursor) == ("2026-01-01T00:00:00+00:00", "run-1")
+    assert runtime._decode_tick_cursor(None) is None
+    assert runtime._decode_tick_cursor("not-json") is None
+    assert runtime._decode_tick_cursor('{"action_at":"","run_id":"run-1"}') is None
+
+
+def test_legacy_workflow_deadline_backfill_populates_indexed_field(cp):
+    _two_node_workflow(cp, slug="legacy-deadline-backfill")
+    run = cp.workflow_runtime.start_run("legacy-deadline-backfill", started_by="ops")
+    cp.store.execute(
+        "UPDATE workflow_runs SET next_action_at = NULL WHERE id = ?",
+        (run.id,),
+    )
+
+    cp.workflow_runtime._backfill_next_action_at()
+
+    row = cp.store.query_one(
+        "SELECT next_action_at FROM workflow_runs WHERE id = ?",
+        (run.id,),
+    )
+    assert row is not None
+    assert row["next_action_at"].startswith("9999-")

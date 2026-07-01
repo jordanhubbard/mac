@@ -246,6 +246,11 @@ class SQLiteStore:
 
                 CREATE INDEX IF NOT EXISTS idx_tasks_state_priority
                     ON tasks (state, priority DESC, created_at);
+                CREATE INDEX IF NOT EXISTS idx_tasks_review_queue
+                    ON tasks (priority DESC, created_at, id)
+                    WHERE state IN ('needs_review', 'reviewing');
+                CREATE INDEX IF NOT EXISTS idx_tasks_state_updated
+                    ON tasks (state, updated_at, id);
                 CREATE INDEX IF NOT EXISTS idx_tasks_owner
                     ON tasks (owner_agent_id);
                 -- mac-1hnt: enforce the task state machine at the DB
@@ -313,6 +318,16 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_task_transition_outbox_task
                     ON task_transition_outbox (task_id, created_at);
 
+                CREATE TABLE IF NOT EXISTS reconciliation_state (
+                    name TEXT PRIMARY KEY,
+                    cursor TEXT,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_reconciliation_state_lease
+                    ON reconciliation_state (lease_expires_at, name);
+
                 CREATE TABLE IF NOT EXISTS evidence (
                     id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -366,6 +381,8 @@ class SQLiteStore:
                     ON leases (task_id, status);
                 CREATE INDEX IF NOT EXISTS idx_leases_agent_status
                     ON leases (agent_id, status);
+                CREATE INDEX IF NOT EXISTS idx_leases_status_expiry
+                    ON leases (status, expires_at, id);
                 -- mac-x5el: enforce "at most one ACTIVE lease per task"
                 -- at the DB layer so a Python bug or a manual UPDATE
                 -- cannot produce duplicate active leases that confuse
@@ -1221,6 +1238,7 @@ class SQLiteStore:
                     started_by TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    next_action_at TEXT,
                     completed_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_workflow_runs_state
@@ -1473,6 +1491,13 @@ class SQLiteStore:
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")
         self._ensure_column("tasks", "workflow_run_id", "workflow_run_id TEXT")
         self._ensure_column("tasks", "workflow_node_key", "workflow_node_key TEXT")
+        self._ensure_column(
+            "workflow_runs", "next_action_at", "next_action_at TEXT"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workflow_runs_next_action "
+            "ON workflow_runs (state, next_action_at, id)"
+        )
         # PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
         # lifecycle authorship to the role agent spawned in the task Job.
         self._ensure_column("leases", "delegated_agent_id", "delegated_agent_id TEXT")

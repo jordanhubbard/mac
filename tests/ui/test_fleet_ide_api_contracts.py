@@ -6,21 +6,29 @@ assertion below.  If the client adds, removes, or renames a method you MUST
 update this file to match.
 
 Client-to-route mapping (as of current ide/src/api/mac.ts):
+  dashboardState -> GET  /dashboard/state
   listTasks   -> GET  /tasks               (optional ?state= filter)
   getTask     -> GET  /tasks/{id}          (TaskDetail: task + evidence + history + reviews)
   listAgents  -> GET  /agents
   createTask  -> POST /tasks               (Fleet IDE payload shape)
+  claimTask   -> POST /tasks/{id}/claim    (specific agent assignment)
   summary     -> GET  /tasks/{id}          (same route as getTask; alias in client)
+  requestReview -> POST /tasks/{id}/reviews
+  workflowPlanPreview -> POST /dashboard/workflow-plan/preview
+  workflowPlanAccept  -> POST /dashboard/workflow-plan/accept
+  cancelWorkflowRun   -> POST /workflows/runs/{id}/cancel
+  agentCard   -> GET  /.well-known/agent-card.json
+  sendA2AMessage/getA2ATask -> POST /a2a
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict
 
-import pytest
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
+from mac.models import TaskState
 from mac.services import ControlPlane
 
 # ---------------------------------------------------------------------------
@@ -53,10 +61,14 @@ def _seed_task(cp: ControlPlane, title: str = "Seeded task") -> str:
     return task.id
 
 
-def _seed_agent(cp: ControlPlane, name: str = "worker-1") -> str:
+def _seed_agent(
+    cp: ControlPlane,
+    name: str = "worker-1",
+    capabilities: list[str] | None = None,
+) -> str:
     """Register a machine + agent directly via the control plane and return the agent id."""
     machine = cp.register_machine(name + "-host", resources={"cpu": 4, "memory_gb": 8})
-    agent = cp.register_agent(machine.id, name, capabilities=["python"])
+    agent = cp.register_agent(machine.id, name, capabilities=capabilities or ["python"])
     return agent.id
 
 
@@ -291,3 +303,94 @@ def test_ui_shell_serves():
 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
+
+
+def test_workbench_dashboard_state_has_cockpit_collections():
+    cp = ControlPlane.in_memory()
+    _seed_task(cp, title="cockpit task")
+    _seed_agent(cp, name="cockpit-agent")
+    client = _make_client(cp)
+
+    resp = client.get("/dashboard/state", headers=_AUTH_HEADERS)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["overview"]["counts"]["active_tasks"] == 1
+    assert isinstance(body["tasks"], list)
+    assert isinstance(body["agents"], list)
+    assert isinstance(body["workflow_runs"], dict)
+    assert isinstance(body["service_links"], list)
+
+
+def test_workbench_agent_card_is_public_and_declares_a2a():
+    client = _make_client(ControlPlane.in_memory())
+
+    resp = client.get("/.well-known/agent-card.json")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["protocolVersion"]
+    assert body["url"].endswith("/a2a")
+    assert body["skills"]
+
+
+def test_workbench_can_delegate_through_a2a():
+    cp = ControlPlane.in_memory()
+    client = _make_client(cp)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "ide-contract",
+        "method": "message/send",
+        "params": {
+            "message": {
+                "kind": "message",
+                "role": "user",
+                "messageId": "msg-ide-contract",
+                "contextId": "mac-fleet-workbench",
+                "parts": [{"kind": "text", "text": "Verify the A2A workbench flow"}],
+            }
+        },
+    }
+
+    resp = client.post("/a2a", json=request, headers=_AUTH_HEADERS)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == "ide-contract"
+    assert body["result"]["status"]["state"] == "submitted"
+    assert cp.get_task(body["result"]["id"]).title == "Verify the A2A workbench flow"
+
+
+def test_workbench_can_claim_new_task_for_selected_agent():
+    cp = ControlPlane.in_memory()
+    task_id = _seed_task(cp, title="assign from inspector")
+    agent_id = _seed_agent(cp, name="selected-agent")
+    client = _make_client(cp)
+
+    resp = client.post(
+        "/tasks/%s/claim?agent_id=%s" % (task_id, agent_id),
+        headers=_AUTH_HEADERS,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["task"]["owner_agent_id"] == agent_id
+
+
+def test_workbench_can_request_review_from_selected_agent():
+    cp = ControlPlane.in_memory()
+    task_id = _seed_task(cp, title="review from inspector")
+    agent_id = _seed_agent(cp, name="selected-reviewer", capabilities=["review"])
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.NEEDS_REVIEW.value, task_id),
+    )
+    client = _make_client(cp)
+
+    resp = client.post(
+        "/tasks/%s/reviews" % task_id,
+        json={"reviewer_agent_id": agent_id, "actor": "human"},
+        headers=_AUTH_HEADERS,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["reviewer_agent_id"] == agent_id

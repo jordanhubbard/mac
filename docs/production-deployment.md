@@ -292,12 +292,17 @@ mac task stats
 mac agent list
 ```
 
-The fleet route must resolve an explicit identity file and verified
-known-hosts/host-CA source. An equivalent route can be supplied without a fleet
+For a reproducible production profile the fleet route should resolve an explicit
+identity file and a verified known-hosts/host-CA source; login validates and
+pins whatever is supplied. An equivalent route can be given without a fleet
 registry using `--ssh`, `--identity-file`, `--known-hosts-file`, optional
 `--ssh-port`, and optional `--proxy-jump`. A directly reachable hub may use
 `--host-key-fingerprint SHA256:...`; proxy-jump routes require a prepared
-known-hosts file.
+known-hosts file. Anything omitted falls back to OpenSSH's own resolution
+(default identities/agent, `~/.ssh/known_hosts` with `accept-new`), so
+`mac login --ssh <host>` works like `ssh <host>` — but such a profile then
+depends on the enrolling machine's ambient ssh state rather than being fully
+portable.
 
 The commands below remain the low-level recovery procedure when diagnosing SSH
 or enrollment independently.

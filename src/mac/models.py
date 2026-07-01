@@ -776,6 +776,7 @@ class WorkflowRun:
     started_by: str
     created_at: str
     updated_at: str
+    next_action_at: Optional[str]
     completed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:

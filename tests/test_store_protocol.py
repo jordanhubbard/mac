@@ -8,7 +8,7 @@ test bodies will run against PostgresStore once it lands in Phase 3.2.
 
 from __future__ import annotations
 
-import os
+import sqlite3
 
 import pytest
 
@@ -94,3 +94,43 @@ def test_module_exports_store_protocol_and_error() -> None:
 
     assert mac.Store is Store
     assert mac.StoreError is StoreError
+
+
+def test_sqlite_upgrade_adds_indexed_workflow_deadline(tmp_path) -> None:
+    database = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(database)
+    conn.execute(
+        """
+        CREATE TABLE workflow_runs (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            workflow_version INTEGER NOT NULL,
+            definition_snapshot TEXT NOT NULL,
+            state TEXT NOT NULL,
+            current_node_key TEXT,
+            current_task_id TEXT,
+            input TEXT NOT NULL DEFAULT '{}',
+            context TEXT NOT NULL DEFAULT '{}',
+            tenant_id TEXT,
+            started_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    upgraded = SQLiteStore(str(database))
+    columns = {
+        row["name"]
+        for row in upgraded.query_all("PRAGMA table_info(workflow_runs)")
+    }
+    indexes = {
+        row["name"]
+        for row in upgraded.query_all("PRAGMA index_list(workflow_runs)")
+    }
+    assert "next_action_at" in columns
+    assert "idx_workflow_runs_next_action" in indexes
+    upgraded.close()

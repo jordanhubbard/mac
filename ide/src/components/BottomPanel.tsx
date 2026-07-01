@@ -1,68 +1,129 @@
 import { useState } from "react";
-import { type TaskDetail } from "../api/mac";
+import type { DashboardState, TaskDetail } from "../api/mac";
 
-type Tab = "activity" | "evidence" | "history";
+type BottomTab = "events" | "terminal" | "evidence" | "problems";
 
-export function BottomPanel({ detail }: { detail: TaskDetail | null }) {
-  const [tab, setTab] = useState<Tab>("activity");
-  const t = detail?.task;
-  const activity = (t?.metadata?.activity as any[]) || [];
+function value(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const candidate = record[key];
+    if (candidate !== null && candidate !== undefined && candidate !== "") {
+      return typeof candidate === "object" ? JSON.stringify(candidate) : String(candidate);
+    }
+  }
+  return "—";
+}
+
+export function BottomPanel({ data, detail }: { data: DashboardState; detail: TaskDetail | null }) {
+  const [tab, setTab] = useState<BottomTab>("events");
   const evidence = detail?.evidence || [];
   const history = detail?.history || [];
+  const findings = data.integration_findings.filter((record) => record.status === "open");
+  const tabs: Array<{ id: BottomTab; label: string; count?: number }> = [
+    { id: "events", label: "Event stream", count: data.events.length },
+    { id: "terminal", label: "Terminal", count: data.terminal_sessions.length },
+    { id: "evidence", label: "Evidence", count: evidence.length },
+    { id: "problems", label: "Problems", count: findings.length },
+  ];
 
   return (
-    <div className="panel" style={{ display: "flex", flexDirection: "column" }}>
-      <div className="bottom-tabs">
-        {(["activity", "evidence", "history"] as Tab[]).map((x) => (
-          <div
-            key={x}
-            className={"tab" + (tab === x ? " active" : "")}
-            onClick={() => setTab(x)}
+    <section className="bottom-panel">
+      <div className="bottom-panel-tabs" role="tablist">
+        {tabs.map((item) => (
+          <button
+            aria-selected={tab === item.id}
+            className={tab === item.id ? "active" : ""}
+            key={item.id}
+            onClick={() => setTab(item.id)}
+            role="tab"
+            type="button"
           >
-            {x[0].toUpperCase() + x.slice(1)}
-          </div>
+            {item.label}{item.count ? <span>{item.count}</span> : null}
+          </button>
         ))}
+        <span className="panel-spacer" />
+        <button title="Pause stream" type="button"><i className="codicon codicon-debug-pause" /></button>
+        <button title="Filter" type="button"><i className="codicon codicon-filter" /></button>
       </div>
-      <div style={{ flex: 1, overflow: "auto" }}>
-        {!detail && <div className="muted" style={{ padding: 12 }}>Select a task.</div>}
-
-        {detail && tab === "activity" &&
-          (activity.length ? (
-            activity.map((e, i) => (
-              <div className="activity-entry" key={i}>
-                <div className="head">
-                  {e.phase} / {e.actor} · {String(e.at || "").slice(0, 19)}
-                </div>
-                <pre>{e.summary}</pre>
-              </div>
-            ))
-          ) : (
-            <div className="muted" style={{ padding: 12 }}>No activity recorded yet.</div>
-          ))}
-
-        {detail && tab === "evidence" &&
-          (evidence.length ? (
-            evidence.map((ev: any, i: number) => (
-              <div className="activity-entry" key={i}>
-                <div className="head">{ev.kind} / {ev.created_by}</div>
-                <pre>{ev.summary}</pre>
-              </div>
-            ))
-          ) : (
-            <div className="muted" style={{ padding: 12 }}>No evidence.</div>
-          ))}
-
-        {detail && tab === "history" &&
-          history.map((h: any, i: number) => (
-            <div className="activity-entry" key={i}>
-              <div className="head">
-                {h.from_state} → {h.to_state} ·{" "}
-                {String(h.timestamp || h.created_at || "").slice(0, 19)}
-                {h.reason ? ` · ${h.reason}` : ""}
-              </div>
-            </div>
-          ))}
+      <div className="bottom-panel-body">
+        {tab === "events" ? <Events data={data} history={history} /> : null}
+        {tab === "terminal" ? <TerminalSessions records={data.terminal_sessions} /> : null}
+        {tab === "evidence" ? <Evidence records={evidence} /> : null}
+        {tab === "problems" ? <Problems records={findings} /> : null}
       </div>
+    </section>
+  );
+}
+
+function Events({ data, history }: { data: DashboardState; history: Array<Record<string, unknown>> }) {
+  const records = [...data.events, ...history].slice(-80).reverse();
+  if (!records.length) return <Empty label="No control-plane events have been recorded." />;
+  return (
+    <div className="console-lines">
+      {records.map((record, index) => {
+        const timestamp = value(record, "created_at", "timestamp");
+        const name = value(record, "event_type", "name", "kind", "to_state");
+        const actor = value(record, "actor", "subject_id", "from_state");
+        const detail = value(record, "reason", "detail", "summary");
+        return (
+          <div className="console-line" key={value(record, "id", "sequence") + index}>
+            <time>{timestamp === "—" ? "--:--:--" : timestamp.slice(11, 23)}</time>
+            <span className="console-level">INFO</span>
+            <span className="console-name">[{actor}]</span>
+            <span>{name}</span>
+            <span className="console-detail">{detail}</span>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function TerminalSessions({ records }: { records: Array<Record<string, unknown>> }) {
+  if (!records.length) return <Empty label="No debug terminal is open. Start one from an agent inspector." />;
+  return (
+    <div className="record-list bottom-records">
+      {records.map((record, index) => (
+        <div className="record-item" key={value(record, "id", "stream_id") + index}>
+          <i className="codicon codicon-terminal" />
+          <span className="record-title"><strong>{value(record, "agent_id", "title")}</strong><small>{value(record, "id", "stream_id")}</small></span>
+          <span className="record-state">{value(record, "status", "state")}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Evidence({ records }: { records: Array<Record<string, unknown>> }) {
+  if (!records.length) return <Empty label="Select a task with evidence to inspect its artifacts and verification." />;
+  return (
+    <div className="record-list bottom-records">
+      {records.map((record, index) => (
+        <div className="record-item evidence-item" key={value(record, "id") + index}>
+          <i className="codicon codicon-verified-filled" />
+          <span className="record-title"><strong>{value(record, "kind", "evidence_type")}</strong><small>{value(record, "summary")}</small></span>
+          {value(record, "uri") !== "—" ? <a href={value(record, "uri")} rel="noreferrer" target="_blank">open artifact</a> : null}
+          <span className="record-state">{value(record, "created_by")}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Problems({ records }: { records: Array<Record<string, unknown>> }) {
+  if (!records.length) return <Empty label="No open integration findings." />;
+  return (
+    <div className="problem-list">
+      {records.map((record, index) => (
+        <div className="problem-item" key={value(record, "id", "fingerprint") + index}>
+          <i className={`codicon codicon-${record.severity === "critical" ? "error" : "warning"}`} />
+          <span className="record-title"><strong>{value(record, "title")}</strong><small>{value(record, "source_kind", "source_id")}</small></span>
+          <span>{value(record, "severity")}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Empty({ label }: { label: string }) {
+  return <div className="empty-state centered"><span>{label}</span></div>;
 }

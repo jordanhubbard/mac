@@ -30,12 +30,26 @@ Or consume the canonical route in `~/.mac/fleets.yaml`:
 mac login --fleet production --profile production --client-id my-laptop
 ```
 
-Login requires an explicit private identity plus strict host trust. A directly
-reachable host can be pinned with `--host-key-fingerprint SHA256:...`; MAC uses
-`ssh-keyscan`, retains only the matching key, and stores it in a private
-profile-owned known-hosts file. Fingerprint discovery is refused for a
-ProxyJump route because an unauthenticated scan cannot traverse and authenticate
-both hops; provide a verified known-hosts file instead.
+Identity and host trust are validated when supplied and otherwise fall back to
+OpenSSH's own resolution, so `mac login --ssh <host>` behaves like `ssh <host>`:
+
+- **Identity** — an explicit `--identity-file` (or a fleet `identity_file`) is
+  validated (must exist, `chmod 600`) and pinned with `IdentitiesOnly`. When
+  none is given, ssh selects its default identities and the agent.
+- **Host trust** — an explicit `--known-hosts-file`, `--host-ca`, or
+  `--host-key-fingerprint` pins the host under strict checking. A directly
+  reachable host pinned by fingerprint is scanned with `ssh-keyscan`, and only
+  the matching key is retained in a private profile-owned known-hosts file
+  (fingerprint discovery is refused for a ProxyJump route, since an
+  unauthenticated scan cannot authenticate both hops — provide a verified
+  known-hosts file instead). When no trust material is given, login verifies
+  against the operator's default `~/.ssh/known_hosts` using `accept-new`
+  (trust-on-first-use), matching interactive ssh rather than failing.
+
+For a reproducible, portable client profile — one that does not depend on the
+enrolling machine's ambient ssh state — supply both an explicit identity and
+explicit host trust (or configure them on the fleet's hub agent). Exported
+profiles record exactly what was resolved.
 
 The command reserves a free loopback port and starts SSH with `-F /dev/null`,
 `BatchMode=yes`, `ExitOnForwardFailure=yes`, strict host checking, server-alive

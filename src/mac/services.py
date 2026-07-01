@@ -33,7 +33,6 @@ from mac.models import (
     WorkflowRun,
     AgentBusChunk,
     AgentBusStream,
-    AgentBusStreamStatus,
     AgentMessage,
     AgentStatus,
     Artifact,
@@ -41,19 +40,15 @@ from mac.models import (
     ProjectRepository,
     COMMAND_AUDIT_PHASES,
     CommandAuditRecord,
-    MoodMode,
     MoodOverlay,
     NapRun,
     NapSchedule,
-    NapStatus,
     ConversationThread,
     Deployment,
-    DeploymentStatus,
     Environment,
     EVIDENCE_KINDS,
     EvalRun,
     EvalSet,
-    EvalTargetKind,
     Evidence,
     EvidenceArtifact,
     Fleet,
@@ -83,17 +78,13 @@ from mac.models import (
     Review,
     ReviewStatus,
     Rollout,
-    ROLLOUT_ACTIONS,
-    RolloutStatus,
-    RolloutStrategy,
     RuntimeEnvironment,
     RuntimeEnvironmentDelta,
     RuntimeRun,
-    RuntimeRunStatus,
     SecretAccess,
-    SecretAuditResult,
     SecretHandle,
     SecretRecord,
+    ServiceRole,
     Task,
     TASK_TRANSITIONS,
     TaskState,
@@ -118,6 +109,7 @@ from mac.repository_hygiene import (
     normalize_cancellation_detail,
     repository_ref_lifecycle_for_transition,
 )
+from mac.reconciliation import ReconciliationCoordinator
 from mac.agent_state_service import AgentStateService
 from mac.agentbus_control import (
     ARTIFACT_PUBLISH_CONTENT_TYPE,
@@ -1004,8 +996,7 @@ class ControlPlane:
         self.task_ledger = TaskLedgerService(self.store)
         self.dispatch = DispatchService(self)
         self._task_outbox_drain_lock = threading.Lock()
-        self._default_review_sweep_lock = threading.Lock()
-        self._default_review_sweep_cursor: Optional[str] = None
+        self.reconciliation = ReconciliationCoordinator(self.store)
         self.identity = IdentityService(self.store)
         self.action_events = ActionEventService(self.store)
         self.observability = ObservabilityService(
@@ -1046,6 +1037,7 @@ class ControlPlane:
             get_task=self.get_task,
             record_history=self._record_history,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
+            reconciliation=self.reconciliation,
         )
         self.secrets = SecretsService(
             self.store,
@@ -5440,19 +5432,99 @@ class ControlPlane:
             return max(60, int(raw))
         return 24 * 60 * 60
 
-    def list_dead_letters(self, tenant_id: Optional[str] = None) -> List[Task]:
-        rows = self.store.query_all(
-            """
-            SELECT * FROM tasks
-            WHERE state = ? AND attempt_count >= max_attempts
-            ORDER BY updated_at, id
-            """,
-            (TaskState.FAILED.value,),
-        )
-        tasks = [self._task_from_row(row) for row in rows]
+    def list_dead_letters(
+        self,
+        tenant_id: Optional[str] = None,
+        *,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> List[Task]:
+        return self.list_dead_letters_page(
+            tenant_id=tenant_id,
+            limit=limit,
+            cursor=cursor,
+        )["tasks"]
+
+    def list_dead_letters_page(
+        self,
+        tenant_id: Optional[str] = None,
+        *,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> JsonDict:
+        limit_value = max(1, min(int(limit), 1000))
+        clauses = ["state = ?", "attempt_count >= max_attempts"]
+        params: List[Any] = [TaskState.FAILED.value]
         if tenant_id is not None:
-            tasks = [task for task in tasks if self._task_tenant_id(task) == tenant_id]
-        return tasks
+            clauses.append(
+                "COALESCE("
+                "NULLIF(json_extract(metadata, '$.origin.tenant_id'), ''), "
+                "NULLIF(json_extract(metadata, '$.tenant_id'), '')"
+                ") = ?"
+            )
+            params.append(tenant_id)
+        decoded = self._decode_scan_cursor(cursor, "dead-letters")
+        if decoded is not None:
+            updated_at, task_id = decoded
+            clauses.append("(updated_at > ? OR (updated_at = ? AND id > ?))")
+            params.extend([updated_at, updated_at, task_id])
+        params.append(limit_value + 1)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            tuple(params),
+        )
+        has_more = len(rows) > limit_value
+        tasks = [self._task_from_row(row) for row in rows[:limit_value]]
+        next_cursor = (
+            self._encode_scan_cursor(
+                "dead-letters",
+                tasks[-1].updated_at,
+                tasks[-1].id,
+            )
+            if has_more and tasks
+            else None
+        )
+        return {
+            "tasks": tasks,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+
+    def _encode_scan_cursor(self, kind: str, position: str, item_id: str) -> str:
+        payload = json_dumps(
+            {"kind": kind, "position": position, "item_id": item_id}
+        ).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        return "v1:%s" % encoded
+
+    def _decode_scan_cursor(
+        self,
+        cursor: Optional[str],
+        kind: str,
+    ) -> Optional[Tuple[str, str]]:
+        if cursor is None:
+            return None
+        raw = str(cursor).strip()
+        if not raw.startswith("v1:"):
+            raise ValidationError("invalid %s cursor" % kind)
+        encoded = raw[3:]
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            payload = json_loads(
+                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode(
+                    "utf-8"
+                ),
+                {},
+            )
+            payload_kind = str(payload["kind"])
+            position = str(payload["position"])
+            item_id = str(payload["item_id"])
+        except (binascii.Error, KeyError, TypeError, ValueError, UnicodeError):
+            raise ValidationError("invalid %s cursor" % kind) from None
+        if payload_kind != kind or not position or not item_id:
+            raise ValidationError("invalid %s cursor" % kind)
+        return position, item_id
 
     def transition_task(
         self,
@@ -6621,8 +6693,28 @@ class ControlPlane:
         return bool(lease.delegated_agent_id) and lease.delegated_agent_id == agent_id
 
     def expire_leases(
-        self, now: Optional[str] = None, *, grace_seconds: Optional[int] = None
+        self,
+        now: Optional[str] = None,
+        *,
+        grace_seconds: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None,
     ) -> List[Task]:
+        return self._expire_leases_page(
+            now=now,
+            grace_seconds=grace_seconds,
+            limit=limit,
+            cursor=cursor,
+        )["tasks"]
+
+    def _expire_leases_page(
+        self,
+        now: Optional[str] = None,
+        *,
+        grace_seconds: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> JsonDict:
         # mac-vgw9: when `now` is auto-derived, subtract a small tolerance
         # so an NTP step forward doesn't mass-expire every lease. When
         # the caller passes `now` explicitly, honor it exactly (callers
@@ -6635,73 +6727,142 @@ class ControlPlane:
             grace = 30 if grace_seconds is None else int(grace_seconds)
             cutoff_dt = parse_time(utcnow()) - timedelta(seconds=grace)
         cutoff = cutoff_dt.isoformat(timespec="microseconds")
+        limit_value = max(1, min(int(limit), 1000))
+        clauses = ["status = ?", "expires_at <= ?"]
+        params: List[Any] = [LeaseStatus.ACTIVE.value, cutoff]
+        decoded = self._decode_scan_cursor(cursor, "expired-leases")
+        if decoded is not None:
+            expires_at, lease_id = decoded
+            clauses.append("(expires_at > ? OR (expires_at = ? AND id > ?))")
+            params.extend([expires_at, expires_at, lease_id])
+        params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM leases WHERE status = ? AND expires_at <= ? ORDER BY expires_at",
-            (LeaseStatus.ACTIVE.value, cutoff),
+            "SELECT * FROM leases WHERE %s "
+            "ORDER BY expires_at, id LIMIT ?" % " AND ".join(clauses),
+            tuple(params),
         )
+        has_more = len(rows) > limit_value
+        rows = rows[:limit_value]
         recovered: List[Task] = []
         for row in rows:
-            lease = self._lease_from_row(row)
-            task = self.get_task(lease.task_id)
-            next_state = TaskState.FAILED.value if task.attempt_count >= task.max_attempts else TaskState.OPEN.value
-            timestamp = utcnow()
-            with self.store.transaction() as conn:
-                # mac-s0ta: guard the lease UPDATE on status='active' so we
-                # don't expire a lease that another path (release/renew)
-                # already moved. If we lost the race, skip this row entirely
-                # — the task may have been reclaimed by a new owner.
-                cur = conn.execute(
-                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
-                    (LeaseStatus.EXPIRED.value, timestamp, lease.id, LeaseStatus.ACTIVE.value),
-                )
-                if cur.rowcount == 0:
-                    continue
-                cur = conn.execute(
-                    """
-                    UPDATE tasks
-                    SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
-                        completed_at = CASE
-                            WHEN ? = ? AND completed_at IS NULL THEN ?
-                            ELSE completed_at
-                        END,
-                        updated_at = ?
-                    WHERE id = ? AND lease_id = ?
-                    """,
-                    (
-                        next_state,
-                        next_state,
-                        TaskState.FAILED.value,
-                        timestamp,
-                        timestamp,
-                        task.id,
-                        lease.id,
-                    ),
-                )
-                if cur.rowcount == 0:
-                    # Task no longer points at this lease — a new owner has
-                    # taken over. Leave their state alone.
-                    continue
-                conn.execute(
-                    """
-                    UPDATE agents
-                    SET status = ?, current_task_id = NULL, updated_at = ?
-                    WHERE id = ? AND current_task_id = ?
-                    """,
-                    (AgentStatus.IDLE.value, timestamp, lease.agent_id, task.id),
-                )
-                detail = {"lease_id": lease.id, "agent_id": lease.agent_id}
-                self._record_history(
-                    task.id,
-                    "task.lease_expired",
-                    "dispatcher",
-                    task.state,
+            try:
+                task = self._expire_lease_row(row)
+            except Exception as exc:  # noqa: BLE001 - isolate corrupt lease rows.
+                try:
+                    self.record_log(
+                        "lease.recovery.failed",
+                        layer="control_plane",
+                        source="dispatcher",
+                        level="error",
+                        subject_type="lease",
+                        subject_id=str(row["id"]),
+                        detail={"lease_id": str(row["id"]), "error": str(exc)},
+                    )
+                except Exception:
+                    pass
+                continue
+            if task is not None:
+                recovered.append(task)
+        next_cursor = (
+            self._encode_scan_cursor(
+                "expired-leases",
+                str(rows[-1]["expires_at"]),
+                str(rows[-1]["id"]),
+            )
+            if has_more and rows
+            else None
+        )
+        return {
+            "tasks": recovered,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+
+    def _expire_lease_row(self, row: Any) -> Optional[Task]:
+        lease = self._lease_from_row(row)
+        task = self.get_task(lease.task_id)
+        next_state = (
+            TaskState.FAILED.value
+            if task.attempt_count >= task.max_attempts
+            else TaskState.OPEN.value
+        )
+        timestamp = utcnow()
+        with self.store.transaction() as conn:
+            # Guard both updates so another replica renewing/reclaiming the
+            # lease wins cleanly instead of having its task state overwritten.
+            cur = conn.execute(
+                "UPDATE leases SET status = ?, updated_at = ? "
+                "WHERE id = ? AND status = ?",
+                (
+                    LeaseStatus.EXPIRED.value,
+                    timestamp,
+                    lease.id,
+                    LeaseStatus.ACTIVE.value,
+                ),
+            )
+            if cur.rowcount == 0:
+                return None
+            cur = conn.execute(
+                """
+                UPDATE tasks
+                SET state = ?, owner_agent_id = NULL, lease_id = NULL,
+                    leased_until = NULL,
+                    completed_at = CASE
+                        WHEN ? = ? AND completed_at IS NULL THEN ?
+                        ELSE completed_at
+                    END,
+                    updated_at = ?
+                WHERE id = ? AND lease_id = ?
+                """,
+                (
                     next_state,
-                    detail,
-                    conn=conn,
-                )
-            recovered.append(self.get_task(task.id))
-            self.drain_task_transition_outbox(task_id=task.id, limit=20)
+                    next_state,
+                    TaskState.FAILED.value,
+                    timestamp,
+                    timestamp,
+                    task.id,
+                    lease.id,
+                ),
+            )
+            if cur.rowcount == 0:
+                return None
+            conn.execute(
+                """
+                UPDATE agents
+                SET status = ?, current_task_id = NULL, updated_at = ?
+                WHERE id = ? AND current_task_id = ?
+                """,
+                (AgentStatus.IDLE.value, timestamp, lease.agent_id, task.id),
+            )
+            self._record_history(
+                task.id,
+                "task.lease_expired",
+                "dispatcher",
+                task.state,
+                next_state,
+                {"lease_id": lease.id, "agent_id": lease.agent_id},
+                conn=conn,
+            )
+        recovered = self.get_task(task.id)
+        self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
+
+    def _expire_leases_sweep_page(self, *, limit: int) -> JsonDict:
+        claim = self.reconciliation.claim("expired-lease-sweep")
+        if claim is None:
+            return {
+                "tasks": [],
+                "next_cursor": None,
+                "has_more": False,
+                "skipped": "lease_held",
+            }
+        try:
+            result = self._expire_leases_page(limit=limit, cursor=claim.cursor)
+        except Exception:
+            self.reconciliation.abandon(claim)
+            raise
+        self.reconciliation.complete(claim, cursor=result.get("next_cursor"))
+        return result
 
     def release_lease(self, lease_id: str, agent_id: str) -> Task:
         lease = self.get_lease(lease_id)
@@ -7886,7 +8047,6 @@ class ControlPlane:
         the qdrant_collections block reports its error instead of
         raising; the operator still gets the SQLite-side numbers.
         """
-        import time
         from datetime import datetime, timezone
         from pathlib import Path
 
@@ -8479,9 +8639,29 @@ class ControlPlane:
         self,
         lease_seconds: int = 900,
         skip_tenants: Optional[Iterable[str]] = None,
+        *,
+        run_maintenance: bool = True,
     ) -> Optional[JsonDict]:
-        self.expire_leases()
-        self._unblock_ready_tasks()
+        assignments = self._dispatch_batch_impl(
+            lease_seconds=lease_seconds,
+            limit=1,
+            skip_tenants=skip_tenants,
+            run_maintenance=run_maintenance,
+        )
+        return assignments[0] if assignments else None
+
+    def _dispatch_batch_impl(
+        self,
+        *,
+        lease_seconds: int = 900,
+        limit: int = 100,
+        skip_tenants: Optional[Iterable[str]] = None,
+        run_maintenance: bool = True,
+    ) -> List[JsonDict]:
+        limit_value = max(1, min(int(limit), 1000))
+        if run_maintenance:
+            self._expire_leases_sweep_page(limit=limit_value)
+            self._unblock_ready_sweep_page(limit=limit_value)
         skipped = set(skip_tenants or [])
         tasks = [
             task
@@ -8490,6 +8670,7 @@ class ControlPlane:
         ]
         agents = self._available_agents()
         unmatched: List[Task] = []
+        assignments: List[JsonDict] = []
         for task in tasks:
             # Autonomous-dispatch gates: a per-task no_dispatch hold or a
             # project-level pause must keep the push dispatcher from auto-
@@ -8516,16 +8697,26 @@ class ControlPlane:
                     {"task_id": claimed.id, "lease_id": lease.id, "reason": "assigned"},
                     task_id=claimed.id,
                 )
-                return {"task": claimed.to_dict(), "agent": agent.to_dict(), "lease": lease.to_dict()}
+                assignments.append(
+                    {
+                        "task": claimed.to_dict(),
+                        "agent": agent.to_dict(),
+                        "lease": lease.to_dict(),
+                    }
+                )
+                matched = True
+                break
             if not matched:
                 unmatched.append(task)
+            if len(assignments) >= limit_value:
+                break
         # No agent could claim any pending task. Emit a provisioning
         # signal so a future provisioner (k8s operator, nomad job, local
         # spawner) can spin up the kind of agent that's missing. Today
         # the row + observability log are the signal; no auto-spawn.
         for task in unmatched:
             self._emit_dispatch_provisioning_signal(task)
-        return None
+        return assignments
 
     def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
         required_role = None
@@ -8599,8 +8790,8 @@ class ControlPlane:
         loop-mode workers can refuse non-canary or out-of-project work before
         touching production tasks.
         """
-        self.expire_leases()
-        self._unblock_ready_tasks()
+        self._expire_leases_sweep_page(limit=100)
+        self._unblock_ready_sweep_page(limit=100)
         agent = self.get_agent(agent_id)
         policy = self._worker_claim_policy(
             allowed_projects=allowed_projects,
@@ -8693,19 +8884,22 @@ class ControlPlane:
         limit: int = 100,
         stale_after_seconds: Optional[int] = None,
     ) -> JsonDict:
+        assignment_limit = max(0, min(int(limit), 1000))
+        limit_value = max(1, assignment_limit)
         stale_agents = []
         if stale_after_seconds is not None:
             stale_agents = [
                 agent.to_dict()
                 for agent in self.mark_stale_agents_offline(stale_after_seconds)
             ]
-        expired = [task.to_dict() for task in self.expire_leases()]
+        expired_page = self._expire_leases_sweep_page(limit=limit_value)
+        expired = [task.to_dict() for task in expired_page["tasks"]]
         try:
             workflow_runs = [
                 run.to_dict()
                 for run in self.workflow_runtime.tick(
                     actor="dispatcher.tick",
-                    limit=limit,
+                    limit=limit_value,
                 )
             ]
         except Exception as exc:  # noqa: BLE001 - one workflow must not stop fleet dispatch.
@@ -8721,35 +8915,37 @@ class ControlPlane:
             self.reconcile_service_roles()  # media-01: reap stale claims + signal zero-holder ops
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
-        self._unblock_ready_tasks()
+        unblocked_page = self._unblock_ready_sweep_page(limit=limit_value)
         review_workflows = self._advance_default_review_sweep_page(
-            limit=limit,
+            limit=limit_value,
             actor="default-review-workflow",
             tenant_id=None,
         )
-        assignments = []
-        served_tenants = set()
-        for _ in range(limit):
-            assignment = self.dispatch_once(
+        assignments = (
+            self._dispatch_batch_impl(
                 lease_seconds=lease_seconds,
-                skip_tenants=served_tenants,
+                limit=assignment_limit,
+                run_maintenance=False,
             )
-            if assignment is None and served_tenants:
-                served_tenants.clear()
-                assignment = self.dispatch_once(lease_seconds=lease_seconds)
-            if assignment is None:
-                break
-            assignments.append(assignment)
-            task_dict = assignment["task"]
-            origin = task_dict.get("metadata", {}).get("origin", {})
-            served_tenants.add(str(origin.get("tenant_id") or task_dict.get("metadata", {}).get("tenant_id") or ""))
+            if assignment_limit
+            else []
+        )
+        dead_letters_page = self.list_dead_letters_page(limit=limit_value)
         return {
             "stale_agents": stale_agents,
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
             "assignments": assignments,
-            "dead_letters": [task.to_dict() for task in self.list_dead_letters()],
+            "dead_letters": [
+                task.to_dict() for task in dead_letters_page["tasks"]
+            ],
+            "maintenance": {
+                "expired_leases_has_more": expired_page["has_more"],
+                "blocked_tasks_has_more": unblocked_page["has_more"],
+                "dead_letters_has_more": dead_letters_page["has_more"],
+                "dead_letters_next_cursor": dead_letters_page["next_cursor"],
+            },
         }
 
     # Communication bus
@@ -9542,16 +9738,31 @@ class ControlPlane:
         actor: str,
         tenant_id: Optional[str],
     ) -> JsonDict:
-        """Advance one process-local cursor page for autonomous sweep callers."""
-        with self._default_review_sweep_lock:
+        """Advance one database-coordinated cursor page for autonomous callers."""
+        claim = self.reconciliation.claim("default-review-sweep")
+        if claim is None:
+            return {
+                "processed": 0,
+                "results": [],
+                "next_cursor": None,
+                "has_more": False,
+                "skipped": "lease_held",
+            }
+        try:
             result = self.advance_default_review_workflows(
                 limit=limit,
                 actor=actor,
                 tenant_id=tenant_id,
-                cursor=self._default_review_sweep_cursor,
+                cursor=claim.cursor,
             )
-            self._default_review_sweep_cursor = result.get("next_cursor")
-            return result
+        except Exception:
+            self.reconciliation.abandon(claim)
+            raise
+        self.reconciliation.complete(
+            claim,
+            cursor=result.get("next_cursor"),
+        )
+        return result
 
     def advance_default_review_workflows(
         self,
@@ -9562,16 +9773,13 @@ class ControlPlane:
     ) -> JsonDict:
         """Sweep one bounded, state-filtered page of reviewable tasks.
 
-        ``cursor`` is the opaque ``next_cursor`` from a prior response. The
-        autonomous heartbeat/dispatcher callers retain it in process so tasks
+        ``cursor`` is the opaque ``next_cursor`` from a prior response.
+        Autonomous callers persist it in ``reconciliation_state`` so tasks
         waiting on a verdict cannot starve later reviewable rows indefinitely.
         """
         limit_value = max(1, min(int(limit), 1000))
-        clauses = ["state IN (?, ?)"]
-        params: List[Any] = [
-            TaskState.NEEDS_REVIEW.value,
-            TaskState.REVIEWING.value,
-        ]
+        clauses = ["state IN ('needs_review', 'reviewing')"]
+        params: List[Any] = []
         if tenant_id is not None:
             clauses.append(
                 "COALESCE("
@@ -9592,7 +9800,7 @@ class ControlPlane:
             )
         params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
+            "SELECT * FROM tasks INDEXED BY idx_tasks_review_queue WHERE %s "
             "ORDER BY priority DESC, created_at, id LIMIT ?"
             % " AND ".join(clauses),
             tuple(params),
@@ -11262,22 +11470,98 @@ class ControlPlane:
         )
         return self.get_task(task.id)
 
-    def _unblock_ready_tasks(self) -> None:
-        for task in self.list_tasks(TaskState.BLOCKED.value):
-            if (
-                task.dependencies
-                and self._dependencies_satisfied(task)
-                and not self._blocked_task_requires_manual_repair(task)
-            ):
-                task = self._prepare_cooperative_integration_task(task)
-                self.transition_task(task.id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
+    def _unblock_ready_tasks(
+        self,
+        *,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> JsonDict:
+        limit_value = max(1, min(int(limit), 1000))
+        clauses = ["state = ?"]
+        params: List[Any] = [TaskState.BLOCKED.value]
+        decoded = self._decode_scan_cursor(cursor, "blocked-tasks")
+        if decoded is not None:
+            updated_at, task_id = decoded
+            clauses.append("(updated_at > ? OR (updated_at = ? AND id > ?))")
+            params.extend([updated_at, updated_at, task_id])
+        params.append(limit_value + 1)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            tuple(params),
+        )
+        has_more = len(rows) > limit_value
+        rows = rows[:limit_value]
+        unblocked: List[Task] = []
+        for row in rows:
+            task = self._task_from_row(row)
+            try:
+                if (
+                    task.dependencies
+                    and self._dependencies_satisfied(task)
+                    and not self._blocked_task_requires_manual_repair(task)
+                ):
+                    task = self._prepare_cooperative_integration_task(task)
+                    unblocked.append(
+                        self.transition_task(
+                            task.id,
+                            TaskState.OPEN.value,
+                            "dispatcher",
+                            {"reason": "dependencies satisfied"},
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 - isolate corrupt blocked rows.
+                try:
+                    self.record_log(
+                        "task.unblock.failed",
+                        layer="control_plane",
+                        source="dispatcher",
+                        level="error",
+                        subject_type="task",
+                        subject_id=task.id,
+                        detail={"task_id": task.id, "error": str(exc)},
+                    )
+                except Exception:
+                    pass
+        next_cursor = (
+            self._encode_scan_cursor(
+                "blocked-tasks",
+                str(rows[-1]["updated_at"]),
+                str(rows[-1]["id"]),
+            )
+            if has_more and rows
+            else None
+        )
+        return {
+            "tasks": unblocked,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
 
-    # mac-5ayd: cap the working set per dispatch tick. The dispatcher
-    # only picks one task per call; loading 100k OPEN tasks into Python
-    # to sort+round-robin is wasteful and grows linearly with backlog.
-    # 500 is well above what any single dispatch tick can act on (the
-    # tick is bounded by lease-claim throughput) and below the point
-    # where the Python sort cost becomes noticeable.
+    def _unblock_ready_sweep_page(self, *, limit: int) -> JsonDict:
+        claim = self.reconciliation.claim("blocked-task-sweep")
+        if claim is None:
+            return {
+                "tasks": [],
+                "next_cursor": None,
+                "has_more": False,
+                "skipped": "lease_held",
+            }
+        try:
+            result = self._unblock_ready_tasks(
+                limit=limit,
+                cursor=claim.cursor,
+            )
+        except Exception:
+            self.reconciliation.abandon(claim)
+            raise
+        self.reconciliation.complete(claim, cursor=result.get("next_cursor"))
+        return result
+
+    # mac-5ayd: cap the working set per dispatch batch. Loading 100k OPEN
+    # tasks into Python to sort+round-robin is wasteful and grows linearly
+    # with backlog. 500 is above the largest supported tick batch while
+    # remaining below the point where the Python sort cost is noticeable.
     _DISPATCH_TASK_WINDOW = 500
 
 

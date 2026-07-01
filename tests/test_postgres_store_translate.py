@@ -102,6 +102,13 @@ class TestTranslatePlaceholders:
         translated = _translate_placeholders(sql)
         assert translated == "SELECT * FROM tasks WHERE id IN (%s, %s, %s, %s, %s)"
 
+    def test_sqlite_index_hint_is_removed(self) -> None:
+        translated = _translate_placeholders(
+            "SELECT * FROM tasks INDEXED BY idx_tasks_review_queue "
+            "WHERE state = ? LIMIT ?"
+        )
+        assert translated == "SELECT * FROM tasks WHERE state = %s LIMIT %s"
+
 
 class TestRowAdapter:
     def test_named_access(self) -> None:

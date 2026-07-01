@@ -236,17 +236,38 @@ def _pin_scanned_fingerprint(
 def prepare_login_spec(
     spec: FleetSshSpec, profile: str, *, connect_timeout: int = 10
 ) -> Tuple[FleetSshSpec, Optional[Path]]:
-    """Validate identity and host trust, materializing a fingerprint pin."""
+    """Validate any explicit identity/host trust, else defer to OpenSSH.
 
-    try:
-        spec.validate_portable()
-    except FleetSshError as exc:
-        raise ClientLoginError(str(exc)) from exc
-    identity = _private_identity(spec.identity_file)
-    spec = replace(spec, identity_file=identity, identity_ref=None, host_key_policy="strict")
+    Historically login *required* an explicit identity file plus pinned host
+    trust and refused to fall back on anything ambient.  That surprised
+    operators: plain ``ssh <host>`` already works from their standard
+    ``~/.ssh`` setup, yet ``mac login --ssh <host>`` demanded its own files.
+
+    Login now follows the principle of least astonishment — when an input is
+    not supplied (by flag or fleet config) it lets OpenSSH resolve it the usual
+    way: default identities and the agent for the key, and the default
+    ``~/.ssh/known_hosts`` for host verification.  (mac still runs ssh with
+    ``-F /dev/null``, so ``~/.ssh/config`` host aliases are not consulted, but
+    the default key and known_hosts files are.)  Any input that *is* supplied
+    is still validated and strictly pinned exactly as before, so
+    explicitly-configured fleets and exported client profiles keep their
+    reproducible, no-ambient-state guarantees.
+    """
+
+    # --- Identity: validate an explicit key file, else defer to ssh. ---
+    if spec.identity_file:
+        identity = _private_identity(spec.identity_file)
+        spec = replace(spec, identity_file=identity, identity_ref=None)
+    else:
+        # No key file given: let ssh pick its default identities / the agent.
+        # Drop any non-file identity_ref so argv construction stays valid.
+        spec = replace(spec, identity_file=None, identity_ref=None)
+
+    # --- Host trust: pin an explicit file/fingerprint, else defer to ssh. ---
     trust_file = spec.known_hosts_file or spec.host_ca
     fingerprint = str(spec.host_key_fingerprint or "").strip()
     if trust_file:
+        spec = replace(spec, host_key_policy="strict")
         trust_path = Path(trust_file).expanduser().resolve()
         if not trust_path.is_file():
             raise ClientLoginError("SSH host-key file does not exist: %s" % trust_path)
@@ -257,14 +278,20 @@ def prepare_login_spec(
         else:
             spec = replace(spec, host_ca=str(trust_path))
         return spec, None
-    if not fingerprint:
-        raise ClientLoginError(
-            "login requires a verified known-hosts file, host CA, or host-key fingerprint"
+    if fingerprint:
+        spec = replace(spec, host_key_policy="strict")
+        path = _pin_scanned_fingerprint(
+            spec, profile, fingerprint, timeout=connect_timeout
         )
-    path = _pin_scanned_fingerprint(
-        spec, profile, fingerprint, timeout=connect_timeout
-    )
-    return replace(spec, known_hosts_file=path), Path(path)
+        return replace(spec, known_hosts_file=path), Path(path)
+
+    # No explicit trust: verify against the operator's default known_hosts using
+    # accept-new (TOFU), mirroring interactive ssh's first-connect behavior
+    # rather than failing in batch mode.  A pre-existing host key is still
+    # enforced; a brand-new one is recorded on first use.  An explicit
+    # ``insecure`` policy (host verification deliberately off) is preserved.
+    policy = "insecure" if spec.host_key_policy == "insecure" else "accept-new"
+    return replace(spec, host_key_policy=policy), None
 
 
 def resolve_login_spec(
@@ -564,7 +591,7 @@ def _profile_manifest(
             "proxy_jump": spec.proxy_jump,
             "identity_file": spec.identity_file,
             "known_hosts_file": spec.known_hosts_file,
-            "host_key_policy": "strict",
+            "host_key_policy": spec.host_key_policy,
             "host_key_fingerprint": spec.host_key_fingerprint,
             "host_ca": spec.host_ca,
         }.items()

@@ -176,37 +176,68 @@ def test_fleet_route_resolution_applies_explicit_overrides(login_files, tmp_path
     assert spec.host_key_fingerprint == "SHA256:pin"
 
 
-def test_prepare_login_spec_enforces_private_identity_and_trust(login_files):
+def test_prepare_login_spec_pins_explicit_identity_and_trust(login_files):
     _home, identity, known_hosts = login_files
     prepared, created = client_login.prepare_login_spec(
         _spec(identity, known_hosts), "production"
     )
     assert prepared.identity_file == str(identity.resolve())
     assert prepared.known_hosts_file == str(known_hosts.resolve())
+    assert prepared.host_key_policy == "strict"
     assert created is None
 
+    # An explicitly-supplied identity file is still validated strictly.
     identity.chmod(0o644)
     with pytest.raises(client_login.ClientLoginError, match="chmod 600"):
         client_login.prepare_login_spec(_spec(identity, known_hosts), "production")
     identity.chmod(0o600)
-    with pytest.raises(client_login.ClientLoginError, match="host-key"):
-        client_login.prepare_login_spec(
-            _spec(identity, known_hosts, known_hosts_file=None), "production"
-        )
-    with pytest.raises(client_login.ClientLoginError, match="identity"):
-        client_login.prepare_login_spec(
-            _spec(identity, known_hosts, identity_file=None), "production"
-        )
-    with pytest.raises(client_login.ClientLoginError, match="verified known-hosts"):
-        client_login.prepare_login_spec(
-            _spec(
-                identity,
-                known_hosts,
-                known_hosts_file=None,
-                host_key_policy="accept-new",
-            ),
-            "production",
-        )
+
+
+def test_prepare_login_spec_defers_to_ssh_defaults_when_unset(login_files):
+    _home, identity, known_hosts = login_files
+
+    # No identity file: defer to ssh's default keys / agent, keep explicit trust.
+    prepared, created = client_login.prepare_login_spec(
+        _spec(identity, known_hosts, identity_file=None), "production"
+    )
+    assert prepared.identity_file is None
+    assert prepared.identity_ref is None
+    assert prepared.known_hosts_file == str(known_hosts.resolve())
+    assert prepared.host_key_policy == "strict"
+    assert created is None
+
+    # No host trust: fall back to the default known_hosts via accept-new (TOFU).
+    prepared, created = client_login.prepare_login_spec(
+        _spec(identity, known_hosts, known_hosts_file=None), "production"
+    )
+    assert prepared.identity_file == str(identity.resolve())
+    assert prepared.known_hosts_file is None
+    assert prepared.host_ca is None
+    assert prepared.host_key_fingerprint is None
+    assert prepared.host_key_policy == "accept-new"
+    assert created is None
+
+    # Nothing explicit at all: behave like `ssh <host>` — no pinned files.
+    prepared, created = client_login.prepare_login_spec(
+        _spec(identity, known_hosts, identity_file=None, known_hosts_file=None),
+        "production",
+    )
+    assert prepared.identity_file is None
+    assert prepared.known_hosts_file is None
+    assert prepared.host_key_policy == "accept-new"
+    assert created is None
+
+    # An explicit `insecure` policy is preserved even without trust material.
+    prepared, _created = client_login.prepare_login_spec(
+        _spec(
+            identity,
+            known_hosts,
+            known_hosts_file=None,
+            host_key_policy="insecure",
+        ),
+        "production",
+    )
+    assert prepared.host_key_policy == "insecure"
 
 
 def test_prepare_login_spec_materializes_matching_fingerprint(

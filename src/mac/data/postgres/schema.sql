@@ -163,6 +163,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     workflow_node_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_state_priority ON tasks (state, priority DESC, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_review_queue
+    ON tasks (priority DESC, created_at, id)
+    WHERE state IN ('needs_review', 'reviewing');
+CREATE INDEX IF NOT EXISTS idx_tasks_state_updated ON tasks (state, updated_at, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks (owner_agent_id);
 
 -- mac-1hnt: enforce the task state machine at the DB layer. SQLite did
@@ -218,6 +222,16 @@ CREATE TABLE IF NOT EXISTS task_transition_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_task_transition_outbox_status ON task_transition_outbox (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_transition_outbox_task ON task_transition_outbox (task_id, created_at);
+
+CREATE TABLE IF NOT EXISTS reconciliation_state (
+    name TEXT PRIMARY KEY,
+    cursor TEXT,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_state_lease
+    ON reconciliation_state (lease_expires_at, name);
 
 CREATE TABLE IF NOT EXISTS evidence (
     id TEXT PRIMARY KEY,
@@ -275,6 +289,7 @@ ALTER TABLE leases ADD COLUMN IF NOT EXISTS delegated_agent_id TEXT
     REFERENCES agents(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_leases_task_status ON leases (task_id, status);
 CREATE INDEX IF NOT EXISTS idx_leases_agent_status ON leases (agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_leases_status_expiry ON leases (status, expires_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_leases_active_per_task
     ON leases (task_id) WHERE status = 'active';
 
@@ -1093,9 +1108,13 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     started_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    next_action_at TEXT,
     completed_at TEXT
 );
+ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS next_action_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_state ON workflow_runs (state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_next_action
+    ON workflow_runs (state, next_action_at, id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_current_task ON workflow_runs (current_task_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs (workflow_id, created_at);
 

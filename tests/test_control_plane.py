@@ -34,6 +34,7 @@ from mac.models import (
 )
 from mac.migration import migrate_acc_sqlite
 from mac.services import ControlPlane
+from mac.store import SQLiteStore
 
 
 def _write_cwd_fake_bd_cli(path: Path) -> None:
@@ -1663,7 +1664,7 @@ def test_default_review_sweep_uses_bounded_state_query_and_cursor(cp, monkeypatc
     sweep_limits = []
 
     def query_all(sql, params=()):
-        if "SELECT * FROM tasks WHERE state IN" in " ".join(sql.split()):
+        if "idx_tasks_review_queue" in sql:
             sweep_limits.append(params[-1])
         return original_query_all(sql, params)
 
@@ -1738,9 +1739,109 @@ def test_default_review_sweep_rejects_invalid_cursor(cp):
         cp.advance_default_review_workflows(cursor="not-a-cursor")
 
 
+def test_reconciliation_claim_is_exclusive_and_preserves_cursor(tmp_path):
+    database = tmp_path / "coordinator.sqlite"
+    secret = "test-key-with-enough-entropy-32+chars"
+    first = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    second = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+
+    claim = first.reconciliation.claim("shared-sweep")
+    assert claim is not None
+    assert first.reconciliation.claim("shared-sweep") is None
+    assert second.reconciliation.claim("shared-sweep") is None
+    assert first.reconciliation.complete(claim, cursor="page-2") is True
+
+    next_claim = second.reconciliation.claim("shared-sweep")
+    assert next_claim is not None
+    assert next_claim.cursor == "page-2"
+    second.reconciliation.complete(next_claim, cursor=None)
+    first.store.close()
+    second.store.close()
+
+
+def test_reconciliation_invalid_lease_config_and_abandon(monkeypatch):
+    monkeypatch.setenv("MAC_RECONCILER_LEASE_SECONDS", "not-a-number")
+    cp = ControlPlane.in_memory()
+    assert cp.reconciliation.lease_seconds == 60
+
+    claim = cp.reconciliation.claim("failed-page")
+    assert claim is not None
+    assert cp.reconciliation.abandon(claim) is True
+
+    retry = cp.reconciliation.claim("failed-page")
+    assert retry is not None
+    assert retry.cursor is None
+
+
+def test_bounded_scan_cursor_validation_covers_corrupt_inputs(cp):
+    cursor = cp._encode_scan_cursor("dead-letters", "2026-01-01T00:00:00+00:00", "task-1")
+    assert cp._decode_scan_cursor(cursor, kind="dead-letters") == (
+        "2026-01-01T00:00:00+00:00",
+        "task-1",
+    )
+    assert cp._decode_scan_cursor(None, kind="dead-letters") is None
+
+    with pytest.raises(ValidationError, match="invalid dead-letters cursor"):
+        cp._decode_scan_cursor("not-versioned", kind="dead-letters")
+    with pytest.raises(ValidationError, match="invalid dead-letters cursor"):
+        cp._decode_scan_cursor("v1:not-base64", kind="dead-letters")
+    with pytest.raises(ValidationError, match="invalid expired-leases cursor"):
+        cp._decode_scan_cursor(cursor, kind="expired-leases")
+    empty = cp._encode_scan_cursor("dead-letters", "", "task-1")
+    with pytest.raises(ValidationError, match="invalid dead-letters cursor"):
+        cp._decode_scan_cursor(empty, kind="dead-letters")
+
+
+def test_default_review_autonomous_cursor_survives_restart(tmp_path, monkeypatch):
+    database = tmp_path / "review-restart.sqlite"
+    secret = "test-key-with-enough-entropy-32+chars"
+    first = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    reviewable = []
+    for index in range(3):
+        task = first.create_task("review restart %d" % index, priority=10 - index)
+        first.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (TaskState.NEEDS_REVIEW.value, task.id),
+        )
+        reviewable.append(task.id)
+    first_seen = []
+    monkeypatch.setattr(
+        first,
+        "advance_default_review_workflow",
+        lambda task_id, actor="default-review-workflow": (
+            first_seen.append(task_id) or {"task_id": task_id}
+        ),
+    )
+    first_page = first._advance_default_review_sweep_page(
+        limit=1,
+        actor="test",
+        tenant_id=None,
+    )
+    assert first_page["has_more"] is True
+    assert first_seen == [reviewable[0]]
+    first.store.close()
+
+    second = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    second_seen = []
+    monkeypatch.setattr(
+        second,
+        "advance_default_review_workflow",
+        lambda task_id, actor="default-review-workflow": (
+            second_seen.append(task_id) or {"task_id": task_id}
+        ),
+    )
+    second._advance_default_review_sweep_page(
+        limit=1,
+        actor="test",
+        tenant_id=None,
+    )
+    assert second_seen == [reviewable[1]]
+    second.store.close()
+
+
 def test_default_review_workflow_waits_for_verifiable_evidence(cp):
     worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
+    register_agent(cp, "reviewer", ["review"])
     task = cp.create_task("Thin evidence", required_capabilities=["python"])
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
@@ -3442,7 +3543,7 @@ def test_rotate_secret_updates_value_in_place_and_audits(cp):
 
 
 def test_delete_secret_scrubs_value_and_allows_name_reuse(cp):
-    secret = cp.create_secret(
+    cp.create_secret(
         "stale-router-key", "old-upstream-value", {"capabilities": ["router-upstream"]}, "deploy"
     )
     assert any(s.name == "stale-router-key" for s in cp.list_secrets())
@@ -5791,7 +5892,7 @@ def test_tasks_state_trigger_rejects_unknown_state(cp):
     illegal state. The DB-level trigger now rejects that."""
     import sqlite3
 
-    worker = register_agent(cp, "w", ["python"])
+    register_agent(cp, "w", ["python"])
     task = cp.create_task("t", required_capabilities=["python"])
     with pytest.raises(sqlite3.IntegrityError):
         cp.store.execute(
@@ -6337,6 +6438,10 @@ def test_workflow_tick_recovers_task_created_before_advancement_crash(cp, monkey
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    cp.store.execute(
+        "UPDATE workflow_runs SET next_action_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", run.id),
+    )
     tick_result = cp.tick(limit=0)
     recovered = tick_result["workflow_runs"]
 
@@ -6384,11 +6489,12 @@ def test_workflow_tick_isolates_poison_run_and_recovers_later_run(cp, monkeypatc
         cp.store.execute(
             """
             UPDATE workflow_runs
-            SET current_node_key = ?, updated_at = ?
+            SET current_node_key = ?, updated_at = ?, next_action_at = ?
             WHERE id = ?
             """,
             (
                 "__workflow_advancing__:task_tick_isolation_%d" % index,
+                "200%d-01-01T00:00:00+00:00" % index,
                 "200%d-01-01T00:00:00+00:00" % index,
                 run.id,
             ),
@@ -6431,11 +6537,12 @@ def test_workflow_tick_bounds_large_candidate_backlog(cp, monkeypatch):
         cp.store.execute(
             """
             UPDATE workflow_runs
-            SET current_node_key = ?, updated_at = ?
+            SET current_node_key = ?, updated_at = ?, next_action_at = ?
             WHERE id = ?
             """,
             (
                 "__workflow_advancing__:task_tick_bound_%d" % index,
+                "2000-01-%02dT00:00:00+00:00" % (index + 1),
                 "2000-01-%02dT00:00:00+00:00" % (index + 1),
                 run.id,
             ),
@@ -6465,6 +6572,220 @@ def test_workflow_tick_bounds_large_candidate_backlog(cp, monkeypatch):
     assert cp.workflow_runtime.tick(limit=2) == []
     assert seen == [run.id for run in runs]
     assert candidate_limits == [3, 3, 3]
+
+
+def test_workflow_tick_uses_indexed_deadline_not_definition_scan(cp, monkeypatch):
+    cp.roles.create_role(
+        slug="qa",
+        name="qa",
+        description="d",
+        system_prompt="p",
+        level="ic",
+    )
+    cp.workflows.create_workflow(
+        slug="indexed-deadline",
+        name="indexed deadline",
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {
+                    "node_key": "work",
+                    "node_type": "task",
+                    "role_required": "qa",
+                    "timeout_minutes": 1,
+                }
+            ],
+            "edges": [
+                {
+                    "from_node_key": "",
+                    "to_node_key": "work",
+                    "condition": "success",
+                    "priority": 100,
+                }
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run("indexed-deadline", started_by="ops")
+    cp.store.execute(
+        "UPDATE workflow_runs SET next_action_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", run.id),
+    )
+    queries = []
+    original_query_all = cp.store.query_all
+
+    def query_all(sql, params=()):
+        if "FROM workflow_runs AS wr" in sql:
+            queries.append(" ".join(sql.split()))
+        return original_query_all(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_all", query_all)
+    cp.workflow_runtime.tick(limit=1)
+
+    assert len(queries) == 1
+    assert "next_action_at <= ?" in queries[0]
+    assert "definition_snapshot LIKE" not in queries[0]
+    indexes = {
+        row["name"]
+        for row in cp.store.query_all("PRAGMA index_list(workflow_runs)")
+    }
+    assert "idx_workflow_runs_next_action" in indexes
+
+
+def test_dispatch_tick_runs_one_bounded_maintenance_and_inventory_pass(cp, monkeypatch):
+    register_agent(
+        cp,
+        "batch-worker",
+        ["python"],
+        resources={
+            "capacity": 5,
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git", "gh"],
+            },
+        },
+    )
+    for index in range(5):
+        cp.create_task(
+            "batch dispatch %d" % index,
+            required_capabilities=["python"],
+        )
+    counts = {"expire": 0, "unblock": 0, "tasks": 0, "agents": 0}
+    original_expire = cp._expire_leases_sweep_page
+    original_unblock = cp._unblock_ready_sweep_page
+    original_tasks = cp._dispatch_ordered_tasks
+    original_agents = cp._available_agents
+
+    def expire(*, limit):
+        counts["expire"] += 1
+        return original_expire(limit=limit)
+
+    def unblock(*, limit):
+        counts["unblock"] += 1
+        return original_unblock(limit=limit)
+
+    def tasks():
+        counts["tasks"] += 1
+        return original_tasks()
+
+    def agents():
+        counts["agents"] += 1
+        return original_agents()
+
+    monkeypatch.setattr(cp, "_expire_leases_sweep_page", expire)
+    monkeypatch.setattr(cp, "_unblock_ready_sweep_page", unblock)
+    monkeypatch.setattr(cp, "_dispatch_ordered_tasks", tasks)
+    monkeypatch.setattr(cp, "_available_agents", agents)
+
+    report = cp.tick(limit=5)
+
+    assert len(report["assignments"]) == 5
+    assert counts == {"expire": 1, "unblock": 1, "tasks": 1, "agents": 1}
+
+
+def test_expired_lease_sweep_pages_large_backlog(cp):
+    leases = []
+    for index in range(5):
+        agent = register_agent(cp, "expired-%d" % index, ["python"])
+        task = cp.create_task(
+            "expired lease %d" % index,
+            required_capabilities=["python"],
+        )
+        _claimed, lease = cp.claim_task(task.id, agent.id)
+        cp.store.execute(
+            "UPDATE leases SET expires_at = ? WHERE id = ?",
+            ("2000-01-%02dT00:00:00+00:00" % (index + 1), lease.id),
+        )
+        leases.append(lease.id)
+
+    first = cp._expire_leases_page(now=utcnow(), limit=2)
+    second = cp._expire_leases_page(
+        now=utcnow(),
+        limit=2,
+        cursor=first["next_cursor"],
+    )
+    third = cp._expire_leases_page(
+        now=utcnow(),
+        limit=2,
+        cursor=second["next_cursor"],
+    )
+
+    assert [len(first["tasks"]), len(second["tasks"]), len(third["tasks"])] == [2, 2, 1]
+    assert first["has_more"] is True
+    assert second["has_more"] is True
+    assert third["has_more"] is False
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM leases WHERE status = ?",
+        (LeaseStatus.ACTIVE.value,),
+    )["n"] == 0
+
+
+def test_blocked_and_dead_letter_sweeps_are_bounded_and_cursor_driven(cp):
+    dependency = cp.create_task("finished dependency")
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, dependency.id),
+    )
+    blocked = [
+        cp.create_task("blocked %d" % index, dependencies=[dependency.id])
+        for index in range(5)
+    ]
+    first = cp._unblock_ready_tasks(limit=2)
+    second = cp._unblock_ready_tasks(limit=2, cursor=first["next_cursor"])
+    third = cp._unblock_ready_tasks(limit=2, cursor=second["next_cursor"])
+    assert [len(first["tasks"]), len(second["tasks"]), len(third["tasks"])] == [2, 2, 1]
+    assert all(cp.get_task(task.id).state == TaskState.OPEN.value for task in blocked)
+
+    dead_ids = []
+    for index in range(5):
+        task = cp.create_task(
+            "dead %d" % index,
+            metadata={"tenant_id": "tenant-a"},
+        )
+        cp.store.execute(
+            """
+            UPDATE tasks
+            SET state = ?, attempt_count = max_attempts, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                TaskState.FAILED.value,
+                "2000-01-%02dT00:00:00+00:00" % (index + 1),
+                task.id,
+            ),
+        )
+        dead_ids.append(task.id)
+    for index in range(3):
+        task = cp.create_task(
+            "other tenant dead %d" % index,
+            priority=1000,
+            metadata={"tenant_id": "tenant-b"},
+        )
+        cp.store.execute(
+            "UPDATE tasks SET state = ?, attempt_count = max_attempts WHERE id = ?",
+            (TaskState.FAILED.value, task.id),
+        )
+    page_one = cp.list_dead_letters_page(tenant_id="tenant-a", limit=2)
+    page_two = cp.list_dead_letters_page(
+        tenant_id="tenant-a",
+        limit=2,
+        cursor=page_one["next_cursor"],
+    )
+    page_three = cp.list_dead_letters_page(
+        tenant_id="tenant-a",
+        limit=2,
+        cursor=page_two["next_cursor"],
+    )
+    seen = [
+        task.id
+        for page in (page_one, page_two, page_three)
+        for task in page["tasks"]
+    ]
+    assert seen == dead_ids
+    assert page_one["has_more"] is True
+    assert page_two["has_more"] is True
+    assert page_three["has_more"] is False
 
 
 def test_workflow_tick_skips_active_reservations_and_incomplete_rows(cp, monkeypatch):
@@ -6582,6 +6903,10 @@ def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypat
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    cp.store.execute(
+        "UPDATE workflow_runs SET next_action_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", row["id"]),
+    )
     recovered = cp.workflow_runtime.tick()
 
     assert [item.id for item in recovered] == [row["id"]]
@@ -6694,6 +7019,10 @@ def test_midrun_predecision_history_commits_only_with_recovered_spawn(cp, monkey
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+    cp.store.execute(
+        "UPDATE workflow_runs SET next_action_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", run.id),
+    )
     cp.tick(limit=0)
 
     final = cp.workflow_runtime.get_run(run.id)
@@ -7519,7 +7848,7 @@ def test_events_view_unifies_all_audit_surfaces(cp):
     rollout = create_verified_rollout(cp, "8.0")
     cp.advance_rollout(rollout.id, "start_canary", "human")
     # eval_set event
-    eval_set = cp.create_eval_set("audit-eval", scoring="higher_is_better")
+    cp.create_eval_set("audit-eval", scoring="higher_is_better")
     # secret event
     deployer = register_agent(cp, "deployer", ["deploy"])
     secret = cp.create_secret("audit-token", "x", {"capabilities": ["deploy"]}, "human")
@@ -8383,7 +8712,7 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
 
 def test_rejected_review_persists_feedback_and_reopens(cp):
     from tests.conftest import submit_review_verdict
-    from mac.models import ReviewStatus, TaskState
+    from mac.models import ReviewStatus
 
     task = cp.create_task("work", required_capabilities=["python"], max_attempts=3)
     executor = register_agent(cp, "executor", capabilities=["python"])
@@ -8421,7 +8750,7 @@ def test_rejected_review_persists_feedback_and_reopens(cp):
 
 def test_project_task_review_reject_retry_approve_publish_loop(cp):
     from tests.conftest import submit_review_verdict
-    from mac.models import ReviewStatus, TaskState
+    from mac.models import ReviewStatus
 
     cp.roles.create_role(
         "python-coder-opencode",

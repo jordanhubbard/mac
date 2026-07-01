@@ -148,6 +148,19 @@ def test_leases_has_delegated_agent_id_column(schema_sql: str) -> None:
     )
 
 
+def test_reconciliation_and_workflow_deadline_schema(schema_sql: str) -> None:
+    assert "CREATE TABLE IF NOT EXISTS reconciliation_state" in schema_sql
+    assert "idx_reconciliation_state_lease" in schema_sql
+    assert re.search(
+        r"ALTER TABLE workflow_runs\s+ADD COLUMN IF NOT EXISTS\s+next_action_at",
+        schema_sql,
+    )
+    assert "idx_workflow_runs_next_action" in schema_sql
+    assert "idx_leases_status_expiry" in schema_sql
+    assert "idx_tasks_state_updated" in schema_sql
+    assert "idx_tasks_review_queue" in schema_sql
+
+
 def test_packaged_loader_reads_schema() -> None:
     psycopg = pytest.importorskip("psycopg")  # noqa: F841
     from mac.store_postgres import _load_packaged_schema

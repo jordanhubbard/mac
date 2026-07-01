@@ -17,7 +17,7 @@ itself into the workflow state machine.
 from __future__ import annotations
 
 import os
-import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
@@ -40,6 +40,7 @@ from mac.models import (
     utcnow,
 )
 from mac.observability_service import ObservabilityService
+from mac.reconciliation import ReconciliationCoordinator
 from mac.roles_service import RolesService
 from mac.workflow_service import WorkflowService
 
@@ -51,6 +52,8 @@ TASK_TERMINAL_TO_CONDITION: Dict[str, str] = {
 }
 
 _ADVANCEMENT_PREFIX = "__workflow_advancing__:"
+_NO_ACTION_AT = "9999-12-31T23:59:59.999999+00:00"
+_TICK_RECONCILER = "workflow-runtime-tick"
 
 
 class WorkflowRuntime:
@@ -67,6 +70,7 @@ class WorkflowRuntime:
         get_task: Callable[[str], Task],
         record_history: Callable[..., None],
         drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
+        reconciliation: Optional[ReconciliationCoordinator] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -78,8 +82,8 @@ class WorkflowRuntime:
         self._get_task = get_task
         self._record_history = record_history
         self._drain_task_transition_outbox = drain_task_transition_outbox
-        self._tick_lock = threading.Lock()
-        self._tick_cursor: Optional[tuple[str, str]] = None
+        self.reconciliation = reconciliation or ReconciliationCoordinator(store)
+        self._backfill_next_action_at()
 
     # Public API --------------------------------------------------------
 
@@ -172,8 +176,9 @@ class WorkflowRuntime:
                     INSERT INTO workflow_runs (
                         id, workflow_id, workflow_version, definition_snapshot,
                         state, current_node_key, current_task_id, input, context,
-                        tenant_id, started_by, created_at, updated_at, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+                        tenant_id, started_by, created_at, updated_at,
+                        next_action_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)
                     """,
                     (
                         run_id,
@@ -201,8 +206,9 @@ class WorkflowRuntime:
                 INSERT INTO workflow_runs (
                     id, workflow_id, workflow_version, definition_snapshot,
                     state, current_node_key, current_task_id, input, context,
-                    tenant_id, started_by, created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)
+                    tenant_id, started_by, created_at, updated_at,
+                    next_action_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     run_id,
@@ -217,6 +223,7 @@ class WorkflowRuntime:
                     started_by,
                     now,
                     now,
+                    self._reservation_deadline(now),
                 ),
             )
         task = self._spawn_node_task(
@@ -236,7 +243,8 @@ class WorkflowRuntime:
             finalized = conn.execute(
                 """
                 UPDATE workflow_runs
-                SET current_node_key = ?, current_task_id = ?, updated_at = ?
+                SET current_node_key = ?, current_task_id = ?, updated_at = ?,
+                    next_action_at = ?
                 WHERE id = ? AND state = ? AND current_node_key = ?
                   AND current_task_id IS NULL
                 """,
@@ -244,6 +252,7 @@ class WorkflowRuntime:
                     spawn_node["node_key"],
                     task.id,
                     finalized_at,
+                    self._node_deadline(spawn_node, finalized_at),
                     run_id,
                     WorkflowState.RUNNING.value,
                     reservation_node,
@@ -302,84 +311,65 @@ class WorkflowRuntime:
         Phase-5 ergonomic surface. Operators drive ticks via
         ``POST /workflows/runs/tick`` (or a future worker hook).
         """
-        with self._tick_lock:
-            return self._tick_page(actor=actor, limit=limit)
+        claim = self.reconciliation.claim(_TICK_RECONCILER)
+        if claim is None:
+            return []
+        try:
+            advanced, next_cursor = self._tick_page(
+                actor=actor,
+                limit=limit,
+                cursor=claim.cursor,
+            )
+        except Exception:
+            self.reconciliation.abandon(claim)
+            raise
+        self.reconciliation.complete(claim, cursor=next_cursor)
+        return advanced
 
     def _tick_page(
         self,
         *,
         actor: str,
         limit: int,
-    ) -> List[WorkflowRun]:
-        from datetime import datetime, timedelta, timezone
-
+        cursor: Optional[str],
+    ) -> tuple[List[WorkflowRun], Optional[str]]:
         now = datetime.now(timezone.utc)
         limit_value = max(1, min(int(limit), 1000))
-        prefix_length = len(_ADVANCEMENT_PREFIX)
-        reservation_clause = ""
-        params: List[Any] = [WorkflowState.RUNNING.value]
-        stale_after = self._reservation_stale_after_seconds()
-        if stale_after is not None:
-            stale_before = (now - timedelta(seconds=stale_after)).isoformat(
-                timespec="microseconds"
-            )
-            reservation_clause = (
-                "(substr(COALESCE(wr.current_node_key, ''), 1, ?) = ? "
-                "AND wr.updated_at <= ?) OR "
-            )
-            params.extend(
-                [prefix_length, _ADVANCEMENT_PREFIX, stale_before]
-            )
-        params.extend(
-            [
-                prefix_length,
-                _ADVANCEMENT_PREFIX,
-                '%"timeout_minutes":%',
-                TaskState.COMPLETED.value,
-                TaskState.FAILED.value,
-                TaskState.CANCELLED.value,
-            ]
-        )
+        now_text = now.isoformat(timespec="microseconds")
+        params: List[Any] = [WorkflowState.RUNNING.value, now_text]
         cursor_clause = ""
-        if self._tick_cursor is not None:
-            cursor_updated_at, cursor_id = self._tick_cursor
+        decoded_cursor = self._decode_tick_cursor(cursor)
+        if decoded_cursor is not None:
+            cursor_action_at, cursor_id = decoded_cursor
             cursor_clause = (
-                "AND (wr.updated_at > ? OR "
-                "(wr.updated_at = ? AND wr.id > ?)) "
+                "AND (wr.next_action_at > ? OR "
+                "(wr.next_action_at = ? AND wr.id > ?)) "
             )
-            params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
+            params.extend([cursor_action_at, cursor_action_at, cursor_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
             """
             SELECT wr.id, wr.current_node_key, wr.current_task_id,
-                   wr.definition_snapshot, wr.updated_at
+                   wr.definition_snapshot, wr.updated_at, wr.next_action_at
             FROM workflow_runs AS wr
-            LEFT JOIN tasks AS task ON task.id = wr.current_task_id
             WHERE wr.state = ?
-              AND (
-            """
-            + reservation_clause
-            + """
-                (
-                    wr.current_task_id IS NOT NULL
-                    AND substr(COALESCE(wr.current_node_key, ''), 1, ?) <> ?
-                    AND wr.definition_snapshot LIKE ?
-                    AND task.id IS NOT NULL
-                    AND task.state NOT IN (?, ?, ?)
-                )
-              )
+              AND wr.next_action_at IS NOT NULL
+              AND wr.next_action_at <= ?
             """
             + cursor_clause
             + """
-            ORDER BY wr.updated_at, wr.id
+            ORDER BY wr.next_action_at, wr.id
             LIMIT ?
             """,
             tuple(params),
         )
         has_more = len(rows) > limit_value
         rows = rows[:limit_value]
-        self._tick_cursor = (
-            (str(rows[-1]["updated_at"]), str(rows[-1]["id"]))
+        next_cursor = (
+            self._encode_tick_cursor(
+                str(rows[-1]["next_action_at"]),
+                str(rows[-1]["id"]),
+            )
             if has_more and rows
             else None
         )
@@ -403,7 +393,7 @@ class WorkflowRuntime:
                 continue
             if recovered is not None:
                 advanced.append(recovered)
-        return advanced
+        return advanced, next_cursor
 
     def _tick_candidate(
         self,
@@ -449,13 +439,11 @@ class WorkflowRuntime:
             TaskState.CANCELLED.value,
         }:
             return None
-        try:
-            started = parse_time(task.updated_at)
-        except (TypeError, ValueError):
-            return None
-        elapsed_min = (now - started).total_seconds() / 60.0
-        if elapsed_min < timeout_min:
-            return None
+        deadline = parse_time(str(row["next_action_at"]))
+        elapsed_min = timeout_min + max(
+            0.0,
+            (now - deadline).total_seconds() / 60.0,
+        )
         try:
             self._transition_task(
                 task.id,
@@ -512,7 +500,8 @@ class WorkflowRuntime:
             changed = conn.execute(
                 """
                 UPDATE workflow_runs
-                SET state = ?, updated_at = ?, completed_at = ?
+                SET state = ?, updated_at = ?, next_action_at = NULL,
+                    completed_at = ?
                 WHERE id = ? AND state = ?
                   AND COALESCE(current_node_key, '') = ?
                   AND COALESCE(current_task_id, '') = ? AND updated_at = ?
@@ -675,12 +664,14 @@ class WorkflowRuntime:
             with self.store.transaction() as conn:
                 renewed = conn.execute(
                     """
-                    UPDATE workflow_runs SET updated_at = ?
+                    UPDATE workflow_runs
+                    SET updated_at = ?, next_action_at = ?
                     WHERE id = ? AND state = ? AND current_node_key = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                     """,
                     (
                         renewed_at,
+                        self._reservation_deadline(renewed_at),
                         run.id,
                         WorkflowState.RUNNING.value,
                         run.current_node_key,
@@ -700,6 +691,7 @@ class WorkflowRuntime:
         expected_node = run.current_node_key
         expected_task = run.current_task_id
         expected_updated_at = run.updated_at
+        expected_next_action_at = run.next_action_at
 
         if edge is None or not edge.get("to_node_key"):
             final_state = (
@@ -723,7 +715,7 @@ class WorkflowRuntime:
                     """
                     UPDATE workflow_runs
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
-                        updated_at = ?, completed_at = ?
+                        updated_at = ?, next_action_at = NULL, completed_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
@@ -765,7 +757,7 @@ class WorkflowRuntime:
                     """
                     UPDATE workflow_runs
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
-                        updated_at = ?, completed_at = ?
+                        updated_at = ?, next_action_at = NULL, completed_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
@@ -813,7 +805,7 @@ class WorkflowRuntime:
                     """
                     UPDATE workflow_runs
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
-                        updated_at = ?, completed_at = ?
+                        updated_at = ?, next_action_at = NULL, completed_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
@@ -869,7 +861,7 @@ class WorkflowRuntime:
                 reserved = conn.execute(
                     """
                     UPDATE workflow_runs
-                    SET current_node_key = ?, updated_at = ?
+                    SET current_node_key = ?, updated_at = ?, next_action_at = ?
                     WHERE id = ? AND state = ?
                       AND COALESCE(current_node_key, '') = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
@@ -877,6 +869,7 @@ class WorkflowRuntime:
                     (
                         reservation_node,
                         reservation_at,
+                        self._reservation_deadline(reservation_at),
                         run.id,
                         WorkflowState.RUNNING.value,
                         run.current_node_key or "",
@@ -927,13 +920,14 @@ class WorkflowRuntime:
                 self.store.execute(
                     """
                     UPDATE workflow_runs
-                    SET current_node_key = ?, updated_at = ?
+                    SET current_node_key = ?, updated_at = ?, next_action_at = ?
                     WHERE id = ? AND state = ? AND current_node_key = ?
                       AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                     """,
                     (
                         expected_node,
                         expected_updated_at,
+                        expected_next_action_at,
                         run.id,
                         WorkflowState.RUNNING.value,
                         reservation_node,
@@ -952,7 +946,8 @@ class WorkflowRuntime:
             finalized = conn.execute(
                 """
                 UPDATE workflow_runs
-                SET current_node_key = ?, current_task_id = ?, updated_at = ?
+                SET current_node_key = ?, current_task_id = ?, updated_at = ?,
+                    next_action_at = ?
                 WHERE id = ? AND state = ? AND current_node_key = ?
                   AND COALESCE(current_task_id, '') = ? AND updated_at = ?
                 """,
@@ -960,6 +955,7 @@ class WorkflowRuntime:
                     target["node_key"],
                     new_task.id,
                     finalized_at,
+                    self._node_deadline(target, finalized_at),
                     run.id,
                     WorkflowState.RUNNING.value,
                     reservation_node,
@@ -1125,6 +1121,94 @@ class WorkflowRuntime:
         except (TypeError, ValueError):
             return False
         return age >= stale_after
+
+    def _reservation_deadline(self, activated_at: str) -> str:
+        stale_after = self._reservation_stale_after_seconds()
+        if stale_after is None:
+            return _NO_ACTION_AT
+        try:
+            return (
+                parse_time(activated_at) + timedelta(seconds=stale_after)
+            ).isoformat(timespec="microseconds")
+        except (TypeError, ValueError):
+            return _NO_ACTION_AT
+
+    def _node_deadline(self, node: Dict[str, Any], activated_at: str) -> str:
+        try:
+            timeout_minutes = max(0, int(node.get("timeout_minutes") or 0))
+            activated = parse_time(activated_at)
+        except (TypeError, ValueError):
+            return _NO_ACTION_AT
+        if timeout_minutes <= 0:
+            return _NO_ACTION_AT
+        return (activated + timedelta(minutes=timeout_minutes)).isoformat(
+            timespec="microseconds"
+        )
+
+    def _backfill_next_action_at(self) -> None:
+        """Populate the indexed deadline for runs created before the column.
+
+        Each query is bounded; rows with no timeout receive a far-future
+        sentinel so subsequent starts do not repeatedly revisit them.
+        """
+        while True:
+            rows = self.store.query_all(
+                """
+                SELECT wr.id, wr.current_node_key, wr.definition_snapshot,
+                       wr.updated_at, task.updated_at AS task_updated_at
+                FROM workflow_runs AS wr
+                LEFT JOIN tasks AS task ON task.id = wr.current_task_id
+                WHERE wr.state = ? AND wr.next_action_at IS NULL
+                ORDER BY wr.updated_at, wr.id
+                LIMIT 500
+                """,
+                (WorkflowState.RUNNING.value,),
+            )
+            if not rows:
+                return
+            for row in rows:
+                try:
+                    node_key = row["current_node_key"]
+                    if self._reserved_task_id(node_key) is not None:
+                        deadline = self._reservation_deadline(str(row["updated_at"]))
+                    else:
+                        definition = json_loads(row["definition_snapshot"], {})
+                        node = self._node_by_key(definition, node_key)
+                        activated_at = row["task_updated_at"] or row["updated_at"]
+                        deadline = (
+                            self._node_deadline(node, str(activated_at))
+                            if node is not None
+                            else _NO_ACTION_AT
+                        )
+                except Exception:  # noqa: BLE001 - quarantine malformed legacy rows.
+                    deadline = _NO_ACTION_AT
+                self.store.execute(
+                    """
+                    UPDATE workflow_runs SET next_action_at = ?
+                    WHERE id = ? AND next_action_at IS NULL
+                    """,
+                    (deadline, row["id"]),
+                )
+            if len(rows) < 500:
+                return
+
+    def _encode_tick_cursor(self, action_at: str, run_id: str) -> str:
+        return json_dumps({"action_at": action_at, "run_id": run_id})
+
+    def _decode_tick_cursor(
+        self, cursor: Optional[str]
+    ) -> Optional[tuple[str, str]]:
+        if not cursor:
+            return None
+        try:
+            payload = json_loads(cursor, {})
+            action_at = str(payload["action_at"])
+            run_id = str(payload["run_id"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not action_at or not run_id:
+            return None
+        return action_at, run_id
 
     def _reservation_stale_after_seconds(self) -> Optional[int]:
         raw = os.environ.get(
@@ -1414,5 +1498,6 @@ class WorkflowRuntime:
             started_by=row["started_by"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            next_action_at=row["next_action_at"],
             completed_at=row["completed_at"],
         )
