@@ -953,8 +953,9 @@ class ControlPlane:
         store: Optional[Store] = None,
         secret_key: Optional[str] = None,
     ) -> None:
-        # When no store is injected, pick a backend from the environment:
-        # MAC_DATABASE_URL -> PostgresStore, otherwise SQLiteStore at MAC_DB.
+        # When no store is injected, pick an explicitly configured backend:
+        # MAC_DATABASE_URL -> PostgresStore, or MAC_DB -> SQLiteStore. Missing
+        # configuration is an error; a client-home database is never inferred.
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
         self.store: Store = store or make_store_from_env()

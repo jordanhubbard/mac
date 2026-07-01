@@ -68,43 +68,55 @@ def make_store_from_env(
 
     Returns a `PostgresStore` when ``MAC_DATABASE_URL`` is set to a
     ``postgres://`` or ``postgresql://`` DSN; otherwise a `SQLiteStore`
-    at ``sqlite_path`` (falling back to ``MAC_DB`` / `default_db_path()`).
+    at the explicitly passed ``sqlite_path`` or ``MAC_DB``.
+
+    There is deliberately no home-directory fallback. A process that owns a
+    control plane must declare its durable authority; an operator client must
+    never acquire a private ``~/.mac/mac.db`` merely by importing or starting
+    MAC without a hub configuration.
+
     The Postgres backend auto-applies the bundled schema on first
     construction so a fresh CNPG cluster comes up ready; SQLite already
     runs `_initialize` from its constructor for the same effect.
     """
+    role = os.environ.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower()
+    if role == "client":
+        raise StoreError(
+            "MAC_CONTROL_PLANE_ROLE=client cannot own a database; connect to the "
+            "configured hub instead"
+        )
     dsn = os.environ.get("MAC_DATABASE_URL", "").strip()
-    if dsn and dsn.startswith(("postgres://", "postgresql://")):
+    if dsn:
+        if not dsn.startswith(("postgres://", "postgresql://")):
+            raise StoreError(
+                "unsupported MAC_DATABASE_URL scheme; expected postgres:// or "
+                "postgresql://"
+            )
         from mac.store_postgres import PostgresStore
 
         pool_size = int(os.environ.get("MAC_PG_POOL_SIZE", "10") or "10")
         store = PostgresStore(dsn, pool_size=pool_size)
         store.initialize()
         return store
-    return SQLiteStore(sqlite_path)
-
-
-def default_db_path() -> str:
-    """Resolve the canonical SQLite path.
-
-    Prefer ``MAC_DB`` (explicit operator intent), otherwise use
-    ``~/.mac/mac.db`` so a stray run from any cwd doesn't drop a fresh
-    ``mac.db`` next to the source tree.
-    """
-    env = os.environ.get("MAC_DB")
-    if env:
-        return env
-    home = Path.home() / ".mac"
-    home.mkdir(parents=True, exist_ok=True)
-    return str(home / "mac.db")
+    path = sqlite_path or os.environ.get("MAC_DB", "").strip()
+    if not path:
+        raise StoreError(
+            "control-plane database is not configured; set MAC_DATABASE_URL for "
+            "PostgreSQL or MAC_DB to an explicit SQLite path. MAC no longer "
+            "creates ~/.mac/mac.db implicitly."
+        )
+    return SQLiteStore(path)
 
 
 class SQLiteStore:
     """Durable SQLite backing store for the control plane."""
 
     def __init__(self, path: Optional[str] = None) -> None:
-        if path is None:
-            path = default_db_path()
+        if not path:
+            raise StoreError(
+                "SQLiteStore requires an explicit database path; pass a path "
+                "directly or configure MAC_DB through make_store_from_env()"
+            )
         self.path = path
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)

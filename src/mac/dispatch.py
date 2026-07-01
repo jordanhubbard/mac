@@ -675,6 +675,20 @@ class RemoteDispatch:
     def fleet_build_distribution(self) -> _Dictish:
         return _Dictish(self._get("/fleet/build-distribution"))
 
+    def fleet_snapshot(
+        self,
+        *,
+        exclude_agent_id: Optional[str] = None,
+        limit: int = 30,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/fleet/snapshot",
+                exclude_agent_id=exclude_agent_id,
+                limit=limit,
+            )
+        )
+
     # -- Mood (per-agent overlay) -------------------------------------------
 
     def set_mood(self, agent_id: str, **kw: Any) -> _Dictish:

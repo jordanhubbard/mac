@@ -64,7 +64,8 @@ only after validation succeeds. Any failure after issuance attempts remote
 revocation and removes transient state without printing the bearer.
 
 After login, operator commands omit `--db` and resolve the installed profile as
-the one hub authority. A client-side `~/.mac/mac.db` is neither a cache nor an
+the one hub authority. MAC no longer creates a client-side database
+implicitly. A legacy `~/.mac/mac.db` is neither a cache nor an
 offline queue, and MAC performs no implicit task reconciliation between SQLite
 files. If that path already contains tasks, task-producing commands refuse to
 add more unless `--local-authority` explicitly declares that the file is the
@@ -74,6 +75,11 @@ Successful login and login-status output include a `local_ledger` notice when
 that database contains active work. The notice is read-only and points to
 `mac migrate local-ledger`; migration remains an explicit `--execute` action
 that verifies hub copies before cancelling and archiving local records.
+
+The same rule applies to deployed fleet spokes. They do not run a local
+control-plane service and their generated environment contains no database
+setting. Workers, fleet-context refresh, and Hermes identity registration all
+use the hub API.
 
 The managed SSH PID is recorded under `$MAC_HOME/sessions`; bearer material is
 not. Every profile-backed CLI command checks the session. A dead tunnel is

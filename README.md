@@ -133,7 +133,7 @@ For local SQLite/API development after installation:
 export MAC_SECRET_KEY="$(openssl rand -base64 32)"
 
 uv run mac --db mac.db init
-uv run uvicorn mac.api:app --reload
+MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
 uv run mac-hermes --url http://127.0.0.1:8000 --help
 ```
 
@@ -141,6 +141,11 @@ For local work, pass `--db path/to/file.db` or set `MAC_DB`. Without `--db`, the
 CLI selects a configured hub (`--hub-url`, `MAC_API_URL`, `MAC_URL`,
 `MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise refuses to run instead of
 silently creating a stray `./mac.db`.
+
+Control-plane server startup likewise requires either an explicit `MAC_DB`
+SQLite path or `MAC_DATABASE_URL` Postgres DSN. It never creates
+`~/.mac/mac.db` implicitly; that client-side path is inspected only by the
+legacy local-ledger migration command.
 
 ### Control-plane authority is not repository-local task storage
 
@@ -156,6 +161,13 @@ The hub ledger is intentionally not rooted in one checkout. It coordinates
 leases, agents, reviews, workflows, evidence, A2A work, non-repository
 operations, and tasks spanning multiple repositories. A task reaches source
 through its project repository registration and execution contract.
+
+Fleet deployment assigns `MAC_CONTROL_PLANE_ROLE=hub` only to the selected hub.
+That host receives the explicit database configuration and runs `mac-api`.
+Spokes have `MAC_CONTROL_PLANE_ROLE=client`, no `MAC_DB`, and register their
+workers and Hermes identities through the hub API. Deployment archives an
+inactive legacy spoke database; if it contains active tasks, deployment stops
+and requires `mac migrate local-ledger` rather than stranding the work.
 
 GitHub issues remain external project-planning records. `.tickets/` is ignored
 local migration/compatibility state, not another execution authority. Bridges
@@ -237,12 +249,13 @@ periods, monitoring, and recovery.
 
 ## API
 
-Run the REST API with `MAC_SECRET_KEY` set:
+Run the REST API with `MAC_SECRET_KEY` and an explicit database set:
 
 ```bash
-MAC_SECRET_KEY="..." uv run uvicorn mac.api:app --reload
+MAC_SECRET_KEY="..." MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
 # or use factory mode to be explicit:
-MAC_SECRET_KEY="..." uv run uvicorn mac.api:create_app --factory --reload
+MAC_SECRET_KEY="..." MAC_DATABASE_URL="postgresql://..." \
+  uv run uvicorn mac.api:create_app --factory --reload
 ```
 
 Set `MAC_API_TOKEN` for one admin token, or `MAC_API_TOKENS` as JSON such as

@@ -270,9 +270,8 @@ def _ensure_secret_values(values: MutableMapping[str, str]) -> None:
 def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
     paths = cfg.paths
     hub_url = _mac_hub_url(cfg)
-    return {
-        "MAC_DB": str(paths.mac_home / "mac.db"),
-        "MAC_CLIENT_PRINCIPALS_FILE": str(paths.mac_home / "client-principals.json"),
+    values = {
+        "MAC_CONTROL_PLANE_ROLE": "hub" if cfg.identity.is_hub else "client",
         "MAC_PORT": cfg.control.port,
         "MAC_BIND_HOST": cfg.control.bind_host,
         "MAC_HUB_URL": hub_url,
@@ -294,6 +293,16 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
         "MAC_MEMORY_TOPOLOGY_FILE": str(paths.home / ".hermes" / "mac-memory-topology.json"),
     }
+    if cfg.identity.is_hub:
+        values.update(
+            {
+                "MAC_DB": str(paths.mac_home / "mac.db"),
+                "MAC_CLIENT_PRINCIPALS_FILE": str(
+                    paths.mac_home / "client-principals.json"
+                ),
+            }
+        )
+    return values
 
 
 def _identity_values(cfg: DeployEnvConfig) -> Dict[str, str]:
@@ -525,7 +534,6 @@ def _apply_inproc_router_spoke(values: MutableMapping[str, str], cfg: DeployEnvC
     """Spoke: route the gateway (chat + image) through the hub's /v1 with the
     validated hub-facing token and hold no upstream keys."""
     hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").rstrip("/")
-    local_token = values.get("MAC_API_TOKEN") or ""
     hub_token = (cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or "").strip()
     hub_v1 = "%s/v1" % hub_base
     values["OPENAI_BASE_URL"] = hub_v1
@@ -628,6 +636,16 @@ def build_mac_env(
 ) -> Dict[str, str]:
     env = os.environ if environ is None else environ
     values: Dict[str, str] = dict(existing)
+    if not cfg.identity.is_hub:
+        _clear(
+            values,
+            (
+                "MAC_DB",
+                "MAC_DATABASE_URL",
+                "MAC_CLIENT_PRINCIPALS_FILE",
+                "MAC_HUB_TICK_INTERVAL_SECONDS",
+            ),
+        )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
     values.update(_identity_values(cfg))

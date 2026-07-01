@@ -112,7 +112,8 @@ queries `information_schema.columns` and emits
 `make_store_from_env() -> Store`:
 
 - `MAC_DATABASE_URL=postgresql://…` → `PostgresStore`
-- otherwise → `SQLiteStore(MAC_DB or default_db_path())`
+- otherwise, explicit `MAC_DB` → `SQLiteStore(MAC_DB)`
+- neither configured → startup error; no implicit client-side database
 
 Update all 4 construction sites identified in
 [`memory/project_store_surface.md`](project_store_surface.md) (or equivalent

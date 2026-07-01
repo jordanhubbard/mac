@@ -23,19 +23,28 @@ concurrent reads well and serializes writes through filesystem locks — so
 call contends on the same lock. For multi-host, multi-replica, or
 write-heavy fleets, use topology (3) (Postgres) instead.
 
-The backend selection is runtime: setting `MAC_DATABASE_URL` to a
-`postgresql://...` DSN switches `mac-api` to `PostgresStore` without any
-code change; leaving it unset keeps the legacy `SQLiteStore` path. Both
-backends ship in the same wheel/image; pick at deploy time.
+The backend selection is runtime: set `MAC_DATABASE_URL` to a
+`postgresql://...` DSN for `PostgresStore`, or set `MAC_DB` to an explicit
+SQLite path. There is no implicit home-directory database. Both backends ship
+in the same wheel/image; pick one at deploy time.
+
+Only a hub or stateless API replica is a control-plane server. Fleet spokes are
+clients: their generated environment has `MAC_CONTROL_PLANE_ROLE=client`, no
+`MAC_DB` or `MAC_DATABASE_URL`, and their worker/gateway processes use
+`MAC_HUB_URL`. A redeployed spoke archives an inactive legacy `mac.db`; active
+legacy tasks block deployment until explicitly migrated to the hub. Store
+construction also rejects `MAC_CONTROL_PLANE_ROLE=client` even if a stale
+database variable is reintroduced.
 
 ## Required configuration
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `MAC_SECRET_KEY` | yes | 32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it. |
-| `MAC_DATABASE_URL` | no | Postgres DSN (`postgresql://...` or `postgres://...`). When set, `mac-api` uses `PostgresStore` and ignores `MAC_DB`. The Postgres schema is auto-applied on startup (idempotent). |
+| `MAC_CONTROL_PLANE_ROLE` | yes for fleet deploys | `hub` for the single database-owning authority; `client` for database-free spokes. |
+| `MAC_DATABASE_URL` | conditional | Postgres DSN (`postgresql://...` or `postgres://...`). Required unless `MAC_DB` is set. When set, `mac-api` uses `PostgresStore` and ignores `MAC_DB`. The Postgres schema is auto-applied on startup (idempotent). |
 | `MAC_PG_POOL_SIZE` | no | `psycopg_pool` max connections per `mac-api` replica. Default `10`. |
-| `MAC_DB` | no | SQLite file path used when `MAC_DATABASE_URL` is unset. Store default is `~/.mac/mac.db`; CLI local mode should pass `--db` or set `MAC_DB` explicitly. |
+| `MAC_DB` | conditional | Explicit SQLite control-plane path. Required unless `MAC_DATABASE_URL` is set. No client-side `~/.mac/mac.db` is created implicitly. |
 | `MAC_API_TOKEN` | no | Single admin bearer token. Set empty string is rejected. |
 | `MAC_API_TOKENS` | no | JSON `{token: [scopes,...]}` for scoped auth. Mutually exclusive with `MAC_API_TOKEN`. |
 | `HERMES_HOME` | no | Hermes state directory checked at startup. Default `~/.hermes`. |

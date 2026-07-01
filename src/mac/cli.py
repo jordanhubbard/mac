@@ -1778,10 +1778,9 @@ def cmd_fleet_memory_prune(args: argparse.Namespace) -> None:
 def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """GET the agent's current mood overlay straight from the hub HTTP API.
 
-    The fleet-context refresh otherwise runs against local SQLite ($MAC_DB wins
-    in CLI resolution), so on a spoke a hub-set mood would never be seen. This
-    talks to the hub directly (same URL + token the worker uses). Returns the
-    overlay dict, or None on any error / no active mood."""
+    Fleet context is hub-backed on every node. Mood remains a small direct HTTP
+    read because it is best-effort and not part of the dispatch facade. Returns
+    the overlay dict, or None on any error / no active mood."""
     import json as _json
     import os as _os
     import urllib.request as _u
@@ -1825,9 +1824,7 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     path = _Path(markdown)
     refresh_fleet_section(path, render_fleet_section(snapshot))
 
-    # mood-01: fetch this agent's mood straight from the hub HTTP API so a spoke
-    # picks it up even though $MAC_DB pins the rest of the CLI to local SQLite
-    # (fleet_snapshot above isn't wrapped in hub mode, so it stays local). Best-effort.
+    # mood-01: fetch this agent's mood straight from the hub HTTP API. Best-effort.
     overlay = _hub_get_mood(agent) if agent else None
     refresh_mood_section(path, render_mood_section(overlay))
     _print(
@@ -2386,6 +2383,7 @@ def cmd_migrate_local_ledger(args: argparse.Namespace) -> None:
         LocalLedgerMigrationError,
         inspect_local_ledger,
         migrate_local_ledger,
+        retire_inactive_local_ledger,
     )
 
     if args.db:
@@ -2395,6 +2393,18 @@ def cmd_migrate_local_ledger(args: argparse.Namespace) -> None:
             "--profile, --fleet, or --hub-url"
         )
     plan = inspect_local_ledger(args.source_db)
+    if args.execute and args.retire_inactive:
+        raise MACError("--execute and --retire-inactive are mutually exclusive")
+    if args.retire_inactive:
+        try:
+            result = retire_inactive_local_ledger(
+                source_db=args.source_db,
+                archive_dir=args.archive_dir,
+            )
+        except (LocalLedgerMigrationError, OSError, sqlite3.Error) as exc:
+            raise MACError(str(exc)) from exc
+        _print(result.to_dict())
+        return
     if not args.execute:
         _print(plan.to_dict())
         return
@@ -5187,9 +5197,8 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_migrate_acc, migrate_acc)
     migrate_local_ledger = migrate.add_parser(
         "local-ledger",
-        help="inspect or explicitly transfer active tasks from an isolated local "
-        "SQLite authority to the selected hub, verify them, cancel the local "
-        "records, and archive the source database",
+        help="inspect, transfer active tasks from an isolated SQLite authority "
+        "to the selected hub, or retire an inactive legacy authority",
     )
     migrate_local_ledger.add_argument(
         "--source-db",
@@ -5205,6 +5214,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--execute",
         action="store_true",
         help="perform the one-way transfer; without this flag the command is read-only",
+    )
+    migrate_local_ledger.add_argument(
+        "--retire-inactive",
+        action="store_true",
+        help="integrity-check, archive, and remove the source only when it has no active tasks",
     )
     migrate_local_ledger.add_argument("--actor", default="local-ledger-migrator")
     _set(cmd_migrate_local_ledger, migrate_local_ledger)

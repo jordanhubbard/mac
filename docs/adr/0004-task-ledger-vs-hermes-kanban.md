@@ -31,7 +31,7 @@ with a bridge; that is **rejected** in favor of one store.
 | Model | `models.py` `Task`, `store.py` `tasks` | `_hermes/hermes_cli/kanban_db.py` `tasks` |
 | Distinctive fields | `required_capabilities`, `lease_id`/`leased_until`, `owner_agent_id`, `max_attempts`, `project` | `board`, `workspace_kind`/`workspace_path`/`branch_name` (git worktrees), `task_links`, `task_comments`/`task_events`, `task_runs`, `worker_pid`/`last_heartbeat_at`, `claim_lock` CAS |
 | States | `open/blocked/claimed/running/needs_review/reviewing/completed/failed/cancelled` | `triage/todo/scheduled/ready/running/blocked/review/done/archived` |
-| Location | One **shared hub** DB per fleet (`~/.mac/mac.db`) | **Per-board local** SQLite (`~/.hermes/kanban.db`) |
+| Location | One **explicitly configured shared hub** DB per fleet (`MAC_DB` or Postgres) | **Per-board local** SQLite (`~/.hermes/kanban.db`) |
 
 No bridge exists today: nothing in `src/mac/` (outside `_hermes/`) imports
 `kanban_db`; neither dispatcher reads the other's DB; the only links were agent
@@ -68,8 +68,9 @@ Neither is "easy." → revert.
    store.
 
 “One task database” means one authoritative database per running control
-plane. The hub's `mac.db` is fleet authority; a SQLite file opened with `--db`
-elsewhere is a separate standalone authority, not a replica. MAC does not merge
+plane. Only the hub owns that database; fleet spokes are database-free clients
+of its API. A SQLite file opened with `--db` elsewhere is a separate standalone
+authority, not a replica, and must be configured explicitly. MAC does not merge
 their task state. Repository `.tickets/` files are migration/compatibility
 mirrors and GitHub issues are external planning sources; neither participates
 in leases, dispatch, review, or workflow state until a hub task is explicitly

@@ -13,6 +13,7 @@ from mac.local_ledger_migration import (
     ARCHIVE_SCHEMA,
     PROVENANCE_SCHEMA,
     LocalLedgerMigrationResult,
+    LocalLedgerRetirementResult,
     LocalLedgerMigrationError,
     _archive_database,
     _as_dict,
@@ -29,6 +30,7 @@ from mac.local_ledger_migration import (
     inspect_local_ledger,
     local_ledger_notice,
     migrate_local_ledger,
+    retire_inactive_local_ledger,
 )
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
@@ -713,3 +715,73 @@ def test_result_dataclass_serializes():
         completed_at="now",
     )
     assert result.to_dict()["migration_id"] == "localmig_test"
+
+    retirement = LocalLedgerRetirementResult(
+        source_db="/tmp/mac.db",
+        source_database_id="localdb_test",
+        archive_path="/tmp/archive.db",
+        archive_sha256="0" * 64,
+        manifest_path="/tmp/archive.json",
+        completed_at="now",
+    )
+    assert retirement.to_dict()["schema"] == retirement.schema
+
+
+def test_retire_inactive_local_ledger_archives_and_refuses_active_work(tmp_path):
+    inactive = tmp_path / "inactive.db"
+    store = SQLiteStore(str(inactive))
+    plane = ControlPlane(store, secret_key=SECRET)
+    task = plane.create_task("historical")
+    conn = sqlite3.connect(inactive)
+    try:
+        conn.execute("UPDATE tasks SET state = 'completed' WHERE id = ?", (task.id,))
+        conn.commit()
+    finally:
+        conn.close()
+        store.close()
+
+    result = retire_inactive_local_ledger(
+        source_db=inactive,
+        archive_dir=tmp_path / "archive",
+    )
+
+    assert not inactive.exists()
+    assert Path(result.archive_path).is_file()
+    manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["status"] == "completed"
+    assert manifest["retirement_schema"] == result.schema
+
+    active = tmp_path / "active.db"
+    _source(active)
+    with pytest.raises(LocalLedgerMigrationError, match="migrate them to the hub"):
+        retire_inactive_local_ledger(
+            source_db=active,
+            archive_dir=tmp_path / "archive",
+        )
+    assert active.exists()
+
+
+def test_cli_retires_inactive_local_ledger_without_target_authority(
+    tmp_path, capsys
+):
+    source = tmp_path / "inactive.db"
+    store = SQLiteStore(str(source))
+    store.close()
+
+    rc = main(
+        [
+            "--json",
+            "migrate",
+            "local-ledger",
+            "--source-db",
+            str(source),
+            "--archive-dir",
+            str(tmp_path / "archive"),
+            "--retire-inactive",
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "mac.local_ledger_retirement_result.v1"
+    assert not source.exists()

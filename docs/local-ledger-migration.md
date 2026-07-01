@@ -1,9 +1,11 @@
 # Local Ledger Authority Transfer
 
-`~/.mac/mac.db` is a complete SQLite control-plane authority, not an offline
-hub replica. MAC does not merge it with a fleet hub. When an operator client
-has active tasks in that database, transfer them explicitly and retire the
-local authority with `mac migrate local-ledger`.
+Older MAC versions could implicitly create `~/.mac/mac.db` as a complete
+SQLite control-plane authority. It was never an offline hub replica, and MAC
+does not merge it with a fleet hub. Current server startup requires an explicit
+database configuration and treats this client-side path only as legacy
+migration input. When an operator client has active tasks there, transfer them
+explicitly and retire the local authority with `mac migrate local-ledger`.
 
 ## Inspect first
 
@@ -59,6 +61,15 @@ The default archive directory is `~/.mac/archive`. The result reports both the
 database archive and its JSON manifest. If cancellation or archive creation
 fails, the recovery copy restores the original active database; the verified
 hub copies remain safe for an idempotent retry.
+
+An already inactive legacy authority can be retired without a hub transfer:
+
+```bash
+mac --json migrate local-ledger --retire-inactive
+```
+
+This action refuses any active task. It integrity-checks and hashes the archive,
+reads its manifest back, and only then removes the live database path.
 
 ## Login and diagnostics notice
 

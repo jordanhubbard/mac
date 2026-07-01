@@ -12,7 +12,7 @@ EnvironmentFile=/etc/mac/mac.env
 # MAC_SECRET_KEY MUST be set in /etc/mac/mac.env. The service refuses to
 # start without it.
 # Optional: MAC_API_TOKEN or MAC_API_TOKENS for scoped bearer auth.
-# Optional: MAC_DB=/var/lib/mac/mac.db (default).
+# Required unless MAC_DATABASE_URL is set: MAC_DB=/var/lib/mac/mac.db.
 ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
     --host 127.0.0.1 --port 8000 --workers 1 --log-level info
 Restart=on-failure

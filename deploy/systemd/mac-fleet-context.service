@@ -15,10 +15,9 @@ EnvironmentFile=-__MAC_HOME__/mac.env
 # session knows what teammates are doing and behaves in its current mood.
 # --agent excludes the caller from its own fleet view.
 #
-# Runs against local SQLite (mac.env sets $MAC_DB): the fleet snapshot isn't
-# wrapped for hub mode, so on the hub agent (local db == hub db) it sees the live
-# fleet. The mood overlay is fetched straight from the hub's HTTP API inside the
-# command, so a spoke still picks up a hub-set mood regardless of $MAC_DB.
+# Runs against the selected hub authority. Hub nodes may use explicit local
+# SQLite; spokes have no MAC_DB and call the remote hub through MAC_HUB_URL.
+# The mood overlay is also fetched from that hub.
 ExecStart=/bin/bash -lc '\
   exec __MAC_HOME__/venv/bin/mac fleet refresh-context \
     --agent "${MAC_AGENT_ID:-${MAC_WORKER_AGENT_ID:-}}"'

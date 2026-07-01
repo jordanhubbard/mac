@@ -1641,6 +1641,10 @@ run_supervisorctl() {
   fi
 }
 
+control_plane_enabled() {
+  [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]
+}
+
 supervisord_conf_dir() {
   if [ -n "${MAC_DEPLOY_SUPERVISOR_CONF_DIR:-}" ]; then
     printf '%s\n' "$MAC_DEPLOY_SUPERVISOR_CONF_DIR"
@@ -4170,9 +4174,60 @@ install_hermes_messaging_deps
 repair_hermes_kanban_schema
 log "installed Hermes agent from upstream plus mac-managed patches"
 
-log "initializing mac database"
-"$VENV/bin/mac" --db "$MAC_DB" init >/dev/null
-register_hermes_runtime_identity
+mac_authority() {
+  if control_plane_enabled; then
+    "$VENV/bin/mac" --db "$MAC_DB" "$@"
+  else
+    "$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"
+  fi
+}
+
+retire_spoke_local_control_plane_database() {
+  if control_plane_enabled; then
+    return 0
+  fi
+  local source="$MAC_HOME/mac.db" plan="$LOG_DIR/spoke-local-ledger-plan.json"
+  local active retirement archive
+  [ -f "$source" ] || return 0
+
+  log "spoke has a legacy local control-plane database; inspecting before retirement"
+  "$VENV/bin/mac" --json migrate local-ledger --source-db "$source" > "$plan"
+  active="$("$PY" - "$plan" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(int(json.load(handle).get("active_task_count") or 0))
+PY
+)"
+  if [ "$active" -gt 0 ]; then
+    log "ERROR: legacy spoke database contains $active active task(s); refusing to strand them"
+    log "Migrate them explicitly to $MAC_HUB_URL with: mac --hub-url <hub> migrate local-ledger --execute"
+    return 1
+  fi
+
+  retirement="$LOG_DIR/spoke-local-ledger-retirement.json"
+  "$VENV/bin/mac" --json migrate local-ledger \
+    --source-db "$source" \
+    --archive-dir "$MAC_HOME/archive" \
+    --retire-inactive > "$retirement"
+  archive="$("$PY" - "$retirement" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle)["archive_path"])
+PY
+)"
+  log "archived inactive legacy spoke database at $archive"
+}
+
+if control_plane_enabled; then
+  log "initializing hub control-plane database"
+  mac_authority init >/dev/null
+  register_hermes_runtime_identity
+else
+  log "configuring spoke as a database-free hub client"
+  retire_spoke_local_control_plane_database
+fi
 write_hermes_runtime_context
 verify_hermes_prompt_bridge
 
@@ -4240,13 +4295,13 @@ PY
 }
 
 if [ -n "$ACC_DB" ]; then
-  if [ -f "$LOG_DIR/acc-migration-import.json" ] && [ "${MAC_FORCE_ACC_MIGRATION:-0}" != "1" ]; then
+  if control_plane_enabled && [ -f "$LOG_DIR/acc-migration-import.json" ] && [ "${MAC_FORCE_ACC_MIGRATION:-0}" != "1" ]; then
     log "existing ACC migration import report found; skipping one-time import"
     summarize_report "migration import existing" "$LOG_DIR/acc-migration-import.json"
     write_migration_status "already_imported" "$ACC_DB"
   else
     log "running ACC migration dry-run from $ACC_DB"
-    "$VENV/bin/mac" --db "$MAC_DB" migrate acc "$ACC_DB" \
+    mac_authority migrate acc "$ACC_DB" \
       --mode dry-run \
       --agent-home "$HOME" \
       --report "$LOG_DIR/acc-migration-dry-run.json" \
@@ -4254,7 +4309,7 @@ if [ -n "$ACC_DB" ]; then
     summarize_report "migration dry-run" "$LOG_DIR/acc-migration-dry-run.json"
 
     log "running ACC migration import with active tasks requeued"
-    "$VENV/bin/mac" --db "$MAC_DB" migrate acc "$ACC_DB" \
+    mac_authority migrate acc "$ACC_DB" \
       --mode import \
       --allow-active \
       --agent-home "$HOME" \
@@ -4449,8 +4504,6 @@ sync_messaging_config() {
 
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
-  log "installing systemd service $unit"
-  install_mac_control_wrapper
   install_hermes_gateway_wrapper
   install_mac_agent_wrapper
   if sudo test -f "$unit"; then
@@ -4459,7 +4512,10 @@ install_linux_service() {
     sudo chown "$USER" "$MAC_UNIT_BACKUP" || true
     write_rollback_script
   fi
-  sudo tee "$unit" >/dev/null <<EOF
+  if control_plane_enabled; then
+    log "installing hub control-plane systemd service $unit"
+    install_mac_control_wrapper
+    sudo tee "$unit" >/dev/null <<EOF
 [Unit]
 Description=mac control plane replacement for ACC
 After=network-online.target
@@ -4479,14 +4535,21 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 EOF
-  sudo systemctl daemon-reload
-  sudo systemctl enable "$MAC_SERVICE_NAME"
-  restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  sudo systemctl restart "$MAC_SERVICE_NAME"
-  sleep 3
-  sudo systemctl --no-pager -l status "$MAC_SERVICE_NAME" || true
-  sudo journalctl -u "$MAC_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-service-journal.txt" || true
-  escrow_router_provider_keys
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$MAC_SERVICE_NAME"
+    restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    sudo systemctl restart "$MAC_SERVICE_NAME"
+    sleep 3
+    sudo systemctl --no-pager -l status "$MAC_SERVICE_NAME" || true
+    sudo journalctl -u "$MAC_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-service-journal.txt" || true
+    escrow_router_provider_keys
+  else
+    log "spoke role: removing stale local control-plane systemd service"
+    sudo systemctl disable --now "$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo rm -f "$unit"
+    sudo systemctl daemon-reload
+    : > "$LOG_DIR/mac-service-not-installed.txt"
+  fi
   scrub_spoke_provider_secrets
   sync_messaging_config
   install_linux_hermes_service
@@ -5076,7 +5139,10 @@ PY
 }
 
 install_linux_hermes_service() {
-  local unit="/etc/systemd/system/${HERMES_SERVICE_NAME}" restart_since
+  local unit="/etc/systemd/system/${HERMES_SERVICE_NAME}" restart_since control_after=""
+  if control_plane_enabled; then
+    control_after="$MAC_SERVICE_NAME"
+  fi
   log "installing systemd service $unit"
   if sudo test -f "$unit"; then
     HERMES_UNIT_BACKUP="$MAC_HOME/backups/${HERMES_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
@@ -5087,7 +5153,7 @@ install_linux_hermes_service() {
   sudo tee "$unit" >/dev/null <<EOF
 [Unit]
 Description=mac-managed Hermes gateway
-After=network-online.target $MAC_SERVICE_NAME
+After=network-online.target $control_after
 Wants=network-online.target
 StartLimitIntervalSec=0
 
@@ -5128,7 +5194,10 @@ EOF
 }
 
 install_linux_agent_service() {
-  local unit="/etc/systemd/system/${MAC_AGENT_SERVICE_NAME}" restart_since
+  local unit="/etc/systemd/system/${MAC_AGENT_SERVICE_NAME}" restart_since control_after=""
+  if control_plane_enabled; then
+    control_after="$MAC_SERVICE_NAME"
+  fi
   log "installing systemd service $unit"
   if sudo test -f "$unit"; then
     MAC_AGENT_UNIT_BACKUP="$MAC_HOME/backups/${MAC_AGENT_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
@@ -5139,7 +5208,7 @@ install_linux_agent_service() {
   sudo tee "$unit" >/dev/null <<EOF
 [Unit]
 Description=mac worker agent registration loop
-After=network-online.target $MAC_SERVICE_NAME
+After=network-online.target $control_after
 Wants=network-online.target
 StartLimitIntervalSec=0
 
@@ -5176,22 +5245,15 @@ EOF
 
 
 install_supervisord_service() {
-  local conf_dir conf restart_since
+  local conf_dir conf restart_since control_program=""
   conf_dir="$(supervisord_conf_dir)"
   conf="$conf_dir/$MAC_SUPERVISORD_CONF_NAME"
   log "installing supervisord programs in $conf"
-  install_mac_control_wrapper
   install_hermes_gateway_wrapper
   install_mac_agent_wrapper
-  if sudo test -f "$conf"; then
-    MAC_UNIT_BACKUP="$MAC_HOME/backups/${MAC_SUPERVISORD_CONF_NAME}.${AGENT}.${DEPLOY_TS}"
-    sudo cp -f "$conf" "$MAC_UNIT_BACKUP"
-    sudo chown "$USER" "$MAC_UNIT_BACKUP" || true
-    write_rollback_script
-  fi
-  sudo install -d -m 0755 "$conf_dir"
-  sudo tee "$conf" >/dev/null <<EOF
-[program:$MAC_SUPERVISORD_PROG]
+  if control_plane_enabled; then
+    install_mac_control_wrapper
+    control_program="[program:$MAC_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/mac-service
 directory=$MAC_HOME
 user=$USER
@@ -5201,7 +5263,17 @@ startsecs=3
 stopwaitsecs=20
 stdout_logfile=$LOG_DIR/mac-service.log
 stderr_logfile=$LOG_DIR/mac-service.log
-environment=HOME="$HOME"
+environment=HOME=\"$HOME\""
+  fi
+  if sudo test -f "$conf"; then
+    MAC_UNIT_BACKUP="$MAC_HOME/backups/${MAC_SUPERVISORD_CONF_NAME}.${AGENT}.${DEPLOY_TS}"
+    sudo cp -f "$conf" "$MAC_UNIT_BACKUP"
+    sudo chown "$USER" "$MAC_UNIT_BACKUP" || true
+    write_rollback_script
+  fi
+  sudo install -d -m 0755 "$conf_dir"
+  sudo tee "$conf" >/dev/null <<EOF
+$control_program
 
 [program:$HERMES_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/hermes-gateway
@@ -5234,25 +5306,36 @@ EOF
   restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   run_supervisorctl reread >/dev/null
   run_supervisorctl update >/dev/null
-  run_supervisorctl restart "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$MAC_SUPERVISORD_PROG" >/dev/null
-  sleep 3
+  if control_plane_enabled; then
+    run_supervisorctl restart "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$MAC_SUPERVISORD_PROG" >/dev/null
+    sleep 3
+  else
+    log "spoke role: supervisord control-plane program is absent"
+    : > "$LOG_DIR/mac-service-not-installed.txt"
+  fi
   # Escrow the router upstream key + scrub spoke secrets + sync messaging BEFORE
   # the gateway/agent start, mirroring the systemd (install_linux_hermes_service)
   # and launchd paths. Without this the supervisord path left the hub vault empty,
   # so the router forwarded keyless (upstream 401) and the agent self-test failed.
   # Needs the control plane reachable, so wait briefly for it.
-  for _i in $(seq 1 30); do
-    curl -fsS -o /dev/null "http://127.0.0.1:${MAC_PORT:-8789}/ui" 2>/dev/null && break
-    sleep 1
-  done
-  escrow_router_provider_keys
+  if control_plane_enabled; then
+    for _i in $(seq 1 30); do
+      curl -fsS -o /dev/null "http://127.0.0.1:${MAC_PORT:-8789}/ui" 2>/dev/null && break
+      sleep 1
+    done
+    escrow_router_provider_keys
+  fi
   scrub_spoke_provider_secrets
   sync_messaging_config
   run_supervisorctl restart "$HERMES_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$HERMES_SUPERVISORD_PROG" >/dev/null
   sleep 5
   run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
   sleep 3
-  run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+  if control_plane_enabled; then
+    run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+  else
+    run_supervisorctl status "$HERMES_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+  fi
   printf 'supervisord restarted at %s\n' "$restart_since" >> "$LOG_DIR/supervisord-services.txt"
 }
 
@@ -5269,7 +5352,8 @@ install_darwin_service() {
     cp -f "$plist" "$MAC_PLIST_BACKUP"
     write_rollback_script
   fi
-  cat > "$wrapper" <<'EOF'
+  if control_plane_enabled; then
+    cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 set -a
@@ -5279,8 +5363,8 @@ export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
 export HERMES_REDACT_SECRETS=true
 exec "$HOME/.mac/venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level info
 EOF
-  chmod 700 "$wrapper"
-  cat > "$plist" <<EOF
+    chmod 700 "$wrapper"
+    cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -5297,20 +5381,27 @@ EOF
 </dict>
 </plist>
 EOF
-  if command -v plutil >/dev/null 2>&1; then
-    plutil -lint "$plist"
-  fi
-  launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
-  launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  : > "$LOG_DIR/mac-service.log"
-  launchctl enable "gui/$uid/$MAC_LAUNCHD_LABEL"
-  if ! launchctl bootstrap "gui/$uid" "$plist"; then
+    if command -v plutil >/dev/null 2>&1; then
+      plutil -lint "$plist"
+    fi
+    launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    : > "$LOG_DIR/mac-service.log"
+    launchctl enable "gui/$uid/$MAC_LAUNCHD_LABEL"
+    if ! launchctl bootstrap "gui/$uid" "$plist"; then
+      launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
+    fi
     launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
+    sleep 3
+    launchctl list "$MAC_LAUNCHD_LABEL" || true
+    escrow_router_provider_keys
+  else
+    log "spoke role: removing stale local control-plane launchd service"
+    launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    rm -f "$plist" "$wrapper"
+    : > "$LOG_DIR/mac-service-not-installed.txt"
   fi
-  launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
-  sleep 3
-  launchctl list "$MAC_LAUNCHD_LABEL" || true
-  escrow_router_provider_keys
   scrub_spoke_provider_secrets
   sync_messaging_config
   install_darwin_hermes_service "$uid"
@@ -5548,13 +5639,28 @@ else
   classify_gateway_logs "$LOG_DIR/hermes-gateway.log"
 fi
 
-log "verifying mac health and Hermes startup report"
-curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
-curl -fsS --config - \
-  "http://127.0.0.1:$MAC_PORT/startup/hermes" \
-  > "$LOG_DIR/startup-hermes.json" <<CURL
+log "verifying hub health and local Hermes startup report"
+if control_plane_enabled; then
+  curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
+  curl -fsS --config - \
+    "http://127.0.0.1:$MAC_PORT/startup/hermes" \
+    > "$LOG_DIR/startup-hermes.json" <<CURL
 header = "Authorization: Bearer $MAC_API_TOKEN"
 CURL
+else
+  curl -fsS "$MAC_HUB_URL/health" > "$LOG_DIR/health.json"
+  "$VENV/bin/python" - "$LOG_DIR/startup-hermes.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+from mac.hermes_startup import build_hermes_startup_report
+
+Path(sys.argv[1]).write_text(
+    json.dumps(build_hermes_startup_report(), indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+fi
 "$PY" - "$LOG_DIR/startup-hermes.json" <<'PY'
 import json
 import sys

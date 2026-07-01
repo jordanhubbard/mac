@@ -320,7 +320,8 @@ enrollment and mode-`0600` profile credential above.
 Start the API:
 
 ```bash
-MAC_SECRET_KEY="$MAC_SECRET_KEY" uv run uvicorn mac.api:app --reload --port 8789
+MAC_SECRET_KEY="$MAC_SECRET_KEY" MAC_DB="$PWD/mac.db" \
+  uv run uvicorn mac.api:app --reload --port 8789
 ```
 
 Open the dashboard:

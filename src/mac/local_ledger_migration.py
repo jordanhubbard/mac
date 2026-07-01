@@ -15,6 +15,7 @@ from mac.models import MACError, TERMINAL_TASK_STATES, TaskState
 
 PLAN_SCHEMA = "mac.local_ledger_migration_plan.v1"
 RESULT_SCHEMA = "mac.local_ledger_migration_result.v1"
+RETIREMENT_SCHEMA = "mac.local_ledger_retirement_result.v1"
 PROVENANCE_SCHEMA = "mac.local_ledger_task_migration.v1"
 ARCHIVE_SCHEMA = "mac.local_ledger_archive.v1"
 ACTIVE_TASK_STATES = frozenset(
@@ -98,6 +99,20 @@ class LocalLedgerMigrationResult:
     manifest_path: str
     completed_at: str
     schema: str = RESULT_SCHEMA
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LocalLedgerRetirementResult:
+    source_db: str
+    source_database_id: str
+    archive_path: str
+    archive_sha256: str
+    manifest_path: str
+    completed_at: str
+    schema: str = RETIREMENT_SCHEMA
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -609,6 +624,70 @@ def _remove_live_database(source_db: Path) -> None:
     source_db.unlink()
     for suffix in ("-wal", "-shm"):
         Path(str(source_db) + suffix).unlink(missing_ok=True)
+
+
+def retire_inactive_local_ledger(
+    *,
+    source_db: Optional[Path | str] = None,
+    archive_dir: Optional[Path | str] = None,
+) -> LocalLedgerRetirementResult:
+    """Archive and remove a legacy local authority only when it has no active work."""
+    plan = inspect_local_ledger(source_db)
+    if not plan.exists:
+        raise LocalLedgerMigrationError("local ledger does not exist: %s" % plan.source_db)
+    if plan.issues:
+        raise LocalLedgerMigrationError(
+            "local ledger requires manual review before retirement: %s"
+            % "; ".join(plan.issues)
+        )
+    if plan.active_task_count:
+        raise LocalLedgerMigrationError(
+            "local ledger contains %d active task(s); migrate them to the hub before retirement"
+            % plan.active_task_count
+        )
+
+    source_path = Path(plan.source_db)
+    archive_root = Path(archive_dir or default_archive_dir()).expanduser().resolve()
+    retirement_id = "localretire_%s" % hashlib.sha256(
+        plan.source_database_id.encode("utf-8")
+    ).hexdigest()[:24]
+    archive_path, archive_hash = _archive_database(
+        source_path,
+        archive_root,
+        retirement_id,
+        (),
+    )
+    manifest_path = archive_path.with_suffix(archive_path.suffix + ".manifest.json")
+    payload: Dict[str, Any] = {
+        "schema": ARCHIVE_SCHEMA,
+        "status": "archive_verified",
+        "retirement_schema": RETIREMENT_SCHEMA,
+        "retirement_id": retirement_id,
+        "source_db": str(source_path),
+        "source_database_id": plan.source_database_id,
+        "source_plan": plan.to_dict(),
+        "archive_path": str(archive_path),
+        "archive_sha256": archive_hash,
+        "archived_at": _utcnow(),
+    }
+    _write_json_atomic(manifest_path, payload)
+    _verify_archive_manifest(
+        manifest_path,
+        archive_path=archive_path,
+        archive_hash=archive_hash,
+    )
+    _remove_live_database(source_path)
+    completed_at = _utcnow()
+    payload.update({"status": "completed", "completed_at": completed_at})
+    _write_json_atomic(manifest_path, payload)
+    return LocalLedgerRetirementResult(
+        source_db=str(source_path),
+        source_database_id=plan.source_database_id,
+        archive_path=str(archive_path),
+        archive_sha256=archive_hash,
+        manifest_path=str(manifest_path),
+        completed_at=completed_at,
+    )
 
 
 def migrate_local_ledger(

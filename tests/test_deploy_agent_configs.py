@@ -758,9 +758,38 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
     )[0]
 
     assert "install_mac_control_wrapper" in linux_service
+    assert "if control_plane_enabled; then" in linux_service
+    assert 'systemctl disable --now "$MAC_SERVICE_NAME"' in linux_service
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "ExecStart=$MAC_HOME/bin/mac-service" in linux_service
     assert "ExecStart=$VENV/bin/uvicorn" not in linux_service
+
+
+def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    hub_env = build_mac_env(
+        {},
+        deploy_env_config(tmp_path, agent="hub-a", hub_agent="hub-a"),
+        environ={},
+    )
+    spoke_env = build_mac_env(
+        {
+            "MAC_DB": "/legacy/spoke.db",
+            "MAC_DATABASE_URL": "postgresql://legacy/spoke",
+        },
+        deploy_env_config(tmp_path, agent="spoke-a", hub_agent="hub-a"),
+        environ={},
+    )
+
+    assert hub_env["MAC_CONTROL_PLANE_ROLE"] == "hub"
+    assert hub_env["MAC_DB"].endswith("/.mac/mac.db")
+    assert spoke_env["MAC_CONTROL_PLANE_ROLE"] == "client"
+    assert "MAC_DB" not in spoke_env
+    assert "MAC_DATABASE_URL" not in spoke_env
+    assert "retire_spoke_local_control_plane_database()" in script
+    assert "refusing to strand them" in script
+    assert 'mac_authority migrate acc "$ACC_DB"' in script
+    assert 'curl -fsS "$MAC_HUB_URL/health"' in script
 
 
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
@@ -1069,9 +1098,11 @@ def test_scrub_spoke_provider_secrets_is_noop_on_hub(tmp_path):
 
 def test_scrub_called_for_all_service_flows():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    # symmetric with the hub escrow: escrow (hub) then scrub (spoke) before messaging,
-    # in each of the three service flows (systemd, launchd, supervisord)
-    assert script.count("\n  escrow_router_provider_keys\n  scrub_spoke_provider_secrets\n  sync_messaging_config\n") == 3
+    # Each supervisor flow conditionally escrows on the hub, then always scrubs
+    # spoke provider state and syncs messaging against the selected hub.
+    assert len(re.findall(r"(?m)^\s+escrow_router_provider_keys$", script)) == 3
+    assert len(re.findall(r"(?m)^\s+scrub_spoke_provider_secrets$", script)) == 3
+    assert len(re.findall(r"(?m)^\s+sync_messaging_config$", script)) == 3
 
 
 def test_deploy_host_blanks_provider_keys_for_spokes():
@@ -1120,7 +1151,7 @@ def test_hub_escrows_router_provider_keys_into_vault():
     assert "router provider key escrow failed" in fn
     # invoked on the hub after the API is up, before the gateway, in all three
     # service flows (systemd, launchd, supervisord)
-    assert script.count("\n  escrow_router_provider_keys\n") == 3
+    assert len(re.findall(r"(?m)^\s+escrow_router_provider_keys$", script)) == 3
 
 
 def test_network_none_spoke_uses_tunnel_forwarded_service_ports():

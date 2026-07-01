@@ -2857,8 +2857,9 @@ def create_app(
     client_principals_path: Optional[str] = None,
 ) -> FastAPI:
     # db_path is the explicit SQLite override (e.g. for tests). When it is
-    # None, fall through to make_store_from_env so MAC_DATABASE_URL can
-    # switch the API process to Postgres for the stateless mac-api topology.
+    # None, make_store_from_env requires MAC_DATABASE_URL or MAC_DB. This keeps
+    # production construction explicit and prevents API import/startup from
+    # manufacturing a private client-home authority.
     if control_plane is not None:
         cp = control_plane
     elif db_path is not None:
@@ -4632,6 +4633,13 @@ def create_app(
     @app.get("/fleet/build-distribution")
     def fleet_build_distribution() -> Dict[str, Any]:
         return cp.fleet_build_distribution()
+
+    @app.get("/fleet/snapshot")
+    def fleet_snapshot(
+        exclude_agent_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=30, ge=1, le=200),
+    ) -> Dict[str, Any]:
+        return cp.fleet_snapshot(exclude_agent_id=exclude_agent_id, limit=limit)
 
     # Mood — agent-self-reported emotional state
     @app.put("/agents/{agent_id}/mood")

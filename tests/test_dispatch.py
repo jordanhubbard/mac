@@ -468,6 +468,31 @@ def test_remote_dispatch_read_endpoints_hit_correct_paths():
     assert all("tenant_id" not in u for u in gets)
 
 
+def test_remote_dispatch_fleet_snapshot_reads_hub_authority():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/fleet/snapshot"): {
+                "schema": "mac.fleet_snapshot.v1",
+                "members": [{"agent_id": "agent_other"}],
+            }
+        }
+    )
+    dispatch = RemoteDispatch(
+        HubClient("http://hub:8789", token="tok", transport=fake)
+    )
+
+    snapshot = dispatch.fleet_snapshot(exclude_agent_id="agent_self", limit=12)
+
+    assert snapshot.to_dict()["members"] == [{"agent_id": "agent_other"}]
+    method, url, _body, _token = fake.calls[0]
+    assert method == "GET"
+    assert "/fleet/snapshot" in url
+    assert "exclude_agent_id=agent_self" in url
+    assert "limit=12" in url
+
+
 def test_remote_dispatch_secret_access_uses_api_body_shape():
     """`mac secret access` in hub mode must use SecretAccessRequest's field names."""
     from mac.http_client import HubClient

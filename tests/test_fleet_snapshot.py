@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from mac.services import ControlPlane
+from fastapi.testclient import TestClient
+
+from mac.api import create_app
 from mac.hermes_runtime import (
     render_fleet_section,
     refresh_fleet_section,
     FLEET_SECTION_BEGIN,
     FLEET_SECTION_END,
 )
+from mac.services import ControlPlane
 
 
 def _agent(cp, name, caps=("python",)):
@@ -19,7 +22,7 @@ def _agent(cp, name, caps=("python",)):
 def test_fleet_snapshot_reports_members_and_their_work():
     cp = ControlPlane.in_memory()
     rocky = _agent(cp, "rocky")
-    natasha = _agent(cp, "natasha")
+    _agent(cp, "natasha")
     task = cp.create_task("Ship the connector", required_capabilities=["python"])
     cp.claim_task(task.id, rocky.id)
 
@@ -32,6 +35,15 @@ def test_fleet_snapshot_reports_members_and_their_work():
     # exclude self
     snap2 = cp.fleet_snapshot(exclude_agent_id=rocky.id)
     assert "rocky" not in {m["name"] for m in snap2["members"]}
+
+    client = TestClient(create_app(control_plane=cp))
+    response = client.get(
+        "/fleet/snapshot",
+        params={"exclude_agent_id": rocky.id, "limit": 1},
+    )
+    assert response.status_code == 200
+    assert response.json()["schema"] == "mac.fleet_snapshot.v1"
+    assert [member["name"] for member in response.json()["members"]] == ["natasha"]
 
 
 def test_render_and_refresh_fleet_section_is_idempotent(tmp_path):
