@@ -222,6 +222,90 @@ def cmd_config_migrate_env_namespace(args: argparse.Namespace) -> None:
     )
 
 
+def _login_profile(args: argparse.Namespace, *, fleet: Optional[str] = None) -> str:
+    return str(
+        getattr(args, "login_profile", None)
+        or getattr(args, "logout_profile", None)
+        or getattr(args, "profile", None)
+        or fleet
+        or "default"
+    )
+
+
+def cmd_login(args: argparse.Namespace) -> None:
+    from mac.client_login import (
+        ClientLoginError,
+        default_client_id,
+        login,
+        login_status,
+        renew_login,
+        resolve_login_spec,
+    )
+    from mac.client_profiles import ClientProfileError
+
+    fleet = args.login_fleet or args.fleet
+    profile = _login_profile(args, fleet=fleet)
+    try:
+        if args.login_action == "status":
+            result = login_status(profile)
+        elif args.login_action == "renew":
+            result = renew_login(
+                profile,
+                expires_in=args.expires_in,
+                remote_mac=args.remote_mac,
+                connect_timeout=args.connect_timeout,
+            )
+        else:
+            spec = resolve_login_spec(
+                ssh_target=args.ssh_target,
+                fleet=fleet,
+                agent=args.agent,
+                fleets_config=args.fleets_config,
+                ssh_port=args.ssh_port,
+                proxy_jump=args.proxy_jump,
+                identity_file=args.identity_file,
+                known_hosts_file=args.known_hosts_file,
+                host_key_fingerprint=args.host_key_fingerprint,
+                host_ca=args.host_ca,
+                remote_port=args.remote_port,
+            )
+            result = login(
+                spec=spec,
+                profile=profile,
+                client_id=args.client_id or default_client_id(),
+                display_name=args.name or "",
+                scopes=_csv(args.scopes),
+                capabilities=_csv(args.capabilities),
+                expires_in=args.expires_in,
+                local_port=args.local_port,
+                remote_host=args.remote_host,
+                remote_port=args.remote_port or spec.control_port,
+                allow_elevated=args.allow_elevated,
+                rotate=args.rotate,
+                remote_mac=args.remote_mac,
+                connect_timeout=args.connect_timeout,
+            )
+    except (ClientLoginError, ClientProfileError, OSError) as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_logout(args: argparse.Namespace) -> None:
+    from mac.client_login import ClientLoginError, logout
+    from mac.client_profiles import ClientProfileError
+
+    try:
+        result = logout(
+            _login_profile(args),
+            revoke=args.revoke,
+            remote_mac=args.remote_mac,
+            connect_timeout=args.connect_timeout,
+        )
+    except (ClientLoginError, ClientProfileError, OSError) as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
 def cmd_client_enroll(args: argparse.Namespace) -> None:
     """Mint a scoped client credential on the hub-local SSH trust channel."""
 
@@ -2883,6 +2967,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="remove the flat unscoped keys after writing the scoped variants",
     )
     _set(cmd_config_migrate_env_namespace, migrate_env)
+
+    login_parser = sub.add_parser(
+        "login",
+        help="bootstrap or inspect a scoped client login over verified SSH",
+    )
+    login_parser.add_argument(
+        "login_action",
+        nargs="?",
+        choices=("status", "renew"),
+        help="inspect or renew the selected login; omit to enroll",
+    )
+    login_parser.add_argument("--ssh", dest="ssh_target", help="hub SSH target user@host")
+    login_parser.add_argument("--ssh-port", type=int)
+    login_parser.add_argument("--proxy-jump")
+    login_parser.add_argument("--identity-file")
+    login_parser.add_argument("--known-hosts-file")
+    login_parser.add_argument("--host-key-fingerprint")
+    login_parser.add_argument("--host-ca")
+    login_parser.add_argument("--fleet", dest="login_fleet")
+    login_parser.add_argument("--agent", default=None)
+    login_parser.add_argument("--fleets-config")
+    login_parser.add_argument("--profile", dest="login_profile")
+    login_parser.add_argument("--client-id")
+    login_parser.add_argument("--name")
+    login_parser.add_argument(
+        "--scopes", default=",".join(("read", "write", "dispatch"))
+    )
+    login_parser.add_argument("--capabilities")
+    login_parser.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    login_parser.add_argument("--local-port", type=int)
+    login_parser.add_argument("--remote-host", default="127.0.0.1")
+    login_parser.add_argument("--remote-port", type=int)
+    login_parser.add_argument("--allow-elevated", action="store_true")
+    login_parser.add_argument(
+        "--rotate",
+        action="store_true",
+        help="replace an existing client identity/profile explicitly",
+    )
+    login_parser.add_argument("--remote-mac", default="mac")
+    login_parser.add_argument("--connect-timeout", type=int, default=10)
+    _set(cmd_login, login_parser)
+
+    logout_parser = sub.add_parser(
+        "logout", help="remove a local login and optionally revoke it on the hub"
+    )
+    logout_parser.add_argument("--profile", dest="logout_profile")
+    logout_parser.add_argument(
+        "--revoke",
+        action="store_true",
+        help="revoke the hub credential before deleting local secret state",
+    )
+    logout_parser.add_argument("--remote-mac", default="mac")
+    logout_parser.add_argument("--connect-timeout", type=int, default=10)
+    _set(cmd_logout, logout_parser)
 
     client = sub.add_parser(
         "client", help="hub enrollment principals and secure local client profiles"

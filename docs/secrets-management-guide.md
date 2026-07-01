@@ -196,9 +196,9 @@ bounded `client profile migrate-legacy` command requires
 resulting authority accurately as `admin` until it is replaced with scoped
 enrollment.
 
-See [SSH Client Bootstrap Contracts](client-bootstrap-contract.md) for the
-manual SSH workflow and failure rules while the single-step `mac login`
-orchestrator is pending.
+See [SSH Client Bootstrap Contracts](client-bootstrap-contract.md) for managed
+`mac login`, renewal, revoking logout, the manual SSH recovery workflow, and
+failure rules.
 
 ### Git-Host Credential Pattern
 

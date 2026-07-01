@@ -1,7 +1,7 @@
 # SSH Client Bootstrap Contracts
 
-MAC now ships the three security contracts needed by the planned `mac login`
-orchestrator:
+MAC ships the complete SSH-first login orchestration plus its three lower-level
+security contracts:
 
 - `mac fleet ssh-spec` resolves one explicit, secret-free SSH route from
   `~/.mac/fleets.yaml`.
@@ -10,11 +10,57 @@ orchestrator:
 - `mac client profile ...` atomically installs and selects a portable local
   profile whose bearer token is kept in a separate mode-`0600` credential
   record.
+- `mac login`, `mac login status`, `mac login renew`, and `mac logout --revoke`
+  compose those primitives into a verified, recoverable client lifecycle.
 
-The single-step `mac login`, reconnecting tunnel supervisor, `login status`, and
-revoking `logout` commands are still pending. The commands in this document are
-the lower-level contract and the supported manual bridge until that
-orchestration lands.
+## Managed Login
+
+For an explicit hub route:
+
+```bash
+mac login --ssh mac@hub.internal \
+  --identity-file ~/.ssh/mac-production \
+  --known-hosts-file ~/.ssh/mac-production-known-hosts \
+  --fleet production --profile production --client-id my-laptop
+```
+
+Or consume the canonical route in `~/.mac/fleets.yaml`:
+
+```bash
+mac login --fleet production --profile production --client-id my-laptop
+```
+
+Login requires an explicit private identity plus strict host trust. A directly
+reachable host can be pinned with `--host-key-fingerprint SHA256:...`; MAC uses
+`ssh-keyscan`, retains only the matching key, and stores it in a private
+profile-owned known-hosts file. Fingerprint discovery is refused for a
+ProxyJump route because an unauthenticated scan cannot traverse and authenticate
+both hops; provide a verified known-hosts file instead.
+
+The command reserves a free loopback port and starts SSH with `-F /dev/null`,
+`BatchMode=yes`, `ExitOnForwardFailure=yes`, strict host checking, server-alive
+probes, and the explicit route. It invokes scoped enrollment in a second SSH
+session, validates `GET /tasks/stats` with the returned bearer through the
+tunnel, writes secret-free session state, and atomically installs the profile
+only after validation succeeds. Any failure after issuance attempts remote
+revocation and removes transient state without printing the bearer.
+
+The managed SSH PID is recorded under `$MAC_HOME/sessions`; bearer material is
+not. Every profile-backed CLI command checks the session. A dead tunnel is
+restarted from the pinned profile and its bearer is validated before the
+requested API call proceeds. `mac login status` is read-only and reports a dead,
+unreachable, or rejected session without exposing the token.
+
+```bash
+mac login status --profile production
+mac login renew --profile production
+mac logout --profile production --revoke
+```
+
+Renewal rotates rather than extends the bearer. Revoking logout performs the
+hub revocation first; if SSH revocation fails, local credential state is kept so
+the operator can retry. Plain `mac logout` is deliberately local-only and leaves
+the remote principal active.
 
 ## Trust Boundary
 
@@ -85,7 +131,7 @@ wildcard entries in a developer's `~/.ssh/config` cannot silently change the
 route. Fleet token recovery, deploy, soul snapshot, agent migration, and the
 Electron bridge consume this same resolver.
 
-## Manual SSH Enrollment
+## Manual SSH Enrollment (Recovery)
 
 For a hub whose API listens only on `127.0.0.1:8789`, keep a verified tunnel
 open in one terminal:
@@ -180,6 +226,9 @@ migrated admin profile with a scoped SSH enrollment immediately.
 - Credential writes commit before profile references. Interrupted installation
   therefore leaves the old complete profile active or an unreferenced new
   credential, never a profile pointing at a missing token.
-- `mac login` remains absent until it can verify the host fingerprint, choose a
-  free local port, supervise/reconnect the tunnel, validate an authenticated
-  request, and roll back all partial local state as one command.
+- Managed login refuses an occupied requested port before enrollment. A stale
+  session is restarted only when the recorded PID is still identifiable as the
+  expected SSH forward; unrelated processes are never killed.
+- The token is never placed in SSH argv, local session state, normal/JSON
+  output, or error text. It exists in memory until API validation and then only
+  in the mode-`0600` credential record.

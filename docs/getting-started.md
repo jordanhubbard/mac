@@ -246,33 +246,33 @@ credential failure.
 
 ## Connect A New Client Today
 
-The intended SSH-first `mac login` bootstrap is designed and tracked, but it is
-not present in the current `mac --help`. In particular, there is no shipped
-`mac login`, `mac login status`, renewal, or revoking logout command yet. The
-implementation task is `task_de953ca70ba14b21b34ab48b36e98bc4`.
-
-The lower-level security contracts do ship. A hub operator can issue a scoped,
-independently revocable credential over authenticated SSH, and the client can
-install the one-time manifest without leaving it on disk. First open a verified
-port forward to the hub-local API. Then, in another terminal:
+Use `mac login` when a new machine has the MAC CLI plus key-based SSH access to
+the hub. Supply a private identity and a verified known-hosts file (or a pinned
+`SHA256:` host fingerprint for a directly reachable hub):
 
 ```bash
-ssh hub 'mac --json client enroll my-laptop \
-  --fleet my-fleet --profile my-fleet \
-  --api-url http://127.0.0.1:8789 \
-  --scopes read,write,dispatch' \
-  | mac client profile install -
+mac login --ssh mac@hub.internal \
+  --identity-file ~/.ssh/mac-my-fleet \
+  --known-hosts-file ~/.ssh/mac-my-fleet-known-hosts \
+  --fleet my-fleet --profile my-fleet --client-id my-laptop
 
-mac --profile my-fleet diagnostics
-mac --profile my-fleet task stats
-mac --profile my-fleet agent list
+mac login status --profile my-fleet
+mac diagnostics
+mac task stats
+mac agent list
 ```
 
-Use the full explicit identity, jump, and known-host options described in
-[SSH Client Bootstrap Contracts](client-bootstrap-contract.md); the abbreviated
-`ssh hub` above is only readable shorthand. `mac login` will eventually verify
-the host identity, allocate and supervise the tunnel, enroll, install, and
-validate this flow atomically.
+The active profile is selected automatically. If the managed SSH process exits,
+the next profile-backed command starts a fresh verified tunnel and validates the
+stored credential before dispatch. Inspect without restarting it using `mac
+login status`; rotate with `mac login renew`; revoke remotely before removing
+local state with `mac logout --revoke`.
+
+For a bastion route, put the hub and jump-host keys in the supplied known-hosts
+file and add `--proxy-jump user@bastion`. Fingerprint discovery deliberately
+does not traverse a proxy jump. See [SSH Client Bootstrap
+Contracts](client-bootstrap-contract.md) for the lower-level recovery workflow,
+file modes, and failure semantics.
 
 For a directly reachable hub, a scoped API token can still be provisioned out
 of band:

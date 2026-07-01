@@ -142,6 +142,40 @@ def test_dispatch_uses_active_profile_without_legacy_files(
     assert dispatch._client.token == _manifest()["credential"]["token"]
 
 
+def test_dispatch_reconnects_ssh_tunnel_profile(
+    isolated_mac_home, monkeypatch
+):
+    manifest = _manifest(
+        connection={
+            "api_url": "http://127.0.0.1:48789",
+            "mode": "ssh-tunnel",
+            "local_port": 48789,
+            "remote_host": "127.0.0.1",
+            "remote_port": 8789,
+        },
+        ssh={
+            "target": "mac@hub.example",
+            "identity_file": "/private/key",
+            "known_hosts_file": "/private/known_hosts",
+            "host_key_policy": "strict",
+        },
+    )
+    install_enrollment_manifest(manifest)
+    called = []
+    monkeypatch.setattr(
+        "mac.client_login.ensure_session", lambda profile: called.append(profile)
+    )
+    for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "MAC_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    args = argparse.Namespace(db=None, hub_url=None, token=None, fleet=None, profile=None)
+
+    dispatch = resolve_dispatch(args)
+
+    assert isinstance(dispatch, RemoteDispatch)
+    assert called == ["rocky"]
+
+
 def test_legacy_migration_requires_explicit_admin_acknowledgement(
     isolated_mac_home, monkeypatch
 ):

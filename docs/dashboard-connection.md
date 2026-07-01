@@ -82,13 +82,13 @@ host-key defaults. The dashboard's URL field is reserved for the `Testing URL`
 target so local or throwaway API endpoints can still be checked without making
 URL entry part of normal fleet usage.
 
-The current package consumes profiles that were already provisioned; it does
-not invoke enrollment itself. Hub-side `mac client enroll|renew|revoke` and
-local `mac client profile ...` commands now ship, and profiles installed by
-those commands are IDE targets. The single-step `mac login`/status/logout
-orchestration is still pending. Use the manual streaming workflow in
-[SSH Client Bootstrap Contracts](client-bootstrap-contract.md); do not copy a
-hub's complete `~/.mac` directory or admin credential into the desktop client.
+The current package consumes profiles provisioned by the CLI rather than
+performing enrollment inside Electron. Use `mac login` to create the active
+profile, `mac login status` to inspect it, and `mac logout --revoke` to retire
+it. Profiles created by the lower-level `mac client profile ...` recovery
+workflow remain valid IDE targets. See [SSH Client Bootstrap
+Contracts](client-bootstrap-contract.md); do not copy a hub's complete
+`~/.mac` directory or admin credential into the desktop client.
 
 Electron mode exposes visible `Fleet hub` and `Bearer token` controls in the
 top bar. The renderer sees token-source labels only; token values loaded from

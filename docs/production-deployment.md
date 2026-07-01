@@ -219,14 +219,10 @@ it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.
 The hub control plane binds to `hub_url` as declared in `~/.mac/fleets.yaml`.
 How you reach it from a client machine depends on the network topology.
 
-> **Current client-bootstrap status:** `mac login` is not registered in the
-> shipped CLI. Hub-local SSH enrollment, independently revocable scoped
-> principals, secure client profiles, and canonical per-agent SSH route
-> resolution now ship. The tracked login task still needs to combine them with
-> host-key verification, local-port allocation, and a reconnectable tunnel
-> lifecycle. Until then, use the manual enrollment sequence below. Do not copy
-> the hub's `~/.mac`, admin token, `mac.db`, `MAC_SECRET_KEY`, provider keys, or
-> SSH private keys to a new client.
+> **Client bootstrap:** `mac login` now combines strict host-key verification,
+> a managed local tunnel, hub-local scoped enrollment, authenticated validation,
+> and atomic profile installation. Do not copy the hub's `~/.mac`, admin token,
+> `mac.db`, `MAC_SECRET_KEY`, provider keys, or SSH private keys to a new client.
 
 For a directly reachable hub, the interim client setup is:
 
@@ -282,6 +278,25 @@ Provision and verify the hub and bastion host keys in `~/.ssh/known_hosts`
 before opening the tunnel. Disabling host-key verification is not a supported
 bootstrap substitute.
 
+The normal client path is one command:
+
+```bash
+mac login --fleet my-fleet --profile my-fleet --client-id my-laptop
+mac login status --profile my-fleet
+mac task stats
+mac agent list
+```
+
+The fleet route must resolve an explicit identity file and verified
+known-hosts/host-CA source. An equivalent route can be supplied without a fleet
+registry using `--ssh`, `--identity-file`, `--known-hosts-file`, optional
+`--ssh-port`, and optional `--proxy-jump`. A directly reachable hub may use
+`--host-key-fingerprint SHA256:...`; proxy-jump routes require a prepared
+known-hosts file.
+
+The commands below remain the low-level recovery procedure when diagnosing SSH
+or enrollment independently.
+
 ```bash
 # Confirm the route is portable and does not depend on ~/.ssh/config.
 mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json
@@ -322,8 +337,16 @@ mac --profile my-fleet task stats
 ```
 
 The API hot-reloads `$MAC_HOME/client-principals.json`, so the new credential
-works immediately. Renewing rotates the bearer; revocation also takes effect
-without a hub restart:
+works immediately. For normal operation, renewal rotates and validates the
+bearer before replacing the local credential; revoking logout invalidates it
+before deleting local state:
+
+```bash
+mac login renew --profile my-fleet
+mac logout --profile my-fleet --revoke
+```
+
+The equivalent low-level recovery commands are:
 
 ```bash
 ssh -T horde@my-hub.cluster.local 'mac --json client renew my-laptop' \

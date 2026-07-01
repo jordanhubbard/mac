@@ -141,24 +141,24 @@ silently creating a stray `./mac.db`.
 
 ### Client bootstrap status
 
-`mac login` is **not shipped in the current CLI**. The SSH-first
-`login`/`status`/`renew`/`logout --revoke` workflow is tracked by
-`task_de953ca70ba14b21b34ab48b36e98bc4`. Its prerequisite contracts now ship:
-canonical per-agent SSH routes (`mac fleet ssh-spec`), hub-local scoped
-enrollment (`mac client enroll|renew|revoke`), and separated local profiles
-(`mac client profile ...`). The remaining work is the one-command verified
-tunnel/session lifecycle. Do not copy an entire `~/.mac` directory or an admin
-token to approximate login.
-
-Until `mac login` lands, use the lower-level SSH enrollment contract or an
-operator-provisioned scoped endpoint/token. With a verified tunnel already
-open, stream the one-time manifest directly into the secure profile store:
+`mac login` bootstraps a new client from verified SSH access to the hub. It
+pins the host identity, opens the hub-local API tunnel, requests an independently
+revocable scoped credential over SSH, validates that credential through the
+tunnel, and only then atomically installs the local profile and mode-`0600`
+secret. Managed tunnels reconnect on the next profile-backed command if their
+SSH process has exited.
 
 ```bash
-ssh hub 'mac --json client enroll my-laptop --fleet my-fleet \
-  --profile my-fleet --api-url http://127.0.0.1:8789' \
-  | mac client profile install -
-mac --profile my-fleet diagnostics
+mac login --ssh mac@hub.internal \
+  --identity-file ~/.ssh/mac-production \
+  --known-hosts-file ~/.ssh/mac-production-known-hosts \
+  --fleet production --profile production --client-id my-laptop
+
+mac login status --profile production
+mac task stats
+mac agent list
+mac login renew --profile production
+mac logout --profile production --revoke
 
 # Directly reachable scoped endpoint (automation/operator provisioning):
 export MAC_API_URL=https://mac.example.internal

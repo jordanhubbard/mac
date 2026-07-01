@@ -1522,6 +1522,16 @@ def _resolve_client_profile(args: Any, env: Dict[str, str]) -> Optional[Dict[str
         if fleet and not explicit and profile.get("fleet") not in (None, "", fleet):
             setattr(args, "_mac_client_profile", False)
             return None
+        if (profile.get("connection") or {}).get("mode") == "ssh-tunnel":
+            try:
+                from mac.client_login import ClientLoginError, ensure_session
+
+                ensure_session(str(profile.get("profile") or selected or ""))
+            except ClientLoginError as exc:
+                raise DispatchError(
+                    "could not establish client login tunnel for %r: %s"
+                    % (profile.get("profile") or selected, exc)
+                ) from exc
         setattr(args, "_mac_client_profile", profile)
         return profile
     except (FileNotFoundError, ClientProfileError) as exc:

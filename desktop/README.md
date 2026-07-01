@@ -118,7 +118,8 @@ Profiles are plain JSON:
 link. This keeps the normal app launch fast and hides service-specific port
 forwarding from the user.
 
-The desktop app consumes profiles but does not enroll them. Use the streaming
-`mac client enroll | mac client profile install -` workflow documented in
-`docs/client-bootstrap-contract.md` until `mac login` owns enrollment and the
-tunnel lifecycle end to end.
+The desktop app consumes profiles but does not enroll them. Run `mac login`
+before opening the app; the CLI owns SSH verification, enrollment, credential
+storage, and the managed control-plane tunnel end to end. The lower-level
+streaming recovery workflow remains documented in
+`docs/client-bootstrap-contract.md`.
