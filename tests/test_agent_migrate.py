@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from mac import agent_migrate as am
+from mac.fleet_ssh import FleetSshSpec
 
 
 # --- soul backup excludes ---------------------------------------------------
@@ -188,6 +189,44 @@ def test_plan_backup_excludes_host_config():
     steps = dict(am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky"))
     assert "--exclude=.hermes/config.yaml" in steps["backup-soul"]
     assert "--exclude=.hermes/.env" in steps["backup-soul"]
+
+
+def test_production_plan_uses_canonical_routes_for_both_hosts(tmp_path):
+    def route(agent, target, identity):
+        return FleetSshSpec(
+            fleet="rocky",
+            fleet_name="mac",
+            agent=agent,
+            target=target,
+            port=2201,
+            proxy_jump="ops@bastion:2222",
+            identity_file=str(tmp_path / identity),
+            identity_ref=None,
+            known_hosts_file=str(tmp_path / "known_hosts"),
+            host_key_policy="strict",
+            host_key_fingerprint=None,
+            host_ca=None,
+            supervisor="systemd",
+            os_kind="linux",
+            control_port=8789,
+        )
+
+    steps = dict(
+        am.migration_plan(
+            "x",
+            src_target="ops@source",
+            dst_target="ops@dest",
+            fleet="rocky",
+            src_route=route("source", "ops@source", "source-key"),
+            dst_route=route("dest", "ops@dest", "dest-key"),
+        )
+    )
+
+    assert "-F /dev/null" in steps["backup-soul"]
+    assert "ProxyJump=ops@bastion:2222" in steps["backup-soul"]
+    assert "source-key" in steps["transfer-soul"]
+    assert "dest-key" in steps["transfer-soul"]
+    assert "scp -3" not in steps["transfer-soul"]
 
 
 # --- execute_migration (injected runner; no real ssh/deploy) ----------------

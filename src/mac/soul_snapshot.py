@@ -26,7 +26,9 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
+
+from mac.fleet_ssh import FleetSshSpec, ssh_argv
 
 # The editable text layer. Relative to each agent's Hermes home (~/.hermes).
 SOUL_FILES: Tuple[str, ...] = ("SOUL.md", "USER.md", "MEMORY.md")
@@ -73,13 +75,29 @@ class SSHTransport:
     backups share one timestamp and the module stays deterministic/testable.
     """
 
-    def __init__(self, *, hermes_subdir: str = ".hermes", connect_timeout: int = 10,
-                 ssh_extra: Optional[Sequence[str]] = None) -> None:
+    def __init__(
+        self,
+        *,
+        hermes_subdir: str = ".hermes",
+        connect_timeout: int = 10,
+        ssh_extra: Optional[Sequence[str]] = None,
+        routes: Optional[Mapping[str, FleetSshSpec]] = None,
+    ) -> None:
         self._sub = hermes_subdir
+        self._connect_timeout = connect_timeout
+        self._routes = dict(routes or {})
         self._ssh = [
             "ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}",
             *(ssh_extra or []),
         ]
+
+    def _argv(self, target: str, command: str) -> List[str]:
+        route = self._routes.get(target)
+        if route is not None:
+            return ssh_argv(route, command, connect_timeout=self._connect_timeout)
+        # Library compatibility for callers that construct a transport
+        # directly. Production fleet CLI paths always provide canonical routes.
+        return [*self._ssh, target, command]
 
     def _remote(self, relpath: str) -> str:
         # Single-quoted for the remote shell; relpath is a fixed allowlisted name.
@@ -91,7 +109,7 @@ class SSHTransport:
         # argv items makes ssh flatten them and lose the quoting.)
         path = self._remote(relpath)
         cmd = "if [ -f %s ]; then cat %s; else exit 7; fi" % (path, path)
-        proc = subprocess.run([*self._ssh, target, cmd], capture_output=True, text=True)
+        proc = subprocess.run(self._argv(target, cmd), capture_output=True, text=True)
         if proc.returncode == 7:
             return None
         if proc.returncode != 0:
@@ -102,7 +120,7 @@ class SSHTransport:
         path = self._remote(relpath)
         bak = '"$HOME/%s/%s.bak.%s"' % (self._sub, relpath, stamp)
         cmd = "if [ -f %s ]; then cp -f %s %s && echo COPIED; fi" % (path, path, bak)
-        proc = subprocess.run([*self._ssh, target, cmd], capture_output=True, text=True)
+        proc = subprocess.run(self._argv(target, cmd), capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError("backup %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
         return ("%s.bak.%s" % (relpath, stamp)) if "COPIED" in proc.stdout else None
@@ -111,7 +129,7 @@ class SSHTransport:
         path = self._remote(relpath)
         cmd = 'mkdir -p "$(dirname %s)" && cat > %s' % (path, path)
         proc = subprocess.run(
-            [*self._ssh, target, cmd], input=content, capture_output=True, text=True,
+            self._argv(target, cmd), input=content, capture_output=True, text=True,
         )
         if proc.returncode != 0:
             raise RuntimeError("write %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
@@ -123,7 +141,7 @@ class SSHTransport:
         # quoting gets mangled over ssh.
         sha = (" sha256sum %s | cut -d' ' -f1;" % path) if checksum else ""
         cmd = 'if [ -f %s ]; then stat -c "%%s %%Y" %s;%s else exit 7; fi' % (path, path, sha)
-        proc = subprocess.run([*self._ssh, target, cmd], capture_output=True, text=True)
+        proc = subprocess.run(self._argv(target, cmd), capture_output=True, text=True)
         if proc.returncode == 7:
             return None
         if proc.returncode != 0:

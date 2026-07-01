@@ -134,9 +134,8 @@ def build_setup_plan(
     if supervisor not in {"auto", "systemd", "launchd", "supervisord"}:
         errors.append("supervisor must be one of auto/systemd/launchd/supervisord")
 
-    # Operator->node SSH ProxyJump (bastion) + host-key strictness, fleet-wide.
-    # Persisting these into fleets.yaml lets the deploy reach bastion-only nodes
-    # (e.g. GKE pods behind a jump host) with no ~/.ssh/config edits.
+    # Operator->node SSH route defaults. Persist every portable input rather
+    # than relying on wildcard Host entries in the setup machine's ssh config.
     ssh_jump = _str(
         spec.get("ssh_jump")
         or defaults_block.get("ssh_jump")
@@ -148,6 +147,40 @@ def build_setup_plan(
             spec.get("ssh_strict_host_key_checking", True),
         )
         is not False
+    )
+    ssh_host_key_policy = _str(
+        spec.get("ssh_host_key_policy")
+        or defaults_block.get("ssh_host_key_policy")
+        or fleet_block.get("ssh_host_key_policy")
+    ) or ("strict" if ssh_strict else "accept-new")
+    if ssh_host_key_policy not in {"strict", "accept-new", "insecure"}:
+        errors.append("ssh_host_key_policy must be strict/accept-new/insecure")
+    ssh_identity_file = _str(
+        spec.get("identity_file")
+        or defaults_block.get("identity_file")
+        or defaults_block.get("ssh_key")
+        or fleet_block.get("identity_file")
+    )
+    ssh_identity_ref = _str(
+        spec.get("identity_ref")
+        or defaults_block.get("identity_ref")
+        or fleet_block.get("identity_ref")
+    )
+    ssh_known_hosts_file = _str(
+        spec.get("ssh_known_hosts_file")
+        or defaults_block.get("ssh_known_hosts_file")
+        or defaults_block.get("known_hosts_file")
+        or fleet_block.get("ssh_known_hosts_file")
+    )
+    ssh_host_key_fingerprint = _str(
+        spec.get("ssh_host_key_fingerprint")
+        or defaults_block.get("ssh_host_key_fingerprint")
+        or fleet_block.get("ssh_host_key_fingerprint")
+    )
+    ssh_host_ca = _str(
+        spec.get("ssh_host_ca")
+        or defaults_block.get("ssh_host_ca")
+        or fleet_block.get("ssh_host_ca")
     )
 
     network = _network_config(spec, defaults_block, errors)
@@ -217,6 +250,12 @@ def build_setup_plan(
             "supervisor": supervisor,
             "ssh_jump": ssh_jump,
             "ssh_strict_host_key_checking": ssh_strict,
+            "ssh_host_key_policy": ssh_host_key_policy,
+            "identity_file": ssh_identity_file,
+            "identity_ref": ssh_identity_ref,
+            "ssh_known_hosts_file": ssh_known_hosts_file,
+            "ssh_host_key_fingerprint": ssh_host_key_fingerprint,
+            "ssh_host_ca": ssh_host_ca,
             "hermes": {
                 "slack_home_channel_name": _str(
                     hermes_defaults.get("slack_home_channel_name")

@@ -16,9 +16,9 @@
 #       --spec ~/.mac/specs/<fleet>.fleet.yaml --force
 #   make deploy HUB=gke-hub ARGS="gke-hub gke-worker-1 gke-worker-2"
 #
-# The pods are reachable only via a bastion, so ssh_jump/ssh_strict are recorded
-# fleet-wide and the stock deploy injects -o ProxyJump for every operator->node
-# hop (the in-cluster hub->spoke tunnels stay jump-free).
+# The pods are reachable only via a bastion, so the complete secret-free route
+# is recorded fleet-wide and the stock deploy consumes mac.fleet_ssh argv for
+# every operator->node hop (the in-cluster hub->spoke tunnels stay jump-free).
 sample: true
 schema: mac.fleet_setup.v1
 
@@ -34,7 +34,12 @@ supervisor: supervisord
 # Operator -> node bastion. GKE pods resolve only inside the cluster, so every
 # ssh/scp ProxyJumps through the bastion; host keys are ephemeral per pod.
 ssh_jump: <bastion-user>@<bastion-host>:<port>
-ssh_strict_host_key_checking: false
+identity_file: ~/.ssh/<fleet-identity-file>
+ssh_known_hosts_file: ~/.ssh/<fleet-known-hosts-file>
+# Ephemeral pods may use accept-new only when their lifecycle requires TOFU.
+# Prefer strict with a local @cert-authority known_hosts file (ssh_host_ca) or
+# a pre-provisioned ssh_known_hosts_file in production.
+ssh_host_key_policy: accept-new
 
 defaults:
   hermes:

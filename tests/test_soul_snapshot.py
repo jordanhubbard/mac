@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from mac import soul_snapshot as fs
+from mac.fleet_ssh import FleetSshSpec
 
 
 class FakeTransport:
@@ -56,6 +57,44 @@ def test_load_fleet_agents():
     assert fs.load_fleet_agents(cfg, "rocky") == [("rocky", "u@do1"), ("natasha", "u@sparky")]
     with pytest.raises(KeyError):
         fs.load_fleet_agents(cfg, "ghost")
+
+
+def test_ssh_transport_uses_canonical_route(monkeypatch, tmp_path):
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = "soul"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return Result()
+
+    route = FleetSshSpec(
+        fleet="rocky",
+        fleet_name="mac",
+        agent="rocky",
+        target="ops@hub",
+        port=2201,
+        proxy_jump="ops@bastion:2222",
+        identity_file=str(tmp_path / "id"),
+        identity_ref=None,
+        known_hosts_file=str(tmp_path / "known_hosts"),
+        host_key_policy="strict",
+        host_key_fingerprint=None,
+        host_ca=None,
+        supervisor="systemd",
+        os_kind="linux",
+        control_port=8789,
+    )
+    monkeypatch.setattr(fs.subprocess, "run", fake_run)
+
+    assert fs.SSHTransport(routes={"ops@hub": route}).read_text(
+        "ops@hub", "SOUL.md"
+    ) == "soul"
+    assert seen["argv"][:3] == ["ssh", "-F", "/dev/null"]
+    assert "ProxyJump=ops@bastion:2222" in seen["argv"]
 
 
 # -- pull -------------------------------------------------------------------

@@ -51,6 +51,7 @@ backends ship in the same wheel/image; pick at deploy time.
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | no | Slack home-channel name, without `#`, used to write `~/.hermes/slack_home_channels.json` from `slack_accounts.json`. Empty skips discovery. |
 | `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS` | no | Set `0` to preserve existing Slack home-channel files without discovery. Default enabled. |
 | `MAC_URL` / `MAC_HUB_URL` | no | MAC API endpoint used by Hermes-side `mac-hermes` operations. Fleet deploy points this at the hub. |
+| `MAC_CLIENT_PRINCIPALS_FILE` | no | Hub-local hashed registry for scoped client enrollment. Fleet deploy sets `$MAC_HOME/client-principals.json`; permissions must be `0600`. The API hot-reloads issuance and revocation. |
 | `MAC_HERMES_INSTANCE_ID` | no | Hermes instance id for this runtime. Fleet deploy uses a deterministic `hermes_<agent>` id and registers it in MAC. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | no | Worker agent binding to the Hermes instance id. This keeps MAC agent rows linked to their Hermes soul/runtime. |
 | `MAC_AGENT_ID` | no | Deterministic MAC agent id for this runtime. Fleet deploy uses `agent_<agent>`. |
@@ -219,14 +220,13 @@ The hub control plane binds to `hub_url` as declared in `~/.mac/fleets.yaml`.
 How you reach it from a client machine depends on the network topology.
 
 > **Current client-bootstrap status:** `mac login` is not registered in the
-> shipped CLI. SSH-first enrollment, a portable least-privilege client profile,
-> revocation, and reconnectable tunnel lifecycle are tracked by
-> `task_de953ca70ba14b21b34ab48b36e98bc4` and its prerequisites. Until they land,
-> the supported path is explicit operator provisioning of a hub URL plus scoped
-> API token, or an existing `~/.mac/fleets.yaml` entry plus
-> `mac fleet sync-token --fleet <name>`. Do not copy the hub's `~/.mac`, admin
-> token, `mac.db`, `MAC_SECRET_KEY`, provider keys, or SSH private keys to a new
-> client.
+> shipped CLI. Hub-local SSH enrollment, independently revocable scoped
+> principals, secure client profiles, and canonical per-agent SSH route
+> resolution now ship. The tracked login task still needs to combine them with
+> host-key verification, local-port allocation, and a reconnectable tunnel
+> lifecycle. Until then, use the manual enrollment sequence below. Do not copy
+> the hub's `~/.mac`, admin token, `mac.db`, `MAC_SECRET_KEY`, provider keys, or
+> SSH private keys to a new client.
 
 For a directly reachable hub, the interim client setup is:
 
@@ -255,20 +255,27 @@ curl http://<hub-host>:8789/health
 make deploy HUB=<hub-node>
 ```
 
-### SSH port forward (K8s, bastion, or private subnets)
+### SSH port forward and scoped enrollment
 
-Hub lives behind a bastion or inside a K8s cluster. Add a `Host` entry in
-`~/.ssh/config` with `ProxyJump` (or `ProxyCommand`), then forward the control
-port:
+Hub lives behind a bastion or inside a K8s cluster. Record the route in the
+home-scoped fleet registry so deploy, credential recovery, snapshots,
+migration, and Electron use the same resolver:
 
-```
-# ~/.ssh/config
-Host my-hub
-    HostName my-hub.cluster.local
-    User horde
-    ProxyJump horde@bastion.example.com:2222
-    StrictHostKeyChecking yes
-    ForwardAgent yes
+```yaml
+# ~/.mac/fleets.yaml
+fleets:
+  my-fleet:
+    hub_agent: hub
+    control_port: 8789
+    defaults:
+      ssh_jump: horde@bastion.example.com:2222
+      identity_file: ~/.ssh/mac-my-fleet
+      ssh_known_hosts_file: ~/.ssh/mac-my-fleet-known-hosts
+      ssh_host_key_policy: strict
+    agents:
+      - name: hub
+        target: horde@my-hub.cluster.local
+        os: linux
 ```
 
 Provision and verify the hub and bastion host keys in `~/.ssh/known_hosts`
@@ -276,16 +283,60 @@ before opening the tunnel. Disabling host-key verification is not a supported
 bootstrap substitute.
 
 ```bash
+# Confirm the route is portable and does not depend on ~/.ssh/config.
+mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json
+
 # Forward hub control port to localhost and open the UI
-ssh -L 8789:127.0.0.1:8789 my-hub
+ssh -N -F /dev/null \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/mac-my-fleet-known-hosts" \
+  -o ProxyJump=horde@bastion.example.com:2222 \
+  -i "$HOME/.ssh/mac-my-fleet" \
+  -L 8789:127.0.0.1:8789 \
+  horde@my-hub.cluster.local
 # then: curl http://localhost:8789/health
 # or:   open http://localhost:8789/ui
 ```
 
-Set `hub_url: http://127.0.0.1:8789` in the fleet registry when using this
-pattern — the deploy script reaches the hub through the forwarded port. The
-tunnel does not enroll the client or issue a token; provision the scoped API
-credential separately until `mac login` ships.
+With that tunnel open, use a second verified SSH session to invoke enrollment
+locally on the hub and stream the one-time token directly into the client
+profile store:
+
+```bash
+ssh -T -F /dev/null \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/mac-my-fleet-known-hosts" \
+  -o ProxyJump=horde@bastion.example.com:2222 \
+  -i "$HOME/.ssh/mac-my-fleet" \
+  horde@my-hub.cluster.local \
+  'mac --json client enroll my-laptop \
+    --fleet my-fleet --profile my-fleet \
+    --api-url http://127.0.0.1:8789 \
+    --scopes read,write,dispatch' \
+  | mac client profile install -
+
+mac --profile my-fleet diagnostics
+mac --profile my-fleet task stats
+```
+
+The API hot-reloads `$MAC_HOME/client-principals.json`, so the new credential
+works immediately. Renewing rotates the bearer; revocation also takes effect
+without a hub restart:
+
+```bash
+ssh -T horde@my-hub.cluster.local 'mac --json client renew my-laptop' \
+  | mac client profile install - --profile my-fleet
+
+ssh -T horde@my-hub.cluster.local 'mac client revoke my-laptop'
+mac client profile remove my-fleet
+```
+
+Use the explicit SSH options above for renewal and revocation as well. The
+short form keeps the lifecycle example readable. See
+[SSH Client Bootstrap Contracts](client-bootstrap-contract.md) for schemas,
+file modes, failure rules, and legacy migration.
 
 ### Tailscale mesh (`provider: tailscale`)
 

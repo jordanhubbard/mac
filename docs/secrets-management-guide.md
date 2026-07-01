@@ -167,6 +167,39 @@ cp.secrets.create_secret(
 Any new deploy agent automatically gains access when it's registered with the
 `deploy` or `image-builder` capability.
 
+### Client Principal And Profile Pattern
+
+New control clients must not receive the shared `MAC_API_TOKEN`. On the hub,
+`mac client enroll` creates a distinct scoped bearer and stores only its
+`sha256:` hash in `$MAC_CLIENT_PRINCIPALS_FILE` (default
+`$MAC_HOME/client-principals.json`). The adjacent audit JSONL contains client
+ID, scopes, version, actor, and lifecycle event, but no token or full stored
+hash. Both files are mode `0600` under a mode-`0700` MAC home.
+
+The default scopes are `read`, `write`, and `dispatch`. `secret`, `deploy`, and
+`admin` issuance fails unless the hub operator passes `--allow-elevated`.
+Renewal rotates the bearer and immediately invalidates its predecessor;
+revocation affects only that client. The API reads the hashed registry on each
+file change, so neither action needs a service restart.
+
+Stream the one-time JSON enrollment output directly into
+`mac client profile install -`. The local profile YAML holds connection,
+host-key, scope, expiry, and credential-reference metadata only. Its bearer is
+stored separately under `~/.mac/credentials/clients/` with mode `0600` and is
+redacted from normal profile output. Unknown manifest fields, credential-bearing
+URLs, and strict SSH profiles without pinned host identity are rejected.
+
+`mac fleet sync-token` remains an administrator-token recovery command for an
+existing operator workstation. It is not a client issuance mechanism. The
+bounded `client profile migrate-legacy` command requires
+`--allow-legacy-admin-token`, makes a secure first-import backup, and labels the
+resulting authority accurately as `admin` until it is replaced with scoped
+enrollment.
+
+See [SSH Client Bootstrap Contracts](client-bootstrap-contract.md) for the
+manual SSH workflow and failure rules while the single-step `mac login`
+orchestrator is pending.
+
 ### Git-Host Credential Pattern
 
 Repository credentials have two distinct layers:

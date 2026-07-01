@@ -37,8 +37,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from mac.fleet_deploy import parse_ssh_target
 from mac.fleet_env import scoped_var, set_env_key
+from mac.fleet_ssh import (
+    FleetSshError,
+    FleetSshSpec,
+    resolve_fleet_ssh,
+    ssh_argv,
+)
 
 
 class FleetCredsError(Exception):
@@ -133,81 +138,23 @@ def load_fleets_config(path: Optional[str] = None) -> dict:
     return data
 
 
-@dataclass(frozen=True)
-class HubSsh:
-    """Everything needed to reach a fleet's hub host over SSH."""
-
-    fleet: str
-    fleet_name: str
-    hub_agent: str
-    target: str  # user@host
-    port: Optional[int]
-    proxy_jump: Optional[str]
-    strict_host_key_checking: Optional[bool]
-    supervisor: str
-    os_kind: str
-
-
-def _optint(value) -> Optional[int]:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+HubSsh = FleetSshSpec
 
 
 def hub_ssh(config: dict, fleet: str) -> HubSsh:
     """Resolve the SSH coordinates of ``fleet``'s hub from a fleets config."""
-    fleets = (config or {}).get("fleets") or {}
-    entry = fleets.get(fleet)
-    if not isinstance(entry, dict):
-        known = ", ".join(sorted(fleets)) or "(none)"
-        raise FleetCredsError("fleet %r not found in fleets config (known: %s)" % (fleet, known))
-    hub_agent = entry.get("hub_agent")
-    if not hub_agent:
-        raise FleetCredsError("fleet %r has no hub_agent" % fleet)
-    agents = entry.get("agents") or []
-    agent = next(
-        (a for a in agents if isinstance(a, dict) and a.get("name") == hub_agent),
-        None,
-    )
-    if not isinstance(agent, dict):
-        raise FleetCredsError("hub agent %r is not listed under fleet %r" % (hub_agent, fleet))
-    raw_target = agent.get("target")
-    if not raw_target:
-        raise FleetCredsError("hub agent %r has no ssh target" % hub_agent)
-    parsed = parse_ssh_target(str(raw_target), port=_optint(agent.get("ssh_port")))
-    defaults = entry.get("defaults") or {}
-    proxy = agent.get("ssh_jump") or defaults.get("ssh_jump")
-    strict = agent.get("ssh_strict_host_key_checking")
-    if strict is None:
-        strict = defaults.get("ssh_strict_host_key_checking")
-    supervisor = agent.get("supervisor") or defaults.get("supervisor") or "auto"
-    return HubSsh(
-        fleet=fleet,
-        fleet_name=str(entry.get("fleet_name") or fleet),
-        hub_agent=str(hub_agent),
-        target=parsed.user_host,
-        port=parsed.port,
-        proxy_jump=str(proxy) if proxy else None,
-        strict_host_key_checking=bool(strict) if strict is not None else None,
-        supervisor=str(supervisor),
-        os_kind=str(agent.get("os") or "linux"),
-    )
+    try:
+        return resolve_fleet_ssh(config, fleet)
+    except FleetSshError as exc:
+        raise FleetCredsError(str(exc)) from exc
 
 
 def ssh_command(hub: HubSsh, remote_cmd: str) -> List[str]:
     """Build the ``ssh`` argv that runs ``remote_cmd`` on the hub host."""
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
-    if hub.port is not None:
-        argv += ["-p", str(hub.port)]
-    if hub.proxy_jump:
-        argv += ["-o", "ProxyJump=%s" % hub.proxy_jump]
-    if hub.strict_host_key_checking is False:
-        argv += ["-o", "StrictHostKeyChecking=accept-new"]
-    argv += [hub.target, remote_cmd]
-    return argv
+    try:
+        return ssh_argv(hub, remote_cmd)
+    except FleetSshError as exc:
+        raise FleetCredsError(str(exc)) from exc
 
 
 def restart_command(hub: HubSsh) -> str:

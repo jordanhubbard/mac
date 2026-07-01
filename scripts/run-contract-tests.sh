@@ -28,6 +28,7 @@ git config --global user.name "mac contract tests" >/dev/null 2>&1 || true
 export PATH=".venv/bin:${PATH}"
 
 if [ "$#" -eq 0 ]; then
+    .venv/bin/python -m coverage erase
     .venv/bin/python -m coverage run -m pytest
     exec .venv/bin/python -m coverage report
 fi

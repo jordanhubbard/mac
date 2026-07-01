@@ -210,6 +210,23 @@ def test_sync_token_errors_when_hub_has_no_token(tmp_path, fleets_file):
                       runner=FakeRunner(hub_token=""))
 
 
+def test_sync_token_host_key_failure_is_closed_and_actionable(tmp_path, fleets_file):
+    def failed_runner(argv, *, input=None):
+        return fc.RunResult(
+            255,
+            "",
+            "REMOTE HOST IDENTIFICATION HAS CHANGED! Host key verification failed.",
+        )
+
+    with pytest.raises(fc.FleetCredsError, match="Host key verification failed"):
+        fc.sync_token(
+            "rocky",
+            fleets_config_path=fleets_file,
+            env_path=str(tmp_path / ".env"),
+            runner=failed_runner,
+        )
+
+
 # --------------------------------------------------------------------------- #
 # rotate_token
 # --------------------------------------------------------------------------- #

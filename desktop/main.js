@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
@@ -14,6 +14,7 @@ const DEFAULT_REMOTE_HOST = "127.0.0.1";
 const DEFAULT_REMOTE_PORT = 8789;
 const DEFAULT_FLEETS_CONFIG = "~/.mac/fleets.yaml";
 const DEFAULT_ENV_FILE = "~/.mac/.env";
+const DEFAULT_CLIENTS_DIR = "~/.mac/clients";
 const TESTING_TARGET_ID = "testing-url";
 const UI_ASSET_PREFIX = "/ui/assets/";
 const UI_CONTENT_TYPES = {
@@ -253,17 +254,45 @@ function fleetNeedsSsh(fleet) {
   );
 }
 
-function sshBaseForFleet(fleet, hubAgent) {
-  const defaults = fleet?.defaults || {};
+function canonicalSshSpec(fleetKey, fleet, hubAgent, configPath) {
+  const agentName = stringValue(hubAgent?.name) || stringValue(fleet?.hub_agent);
+  const cli = process.env.MAC_CLI_BIN || "mac";
+  let resolved;
+  try {
+    const raw = execFileSync(cli, [
+      "--json",
+      "fleet",
+      "ssh-spec",
+      "--fleet",
+      fleetKey,
+      "--agent",
+      agentName,
+      "--fleets-config",
+      expandHome(configPath),
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, MAC_FLEETS_CONFIG: expandHome(configPath) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    resolved = JSON.parse(raw);
+  } catch (error) {
+    const detail = error?.stderr?.toString?.("utf8")?.trim() || error.message;
+    throw new Error(`could not resolve canonical SSH route for ${fleetKey}/${agentName}: ${detail}`);
+  }
   const controlPort = numberValue(fleet?.control_port, DEFAULT_REMOTE_PORT);
   return {
-    target: stringValue(hubAgent?.target),
+    target: stringValue(resolved.target),
+    port: optionalNumberValue(resolved.port, 0),
     localPort: 0,
     remoteHost: DEFAULT_REMOTE_HOST,
     remotePort: controlPort,
-    identityFile: expandHome(defaults.ssh_key || defaults.identity_file || ""),
-    jumpHost: stringValue(defaults.ssh_jump),
-    strictHostKeyChecking: defaults.ssh_strict_host_key_checking !== false,
+    identityFile: expandHome(resolved.identity_file || ""),
+    identityRef: stringValue(resolved.identity_ref),
+    jumpHost: stringValue(resolved.proxy_jump),
+    knownHostsFile: expandHome(resolved.known_hosts_file || ""),
+    hostKeyPolicy: stringValue(resolved.host_key_policy) || "strict",
+    hostKeyFingerprint: stringValue(resolved.host_key_fingerprint),
+    hostCa: stringValue(resolved.host_ca),
   };
 }
 
@@ -306,7 +335,9 @@ function targetFromFleet(key, fleet, configPath, env) {
     proxyPort: 0,
     serviceTunnels: {},
   };
-  const sshBase = sshBaseForFleet(fleet, hubAgent);
+  const sshBase = stringValue(hubAgent?.target)
+    ? canonicalSshSpec(key, fleet, hubAgent, configPath)
+    : { target: "" };
   const useSsh = fleetNeedsSsh(fleet) || !hubUrl;
   if (useSsh && sshBase.target) {
     profile.ssh = sshBase;
@@ -350,6 +381,93 @@ function loadFleetTargets(args, env) {
   return targets;
 }
 
+function loadSecureClientTargets(args) {
+  const configuredRoot = path.resolve(expandHome(
+    args["clients-dir"] || process.env.MAC_CLIENT_PROFILES_DIR || DEFAULT_CLIENTS_DIR,
+  ));
+  if (!fs.existsSync(configuredRoot)) return [];
+  const root = fs.realpathSync(configuredRoot);
+  const rootMode = fs.statSync(root).mode & 0o777;
+  if ((rootMode & 0o077) !== 0) throw new Error(`client profile directory ${root} must be mode 0700`);
+  let active = "";
+  const current = path.join(root, "current");
+  if (fs.existsSync(current)) {
+    const currentMode = fs.statSync(current).mode & 0o777;
+    if ((currentMode & 0o077) !== 0) throw new Error(`active client profile ${current} must be mode 0600`);
+    active = fs.readFileSync(current, "utf8").trim();
+  }
+  const configuredCredentialRoot = path.resolve(
+    process.env.MAC_CLIENT_CREDENTIALS_DIR
+      ? expandHome(process.env.MAC_CLIENT_CREDENTIALS_DIR)
+      : path.join(path.dirname(root), "credentials", "clients"),
+  );
+  const credentialRoot = fs.realpathSync(configuredCredentialRoot);
+  const targets = [];
+  for (const filename of fs.readdirSync(root).filter((name) => name.endsWith(".yaml"))) {
+    const profilePath = fs.realpathSync(path.join(root, filename));
+    if (!(profilePath === root || profilePath.startsWith(`${root}${path.sep}`))) {
+      throw new Error(`client profile ${filename} escapes the client profile directory`);
+    }
+    const profileMode = fs.statSync(profilePath).mode & 0o777;
+    if ((profileMode & 0o077) !== 0) throw new Error(`client profile ${profilePath} must be mode 0600`);
+    const document = yaml.load(fs.readFileSync(profilePath, "utf8")) || {};
+    if (document.schema !== "mac.client_profile.v1") continue;
+    const profileName = stringValue(document.profile);
+    const credentialRef = stringValue(document.credential?.path);
+    const unresolvedCredentialPath = path.resolve(root, credentialRef);
+    const credentialPath = credentialRef && fs.existsSync(unresolvedCredentialPath)
+      ? fs.realpathSync(unresolvedCredentialPath)
+      : unresolvedCredentialPath;
+    if (!credentialRef || !(credentialPath === credentialRoot || credentialPath.startsWith(`${credentialRoot}${path.sep}`))) {
+      throw new Error(`client profile ${profileName} has an invalid credential reference`);
+    }
+    const mode = fs.statSync(credentialPath).mode & 0o777;
+    if ((mode & 0o077) !== 0) throw new Error(`client credential ${credentialPath} must be mode 0600`);
+    const token = fs.readFileSync(credentialPath, "utf8").trim();
+    const connection = document.connection || {};
+    const ssh = document.ssh || {};
+    const runtimeProfile = {
+      displayName: stringValue(document.display_name) || profileName,
+      apiUrl: stringValue(connection.api_url),
+      token,
+      tokenSourceId: `client-profile:${profileName}`,
+      tokenChoices: [],
+      tokenEnv: "MAC_DESKTOP_API_TOKEN",
+      proxyPort: 0,
+      serviceTunnels: {},
+    };
+    if (connection.mode === "ssh-tunnel") {
+      runtimeProfile.ssh = {
+        target: stringValue(ssh.target),
+        port: optionalNumberValue(ssh.port, 0),
+        localPort: optionalNumberValue(connection.local_port, 0),
+        remoteHost: stringValue(connection.remote_host) || DEFAULT_REMOTE_HOST,
+        remotePort: numberValue(connection.remote_port, DEFAULT_REMOTE_PORT),
+        identityFile: expandHome(ssh.identity_file || ""),
+        identityRef: stringValue(ssh.identity_ref),
+        jumpHost: stringValue(ssh.proxy_jump),
+        knownHostsFile: expandHome(ssh.known_hosts_file || ""),
+        hostKeyPolicy: stringValue(ssh.host_key_policy) || "strict",
+        hostKeyFingerprint: stringValue(ssh.host_key_fingerprint),
+        hostCa: stringValue(ssh.host_ca),
+      };
+    }
+    targets.push({
+      id: `client:${profileName}`,
+      label: runtimeProfile.displayName,
+      mode: runtimeProfile.ssh ? "client-ssh" : "client-direct",
+      apiUrl: runtimeProfile.ssh ? "" : runtimeProfile.apiUrl,
+      fleetName: stringValue(document.fleet),
+      hubAgent: "",
+      source: profilePath,
+      active: profileName === active,
+      profile: runtimeProfile,
+    });
+  }
+  targets.sort((left, right) => Number(right.active) - Number(left.active));
+  return targets;
+}
+
 function testingTarget(env = {}) {
   const profile = loadProfile({ allowDefault: true });
   const tokenChoices = tokenSourcesForTarget("testing", {}, env);
@@ -373,7 +491,10 @@ function testingTarget(env = {}) {
 function loadTargets() {
   const args = parseArgs(process.argv.slice(1));
   const env = loadMacEnv(args);
-  const targets = loadFleetTargets(args, env);
+  const targets = [
+    ...loadSecureClientTargets(args),
+    ...loadFleetTargets(args, env),
+  ];
   targets.push(testingTarget(env));
   return targets;
 }
@@ -383,7 +504,9 @@ function targetPublicInfo(target) {
     id: target.id,
     label: target.label,
     mode: target.mode,
-    apiUrl: target.mode === "fleet-direct" || target.id === TESTING_TARGET_ID ? target.apiUrl || "" : "",
+    apiUrl: ["fleet-direct", "client-direct"].includes(target.mode) || target.id === TESTING_TARGET_ID
+      ? target.apiUrl || ""
+      : "",
     fleetName: target.fleetName || "",
     hubAgent: target.hubAgent || "",
     source: target.source || "",
@@ -591,6 +714,7 @@ async function sshArgsFor(spec) {
   const localPort = optionalNumberValue(spec.localPort, 0) || await allocateTcpPort();
   const args = [
     "-N",
+    "-F", "/dev/null",
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=30",
@@ -598,11 +722,21 @@ async function sshArgsFor(spec) {
     "-o", "ExitOnForwardFailure=yes",
     "-L", `${DEFAULT_PROXY_HOST}:${localPort}:${remoteHost}:${remotePort}`,
   ];
-  if (spec.strictHostKeyChecking === false) {
+  const hostKeyPolicy = spec.hostKeyPolicy || "strict";
+  if (hostKeyPolicy === "insecure") {
     args.push("-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null");
+  } else if (hostKeyPolicy === "accept-new") {
+    args.push("-o", "StrictHostKeyChecking=accept-new");
+  } else {
+    args.push("-o", "StrictHostKeyChecking=yes");
   }
-  if (spec.identityFile) args.push("-i", expandHome(spec.identityFile));
+  if (spec.knownHostsFile) args.push("-o", `UserKnownHostsFile=${expandHome(spec.knownHostsFile)}`);
+  if (spec.identityFile) args.push("-o", "IdentitiesOnly=yes", "-i", expandHome(spec.identityFile));
+  if (spec.identityRef && !spec.identityFile && !spec.identityRef.startsWith("file:")) {
+    throw new Error(`SSH identity reference ${spec.identityRef} is not available to OpenSSH`);
+  }
   if (spec.jumpHost) args.push("-o", `ProxyJump=${spec.jumpHost}`);
+  if (spec.port) args.push("-p", String(spec.port));
   args.push(spec.target);
   return { args, localPort };
 }
@@ -794,8 +928,11 @@ function serviceTunnelSpec(serviceId) {
     remotePort: spec.remotePort,
     localPort: spec.localPort,
     identityFile: expandHome(spec.identityFile || profile.ssh?.identityFile || ""),
+    identityRef: spec.identityRef || profile.ssh?.identityRef,
     jumpHost: spec.jumpHost || profile.ssh?.jumpHost,
-    strictHostKeyChecking: spec.strictHostKeyChecking ?? profile.ssh?.strictHostKeyChecking,
+    knownHostsFile: expandHome(spec.knownHostsFile || profile.ssh?.knownHostsFile || ""),
+    hostKeyPolicy: spec.hostKeyPolicy || profile.ssh?.hostKeyPolicy,
+    port: spec.port || profile.ssh?.port,
     path: spec.path || "/",
     url: spec.url || "",
   };

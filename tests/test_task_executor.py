@@ -675,6 +675,7 @@ def test_main_salvages_evidence_when_agent_run_times_out(tmp_path, monkeypatch):
     task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
     ws = tmp_path / "ws"; ws.mkdir()
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     posts = []
     monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
     monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
@@ -702,6 +703,7 @@ def test_main_fails_when_timeout_and_no_evidence(tmp_path, monkeypatch):
     task_file = tmp_path / "task.json"; task_file.write_text(json.dumps({"task": task}))
     ws = tmp_path / "ws"; ws.mkdir()
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     monkeypatch.setattr(te, "_hub_post", lambda *a, **k: True)
     monkeypatch.setattr(te, "_hub_get", lambda *a, **k: [])
     # timeout with NO deliverable written → honest failure, not salvaged
@@ -1679,6 +1681,9 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     ws.mkdir()
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
 
     # This test exercises the Hermes -> gateway runner (asserts the --query argv);
     # pin coding-agent preference off so it is independent of which coding-agent
@@ -2228,6 +2233,7 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
     ws.mkdir()
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
 
     posts = []
     monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)

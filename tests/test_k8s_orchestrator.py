@@ -444,3 +444,81 @@ def test_main_starts_review_tick_daemon_thread(
     assert t.daemon is True, "review-tick thread must be a daemon"
 
 
+def test_loop_helpers_log_processed_stuck_jobs_and_review_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import mac.k8s.controller as controller_mod
+    import mac.k8s.runner as runner_mod
+
+    monkeypatch.setattr(
+        controller_mod,
+        "reconcile_stuck_jobs",
+        lambda *_a: [{"status": "deleted", "job": "stale"}],
+    )
+    monkeypatch.setattr(
+        orchestrator.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(RuntimeError("stop")),
+    )
+    with caplog.at_level(logging.INFO):
+        orchestrator._run_controller_loop_forever(
+            object(), object(), object(), 0.01, logging.getLogger("controller-edge")
+        )
+    assert "stuck-job" in caplog.text
+
+    class TickMac:
+        def post(self, *_args: Any) -> Dict[str, Any]:
+            return {"processed": 2}
+
+    with caplog.at_level(logging.INFO):
+        orchestrator._run_review_tick_loop_forever(
+            TickMac(), 0.01, 2, "actor", logging.getLogger("tick-edge")
+        )
+    assert "processed=2" in caplog.text
+
+    monkeypatch.setattr(runner_mod, "review_loop", lambda *_a: None)
+    orchestrator._run_review_loop_forever(
+        object(), object(), object(), logging.getLogger("review-edge")
+    )
+    monkeypatch.setattr(
+        runner_mod,
+        "review_loop",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("review failed")),
+    )
+    orchestrator.review_loop_failures = 0
+    orchestrator._run_review_loop_forever(
+        object(), object(), object(), logging.getLogger("review-edge")
+    )
+    assert orchestrator.review_loop_failures == 1
+
+
+def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
+    baseline_env: None,
+    patched_runtime: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mac.k8s.runner as runner_mod
+
+    cfg = runner_mod.RunnerConfig.from_env()
+    cfg.reviewer_agent_ids = {"reviewer": "agent-reviewer"}
+    monkeypatch.setattr(runner_mod.RunnerConfig, "from_env", staticmethod(lambda: cfg))
+    monkeypatch.setattr(
+        runner_mod, "check_dispatcher_capabilities", lambda *_a: ["gpu"]
+    )
+    monkeypatch.setenv("MAC_REVIEW_TICK_LIMIT", "not-an-int")
+    started: List[str] = []
+
+    class FakeThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.name = kwargs["name"]
+            self.daemon = kwargs.get("daemon", False)
+
+        def start(self) -> None:
+            started.append(self.name)
+
+    monkeypatch.setattr(orchestrator.threading, "Thread", FakeThread)
+    assert orchestrator.main([]) == 0
+    assert "mac-orchestrator-review" in started
+    assert "mac-orchestrator-review-tick" in started
+

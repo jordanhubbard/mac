@@ -1,11 +1,10 @@
-"""SSH ProxyJump (bastion) support: the setup writes ssh_jump into fleets.yaml,
-and the deploy injects -o ProxyJump=/StrictHostKeyChecking into every
-operator->node ssh/scp — so a bastion-only fleet (e.g. GKE pods) deploys with no
-~/.ssh/config edits, while the in-cluster hub->spoke tunnels stay jump-free."""
+"""Canonical SSH routing for the shell fleet deploy.
+
+The deploy consumes NUL-delimited argv from :mod:`mac.fleet_ssh`, so per-agent
+ports, jumps, identities, and host-key policy work without ambient ssh config.
+"""
 from __future__ import annotations
 
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -22,6 +21,8 @@ def test_fleet_setup_persists_ssh_jump_into_defaults():
         "hub_url": "http://jordanh-hub:8789", "supervisor": "supervisord",
         "ssh_jump": "horde@bastion.horde-gke.nvidia.com:2222",
         "ssh_strict_host_key_checking": False,
+        "identity_file": "~/.ssh/gke-operator",
+        "ssh_known_hosts_file": "~/.ssh/gke-known-hosts",
         "router": {"backend": "inproc", "providers": [{"id": "nvidia"}]},
         "agents": [{"name": "jordanh-hub", "target": "horde@jordanh-hub", "os": "linux", "supervisor": "supervisord"}],
         "deploy_agents": ["jordanh-hub"],
@@ -31,6 +32,9 @@ def test_fleet_setup_persists_ssh_jump_into_defaults():
     assert plan["errors"] == []
     assert d["ssh_jump"] == "horde@bastion.horde-gke.nvidia.com:2222"
     assert d["ssh_strict_host_key_checking"] is False
+    assert d["ssh_host_key_policy"] == "accept-new"
+    assert d["identity_file"] == "~/.ssh/gke-operator"
+    assert d["ssh_known_hosts_file"] == "~/.ssh/gke-known-hosts"
 
 
 def test_default_setup_keeps_strict_on_and_jump_empty():
@@ -46,40 +50,33 @@ def test_default_setup_keeps_strict_on_and_jump_empty():
 
 
 def test_deploy_script_wires_proxyjump():
-    assert "ssh_conn_opts" in SCRIPT and "ProxyJump=" in SCRIPT and "load_ssh_jump_config" in SCRIPT
-    # both arg builders call the injector
-    assert SCRIPT.count("\n  ssh_conn_opts\n") >= 2
-    # the bare-target ssh calls carry the opts string
-    assert "$SSH_CONN_OPTS" in SCRIPT
+    assert "fleet_ssh_route_args" in SCRIPT
+    assert "-m mac.fleet_ssh" in SCRIPT
+    assert '--kind "$kind"' in SCRIPT
+    assert "--nul" in SCRIPT
+    assert 'ssh_target_args "$agent"' in SCRIPT
+    assert 'scp_target_args "$agent"' in SCRIPT
+    assert "$SSH_CONN_OPTS" not in SCRIPT
 
 
-def _extract(func: str) -> str:
-    m = re.search(r"^%s\(\) \{\n.*?^\}$" % re.escape(func), SCRIPT, re.S | re.M)
-    assert m, "could not extract %s" % func
-    return m.group(0)
+def test_shared_resolver_emits_proxyjump_and_safe_host_key_policy(monkeypatch, tmp_path):
+    from mac.fleet_ssh import resolve_fleet_ssh, route_argv
 
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = {
+        "fleets": {
+            "gke": {
+                "hub_agent": "hub",
+                "defaults": {
+                    "ssh_jump": "horde@bastion:2222",
+                    "ssh_strict_host_key_checking": False,
+                },
+                "agents": [{"name": "hub", "target": "horde@hub"}],
+            }
+        }
+    }
+    argv = route_argv(resolve_fleet_ssh(config, "gke"))
 
-def test_ssh_conn_opts_emits_proxyjump_dynamically():
-    fn = _extract("ssh_conn_opts")
-    with_jump = subprocess.run(
-        ["bash", "-c", fn + '\nSSH_JUMP="horde@bastion:2222"; SSH_STRICT=0; ssh_conn_opts | tr "\\0" "\\n"'],
-        capture_output=True, text=True,
-    ).stdout
-    assert "ProxyJump=horde@bastion:2222" in with_jump
-    assert "StrictHostKeyChecking=no" in with_jump
-    # no jump configured -> emits nothing (default non-bastion fleet)
-    none = subprocess.run(
-        ["bash", "-c", fn + '\nSSH_JUMP=""; SSH_STRICT=1; ssh_conn_opts | tr "\\0" "\\n"'],
-        capture_output=True, text=True,
-    ).stdout
-    assert none.strip() == ""
-
-
-def test_load_ssh_jump_config_is_operator_side_safe():
-    """load_ssh_jump_config runs on the operator, where the script's log() is
-    NOT defined (it lives only inside the remote <<'REMOTE' node payload, so on
-    macOS `log` resolves to /usr/bin/log and aborts under set -e). It must use
-    the operator-side echo "==>" convention instead."""
-    fn = _extract("load_ssh_jump_config")
-    assert 'log "' not in fn, "operator-side function must not call the remote-only log()"
-    assert 'echo "==>' in fn
+    assert "ProxyJump=horde@bastion:2222" in argv
+    assert "StrictHostKeyChecking=accept-new" in argv
+    assert "StrictHostKeyChecking=no" not in argv

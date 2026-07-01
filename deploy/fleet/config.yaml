@@ -15,6 +15,14 @@ shared_services_manager_agent: hub
 
 defaults:
   supervisor: auto
+  # Operator-side SSH route references. Private key bytes never belong here.
+  ssh_jump: ""
+  identity_file: ""
+  identity_ref: ""
+  ssh_known_hosts_file: ""
+  ssh_host_key_policy: strict
+  ssh_host_key_fingerprint: ""
+  ssh_host_ca: ""
   hermes:
     slack_home_channel_name: ""
     gateway_provider: custom

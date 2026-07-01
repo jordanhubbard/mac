@@ -382,6 +382,7 @@ def test_task_executor_main_calls_create_agent_scope(tmp_path, monkeypatch):
 
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
 
     scopes_opened = []
 

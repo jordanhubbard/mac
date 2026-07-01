@@ -72,18 +72,23 @@ Service navigation also goes through the bridge. That lets Electron open or
 reuse tunnels for Qdrant, Firecrawl, TokenHub, or future services without
 showing users port-forwarding details.
 
-The packaged Electron app reads `~/.mac/fleets.yaml` and uses those fleet names
-as the primary target dropdown. The dashboard's URL field is reserved for the
-`Testing URL` target so local or throwaway API endpoints can still be checked
-without making URL entry part of normal fleet usage.
+The packaged Electron app first reads secure profiles from
+`~/.mac/clients/*.yaml`, keeping the bearer in Electron main via the referenced
+mode-`0600` file under `~/.mac/credentials/clients/`. The active secure profile
+is the default target. It then reads legacy `~/.mac/fleets.yaml` entries as
+additional targets. Fleet SSH routes are resolved by `mac fleet ssh-spec`; the
+Electron process no longer independently interprets jump, identity, port, or
+host-key defaults. The dashboard's URL field is reserved for the `Testing URL`
+target so local or throwaway API endpoints can still be checked without making
+URL entry part of normal fleet usage.
 
 The current package consumes profiles that were already provisioned; it does
-not enroll a fresh client. `mac login`/logout/revocation and IDE integration
-with the resulting portable client profile are tracked but are not shipped in
-the current CLI or Electron package. Until that work lands, provision
-`~/.mac/fleets.yaml`, a verified SSH route, and the scoped token source out of
-band. Do not copy a hub's complete `~/.mac` directory or admin credential into
-the desktop client.
+not invoke enrollment itself. Hub-side `mac client enroll|renew|revoke` and
+local `mac client profile ...` commands now ship, and profiles installed by
+those commands are IDE targets. The single-step `mac login`/status/logout
+orchestration is still pending. Use the manual streaming workflow in
+[SSH Client Bootstrap Contracts](client-bootstrap-contract.md); do not copy a
+hub's complete `~/.mac` directory or admin credential into the desktop client.
 
 Electron mode exposes visible `Fleet hub` and `Bearer token` controls in the
 top bar. The renderer sees token-source labels only; token values loaded from

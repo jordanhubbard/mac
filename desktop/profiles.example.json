@@ -13,7 +13,8 @@
       "remoteHost": "127.0.0.1",
       "remotePort": 8789,
       "identityFile": "~/.ssh/id_ed25519",
-      "strictHostKeyChecking": true
+      "knownHostsFile": "~/.ssh/mac-known-hosts",
+      "hostKeyPolicy": "strict"
     },
     "serviceTunnels": {
       "qdrant": {

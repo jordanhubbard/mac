@@ -1464,6 +1464,11 @@ def _resolve_hub_url(args: Any, env: Dict[str, str]) -> Optional[str]:
     explicit = getattr(args, "hub_url", None)
     if explicit:
         return explicit
+    profile = _resolve_client_profile(args, env)
+    if profile:
+        value = (profile.get("connection") or {}).get("api_url")
+        if value:
+            return str(value)
     for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "HGMAC_URL"):
         value = env.get(name)
         if value:
@@ -1480,6 +1485,11 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     explicit = getattr(args, "token", None)
     if explicit:
         return explicit
+    profile = _resolve_client_profile(args, env)
+    if profile:
+        value = (profile.get("credential") or {}).get("token")
+        if value:
+            return str(value)
     fleet = _effective_fleet(args, env)
     token = resolve_env_var("MAC_API_TOKEN", fleet=fleet, env=env)
     if token:
@@ -1488,6 +1498,37 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     # as a fallback so wrappers can call ``mac pull-request open`` etc.
     # without an extra env-export shim.
     return env.get("MAC_WORKER_TOKEN") or None
+
+
+def _resolve_client_profile(args: Any, env: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Load the selected secure client profile once per parsed argument set."""
+
+    cached = getattr(args, "_mac_client_profile", None)
+    if cached is False:
+        return None
+    if isinstance(cached, dict):
+        return cached
+    explicit = getattr(args, "profile", None) or env.get("MAC_PROFILE")
+    fleet = _effective_fleet(args, env)
+    try:
+        from mac.client_profiles import ClientProfileError, list_profiles, load_profile
+
+        selected = explicit
+        if not selected and fleet:
+            candidates = [item for item in list_profiles() if item.get("fleet") == fleet]
+            if len(candidates) == 1:
+                selected = str(candidates[0]["profile"])
+        profile = load_profile(selected, include_token=True)
+        if fleet and not explicit and profile.get("fleet") not in (None, "", fleet):
+            setattr(args, "_mac_client_profile", False)
+            return None
+        setattr(args, "_mac_client_profile", profile)
+        return profile
+    except (FileNotFoundError, ClientProfileError) as exc:
+        if explicit:
+            raise DispatchError("could not load client profile %r: %s" % (explicit, exc)) from exc
+        setattr(args, "_mac_client_profile", False)
+        return None
 
 
 def _fleets_config_path() -> Path:
@@ -1604,6 +1645,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         "mac: no hub configured and no --db specified.\n"
         "  Set MAC_API_URL (or pass --hub-url <URL>) to target a hub, or\n"
         "  pass --db <path> to use a local SQLite database.\n"
+        "  A secure profile can be selected with --profile <name>.\n"
         "  For a named fleet: --fleet <name> reads ~/.mac/fleets.yaml.\n"
         "  With multiple fleets, mark one `default: true` in fleets.yaml to\n"
         "  make it the flagless default (a lone fleet is the default already).",

@@ -222,6 +222,181 @@ def cmd_config_migrate_env_namespace(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_client_enroll(args: argparse.Namespace) -> None:
+    """Mint a scoped client credential on the hub-local SSH trust channel."""
+
+    if not _OUTPUT_JSON:
+        raise MACError(
+            "client enroll returns a one-time credential; pass --json and pipe "
+            "the manifest directly to `mac client profile install -`"
+        )
+
+    from mac.client_principals import (
+        ClientPrincipalError,
+        ClientPrincipalStore,
+        enrollment_manifest,
+    )
+
+    try:
+        issued = ClientPrincipalStore(
+            Path(args.registry).expanduser() if args.registry else None
+        ).enroll(
+            args.client_id,
+            display_name=args.name or "",
+            fleet=args.fleet_name or "",
+            profile=args.profile_name or args.client_id,
+            scopes=_csv(args.scopes),
+            expires_in=args.expires_in,
+            api_url=args.api_url,
+            ssh_host_key_fingerprint=args.host_key_fingerprint or "",
+            ssh_host_ca=args.host_ca or "",
+            capabilities=_csv(args.capabilities),
+            allow_elevated=args.allow_elevated,
+            rotate=args.rotate,
+            actor=args.actor,
+        )
+    except ClientPrincipalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(enrollment_manifest(issued))
+
+
+def cmd_client_renew(args: argparse.Namespace) -> None:
+    if not _OUTPUT_JSON:
+        raise MACError(
+            "client renew returns a one-time credential; pass --json and pipe "
+            "the manifest directly to `mac client profile install -`"
+        )
+
+    from mac.client_principals import (
+        ClientPrincipalError,
+        ClientPrincipalStore,
+        enrollment_manifest,
+    )
+
+    try:
+        issued = ClientPrincipalStore(
+            Path(args.registry).expanduser() if args.registry else None
+        ).renew(args.client_id, expires_in=args.expires_in, actor=args.actor)
+    except ClientPrincipalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(enrollment_manifest(issued))
+
+
+def cmd_client_revoke(args: argparse.Namespace) -> None:
+    from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
+
+    try:
+        result = ClientPrincipalStore(
+            Path(args.registry).expanduser() if args.registry else None
+        ).revoke(args.client_id, actor=args.actor)
+    except ClientPrincipalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_list(args: argparse.Namespace) -> None:
+    from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
+
+    try:
+        result = ClientPrincipalStore(
+            Path(args.registry).expanduser() if args.registry else None
+        ).list()
+    except ClientPrincipalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_install(args: argparse.Namespace) -> None:
+    from mac.client_profiles import (
+        ClientProfileError,
+        install_enrollment_manifest,
+        read_manifest,
+    )
+
+    try:
+        result = install_enrollment_manifest(
+            read_manifest(args.manifest),
+            profile_override=args.profile_name,
+            activate=not args.no_activate,
+        )
+    except (ClientProfileError, OSError) as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_list(args: argparse.Namespace) -> None:
+    from mac.client_profiles import ClientProfileError, list_profiles
+
+    try:
+        result = list_profiles()
+    except ClientProfileError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_show(args: argparse.Namespace) -> None:
+    from mac.client_profiles import ClientProfileError, show_profile
+
+    try:
+        result = show_profile(args.profile_name)
+    except ClientProfileError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_activate(args: argparse.Namespace) -> None:
+    from mac.client_profiles import ClientProfileError, activate_profile
+
+    try:
+        result = activate_profile(args.profile_name)
+    except ClientProfileError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_remove(args: argparse.Namespace) -> None:
+    from mac.client_profiles import ClientProfileError, remove_profile
+
+    try:
+        result = remove_profile(args.profile_name)
+    except ClientProfileError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_client_profile_migrate_legacy(args: argparse.Namespace) -> None:
+    from mac.client_profiles import ClientProfileError, migrate_legacy_profile
+
+    try:
+        result = migrate_legacy_profile(
+            fleet=args.fleet_name,
+            profile=args.profile_name,
+            fleets_config=args.fleets_config,
+            env_file=args.env_file,
+            allow_legacy_admin_token=args.allow_legacy_admin_token,
+            activate=not args.no_activate,
+        )
+    except (ClientProfileError, OSError) as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
+def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
+    from mac.fleet_ssh import FleetSshError, load_fleet_config, resolve_fleet_ssh
+
+    try:
+        spec = resolve_fleet_ssh(
+            load_fleet_config(args.fleets_config),
+            getattr(args, "fleet_name", None) or args.fleet,
+            args.agent,
+            port_override=args.ssh_port,
+            portable=args.portable,
+        )
+    except FleetSshError as exc:
+        raise MACError(str(exc)) from exc
+    _print(spec.to_dict())
+
+
 def cmd_fleet_sync_token(args: argparse.Namespace) -> None:
     """auth-token-sync-01: pull the hub's current bearer token into this client.
 
@@ -772,10 +947,13 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     / mood follow ``agent_<name>`` automatically."""
     import shutil
     import time
+    from dataclasses import replace
 
     import yaml
 
     from mac import agent_migrate as am
+    from mac.fleet_deploy import parse_ssh_target
+    from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
     from mac.hermes_config_surface import registry_path
 
     reg_path = registry_path()
@@ -807,6 +985,40 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     hub = is_hub_agent if args.hub is None else args.hub
     src_os = args.src_os or (cur.get("os") or "linux")
 
+    try:
+        src_route = resolve_fleet_ssh(registry, fleet, args.name)
+        parsed_src = parse_ssh_target(str(src), port=src_route.port)
+        src_route = replace(
+            src_route, target=parsed_src.user_host, port=parsed_src.port
+        )
+        parsed_dst = parse_ssh_target(args.to_target, port=args.to_ssh_port)
+        dst_route = replace(
+            src_route,
+            target=parsed_dst.user_host,
+            port=parsed_dst.port,
+            identity_file=(
+                str(Path(args.to_identity_file).expanduser())
+                if args.to_identity_file
+                else src_route.identity_file
+            ),
+            proxy_jump=(
+                args.to_proxy_jump
+                if args.to_proxy_jump is not None
+                else src_route.proxy_jump
+            ),
+            known_hosts_file=(
+                str(Path(args.to_known_hosts_file).expanduser())
+                if args.to_known_hosts_file
+                else src_route.known_hosts_file
+            ),
+            host_key_policy=args.to_host_key_policy or src_route.host_key_policy,
+            os_kind=args.to_os,
+        )
+        src_route.validate_portable()
+        dst_route.validate_portable()
+    except (FleetSshError, ValueError) as exc:
+        raise SystemExit("could not resolve migration SSH routes: %s" % exc) from exc
+
     steps = am.migration_plan(
         args.name,
         src_target=src,
@@ -818,6 +1030,8 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
         keep_source=args.keep_source,
         retire_source_agent=args.retire_source_agent,
         hub=hub,
+        src_route=src_route,
+        dst_route=dst_route,
     )
     if hub:
         print("# HUB migration: moving soul + mac.db + Qdrant + MAC_SECRET_KEY/MAC_API_TOKEN")
@@ -1195,7 +1409,16 @@ def _soul_snapshot_setup(args):
     if not fleet_name:
         raise SystemExit("no fleet found; pass --fleet")
     agents = _ss.load_fleet_agents(cfg, fleet_name)
-    return fleet_name, agents, _ss.SSHTransport()
+    from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
+
+    try:
+        routes = {
+            target: resolve_fleet_ssh(cfg, fleet_name, name)
+            for name, target in agents
+        }
+    except FleetSshError as exc:
+        raise SystemExit(str(exc)) from exc
+    return fleet_name, agents, _ss.SSHTransport(routes=routes)
 
 
 def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
@@ -1251,7 +1474,30 @@ def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
 
     src = Path(getattr(args, "from_dir")).expanduser()
     manifest = _yaml.safe_load((src / "manifest.yaml").read_text(encoding="utf-8"))
-    transport = _ss.SSHTransport()
+    # Resolve current targets from the authoritative registry instead of using
+    # snapshot-era hostnames, then route every SSH call through FleetSshSpec.
+    cfg = _yaml.safe_load(
+        Path(args.fleets_config).expanduser().read_text(encoding="utf-8")
+    ) or {}
+    fleet_name = args.fleet or manifest.get("fleet")
+    if not fleet_name:
+        raise SystemExit("snapshot has no fleet; pass --fleet")
+    from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
+
+    current_agents = dict(_ss.load_fleet_agents(cfg, fleet_name))
+    routes = {}
+    try:
+        for agent_name, entry in (manifest.get("agents") or {}).items():
+            target = current_agents.get(agent_name)
+            if not target:
+                raise SystemExit(
+                    "agent %r is no longer present in fleet %r" % (agent_name, fleet_name)
+                )
+            entry["target"] = target
+            routes[target] = resolve_fleet_ssh(cfg, fleet_name, agent_name)
+    except FleetSshError as exc:
+        raise SystemExit(str(exc)) from exc
+    transport = _ss.SSHTransport(routes=routes)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     res = _ss.plan_and_push(
         src, manifest, transport, stamp=stamp,
@@ -2590,6 +2836,12 @@ def build_parser() -> argparse.ArgumentParser:
         "~/.mac/fleets.yaml entry.",
     )
     parser.add_argument(
+        "--profile",
+        default=None,
+        help="Secure client profile under ~/.mac/clients. Falls back to "
+        "$MAC_PROFILE or the active profile.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of the default human-readable text. Works in any "
@@ -2631,6 +2883,88 @@ def build_parser() -> argparse.ArgumentParser:
         help="remove the flat unscoped keys after writing the scoped variants",
     )
     _set(cmd_config_migrate_env_namespace, migrate_env)
+
+    client = sub.add_parser(
+        "client", help="hub enrollment principals and secure local client profiles"
+    ).add_subparsers(dest="client_command", required=True)
+
+    client_enroll = client.add_parser(
+        "enroll",
+        help="hub-local: mint a revocable scoped credential (invoke through SSH)",
+    )
+    client_enroll.add_argument("client_id")
+    client_enroll.add_argument("--name")
+    client_enroll.add_argument("--fleet", dest="fleet_name", default="")
+    client_enroll.add_argument("--profile", dest="profile_name")
+    client_enroll.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
+    client_enroll.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_enroll.add_argument("--api-url", default="http://127.0.0.1:8789")
+    client_enroll.add_argument("--host-key-fingerprint")
+    client_enroll.add_argument("--host-ca")
+    client_enroll.add_argument("--capabilities")
+    client_enroll.add_argument("--allow-elevated", action="store_true")
+    client_enroll.add_argument(
+        "--rotate", action="store_true", help="rotate an existing id instead of refusing"
+    )
+    client_enroll.add_argument("--registry", help="override the hub principal registry path")
+    client_enroll.add_argument("--actor", default="ssh-operator")
+    _set(cmd_client_enroll, client_enroll)
+
+    client_renew = client.add_parser(
+        "renew", help="hub-local: rotate one client's token and expiry"
+    )
+    client_renew.add_argument("client_id")
+    client_renew.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_renew.add_argument("--registry")
+    client_renew.add_argument("--actor", default="ssh-operator")
+    _set(cmd_client_renew, client_renew)
+
+    client_revoke = client.add_parser(
+        "revoke", help="hub-local: immediately revoke one client credential"
+    )
+    client_revoke.add_argument("client_id")
+    client_revoke.add_argument("--registry")
+    client_revoke.add_argument("--actor", default="ssh-operator")
+    _set(cmd_client_revoke, client_revoke)
+
+    client_list = client.add_parser(
+        "list", help="hub-local: list client principals without token hashes"
+    )
+    client_list.add_argument("--registry")
+    _set(cmd_client_list, client_list)
+
+    client_profile = client.add_parser(
+        "profile", help="install, select, inspect, or remove local secure profiles"
+    ).add_subparsers(dest="client_profile_command", required=True)
+    profile_install = client_profile.add_parser(
+        "install", help="atomically install an enrollment manifest from JSON"
+    )
+    profile_install.add_argument("manifest", help="manifest file, or - for stdin")
+    profile_install.add_argument("--profile", dest="profile_name")
+    profile_install.add_argument("--no-activate", action="store_true")
+    _set(cmd_client_profile_install, profile_install)
+    profile_list = client_profile.add_parser("list")
+    _set(cmd_client_profile_list, profile_list)
+    profile_show = client_profile.add_parser("show")
+    profile_show.add_argument("profile_name", nargs="?")
+    _set(cmd_client_profile_show, profile_show)
+    profile_activate = client_profile.add_parser("activate")
+    profile_activate.add_argument("profile_name")
+    _set(cmd_client_profile_activate, profile_activate)
+    profile_remove = client_profile.add_parser("remove")
+    profile_remove.add_argument("profile_name")
+    _set(cmd_client_profile_remove, profile_remove)
+    profile_migrate = client_profile.add_parser(
+        "migrate-legacy",
+        help="import one legacy fleet connection (admin token requires acknowledgement)",
+    )
+    profile_migrate.add_argument("--fleet", dest="fleet_name", required=True)
+    profile_migrate.add_argument("--profile", dest="profile_name")
+    profile_migrate.add_argument("--fleets-config")
+    profile_migrate.add_argument("--env-file")
+    profile_migrate.add_argument("--allow-legacy-admin-token", action="store_true")
+    profile_migrate.add_argument("--no-activate", action="store_true")
+    _set(cmd_client_profile_migrate_legacy, profile_migrate)
 
     tenant = sub.add_parser("tenant", help="tenant boundary commands").add_subparsers(dest="tenant_command", required=True)
     tenant_register = tenant.add_parser("register")
@@ -3171,6 +3505,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-hub", dest="hub", action="store_false",
         help="force soul-only (spoke) migration even if the agent looks like the hub")
     agent_migrate.add_argument("--src-os", help="source service manager (default: from fleets.yaml, else linux)")
+    agent_migrate.add_argument("--to-ssh-port", type=int)
+    agent_migrate.add_argument("--to-identity-file")
+    agent_migrate.add_argument("--to-proxy-jump")
+    agent_migrate.add_argument("--to-known-hosts-file")
+    agent_migrate.add_argument(
+        "--to-host-key-policy", choices=("strict", "accept-new", "insecure")
+    )
     _set(cmd_agent_migrate, agent_migrate)
 
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
@@ -3181,6 +3522,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    fleet_ssh_spec = fleet.add_parser(
+        "ssh-spec",
+        help="resolve the canonical secret-free SSH route for one fleet agent",
+    )
+    fleet_ssh_spec.add_argument(
+        "--fleet", dest="fleet_name", help="fleet key/name (defaults like global --fleet)"
+    )
+    fleet_ssh_spec.add_argument("--agent", help="agent name (default: fleet hub_agent)")
+    fleet_ssh_spec.add_argument(
+        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+    )
+    fleet_ssh_spec.add_argument("--ssh-port", type=int)
+    fleet_ssh_spec.add_argument(
+        "--portable",
+        action="store_true",
+        help="require explicit identity and host-key material suitable for a clean HOME",
+    )
+    _set(cmd_fleet_ssh_spec, fleet_ssh_spec)
 
     fleet_refresh = fleet.add_parser(
         "refresh-source",
@@ -3252,6 +3612,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_soul_push.add_argument(
         "--agent", action="append", help="limit to this agent (repeatable)"
+    )
+    fleet_soul_push.add_argument("--fleet", help="fleet name (default: snapshot manifest)")
+    fleet_soul_push.add_argument(
+        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
     )
     _set(cmd_fleet_soul_push, fleet_soul_push)
 

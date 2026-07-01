@@ -251,8 +251,31 @@ not present in the current `mac --help`. In particular, there is no shipped
 `mac login`, `mac login status`, renewal, or revoking logout command yet. The
 implementation task is `task_de953ca70ba14b21b34ab48b36e98bc4`.
 
-For now, a client needs a hub URL and a scoped API token provisioned out of
-band:
+The lower-level security contracts do ship. A hub operator can issue a scoped,
+independently revocable credential over authenticated SSH, and the client can
+install the one-time manifest without leaving it on disk. First open a verified
+port forward to the hub-local API. Then, in another terminal:
+
+```bash
+ssh hub 'mac --json client enroll my-laptop \
+  --fleet my-fleet --profile my-fleet \
+  --api-url http://127.0.0.1:8789 \
+  --scopes read,write,dispatch' \
+  | mac client profile install -
+
+mac --profile my-fleet diagnostics
+mac --profile my-fleet task stats
+mac --profile my-fleet agent list
+```
+
+Use the full explicit identity, jump, and known-host options described in
+[SSH Client Bootstrap Contracts](client-bootstrap-contract.md); the abbreviated
+`ssh hub` above is only readable shorthand. `mac login` will eventually verify
+the host identity, allocate and supervise the tunnel, enroll, install, and
+validate this flow atomically.
+
+For a directly reachable hub, a scoped API token can still be provisioned out
+of band:
 
 ```bash
 export MAC_API_URL=https://mac.example.internal
@@ -265,7 +288,7 @@ mac agent list
 
 If the client already has a home-scoped `~/.mac/fleets.yaml` entry with a
 verified SSH route to the hub, it can refresh the fleet-scoped token and use
-the profile selector:
+the legacy fleet selector:
 
 ```bash
 mac fleet sync-token --fleet my-fleet
@@ -273,11 +296,11 @@ mac --fleet my-fleet diagnostics
 mac --fleet my-fleet task stats
 ```
 
-This is an interim operator-provisioned connection, not an enrollment flow. Do
-not copy `mac.db`, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a
-different operator's complete `~/.mac` directory. Use a least-privilege client
-token and mode-`0600` local env file. Once `mac login` ships, this section must
-be replaced by the SSH enrollment flow rather than keeping both as equal paths.
+`mac fleet sync-token` copies the historical shared administrator token. Treat
+it as existing-operator recovery, not new-client enrollment. Do not copy
+`mac.db`, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
+operator's complete `~/.mac` directory. New clients should use the scoped SSH
+enrollment and mode-`0600` profile credential above.
 
 ## Run The API And Dashboard
 

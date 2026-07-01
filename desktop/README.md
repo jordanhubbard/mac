@@ -37,10 +37,14 @@ cd desktop
 npm start
 ```
 
-By default, the app reads `~/.mac/fleets.yaml` and `~/.mac/.env`, presents the
-configured fleets in the target dropdown, and keeps API tokens and SSH routing
-inside Electron main. Use `MAC_DESKTOP_FLEETS_CONFIG=/path/to/fleets.yaml` to
-override the fleet file.
+By default, the app presents secure `~/.mac/clients/*.yaml` profiles first,
+with the active profile selected, then legacy entries from
+`~/.mac/fleets.yaml`. Profile tokens are read only by Electron main from their
+mode-`0600` credential references. Legacy fleet SSH routes are obtained from
+`mac fleet ssh-spec`, so Electron does not maintain a second interpretation of
+ports, jumps, identities, or host-key policy. Use
+`MAC_CLIENT_PROFILES_DIR=/path/to/clients` or
+`MAC_DESKTOP_FLEETS_CONFIG=/path/to/fleets.yaml` to override those stores.
 
 Direct API:
 
@@ -94,8 +98,11 @@ Profiles are plain JSON:
   "ssh": {
     "target": "horde@example.test",
     "localPort": 18789,
-    "remoteHost": "127.0.0.1",
-    "remotePort": 8789
+      "remoteHost": "127.0.0.1",
+      "remotePort": 8789,
+      "identityFile": "~/.ssh/mac-production",
+      "knownHostsFile": "~/.ssh/mac-production-known-hosts",
+      "hostKeyPolicy": "strict"
   },
   "serviceTunnels": {
     "qdrant": {
@@ -110,3 +117,8 @@ Profiles are plain JSON:
 `serviceTunnels` are opened lazily when the user clicks a dashboard service
 link. This keeps the normal app launch fast and hides service-specific port
 forwarding from the user.
+
+The desktop app consumes profiles but does not enroll them. Use the streaming
+`mac client enroll | mac client profile install -` workflow documented in
+`docs/client-bootstrap-contract.md` until `mac login` owns enrollment and the
+tunnel lifecycle end to end.

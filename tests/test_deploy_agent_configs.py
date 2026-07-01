@@ -1612,7 +1612,8 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     cleanup_plan = "\n".join(cleanup_path_strings(Path.home(), Path.home() / ".mac"))
 
     assert "--ssh-port <port>" in script
-    assert "parse_ssh_target_fields()" in script
+    assert "fleet_ssh_route_args()" in script
+    assert "--port-override" in script
     assert 'scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}"' in script
     assert 'ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}"' in script
     assert "reconcile_remote_deploy()" in script

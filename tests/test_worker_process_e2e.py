@@ -153,6 +153,10 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
         )
 
         worker_env = hub_env.copy()
+        # This process explicitly owns an attestation-key file. Ignore any
+        # ambient key inherited from an in-process CLI test or operator shell;
+        # otherwise a re-registration can sign with the wrong agent key.
+        worker_env.pop("MAC_ATTESTATION_KEY", None)
         workspace = tmp_path / "worker-workspaces"
         common = [
             *mac_agent,
@@ -246,7 +250,7 @@ print("executor completed " + task["id"])
             worker_env,
         )
         assert len(run) == 1
-        assert run[0]["status"] == "submitted_for_review"
+        assert run[0]["status"] == "submitted_for_review", run
         assert run[0]["task"]["id"] == canary["id"]
 
         final_tasks = {

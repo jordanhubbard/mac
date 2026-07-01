@@ -819,87 +819,32 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
 }
 
-parse_ssh_target_fields() {
-  local raw_target="$1"
-  "$PYTHON_BIN" - "$raw_target" "${SSH_PORT_OVERRIDE:-}" <<'PY'
-import sys
-
-text = (sys.argv[1] or "").strip()
-port_override = int(sys.argv[2]) if sys.argv[2] else None
-user_host = text
-parsed_port = port_override
-if text.count(":") == 1 and not text.endswith(":"):
-    candidate_host, candidate_port = text.rsplit(":", 1)
-    if candidate_port.isdigit():
-        user_host = candidate_host
-        parsed_port = parsed_port if parsed_port is not None else int(candidate_port)
-print("%s|%s" % (user_host, parsed_port or ""))
-PY
-}
-
-# Operator->node connection options injected from the fleet config (SSH_JUMP /
-# SSH_STRICT are set once in main() from defaults.ssh_jump /
-# defaults.ssh_strict_host_key_checking in fleets.yaml). This is the single
-# chokepoint every operator->node ssh/scp flows through, so a bastion fleet (e.g.
-# GKE pods reachable only via a jump host) works without any ~/.ssh/config edits.
-# NOTE: these are operator-side only — they are never interpolated into the
-# hub->spoke reverse-tunnel heredocs, which run in-cluster without the bastion.
-ssh_conn_opts() {
-  if [ "${SSH_STRICT:-1}" = "0" ]; then
-    printf '%s\0%s\0%s\0%s\0' "-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null"
+# Resolve every operator-side SSH/scp call through the Python contract used by
+# the CLI and desktop bridge. Output is NUL-delimited so paths containing spaces
+# remain argv-safe. ``-F /dev/null`` prevents ambient ~/.ssh/config from
+# silently supplying a different jump host, identity, or host-key policy.
+fleet_ssh_route_args() {
+  local kind="$1" agent="$2" cmd
+  cmd=(
+    "$PYTHON_BIN" -m mac.fleet_ssh
+    --config "$FLEET_REGISTRY_CONFIG"
+    --fleet "$HUB_SELECTOR"
+    --agent "$agent"
+    --kind "$kind"
+    --nul
+  )
+  if [ -n "${SSH_PORT_OVERRIDE:-}" ]; then
+    cmd+=(--port-override "$SSH_PORT_OVERRIDE")
   fi
-  if [ -n "${SSH_JUMP:-}" ]; then
-    printf '%s\0%s\0' "-o" "ProxyJump=${SSH_JUMP}"
-  fi
+  PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "${cmd[@]}"
 }
 
 ssh_target_args() {
-  local raw_target="$1" ssh_target ssh_port
-  IFS='|' read -r ssh_target ssh_port < <(parse_ssh_target_fields "$raw_target")
-  ssh_conn_opts
-  if [ -n "$ssh_port" ]; then
-    printf '%s\0%s\0%s\0' "-p" "$ssh_port" "$ssh_target"
-  else
-    printf '%s\0' "$ssh_target"
-  fi
+  fleet_ssh_route_args ssh "$1"
 }
 
 scp_target_args() {
-  local raw_target="$1" ssh_target ssh_port
-  IFS='|' read -r ssh_target ssh_port < <(parse_ssh_target_fields "$raw_target")
-  ssh_conn_opts
-  if [ -n "$ssh_port" ]; then
-    printf '%s\0%s\0%s\0' "-P" "$ssh_port" "$ssh_target"
-  else
-    printf '%s\0' "$ssh_target"
-  fi
-}
-
-# Populate SSH_JUMP / SSH_STRICT globals from the fleet's
-# defaults.ssh_jump / defaults.ssh_strict_host_key_checking (fleets.yaml).
-# Called once in main() before any operator->node ssh/scp.
-SSH_JUMP="${SSH_JUMP:-}"
-SSH_STRICT="${SSH_STRICT:-1}"
-# Space-joined ssh opts (no spaces within any token, so it's safe to expand
-# unquoted) for the few bare-target ssh calls that don't flow through
-# ssh_target_args (health/tunnel probes, post-deploy restarts).
-SSH_CONN_OPTS=""
-load_ssh_jump_config() {
-  local out
-  out="$(fleet_config_query ssh-jump 2>/dev/null || true)"
-  [ -n "$out" ] || return 0
-  SSH_JUMP="${out%%|*}"
-  if [ "${out##*|}" = "0" ]; then SSH_STRICT="0"; else SSH_STRICT="1"; fi
-  SSH_CONN_OPTS=""
-  [ "$SSH_STRICT" = "0" ] && SSH_CONN_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-  [ -n "$SSH_JUMP" ] && SSH_CONN_OPTS="${SSH_CONN_OPTS:+$SSH_CONN_OPTS }-o ProxyJump=$SSH_JUMP"
-  if [ -n "$SSH_JUMP" ]; then
-    # Operator-side message: log() is defined only inside the remote node
-    # payload (the <<'REMOTE' heredoc), so on the operator it resolves to the
-    # macOS /usr/bin/log binary and would abort under set -e. Use the same
-    # echo "==> ..." convention as the rest of main()'s operator-side output.
-    echo "==> ssh: operator->node via -o ProxyJump=${SSH_JUMP} (strict host-key checking: $([ "$SSH_STRICT" = "0" ] && echo off || echo on))"
-  fi
+  fleet_ssh_route_args scp "$1"
 }
 
 env_value_or_empty() {
@@ -942,7 +887,7 @@ make_archive() {
 
 reconcile_remote_deploy() {
   local agent="$1" target="$2" ssh_parts=() ssh_args=() ssh_target item last_index
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -1002,7 +947,7 @@ run_openshell_bootstrap() {
     1|true|yes|on) ;;
     *) return 0 ;;
   esac
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -1099,8 +1044,8 @@ deploy_host() {
   remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
   remote_registry="/tmp/mac-fleets-${agent}-${TS}.yaml"
   local ssh_parts=() scp_parts=() last_index
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
-  while IFS= read -r -d '' item; do scp_parts+=("$item"); done < <(scp_target_args "$target")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  while IFS= read -r -d '' item; do scp_parts+=("$item"); done < <(scp_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -5683,9 +5628,10 @@ upsert_local_env() {
 }
 
 read_hub_token() {
-  local target ssh_parts=() ssh_args=() ssh_target item last_index
+  local target hub_agent ssh_parts=() ssh_args=() ssh_target item last_index
   target="$(hub_target)"
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -5694,9 +5640,10 @@ read_hub_token() {
 }
 
 read_hub_tunnel_pubkey() {
-  local target ssh_parts=() ssh_args=() ssh_target item last_index
+  local target hub_agent ssh_parts=() ssh_args=() ssh_target item last_index
   target="$(hub_target)"
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$target")
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -5720,26 +5667,24 @@ ensure_local_github_review_key() {
 }
 
 install_reverse_tunnel_on_hub() {
-  local worker_agent="$1" worker_target="$2" hub_target_str="$3" fleet_name_arg="${4:-mac}"
+  local worker_agent="$1" worker_target="$2" hub_agent="$3" hub_target_str="$4" fleet_name_arg="${5:-mac}"
   local ssh_parts=() ssh_args=() ssh_target item last_index tunnel_host fleet_name_local
   fleet_name_local="${fleet_name_arg:-mac}"
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_target_str")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  # Resolve the worker's actual SSH hostname from local ~/.ssh/config so the hub
-  # (which has no local SSH aliases) can reach it by FQDN within the cluster.
-  tunnel_host="$(ssh -G "$worker_target" 2>/dev/null | awk '/^hostname / {print $2; exit}')"
-  if [ -z "$tunnel_host" ]; then
-    tunnel_host="$worker_target"
-  fi
-  # Derive the worker's SSH user from the agent's target (user@host, an
-  # ~/.ssh/config alias, or a bare host) the same way we derive the
-  # host. Falls back to "horde" only when ssh can't resolve a user, so
-  # fleets whose worker user isn't horde (e.g. jkh@...) get the right
-  # account instead of a hardcoded guess.
-  tunnel_user="$(ssh -G "$worker_target" 2>/dev/null | awk '/^user / {print $2; exit}')"
-  if [ -z "$tunnel_user" ]; then
+  # The fleet registry target is the contract. Do not consult ambient
+  # ~/.ssh/config here: the hub cannot reproduce aliases from the operator's
+  # machine. Inline ports are operator-to-worker routing metadata and are not
+  # part of the address used by the hub-originated reverse tunnel.
+  tunnel_host="${worker_target#*@}"
+  case "$tunnel_host" in
+    *:[0-9]*) tunnel_host="${tunnel_host%:*}" ;;
+  esac
+  if [[ "$worker_target" == *@* ]]; then
+    tunnel_user="${worker_target%@*}"
+  else
     tunnel_user="horde"
   fi
   # Pass values to the remote inline; quoting handled by shell_quote
@@ -5817,13 +5762,13 @@ uses_direct_mesh_hub() {
 }
 
 worker_has_mesh_client() {
-  local raw_target="$1" provider="$2" ssh_parts=() ssh_args=() ssh_target item last_index
+  local agent="$1" raw_target="$2" provider="$3" ssh_parts=() ssh_args=() ssh_target item last_index
   provider="$(printf '%s' "${provider:-}" | tr '[:upper:]' '[:lower:]')"
   case "$provider" in
     tailscale|headscale) ;;
     *) return 1 ;;
   esac
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$raw_target")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -5832,9 +5777,9 @@ worker_has_mesh_client() {
 }
 
 worker_can_reach_hub_url() {
-  local raw_target="$1" hub_url="$2" ssh_parts=() ssh_args=() ssh_target item last_index
+  local agent="$1" raw_target="$2" hub_url="$3" ssh_parts=() ssh_args=() ssh_target item last_index
   [ -n "$hub_url" ] || return 1
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$raw_target")
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -5844,8 +5789,6 @@ worker_can_reach_hub_url() {
 
 main() {
   make_archive
-  # Operator->node ssh/scp options (bastion ProxyJump etc.) from fleets.yaml.
-  load_ssh_jump_config
   local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
@@ -5863,13 +5806,18 @@ main() {
     IFS='|' read -r -a spec_fields <<<"$spec"
     agent="${spec_fields[0]}"
     local_target="${spec_fields[1]}"
+    local local_ssh_parts=() local_ssh_args=() local_ssh_target local_item local_last_index
+    while IFS= read -r -d '' local_item; do local_ssh_parts+=("$local_item"); done < <(ssh_target_args "$agent")
+    local_last_index=$((${#local_ssh_parts[@]} - 1))
+    local_ssh_target="${local_ssh_parts[$local_last_index]}"
+    local_ssh_args=("${local_ssh_parts[@]:0:$local_last_index}")
     hub_url_field="${spec_fields[7]:-}"
     fleet_name_field="${spec_fields[23]:-mac}"
     network_provider_field="${spec_fields[31]:-none}"
     direct_mesh_hub=0
     if [ "$agent" != "$hub_agent" ] \
       && uses_direct_mesh_hub "$network_provider_field" "$hub_url_field" \
-      && worker_can_reach_hub_url "$local_target" "$hub_url_field"; then
+      && worker_can_reach_hub_url "$agent" "$local_target" "$hub_url_field"; then
       direct_mesh_hub=1
     fi
     if [ "$agent" != "$hub_agent" ] && [ -z "$hub_token" ]; then
@@ -5883,7 +5831,7 @@ main() {
       # the hub tunnel key has not been authorized yet. Allow Qdrant and Firecrawl
       # to be degraded for this first deploy; they are re-checked after the tunnel
       # is established below.
-      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
+      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
         "curl -fsS --max-time 3 http://127.0.0.1:8789/health >/dev/null 2>&1" 2>/dev/null; then
         allow_degraded_services=1
         echo "==> ${agent}: first deploy (no existing mac API); shared-services degraded override active"
@@ -5892,12 +5840,12 @@ main() {
       # worker. The worker validates hub-managed Qdrant and Firecrawl
       # through tunnel-forwarded ports during deploy; the tunnel must be
       # established first.
-      install_reverse_tunnel_on_hub "$agent" "$local_target" "$hub_target_str" "$fleet_name_field"
+      install_reverse_tunnel_on_hub "$agent" "$local_target" "$hub_agent" "$hub_target_str" "$fleet_name_field"
       echo "==> ${agent}: waiting for hub reverse tunnel to establish before worker deploy"
       local attempt tunnel_ok=0
       for attempt in $(seq 1 6); do
         sleep 5
-        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
+        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
           "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
           echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
           tunnel_ok=1
@@ -5921,7 +5869,7 @@ main() {
         echo "==> ${agent}: using ${network_provider_field} hub URL ${hub_url_field}; skipping reverse tunnel"
       elif [ "${tunnel_ok:-0}" = "1" ]; then
         local agent_prog="${fleet_name_field}-agent"
-        ssh -n -o BatchMode=yes -o ConnectTimeout=10 $SSH_CONN_OPTS "$local_target" \
+        ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${local_ssh_args[@]}" "$local_ssh_target" \
           "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
         echo "==> ${agent}: restarted mac-agent with tunnel now available"
       elif [ "${allow_degraded_services:-0}" = "1" ]; then
@@ -5931,7 +5879,7 @@ main() {
         local attempt first_tunnel_ok=0
         for attempt in $(seq 1 12); do
           sleep 5
-          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 $SSH_CONN_OPTS "$local_target" \
+          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
             "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
             echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
             first_tunnel_ok=1
@@ -5940,7 +5888,7 @@ main() {
         done
         local agent_prog="${fleet_name_field}-agent"
         if [ "$first_tunnel_ok" = "1" ]; then
-          ssh -n -o BatchMode=yes -o ConnectTimeout=10 $SSH_CONN_OPTS "$local_target" \
+          ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${local_ssh_args[@]}" "$local_ssh_target" \
             "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
           echo "==> ${agent}: restarted mac-agent with tunnel now available"
         else

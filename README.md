@@ -100,6 +100,11 @@ make test
 make run-gui IDE_API_URL=http://127.0.0.1:8789
 ```
 
+`make test` runs the complete hermetic pytest suite with source coverage and
+fails when coverage for MAC-owned `src/mac` code is below 95%. Vendored Hermes
+internals under `src/mac/_hermes` are excluded from that repository threshold.
+Use `make coverage` when you want the same full-suite coverage report directly.
+
 The common lifecycle is deliberately conventional:
 
 ```bash
@@ -138,30 +143,39 @@ silently creating a stray `./mac.db`.
 
 `mac login` is **not shipped in the current CLI**. The SSH-first
 `login`/`status`/`renew`/`logout --revoke` workflow is tracked by
-`task_de953ca70ba14b21b34ab48b36e98bc4` and remains blocked on the portable
-client-profile, fleet SSH-routing, and hub enrollment contracts. Do not copy an
-entire `~/.mac` directory or an admin token to approximate login.
+`task_de953ca70ba14b21b34ab48b36e98bc4`. Its prerequisite contracts now ship:
+canonical per-agent SSH routes (`mac fleet ssh-spec`), hub-local scoped
+enrollment (`mac client enroll|renew|revoke`), and separated local profiles
+(`mac client profile ...`). The remaining work is the one-command verified
+tunnel/session lifecycle. Do not copy an entire `~/.mac` directory or an admin
+token to approximate login.
 
-Until that work lands, an operator must provision the hub endpoint and a
-scoped bearer token out of band, either in the process environment or in the
-home-scoped `~/.mac/fleets.yaml` plus `~/.mac/.env` files:
+Until `mac login` lands, use the lower-level SSH enrollment contract or an
+operator-provisioned scoped endpoint/token. With a verified tunnel already
+open, stream the one-time manifest directly into the secure profile store:
 
 ```bash
+ssh hub 'mac --json client enroll my-laptop --fleet my-fleet \
+  --profile my-fleet --api-url http://127.0.0.1:8789' \
+  | mac client profile install -
+mac --profile my-fleet diagnostics
+
+# Directly reachable scoped endpoint (automation/operator provisioning):
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
 mac diagnostics
 mac task stats
 
-# If a fleet registry with a verified SSH hub route is already present, refresh
-# its fleet-scoped token without copying another operator's ~/.mac directory.
+# Shared-admin recovery for an existing operator workstation only:
 mac fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 ```
 
 Prefer environment or mode-`0600` files over `--token`, which can expose a
-token through shell history or process inspection. See
-[Production Deployment](docs/production-deployment.md#reaching-the-hub-node)
-for the current manual connection contract.
+token through shell history or process inspection. `fleet sync-token` copies
+the historical administrator token; do not use it for routine new-client
+onboarding. See [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
+and [Production Deployment](docs/production-deployment.md#reaching-the-hub-node).
 
 ## API
 
@@ -175,8 +189,10 @@ MAC_SECRET_KEY="..." uv run uvicorn mac.api:create_app --factory --reload
 
 Set `MAC_API_TOKEN` for one admin token, or `MAC_API_TOKENS` as JSON such as
 `{"reader":["read"],"worker":["agent","dispatch"]}` to require scoped bearer
-tokens. With no API token configured, the local prototype API remains open for
-development.
+tokens. Hub-local `mac client enroll` writes independently revocable hashed
+principals to `MAC_CLIENT_PRINCIPALS_FILE`; the API hot-reloads that registry.
+With no static token or enrolled client configured, the local prototype API
+remains open for development.
 
 The built-in dashboard is served at `/ui`. Static dashboard assets are public so
 the browser can load the shell, while data requests still use the same API token
@@ -478,6 +494,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Hermes Boundary](docs/hermes-boundary.md)
 - [Hermes Integration](docs/hermes-integration.md)
 - [Production Deployment](docs/production-deployment.md)
+- [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)

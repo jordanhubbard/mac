@@ -272,6 +272,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
     hub_url = _mac_hub_url(cfg)
     return {
         "MAC_DB": str(paths.mac_home / "mac.db"),
+        "MAC_CLIENT_PRINCIPALS_FILE": str(paths.mac_home / "client-principals.json"),
         "MAC_PORT": cfg.control.port,
         "MAC_BIND_HOST": cfg.control.bind_host,
         "MAC_HUB_URL": hub_url,

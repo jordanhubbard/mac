@@ -98,6 +98,7 @@ class TokenPrincipal:
     scopes: frozenset = field(default_factory=frozenset)
     tenant_id: Optional[str] = None
     agent_id: Optional[str] = None
+    client_id: Optional[str] = None
 
     @property
     def is_admin(self) -> bool:
@@ -168,7 +169,13 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
         scopes = frozenset(str(s) for s in value.get("scopes", []))
         tenant = value.get("tenant_id")
         agent = value.get("agent_id")
-        return TokenPrincipal(scopes=scopes, tenant_id=tenant, agent_id=agent)
+        client = value.get("client_id")
+        return TokenPrincipal(
+            scopes=scopes,
+            tenant_id=tenant,
+            agent_id=agent,
+            client_id=str(client) if client else None,
+        )
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
 
@@ -1771,6 +1778,7 @@ def _dashboard_session(principal: TokenPrincipal) -> Dict[str, Any]:
         "scopes": scopes,
         "tenant_id": principal.tenant_id,
         "agent_id": principal.agent_id,
+        "client_id": principal.client_id,
         "is_admin": principal.is_admin,
         "can_read": principal.has_scope("read"),
         "can_write": can_write,
@@ -2832,6 +2840,7 @@ def create_app(
     control_plane: Optional[ControlPlane] = None,
     auth_tokens: Optional[AuthTokenMapping] = None,
     record_http_observations: Optional[bool] = None,
+    client_principals_path: Optional[str] = None,
 ) -> FastAPI:
     # db_path is the explicit SQLite override (e.g. for tests). When it is
     # None, fall through to make_store_from_env so MAC_DATABASE_URL can
@@ -2847,12 +2856,59 @@ def create_app(
         if auth_tokens is not None
         else _load_auth_tokens_from_env()
     )
+    # Production factory invocations (``create_app()``) merge the hub-local,
+    # hashed client registry on every request.  Tests and embedded callers that
+    # inject a control plane stay hermetic unless they explicitly pass a path.
+    # This gives SSH enrollment immediate issuance/renewal/revocation without a
+    # control-plane restart while preserving the static admin recovery token.
+    from mac.client_principals import ClientPrincipalProvider
+
+    configured_client_path = client_principals_path or os.environ.get(
+        "MAC_CLIENT_PRINCIPALS_FILE"
+    )
+    use_default_client_registry = control_plane is None and db_path is None
+    client_principals = (
+        ClientPrincipalProvider(
+            Path(configured_client_path).expanduser()
+            if configured_client_path
+            else None
+        )
+        if configured_client_path or use_default_client_registry
+        else None
+    )
+    client_registry_seen = bool(
+        client_principals is not None and client_principals.path.exists()
+    )
+
+    def _current_auth_tokens() -> Dict[str, TokenPrincipal]:
+        nonlocal client_registry_seen
+        if client_principals is not None and client_principals.path.exists():
+            client_registry_seen = True
+        dynamic = (
+            _normalize_auth_tokens(client_principals.tokens())
+            if client_principals is not None
+            else {}
+        )
+        # Static environment tokens are the recovery authority if an
+        # impossible hash collision or duplicate registration occurs.
+        merged = {**dynamic, **tokens}
+        if client_registry_seen and not merged:
+            # A registry that becomes empty/corrupt after enrollment must not
+            # turn a previously authenticated hub into open development mode.
+            # This unmatchable hash keeps public routes public while making
+            # every scoped route fail closed.
+            merged["sha256:" + ("0" * 64)] = TokenPrincipal(
+                scopes=frozenset({"read"})
+            )
+        return merged
+
+    initial_tokens = _current_auth_tokens()
     # mac-853j: refuse to fail-open when the API is bound to a non-loopback
     # interface. Deployments that explicitly want a no-auth dev mode can
     # set MAC_API_ALLOW_OPEN=1, but the default for a 0.0.0.0 hub is
     # fail-closed (the alternative was: any tenant on the network could
     # reach /secrets/{id}/reveal).
-    if not tokens:
+    if not initial_tokens:
         bind_host = (os.environ.get("MAC_BIND_HOST") or "").strip()
         allow_open = (os.environ.get("MAC_API_ALLOW_OPEN") or "").strip().lower() in {"1", "true", "yes", "on"}
         is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
@@ -2865,7 +2921,8 @@ def create_app(
     record_http_obs = _resolve_record_http_observations(record_http_observations)
     app = FastAPI(title="MAC Control Plane", version="0.1.0")
     app.state.control_plane = cp
-    app.state.auth_tokens = tokens
+    app.state.auth_tokens = initial_tokens
+    app.state.client_principals = client_principals
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -2932,7 +2989,7 @@ def create_app(
                 request.method,
                 request.url.path,
                 request.headers.get("authorization"),
-                tokens,
+                _current_auth_tokens(),
             )
             request.state.principal = principal
         except AuthorizationError as exc:
@@ -3085,8 +3142,9 @@ def create_app(
         #     subprotocol value, since browsers can't set Authorization headers
         #     on a WS handshake). We echo ``Authorization`` back as the accepted
         #     subprotocol.
-        principal, accepted_subprotocol = _authorize_acp_websocket(websocket, tokens)
-        if principal is None and tokens:
+        current_tokens = _current_auth_tokens()
+        principal, accepted_subprotocol = _authorize_acp_websocket(websocket, current_tokens)
+        if principal is None and current_tokens:
             # tokens configured but no valid principal -> reject (1008 policy).
             await websocket.close(code=1008)
             return
@@ -5496,7 +5554,12 @@ def create_app(
         # admin tokens are operator-driven and unlikely to enumerate
         if principal.is_admin:
             return
-        key = "%s::%s::%s" % (principal.tenant_id or "-", principal.agent_id or "-", route)
+        key = "%s::%s::%s::%s" % (
+            principal.tenant_id or "-",
+            principal.agent_id or "-",
+            principal.client_id or "-",
+            route,
+        )
         bucket = secret_rate_state.setdefault(key, [])
         now_t = time.monotonic()
         cutoff = now_t - window_seconds

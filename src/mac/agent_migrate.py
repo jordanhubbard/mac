@@ -33,6 +33,8 @@ import shlex
 import subprocess
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from mac.fleet_ssh import FleetSshSpec, ssh_argv
+
 # ~/.hermes entries that must NOT migrate with the soul. The rule: keep
 # everything that is personality OR memory; drop only host-local cruft,
 # host-specific runtime config the deploy re-writes, deploy-managed skills, and
@@ -73,7 +75,20 @@ HUB_ENV_SECRETS = ["MAC_SECRET_KEY", "MAC_API_TOKEN"]
 _FLEET_SERVICES = ["mac-agent", "mac-hermes-gateway", "mac", "mac-gen-server"]
 
 
-def _ssh_python(target: str, code: str, *args: str) -> str:
+def _ssh_shell(
+    target: str, command: str, route: Optional[FleetSshSpec] = None
+) -> str:
+    if route is not None:
+        return shlex.join(ssh_argv(route, command))
+    return "ssh %s %s" % (shlex.quote(target), shlex.quote(command))
+
+
+def _ssh_python(
+    target: str,
+    code: str,
+    *args: str,
+    route: Optional[FleetSshSpec] = None,
+) -> str:
     """Build a shell-safe ``ssh <target> python3 -c <code> [args...]``.
 
     The remote command (``python3 -c <code> ...``) is assembled with each token
@@ -83,7 +98,7 @@ def _ssh_python(target: str, code: str, *args: str) -> str:
     metacharacters (``;`` ``(`` ``)``) unquoted and bombs — this double-quote is
     the correct construction for piping a python snippet through ssh."""
     remote = " ".join(shlex.quote(p) for p in (["python3", "-c", code] + list(args)))
-    return "ssh %s %s" % (target, shlex.quote(remote))
+    return _ssh_shell(target, remote, route)
 
 
 def _qdrant_dir(os_kind: str, fleet_name: str) -> str:
@@ -106,16 +121,29 @@ def _control_plane_services(os_kind: str, fleet_name: str, *, include_qdrant: bo
     return svcs
 
 
-def _stop_services_cmd(target: str, os_kind: str, services: List[str]) -> str:
+def _stop_services_cmd(
+    target: str,
+    os_kind: str,
+    services: List[str],
+    route: Optional[FleetSshSpec] = None,
+) -> str:
     if os_kind == "darwin":
         labels = " ".join(services)
-        return ("ssh %s 'uid=$(id -u); for L in %s; do "
-                "launchctl bootout gui/$uid/$L 2>/dev/null || true; done'"
-                % (target, labels))
-    return "ssh %s 'sudo systemctl stop %s'" % (target, " ".join(services))
+        command = (
+            "uid=$(id -u); for L in %s; do "
+            "launchctl bootout gui/$uid/$L 2>/dev/null || true; done" % labels
+        )
+        return _ssh_shell(target, command, route)
+    return _ssh_shell(target, "sudo systemctl stop %s" % " ".join(services), route)
 
 
-def _restart_services_cmd(target: str, os_kind: str, fleet_name: str, services: List[str]) -> str:
+def _restart_services_cmd(
+    target: str,
+    os_kind: str,
+    fleet_name: str,
+    services: List[str],
+    route: Optional[FleetSshSpec] = None,
+) -> str:
     if os_kind == "darwin":
         la = "$HOME/Library/LaunchAgents"
         # bootstrap re-adds (RunAtLoad starts); kickstart -k as a fallback.
@@ -123,11 +151,20 @@ def _restart_services_cmd(target: str, os_kind: str, fleet_name: str, services: 
                  "launchctl bootstrap gui/$uid \"%s/$L.plist\" 2>/dev/null "
                  "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done"
                  % (" ".join(reversed(services)), la))
-        return "ssh %s '%s'" % (target, inner)
-    return "ssh %s 'sudo systemctl start %s'" % (target, " ".join(reversed(services)))
+        return _ssh_shell(target, inner, route)
+    return _ssh_shell(
+        target, "sudo systemctl start %s" % " ".join(reversed(services)), route
+    )
 
 
-def _seed_hub_secrets_cmd(src_target: str, dst_target: str, env_path: str) -> str:
+def _seed_hub_secrets_cmd(
+    src_target: str,
+    dst_target: str,
+    env_path: str,
+    *,
+    src_route: Optional[FleetSshSpec] = None,
+    dst_route: Optional[FleetSshSpec] = None,
+) -> str:
     """Copy the environment-pinned hub secrets (MAC_SECRET_KEY, MAC_API_TOKEN)
     from src mac.env into dst mac.env BEFORE the deploy, so deploy_env preserves
     them and the migrated DB decrypts. Idempotent upsert; never prints values."""
@@ -144,11 +181,21 @@ def _seed_hub_secrets_cmd(src_target: str, dst_target: str, env_path: str) -> st
         "p.write_text(chr(10).join(kept+incoming)+chr(10));"
         "os.chmod(p,0o600)" % env_path
     )
-    return ("ssh %s 'grep -E \"^(%s)=\" %s' | %s"
-            % (src_target, keys, env_path, _ssh_python(dst_target, upsert)))
+    source = _ssh_shell(
+        src_target, 'grep -E "^(%s)=" %s' % (keys, env_path), src_route
+    )
+    pipeline = "%s | %s" % (
+        source,
+        _ssh_python(dst_target, upsert, route=dst_route),
+    )
+    return "bash -o pipefail -c %s" % shlex.quote(pipeline)
 
 
-def _reconcile_identity_cmd(dst_target: str, name: str) -> str:
+def _reconcile_identity_cmd(
+    dst_target: str,
+    name: str,
+    route: Optional[FleetSshSpec] = None,
+) -> str:
     """Force the destination's Hermes identity to the migrated agent.
 
     ``~/.hermes/config.yaml`` + ``.env`` are host-local (soul-excluded,
@@ -170,7 +217,7 @@ def _reconcile_identity_cmd(dst_target: str, name: str) -> str:
         "c.exists() and c.write_text("
         "re.sub(r'(?m)^(\\s*)AGENT_NAME:.*$', r'\\1AGENT_NAME: '+n, c.read_text()))"
     )
-    return _ssh_python(dst_target, script, name)
+    return _ssh_python(dst_target, script, name, route=route)
 
 
 def soul_backup_tar_excludes() -> List[str]:
@@ -214,7 +261,12 @@ def _launchd_labels(fleet_name: str) -> List[str]:
     ]
 
 
-def _darwin_restore_cmd(dst_target: str, tgz: str, fleet_name: str) -> str:
+def _darwin_restore_cmd(
+    dst_target: str,
+    tgz: str,
+    fleet_name: str,
+    route: Optional[FleetSshSpec] = None,
+) -> str:
     """launchctl-based restore-soul for a darwin destination: bootout the agents,
     unpack the soul tar, then BOOTSTRAP them back. (``bootout`` unloads the
     service from the domain, so ``kickstart`` — which only restarts an
@@ -222,14 +274,43 @@ def _darwin_restore_cmd(dst_target: str, tgz: str, fleet_name: str) -> str:
     RunAtLoad starts it. kickstart is kept only as a fallback.)"""
     labels = " ".join(_launchd_labels(fleet_name))
     la = "$HOME/Library/LaunchAgents"
-    return (
-        "ssh %s 'uid=$(id -u); "
+    command = (
+        "uid=$(id -u); "
         "for L in %s; do launchctl bootout gui/$uid/$L 2>/dev/null || true; done; "
         "cd \"$HOME\" && tar xzf %s; "
         "for L in %s; do launchctl bootstrap gui/$uid \"%s/$L.plist\" 2>/dev/null "
-        "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done'"
-        % (dst_target, labels, tgz, labels, la)
+        "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done"
+        % (labels, tgz, labels, la)
     )
+    return _ssh_shell(dst_target, command, route)
+
+
+def _transfer_cmd(
+    src_target: str,
+    dst_target: str,
+    remote_path: str,
+    *,
+    src_route: Optional[FleetSshSpec] = None,
+    dst_route: Optional[FleetSshSpec] = None,
+) -> str:
+    if src_route is None or dst_route is None:
+        return "scp -3 %s:%s %s:%s" % (
+            src_target,
+            remote_path,
+            dst_target,
+            remote_path,
+        )
+    source = shlex.join(
+        ssh_argv(src_route, "cat -- %s" % shlex.quote(remote_path))
+    )
+    destination = shlex.join(
+        ssh_argv(
+            dst_route,
+            "umask 077; cat > %s" % shlex.quote(remote_path),
+        )
+    )
+    pipeline = "%s | %s" % (source, destination)
+    return "bash -o pipefail -c %s" % shlex.quote(pipeline)
 
 
 def migration_plan(
@@ -249,6 +330,8 @@ def migration_plan(
     env_path: str = DEFAULT_ENV_PATH,
     src_qdrant_dir: Optional[str] = None,
     dst_qdrant_dir: Optional[str] = None,
+    src_route: Optional[FleetSshSpec] = None,
+    dst_route: Optional[FleetSshSpec] = None,
 ) -> List[Tuple[str, str]]:
     """Ordered ``(step, command)`` runbook for the migration. Pure — builds the
     exact shell the operator (or ``execute_migration``) runs, soul-clobber-safe.
@@ -281,54 +364,131 @@ def migration_plan(
     sq = src_qdrant_dir or _qdrant_dir(src_os, fn)
     dq = dst_qdrant_dir or _qdrant_dir(to_os, fn)
     if to_os == "darwin":
-        restore_cmd = _darwin_restore_cmd(dst_target, tgz, fn)
+        restore_cmd = _darwin_restore_cmd(dst_target, tgz, fn, dst_route)
     else:
-        restore_cmd = (
-            "ssh %s 'sudo systemctl stop %s; cd \"$HOME\" && tar xzf %s; "
-            "sudo systemctl start %s'" % (dst_target, svcs, tgz, svcs))
+        restore_cmd = _ssh_shell(
+            dst_target,
+            "sudo systemctl stop %s; cd \"$HOME\" && tar xzf %s; "
+            "sudo systemctl start %s" % (svcs, tgz, svcs),
+            dst_route,
+        )
 
     steps: List[Tuple[str, str]] = []
 
     if hub:
         # 1. Quiesce the source hub so the DB + Qdrant snapshot is consistent.
         src_svcs = _control_plane_services(src_os, fn, include_qdrant=True)
-        steps.append(("stop-source-hub", _stop_services_cmd(src_target, src_os, src_svcs)))
+        steps.append(
+            ("stop-source-hub", _stop_services_cmd(src_target, src_os, src_svcs, src_route))
+        )
         # 2. Consistent online DB backup (works without the sqlite3 CLI).
         db_backup = (
             "import sqlite3,os;"
             "s=sqlite3.connect(os.path.expanduser(%r));"
             "d=sqlite3.connect(%r);"
             "s.backup(d);d.close();s.close()" % (db_path, db_tgz))
-        steps.append(("backup-db-source", _ssh_python(src_target, db_backup)))
+        steps.append(
+            ("backup-db-source", _ssh_python(src_target, db_backup, route=src_route))
+        )
         # 3. Qdrant storage snapshot (Linux /var/lib needs sudo + chown for scp).
         if src_os == "darwin":
             qd_cmd = "tar czf %s -C %s ." % (qd_tgz, sq)
         else:
             qd_cmd = ("sudo tar czf %s -C %s . && sudo chown \"$USER\" %s"
                       % (qd_tgz, sq, qd_tgz))
-        steps.append(("backup-qdrant-source", "ssh %s '%s'" % (src_target, qd_cmd)))
+        steps.append(("backup-qdrant-source", _ssh_shell(src_target, qd_cmd, src_route)))
 
     # 4. Soul backup (always).
-    steps.append(("backup-soul",
-                  "ssh %s 'cd \"$HOME\" && tar czf %s %s .hermes'" % (src_target, tgz, excludes)))
+    steps.append(
+        (
+            "backup-soul",
+            _ssh_shell(
+                src_target,
+                'cd "$HOME" && tar czf %s %s .hermes' % (tgz, excludes),
+                src_route,
+            ),
+        )
+    )
 
     # 5. Transfer artifacts src -> dst.
-    steps.append(("transfer-soul", "scp -3 %s:%s %s:%s" % (src_target, tgz, dst_target, tgz)))
+    steps.append(
+        (
+            "transfer-soul",
+            _transfer_cmd(
+                src_target,
+                dst_target,
+                tgz,
+                src_route=src_route,
+                dst_route=dst_route,
+            ),
+        )
+    )
     if hub:
-        steps.append(("transfer-db", "scp -3 %s:%s %s:%s" % (src_target, db_tgz, dst_target, db_tgz)))
-        steps.append(("transfer-qdrant", "scp -3 %s:%s %s:%s" % (src_target, qd_tgz, dst_target, qd_tgz)))
+        steps.append(
+            (
+                "transfer-db",
+                _transfer_cmd(
+                    src_target,
+                    dst_target,
+                    db_tgz,
+                    src_route=src_route,
+                    dst_route=dst_route,
+                ),
+            )
+        )
+        steps.append(
+            (
+                "transfer-qdrant",
+                _transfer_cmd(
+                    src_target,
+                    dst_target,
+                    qd_tgz,
+                    src_route=src_route,
+                    dst_route=dst_route,
+                ),
+            )
+        )
         # 6. Seed the env-pinned secrets BEFORE deploy so deploy_env preserves
         #    them and the migrated DB decrypts.
-        steps.append(("seed-hub-secrets", _seed_hub_secrets_cmd(src_target, dst_target, env_path)))
+        steps.append(
+            (
+                "seed-hub-secrets",
+                _seed_hub_secrets_cmd(
+                    src_target,
+                    dst_target,
+                    env_path,
+                    src_route=src_route,
+                    dst_route=dst_route,
+                ),
+            )
+        )
         # 7. Stage DB + Qdrant on dst (stop any running dst hub services first).
         dst_svcs = _control_plane_services(to_os, fn, include_qdrant=True)
-        steps.append(("stage-stop-dest", _stop_services_cmd(dst_target, to_os, dst_svcs)))
-        steps.append(("stage-db-dest",
-                      "ssh %s 'mkdir -p \"$(dirname %s)\"; rm -f %s-wal %s-shm; mv -f %s %s'"
-                      % (dst_target, db_path, db_path, db_path, db_tgz, db_path)))
-        steps.append(("stage-qdrant-dest",
-                      "ssh %s 'mkdir -p %s && rm -rf %s/* && tar xzf %s -C %s'"
-                      % (dst_target, dq, dq, qd_tgz, dq)))
+        steps.append(
+            ("stage-stop-dest", _stop_services_cmd(dst_target, to_os, dst_svcs, dst_route))
+        )
+        steps.append(
+            (
+                "stage-db-dest",
+                _ssh_shell(
+                    dst_target,
+                    'mkdir -p "$(dirname %s)"; rm -f %s-wal %s-shm; mv -f %s %s'
+                    % (db_path, db_path, db_path, db_tgz, db_path),
+                    dst_route,
+                ),
+            )
+        )
+        steps.append(
+            (
+                "stage-qdrant-dest",
+                _ssh_shell(
+                    dst_target,
+                    "mkdir -p %s && rm -rf %s/* && tar xzf %s -C %s"
+                    % (dq, dq, qd_tgz, dq),
+                    dst_route,
+                ),
+            )
+        )
 
     # 8. Retarget + deploy (deploy comes up against the staged hub state).
     steps.append(("retarget-fleet", "(fleets.yaml) set agent %r target=%s" % (name, dst_target)))
@@ -337,7 +497,9 @@ def migration_plan(
     # 9. Restore soul over the deploy's fresh ~/.hermes, reconcile the host's
     #    Hermes identity to the migrated agent, then verify.
     steps.append(("restore-soul", restore_cmd))
-    steps.append(("reconcile-identity", _reconcile_identity_cmd(dst_target, name)))
+    steps.append(
+        ("reconcile-identity", _reconcile_identity_cmd(dst_target, name, dst_route))
+    )
     if hub:
         verify = ("compare sha256 ~/.hermes/SOUL.md on %s vs %s; "
                   "mac agent list (decrypts); "
@@ -353,11 +515,16 @@ def migration_plan(
     if not keep_source:
         if src_os == "darwin":
             labels = " ".join(_launchd_labels(fn))
-            decommission = (
-                "ssh %s 'uid=$(id -u); for L in %s; do "
-                "launchctl bootout gui/$uid/$L 2>/dev/null || true; done'" % (src_target, labels))
+            decommission = _ssh_shell(
+                src_target,
+                "uid=$(id -u); for L in %s; do "
+                "launchctl bootout gui/$uid/$L 2>/dev/null || true; done" % labels,
+                src_route,
+            )
         else:
-            decommission = "ssh %s 'sudo systemctl stop %s'" % (src_target, svcs)
+            decommission = _ssh_shell(
+                src_target, "sudo systemctl stop %s" % svcs, src_route
+            )
         steps.append(("decommission-source", decommission))
     if retire_source_agent:
         steps.append(("retire-source-agent", "mac agent delete %s" % retire_source_agent))
