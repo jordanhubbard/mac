@@ -132,6 +132,16 @@ class LocalDispatch:
     def __init__(self, plane: Any) -> None:
         self._plane = plane
 
+    @staticmethod
+    def _require_hub_reconciler(*_args: Any, **_kwargs: Any) -> Any:
+        raise DispatchError(
+            "repository-ref reconciler status and triggers belong to the running hub; "
+            "target a hub URL instead of --db"
+        )
+
+    repository_ref_reconciler_status = _require_hub_reconciler
+    reconcile_repository_refs = _require_hub_reconciler
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._plane, name)
 
@@ -483,6 +493,22 @@ class RemoteDispatch:
         enabled: Optional[bool] = None,
     ) -> List[_Dictish]:
         return _wrap_list(self._get("/bridge/repositories", enabled=enabled))
+
+    def repository_ref_reconciler_status(self) -> _Dictish:
+        return _Dictish(self._get("/repository-refs/reconciler"))
+
+    def reconcile_repository_refs(
+        self,
+        *,
+        mode: Optional[str] = None,
+        actor: str = "operator",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/repository-refs/reconcile",
+                _drop_none({"mode": mode, "actor": actor}),
+            )
+        )
 
     # -- Workflow decisions (wf-02) -----------------------------------------
 

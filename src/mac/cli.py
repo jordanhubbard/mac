@@ -19,6 +19,7 @@ from mac.repository_hygiene import (
     cleanup_evidence_metadata,
     list_managed_remote_refs,
     prune_repository_refs,
+    query_open_pull_requests,
 )
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
@@ -906,46 +907,7 @@ def cmd_task_force_complete(args: argparse.Namespace) -> None:
 
 
 def _repository_open_pull_requests(repo: Path) -> tuple[Optional[Dict[str, str]], str]:
-    try:
-        result = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--state",
-                "open",
-                "--limit",
-                "1000",
-                "--json",
-                "headRefName,number,url",
-            ],
-            cwd=str(repo),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None, "GitHub pull request state could not be verified"
-    if result.returncode != 0:
-        return None, "GitHub pull request state could not be verified"
-    try:
-        payload = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return None, "GitHub pull request state returned malformed JSON"
-    if not isinstance(payload, list):
-        return None, "GitHub pull request state returned an invalid response"
-    heads: Dict[str, str] = {}
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        branch = str(item.get("headRefName") or "").strip()
-        if not branch:
-            continue
-        url = str(item.get("url") or "").strip()
-        number = str(item.get("number") or "").strip()
-        heads[branch] = url or (("PR #%s" % number) if number else "open pull request")
-    return heads, ""
+    return query_open_pull_requests(repo, runner=subprocess.run)
 
 
 def _repository_ref_audit(
@@ -1026,6 +988,19 @@ def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
     )
     result["audit"] = _repository_ref_report(audits, pr_warning=warning)
     _print(result)
+
+
+def cmd_repo_refs_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).repository_ref_reconciler_status())
+
+
+def cmd_repo_refs_reconcile(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).reconcile_repository_refs(
+            mode=args.mode,
+            actor=args.actor,
+        )
+    )
 
 
 def cmd_task_search(args: argparse.Namespace) -> None:
@@ -3527,6 +3502,12 @@ def build_parser() -> argparse.ArgumentParser:
     refs_prune = repo_refs.add_parser(
         "prune", help="show or execute safe exact-SHA managed-ref cleanup"
     )
+    refs_status = repo_refs.add_parser(
+        "status", help="show the hub's automatic repository-ref reconciler status"
+    )
+    refs_reconcile = repo_refs.add_parser(
+        "reconcile", help="ask the hub to reconcile all registered repositories now"
+    )
     for refs_parser in (refs_audit, refs_prune):
         refs_parser.add_argument(
             "--repo",
@@ -3568,6 +3549,14 @@ def build_parser() -> argparse.ArgumentParser:
     refs_prune.set_defaults(execute=False)
     refs_prune.add_argument("--actor", default="human")
     _set(cmd_repo_refs_prune, refs_prune)
+    _set(cmd_repo_refs_status, refs_status)
+    refs_reconcile.add_argument(
+        "--mode",
+        choices=("audit", "prune"),
+        help="override the configured mode for this run",
+    )
+    refs_reconcile.add_argument("--actor", default="human")
+    _set(cmd_repo_refs_reconcile, refs_reconcile)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
     project_create = project.add_parser("create")

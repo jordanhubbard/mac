@@ -322,3 +322,35 @@ def test_repository_ref_audit_rejects_missing_repo(tmp_path):
     args = SimpleNamespace(repo_path=str(tmp_path / "missing"))
     with pytest.raises(cli.RepositoryHygieneError, match="does not exist"):
         cli._repository_ref_audit(args)
+
+
+def test_repo_refs_reconciler_status_and_trigger_commands(monkeypatch, capsys):
+    class Plane:
+        def repository_ref_reconciler_status(self):
+            return {"status": "idle"}
+
+        def reconcile_repository_refs(self, *, mode, actor):
+            return {"status": "completed", "mode": mode, "actor": actor}
+
+    monkeypatch.setattr(cli, "_plane", lambda _args: Plane())
+
+    assert main(["--json", "repo", "refs", "status"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "idle"}
+
+    assert main(
+        [
+            "--json",
+            "repo",
+            "refs",
+            "reconcile",
+            "--mode",
+            "audit",
+            "--actor",
+            "operator",
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "completed",
+        "mode": "audit",
+        "actor": "operator",
+    }

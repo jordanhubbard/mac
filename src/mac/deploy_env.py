@@ -664,6 +664,25 @@ def build_mac_env(
         # mac-selfdrive: hub drives its own tick (dispatch->review->merge->reconcile)
         # on this interval (seconds) so the autonomous loop needs no external clock.
         ("MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS", "MAC_HUB_TICK_INTERVAL_SECONDS"),
+        # Managed task branches are retired by one hub-owned, fail-closed
+        # reconciler. Spokes and stateless replicas remain off unless an
+        # operator explicitly overrides their deployment environment.
+        (
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE",
+            "MAC_REPOSITORY_REF_RECONCILER_MODE",
+        ),
+        (
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS",
+            "MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS",
+        ),
+        (
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS",
+            "MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS",
+        ),
+        (
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
+            "MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
+        ),
         # OpenShell sandbox requirement, data-driven from the agent's resources
         # (no hardcoded agent list). The deploy orchestrator derives this from the
         # agent's DB resources["openshell_required"]; it lands in mac.env and the
@@ -674,6 +693,13 @@ def build_mac_env(
         _v = (env.get(_src) or "").strip()
         if _v:
             values[_dst] = _v
+    if cfg.identity.is_hub:
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "prune")
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "86400")
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS", "300")
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "7")
+    else:
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")

@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.parse
 from collections import Counter
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
@@ -49,6 +50,10 @@ from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
+from mac.repository_ref_reconciler import (
+    RepositoryRefReconciler,
+    RepositoryRefReconcilerConfig,
+)
 from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
 
@@ -1196,6 +1201,11 @@ class ProjectRepositoryRegister(BaseModel):
     actor: str = "bridge"
 
 
+class RepositoryRefReconcileRequest(BaseModel):
+    mode: Optional[str] = None
+    actor: str = "operator"
+
+
 class MemoryCreate(BaseModel):
     task_id: Optional[str] = None
     subject_type: str
@@ -1323,6 +1333,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # regardless of method. This keeps the router from being an open proxy
         # when the API is bound to a network interface (e.g. the hub node).
         return "agent"
+    if path.startswith("/repository-refs"):
+        # A forced reconciliation in prune mode can delete remote branches.
+        # Status is ordinary read data; every mutating trigger is admin-only.
+        return "read" if method == "GET" else "admin"
     if method == "GET" and re.match(r"^/evidence/[^/]+/artifacts/[^/]+$", path):
         # Durable evidence artifact bytes can contain raw stdout/stderr and
         # result manifests. Listing metadata is a read model; fetching bytes is
@@ -2919,10 +2933,24 @@ def create_app(
                 "to override or configure tokens (mac-853j)" % bind_host
             )
     record_http_obs = _resolve_record_http_observations(record_http_observations)
-    app = FastAPI(title="MAC Control Plane", version="0.1.0")
+    repository_ref_reconciler = RepositoryRefReconciler(
+        cp,
+        RepositoryRefReconcilerConfig.from_env(),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        repository_ref_reconciler.start()
+        try:
+            yield
+        finally:
+            repository_ref_reconciler.stop()
+
+    app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.control_plane = cp
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
+    app.state.repository_ref_reconciler = repository_ref_reconciler
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -3062,6 +3090,22 @@ def create_app(
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/repository-refs/reconciler")
+    def repository_ref_reconciler_status() -> Dict[str, Any]:
+        return repository_ref_reconciler.status()
+
+    @app.post("/repository-refs/reconcile")
+    def reconcile_repository_refs(
+        body: RepositoryRefReconcileRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return repository_ref_reconciler.run_once(
+            mode=body.mode,
+            actor=body.actor,
+            trigger="operator",
+        )
 
     @app.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:

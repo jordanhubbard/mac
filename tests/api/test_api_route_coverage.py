@@ -1375,6 +1375,10 @@ edges:
         },
         ("POST", "/dispatch/assign"): {"lease_seconds": 60},
         ("POST", "/dispatch/tick"): {"lease_seconds": 60, "limit": 2},
+        ("POST", "/repository-refs/reconcile"): {
+            "mode": "off",
+            "actor": "operator",
+        },
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,

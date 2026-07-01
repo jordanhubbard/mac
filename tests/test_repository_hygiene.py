@@ -20,7 +20,11 @@ from mac.repository_hygiene import (
     normalize_cancellation_detail,
     parse_managed_branch,
     prune_repository_refs,
+    query_open_pull_requests,
+    refresh_remote_base_ref,
     repository_ref_lifecycle_for_transition,
+    resolve_remote_base_ref,
+    verify_repository_remote,
 )
 
 
@@ -592,6 +596,138 @@ def test_prune_normalizes_remote_revalidation_failure(tmp_path):
             [_eligible_audit()],
             execute=True,
             runner=runner,
+        )
+    assert "secret" not in str(exc_info.value)
+
+
+def test_query_open_pull_requests_uses_distinct_failure_state(tmp_path):
+    payload = (
+        '[{"headRefName":"branch","number":7,'
+        '"url":"https://example.invalid/pull/7"}]'
+    )
+
+    def success(argv, **kwargs):
+        assert argv[:4] == ["gh", "pr", "list", "--state"]
+        assert kwargs["cwd"] == str(tmp_path.resolve())
+        return _cp(argv, stdout=payload)
+
+    heads, warning = query_open_pull_requests(tmp_path, runner=success)
+    assert warning == ""
+    assert heads == {"branch": "https://example.invalid/pull/7"}
+
+    heads, warning = query_open_pull_requests(
+        tmp_path,
+        runner=lambda *args, **kwargs: _cp([], returncode=1),
+    )
+    assert heads is None
+    assert "could not be verified" in warning
+
+
+def test_verify_repository_remote_accepts_transport_equivalence(tmp_path):
+    def runner(_repo, argv, timeout):
+        assert argv == ["git", "remote", "get-url", "origin"]
+        assert timeout == 30
+        return _cp(argv, stdout="https://github.com/example/project.git\n")
+
+    verify_repository_remote(
+        tmp_path,
+        "origin",
+        "git@github.com:example/project.git",
+        runner=runner,
+    )
+
+    with pytest.raises(RepositoryHygieneError, match="does not match"):
+        verify_repository_remote(
+            tmp_path,
+            "origin",
+            "git@github.com:example/other.git",
+            runner=runner,
+        )
+
+
+def test_verify_repository_remote_rejects_invalid_inputs(tmp_path):
+    with pytest.raises(RepositoryHygieneError, match="remote name"):
+        verify_repository_remote(tmp_path, "bad remote", "git@github.com:a/b.git")
+    with pytest.raises(RepositoryHygieneError, match="canonical"):
+        verify_repository_remote(tmp_path, "origin", "not-a-url")
+
+    def missing(_repo, argv, timeout):
+        return _cp(argv, returncode=1)
+
+    with pytest.raises(RepositoryHygieneError, match="could not resolve"):
+        verify_repository_remote(
+            tmp_path,
+            "origin",
+            "git@github.com:a/b.git",
+            runner=missing,
+        )
+
+
+def test_resolve_remote_base_ref_uses_local_or_advertised_head(tmp_path):
+    def local(_repo, argv, timeout):
+        if argv[1] == "symbolic-ref":
+            return _cp(argv, stdout="origin/trunk\n")
+        if argv[1] == "check-ref-format":
+            return _cp(argv)
+        raise AssertionError(argv)
+
+    assert resolve_remote_base_ref(tmp_path, runner=local) == "origin/trunk"
+
+    def advertised(_repo, argv, timeout):
+        if argv[1] == "symbolic-ref":
+            return _cp(argv, returncode=1)
+        if argv[1] == "ls-remote":
+            return _cp(argv, stdout="ref: refs/heads/release\tHEAD\n%s\tHEAD\n" % SHA)
+        if argv[1] == "check-ref-format":
+            return _cp(argv)
+        raise AssertionError(argv)
+
+    assert resolve_remote_base_ref(tmp_path, runner=advertised) == "origin/release"
+
+
+def test_resolve_and_refresh_base_ref_fail_closed(tmp_path):
+    def checked(_repo, argv, timeout):
+        if argv[1] == "check-ref-format":
+            return _cp(argv)
+        if argv[1] == "fetch":
+            assert argv[-1] == "+refs/heads/main:refs/remotes/origin/main"
+            return _cp(argv)
+        raise AssertionError(argv)
+
+    assert resolve_remote_base_ref(
+        tmp_path,
+        configured="origin/main",
+        runner=checked,
+    ) == "origin/main"
+    assert refresh_remote_base_ref(
+        tmp_path,
+        "origin",
+        "origin/main",
+        runner=checked,
+    ) == "origin/main"
+
+    with pytest.raises(RepositoryHygieneError, match="belong to remote"):
+        resolve_remote_base_ref(
+            tmp_path,
+            configured="upstream/main",
+            runner=checked,
+        )
+
+    def failed_fetch(_repo, argv, timeout):
+        if argv[1] == "check-ref-format":
+            return _cp(argv)
+        return _cp(
+            argv,
+            returncode=1,
+            stderr="https://user:secret@example.invalid unavailable",
+        )
+
+    with pytest.raises(RepositoryHygieneError) as exc_info:
+        refresh_remote_base_ref(
+            tmp_path,
+            "origin",
+            "origin/main",
+            runner=failed_fetch,
         )
     assert "secret" not in str(exc_info.value)
 

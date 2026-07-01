@@ -64,6 +64,11 @@ backends ship in the same wheel/image; pick at deploy time.
 | `GH_TOKEN` / `GITHUB_TOKEN` | no | GitHub HTTPS credential used by task, review, publication, and pushed-ref verification commands. The credential may appear only in the individual Git command and must not persist in `origin`, evidence, logs, or memory. |
 | `GITEA_TOKEN` | no | Gitea HTTPS credential for the same Git operations. `MAC_TASK_GIT_TOKEN` is the host-mode fallback when no host-specific token is set. |
 | `MAC_DEPLOY_GH_TOKEN` | no | Fleet-deploy input copied into the managed runtime as `GH_TOKEN`. Keep it in the host-local `~/.mac/.env`, never in `fleets.yaml` or a committed spec. |
+| `MAC_REPOSITORY_REF_RECONCILER_MODE` | no | Managed task-branch reconciler mode: `off`, `audit`, or `prune`. Runtime default `off`; fleet deployment defaults the hub to `prune` and spokes to `off`. |
+| `MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | no | Delay between automatic passes, bounded from `60` through `604800`. Hub default `86400` (daily). |
+| `MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | no | Delay before the first automatic pass, bounded from `0` through `86400`. Hub default `300`. |
+| `MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | no | Fallback cleanup grace for legacy lifecycle records, bounded from `0` through `365`. Default `7`. |
+| `MAC_REPOSITORY_REF_RECONCILER_REMOTE` / `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | no | Git remote name (default `origin`) and optional explicit `<remote>/<branch>` ancestry target. Without a base override, the remote HEAD is auto-detected. |
 | `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | no | How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default `1800`. |
 | `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning receives reviewer-selection preference. Default `86400`. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | no | Maximum durable delivered verdict nudges for one review before it is retracted. Default `10`. |
@@ -721,6 +726,13 @@ canonical remote URL, and required evidence to new tasks. See
 If CodeGraph is available on the registering host, repository registration also
 runs `codegraph init` after excluding `.codegraph/` through the checkout-local
 `.git/info/exclude`.
+
+The hub's repository-ref reconciler uses this registry as its complete workset.
+The hub therefore needs filesystem and GitHub access to each enabled checkout;
+automatic `prune` additionally requires the contract's `canonical_remote_url`.
+Monitor it with `mac repo refs status` and trigger a one-shot audit with
+`mac repo refs reconcile --mode audit`. See
+[Managed Repository Ref Hygiene](repository-ref-hygiene.md).
 
 The hub advances the default review/publication workflow from heartbeat when
 `MAC_REVIEW_TICK_ON_HEARTBEAT=1` and `MAC_REVIEW_TICK_HUB_AGENT` is set to the

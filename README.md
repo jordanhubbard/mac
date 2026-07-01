@@ -51,8 +51,8 @@ This project provides durable contracts for coordinating a fleet:
   agents can bootstrap and test work on macOS, Linux, WSL2, or narrower
   declared host families without relying on accidental local state.
 - Managed repository-ref lifecycles that distinguish superseded work from
-  deferred or failed attempts, audit task-owned remote branches, and delete
-  only exact-SHA eligible refs after a grace period.
+  deferred or failed attempts, plus a hub-owned recurring reconciler that
+  retires only exact-SHA eligible refs after a grace period.
 - Role catalog, role assignment, provisioning requests, and data-driven DAG
   workflows that turn multi-step plans into durable tasks with per-node role
   requirements and run history.
@@ -185,7 +185,9 @@ and [Production Deployment](docs/production-deployment.md#reaching-the-hub-node)
 Task cancellation records why its worker branches should be preserved or may
 eventually be removed. Missing dispositions default to `preserve`; duplicate
 and superseded work must name the replacement task. Audit and prune are
-fail-closed, and prune is read-only unless `--execute` is explicit.
+fail-closed, and manual prune is read-only unless `--execute` is explicit. Fleet
+deployment enables a daily `prune` reconciler on the hub only; the runtime
+default remains `off` for standalone API processes and stateless replicas.
 
 ```bash
 mac task close task_old --cancelled --disposition superseded \
@@ -195,10 +197,16 @@ git fetch --prune origin
 mac --json repo refs audit --repo .
 mac --json repo refs prune --repo .          # dry-run
 mac --json repo refs prune --repo . --execute --actor operator
+
+# Hub-wide automatic reconciler status and immediate admin-triggered passes.
+mac --json repo refs status
+mac --json repo refs reconcile --mode audit --actor operator
+mac --json repo refs reconcile --mode prune --actor operator
 ```
 
 See [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md) for the
-disposition policy, exact-SHA deletion contract, grace periods, and recovery.
+schedule/configuration, disposition policy, exact-SHA deletion contract, grace
+periods, monitoring, and recovery.
 
 ## API
 

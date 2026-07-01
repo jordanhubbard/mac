@@ -97,6 +97,14 @@ def test_local_dispatch_exposes_store():
     assert LocalDispatch(plane).store is plane.store
 
 
+def test_local_dispatch_refuses_hub_owned_reconciler_calls():
+    dispatch = LocalDispatch(_FakePlane())
+    with pytest.raises(DispatchError, match="running hub"):
+        dispatch.repository_ref_reconciler_status()
+    with pytest.raises(DispatchError, match="running hub"):
+        dispatch.reconcile_repository_refs(mode="audit")
+
+
 # ---------------------------------------------------------------------------
 # RemoteDispatch — refuses direct SQL, errors on unwrapped methods
 # ---------------------------------------------------------------------------
@@ -121,6 +129,25 @@ def test_remote_dispatch_errors_on_unwrapped_method():
     disp = RemoteDispatch(_FakeHttpClient())  # type: ignore[arg-type]
     with pytest.raises(DispatchError, match="not yet supported in hub mode"):
         disp.completely_made_up_method(1, 2)
+
+
+def test_remote_dispatch_repository_ref_reconciler_calls():
+    client = _FakeHttpClient()
+    dispatch = RemoteDispatch(client)  # type: ignore[arg-type]
+    assert dispatch.repository_ref_reconciler_status().to_dict() == {
+        "echo": "/repository-refs/reconciler"
+    }
+    assert dispatch.reconcile_repository_refs(
+        mode="prune", actor="operator"
+    ).to_dict() == {"echo": "/repository-refs/reconcile"}
+    assert client.calls == [
+        ("GET", "/repository-refs/reconciler", None),
+        (
+            "POST",
+            "/repository-refs/reconcile",
+            {"mode": "prune", "actor": "operator"},
+        ),
+    ]
 
 
 # ---------------------------------------------------------------------------

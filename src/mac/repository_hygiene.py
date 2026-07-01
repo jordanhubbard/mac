@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import urllib.parse
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +37,9 @@ _MANAGED_BRANCH_RE = re.compile(
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _AUTHORITY_RE = re.compile(r"(?P<scheme>https?://)[^/@\s]+@", re.IGNORECASE)
+_SCP_REMOTE_RE = re.compile(
+    r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>[^\s]+)$"
+)
 
 ACTIVE_TASK_STATES = frozenset(
     {"open", "claimed", "running", "needs_review", "reviewing"}
@@ -81,6 +86,12 @@ class RepositoryRefAudit:
 
 def _redact(text: Any) -> str:
     return _AUTHORITY_RE.sub(r"\g<scheme><redacted>@", str(text or ""))
+
+
+def redact_repository_hygiene_text(text: Any) -> str:
+    """Return repository-hygiene diagnostics without URL credentials."""
+
+    return _redact(text)
 
 
 def _parse_time(value: Any) -> Optional[datetime]:
@@ -282,6 +293,227 @@ def _run(
         raise RepositoryHygieneError("git repository-ref operation timed out") from exc
     except OSError as exc:
         raise RepositoryHygieneError("git repository-ref operation failed") from exc
+
+
+def query_open_pull_requests(
+    repo: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[Optional[Dict[str, str]], str]:
+    """Return open GitHub pull requests keyed by head branch.
+
+    Failure is represented as ``(None, warning)`` rather than an empty mapping,
+    because callers must distinguish "no open pull requests" from "the check
+    could not be completed" and fail closed before deletion.
+    """
+
+    try:
+        result = runner(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                "1000",
+                "--json",
+                "headRefName,number,url",
+            ],
+            cwd=str(Path(repo).expanduser().resolve()),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None, "GitHub pull request state could not be verified"
+    if result.returncode != 0:
+        return None, "GitHub pull request state could not be verified"
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None, "GitHub pull request state returned malformed JSON"
+    if not isinstance(payload, list):
+        return None, "GitHub pull request state returned an invalid response"
+    heads: Dict[str, str] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("headRefName") or "").strip()
+        if not branch:
+            continue
+        url = str(item.get("url") or "").strip()
+        number = str(item.get("number") or "").strip()
+        heads[branch] = url or (("PR #%s" % number) if number else "open pull request")
+    return heads, ""
+
+
+def _canonical_git_remote(value: str) -> Optional[tuple[str, str]]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if "://" in raw:
+        parsed = urllib.parse.urlsplit(raw)
+        host = str(parsed.hostname or "").lower()
+        path = str(parsed.path or "")
+    else:
+        match = _SCP_REMOTE_RE.fullmatch(raw)
+        if match is None:
+            return None
+        host = match.group("host").lower()
+        path = match.group("path")
+    normalized_path = path.strip().strip("/")
+    if normalized_path.endswith(".git"):
+        normalized_path = normalized_path[:-4]
+    if not host or not normalized_path:
+        return None
+    return host, normalized_path
+
+
+def verify_repository_remote(
+    repo: Path,
+    remote: str,
+    expected_url: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
+) -> None:
+    """Fail closed unless ``remote`` matches the registered canonical URL."""
+
+    if not _REMOTE_NAME_RE.fullmatch(str(remote or "")):
+        raise RepositoryHygieneError("invalid git remote name")
+    expected = _canonical_git_remote(expected_url)
+    if expected is None:
+        raise RepositoryHygieneError("registered canonical repository remote is invalid")
+    result = runner(
+        Path(repo).expanduser().resolve(),
+        ["git", "remote", "get-url", remote],
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RepositoryHygieneError("could not resolve the registered git remote")
+    actual_url = next(
+        (line.strip() for line in result.stdout.splitlines() if line.strip()),
+        "",
+    )
+    actual = _canonical_git_remote(actual_url)
+    if actual is None or actual != expected:
+        raise RepositoryHygieneError(
+            "repository remote does not match its registered canonical remote"
+        )
+
+
+def _validate_base_ref(
+    repo: Path,
+    remote: str,
+    base_ref: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> str:
+    prefix = "%s/" % remote
+    if not base_ref.startswith(prefix):
+        raise RepositoryHygieneError(
+            "canonical base ref must belong to remote %s" % remote
+        )
+    branch = base_ref[len(prefix) :]
+    if not branch or branch.startswith("-"):
+        raise RepositoryHygieneError("canonical base branch is invalid")
+    checked = runner(
+        repo,
+        ["git", "check-ref-format", "--branch", branch],
+        timeout=30,
+    )
+    if checked.returncode != 0:
+        raise RepositoryHygieneError("canonical base branch is invalid")
+    return "%s/%s" % (remote, branch)
+
+
+def resolve_remote_base_ref(
+    repo: Path,
+    remote: str = "origin",
+    *,
+    configured: str = "",
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
+) -> str:
+    """Resolve the remote's canonical branch, falling back safely to ``main``."""
+
+    root = Path(repo).expanduser().resolve()
+    if not _REMOTE_NAME_RE.fullmatch(str(remote or "")):
+        raise RepositoryHygieneError("invalid git remote name")
+    if configured:
+        return _validate_base_ref(
+            root,
+            remote,
+            str(configured).strip(),
+            runner=runner,
+        )
+
+    symbolic = runner(
+        root,
+        [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/%s/HEAD" % remote,
+        ],
+        timeout=30,
+    )
+    local_ref = symbolic.stdout.strip() if symbolic.returncode == 0 else ""
+    if local_ref:
+        return _validate_base_ref(root, remote, local_ref, runner=runner)
+
+    advertised = runner(
+        root,
+        ["git", "ls-remote", "--symref", remote, "HEAD"],
+        timeout=60,
+    )
+    if advertised.returncode == 0:
+        for line in advertised.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 3 and fields[0] == "ref:" and fields[2] == "HEAD":
+                head = fields[1]
+                prefix = "refs/heads/"
+                if head.startswith(prefix):
+                    return _validate_base_ref(
+                        root,
+                        remote,
+                        "%s/%s" % (remote, head[len(prefix) :]),
+                        runner=runner,
+                    )
+    return _validate_base_ref(root, remote, "%s/main" % remote, runner=runner)
+
+
+def refresh_remote_base_ref(
+    repo: Path,
+    remote: str,
+    base_ref: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
+) -> str:
+    """Fetch only the canonical branch used for merge ancestry proof."""
+
+    root = Path(repo).expanduser().resolve()
+    checked = _validate_base_ref(root, remote, base_ref, runner=runner)
+    branch = checked[len(remote) + 1 :]
+    fetched = runner(
+        root,
+        [
+            "git",
+            "fetch",
+            "--no-tags",
+            "--quiet",
+            remote,
+            "+refs/heads/%s:refs/remotes/%s/%s" % (branch, remote, branch),
+        ],
+        timeout=120,
+    )
+    if fetched.returncode != 0:
+        raise RepositoryHygieneError(
+            "could not refresh canonical base ref: %s"
+            % _redact(fetched.stderr or fetched.stdout or "git fetch failed")
+        )
+    return checked
 
 
 def list_managed_remote_refs(

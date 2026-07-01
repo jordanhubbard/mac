@@ -133,6 +133,45 @@ def test_gateway_values_build_env_passthrough_and_write(tmp_path) -> None:
     assert written["MAC_SECRET_KEY"]
 
 
+def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path):
+    hub = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
+    assert hub["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "prune"
+    assert hub["MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS"] == "86400"
+    assert hub["MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS"] == "300"
+    assert hub["MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS"] == "7"
+
+    spoke = deploy_env.build_mac_env(
+        {},
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ={},
+    )
+    assert spoke["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "off"
+
+
+def test_repository_ref_reconciler_deploy_overrides_and_existing_values_win(tmp_path):
+    configured = deploy_env.build_mac_env(
+        {},
+        _cfg(tmp_path),
+        environ={
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE": "audit",
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS": "7200",
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS": "10",
+            "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS": "14",
+        },
+    )
+    assert configured["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "audit"
+    assert configured["MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS"] == "7200"
+    assert configured["MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS"] == "10"
+    assert configured["MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS"] == "14"
+
+    preserved = deploy_env.build_mac_env(
+        {"MAC_REPOSITORY_REF_RECONCILER_MODE": "off"},
+        _cfg(tmp_path),
+        environ={},
+    )
+    assert preserved["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "off"
+
+
 def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:
     with pytest.raises(SystemExit, match="expects 30"):
         deploy_env.LegacyDeployArgs.from_argv([])

@@ -51,6 +51,60 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     assert thread is not None and thread.daemon is True and thread.is_alive()
 
 
+def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
+    monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_MODE", "audit")
+    monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "999")
+    monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS", "999")
+    app = create_app(control_plane=ControlPlane.in_memory())
+    reconciler = app.state.repository_ref_reconciler
+    assert reconciler.status()["thread_alive"] is False
+
+    with TestClient(app) as client:
+        assert client.get("/repository-refs/reconciler").status_code == 200
+        assert reconciler.status()["thread_alive"] is True
+
+    assert reconciler.status()["thread_alive"] is False
+
+
+def test_repository_ref_reconciler_operator_trigger_and_admin_scope(monkeypatch):
+    monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
+    app = create_app(
+        control_plane=ControlPlane.in_memory(),
+        auth_tokens={
+            "reader": ["read"],
+            "admin": ["admin"],
+        },
+    )
+    reconciler = app.state.repository_ref_reconciler
+    seen = {}
+
+    def run_once(**kwargs):
+        seen.update(kwargs)
+        return {"status": "completed", "mode": kwargs.get("mode")}
+
+    monkeypatch.setattr(reconciler, "run_once", run_once)
+    with TestClient(app) as client:
+        status = client.get(
+            "/repository-refs/reconciler",
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert status.status_code == 200
+        refused = client.post(
+            "/repository-refs/reconcile",
+            headers={"Authorization": "Bearer reader"},
+            json={"mode": "prune"},
+        )
+        assert refused.status_code == 403
+        triggered = client.post(
+            "/repository-refs/reconcile",
+            headers={"Authorization": "Bearer admin"},
+            json={"mode": "audit", "actor": "operator"},
+        )
+        assert triggered.status_code == 200
+        assert triggered.json() == {"status": "completed", "mode": "audit"}
+    assert seen == {"mode": "audit", "actor": "operator", "trigger": "operator"}
+
+
 def test_well_known_acp_manifest_is_public_and_advertises_mac_extensions(monkeypatch):
     # ADR 0006 Phase 3: the discovery manifest is unauthenticated even when the
     # hub is token-protected, and carries protocolVersion + mac's _meta extensions.

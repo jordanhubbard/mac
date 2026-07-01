@@ -92,16 +92,67 @@ after success it records `deleted`. Push failures record `failed`, with
 authenticated URLs redacted.
 
 Use repeated `--task` options to limit an audit or prune to selected task IDs.
-The JSON report's `counts` and `eligible_count` fields are suitable for a daily
-operator job and monitoring. A scheduler should run audit continuously and
-enable `--execute` only after operators have reviewed legacy classifications.
+The JSON report's `counts` and `eligible_count` fields remain useful for
+diagnosis and targeted recovery.
+
+## Automatic reconciliation
+
+The MAC hub owns a recurring reconciler. It discovers enabled repositories from
+the project-repository registry, resolves and verifies each repository's
+`repository_contract.canonical_remote_url`, refreshes its canonical base branch,
+and then runs the same audit and exact-SHA prune implementation used by the
+manual commands. Spokes and stateless API replicas do not run the reconciler.
+
+Fleet deployment enables `prune` mode on the shared-services-manager (hub) by
+default. The first pass starts after five minutes and subsequent passes run
+daily. A repository registered with
+`metadata.repository_ref_hygiene.enabled=false` is skipped. Automatic `prune`
+also requires `canonical_remote_url` in the repository contract; a missing or
+mismatched canonical remote fails closed for that repository.
+
+Inspect the scheduler or request an immediate fleet-wide pass through the hub:
+
+```bash
+mac --json repo refs status
+mac --json repo refs reconcile --mode audit --actor operator
+mac --json repo refs reconcile --mode prune --actor operator
+```
+
+Only an administrator token can trigger a pass. Concurrent scheduled and manual
+runs do not overlap: the second request returns `status=busy`. A failure in one
+repository is reported but does not prevent later registered repositories from
+being evaluated.
+
+The runtime configuration is:
+
+| Variable | Runtime default | Fleet hub default | Meaning |
+| --- | --- | --- | --- |
+| `MAC_REPOSITORY_REF_RECONCILER_MODE` | `off` | `prune` | `off`, read-only `audit`, or executable `prune` |
+| `MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | `86400` | `86400` | Interval from 60 seconds through 7 days |
+| `MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | `300` | `300` | Startup delay from 0 through 86400 seconds |
+| `MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | `7` | `7` | Fallback grace for legacy lifecycle records, from 0 through 365 days |
+| `MAC_REPOSITORY_REF_RECONCILER_REMOTE` | `origin` | `origin` | Managed Git remote name |
+| `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | auto-detect | auto-detect | Optional `<remote>/<branch>` ancestry target |
+
+Fleet deployment accepts matching `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_*`
+overrides. Existing explicit values are preserved on redeploy. Invalid values
+disable the reconciler and emit a
+`repository.ref.reconciler.configuration_invalid` warning instead of guessing.
+
+Every pass emits a `repository.ref.reconciler.run` observability record with
+per-repository classifications, eligible/deleted totals, timestamps, trigger,
+and a secret-redacted error when applicable. `mac repo refs status` exposes the
+active configuration and last report. The hub needs filesystem access to each
+registered checkout, Git credentials for its canonical remote, and `gh`
+credentials for pull-request verification; missing access blocks deletion for
+that repository.
 
 ## Lifecycle integration
 
 Task transitions write `metadata.repository_ref_lifecycle` and emit a durable
 `repository.ref.lifecycle` control-plane event. Network deletion deliberately
-does not occur inside the task transaction: the reconciler performs Git and
-GitHub checks later, where failures cannot corrupt task state.
+does not occur inside the task transaction: the recurring reconciler performs
+Git and GitHub checks later, where failures cannot corrupt task state.
 
 This split gives MAC an automatic candidate lifecycle and an idempotent cleanup
 boundary while preserving the independent evidence and review contracts.
