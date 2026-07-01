@@ -391,6 +391,15 @@ network_name = "openshell-docker"
 grpc_endpoint = "http://host.openshell.internal:17670"
 image_pull_policy = "IfNotPresent"
 EOF
+cat > "$OSH_DIR/run-gateway.sh" <<EOF
+#!/usr/bin/env sh
+# This gateway is explicitly configured for Docker-in-Docker. Kubernetes injects
+# these variables into every pod; leaving them set makes OpenShell assume the
+# Kubernetes driver must also be configured and abort before listening.
+unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT
+exec "$BIN/openshell-gateway" --config "$OSH_DIR/gateway.toml"
+EOF
+chmod 700 "$OSH_DIR/run-gateway.sh"
 
 # --- 7. gateway service + register ------------------------------------------
 gateway_manager=""
@@ -401,7 +410,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/d
 [Unit]
 Description=OpenShell gateway (Docker Engine/Moby driver)
 [Service]
-ExecStart=%h/.local/bin/openshell-gateway --config %h/.mac/openshell/gateway.toml
+ExecStart=%h/.mac/openshell/run-gateway.sh
 Restart=on-failure
 RestartSec=5
 [Install]
@@ -414,7 +423,7 @@ EOF
 elif command -v supervisorctl >/dev/null 2>&1; then
   sudo tee /etc/supervisor/conf.d/openshell-gateway.conf >/dev/null <<EOF
 [program:openshell-gateway]
-command=$BIN/openshell-gateway --config $OSH_DIR/gateway.toml
+command=$OSH_DIR/run-gateway.sh
 directory=$OSH_DIR
 user=$USER
 environment=HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin"
