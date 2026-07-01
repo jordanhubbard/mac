@@ -61,6 +61,17 @@ def test_inproc_hub_validation_and_modality_configuration(tmp_path) -> None:
         deploy_env._apply_inproc_router(values, cfg, {
             "MAC_DEPLOY_ROUTER_BACKEND": "inproc", "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://x,key=raw"
         })
+    with pytest.raises(ValueError, match="private endpoint"):
+        deploy_env._apply_inproc_router(values, cfg, {
+            "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+            "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://api.example.com,key=none",
+        })
+    private_values = {"MAC_API_TOKEN": "local"}
+    deploy_env._apply_inproc_router(private_values, cfg, {
+        "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+        "MAC_DEPLOY_ROUTER_PROVIDERS": "madmax=http://100.121.27.109:8000/v1,0,models=x",
+    })
+    assert private_values["MAC_ROUTER_PROVIDERS"].endswith(",key=none")
     env = {
         "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
         "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://x,key=secret:provider",

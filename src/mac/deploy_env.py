@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+import ipaddress
 import os
 import re
 import secrets
@@ -501,6 +502,40 @@ def _deploy_router_config(env: Mapping[str, str]) -> Dict[str, str]:
     }
 
 
+def _provider_allows_no_key(spec: str) -> bool:
+    _name, separator, rest = str(spec or "").partition("=")
+    if not separator:
+        return False
+    base_url = rest.split(",", 1)[0].strip()
+    host = (urllib.parse.urlsplit(base_url).hostname or "").strip().lower()
+    if host in {"localhost", "host.docker.internal", "host.openshell.internal"}:
+        return True
+    if host.endswith((".local", ".internal", ".svc.cluster.local")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(
+        address.is_loopback
+        or address.is_private
+        or address in ipaddress.ip_network("100.64.0.0/10")
+    )
+
+
+def _normalize_inproc_provider_specs(raw: str) -> str:
+    normalized = []
+    for value in str(raw or "").split(";"):
+        spec = value.strip()
+        if not spec:
+            continue
+        fields = [field.strip() for field in spec.split(",")]
+        if not any(field.startswith("key=") for field in fields[1:]) and _provider_allows_no_key(spec):
+            spec += ",key=none"
+        normalized.append(spec)
+    return ";".join(normalized)
+
+
 def _apply_inproc_router_hub(
     values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
 ) -> None:
@@ -566,18 +601,26 @@ def _apply_inproc_router(
     router or a spoke to route through it (credentials centralize on the hub)."""
     router = _deploy_router_config(env)
     if cfg.identity.is_hub:
+        router["providers"] = _normalize_inproc_provider_specs(router["providers"])
         if not router["providers"]:
             raise ValueError(
                 "inproc router hub requires MAC_DEPLOY_ROUTER_PROVIDERS"
             )
-        invalid_specs = [
-            spec
-            for spec in router["providers"].split(";")
-            if spec.strip() and "key=secret:" not in spec
-        ]
+        invalid_specs = []
+        for spec in router["providers"].split(";"):
+            if not spec.strip():
+                continue
+            fields = [field.strip() for field in spec.split(",")]
+            keys = [field[len("key=") :] for field in fields[1:] if field.startswith("key=")]
+            if any(key.startswith("secret:") for key in keys):
+                continue
+            if keys == ["none"] and _provider_allows_no_key(spec):
+                continue
+            invalid_specs.append(spec)
         if invalid_specs:
             raise ValueError(
-                "inproc router providers must use key=secret:<name>: %s"
+                "inproc router providers must use key=secret:<name>, or explicit "
+                "key=none on a private endpoint: %s"
                 % ";".join(invalid_specs)
             )
         if not (values.get("MAC_API_TOKEN") or "").strip():
@@ -599,6 +642,7 @@ def _apply_inproc_router(
     _clear(values, INPROC_MANAGED_KEYS)
     if cfg.identity.is_hub:
         _apply_inproc_router_hub(values, cfg, env)
+        values["MAC_ROUTER_PROVIDERS"] = router["providers"]
     else:
         _apply_inproc_router_spoke(values, cfg)
 

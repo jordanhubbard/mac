@@ -104,7 +104,7 @@ def resolve_provider_key(provider: Provider, secret_resolver: Optional[SecretRes
     injected ``secret_resolver`` — so the upstream credential is never stored in
     plaintext env. Returns "" when unresolved (forwarder sends no Authorization)."""
     spec = (provider.api_key_env or "").strip()
-    if not spec:
+    if not spec or spec == "none":
         return ""
     if spec.startswith(_SECRET_PREFIX):
         if secret_resolver is None:

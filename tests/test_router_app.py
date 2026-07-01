@@ -600,6 +600,8 @@ def test_resolve_provider_key_secret_missing_resolver_or_value():
     assert resolve_provider_key(p, {}.get) == ""            # resolver returns None
     p2 = Provider("nvidia", "http://u/v1", api_key_env="")
     assert resolve_provider_key(p2) == ""                   # no key spec
+    p3 = Provider("local", "http://127.0.0.1:8000/v1", api_key_env="none")
+    assert resolve_provider_key(p3) == ""                   # explicit private no-auth
 
 
 def test_urllib_forwarder_uses_secret_resolver(monkeypatch):
