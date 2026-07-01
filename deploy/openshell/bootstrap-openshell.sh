@@ -53,6 +53,10 @@ mkdir -p "$OSH_DIR" "$BIN"
 # mounts resolve on the Docker host. Self-contained + early-exit so the Linux
 # flow below is untouched.
 bootstrap_darwin() {
+  # launchd and non-interactive SSH sessions do not inherit the interactive
+  # shell's Homebrew or Docker Desktop paths.  Bootstrap must be runnable by
+  # the fleet deployer, not only from a configured terminal.
+  export PATH="/Applications/Docker.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
   command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1 || { echo "docker CLI not found on PATH (Docker Desktop?)" >&2; exit 1; }
   "$OSH_DOCKER_BIN" info >/dev/null 2>&1 || { echo "docker daemon unreachable — is Docker Desktop running?" >&2; exit 1; }
   log "macOS: OpenShell via Docker ($("$OSH_DOCKER_BIN" --version 2>&1 | head -1)); gateway runs in a container"

@@ -974,7 +974,7 @@ bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
 exec "$bs" $MAC_DEPLOY_OPENSHELL_ARGS
 REMOTE
   then
-    echo "==> ${agent}: WARNING: OpenShell bootstrap exited non-zero (non-fatal; re-run $mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh by hand)" >&2
+    echo "==> ${agent}: WARNING: OpenShell bootstrap exited non-zero (non-fatal; re-run ~/.mac/src/mac/deploy/openshell/bootstrap-openshell.sh on the node)" >&2
   fi
 }
 
@@ -4745,6 +4745,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time

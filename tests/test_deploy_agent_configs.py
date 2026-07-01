@@ -1279,10 +1279,14 @@ def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
 
 def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    selftest = script.split('cat > "$selftest" <<', 1)[1].split(
+        'cat > "$executor" <<', 1
+    )[0]
 
     assert '"openshell_executor_config": False' in script
     assert "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments" in script
     assert 'arg in {"--env", "--"}' in script
+    assert "import shlex" in selftest
     assert "--site-config" not in script
     assert "MAC_DEPLOY_FLEET_SITE_CONFIG" not in script
     assert "FLEET_SITE_CONFIG" not in script
@@ -1747,6 +1751,15 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     assert '"resources": {"startup_self_test": report}' in selftest
     assert '"health_status": "degraded" if problems else "healthy"' in selftest
     assert '"health_status": "degraded"' in selftest
+
+
+def test_openshell_bootstrap_supports_noninteractive_macos_path():
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/Applications/Docker.app/Contents/Resources/bin" in script
+    assert "/opt/homebrew/bin" in script
 
 
 def test_executor_prompt_includes_repository_runtime_contract():
