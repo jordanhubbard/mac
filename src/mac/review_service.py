@@ -121,6 +121,7 @@ class ReviewService:
         transition_task: Callable[..., Task],
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
+        reviewer_independence_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
     ) -> None:
         self.store = store
         self.observability = observability
@@ -135,6 +136,7 @@ class ReviewService:
         # comes with a properly signed review_verdict authored by
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
+        self._reviewer_independence_check = reviewer_independence_check
 
     # Reviews -----------------------------------------------------------
 
@@ -142,11 +144,19 @@ class ReviewService:
         self, task_id: str, reviewer_agent_id: str, actor: str = "dispatcher"
     ) -> Review:
         task = self._get_task(task_id)
-        self._get_agent(reviewer_agent_id)
-        if self.agent_is_current_owner_or_latest_evidence_author(task_id, reviewer_agent_id):
+        reviewer = self._get_agent(reviewer_agent_id)
+        if "review" not in set(reviewer.capabilities):
+            raise AuthorizationError("reviewer agent requires the review capability")
+        if self.agent_has_owned_task(task_id, reviewer_agent_id):
             raise AuthorizationError(
-                "reviewer cannot review its own active task or latest evidence"
+                "reviewer cannot review a task it currently or previously owned"
             )
+        if self.latest_executor_evidence_author(task_id) == reviewer_agent_id:
+            raise AuthorizationError("reviewer cannot review its own latest evidence")
+        if self._reviewer_independence_check is not None:
+            problem = self._reviewer_independence_check(task, reviewer)
+            if problem:
+                raise AuthorizationError("reviewer independence check failed: %s" % problem)
         if task.state == TaskState.NEEDS_REVIEW.value:
             self._transition_task(
                 task_id,
@@ -249,6 +259,16 @@ class ReviewService:
                     raise ValidationError(
                         "review approval evidence %s is not a review_verdict "
                         "(missing verification.reviewed_evidence_id)" % evidence_id
+                    )
+                current_target = self.current_review_target_evidence_id(review.task_id)
+                if not current_target:
+                    raise ValidationError(
+                        "review approval requires a current executor evidence target"
+                    )
+                if executor_evidence_id_from_manifest != current_target:
+                    raise ValidationError(
+                        "review approval targets stale executor evidence: %s != %s"
+                        % (executor_evidence_id_from_manifest, current_target)
                     )
                 verdict, problems = self._find_verdict_evidence(
                     review.task_id,
@@ -539,19 +559,44 @@ class ReviewService:
     # Authorization helpers --------------------------------------------
 
     def completion_authorized(self, task_id: str) -> bool:
-        """Approved review must reference evidence that belongs to the
-        same task. Completion needs not just *some* approval and *some*
-        evidence, but a documented link between them."""
-        approved = self.store.query_one(
+        """Return true only for approval of the current executor evidence.
+
+        Historical approvals from earlier attempts must not authorize a later
+        attempt.  ``transition_task(..., needs_review)`` records the immutable
+        executor evidence target in task metadata; the approved verdict must
+        name that exact evidence row.
+        """
+        current_target = self.current_review_target_evidence_id(task_id)
+        if not current_target:
+            return False
+        rows = self.store.query_all(
             """
-            SELECT r.id FROM reviews r
+            SELECT r.id, e.metadata FROM reviews r
             JOIN evidence e ON e.id = r.evidence_id AND e.task_id = r.task_id
             WHERE r.task_id = ? AND r.status = ?
-            LIMIT 1
+            ORDER BY r.completed_at DESC, r.id DESC
             """,
             (task_id, ReviewStatus.APPROVED.value),
         )
-        return approved is not None
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"])
+            except (TypeError, ValueError):
+                continue
+            manifest = metadata.get("verification") if isinstance(metadata, dict) else None
+            if not isinstance(manifest, dict):
+                continue
+            if str(manifest.get("reviewed_evidence_id") or "").strip() == current_target:
+                return True
+        return False
+
+    def current_review_target_evidence_id(self, task_id: str) -> Optional[str]:
+        task = self._get_task(task_id)
+        target = task.metadata.get("review_target") if isinstance(task.metadata, dict) else None
+        if not isinstance(target, dict):
+            return None
+        evidence_id = str(target.get("executor_evidence_id") or "").strip()
+        return evidence_id or None
 
     def agent_has_owned_task(self, task_id: str, agent_id: str) -> bool:
         task = self._get_task(task_id)

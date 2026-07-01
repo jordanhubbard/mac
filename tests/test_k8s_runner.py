@@ -1228,12 +1228,17 @@ def _review_cfg(**overrides: Any) -> RunnerConfig:
 
 
 def test_build_review_job_spec_sets_required_env() -> None:
+    cfg = _review_cfg(
+        role_executors={
+            "python-reviewer": "/usr/local/bin/mac-task-executor-codex-review"
+        }
+    )
     spec = build_review_job_spec(
         "review-1",
         "task-abc",
         "mac-worker-python-reviewer",
         "ev-target",
-        _review_cfg(),
+        cfg,
     )
     envs = {
         e["name"]: e

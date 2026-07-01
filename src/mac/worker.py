@@ -2853,6 +2853,13 @@ class MacWorker:
         }
         if review_repository_context is not None:
             review_context["review_repository_worktree"] = review_repository_context
+        original_task = (
+            task_detail.get("task")
+            if isinstance(task_detail.get("task"), dict)
+            else {}
+        )
+        review_metadata = ensure_json_object(original_task.get("metadata"))
+        review_metadata["review_context"] = review_context
         task = {
             "id": "review_%s" % review_id,
             "title": "Review task %s" % task_id,
@@ -2861,9 +2868,7 @@ class MacWorker:
                 "review_verdict manifest." % task_id
             ),
             "required_capabilities": ["review"],
-            "metadata": {
-                "review_context": review_context,
-            },
+            "metadata": review_metadata,
         }
         if review_repository_context is not None:
             task["metadata"]["runtime"] = review_repository_context

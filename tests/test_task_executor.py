@@ -1449,6 +1449,18 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
         ),
         encoding="utf-8",
     )
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": "approved",
+                "summary": "semantic review found no defects",
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
     task = {
@@ -1478,6 +1490,180 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
     assert manifest["verdict"] == "approved"
     assert manifest["bootstrap"]["status"] == "pass"
     assert manifest["tests"][0]["returncode"] == 0
+
+
+def test_review_finalizer_never_upgrades_semantic_rejection(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "repo": {
+                            "head_sha": head,
+                            "remote_ref": "refs/heads/task/semantic-reject",
+                            "pushed": True,
+                            "dirty": False,
+                            "files_changed": ["README.md"],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": "rejected",
+                "feedback": "The implementation violates the required architecture.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
+    task = {
+        "id": "t1",
+        "owner_agent_id": "agent_review",
+        "metadata": {
+            "origin": {"repository_contract": {"test": {"command": "true"}}}
+        },
+    }
+
+    te.run_deterministic_review_verdict(
+        ws, task, {"executor_evidence_id": "ev1", "review_id": "review1"}
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "rejected"
+    assert manifest["semantic_verdict"] == "rejected"
+    assert manifest["tests"][0]["returncode"] == 0
+    assert "violates" in manifest["feedback"]
+
+
+def test_review_finalizer_requires_exact_executor_head(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "reviewed.txt").write_text("reviewed\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "reviewed")
+    reviewed_head = _git(work, "rev-parse", "HEAD").stdout.strip()
+    (work / "other.txt").write_text("wrong checkout\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "other")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "repo": {
+                            "head_sha": reviewed_head,
+                            "remote_ref": "refs/heads/task/reviewed",
+                            "pushed": True,
+                            "dirty": False,
+                            "files_changed": ["reviewed.txt"],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": "approved",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
+
+    te.run_deterministic_review_verdict(
+        ws,
+        {
+            "owner_agent_id": "agent_review",
+            "metadata": {
+                "origin": {"repository_contract": {"test": {"command": "true"}}}
+            },
+        },
+        {"executor_evidence_id": "ev1", "review_id": "review1"},
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "rejected"
+    assert "HEAD does not match" in manifest["feedback"]
+    assert manifest["tests"] is None
+
+
+def test_cooperative_integration_check_requires_child_commit_ancestry(tmp_path):
+    repo = tmp_path / "repo"
+    _git(tmp_path, "init", str(repo))
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "-b", "child")
+    (repo / "child.txt").write_text("child\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "child")
+    child = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "-b", "integration", base)
+    task = {
+        "metadata": {
+            "coordination": {
+                "phase": "integration",
+                "child_outputs": [
+                    {
+                        "task_id": "child-task",
+                        "status": "ready",
+                        "executor_evidence_id": "ev-child",
+                        "repo": {"head_sha": child},
+                    }
+                ],
+            }
+        }
+    }
+
+    failed = te._cooperative_integration_check(task, repo)
+    assert failed["status"] == "fail"
+    assert "not an ancestor" in failed["problems"][0]
+
+    _git(repo, "merge", "--no-ff", "child", "-m", "integrate child")
+    passed = te._cooperative_integration_check(task, repo)
+    assert passed["status"] == "pass"
+    assert passed["verified_child_evidence_ids"] == ["ev-child"]
+
+    task["metadata"]["coordination"]["child_outputs"].append(
+        {"task_id": "missing-child", "status": "missing_evidence"}
+    )
+    missing = te._cooperative_integration_check(task, repo)
+    assert missing["status"] == "fail"
+    assert any("missing-child" in problem for problem in missing["problems"])
 
 
 # ---------------------------------------------------------------------------

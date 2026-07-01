@@ -485,6 +485,18 @@ class WorkflowRuntime:
         one caller advances the run, no duplicate task gets spawned, no
         orphaned history row gets written.
         """
+        # Always arbitrate against the current durable run.  A terminal event
+        # from an older node must not advance (or finish) a run that has
+        # already moved on, and callers that observe an in-flight reservation
+        # simply leave its owner to finish the transition.
+        run = self.get_run(run.id)
+        if run.state in WORKFLOW_TERMINAL_STATES:
+            return run
+        if str(run.current_node_key or "").startswith("__workflow_advancing__:"):
+            return run
+        if task_id is not None and run.current_task_id != task_id:
+            return run
+
         definition = run.definition_snapshot
         edge = self._pick_edge(definition, from_key, condition)
         if edge is None and condition != "success":
@@ -506,8 +518,20 @@ class WorkflowRuntime:
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
                         updated_at = ?, completed_at = ?
                     WHERE id = ? AND state = ?
+                      AND COALESCE(current_node_key, '') = ?
+                      AND COALESCE(current_task_id, '') = ?
+                      AND updated_at = ?
                     """,
-                    (final_state, now, now, run.id, WorkflowState.RUNNING.value),
+                    (
+                        final_state,
+                        now,
+                        now,
+                        run.id,
+                        WorkflowState.RUNNING.value,
+                        run.current_node_key or "",
+                        run.current_task_id or "",
+                        run.updated_at,
+                    ),
                 )
                 if cur.rowcount == 0:
                     return self.get_run(run.id)
@@ -553,8 +577,20 @@ class WorkflowRuntime:
                     SET state = ?, current_node_key = NULL, current_task_id = NULL,
                         updated_at = ?, completed_at = ?
                     WHERE id = ? AND state = ?
+                      AND COALESCE(current_node_key, '') = ?
+                      AND COALESCE(current_task_id, '') = ?
+                      AND updated_at = ?
                     """,
-                    (WorkflowState.FAILED.value, now, now, run.id, WorkflowState.RUNNING.value),
+                    (
+                        WorkflowState.FAILED.value,
+                        now,
+                        now,
+                        run.id,
+                        WorkflowState.RUNNING.value,
+                        run.current_node_key or "",
+                        run.current_task_id or "",
+                        run.updated_at,
+                    ),
                 )
                 if cur.rowcount == 0:
                     return self.get_run(run.id)
@@ -590,6 +626,35 @@ class WorkflowRuntime:
             if isinstance(run.context, dict)
             else None
         )
+        # Reserve with an explicit sentinel, not just a timestamp.  A caller
+        # that starts after this compare-and-swap can distinguish an in-flight
+        # advancement from an ordinary fresh run and cannot reserve it again.
+        prior_node_key = run.current_node_key
+        prior_task_id = run.current_task_id
+        reservation_at = utcnow()
+        reservation_token = "__workflow_advancing__:%s" % new_id("wfr")
+        with self.store.transaction() as conn:
+            reserved = conn.execute(
+                """
+                UPDATE workflow_runs
+                SET current_node_key = ?, updated_at = ?
+                WHERE id = ? AND state = ?
+                  AND COALESCE(current_node_key, '') = ?
+                  AND COALESCE(current_task_id, '') = ?
+                  AND updated_at = ?
+                """,
+                (
+                    reservation_token,
+                    reservation_at,
+                    run.id,
+                    WorkflowState.RUNNING.value,
+                    run.current_node_key or "",
+                    prior_task_id or "",
+                    run.updated_at,
+                ),
+            )
+        if reserved.rowcount == 0:
+            return self.get_run(run.id)
         # wf-03: if the target is a pre-decided approval node (or the
         # start of a chain of pre-decided ones), skip past them in the
         # same transaction. Returns the first non-skipped node, or None
@@ -616,7 +681,7 @@ class WorkflowRuntime:
                         SET state = ?, current_node_key = NULL,
                             current_task_id = NULL, updated_at = ?,
                             completed_at = ?
-                        WHERE id = ? AND state = ?
+                        WHERE id = ? AND state = ? AND current_node_key = ?
                         """,
                         (
                             WorkflowState.COMPLETED.value,
@@ -624,49 +689,73 @@ class WorkflowRuntime:
                             now,
                             run.id,
                             WorkflowState.RUNNING.value,
+                            reservation_token,
                         ),
                     )
                     return self.get_run(run.id)
                 target = spawn_target
-        # Spawn the next task BEFORE the transaction (because create_task
-        # opens its own transaction and SQLite cannot nest). If the
-        # subsequent guarded UPDATE finds the run has moved on, we cancel
-        # the freshly-spawned task to avoid an orphan.
         plan_payloads = (
             (run.context or {}).get("plan_payloads")
             if isinstance(run.context, dict)
             else None
         )
-        new_task = self._spawn_node_task(
-            run.id,
-            target,
-            workflow=None,
-            started_by=run.started_by,
-            tenant_id=run.tenant_id,
-            attempt=prior_attempts + 1,
-            role_snapshots=definition.get("role_snapshots") if isinstance(definition, dict) else None,
-            pre_decisions=pre_decisions,
-            plan_payloads=plan_payloads,
-            run_input=run.input if isinstance(run.input, dict) else None,
-        )
+        try:
+            new_task = self._spawn_node_task(
+                run.id,
+                target,
+                workflow=None,
+                started_by=run.started_by,
+                tenant_id=run.tenant_id,
+                attempt=prior_attempts + 1,
+                role_snapshots=definition.get("role_snapshots")
+                if isinstance(definition, dict)
+                else None,
+                pre_decisions=pre_decisions,
+                plan_payloads=plan_payloads,
+                run_input=run.input if isinstance(run.input, dict) else None,
+            )
+        except Exception:
+            self.store.execute(
+                """
+                UPDATE workflow_runs
+                SET current_node_key = ?, updated_at = ?
+                WHERE id = ? AND current_node_key = ? AND updated_at = ?
+                """,
+                (
+                    prior_node_key,
+                    run.updated_at,
+                    run.id,
+                    reservation_token,
+                    reservation_at,
+                ),
+            )
+            raise
+        finalized_at = utcnow()
+        reservation_lost = False
         with self.store.transaction() as conn:
             cur = conn.execute(
                 """
                 UPDATE workflow_runs
                 SET current_node_key = ?, current_task_id = ?, updated_at = ?
                 WHERE id = ? AND state = ?
+                  AND current_node_key = ?
+                  AND COALESCE(current_task_id, '') = ?
+                  AND updated_at = ?
                 """,
-                (target["node_key"], new_task.id, now, run.id, WorkflowState.RUNNING.value),
+                (
+                    target["node_key"],
+                    new_task.id,
+                    finalized_at,
+                    run.id,
+                    WorkflowState.RUNNING.value,
+                    reservation_token,
+                    prior_task_id or "",
+                    reservation_at,
+                ),
             )
             if cur.rowcount == 0:
-                # Another _advance won the race. Cancel our spawn outside
-                # the transaction (also opens its own tx).
-                orphan_task_id = new_task.id
-                # We can't call self.cp.transition_task from inside the
-                # current tx; mark for cleanup after we exit.
-                cleanup_orphan = True
+                reservation_lost = True
             else:
-                cleanup_orphan = False
                 next_seq = self._next_history_seq(run.id)
                 conn.execute(
                     """
@@ -685,19 +774,17 @@ class WorkflowRuntime:
                         new_task.id,
                         prior_attempts + 1,
                         json_dumps({"reason": "advance"}),
-                        now,
-                    ),
+                        finalized_at,
+                    )
                 )
-        if cleanup_orphan:
-            try:
-                self.cp.transition_task(
-                    orphan_task_id,
-                    TaskState.CANCELLED.value,
-                    "workflow_runtime",
-                    {"reason": "advance_race_orphan"},
-                )
-            except Exception:
-                pass
+        if reservation_lost:
+            self._transition_task(
+                new_task.id,
+                TaskState.CANCELLED.value,
+                "workflow_runtime",
+                {"reason": "advancement_reservation_lost"},
+            )
+            raise TransitionError("workflow advancement reservation was lost")
         return self.get_run(run.id)
 
     def _spawn_node_task(

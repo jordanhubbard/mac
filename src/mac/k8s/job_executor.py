@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
@@ -229,10 +230,33 @@ def _run_one_review(
             error="MAC_TASK_ID and MAC_REVIEW_ID are required for review mode",
         )
 
-    mac, executor = _resolve_mac_and_executor(env, mac, executor)
+    if mac is None:
+        mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
+        token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN", "")
+        mac = _default_mac_client(mac_url, token)
     task, early = _fetch_task_or_fail(mac, task_id, lease_id=None)
     if early is not None:
         return early
+    if executor is None:
+        try:
+            review_env = _prepare_canonical_review_environment(
+                mac,
+                env,
+                task_id=task_id,
+                review_id=review_id,
+                target_evidence_id=target_evidence_id,
+                reviewer_agent_id=agent_id,
+                task_detail=task,
+            )
+        except Exception as exc:  # noqa: BLE001 - checkout/preparation boundary
+            return JobExecutionResult(
+                status="no-evidence",
+                task_id=task_id,
+                lease_id=None,
+                returncode=None,
+                error="canonical review workspace preparation failed: %s" % exc,
+            )
+        executor = _default_subprocess_executor(review_env)
 
     try:
         exec_result, duration_ms = _execute_timed(executor, task)
@@ -324,6 +348,66 @@ def _run_one_review(
         duration_ms=duration_ms,
         stdout_sha256=exec_result.stdout_sha256,
     )
+
+
+def _prepare_canonical_review_environment(
+    mac: Any,
+    env: Dict[str, str],
+    *,
+    task_id: str,
+    review_id: str,
+    target_evidence_id: str,
+    reviewer_agent_id: str,
+    task_detail: JsonDict,
+) -> Dict[str, str]:
+    """Materialize the exact executor evidence and checkout for a review Job."""
+    from mac.worker import MacWorker
+
+    workspace_root = Path(
+        env.get("MAC_REVIEW_WORKSPACE_ROOT") or "/tmp/mac-review-workspaces"
+    )
+    preparer = MacWorker(
+        mac,
+        reviewer_agent_id,
+        workspace_root,
+        lambda *_args: None,
+        agentbus_control_enabled=False,
+        attestation_key=env.get("MAC_AGENT_ATTESTATION_KEY")
+        or env.get("MAC_ATTESTATION_KEY"),
+    )
+    task_dir = preparer._prepare_review_workspace(
+        task_id,
+        review_id,
+        target_evidence_id,
+        task_detail,
+        {"id": "k8s-review-%s" % review_id},
+        {
+            "claim": {
+                "review_id": review_id,
+                "reviewer_agent_id": reviewer_agent_id,
+                "executor_evidence_id": target_evidence_id,
+            }
+        },
+    )
+    task_payload = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+    review_task = task_payload.get("task", task_payload)
+    runtime = (
+        (review_task.get("metadata") or {}).get("runtime")
+        if isinstance(review_task, dict)
+        else None
+    )
+    prepared = dict(env)
+    prepared["MAC_TASK_WORKSPACE"] = str(task_dir)
+    prepared["MAC_TASK_FILE"] = str(task_dir / "task.json")
+    prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] = str(
+        task_dir / "mac-evidence.json"
+    )
+    prepared["MAC_WORKER_AGENT_ID"] = reviewer_agent_id
+    if prepared.get("MAC_AGENT_ATTESTATION_KEY"):
+        prepared["MAC_ATTESTATION_KEY"] = prepared["MAC_AGENT_ATTESTATION_KEY"]
+    if isinstance(runtime, dict) and runtime.get("repository_worktree"):
+        prepared["MAC_TASK_REPO_WORKTREE"] = str(runtime["repository_worktree"])
+    return prepared
 
 
 def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _ExecResult]:

@@ -14,6 +14,7 @@ import pytest
 from mac.k8s.job_executor import (
     DEFAULT_EVIDENCE_MANIFEST_PATH,
     JobExecutionResult,
+    _prepare_canonical_review_environment,
     _default_subprocess_executor,
     _ExecResult,
     _read_verification_manifest,
@@ -230,6 +231,49 @@ def test_review_mode_executor_exception_blocks_task_without_evidence() -> None:
     assert blocked_post["body"]["detail"]["reason"] == "review_executor_exception"
     assert blocked_post["body"]["detail"]["review_id"] == "review-1"
     assert blocked_post["body"]["detail"]["manual_repair_required"] is True
+
+
+def test_canonical_review_environment_materializes_exact_evidence(tmp_path: Path) -> None:
+    mac = _FakeMac()
+    detail = {
+        "task": {"id": "task-1", "title": "review me", "metadata": {}},
+        "evidence": [
+            {
+                "id": "ev-target",
+                "task_id": "task-1",
+                "metadata": {
+                    "verification": {
+                        "schema": "mac.worker_evidence.v1",
+                        "status": "complete",
+                        "evidence_type": "operator_result",
+                        "summary": "planned result",
+                    }
+                },
+            }
+        ],
+    }
+    prepared = _prepare_canonical_review_environment(
+        mac,
+        {
+            "MAC_REVIEW_WORKSPACE_ROOT": str(tmp_path),
+            "MAC_AGENT_ATTESTATION_KEY": "review-secret",
+        },
+        task_id="task-1",
+        review_id="review-1",
+        target_evidence_id="ev-target",
+        reviewer_agent_id="reviewer-1",
+        task_detail=detail,
+    )
+
+    workspace = Path(prepared["MAC_TASK_WORKSPACE"])
+    assert json.loads((workspace / "executor-evidence.json").read_text())["id"] == "ev-target"
+    task = json.loads((workspace / "task.json").read_text())["task"]
+    assert task["metadata"]["review_context"]["executor_evidence_id"] == "ev-target"
+    assert prepared["MAC_TASK_FILE"] == str(workspace / "task.json")
+    assert prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] == str(
+        workspace / "mac-evidence.json"
+    )
+    assert prepared["MAC_ATTESTATION_KEY"] == "review-secret"
 
 
 def test_get_task_failure_aborts_cleanly() -> None:

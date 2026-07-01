@@ -1505,7 +1505,7 @@ def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claim
     assert "workflow.default_review.nudge_capped" in names
 
 
-def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
+def test_default_review_rejects_prior_owner_for_newer_retry_evidence(cp):
     from tests.conftest import submit_review_verdict
 
     alpha = register_agent(cp, "alpha", ["python", "review"])
@@ -1537,7 +1537,7 @@ def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
 
     cp.claim_task(task.id, beta.id)
     cp.start_task(task.id, beta.id)
-    retry_evidence = cp.add_evidence(
+    cp.add_evidence(
         task.id,
         "log",
         "artifact://attempt-2",
@@ -1552,13 +1552,9 @@ def test_default_review_allows_prior_owner_to_review_newer_retry_evidence(cp):
     cp.submit_for_review(task.id, beta.id)
 
     retry_review = cp.advance_default_review_workflow(task.id)
-    assert retry_review["status"] == "waiting_for_reviewer_verdict"
-    assert retry_review["reviewer_agent_id"] == alpha.id
-    submit_review_verdict(cp, task.id, alpha.id, retry_evidence.id)
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "published"
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert retry_review["status"] == "waiting_for_reviewer"
+    assert not retry_review.get("reviewer_agent_id")
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
 
 
 def test_request_review_refuses_latest_evidence_author(cp):
@@ -2227,7 +2223,6 @@ def test_default_reviewer_requires_review_capability(cp):
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_reviewer"
     assert cp.list_reviews(task.id) == []
-
     # Once a `review`-capable agent comes online, the workflow advances.
     real_reviewer = register_agent(cp, "real-reviewer", ["review"])
     waiting = cp.advance_default_review_workflow(task.id)
@@ -2539,6 +2534,8 @@ def test_default_reviewer_refuses_same_persona_as_executor(cp):
     # persona — the workflow must refuse to draft them.
     assert result["status"] == "waiting_for_reviewer"
     assert cp.list_reviews(task.id) == []
+    with pytest.raises(AuthorizationError, match="same persona"):
+        cp.request_review(task.id, peer.id, actor="manual")
 
 
 def test_default_review_refuses_reviewer_from_different_tenant(cp):
@@ -2733,6 +2730,8 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp):
         worker.id,
         metadata=verified_repo_metadata(cp, worker.id, head_sha="fedcba9876543210fedcba9876543210fedcba98"),
     )
+    cp.transition_task(task.id, TaskState.RUNNING.value, "test-retry")
+    cp.transition_task(task.id, TaskState.NEEDS_REVIEW.value, "test-retry")
 
     waiting_again = cp.advance_default_review_workflow(task.id)
     assert waiting_again["status"] == "waiting_for_reviewer_verdict"
@@ -5625,7 +5624,6 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
     must not both spawn a next-node task. The guarded UPDATE in _advance
     ensures only the first caller proceeds; the second one observes
     rowcount=0 and exits without writing history."""
-    from tests.conftest import bind_soul as _bs
     cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
     cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
     cp.workflows.create_workflow(
@@ -5636,7 +5634,7 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
         definition={
             "nodes": [
                 {"node_key": "a", "node_type": "task", "role_required": "qa", "max_attempts": 1},
-                {"node_key": "b", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+                {"node_key": "b", "node_type": "task", "role_required": "dev", "max_attempts": 5},
             ],
             "edges": [
                 {"from_node_key": "", "to_node_key": "a", "condition": "success", "priority": 100},
@@ -5646,32 +5644,99 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
         created_by="human",
     )
     run = cp.workflow_runtime.start_run("race-wf", started_by="ops")
-    machine = cp.register_machine("h")
-    qa_soul = _bs(cp, persona_name="qa", allowed_role_slugs=["qa"])
-    qa_agent = cp.register_agent(machine.id, "qa1", capabilities=["python", "qa"], hermes_instance_id=qa_soul)
-    cp.roles.assign_role(qa_agent.id, "qa")
-    first_task = cp.get_task(run.current_task_id)
-    cp.claim_task(first_task.id, qa_agent.id)
-    cp.start_task(first_task.id, qa_agent.id)
+    start = threading.Barrier(2)
+    errors = []
 
-    # Simulate a race: two callers invoke _advance with the SAME completed
-    # task. The first wins, the second's guarded UPDATE finds the run
-    # has moved on and exits cleanly.
-    cp.transition_task(first_task.id, TaskState.FAILED.value, qa_agent.id)
-    # At this point, the runtime advanced once via on_task_completed.
-    # Calling _advance again directly should be a no-op.
-    cp.workflow_runtime._advance(
-        cp.workflow_runtime.get_run(run.id), "a", "failure", first_task.id
+    def advance() -> None:
+        try:
+            start.wait(timeout=5)
+            cp.workflow_runtime._advance(
+                run, "a", "failure", run.current_task_id
+            )
+        except Exception as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+
+    threads = [threading.Thread(target=advance) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    spawned = cp.store.query_all(
+        "SELECT id, state FROM tasks WHERE workflow_run_id = ? AND workflow_node_key = ?",
+        (run.id, "b"),
     )
+    assert len(spawned) == 1
+    assert cp.workflow_runtime.get_run(run.id).current_task_id == spawned[0]["id"]
 
     history = cp.store.query_all(
         "SELECT to_node_key FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
         (run.id,),
     )
-    # Expect: start (to=a), then advance to b, then either a refused or
-    # a cancellation. Critically, we must not see two spawns of `b`.
     b_spawns = sum(1 for r in history if r["to_node_key"] == "b")
-    assert b_spawns <= 1, f"workflow spawned {b_spawns} `b` tasks, expected <= 1"
+    assert b_spawns == 1
+
+
+def test_workflow_advance_reservation_blocks_staggered_caller(cp, monkeypatch):
+    cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(slug="dev", name="dev", description="d", system_prompt="p", level="ic")
+    cp.workflows.create_workflow(
+        slug="staggered-race-wf",
+        name="staggered race",
+        description="d",
+        workflow_type="bug",
+        definition={
+            "nodes": [
+                {"node_key": "a", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {"node_key": "b", "node_type": "task", "role_required": "dev", "max_attempts": 5},
+            ],
+            "edges": [
+                {"from_node_key": "", "to_node_key": "a", "condition": "success", "priority": 100},
+                {"from_node_key": "a", "to_node_key": "b", "condition": "success", "priority": 100},
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run("staggered-race-wf", started_by="ops")
+    entered = threading.Event()
+    release = threading.Event()
+    original_spawn = cp.workflow_runtime._spawn_node_task
+
+    def delayed_spawn(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", delayed_spawn)
+    errors = []
+
+    def advance() -> None:
+        try:
+            cp.workflow_runtime._advance(run, "a", "success", run.current_task_id)
+        except Exception as exc:  # pragma: no cover - assertion below reports it
+            errors.append(exc)
+
+    thread = threading.Thread(target=advance)
+    thread.start()
+    assert entered.wait(timeout=5)
+    reserved = cp.workflow_runtime.get_run(run.id)
+    assert reserved.current_node_key.startswith("__workflow_advancing__:")
+
+    observed = cp.workflow_runtime._advance(
+        reserved, "a", "success", run.current_task_id
+    )
+    assert observed.current_node_key == reserved.current_node_key
+    release.set()
+    thread.join(timeout=10)
+
+    assert not errors
+    spawned = cp.store.query_all(
+        "SELECT id FROM tasks WHERE workflow_run_id = ? AND workflow_node_key = ?",
+        (run.id, "b"),
+    )
+    assert len(spawned) == 1
+    assert cp.workflow_runtime.get_run(run.id).current_task_id == spawned[0]["id"]
 
 
 
@@ -7457,6 +7522,217 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
 
     assert publication.target == "gitea://merge-request"
     assert completed.state == "completed"
+
+
+def test_historical_approval_cannot_complete_a_later_attempt(cp):
+    from tests.conftest import submit_review_verdict
+
+    executor = register_agent(cp, "attempt-executor", capabilities=["python"])
+    reviewer = register_agent(cp, "attempt-reviewer", capabilities=["review"])
+    task = cp.create_task("attempt-bound review", max_attempts=3)
+
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    first_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://attempt-one",
+        "first attempt",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id, files_changed=["one.py"]),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    first_review = cp.request_review(task.id, reviewer.id)
+    first_verdict = submit_review_verdict(
+        cp, task.id, reviewer.id, first_evidence.id
+    )
+    cp.submit_review(
+        first_review.id,
+        ReviewStatus.APPROVED.value,
+        reviewer.id,
+        evidence_id=first_verdict,
+    )
+
+    cp.transition_task(task.id, TaskState.OPEN.value, "operator", {"reason": "rework"})
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    second_evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://attempt-two",
+        "second attempt",
+        executor.id,
+        metadata=verified_repo_metadata(
+            cp,
+            executor.id,
+            files_changed=["two.py"],
+            head_sha="fedcba9876543210fedcba9876543210fedcba98",
+        ),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    second_review = cp.request_review(task.id, reviewer.id)
+
+    with pytest.raises(ValidationError, match="stale executor evidence"):
+        cp.submit_review(
+            second_review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=first_verdict,
+        )
+    with pytest.raises(ValidationError, match="completion requires approved review"):
+        cp.transition_task(task.id, TaskState.COMPLETED.value, "operator")
+
+    assert cp.get_task(task.id).metadata["review_target"]["executor_evidence_id"] == second_evidence.id
+    assert cp.get_review(second_review.id).status == ReviewStatus.PENDING.value
+
+
+def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_path):
+    from mac.task_executor import build_task_prompt
+    from tests.conftest import submit_review_verdict
+
+    planner = register_agent(cp, "planner", capabilities=["python"])
+    child_one_agent = register_agent(cp, "child-one", capabilities=["python"])
+    child_two_agent = register_agent(cp, "child-two", capabilities=["python"])
+    integrator = register_agent(cp, "integrator", capabilities=["python"])
+    reviewer = register_agent(cp, "coord-reviewer", capabilities=["review"])
+    parent = cp.create_task(
+        "Implement coordinated feature",
+        required_capabilities=["python"],
+        max_attempts=3,
+    )
+    cp.claim_task(parent.id, planner.id)
+    cp.start_task(parent.id, planner.id)
+    split = cp.add_child_tasks(
+        parent.id,
+        [
+            {"title": "Implement component one"},
+            {"title": "Implement component two"},
+        ],
+        actor=planner.id,
+    )
+    child_one, child_two = [cp.get_task(item["id"]) for item in split["children"]]
+
+    assert not cp._agent_available_for(planner, child_one)
+    assert cp._agent_available_for(child_one_agent, child_one)
+    cp.claim_task(child_one.id, child_one_agent.id)
+    assert not cp._agent_available_for(child_one_agent, child_two)
+    assert cp._agent_available_for(child_two_agent, child_two)
+
+    def complete_child(task, agent, head_sha, changed_file):
+        cp.start_task(task.id, agent.id)
+        evidence = cp.add_evidence(
+            task.id,
+            "log",
+            "artifact://%s" % task.id,
+            "completed %s" % task.title,
+            agent.id,
+            metadata=verified_repo_metadata(
+                cp,
+                agent.id,
+                head_sha=head_sha,
+                files_changed=[changed_file],
+            ),
+        )
+        cp.submit_for_review(task.id, agent.id)
+        review = cp.request_review(task.id, reviewer.id)
+        verdict = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+        cp.submit_review(
+            review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=verdict,
+        )
+        cp.transition_task(task.id, TaskState.COMPLETED.value, reviewer.id)
+        return evidence
+
+    first_evidence = complete_child(
+        child_one,
+        child_one_agent,
+        "abcdef1234567890abcdef1234567890abcdef12",
+        "src/one.py",
+    )
+    cp.claim_task(child_two.id, child_two_agent.id)
+    second_evidence = complete_child(
+        child_two,
+        child_two_agent,
+        "fedcba9876543210fedcba9876543210fedcba98",
+        "src/two.py",
+    )
+
+    cp._unblock_ready_tasks()
+    integration_task = cp.get_task(parent.id)
+    assert integration_task.state == TaskState.OPEN.value
+    coordination = integration_task.metadata["coordination"]
+    assert coordination["phase"] == "integration"
+    output_ids = {
+        item["executor_evidence_id"] for item in coordination["child_outputs"]
+    }
+    assert output_ids == {first_evidence.id, second_evidence.id}
+    assert cp._cooperative_review_integration_problems(integration_task, {})
+    assert cp._cooperative_review_integration_problems(
+        integration_task,
+        {
+            "integration": {
+                "status": "pass",
+                "required_child_evidence_ids": sorted(output_ids),
+                "verified_child_evidence_ids": sorted(output_ids),
+            }
+        },
+    ) == []
+    assert not cp._agent_available_for(planner, integration_task)
+    assert not cp._agent_available_for(child_one_agent, integration_task)
+    assert not cp._agent_available_for(child_two_agent, integration_task)
+    assert cp._agent_available_for(integrator, integration_task)
+
+    prompt = build_task_prompt(integration_task.to_dict(), tmp_path / "task.json")
+    assert "mandatory fan-in pass" in prompt
+    assert "refs/heads" in prompt
+    assert first_evidence.id in prompt and second_evidence.id in prompt
+
+
+def test_cooperative_child_claims_atomically_enforce_distinct_agents(cp, monkeypatch):
+    planner = register_agent(cp, "atomic-planner", capabilities=["python"])
+    shared_agent = register_agent(cp, "atomic-shared", capabilities=["python"])
+    parent = cp.create_task(
+        "Atomically coordinate children",
+        required_capabilities=["python"],
+    )
+    cp.claim_task(parent.id, planner.id)
+    cp.start_task(parent.id, planner.id)
+    split = cp.add_child_tasks(
+        parent.id,
+        [{"title": "Atomic child one"}, {"title": "Atomic child two"}],
+        actor=planner.id,
+    )
+    child_ids = [item["id"] for item in split["children"]]
+    barrier = threading.Barrier(2)
+    original_available = cp._agent_available_for
+
+    def synchronized_available(agent, task):
+        available = original_available(agent, task)
+        barrier.wait(timeout=5)
+        return available
+
+    monkeypatch.setattr(cp, "_agent_available_for", synchronized_available)
+    claimed = []
+    errors = []
+
+    def claim(child_id):
+        try:
+            claimed.append(cp.claim_task(child_id, shared_agent.id)[0].id)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=claim, args=(child_id,)) for child_id in child_ids]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert len(claimed) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValidationError)
+    assert "already participated" in str(errors[0])
 
 
 def test_create_task_filters_disallowed_capabilities_to_metadata(cp):

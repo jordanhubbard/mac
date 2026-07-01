@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Review-verdict executor that delegates the review to opencode's `review`
-# agent. Mirrors mac-task-executor-codex-review: builds a verdict manifest
-# (mac.worker_evidence.v1, evidence_type=review_verdict) and signs via
-# `mac-evidence sign`. NO inline HMAC.
+# Review-verdict executor that delegates semantic review to opencode's
+# `review` agent, then passes the result through MAC's canonical deterministic
+# finalizer for exact-checkout tests, CodeGraph, integration checks, and signing.
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"
@@ -11,7 +10,7 @@ MAC_AGENT_ID="${MAC_AGENT_ID:-mac-task-runner}"
 MAC_AGENT_ROLE="${MAC_AGENT_ROLE:-}"
 MAC_URL="${MAC_URL:-}"
 MAC_WORKER_TOKEN="${MAC_WORKER_TOKEN:-}"
-ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-}"
+ATTESTATION_KEY="${MAC_AGENT_ATTESTATION_KEY:-${MAC_ATTESTATION_KEY:-}}"
 REVIEW_TARGET="${MAC_REVIEW_TARGET_EVIDENCE_ID:-pending-resolution-by-opencode-runner}"
 EVIDENCE_PATH="${MAC_TASK_EVIDENCE_MANIFEST_PATH:-/tmp/mac-evidence.json}"
 
@@ -26,7 +25,7 @@ mkdir -p "${HOME}/.local" "${XDG_CONFIG_HOME}/opencode" "${XDG_DATA_HOME}" "${XD
 OPENCODE_CONFIG_SRC="${MAC_OPENCODE_CONFIG_PATH:-/etc/opencode/opencode.json}"
 OPENCODE_CONFIG_DST="${XDG_CONFIG_HOME}/opencode/opencode.json"
 if [ -f "${OPENCODE_CONFIG_SRC}" ]; then
-    cp "${OPENCODE_CONFIG_SRC}" "${OPENCODE_CONFIG_DST}"
+    cp -f "${OPENCODE_CONFIG_SRC}" "${OPENCODE_CONFIG_DST}"
 else
     echo "[opencode-review] WARNING: opencode config not found at ${OPENCODE_CONFIG_SRC}" >&2
 fi
@@ -68,22 +67,11 @@ echo "EVIDENCE_PATH:    ${EVIDENCE_PATH}"
 if [ -n "${ATTESTATION_KEY}" ]; then
     echo "MAC_AGENT_ATTESTATION_KEY: <present>"
 else
-    echo "MAC_AGENT_ATTESTATION_KEY: <unset> (verdict will be unsigned)"
+    echo "MAC_AGENT_ATTESTATION_KEY/MAC_ATTESTATION_KEY: <unset>"
 fi
 echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
 
-if command -v mac-evidence >/dev/null 2>&1; then
-    MAC_EVIDENCE_CMD=("mac-evidence")
-else
-    MAC_EVIDENCE_PY="${MAC_EVIDENCE_PYTHON:-$(command -v python3 || command -v python || true)}"
-    if [ -z "${MAC_EVIDENCE_PY}" ]; then
-        echo "[FATAL] mac-evidence is not on PATH and no python interpreter is available" >&2
-        exit 3
-    fi
-    MAC_EVIDENCE_CMD=("${MAC_EVIDENCE_PY}" "-m" "mac.evidence_cli")
-fi
-
-PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET})"
+PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET}). Perform a semantic code review independently. Read ${MAC_TASK_WORKSPACE:-/tmp}/executor-task.json and ${MAC_TASK_WORKSPACE:-/tmp}/executor-evidence.json. If a repository checkout is present at ${MAC_TASK_REPO_WORKTREE:-<none>}, inspect the exact checked-out commit. Return a fenced JSON object with verdict=approved or rejected, summary, feedback, and findings. Passing tests never require you to approve a semantic defect."
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
     task_json="$(curl -fsS --config - \
         "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
@@ -91,15 +79,22 @@ header = "Authorization: Bearer ${MAC_WORKER_TOKEN}"
 CURL
 )"
     if [ -n "${task_json}" ]; then
-        PROMPT="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
+        task_context="$(printf '%s' "${task_json}" | python3 -c 'import json,sys
 d=json.load(sys.stdin)
-print("Review task: %s\n\n%s" % (d.get("title","") or "", d.get("description","") or ""))' || echo "${PROMPT}")"
+task=d.get("task") if isinstance(d.get("task"),dict) else d
+print("Task title: %s\n\nTask description:\n%s" % (task.get("title","") or "", task.get("description","") or ""))' || true)"
+        if [ -n "${task_context}" ]; then
+            PROMPT="${PROMPT}
+
+${task_context}"
+        fi
     fi
 fi
 
 opencode_stdout="$(mktemp)"
+review_cwd="${MAC_TASK_REPO_WORKTREE:-${MAC_TASK_WORKSPACE:-$PWD}}"
 set +e
-opencode run --agent review --format json "${PROMPT}" > "${opencode_stdout}" 2>&1
+(cd "${review_cwd}" && opencode run --agent review --format json "${PROMPT}") > "${opencode_stdout}" 2>&1
 opencode_rc=$?
 set -e
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -222,7 +217,7 @@ worktree_digest = "sha256:" + hashlib.sha256(digest_input.encode("utf-8")).hexdi
 status = "complete"
 result = "review_completed"
 returncode = 0
-checks = [{"name": "review_completed", "status": "pass", "returncode": 0}]
+checks = [{"name": "semantic_review", "status": "pass", "returncode": 0}]
 
 # On infrastructure failure (manifest can't be written) we exit nonzero below.
 manifest = {
@@ -249,7 +244,7 @@ manifest = {
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
     "checks": checks,
-    "notes": "opencode review executor; signing handled by mac-evidence sign.",
+    "notes": "opencode semantic review; canonical finalization and signing follow.",
 }
 try:
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -259,16 +254,24 @@ except Exception as exc:
     sys.exit(5)
 PYEOF
 
-if [ -n "${ATTESTATION_KEY}" ]; then
-    "${MAC_EVIDENCE_CMD[@]}" sign \
-        --manifest "${tmp_path}" \
-        --key-env MAC_AGENT_ATTESTATION_KEY \
-        --signed-by "${MAC_AGENT_ID}"
-    mv "${tmp_path}" "${EVIDENCE_PATH}"
-    echo "[opencode-review] manifest signed -> ${EVIDENCE_PATH}"
-else
-    mv "${tmp_path}" "${EVIDENCE_PATH}"
-    echo "[opencode-review] manifest unsigned -> ${EVIDENCE_PATH}"
+mv "${tmp_path}" "${EVIDENCE_PATH}"
+if [ -z "${ATTESTATION_KEY}" ]; then
+    echo "[opencode-review] FATAL: MAC_AGENT_ATTESTATION_KEY is required" >&2
+    rm -f "${opencode_stdout}"
+    exit 4
 fi
+if [ -z "${MAC_TASK_WORKSPACE:-}" ] || [ ! -f "${MAC_TASK_WORKSPACE}/task.json" ] || [ ! -f "${MAC_TASK_WORKSPACE}/executor-evidence.json" ]; then
+    echo "[opencode-review] FATAL: canonical review workspace is missing" >&2
+    rm -f "${opencode_stdout}"
+    exit 4
+fi
+export MAC_ATTESTATION_KEY="${ATTESTATION_KEY}"
+export MAC_WORKER_AGENT_ID="${MAC_AGENT_ID}"
+export MAC_TASK_FILE="${MAC_TASK_FILE:-${MAC_TASK_WORKSPACE}/task.json}"
+python3 -m mac.review_finalizer
+if [ "${EVIDENCE_PATH}" != "${MAC_TASK_WORKSPACE}/mac-evidence.json" ]; then
+    cp -f "${MAC_TASK_WORKSPACE}/mac-evidence.json" "${EVIDENCE_PATH}"
+fi
+echo "[opencode-review] canonical signed manifest -> ${EVIDENCE_PATH}"
 rm -f "${opencode_stdout}"
 exit 0

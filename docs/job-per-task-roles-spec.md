@@ -202,7 +202,7 @@ MAC_RUNNER_ROLE_AGENT_IDS: |
 MAC_RUNNER_ROLE_EXECUTORS: |
   {
     "python-coder":    "/usr/local/bin/mac-task-executor-codex",
-    "python-reviewer": "/usr/local/bin/mac-task-executor-codex-review"
+    "python-reviewer": "/usr/local/bin/mac-task-executor-opencode-review"
   }
 # Transitional: capability → role alias map. Lets Hermes tasks
 # created with required_capabilities=[python] route to the

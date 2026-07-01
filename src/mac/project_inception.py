@@ -305,17 +305,35 @@ def run_c26_project_inception_proof(
 
 def _register_c26_agents(cp: ControlPlane, hermes_instance_id: str) -> Dict[str, Any]:
     machine = cp.register_machine("c26-proof-host")
+    base_instance = cp.identity.get_hermes_instance(hermes_instance_id)
 
-    def agent(name: str, capabilities: Iterable[str]):
+    def agent(
+        name: str, capabilities: Iterable[str], *, use_base_instance: bool = False
+    ):
+        instance_id = hermes_instance_id
+        if not use_base_instance:
+            persona = cp.register_persona(
+                base_instance.tenant_id,
+                "%s persona" % name,
+                "hermes://c26/%s/SOUL.md" % name,
+                "hermes://c26/%s/memory" % name,
+            )
+            instance = cp.register_hermes_instance(
+                base_instance.tenant_id,
+                "%s-hermes" % name,
+                persona_id=persona.id,
+                home_ref="hermes://c26/%s" % name,
+            )
+            instance_id = instance.id
         return cp.register_agent(
             machine.id,
             name,
             capabilities=capabilities,
-            hermes_instance_id=hermes_instance_id,
+            hermes_instance_id=instance_id,
         )
 
     return {
-        "planner": agent("c26-planner", ["planning", "python"]),
+        "planner": agent("c26-planner", ["planning", "python", "review"]),
         "reviewer": agent("c26-reviewer", ["review", "python"]),
         "architect": agent("c26-architect", ["c", "asm", "riscv", "qemu"]),
         "builder": agent("c26-build-engineer", ["c", "asm", "riscv", "qemu"]),
@@ -325,7 +343,9 @@ def _register_c26_agents(cp: ControlPlane, hermes_instance_id: str) -> Dict[str,
         "media": agent("c26-media-engineer", ["c", "graphics", "audio"]),
         "robot": agent("c26-robotics-engineer", ["c", "robotics"]),
         "integrator": agent("c26-integrator", ["c", "asm", "qemu", "demo"]),
-        "reporter": agent("c26-slack-reporter", ["slack", "demo"]),
+        "reporter": agent(
+            "c26-slack-reporter", ["slack", "demo"], use_base_instance=True
+        ),
     }
 
 

@@ -1361,6 +1361,11 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # `write` token can't flush every reviewable task to
         # COMPLETED on demand. mac-iez.
         return "admin"
+    if re.match(r"^/tasks/[^/]+/force-complete$", path):
+        # This endpoint deliberately bypasses the normal review/evidence gate.
+        # It is stronger than the default-review tick and therefore must never
+        # be available to an ordinary task writer.
+        return "admin"
     return "write"
 
 

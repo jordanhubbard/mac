@@ -29,8 +29,9 @@ This project provides durable contracts for coordinating a fleet:
 - Structured agent message bus that rejects arbitrary execution payloads.
 - Typed AgentBus streams for ordered agent-to-agent JSON, text, or base64
   content chunks with NDJSON tailing semantics.
-- Review and publication pipeline that requires typed evidence, independent
-  approved review, and publication hashes when policy requires them.
+- Review and publication pipeline that binds each approval to the current
+  executor evidence, requires an independent approved review of that exact
+  attempt, and records publication hashes when policy requires them.
 - Canonical durable task ledger (`mac task`) — a beads-equivalent that avoids the
   beads/dolt sync problems. `.tickets/<id>.md` is optional, gitignored local
   compatibility output for human/IDE viewing when a `.tickets/` directory already
@@ -285,7 +286,8 @@ For repository-backed work, the production path is:
    verification manifest. Repository work must report pushed/clean git state
    and passing checks before it can enter review.
 5. The default review workflow assigns a healthy reviewer-capable agent that
-   has not owned the task. For remote repositories it consults shared
+   has never owned the task or another task in the same cooperative work
+   family. For remote repositories it consults shared
    `fleet_learning:repository_access` memory: a recent successful clone is
    preferred, while a newer authentication or authorization failure makes that
    agent temporarily ineligible for the same project, host, and operation.
@@ -294,8 +296,10 @@ For repository-backed work, the production path is:
    record a secret-free success or failure learning. An authentication failure
    triggers immediate reviewer re-evaluation instead of repeating the same
    credential pattern.
-7. The workflow waits for signed `review_verdict` evidence and publishes only
-   after executor and reviewer evidence both verify. Review nudges are capped
+7. The workflow waits for signed `review_verdict` evidence targeting the
+   immutable executor evidence selected when the attempt entered review. The
+   semantic reviewer owns the verdict; independent build/test/CodeGraph checks
+   may veto an approval but cannot reverse a rejection. Review nudges are capped
    by durable delivered attempts, so a reviewer that cannot produce a verdict
    is retracted instead of being nudged indefinitely.
 8. Publication completes the mac task. Failed tasks are reopened with a bounded
@@ -331,6 +335,13 @@ into durable tasks:
   next task, or mark the run completed/failed/cancelled with append-only run
   history.
 - Default seed data exists for bug, feature, UI, and self-improvement flows.
+
+Workflow runs are deliberately single-current-node routing state machines, not
+parallel fan-out engines. Cooperative fan-out uses task children and
+dependencies: each child is assigned to a distinct executor, completed child
+evidence contributes immutable commit/ref inputs to the reopened parent, and a
+different integration executor must merge every exact child commit and
+verify the combined result before the parent can enter review.
 
 The REST API and CLI can create, import, seed, start, cancel, and tick workflow
 runs today, and `/dashboard/state` includes workflow-run summary data for UI

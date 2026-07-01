@@ -773,7 +773,10 @@ def build_review_job_spec(
     (pod template, secret env block) flows through the shared helpers.
     """
     role = _resolve_role_for_reviewer_agent(reviewer_agent_id, cfg)
-    executor_cmd = _resolve_executor_for_role(role, cfg)
+    # Review Jobs use one audited implementation across every role.  Role
+    # executor maps still select coding executors, but may not reintroduce the
+    # historical always-approve or no-checkout reviewer scripts.
+    executor_cmd = "/usr/local/bin/mac-task-executor-opencode-review"
     attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
     image = cfg.role_images.get(role) if role else None
     if not image:

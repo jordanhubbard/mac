@@ -607,6 +607,34 @@ def test_default_review_tick_requires_admin_not_write():
     assert allowed.status_code == 200
 
 
+def test_force_complete_requires_admin_not_write():
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={"writer": ["write"], "admin": ["admin"]},
+        )
+    )
+    task = client.post(
+        "/tasks",
+        headers={"Authorization": "Bearer writer"},
+        json={"title": "force-complete scope proof"},
+    ).json()
+    blocked = client.post(
+        "/tasks/%s/force-complete" % task["id"],
+        headers={"Authorization": "Bearer writer"},
+        json={"actor": "writer", "reason": "must not bypass review"},
+    )
+    assert blocked.status_code == 403
+
+    allowed = client.post(
+        "/tasks/%s/force-complete" % task["id"],
+        headers={"Authorization": "Bearer admin"},
+        json={"actor": "admin", "reason": "operator reconciliation"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["state"] == "completed"
+
+
 def test_dashboard_state_exposes_session_scope_capabilities():
     client = TestClient(
         create_app(

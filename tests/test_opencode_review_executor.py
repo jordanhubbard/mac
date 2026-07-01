@@ -42,7 +42,40 @@ def _run_review(tmp_path: Path, event_text: str):
         ),
         encoding="utf-8",
     )
-    evidence = tmp_path / "evidence.json"
+    evidence = tmp_path / "mac-evidence.json"
+    (tmp_path / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "schema": "mac.worker_evidence.v1",
+                        "status": "complete",
+                        "evidence_type": "operator_result",
+                        "summary": "executor result",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "task.json").write_text(
+        json.dumps(
+            {
+                "task": {
+                    "id": "review_rev_test",
+                    "owner_agent_id": "reviewer",
+                    "metadata": {
+                        "review_context": {
+                            "task_id": "task_test",
+                            "review_id": "rev_test",
+                            "executor_evidence_id": "ev_executor",
+                        }
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     env = os.environ.copy()
     env.update(
         {
@@ -53,6 +86,9 @@ def _run_review(tmp_path: Path, event_text: str):
             "MAC_AGENT_ID": "reviewer",
             "MAC_OPENCODE_CONFIG_PATH": str(cfg),
             "MAC_TASK_EVIDENCE_MANIFEST_PATH": str(evidence),
+            "MAC_TASK_WORKSPACE": str(tmp_path),
+            "MAC_TASK_FILE": str(tmp_path / "task.json"),
+            "MAC_AGENT_ATTESTATION_KEY": "reviewer-secret",
         }
     )
     result = subprocess.run(["bash", str(SCRIPT)], env=env, text=True, capture_output=True, timeout=30)
@@ -75,6 +111,7 @@ def test_opencode_review_rejected_event_stream(tmp_path: Path) -> None:
     assert manifest["llm_model"] == "inference-hub/reviewer-model"
     assert manifest["llm"]["model"] == "inference-hub/reviewer-model"
     assert manifest["worktree_digest"].startswith("sha256:")
+    assert manifest["signed_by"] == "reviewer"
 
 
 def test_opencode_review_approved_event_stream(tmp_path: Path) -> None:

@@ -1082,6 +1082,7 @@ class ControlPlane:
             transition_task=self.transition_task,
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
+            reviewer_independence_check=self._reviewer_independence_problem,
         )
         self.agent_state = AgentStateService(
             self.store,
@@ -3870,6 +3871,15 @@ class ControlPlane:
             child_metadata["relationships"] = relationships
             child_metadata.setdefault("parent_task_id", parent.id)
             child_metadata.setdefault("parent_task_title", parent.title)
+            coordination = ensure_json_object(child_metadata.get("coordination"))
+            coordination.update(
+                {
+                    "mode": "cooperative_child",
+                    "integration_task_id": parent.id,
+                    "require_distinct_agent": True,
+                }
+            )
+            child_metadata["coordination"] = coordination
             normalized_metadata = self._normalize_task_execution_contract(
                 child_metadata,
                 child_project,
@@ -3914,6 +3924,21 @@ class ControlPlane:
         )
         parent_relationships["blocked_by_task_ids"] = parent_dependencies
         parent_metadata["relationships"] = parent_relationships
+        parent_coordination = ensure_json_object(parent_metadata.get("coordination"))
+        parent_coordination.update(
+            {
+                "mode": "cooperative_integration",
+                "phase": "awaiting_children",
+                "child_task_ids": _unique_ordered(
+                    [
+                        *_metadata_string_list(parent_coordination.get("child_task_ids")),
+                        *child_ids,
+                    ]
+                ),
+                "require_distinct_agent": True,
+            }
+        )
+        parent_metadata["coordination"] = parent_coordination
 
         release_lease_id = parent.lease_id
         with self.store.transaction() as conn:
@@ -5378,11 +5403,30 @@ class ControlPlane:
         if task.state == target:
             return task
         validate_transition(task.state, target)
+        review_ready_evidence: Optional[Evidence] = None
         if target == TaskState.NEEDS_REVIEW.value:
-            self._require_review_ready(task)
+            review_ready_evidence = self._require_review_ready(task)
         if target == TaskState.COMPLETED.value and not self.reviews.completion_authorized(task_id):
             raise ValidationError("task completion requires approved review and evidence")
         now = utcnow()
+        updated_metadata: Optional[JsonDict] = None
+        if review_ready_evidence is not None:
+            updated_metadata = ensure_json_object(task.metadata)
+            updated_metadata["review_target"] = {
+                "executor_evidence_id": review_ready_evidence.id,
+                "attempt_count": task.attempt_count,
+                "recorded_at": now,
+            }
+        elif target in {
+            TaskState.OPEN.value,
+            TaskState.BLOCKED.value,
+            TaskState.RUNNING.value,
+            TaskState.FAILED.value,
+            TaskState.CANCELLED.value,
+        }:
+            candidate_metadata = ensure_json_object(task.metadata)
+            if candidate_metadata.pop("review_target", None) is not None:
+                updated_metadata = candidate_metadata
         owner_agent_id = task.owner_agent_id
         lease_id = task.lease_id
         leased_until = task.leased_until
@@ -5441,6 +5485,11 @@ class ControlPlane:
                         now,
                         task_id,
                     ),
+                )
+            if updated_metadata is not None:
+                conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(updated_metadata), now, task_id),
                 )
             if task.owner_agent_id and target in TERMINAL_TASK_STATES.union(
                 {TaskState.BLOCKED.value, TaskState.OPEN.value, TaskState.NEEDS_REVIEW.value}
@@ -5575,6 +5624,7 @@ class ControlPlane:
             and self._dependencies_satisfied(task)
             and not self._blocked_task_requires_manual_repair(task)
         ):
+            task = self._prepare_cooperative_integration_task(task)
             task = self.transition_task(task_id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
@@ -5599,7 +5649,44 @@ class ControlPlane:
         now = utcnow()
         expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat(timespec="microseconds")
         lease_id = new_id("lease")
+        coordination_related_ids = self._coordination_related_task_ids(task)
+        coordination_lock_task_id: Optional[str] = None
+        if coordination_related_ids:
+            relationships = ensure_json_object(
+                ensure_json_object(task.metadata).get("relationships")
+            )
+            coordination_lock_task_id = str(
+                relationships.get("parent_task_id")
+                or ensure_json_object(task.metadata).get("parent_task_id")
+                or task.id
+            ).strip()
         with self.store.transaction() as conn:
+            if coordination_lock_task_id:
+                # Serialize family participation across dispatchers.  The
+                # eligibility check above is intentionally repeated while a
+                # shared parent-row lock is held, closing the race where two
+                # child claims could otherwise assign the same agent before
+                # either lease became visible.
+                family_lock = conn.execute(
+                    "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                    (coordination_lock_task_id,),
+                )
+                if family_lock.rowcount != 1:
+                    raise ValidationError(
+                        "cooperative task family lock %s is unavailable"
+                        % coordination_lock_task_id
+                    )
+                placeholders = ",".join("?" for _ in coordination_related_ids)
+                prior_participation = conn.execute(
+                    "SELECT 1 FROM leases WHERE agent_id = ? AND task_id IN (%s) LIMIT 1"
+                    % placeholders,
+                    (agent_id, *sorted(coordination_related_ids)),
+                ).fetchone()
+                if prior_participation is not None:
+                    raise ValidationError(
+                        "agent %s already participated in cooperative task family for %s"
+                        % (agent_id, task_id)
+                    )
             # Atomic claim: the UPDATE only succeeds if the task is still OPEN and
             # unleased. rowcount==0 means another dispatcher already took it.
             cursor = conn.execute(
@@ -5755,7 +5842,6 @@ class ControlPlane:
         # actor (recorded via delegate_lease).
         if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
-        self._require_review_ready(task)
         reviewed = self.transition_task(
             task_id,
             TaskState.NEEDS_REVIEW.value,
@@ -5765,7 +5851,7 @@ class ControlPlane:
         )
         return reviewed
 
-    def _require_review_ready(self, task: Task) -> None:
+    def _require_review_ready(self, task: Task) -> Evidence:
         evidence, assessment = self._default_review_evidence(task)
         if evidence is None:
             problems: List[str] = []
@@ -5778,6 +5864,7 @@ class ControlPlane:
                 "task needs verifiable evidence before review: %s"
                 % "; ".join(problems[:8])
             )
+        return evidence
 
     def add_evidence(
         self,
@@ -9244,7 +9331,7 @@ class ControlPlane:
             )
             return {"task_id": task_id, "status": "disabled_by_task_policy"}
 
-        evidence, evidence_assessment = self._default_review_evidence(task)
+        evidence, evidence_assessment = self._bound_review_evidence(task)
         if evidence is None:
             self._record_default_review_observation(
                 task_id,
@@ -10749,6 +10836,84 @@ class ControlPlane:
             }
         return False
 
+    def _prepare_cooperative_integration_task(self, task: Task) -> Task:
+        """Attach immutable child outputs before reopening an integration task."""
+        metadata = ensure_json_object(task.metadata)
+        coordination = ensure_json_object(metadata.get("coordination"))
+        if coordination.get("mode") != "cooperative_integration":
+            return task
+        child_ids = _metadata_string_list(coordination.get("child_task_ids"))
+        if not child_ids:
+            return task
+        outputs: List[JsonDict] = []
+        for child_id in child_ids:
+            try:
+                child = self.get_task(child_id)
+            except NotFoundError:
+                outputs.append(
+                    {"task_id": child_id, "status": "missing_task"}
+                )
+                continue
+            child_target = ensure_json_object(
+                ensure_json_object(child.metadata).get("review_target")
+            )
+            evidence_id = str(
+                child_target.get("executor_evidence_id") or ""
+            ).strip()
+            output: JsonDict = {
+                "task_id": child.id,
+                "title": child.title,
+                "state": child.state,
+                "executor_evidence_id": evidence_id,
+            }
+            if evidence_id:
+                try:
+                    evidence = self.get_evidence(evidence_id)
+                except NotFoundError:
+                    output["status"] = "missing_evidence"
+                else:
+                    manifest = ensure_json_object(
+                        ensure_json_object(evidence.metadata).get("verification")
+                    )
+                    repo = ensure_json_object(manifest.get("repo"))
+                    output.update(
+                        {
+                            "status": "ready",
+                            "summary": evidence.summary,
+                            "created_by": evidence.created_by,
+                            "evidence_type": manifest.get("evidence_type"),
+                            "repo": {
+                                key: repo.get(key)
+                                for key in (
+                                    "head_sha",
+                                    "base_sha",
+                                    "remote_ref",
+                                    "remote_url",
+                                    "pr_url",
+                                    "files_changed",
+                                )
+                                if repo.get(key) not in (None, "", [])
+                            },
+                        }
+                    )
+            else:
+                output["status"] = "missing_evidence"
+            outputs.append(output)
+        coordination["phase"] = "integration"
+        coordination["child_outputs"] = outputs
+        coordination["integration_contract"] = {
+            "required": True,
+            "strategy": "merge_each_exact_child_commit",
+            "verify_combined_result": True,
+            "verify_child_commit_ancestry": True,
+        }
+        metadata["coordination"] = coordination
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), task.id),
+        )
+        return self.get_task(task.id)
+
     def _unblock_ready_tasks(self) -> None:
         for task in self.list_tasks(TaskState.BLOCKED.value):
             if (
@@ -10756,6 +10921,7 @@ class ControlPlane:
                 and self._dependencies_satisfied(task)
                 and not self._blocked_task_requires_manual_repair(task)
             ):
+                task = self._prepare_cooperative_integration_task(task)
                 self.transition_task(task.id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
 
     # mac-5ayd: cap the working set per dispatch tick. The dispatcher
@@ -10884,10 +11050,71 @@ class ControlPlane:
         )
         return [self._agent_from_row(row) for row in rows]
 
+    def _coordination_related_task_ids(self, task: Task) -> set[str]:
+        """Return the durable task family used for cooperative separation."""
+        metadata = ensure_json_object(task.metadata)
+        coordination = ensure_json_object(metadata.get("coordination"))
+        if coordination.get("require_distinct_agent") is not True:
+            return set()
+        relationships = ensure_json_object(metadata.get("relationships"))
+        parent_id = str(
+            relationships.get("parent_task_id")
+            or metadata.get("parent_task_id")
+            or task.id
+        ).strip()
+        related_ids = {parent_id}
+        if parent_id == task.id:
+            related_ids.update(
+                _metadata_string_list(coordination.get("child_task_ids"))
+            )
+            related_ids.update(
+                _metadata_string_list(relationships.get("child_task_ids"))
+            )
+        else:
+            try:
+                parent = self.get_task(parent_id)
+            except NotFoundError:
+                parent = None
+            if parent is not None:
+                parent_metadata = ensure_json_object(parent.metadata)
+                parent_relationships = ensure_json_object(
+                    parent_metadata.get("relationships")
+                )
+                parent_coordination = ensure_json_object(
+                    parent_metadata.get("coordination")
+                )
+                related_ids.update(
+                    _metadata_string_list(parent_relationships.get("child_task_ids"))
+                )
+                related_ids.update(
+                    _metadata_string_list(parent_coordination.get("child_task_ids"))
+                )
+        return related_ids
+
+    def _coordination_excluded_agent_ids(self, task: Task) -> set[str]:
+        """Agents already participating in a cooperative task family.
+
+        Decomposed children and the final integration pass require distinct
+        executors.  Lease history is the durable source of participation: it
+        survives task handoff and rejected attempts, unlike ``owner_agent_id``.
+        """
+        related_ids = self._coordination_related_task_ids(task)
+        if not related_ids:
+            return set()
+        placeholders = ",".join("?" for _ in related_ids)
+        rows = self.store.query_all(
+            "SELECT DISTINCT agent_id FROM leases WHERE task_id IN (%s)"
+            % placeholders,
+            tuple(sorted(related_ids)),
+        )
+        return {str(row["agent_id"]) for row in rows if row["agent_id"]}
+
     def _agent_available_for(self, agent: Agent, task: Task) -> bool:
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return False
         if agent.health_status != HealthStatus.HEALTHY.value:
+            return False
+        if agent.id in self._coordination_excluded_agent_ids(task):
             return False
         target_agent_id = (
             task.metadata.get("target_agent_id")
@@ -11072,6 +11299,43 @@ class ControlPlane:
             "reason": "evidence_not_verifiable",
             "rejected_evidence": rejected[:5],
         }
+
+    def _bound_review_evidence(self, task: Task) -> Tuple[Optional[Evidence], JsonDict]:
+        """Resolve the immutable executor evidence target for this review attempt."""
+        metadata = ensure_json_object(task.metadata)
+        target = ensure_json_object(metadata.get("review_target"))
+        target_id = str(target.get("executor_evidence_id") or "").strip()
+        if target_id:
+            try:
+                evidence = self.get_evidence(target_id)
+            except NotFoundError:
+                return None, {
+                    "reason": "review_target_missing",
+                    "executor_evidence_id": target_id,
+                }
+            assessment = self._assess_default_review_evidence(task, evidence)
+            if assessment.get("valid"):
+                return evidence, assessment
+            return None, {
+                "reason": "bound_evidence_not_verifiable",
+                "executor_evidence_id": target_id,
+                "problems": assessment.get("problems", []),
+            }
+
+        # Rolling-upgrade compatibility for tasks that entered NEEDS_REVIEW
+        # before review_target existed. Bind once, then never follow newer rows.
+        evidence, assessment = self._default_review_evidence(task)
+        if evidence is not None:
+            metadata["review_target"] = {
+                "executor_evidence_id": evidence.id,
+                "attempt_count": task.attempt_count,
+                "recorded_at": utcnow(),
+            }
+            self.store.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(metadata), utcnow(), task.id),
+            )
+        return evidence, assessment
 
     def _assess_default_review_evidence(self, task: Task, evidence: Evidence) -> JsonDict:
         if self._evidence_returncode(evidence) != 0:
@@ -11536,6 +11800,7 @@ class ControlPlane:
                 signature = <HMAC of manifest under reviewer's key>
         """
         problems: List[str] = []
+        reviewed_task = self.get_task(task_id)
         for evidence in reversed(self.list_evidence(task_id)):
             if verdict_evidence_id is not None and evidence.id != verdict_evidence_id:
                 continue
@@ -11691,6 +11956,15 @@ class ControlPlane:
             if self._passed_verification_check_count(manifest) < 1:
                 problems.append("verdict %s requires at least one independent passing check" % evidence.id)
                 continue
+            integration_problems = self._cooperative_review_integration_problems(
+                reviewed_task, manifest
+            )
+            if integration_problems:
+                problems.extend(
+                    "verdict %s %s" % (evidence.id, problem)
+                    for problem in integration_problems
+                )
+                continue
             codegraph_manifest = dict(manifest)
             if isinstance(executor_manifest.get("repo"), dict):
                 review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
@@ -11704,6 +11978,56 @@ class ControlPlane:
                 continue
             return evidence, []
         return None, problems
+
+    def _cooperative_review_integration_problems(
+        self, task: Task, verdict_manifest: JsonDict
+    ) -> List[str]:
+        coordination = ensure_json_object(
+            ensure_json_object(task.metadata).get("coordination")
+        )
+        if coordination.get("phase") != "integration":
+            return []
+        child_outputs = coordination.get("child_outputs", [])
+        expected = {
+            str(item.get("executor_evidence_id") or "").strip()
+            for item in child_outputs
+            if isinstance(item, dict)
+            and str(item.get("executor_evidence_id") or "").strip()
+        }
+        missing_outputs = [
+            str(item.get("task_id") or "unknown").strip()
+            for item in child_outputs
+            if not isinstance(item, dict)
+            or str(item.get("status") or "").strip() != "ready"
+            or not str(item.get("executor_evidence_id") or "").strip()
+            or not str(ensure_json_object(item.get("repo")).get("head_sha") or "").strip()
+        ]
+        integration = ensure_json_object(verdict_manifest.get("integration"))
+        required = set(
+            _metadata_string_list(integration.get("required_child_evidence_ids"))
+        )
+        verified = set(
+            _metadata_string_list(integration.get("verified_child_evidence_ids"))
+        )
+        problems: List[str] = []
+        if integration.get("status") != "pass":
+            problems.append("cooperative integration verification must pass")
+        if missing_outputs:
+            problems.append(
+                "cooperative integration has incomplete child outputs: %s"
+                % ", ".join(sorted(set(missing_outputs)))
+            )
+        if not expected:
+            problems.append("cooperative integration has no child evidence targets")
+        if required != expected:
+            problems.append(
+                "cooperative integration required child evidence does not match task inputs"
+            )
+        if verified != expected:
+            problems.append(
+                "cooperative integration did not verify every child commit as an ancestor"
+            )
+        return problems
 
     def _verdict_value(self, evidence: Evidence) -> str:
         manifest = evidence.metadata.get("verification") or {}
@@ -11761,10 +12085,9 @@ class ControlPlane:
           Two code-reviewer-souled agents cannot approve each other's
           work — the second-eyes role only matters if it's a different
           eye.
-        * Not the executor (existing): the latest evidence author cannot
-          review their own work. Prior owners from earlier rejected
-          attempts may review a newer agent's evidence so small fleets do
-          not deadlock after retries.
+        * Never an executor for this task: current and prior lease owners,
+          plus the latest evidence author, are excluded. Small fleets wait
+          for genuinely independent review rather than weakening the gate.
         """
         task_tenant = self._task_tenant_id(task)
         executor_persona_slug = self._task_executor_persona_slug(task)
@@ -11839,8 +12162,8 @@ class ControlPlane:
             return "reviewer_not_available"
         if not self._agent_seen_recently(agent, self._default_reviewer_stale_after_seconds()):
             return "reviewer_stale"
-        if task.owner_agent_id == agent.id:
-            return "reviewer_owned_task"
+        if self.reviews.agent_has_owned_task(task.id, agent.id):
+            return "reviewer_previously_owned_task"
         if executor_agent_id is not None and agent.id == executor_agent_id:
             return "reviewer_created_executor_evidence"
         if "review" not in set(agent.capabilities):
@@ -12001,6 +12324,38 @@ class ControlPlane:
             return instance.tenant_id, None
         slug = persona.name.strip().lower().replace(" ", "-").replace("_", "-") or None
         return instance.tenant_id, slug
+
+    def _reviewer_independence_problem(
+        self, task: Task, reviewer: Agent
+    ) -> Optional[str]:
+        """Return a domain-level reviewer separation failure, if any.
+
+        Availability and routing preferences belong in the default selector;
+        tenant and persona separation are correctness boundaries and therefore
+        also run inside ``ReviewService.request_review`` for manual/API callers.
+        """
+        if reviewer.id in self._coordination_excluded_agent_ids(task):
+            return "reviewer executed another task in the same cooperative work family"
+        task_tenant = self._task_tenant_id(task)
+        reviewer_tenant, reviewer_persona = self._agent_tenant_and_persona(reviewer)
+        if task_tenant is not None:
+            if reviewer_tenant is None:
+                try:
+                    machine = self.get_machine(reviewer.machine_id)
+                except NotFoundError:
+                    return "reviewer machine is missing"
+                if not self._machine_allows_tenant(machine, task_tenant):
+                    return "reviewer is outside the task tenant boundary"
+            elif reviewer_tenant != task_tenant:
+                return "reviewer is outside the task tenant boundary"
+        executor_persona = self._task_executor_persona_slug(task)
+        if (
+            executor_persona is not None
+            and reviewer_persona is not None
+            and executor_persona == reviewer_persona
+        ):
+            return "reviewer and executor use the same persona"
+        return None
 
     def _task_executor_persona_slug(self, task: Task) -> Optional[str]:
         """Find the persona slug of whichever agent owned the task last

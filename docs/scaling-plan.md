@@ -93,7 +93,8 @@ Status: implemented.
 Move from prototype gates to production gates:
 
 - Reviewer independence from current or prior task owners is enforced.
-- Approved reviews must reference task evidence.
+- Approved reviews must reference the current attempt's immutable executor
+  evidence; historical approvals cannot authorize rework.
 - Evidence kinds are explicit: `test`, `review`, `artifact`, `publication`, `log`.
 - Default auto-review requires a `mac.worker_evidence.v1` verification manifest;
   returncode `0` without verifiable repo/deployment/artifact facts is not enough.
@@ -135,6 +136,9 @@ Move from single-task routing to coordinated agent work:
   keep append-only run history. Callers cannot forge membership by setting
   `metadata.workflow_run_id`; only the `tasks.workflow_run_id` column written
   by the runtime drives callbacks.
+- Cooperative decomposition is a separate fan-out/fan-in contract: child tasks
+  use distinct executors, publish their evidence as integration inputs, and the
+  parent is reopened as a combined integration task owned by another agent.
 - Observability now includes low-level metrics/logs, integration findings,
   operator notifications, command audit, and Beads `mac-ledger v1` issue
   comments for human-facing task milestones.
@@ -161,8 +165,9 @@ The current suite has regression coverage for these contracts:
 - Legacy Beads migration/import paths preserve provenance without making Beads
   a live read/write task authority.
 - The default review workflow requires verifiable executor evidence, an
-  independent reviewer, signed verdict evidence, and publication evidence when
-  policy demands it.
+  independent reviewer, a semantic verdict bound to the current attempt,
+  independent checks of the exact commit, and publication evidence when policy
+  demands it.
 - Command audit, integration findings, operator notifications, and deploy-token
   redaction have regression tests.
 - Workflow definitions, YAML import, seed loading, run advancement, cancellation,

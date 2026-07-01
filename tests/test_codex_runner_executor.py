@@ -247,13 +247,11 @@ class TestCoderExecutorProducesSignedManifest:
         )
 
 
-class TestReviewerExecutorProducesSignedVerdictManifest:
-    def test_signed_review_verdict_manifest_shape(
+class TestDeprecatedReviewerExecutorFailsClosed:
+    def test_deprecated_reviewer_cannot_emit_approval(
         self, cp: ControlPlane, tmp_path: Path
     ) -> None:
-        """The reviewer executor produces a review_verdict manifest that
-        validates structurally via ReviewVerdictValidator and verifies
-        under the reviewer's attestation key."""
+        """The removed always-approve path must fail without a manifest."""
         reviewer = _register_worker(
             cp, "mac-worker-python-reviewer", ["review", "python"]
         )
@@ -272,37 +270,6 @@ class TestReviewerExecutorProducesSignedVerdictManifest:
             manifest_path=manifest_path,
             extra_env={"MAC_REVIEW_TARGET_EVIDENCE_ID": "ev-target-123"},
         )
-        assert result.returncode == 0, (
-            "executor failed: stdout=%s stderr=%s" % (result.stdout, result.stderr)
-        )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["evidence_type"] == "review_verdict"
-        assert manifest["verdict"] == "approved"
-        assert manifest["reviewed_evidence_id"] == "ev-target-123"
-        assert manifest["worktree_digest"].startswith("sha256:")
-        assert len(manifest["worktree_digest"]) == len("sha256:") + 64
-        assert manifest["signed_by"] == reviewer.id
-        assert manifest["signature"].startswith("v1:")
-
-        # Verify the structural shape with the actual validator. The
-        # reviewer flow has additional downstream constraints (executor
-        # evidence existence, signer-not-author check) that we don't
-        # promise to satisfy here — those are the reviewer service's
-        # job, and PR3's reviewer executor is explicitly a "lower
-        # priority" deliverable per the ticket.
-        from mac.evidence_validators import validate_evidence_type
-
-        problems = validate_evidence_type(
-            "review_verdict",
-            manifest,
-            passed_check_count=lambda _m: 1,
-        )
-        assert problems == [], "review_verdict structural validation: %s" % problems
-
-        # Manifest verifies under the reviewer's attestation key.
-        from mac.services import verify_verification_manifest_signature
-
-        signature = manifest["signature"]
-        assert verify_verification_manifest_signature(
-            attestation_key, manifest, signature
-        ), "bash canonical form must agree with json_dumps"
+        assert result.returncode == 64
+        assert "disabled" in result.stderr
+        assert not manifest_path.exists()

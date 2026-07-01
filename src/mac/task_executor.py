@@ -1213,6 +1213,27 @@ def _lessons_section(lessons: List[str]) -> str:
     )
 
 
+def _cooperative_integration_section(task: Dict[str, Any]) -> str:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    coordination = metadata.get("coordination") if isinstance(metadata, dict) else {}
+    if not isinstance(coordination, dict) or coordination.get("phase") != "integration":
+        return ""
+    outputs = coordination.get("child_outputs")
+    if not isinstance(outputs, list) or not outputs:
+        return ""
+    return "\n".join(
+        [
+            "Cooperative integration contract:",
+            "This is the mandatory fan-in pass for independently executed child tasks.",
+            "Treat every child output below as an explicit input. Fetch and merge each exact remote_ref/head_sha into this task's integration branch; do not squash, cherry-pick, or merely summarize the children because the final review verifies commit ancestry.",
+            "Resolve conflicts, run the repository's complete test contract and CodeGraph on the combined result, and produce new executor evidence for the integrated commit.",
+            "If any required child output is missing or cannot be integrated, fail closed and identify that child instead of claiming completion.",
+            "Child outputs (JSON):\n%s"
+            % json.dumps(outputs, indent=2, sort_keys=True),
+        ]
+    )
+
+
 # Marker lines the executor asks the coding agent / reviewer to wrap its plain
 # recap in, so the worker can capture a clean human summary for the per-task
 # activity log (mac task summary) instead of scraping raw stdout. The worker's
@@ -1229,6 +1250,9 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         "Repository tasks default to evidence_type=repo_change; use operator_result only when no repository contract exists. Deterministic host code enforces tests, CodeGraph, cleanliness, and publication.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
+    integration_section = _cooperative_integration_section(task)
+    if integration_section:
+        parts.append(integration_section)
     parts.append(
         "Finally, for the per-task activity log, print a short plain-language recap "
         "of what you did and how you verified it (1-3 sentences, no code or diff), "
@@ -1487,8 +1511,64 @@ def _sign_verdict(key: str, manifest: Dict[str, Any]) -> str:
     return "v1:" + _base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+def _cooperative_integration_check(
+    task: Dict[str, Any], worktree: Path
+) -> Optional[Dict[str, Any]]:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    coordination = metadata.get("coordination") if isinstance(metadata, dict) else {}
+    if not isinstance(coordination, dict) or coordination.get("phase") != "integration":
+        return None
+    outputs = coordination.get("child_outputs")
+    required = []
+    problems: List[str] = []
+    for output in outputs if isinstance(outputs, list) else []:
+        if not isinstance(output, dict):
+            problems.append("cooperative integration contains a malformed child output")
+            continue
+        repo = output.get("repo") if isinstance(output.get("repo"), dict) else {}
+        head_sha = str(repo.get("head_sha") or "").strip()
+        evidence_id = str(output.get("executor_evidence_id") or "").strip()
+        task_id = str(output.get("task_id") or "unknown").strip()
+        status = str(output.get("status") or "").strip()
+        if status != "ready" or not head_sha or not evidence_id:
+            problems.append(
+                "cooperative child %s has no verifiable completed output" % task_id
+            )
+            continue
+        required.append((evidence_id, head_sha))
+    verified: List[str] = []
+    if not required:
+        problems.append("cooperative integration has no verifiable child commit inputs")
+    for evidence_id, head_sha in required:
+        exists = _git(["cat-file", "-e", "%s^{commit}" % head_sha], worktree)
+        if exists.returncode != 0:
+            problems.append("child evidence %s commit %s is missing" % (evidence_id, head_sha))
+            continue
+        ancestor = _git(["merge-base", "--is-ancestor", head_sha, "HEAD"], worktree)
+        if ancestor.returncode != 0:
+            problems.append(
+                "child evidence %s commit %s is not an ancestor of the integrated HEAD"
+                % (evidence_id, head_sha)
+            )
+            continue
+        verified.append(evidence_id)
+    return {
+        "status": "pass" if not problems else "fail",
+        "required_child_evidence_ids": [item[0] for item in required],
+        "verified_child_evidence_ids": verified,
+        "problems": problems,
+    }
+
+
 def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any], review_context: Dict[str, Any]) -> None:
-    """mac-jfns: deterministic, signed review verdict from an independent test run."""
+    """Finalize a semantic review with deterministic independent checks.
+
+    The review agent owns the semantic verdict.  Deterministic checks may veto
+    an approval, but they must never turn a semantic rejection into an
+    approval.  This distinction is important for defects that are not captured
+    by the repository's test suite (design errors, unsafe behavior, incomplete
+    requirements, and similar review findings).
+    """
     reviewer_agent_id = str(task.get("owner_agent_id") or os.environ.get("MAC_WORKER_AGENT_ID") or "").strip()
     attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
     if not reviewer_agent_id or not attestation_key:
@@ -1497,27 +1577,55 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     review_id = str(review_context.get("review_id") or "").strip()
     if not executor_evidence_id or not review_id:
         return
+    manifest_path = task_workspace / "mac-evidence.json"
+    semantic_manifest: Dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                semantic_manifest = loaded
+        except Exception:
+            semantic_manifest = {}
+
+    semantic_verdict = str(semantic_manifest.get("verdict") or "").strip().lower()
+    semantic_valid = (
+        str(semantic_manifest.get("schema") or "").strip() == "mac.worker_evidence.v1"
+        and str(semantic_manifest.get("status") or "").strip().lower() == "complete"
+        and str(semantic_manifest.get("evidence_type") or "").strip().lower()
+        == "review_verdict"
+        and semantic_verdict in {"approved", "rejected"}
+    )
+
     exec_ev_path = task_workspace / "executor-evidence.json"
-    if not exec_ev_path.exists():
-        return
-    try:
-        exec_ev = json.loads(exec_ev_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
+    exec_ev: Dict[str, Any] = {}
+    if exec_ev_path.exists():
+        try:
+            loaded = json.loads(exec_ev_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                exec_ev = loaded
+        except Exception:
+            exec_ev = {}
     exec_verification = (exec_ev.get("metadata") or {}).get("verification") or {}
     exec_repo = exec_verification.get("repo") or {}
     exec_head = str(exec_repo.get("head_sha") or "").strip()
-    if not exec_head:
-        return
+    repo_review = bool(exec_head)
     review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
     tests = None
     bootstrap = None
     codegraph = None
-    independent_pass = False
-    if review_worktree and Path(review_worktree).is_dir():
+    integration = None
+    # Non-repository work has no checkout/test contract.  Its independent
+    # check is the semantic review itself.  Repository work must additionally
+    # prove the exact executor commit exists in the prepared review checkout
+    # and pass bootstrap, tests, and CodeGraph.
+    independent_pass = semantic_valid and not repo_review
+    independent_problem = ""
+    if repo_review and review_worktree and Path(review_worktree).is_dir():
         review_worktree_path = Path(review_worktree)
         ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], review_worktree_path)
-        if ck.returncode == 0:
+        checked_out = _git(["rev-parse", "HEAD"], review_worktree_path)
+        checked_out_head = checked_out.stdout.strip() if checked_out.returncode == 0 else ""
+        if ck.returncode == 0 and checked_out_head == exec_head:
             bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
             test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
             tr = subprocess.run(
@@ -1525,36 +1633,69 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             )
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
             codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
-            independent_pass = bootstrap_ok and tr.returncode == 0 and codegraph_audit_passed(codegraph)
+            integration = _cooperative_integration_check(task, review_worktree_path)
+            integration_ok = integration is None or integration.get("status") == "pass"
+            independent_pass = (
+                bootstrap_ok
+                and tr.returncode == 0
+                and codegraph_audit_passed(codegraph)
+                and integration_ok
+            )
             tests = {
                 "command": test_cmd,
                 "returncode": int(tr.returncode),
                 "status": "pass" if tr.returncode == 0 else "fail",
             }
-    verdict = "approved" if independent_pass else "rejected"
+            if not independent_pass:
+                independent_problem = "independent bootstrap, tests, or CodeGraph failed"
+        elif ck.returncode != 0:
+            independent_problem = "executor commit is not present in the review checkout"
+        else:
+            independent_problem = "review checkout HEAD does not match the executor commit"
+    elif repo_review:
+        independent_problem = "exact review checkout is unavailable"
+
+    verdict = (
+        "approved"
+        if semantic_valid and semantic_verdict == "approved" and independent_pass
+        else "rejected"
+    )
     digest_input = ("%s|%s|%s" % (exec_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
     import hashlib as _hashlib
 
     worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
-    manifest = {
+    repo_manifest = dict(exec_repo) if isinstance(exec_repo, dict) else {}
+    manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
         "evidence_type": "review_verdict",
         "verdict": verdict,
+        "semantic_verdict": semantic_verdict or "invalid",
+        "result": "review_completed",
+        "returncode": 0,
         "review_id": review_id,
         "reviewed_evidence_id": executor_evidence_id,
         "worktree_digest": worktree_digest,
-        "repo": {
-            "head_sha": exec_head,
-            "remote_ref": exec_repo.get("remote_ref") or "",
-            "pushed": True,
-            "dirty": False,
-            "files_changed": exec_repo.get("files_changed") or [],
-        },
         "checks": [
+            {
+                "name": "semantic_review",
+                "returncode": 0 if semantic_valid else 1,
+                "status": "pass" if semantic_valid else "fail",
+            },
             *(
                 [codegraph_audit_check(codegraph)]
                 if isinstance(codegraph, dict) and str(codegraph.get("status") or "") != "skipped"
+                else []
+            ),
+            *(
+                [
+                    {
+                        "name": "cooperative_integration",
+                        "returncode": 0 if integration.get("status") == "pass" else 1,
+                        "status": integration.get("status"),
+                    }
+                ]
+                if isinstance(integration, dict)
                 else []
             ),
             {
@@ -1567,12 +1708,33 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         "tests": [tests] if tests is not None else None,
         "signed_by": reviewer_agent_id,
     }
+    if repo_manifest:
+        manifest["repo"] = repo_manifest
+    for key in ("summary", "feedback", "findings", "llm", "llm_model", "opencode_model", "gateway_model"):
+        if key in semantic_manifest:
+            manifest[key] = semantic_manifest[key]
+    if verdict == "rejected" and not any(
+        manifest.get(key) for key in ("feedback", "summary", "findings")
+    ):
+        if not semantic_valid:
+            manifest["feedback"] = "review agent did not produce a valid semantic verdict"
+        elif semantic_verdict == "rejected":
+            manifest["feedback"] = "semantic reviewer rejected the executor result"
+        else:
+            manifest["feedback"] = independent_problem or "independent verification failed"
+    elif verdict == "rejected" and independent_problem and semantic_verdict == "approved":
+        existing = str(manifest.get("feedback") or "").strip()
+        manifest["feedback"] = "; ".join(
+            part for part in (existing, independent_problem) if part
+        )
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
     if codegraph is not None:
         manifest["codegraph"] = codegraph
+    if integration is not None:
+        manifest["integration"] = integration
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
-    (task_workspace / "mac-evidence.json").write_text(
+    manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
