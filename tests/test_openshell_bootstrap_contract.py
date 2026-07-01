@@ -32,6 +32,8 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "openshell-x86_64-unknown-linux-musl.tar.gz" in script
     assert "openshell-aarch64-unknown-linux-musl.tar.gz" in script
     assert "Python wheel is incompatible with this host" in script
+    assert "--retry 5 --retry-all-errors" in script
+    assert "--connect-timeout 15 --max-time 120" in script
     assert 'MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0' in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
     create_arg_lines = [
@@ -57,9 +59,12 @@ def test_openshell_image_installs_codegraph_baseline():
     ).read_text(encoding="utf-8")
 
     assert (
-        "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
+        "curl ${MAC_CURL_FLAGS} -fsSL "
+        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
         "-o /tmp/codegraph-install.sh"
     ) in containerfile
+    assert 'ARG MAC_CURL_FLAGS="--retry 5 --retry-all-errors' in containerfile
+    assert "--connect-timeout 15 --max-time 120" in containerfile
     assert (
         "CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
         "sh /tmp/codegraph-install.sh"

@@ -37,22 +37,23 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   refuses Node < v22.13 ("This version of pnpm requires at least Node.js
 #   v22.13"), which silently breaks every `pnpm install` repo bootstrap.
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
+ARG MAC_CURL_FLAGS="--retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && mkdir -p -m 755 /etc/apt/keyrings \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && curl ${MAC_CURL_FLAGS} -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+    && curl ${MAC_CURL_FLAGS} -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
     && bash /tmp/nodesource_setup.sh \
     && rm -f /tmp/nodesource_setup.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends iproute2 iptables git gh make build-essential libssl-dev nodejs openjdk-17-jre-headless \
     && npm install -g @openai/codex@0.140.0 \
     && npm install -g pnpm \
-    && curl -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
+    && curl ${MAC_CURL_FLAGS} -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
     && chmod +x /usr/local/bin/lein \
-    && curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh -o /tmp/codegraph-install.sh \
+    && curl ${MAC_CURL_FLAGS} -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh -o /tmp/codegraph-install.sh \
     && CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin sh /tmp/codegraph-install.sh \
     && rm -f /tmp/codegraph-install.sh \
     && CG_BIN="$(readlink -f /usr/local/bin/codegraph)" \

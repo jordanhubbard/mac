@@ -8,7 +8,8 @@ from mac.worker import DEFAULT_COMMAND_INVENTORY_NAMES
 ROOT = Path(__file__).resolve().parents[1]
 CODEGRAPH_INSTALL = "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh"
 CODEGRAPH_IMAGE_INSTALL = (
-    "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
+    "curl ${MAC_CURL_FLAGS} -fsSL "
+    "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
     "-o /tmp/codegraph-install.sh"
 )
 
