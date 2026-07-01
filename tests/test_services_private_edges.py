@@ -222,6 +222,7 @@ def _base_verdict(**extra):
 )
 def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, problem) -> None:
     cp = ControlPlane.in_memory()
+    monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
     evidence_metadata = metadata if metadata is not None else {"returncode": 0, "verification": manifest}
     item = _verdict(_base_verdict(), metadata=evidence_metadata)
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [item])
@@ -239,6 +240,7 @@ def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, proble
 
 def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
+    monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: None)
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [_verdict(_base_verdict())])
     found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
@@ -272,6 +274,7 @@ def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkey
 
 def test_review_verdict_selection_and_time_filters(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
+    monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
     ignored = _verdict(_base_verdict(), id="ignored", created_by="other")
     old = _verdict(_base_verdict(), id="old", created_at="2025-01-01T00:00:00+00:00")
     invalid = _verdict(_base_verdict(), id="invalid", created_at="bad")
@@ -285,3 +288,98 @@ def test_review_verdict_selection_and_time_filters(monkeypatch) -> None:
         "task", "reviewer", executor_evidence_id="executor", verdict_evidence_id="missing"
     )
     assert found is None and problems == []
+
+
+def test_review_verdict_reports_deep_validation_failures(monkeypatch) -> None:
+    cp = ControlPlane.in_memory()
+    task = SimpleNamespace(metadata={})
+    evidence = [_verdict(_base_verdict(verdict="rejected"))]
+    executor = SimpleNamespace(metadata={"verification": {}})
+    monkeypatch.setattr(cp, "get_task", lambda *_a: task)
+    monkeypatch.setattr(cp, "list_evidence", lambda *_a: evidence)
+    monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
+    monkeypatch.setattr(
+        services, "verify_verification_manifest_signature", lambda *_a: True
+    )
+    monkeypatch.setattr(cp, "get_evidence", lambda *_a: executor)
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a: [])
+    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
+
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
+    assert found is None
+    assert any("requires feedback" in problem for problem in problems)
+
+    evidence[0] = _verdict(_base_verdict())
+    executor.metadata = {"verification": ["invalid"]}
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
+    assert found is None
+    assert any("cannot resolve executor" in problem for problem in problems)
+
+    executor.metadata = {"verification": {"repo": {"head_sha": "a" * 40}}}
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
+    assert found is None
+    assert any("verification.repo object" in problem for problem in problems)
+
+    executor.metadata = {"verification": {}}
+    task.metadata = {"coordination": {"phase": "integration", "child_outputs": []}}
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
+    assert found is None
+    assert any("cooperative integration" in problem for problem in problems)
+
+    task.metadata = {}
+    monkeypatch.setattr(
+        services, "codegraph_audit_manifest_problems", lambda *_a: ["audit missing"]
+    )
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
+    assert found is None
+    assert problems == ["verdict verdict audit missing"]
+
+
+def test_reviewer_independence_problem_edges(monkeypatch) -> None:
+    cp = ControlPlane.in_memory()
+    task = SimpleNamespace(metadata={})
+    reviewer = SimpleNamespace(id="reviewer", machine_id="machine")
+    monkeypatch.setattr(
+        cp, "_coordination_excluded_agent_ids", lambda *_a: {"reviewer"}
+    )
+    assert "cooperative work family" in cp._reviewer_independence_problem(
+        task, reviewer
+    )
+
+    monkeypatch.setattr(cp, "_coordination_excluded_agent_ids", lambda *_a: set())
+    monkeypatch.setattr(cp, "_task_tenant_id", lambda *_a: "tenant-a")
+    monkeypatch.setattr(cp, "_agent_tenant_and_persona", lambda *_a: (None, None))
+    monkeypatch.setattr(
+        cp,
+        "get_machine",
+        lambda *_a: (_ for _ in ()).throw(NotFoundError("missing")),
+    )
+    assert "machine is missing" in cp._reviewer_independence_problem(task, reviewer)
+
+    monkeypatch.setattr(cp, "get_machine", lambda *_a: SimpleNamespace())
+    monkeypatch.setattr(cp, "_machine_allows_tenant", lambda *_a: False)
+    assert "tenant boundary" in cp._reviewer_independence_problem(task, reviewer)
+
+    monkeypatch.setattr(
+        cp, "_agent_tenant_and_persona", lambda *_a: ("tenant-b", None)
+    )
+    assert "tenant boundary" in cp._reviewer_independence_problem(task, reviewer)
+
+    monkeypatch.setattr(cp, "_task_tenant_id", lambda *_a: None)
+    monkeypatch.setattr(
+        cp, "_agent_tenant_and_persona", lambda *_a: (None, "shared-persona")
+    )
+    monkeypatch.setattr(
+        cp, "_task_executor_persona_slug", lambda *_a: "shared-persona"
+    )
+    assert "same persona" in cp._reviewer_independence_problem(task, reviewer)

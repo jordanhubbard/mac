@@ -2,6 +2,9 @@
 summary. Subprocess probes are monkeypatched so tests are host-independent."""
 from __future__ import annotations
 
+import io
+from types import SimpleNamespace
+
 import mac.hardware as hw
 
 
@@ -63,3 +66,30 @@ def test_summarize():
     assert "NVIDIA GB10" in hw.summarize({"accelerator": "cuda", "gpu": {"name": "NVIDIA GB10", "count": 1}, "os": "linux", "arch": "aarch64", "cpu_count": 20})
     assert hw.summarize(None) == "(no hardware reported)"
     assert "accelerator=none" in hw.summarize({"accelerator": "none", "os": "linux", "arch": "x86_64"})
+    assert "16GB" in hw.summarize({"accelerator": "none", "os": "linux", "arch": "x86_64", "memory_mb": 16384})
+
+
+def test_probe_nonzero_and_linux_memory_edges(monkeypatch):
+    monkeypatch.setattr(
+        hw.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="ignored"),
+    )
+    assert hw._run(["missing-probe"]) is None
+
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *_a, **_k: io.StringIO("MemTotal:       2097152 kB\n"),
+    )
+    assert hw._memory_mb() == 2048
+
+
+def test_memory_probe_exception_falls_back_to_zero(monkeypatch):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr("builtins.open", fail_open)
+    assert hw._memory_mb() == 0

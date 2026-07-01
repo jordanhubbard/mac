@@ -169,6 +169,85 @@ def test_pre_decision_rejected_skips_along_rejected_edge(cp):
     assert rows[1]["condition"] == "rejected"
 
 
+def test_pre_decision_reached_after_task_can_complete_run(cp):
+    cp.workflows.create_workflow(
+        slug="task-then-approved-gate",
+        name="Task then approved gate",
+        description="exercise advancement through a pre-decided terminal gate",
+        workflow_type="custom",
+        definition={
+            "nodes": [
+                {
+                    "node_key": "build",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                },
+                {
+                    "node_key": "gate",
+                    "node_type": "approval",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
+            ],
+            "edges": [
+                {
+                    "from_node_key": "",
+                    "to_node_key": "build",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "build",
+                    "to_node_key": "gate",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "gate",
+                    "to_node_key": "",
+                    "condition": "approved",
+                    "priority": 100,
+                },
+            ],
+        },
+        created_by="human",
+    )
+    run = cp.workflow_runtime.start_run(
+        "task-then-approved-gate",
+        started_by="ops",
+        pre_decisions={"gate": "approved"},
+    )
+
+    completed = cp.workflow_runtime._advance(
+        run, "build", "success", task_id=run.current_task_id
+    )
+
+    assert completed.state == "completed"
+    assert completed.current_node_key is None
+    assert completed.current_task_id is None
+
+
+def test_advance_restores_reservation_when_task_spawn_fails(cp, monkeypatch):
+    _two_node_workflow(cp, slug="spawn-rollback")
+    run = cp.workflow_runtime.start_run("spawn-rollback", started_by="ops")
+    original_node = run.current_node_key
+    original_task = run.current_task_id
+
+    def fail_spawn(*_args, **_kwargs):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", fail_spawn)
+    with pytest.raises(RuntimeError, match="spawn failed"):
+        cp.workflow_runtime._advance(
+            run, "investigate", "success", task_id=original_task
+        )
+
+    restored = cp.workflow_runtime.get_run(run.id)
+    assert restored.current_node_key == original_node
+    assert restored.current_task_id == original_task
+
+
 def test_plan_node_is_a_valid_node_type(cp):
     """wf-04: workflow_models accepts node_type='plan'."""
     wf = cp.workflows.create_workflow(

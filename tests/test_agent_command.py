@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from mac import agent_command
 
 
@@ -75,3 +77,56 @@ def test_external_agent_receives_prompt_on_stdin_not_argv(
     assert seen["input"] == prompt
     assert not command.exists()
     assert not prompt_file.exists()
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        ([], "non-empty string argv"),
+        (["claude", "--print"], "exactly one prompt sentinel"),
+    ],
+)
+def test_private_inputs_reject_malformed_commands_and_unlink(
+    tmp_path: Path, argv: list[str], message: str
+) -> None:
+    command, prompt_file = _inputs(tmp_path, argv, "private")
+
+    with pytest.raises(ValueError, match=message):
+        agent_command._read_private_inputs(command, prompt_file)
+
+    assert not command.exists()
+    assert not prompt_file.exists()
+
+
+def test_hermes_non_numeric_system_exit_is_failure(monkeypatch) -> None:
+    monkeypatch.setattr(agent_command.sys, "argv", ["pytest"])
+
+    def exit_with_message(*_args, **_kwargs):
+        raise SystemExit("bad invocation")
+
+    monkeypatch.setattr(agent_command.runpy, "run_module", exit_with_message)
+    assert agent_command._run_hermes_in_process(
+        [
+            "python",
+            "-m",
+            "hermes_cli.main",
+            "--query",
+            agent_command.PROMPT_SENTINEL,
+        ],
+        "prompt",
+    ) == 1
+
+
+def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(argv=list(argv), **kwargs)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(agent_command.subprocess, "run", fake_run)
+    assert agent_command._run_external_with_stdin(
+        ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
+    ) == 0
+    assert seen["argv"] == ["codex", "exec", "-"]
+    assert seen["input"] == "private prompt"

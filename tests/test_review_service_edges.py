@@ -58,12 +58,18 @@ def _evidence(**extra):
 def test_request_review_transition_and_existing_review_paths(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     service = cp.reviews
-    monkeypatch.setattr(service, "_get_agent", lambda *_a: SimpleNamespace())
-    monkeypatch.setattr(service, "agent_is_current_owner_or_latest_evidence_author", lambda *_a: False)
+    monkeypatch.setattr(
+        service,
+        "_get_agent",
+        lambda *_a: SimpleNamespace(capabilities={"review"}),
+    )
+    monkeypatch.setattr(service, "agent_has_owned_task", lambda *_a: False)
+    monkeypatch.setattr(service, "latest_executor_evidence_author", lambda *_a: None)
+    monkeypatch.setattr(service, "_reviewer_independence_check", None)
     monkeypatch.setattr(service, "_get_task", lambda *_a: _task(state=TaskState.OPEN.value))
     with pytest.raises(TransitionError, match="must need review"):
         service.request_review("task", "reviewer")
-    monkeypatch.setattr(service, "agent_is_current_owner_or_latest_evidence_author", lambda *_a: True)
+    monkeypatch.setattr(service, "agent_has_owned_task", lambda *_a: True)
     with pytest.raises(AuthorizationError, match="own"):
         service.request_review("task", "reviewer")
 
@@ -71,6 +77,9 @@ def test_request_review_transition_and_existing_review_paths(monkeypatch) -> Non
 def test_submit_review_validation_and_verdict_finder_edges(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     service = cp.reviews
+    monkeypatch.setattr(
+        service, "current_review_target_evidence_id", lambda *_a: "executor"
+    )
     monkeypatch.setattr(service, "get_review", lambda *_a: _review())
     with pytest.raises(AuthorizationError):
         service.submit_review("review", "approved", "other", evidence_id="e")
