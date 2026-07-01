@@ -285,6 +285,22 @@ tool_version() {
   "$1" --version 2>/dev/null | awk 'NR==1 {print $NF}'
 }
 
+install_openshell_cli_static() {
+  case "$ARCH" in
+    x86_64)  ca="openshell-x86_64-unknown-linux-musl.tar.gz";;
+    aarch64) ca="openshell-aarch64-unknown-linux-musl.tar.gz";;
+    *) echo "unsupported arch $ARCH" >&2; exit 1;;
+  esac
+  url="https://github.com/NVIDIA/OpenShell/releases/download/v$OPENSHELL_VERSION/$ca"
+  log "fetching static openshell CLI: $url"
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/openshell.tgz" "$url"
+  tar -xzf "$tmp/openshell.tgz" -C "$tmp"
+  rm -f "$BIN/openshell"
+  install -m755 "$(find "$tmp" -name openshell -type f | head -1)" "$BIN/openshell"
+  rm -rf "$tmp"
+}
+
 current_openshell_version=""
 if command -v openshell >/dev/null 2>&1; then
   current_openshell_version="$(tool_version openshell || true)"
@@ -292,12 +308,20 @@ fi
 if [ "$current_openshell_version" != "$OPENSHELL_VERSION" ]; then
   log "installing openshell CLI $OPENSHELL_VERSION (current: ${current_openshell_version:-missing})"
   if command -v uv >/dev/null; then
-    uv tool install --force "openshell==$OPENSHELL_VERSION"
+    if ! uv tool install --force "openshell==$OPENSHELL_VERSION"; then
+      log "Python wheel is incompatible with this host; using the static musl CLI"
+      install_openshell_cli_static
+    fi
   else
     rm -rf "$HOME/.openshell-cli-venv"
     python3 -m venv "$HOME/.openshell-cli-venv"
-    "$HOME/.openshell-cli-venv/bin/pip" install -q "openshell==$OPENSHELL_VERSION"
-    ln -sf "$HOME/.openshell-cli-venv/bin/openshell" "$BIN/openshell"
+    if "$HOME/.openshell-cli-venv/bin/pip" install -q "openshell==$OPENSHELL_VERSION"; then
+      ln -sf "$HOME/.openshell-cli-venv/bin/openshell" "$BIN/openshell"
+    else
+      log "Python wheel is incompatible with this host; using the static musl CLI"
+      rm -rf "$HOME/.openshell-cli-venv"
+      install_openshell_cli_static
+    fi
   fi
 fi
 log "openshell CLI: $(openshell --version 2>&1 | head -1)"

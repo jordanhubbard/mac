@@ -4758,6 +4758,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -4919,7 +4920,8 @@ chat_returncode: int | None = None
 hermes_failure_class = ""
 
 openshell_create_args = str(os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
-if truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")) and openshell_create_args:
+openshell_enabled = truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
+if openshell_enabled and openshell_create_args:
     try:
         openshell_create_argv = shlex.split(openshell_create_args)
     except ValueError as exc:
@@ -4931,8 +4933,14 @@ if truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")) and openshell_create_args:
                 "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments: "
                 + ", ".join(forbidden)
             )
+openshell_bin = str(os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+if openshell_enabled and shutil.which(openshell_bin) is None:
+    problems.append(
+        f"OpenShell sandbox is enabled but MAC_OPENSHELL_BIN is not executable: {openshell_bin}"
+    )
 checks["openshell_executor_config"] = not any(
-    problem.startswith("MAC_OPENSHELL_CREATE_ARGS") for problem in problems
+    problem.startswith(("MAC_OPENSHELL_CREATE_ARGS", "OpenShell sandbox is enabled"))
+    for problem in problems
 )
 
 for key, value in {

@@ -1288,6 +1288,9 @@ def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
     assert "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments" in script
     assert 'arg in {"--env", "--"}' in script
     assert "import shlex" in selftest
+    assert "import shutil" in selftest
+    assert "OpenShell sandbox is enabled but MAC_OPENSHELL_BIN is not executable" in selftest
+    assert "shutil.which(openshell_bin) is None" in selftest
     assert "--site-config" not in script
     assert "MAC_DEPLOY_FLEET_SITE_CONFIG" not in script
     assert "FLEET_SITE_CONFIG" not in script
