@@ -505,6 +505,41 @@ def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
     _hub_post("/agents/%s/command-audit" % agent_id, payload)
 
 
+def _run_captured(argv: List[str], cwd: Path, timeout: Optional[float]):
+    """``subprocess.run(capture_output=True)`` equivalent that kills the WHOLE
+    process tree on timeout.
+
+    ``subprocess.run()``'s timeout path kills only the direct child. On
+    unsandboxed hosts the agent's surviving children then keep running on the
+    node (leaked servers, wedged tool subprocesses) and keep the inherited
+    stdout/stderr pipes open, so the post-kill output drain can block
+    indefinitely. Run the child in its own session and SIGKILL the process
+    group on timeout: everything dies and the pipes are guaranteed to reach
+    EOF. Sandboxed runs are unaffected — OpenShell teardown already bounds
+    those — but get the same guarantee for the CLI process itself.
+    """
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(cwd),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        import signal
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        out, err = proc.communicate()
+        raise subprocess.TimeoutExpired(argv, timeout or 0.0, output=out, stderr=err)
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
 def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str, Any]):
     command_id = command_audit_id()
     agent_id = local_agent_id()
@@ -522,9 +557,7 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
     post_command_audit(agent_id, {**base, "phase": "started"})
     timeout = metadata.pop("timeout", None) if isinstance(metadata, dict) else None
     try:
-        result = subprocess.run(
-            argv, cwd=str(cwd), text=True, capture_output=True, check=False, timeout=timeout
-        )
+        result = _run_captured(argv, cwd, timeout)
     except subprocess.TimeoutExpired as exc:
         # loop-01 resilience: a wedged TokenHub turn can hang the agent
         # indefinitely. Bound it. The agent may already have written a valid

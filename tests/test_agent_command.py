@@ -117,6 +117,64 @@ def test_hermes_non_numeric_system_exit_is_failure(monkeypatch) -> None:
     ) == 1
 
 
+def test_shutdown_watchdog_bounds_wedged_interpreter_exit(tmp_path: Path) -> None:
+    """A stuck non-daemon thread left behind by the agent run must not hold
+    the wrapper alive past the exit grace window (it used to hang until the
+    executor's 900s agent timeout killed it). Exercises the real
+    ``python -m mac.agent_command`` entry — the watchdog must arm there and
+    ONLY there (in-process callers like this test suite must never inherit
+    a delayed forced exit)."""
+    import os
+    import subprocess
+    import time
+
+    fake_pkg = tmp_path / "fake-runtime" / "hermes_cli"
+    fake_pkg.mkdir(parents=True)
+    (fake_pkg / "__init__.py").write_text("", encoding="utf-8")
+    (fake_pkg / "main.py").write_text(
+        "\n".join(
+            [
+                "import threading, time",
+                "threading.Thread(target=lambda: time.sleep(600)).start()",
+                "raise SystemExit(0)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    command, prompt_file = _inputs(
+        tmp_path,
+        ["python", "-m", "hermes_cli.main", "chat", "--query", agent_command.PROMPT_SENTINEL],
+        "prompt",
+    )
+    repo_src = str(Path(agent_command.__file__).resolve().parents[2])
+    env = {
+        **os.environ,
+        "MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS": "1",
+        "PYTHONPATH": os.pathsep.join(
+            [repo_src, str(fake_pkg.parent), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
+    started = time.monotonic()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            str(command),
+            "--prompt-file",
+            str(prompt_file),
+        ],
+        env=env,
+        timeout=30,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    # Without the watchdog the wedged thread holds the interpreter ~600s.
+    assert time.monotonic() - started < 20
+
+
 def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
     seen = {}
 
