@@ -1633,6 +1633,111 @@ def test_default_review_tick_processes_backlog(cp):
     assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
 
 
+def test_default_review_sweep_uses_bounded_state_query_and_cursor(cp, monkeypatch):
+    for index in range(6):
+        cp.create_task(
+            "irrelevant open %d" % index,
+            priority=1000,
+        )
+    reviewable = []
+    for index in range(5):
+        task = cp.create_task(
+            "reviewable %d" % index,
+            priority=100 - index,
+        )
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (TaskState.NEEDS_REVIEW.value, task.id),
+        )
+        reviewable.append(task.id)
+
+    monkeypatch.setattr(
+        cp,
+        "list_tasks",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("review sweep must not load the full task ledger")
+        ),
+    )
+    seen = []
+    original_query_all = cp.store.query_all
+    sweep_limits = []
+
+    def query_all(sql, params=()):
+        if "SELECT * FROM tasks WHERE state IN" in " ".join(sql.split()):
+            sweep_limits.append(params[-1])
+        return original_query_all(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_all", query_all)
+
+    def advance(task_id, actor="default-review-workflow"):
+        seen.append(task_id)
+        return {"task_id": task_id, "status": "observed", "actor": actor}
+
+    monkeypatch.setattr(cp, "advance_default_review_workflow", advance)
+
+    first = cp.advance_default_review_workflows(limit=2)
+    second = cp.advance_default_review_workflows(
+        limit=2,
+        cursor=first["next_cursor"],
+    )
+    third = cp.advance_default_review_workflows(
+        limit=2,
+        cursor=second["next_cursor"],
+    )
+
+    assert first["processed"] == second["processed"] == 2
+    assert third["processed"] == 1
+    assert first["has_more"] is True
+    assert second["has_more"] is True
+    assert third["has_more"] is False
+    assert seen == reviewable
+    assert sweep_limits == [3, 3, 3]
+
+
+def test_default_review_sweep_filters_tenant_before_limit(cp, monkeypatch):
+    for index in range(4):
+        task = cp.create_task(
+            "tenant-b %d" % index,
+            priority=1000 - index,
+            metadata={"origin": {"tenant_id": "tenant-b"}},
+        )
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (TaskState.NEEDS_REVIEW.value, task.id),
+        )
+    tenant_a = cp.create_task(
+        "tenant-a review",
+        priority=1,
+        metadata={"tenant_id": "tenant-a"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.NEEDS_REVIEW.value, tenant_a.id),
+    )
+    seen = []
+    monkeypatch.setattr(
+        cp,
+        "advance_default_review_workflow",
+        lambda task_id, actor="default-review-workflow": (
+            seen.append(task_id)
+            or {"task_id": task_id, "status": "observed"}
+        ),
+    )
+
+    result = cp.advance_default_review_workflows(
+        limit=1,
+        tenant_id="tenant-a",
+    )
+
+    assert result["processed"] == 1
+    assert seen == [tenant_a.id]
+
+
+def test_default_review_sweep_rejects_invalid_cursor(cp):
+    with pytest.raises(ValidationError, match="invalid review sweep cursor"):
+        cp.advance_default_review_workflows(cursor="not-a-cursor")
+
+
 def test_default_review_workflow_waits_for_verifiable_evidence(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -6265,6 +6370,101 @@ def test_dispatch_tick_contains_workflow_recovery_and_reconcile_failures(cp, mon
     assert result["workflow_runs"] == []
     events = cp.list_observability(limit=20)
     assert any(event.name == "workflow.recovery.failed" for event in events)
+
+
+def test_workflow_tick_isolates_poison_run_and_recovers_later_run(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "tick-isolation")
+    poison = cp.workflow_runtime.start_run("tick-isolation", started_by="ops")
+    healthy = cp.workflow_runtime.start_run("tick-isolation", started_by="ops")
+    for index, run in enumerate((poison, healthy)):
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (TaskState.COMPLETED.value, run.current_task_id),
+        )
+        cp.store.execute(
+            """
+            UPDATE workflow_runs
+            SET current_node_key = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                "__workflow_advancing__:task_tick_isolation_%d" % index,
+                "200%d-01-01T00:00:00+00:00" % index,
+                run.id,
+            ),
+        )
+    original_advance = cp.workflow_runtime._advance
+
+    def isolate(run, *args, **kwargs):
+        if run.id == poison.id:
+            raise RuntimeError("poison workflow run")
+        return original_advance(run, *args, **kwargs)
+
+    monkeypatch.setattr(cp.workflow_runtime, "_advance", isolate)
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+
+    recovered = cp.workflow_runtime.tick(limit=10, actor="test-sweeper")
+
+    assert [run.id for run in recovered] == [healthy.id]
+    assert cp.workflow_runtime.get_run(poison.id).current_node_key.startswith(
+        "__workflow_advancing__:"
+    )
+    failures = [
+        event
+        for event in cp.list_observability(limit=50)
+        if event.name == "workflow.recovery.failed"
+    ]
+    assert any(event.subject_id == poison.id for event in failures)
+
+
+def test_workflow_tick_bounds_large_candidate_backlog(cp, monkeypatch):
+    _recovery_two_node_workflow(cp, "tick-bounded")
+    runs = [
+        cp.workflow_runtime.start_run("tick-bounded", started_by="ops")
+        for _ in range(5)
+    ]
+    for index, run in enumerate(runs):
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (TaskState.COMPLETED.value, run.current_task_id),
+        )
+        cp.store.execute(
+            """
+            UPDATE workflow_runs
+            SET current_node_key = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                "__workflow_advancing__:task_tick_bound_%d" % index,
+                "2000-01-%02dT00:00:00+00:00" % (index + 1),
+                run.id,
+            ),
+        )
+    seen = []
+    original_query_all = cp.store.query_all
+    candidate_limits = []
+
+    def query_all(sql, params=()):
+        if "FROM workflow_runs AS wr" in sql:
+            candidate_limits.append(params[-1])
+        return original_query_all(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_all", query_all)
+
+    def observe(run, *args, **kwargs):
+        seen.append(run.id)
+        return run
+
+    monkeypatch.setattr(cp.workflow_runtime, "_advance", observe)
+    monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
+
+    assert cp.workflow_runtime.tick(limit=2) == []
+    assert seen == [runs[0].id, runs[1].id]
+    assert cp.workflow_runtime.tick(limit=2) == []
+    assert seen == [run.id for run in runs[:4]]
+    assert cp.workflow_runtime.tick(limit=2) == []
+    assert seen == [run.id for run in runs]
+    assert candidate_limits == [3, 3, 3]
 
 
 def test_workflow_tick_skips_active_reservations_and_incomplete_rows(cp, monkeypatch):

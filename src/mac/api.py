@@ -5541,6 +5541,7 @@ def create_app(
         limit: int = Query(default=100),
         actor: str = Query(default="operator"),
         tenant_id: Optional[str] = Query(default=None),
+        cursor: Optional[str] = Query(default=None),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         # Admin scope is required by _required_scope. If the caller is
@@ -5556,7 +5557,10 @@ def create_app(
         ):
             principal.assert_tenant(tenant_id)
         return cp.advance_default_review_workflows(
-            limit=limit, actor=actor, tenant_id=tenant_id
+            limit=limit,
+            actor=actor,
+            tenant_id=tenant_id,
+            cursor=cursor,
         )
 
     @app.post("/publications")

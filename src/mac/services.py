@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import fnmatch
 import hashlib
 import os
@@ -1003,6 +1004,8 @@ class ControlPlane:
         self.task_ledger = TaskLedgerService(self.store)
         self.dispatch = DispatchService(self)
         self._task_outbox_drain_lock = threading.Lock()
+        self._default_review_sweep_lock = threading.Lock()
+        self._default_review_sweep_cursor: Optional[str] = None
         self.identity = IdentityService(self.store)
         self.action_events = ActionEventService(self.store)
         self.observability = ObservabilityService(
@@ -7745,7 +7748,7 @@ class ControlPlane:
         except ValueError:
             limit = 25
         try:
-            result = self.advance_default_review_workflows(
+            result = self._advance_default_review_sweep_page(
                 limit=max(1, limit),
                 actor=agent.id,
                 tenant_id=None,
@@ -8700,7 +8703,10 @@ class ControlPlane:
         try:
             workflow_runs = [
                 run.to_dict()
-                for run in self.workflow_runtime.tick(actor="dispatcher.tick")
+                for run in self.workflow_runtime.tick(
+                    actor="dispatcher.tick",
+                    limit=limit,
+                )
             ]
         except Exception as exc:  # noqa: BLE001 - one workflow must not stop fleet dispatch.
             workflow_runs = []
@@ -8716,7 +8722,11 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
         self._unblock_ready_tasks()
-        review_workflows = self.advance_default_review_workflows(limit=limit)
+        review_workflows = self._advance_default_review_sweep_page(
+            limit=limit,
+            actor="default-review-workflow",
+            tenant_id=None,
+        )
         assignments = []
         served_tenants = set()
         for _ in range(limit):
@@ -9525,30 +9535,118 @@ class ControlPlane:
     def list_publications(self, *args: Any, **kwargs: Any) -> List[Publication]:
         return self.reviews.list_publications(*args, **kwargs)
 
+    def _advance_default_review_sweep_page(
+        self,
+        *,
+        limit: int,
+        actor: str,
+        tenant_id: Optional[str],
+    ) -> JsonDict:
+        """Advance one process-local cursor page for autonomous sweep callers."""
+        with self._default_review_sweep_lock:
+            result = self.advance_default_review_workflows(
+                limit=limit,
+                actor=actor,
+                tenant_id=tenant_id,
+                cursor=self._default_review_sweep_cursor,
+            )
+            self._default_review_sweep_cursor = result.get("next_cursor")
+            return result
+
     def advance_default_review_workflows(
         self,
         limit: int = 100,
         actor: str = "default-review-workflow",
         tenant_id: Optional[str] = None,
+        cursor: Optional[str] = None,
     ) -> JsonDict:
-        """Sweep reviewable tasks. When ``tenant_id`` is set, only tasks
-        owned by that tenant are processed — operator tools call this
-        scoped, and the autonomous-tick endpoint passes their tenant
-        through. Without a filter, sweeps everything (admin / single-
-        tenant deployments)."""
-        results = []
-        for task in self.list_tasks():
-            if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
-                continue
-            if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
-                continue
-            results.append(self.advance_default_review_workflow(task.id, actor=actor))
-            if len(results) >= max(1, int(limit)):
-                break
+        """Sweep one bounded, state-filtered page of reviewable tasks.
+
+        ``cursor`` is the opaque ``next_cursor`` from a prior response. The
+        autonomous heartbeat/dispatcher callers retain it in process so tasks
+        waiting on a verdict cannot starve later reviewable rows indefinitely.
+        """
+        limit_value = max(1, min(int(limit), 1000))
+        clauses = ["state IN (?, ?)"]
+        params: List[Any] = [
+            TaskState.NEEDS_REVIEW.value,
+            TaskState.REVIEWING.value,
+        ]
+        if tenant_id is not None:
+            clauses.append(
+                "COALESCE("
+                "NULLIF(json_extract(metadata, '$.origin.tenant_id'), ''), "
+                "NULLIF(json_extract(metadata, '$.tenant_id'), '')"
+                ") = ?"
+            )
+            params.append(tenant_id)
+        if cursor is not None:
+            priority, created_at, task_id = self._decode_review_sweep_cursor(cursor)
+            clauses.append(
+                "(priority < ? OR "
+                "(priority = ? AND created_at > ?) OR "
+                "(priority = ? AND created_at = ? AND id > ?))"
+            )
+            params.extend(
+                [priority, priority, created_at, priority, created_at, task_id]
+            )
+        params.append(limit_value + 1)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY priority DESC, created_at, id LIMIT ?"
+            % " AND ".join(clauses),
+            tuple(params),
+        )
+        has_more = len(rows) > limit_value
+        tasks = [self._task_from_row(row) for row in rows[:limit_value]]
+        results = [
+            self.advance_default_review_workflow(task.id, actor=actor)
+            for task in tasks
+        ]
+        next_cursor = (
+            self._encode_review_sweep_cursor(tasks[-1])
+            if has_more and tasks
+            else None
+        )
         return {
             "processed": len(results),
             "results": results,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
         }
+
+    def _encode_review_sweep_cursor(self, task: Task) -> str:
+        payload = json_dumps(
+            {
+                "priority": int(task.priority),
+                "created_at": task.created_at,
+                "task_id": task.id,
+            }
+        ).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        return "v1:%s" % encoded
+
+    def _decode_review_sweep_cursor(self, cursor: str) -> Tuple[int, str, str]:
+        raw = str(cursor or "").strip()
+        if not raw.startswith("v1:"):
+            raise ValidationError("invalid review sweep cursor")
+        encoded = raw[3:]
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            payload = json_loads(
+                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode(
+                    "utf-8"
+                ),
+                {},
+            )
+            priority = int(payload["priority"])
+            created_at = str(payload["created_at"])
+            task_id = str(payload["task_id"])
+        except (binascii.Error, KeyError, TypeError, ValueError, UnicodeError):
+            raise ValidationError("invalid review sweep cursor") from None
+        if not created_at or not task_id:
+            raise ValidationError("invalid review sweep cursor")
+        return priority, created_at, task_id
 
     def advance_default_review_workflow(
         self,

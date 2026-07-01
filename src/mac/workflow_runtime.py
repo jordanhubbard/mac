@@ -17,6 +17,7 @@ itself into the workflow state machine.
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
@@ -77,6 +78,8 @@ class WorkflowRuntime:
         self._get_task = get_task
         self._record_history = record_history
         self._drain_task_transition_outbox = drain_task_transition_outbox
+        self._tick_lock = threading.Lock()
+        self._tick_cursor: Optional[tuple[str, str]] = None
 
     # Public API --------------------------------------------------------
 
@@ -282,91 +285,192 @@ class WorkflowRuntime:
         params.append(max(1, min(int(limit), 1000)))
         return [self._run_from_row(r) for r in self.store.query_all(sql, tuple(params))]
 
-    def tick(self, *, actor: str = "workflow_runtime.tick") -> List[WorkflowRun]:
-        """Sweep runs whose current task has exceeded the node's timeout.
+    def tick(
+        self,
+        *,
+        actor: str = "workflow_runtime.tick",
+        limit: int = 100,
+    ) -> List[WorkflowRun]:
+        """Sweep a bounded set of stale reservations and timeout candidates.
 
         Cancels the stuck task (which the on_task_completed hook then
         sees as a CANCELLED terminal state) and lets normal edge
         selection take it through whatever ``timeout`` / ``cancelled``
-        edge the workflow defined. Idempotent — runs whose current task
-        is already terminal are skipped.
+        edge the workflow defined. A malformed run is logged and skipped
+        without preventing later candidates in the same page from advancing.
 
         Phase-5 ergonomic surface. Operators drive ticks via
         ``POST /workflows/runs/tick`` (or a future worker hook).
         """
-        from datetime import datetime, timezone
+        with self._tick_lock:
+            return self._tick_page(actor=actor, limit=limit)
 
-        rows = self.store.query_all(
-            """
-            SELECT id, current_node_key, current_task_id, definition_snapshot, updated_at
-            FROM workflow_runs
-            WHERE state = ?
-            """,
-            (WorkflowState.RUNNING.value,),
-        )
-        advanced: List[WorkflowRun] = []
+    def _tick_page(
+        self,
+        *,
+        actor: str,
+        limit: int,
+    ) -> List[WorkflowRun]:
+        from datetime import datetime, timedelta, timezone
+
         now = datetime.now(timezone.utc)
-        for row in rows:
-            reserved_task_id = self._reserved_task_id(row["current_node_key"])
-            if reserved_task_id is not None:
-                run = self.get_run(row["id"])
-                if not self._reservation_is_stale(run):
-                    continue
-                origin = self._reservation_origin(run)
-                if origin is None:
-                    continue
-                from_key, condition, source_task_id = origin
-                recovered = self._advance(
-                    run,
-                    from_key,
-                    condition,
-                    source_task_id,
-                )
-                if recovered.current_node_key != row["current_node_key"]:
-                    advanced.append(recovered)
-                continue
-            if row["current_task_id"] is None:
-                continue
-            definition = json_loads(row["definition_snapshot"], {})
-            node = self._node_by_key(definition, row["current_node_key"])
-            if node is None:
-                continue
-            timeout_min = int(node.get("timeout_minutes") or 0)
-            if timeout_min <= 0:
-                continue
-            try:
-                task = self._get_task(row["current_task_id"])
-            except NotFoundError:
-                continue
-            if task.state in {
+        limit_value = max(1, min(int(limit), 1000))
+        prefix_length = len(_ADVANCEMENT_PREFIX)
+        reservation_clause = ""
+        params: List[Any] = [WorkflowState.RUNNING.value]
+        stale_after = self._reservation_stale_after_seconds()
+        if stale_after is not None:
+            stale_before = (now - timedelta(seconds=stale_after)).isoformat(
+                timespec="microseconds"
+            )
+            reservation_clause = (
+                "(substr(COALESCE(wr.current_node_key, ''), 1, ?) = ? "
+                "AND wr.updated_at <= ?) OR "
+            )
+            params.extend(
+                [prefix_length, _ADVANCEMENT_PREFIX, stale_before]
+            )
+        params.extend(
+            [
+                prefix_length,
+                _ADVANCEMENT_PREFIX,
+                '%"timeout_minutes":%',
                 TaskState.COMPLETED.value,
                 TaskState.FAILED.value,
                 TaskState.CANCELLED.value,
-            }:
-                continue
-            try:
-                started = datetime.fromisoformat(task.updated_at)
-            except (TypeError, ValueError):
-                continue
-            elapsed_min = (now - started).total_seconds() / 60.0
-            if elapsed_min < timeout_min:
-                continue
-            try:
-                self._transition_task(
-                    task.id,
-                    TaskState.CANCELLED.value,
-                    actor,
-                    {
-                        "reason": "workflow_runtime.tick timeout",
-                        "elapsed_minutes": elapsed_min,
-                        "timeout_minutes": timeout_min,
-                        "workflow_run_id": row["id"],
-                    },
+            ]
+        )
+        cursor_clause = ""
+        if self._tick_cursor is not None:
+            cursor_updated_at, cursor_id = self._tick_cursor
+            cursor_clause = (
+                "AND (wr.updated_at > ? OR "
+                "(wr.updated_at = ? AND wr.id > ?)) "
+            )
+            params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
+        params.append(limit_value + 1)
+        rows = self.store.query_all(
+            """
+            SELECT wr.id, wr.current_node_key, wr.current_task_id,
+                   wr.definition_snapshot, wr.updated_at
+            FROM workflow_runs AS wr
+            LEFT JOIN tasks AS task ON task.id = wr.current_task_id
+            WHERE wr.state = ?
+              AND (
+            """
+            + reservation_clause
+            + """
+                (
+                    wr.current_task_id IS NOT NULL
+                    AND substr(COALESCE(wr.current_node_key, ''), 1, ?) <> ?
+                    AND wr.definition_snapshot LIKE ?
+                    AND task.id IS NOT NULL
+                    AND task.state NOT IN (?, ?, ?)
                 )
-            except (TransitionError, ValidationError):
+              )
+            """
+            + cursor_clause
+            + """
+            ORDER BY wr.updated_at, wr.id
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        has_more = len(rows) > limit_value
+        rows = rows[:limit_value]
+        self._tick_cursor = (
+            (str(rows[-1]["updated_at"]), str(rows[-1]["id"]))
+            if has_more and rows
+            else None
+        )
+        advanced: List[WorkflowRun] = []
+        for row in rows:
+            try:
+                recovered = self._tick_candidate(row, now=now, actor=actor)
+            except Exception as exc:  # noqa: BLE001 - isolate poison workflow rows.
+                try:
+                    self.observability.record_log(
+                        "workflow.recovery.failed",
+                        layer="control_plane",
+                        source=actor,
+                        level="error",
+                        subject_type="workflow_run",
+                        subject_id=str(row["id"]),
+                        detail={"run_id": str(row["id"]), "error": str(exc)},
+                    )
+                except Exception:
+                    pass
                 continue
-            advanced.append(self.get_run(row["id"]))
+            if recovered is not None:
+                advanced.append(recovered)
         return advanced
+
+    def _tick_candidate(
+        self,
+        row: Any,
+        *,
+        now: Any,
+        actor: str,
+    ) -> Optional[WorkflowRun]:
+        reserved_task_id = self._reserved_task_id(row["current_node_key"])
+        if reserved_task_id is not None:
+            run = self.get_run(row["id"])
+            if not self._reservation_is_stale(run):
+                return None
+            origin = self._reservation_origin(run)
+            if origin is None:
+                return None
+            from_key, condition, source_task_id = origin
+            recovered = self._advance(
+                run,
+                from_key,
+                condition,
+                source_task_id,
+            )
+            if recovered.current_node_key != row["current_node_key"]:
+                return recovered
+            return None
+        if row["current_task_id"] is None:
+            return None
+        definition = json_loads(row["definition_snapshot"], {})
+        node = self._node_by_key(definition, row["current_node_key"])
+        if node is None:
+            return None
+        timeout_min = int(node.get("timeout_minutes") or 0)
+        if timeout_min <= 0:
+            return None
+        try:
+            task = self._get_task(row["current_task_id"])
+        except NotFoundError:
+            return None
+        if task.state in {
+            TaskState.COMPLETED.value,
+            TaskState.FAILED.value,
+            TaskState.CANCELLED.value,
+        }:
+            return None
+        try:
+            started = parse_time(task.updated_at)
+        except (TypeError, ValueError):
+            return None
+        elapsed_min = (now - started).total_seconds() / 60.0
+        if elapsed_min < timeout_min:
+            return None
+        try:
+            self._transition_task(
+                task.id,
+                TaskState.CANCELLED.value,
+                actor,
+                {
+                    "reason": "workflow_runtime.tick timeout",
+                    "elapsed_minutes": elapsed_min,
+                    "timeout_minutes": timeout_min,
+                    "workflow_run_id": row["id"],
+                },
+            )
+        except (TransitionError, ValidationError):
+            return None
+        return self.get_run(row["id"])
 
     def cancel_run(self, run_id: str, *, reason: str, actor: str) -> WorkflowRun:
         run = self.get_run(run_id)
@@ -1013,15 +1117,23 @@ class WorkflowRuntime:
         return task_id or None
 
     def _reservation_is_stale(self, run: WorkflowRun) -> bool:
-        raw = os.environ.get(
-            "MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "60"
-        ).strip()
+        stale_after = self._reservation_stale_after_seconds()
+        if stale_after is None:
+            return False
         try:
-            stale_after = max(0, int(raw))
             age = (parse_time(utcnow()) - parse_time(run.updated_at)).total_seconds()
         except (TypeError, ValueError):
             return False
         return age >= stale_after
+
+    def _reservation_stale_after_seconds(self) -> Optional[int]:
+        raw = os.environ.get(
+            "MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "60"
+        ).strip()
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return None
 
     def _reservation_origin(
         self, run: WorkflowRun

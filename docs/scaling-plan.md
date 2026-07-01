@@ -149,6 +149,9 @@ Move from single-task routing to coordinated agent work:
   domain row, history, and outbox together. Review creation and verdict updates
   use compare-and-swap guards, and verdict submission rechecks the assignment's
   current reviewer eligibility.
+- Workflow recovery and default-review reconciliation use indexed, bounded
+  cursor pages. Recovery isolates and records poison-run failures, while review
+  queries select only reviewable states and apply tenant filters before limits.
 - Observability now includes low-level metrics/logs, integration findings,
   operator notifications, command audit, and Beads `mac-ledger v1` issue
   comments for human-facing task milestones.

@@ -404,6 +404,12 @@ until the downstream task and run transition finalize together. Cancelling a run
 commits the run state, current-task cancellation, history, and transition outbox
 atomically, so the cancellation callback cannot create downstream work.
 
+Dispatcher recovery reads bounded, oldest-first pages of stale reservations and
+timeout candidates. A malformed run records a run-scoped failure and does not
+stop later candidates. Default-review sweeps query only `needs_review` and
+`reviewing` rows; their opaque `next_cursor` provides bounded traversal without
+letting a task waiting on a verdict permanently starve the rest of the backlog.
+
 The REST API and CLI can create, import, seed, start, cancel, and tick workflow
 runs today, and `/dashboard/state` includes workflow-run summary data for UI
 clients. The checked-in dashboard does not yet provide a full visual workflow
