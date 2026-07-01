@@ -17,6 +17,7 @@ def test_deploy_drains_worker_before_stopping_services():
     assert "MAC_DEPLOY_DRAIN_MODE" in text
     assert "MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS" in text
     assert 'add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"' in text
+    assert 'add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"' in text
     assert 'timeout = float(os.environ.get("MAC_DEPLOY_API_TIMEOUT_SECONDS") or "30")' in text
     assert 'health_status":"degraded' in text
 
@@ -34,3 +35,13 @@ def test_deploy_clears_worker_drain_after_restart():
     clear_pos = text.index("clear_mac_agent_drain_after_deploy", verify_pos)
     post_manifest_pos = text.index('write_deploy_manifest "post"')
     assert verify_pos < clear_pos < post_manifest_pos
+
+
+def test_openshell_deploy_holds_drain_until_bootstrap_succeeds():
+    text = script_text()
+
+    assert "keeping drain state until post-deploy OpenShell validation completes" in text
+    assert "keeping mac-agent stopped while OpenShell validates" in text
+    assert 'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop' in text
+    assert 'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart' in text
+    assert "OpenShell bootstrap failed; mac-agent remains stopped and drained" in text
