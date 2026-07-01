@@ -42,6 +42,31 @@ def test_mac_cli_init_creates_db(tmp_path):
     assert result["status"] == "initialized"
 
 
+def test_home_db_task_create_requires_explicit_local_authority(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.delenv("MAC_SECRET_KEY", raising=False)
+    fleet_config = tmp_path / "fleets.yaml"
+    fleet_config.write_text(
+        "fleets:\n  production:\n    default: true\n    agents: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(fleet_config))
+    db_path = tmp_path / ".mac" / "mac.db"
+    db_path.parent.mkdir(parents=True)
+
+    rc = main(["--db", str(db_path), "task", "create", "stranded work"])
+
+    assert rc == 1
+    error = capsys.readouterr().err
+    assert "not a repository ticket store" in error
+    assert "never uploaded or reconciled" in error
+    assert "--local-authority" in error
+    assert not db_path.exists()
+
+
 def test_print_serializes_list_of_dictish():
     # Regression: hub-mode list commands (e.g. `mac project list`) return
     # list[_Dictish]; _print only unwrapped a single top-level to_dict object,
@@ -566,7 +591,6 @@ def test_mac_cli_task_create_description_file(tmp_path):
 def test_mac_cli_task_create_metadata_invalid_json_errors_cleanly(tmp_path):
     """A malformed --metadata value must raise SystemExit, not crash with
     a raw json.JSONDecodeError traceback."""
-    import pytest
     with pytest.raises(SystemExit) as exc:
         _run(
             tmp_path,

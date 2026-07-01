@@ -142,6 +142,26 @@ CLI selects a configured hub (`--hub-url`, `MAC_API_URL`, `MAC_URL`,
 `MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise refuses to run instead of
 silently creating a stray `./mac.db`.
 
+### Control-plane authority is not repository-local task storage
+
+`--db` selects a **direct SQLite authority**: a complete MAC control plane whose
+API, dispatcher, and workers all use that exact database. It is useful for a
+single-host deployment, hub-host maintenance, tests, and migrations. It is not
+an offline cache and its tasks are never uploaded, merged, or reconciled with a
+remote hub. Task-producing commands against the ambiguous client path
+`~/.mac/mac.db` therefore require `--local-authority`; otherwise MAC refuses the
+write and directs the operator to the configured hub.
+
+The hub ledger is intentionally not rooted in one checkout. It coordinates
+leases, agents, reviews, workflows, evidence, A2A work, non-repository
+operations, and tasks spanning multiple repositories. A task reaches source
+through its project repository registration and execution contract.
+
+GitHub issues remain external project-planning records. `.tickets/` is ignored
+local migration/compatibility state, not another execution authority. Bridges
+may create a hub task from an external issue, but the resulting `mac task`
+record in the selected control-plane authority is what agents claim and run.
+
 ### Client bootstrap status
 
 `mac login` bootstraps a new client from verified SSH access to the hub. It

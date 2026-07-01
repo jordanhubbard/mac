@@ -54,10 +54,21 @@ profiles record exactly what was resolved.
 The command reserves a free loopback port and starts SSH with `-F /dev/null`,
 `BatchMode=yes`, `ExitOnForwardFailure=yes`, strict host checking, server-alive
 probes, and the explicit route. It invokes scoped enrollment in a second SSH
-session, validates `GET /tasks/stats` with the returned bearer through the
+session, running the hub's `mac` executable. Because a non-interactive SSH
+command shell does not source the operator's login profile, the remote `mac`
+path is discovered automatically (well-known install locations plus the shell's
+own `command -v`); pass `--remote-mac <abs path>` only to override that. It then
+validates `GET /tasks/stats` with the returned bearer through the
 tunnel, writes secret-free session state, and atomically installs the profile
 only after validation succeeds. Any failure after issuance attempts remote
 revocation and removes transient state without printing the bearer.
+
+After login, operator commands omit `--db` and resolve the installed profile as
+the one hub authority. A client-side `~/.mac/mac.db` is neither a cache nor an
+offline queue, and MAC performs no implicit task reconciliation between SQLite
+files. If that path already contains tasks, task-producing commands refuse to
+add more unless `--local-authority` explicitly declares that the file is the
+database used by a standalone API, dispatcher, and worker set.
 
 The managed SSH PID is recorded under `$MAC_HOME/sessions`; bearer material is
 not. Every profile-backed CLI command checks the session. A dead tunnel is

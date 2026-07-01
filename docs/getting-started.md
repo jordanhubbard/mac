@@ -121,6 +121,13 @@ Create a local database:
 uv run mac --db mac.db init
 ```
 
+This creates a standalone control-plane authority, not an offline replica of a
+fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
+workers configured to use this same file. They are never synchronized with a
+remote hub. Relative or temporary database paths are appropriate for this
+tutorial; task-producing commands against `~/.mac/mac.db` require the explicit
+`--local-authority` acknowledgement.
+
 Create a practice project and task:
 
 ```bash

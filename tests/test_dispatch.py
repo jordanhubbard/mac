@@ -5,26 +5,26 @@ from __future__ import annotations
 import argparse
 import io
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
-
-
-@pytest.fixture(autouse=True)
-def _mac_secret_key(monkeypatch):
-    """LocalDispatch instantiates ControlPlane which requires MAC_SECRET_KEY."""
-    monkeypatch.setenv("MAC_SECRET_KEY", "dispatch-test-key-with-at-least-32-characters")
-
 
 from mac.dispatch import (
     DispatchError,
     LocalDispatch,
     RemoteDispatch,
     _Dictish,
+    _configured_remote_authority,
+    _task_producing_cli_operation,
     _wrap_list,
     resolve_dispatch,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mac_secret_key(monkeypatch):
+    """LocalDispatch instantiates ControlPlane which requires MAC_SECRET_KEY."""
+    monkeypatch.setenv("MAC_SECRET_KEY", "dispatch-test-key-with-at-least-32-characters")
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +83,14 @@ class _FakePlane:
         self.calls.append(("make_task", args, kwargs))
         return "ok"
 
+    def create_task(self, *args: Any, **kwargs: Any) -> str:
+        self.calls.append(("create_task", args, kwargs))
+        return "created"
+
+    def convert_ticketing_source(self, *args: Any, **kwargs: Any) -> str:
+        self.calls.append(("convert_ticketing_source", args, kwargs))
+        return "converted"
+
 
 def test_local_dispatch_forwards_method_calls():
     plane = _FakePlane()
@@ -103,6 +111,54 @@ def test_local_dispatch_refuses_hub_owned_reconciler_calls():
         dispatch.repository_ref_reconciler_status()
     with pytest.raises(DispatchError, match="running hub"):
         dispatch.reconcile_repository_refs(mode="audit")
+
+
+def test_local_dispatch_refuses_unconfirmed_home_task_authority():
+    plane = _FakePlane()
+    dispatch = LocalDispatch(
+        plane,
+        db_path="/home/operator/.mac/mac.db",
+        local_authority_confirmed=False,
+        remote_authority="fleet 'production'",
+    )
+
+    with pytest.raises(DispatchError) as excinfo:
+        dispatch.create_task("stranded work")
+
+    message = str(excinfo.value)
+    assert "never uploaded or reconciled" in message
+    assert "fleet 'production'" in message
+    assert "--local-authority" in message
+    assert plane.calls == []
+
+    without_remote = LocalDispatch(
+        plane,
+        db_path="/home/operator/.mac/mac.db",
+        local_authority_confirmed=False,
+    )
+    with pytest.raises(DispatchError, match="Target a configured hub"):
+        without_remote.create_task("still stranded")
+
+
+def test_local_dispatch_allows_confirmed_authority_and_read_only_conversion():
+    plane = _FakePlane()
+    confirmed = LocalDispatch(
+        plane,
+        db_path="/srv/mac/mac.db",
+        local_authority_confirmed=True,
+    )
+    assert confirmed.create_task("hub work") == "created"
+
+    guarded = LocalDispatch(
+        plane,
+        db_path="/home/operator/.mac/mac.db",
+        local_authority_confirmed=False,
+    )
+    assert guarded.convert_ticketing_source(".", dry_run=True) == "converted"
+    assert [call[0] for call in plane.calls] == [
+        "create_task",
+        "convert_ticketing_source",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +217,48 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"command": "interaction", "interaction_command": "task"}, "interaction task creation"),
+        ({"command": "project", "project_command": "onboard"}, "project onboarding"),
+        ({"command": "bridge", "bridge_command": "import"}, "bridge task import"),
+        ({"command": "workflow", "workflow_command": "start"}, "workflow start"),
+        ({"command": "rollout", "rollout_command": "health"}, "rollout health"),
+        ({"command": "migrate", "migrate_command": "import"}, "task migration import"),
+        (
+            {"command": "migrate", "migrate_command": "acc", "mode": "import"},
+            "ACC task migration",
+        ),
+        (
+            {"command": "task", "task_command": "migrate-beads", "dry_run": False},
+            "beads task migration",
+        ),
+        (
+            {"command": "task", "task_command": "convert-ticketing", "dry_run": False},
+            "ticket conversion",
+        ),
+        ({"command": "task", "task_command": "list"}, None),
+    ],
+)
+def test_task_producing_cli_operation_classifies_indirect_writes(values, expected):
+    assert _task_producing_cli_operation(_ns(**values)) == expected
+
+
+def test_configured_remote_authority_describes_explicit_selection(monkeypatch):
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    assert _configured_remote_authority(_ns(profile="operator"), {}) == (
+        "client profile 'operator'"
+    )
+    assert _configured_remote_authority(_ns(hub_url="https://hub.example"), {}) == (
+        "the explicitly selected hub"
+    )
+    assert _configured_remote_authority(_ns(), {"MAC_API_URL": "https://hub.example"}) == (
+        "a hub URL from the environment"
+    )
+    assert _configured_remote_authority(_ns(fleet="production"), {}) == "fleet 'production'"
+
+
 def test_resolve_dispatch_with_explicit_db(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_DB", raising=False)
@@ -205,6 +303,43 @@ def test_resolve_dispatch_explicit_db_wins_over_hub(tmp_path, monkeypatch):
     db_path = tmp_path / "mac.db"
     disp = resolve_dispatch(_ns(db=str(db_path)))
     assert isinstance(disp, LocalDispatch)
+
+
+@pytest.mark.parametrize("selector", ["hub_url", "fleet", "profile"])
+def test_resolve_dispatch_rejects_conflicting_explicit_authorities(
+    tmp_path, monkeypatch, selector
+):
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    value = "http://hub.example:8789" if selector == "hub_url" else "production"
+    with pytest.raises(DispatchError, match="Choose exactly one"):
+        resolve_dispatch(_ns(db=str(tmp_path / "mac.db"), **{selector: value}))
+
+
+def test_resolve_dispatch_guards_canonical_home_db_task_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    config = tmp_path / "fleets.yaml"
+    config.write_text(
+        "fleets:\n  production:\n    default: true\n    agents: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(config))
+    db_path = tmp_path / ".mac" / "mac.db"
+    db_path.parent.mkdir(parents=True)
+
+    guarded = resolve_dispatch(_ns(db=str(db_path)))
+    with pytest.raises(DispatchError, match="never uploaded or reconciled"):
+        guarded.create_task("stranded work")
+
+    confirmed = resolve_dispatch(_ns(db=str(db_path), local_authority=True))
+    assert confirmed.create_task("standalone work").title == "standalone work"
+
+
+def test_resolve_dispatch_rejects_local_authority_without_db(monkeypatch):
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    with pytest.raises(DispatchError, match="requires --db"):
+        resolve_dispatch(_ns(local_authority=True))
 
 
 def test_resolve_dispatch_errors_when_nothing_configured(tmp_path, monkeypatch, capsys):
@@ -595,7 +730,6 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
 
     from mac.cli import main
     from mac.http_client import HubClient
-    import mac.dispatch as dispatch_mod
 
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_DB", raising=False)
@@ -1058,5 +1192,6 @@ def test_resolve_dispatch_emits_local_banner(tmp_path, monkeypatch, capsys):
     db_path = tmp_path / "mac.db"
     resolve_dispatch(_ns(db=str(db_path)))
     captured = capsys.readouterr()
-    assert "LOCAL db" in captured.err
+    assert "DIRECT SQLite authority" in captured.err
+    assert "does not synchronize tasks" in captured.err
     assert str(db_path) in captured.err

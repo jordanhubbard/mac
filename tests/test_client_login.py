@@ -298,6 +298,45 @@ def test_prepare_login_spec_rejects_fingerprint_mismatch(login_files, monkeypatc
         )
 
 
+def test_resolve_remote_mac_discovers_and_tolerates_absence(login_files, monkeypatch):
+    _home, identity, known_hosts = login_files
+    spec = _spec(identity, known_hosts)
+
+    # A hit is returned from the sentinel-tagged probe output, banner and all.
+    def found(argv, **_kwargs):
+        assert _spec_probe_target(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="Welcome to the hub!\nMAC_BIN=/Users/jkh/.local/bin/mac\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(client_login.subprocess, "run", found)
+    assert (
+        client_login._resolve_remote_mac(spec, timeout=5)
+        == "/Users/jkh/.local/bin/mac"
+    )
+
+    # No sentinel (not found) -> None, so the caller falls back to bare `mac`.
+    monkeypatch.setattr(
+        client_login.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(returncode=3, stdout="", stderr=""),
+    )
+    assert client_login._resolve_remote_mac(spec, timeout=5) is None
+
+    # A transport failure is swallowed rather than aborting login.
+    def boom(*_a, **_k):
+        raise OSError("ssh unavailable")
+
+    monkeypatch.setattr(client_login.subprocess, "run", boom)
+    assert client_login._resolve_remote_mac(spec, timeout=5) is None
+
+
+def _spec_probe_target(argv):
+    return argv[0] == "ssh" and argv[-2] == "mac@hub.example"
+
+
 def test_choose_local_port_and_tunnel_argv(login_files):
     _home, identity, known_hosts = login_files
     chosen = client_login.choose_local_port()
@@ -355,6 +394,7 @@ def test_login_validates_before_atomic_install_and_never_returns_token(
     commands = []
     monkeypatch.setattr(client_login, "choose_local_port", lambda _port=None: 48789)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(
         client_login,
         "_run_remote_json",
@@ -388,6 +428,7 @@ def test_login_rolls_back_and_revokes_after_malformed_manifest(
     actions = []
     monkeypatch.setattr(client_login, "choose_local_port", lambda _port=None: 48789)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(
         client_login,
         "_run_remote_json",
@@ -439,6 +480,7 @@ def test_rotating_login_stops_previous_managed_tunnel(login_files, monkeypatch):
     )
     monkeypatch.setattr(client_login, "choose_local_port", lambda *_a: 48790)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(
         client_login,
         "_run_remote_json",
@@ -474,6 +516,7 @@ def test_login_cleans_interrupted_session_without_profile(login_files, monkeypat
     )
     monkeypatch.setattr(client_login, "choose_local_port", lambda *_a: 48790)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(client_login, "_run_remote_json", lambda *_a, **_k: _manifest())
     monkeypatch.setattr(
         client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
@@ -511,6 +554,7 @@ def test_ensure_session_running_reconnect_conflict_and_auth_failure(
         client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
     )
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     assert client_login.ensure_session("production")["status"] == "reconnected"
 
@@ -940,6 +984,7 @@ def test_login_option_flags_and_validation_rollback(login_files, monkeypatch):
     )
     monkeypatch.setattr(client_login, "choose_local_port", lambda *_a: 48789)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(
         client_login,
         "_run_remote_json",
@@ -1006,6 +1051,7 @@ def test_direct_and_stale_session_recovery_edges(login_files, monkeypatch):
         client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
     )
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
+    monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(
         client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
     )

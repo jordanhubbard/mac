@@ -67,6 +67,14 @@ Neither is "easy." → revert.
    parent/child task links over the existing ledger), not by adopting a second
    store.
 
+“One task database” means one authoritative database per running control
+plane. The hub's `mac.db` is fleet authority; a SQLite file opened with `--db`
+elsewhere is a separate standalone authority, not a replica. MAC does not merge
+their task state. Repository `.tickets/` files are migration/compatibility
+mirrors and GitHub issues are external planning sources; neither participates
+in leases, dispatch, review, or workflow state until a hub task is explicitly
+created from it.
+
 ## Consequences
 
 - **Pros:** one store, one source of truth, no second DB to back up/observe, no

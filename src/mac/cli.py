@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from mac.migration import import_jsonl, migrate_acc_sqlite
 from mac.models import MACError
@@ -21,10 +21,6 @@ from mac.repository_hygiene import (
     prune_repository_refs,
     query_open_pull_requests,
 )
-from mac.services import ControlPlane
-from mac.store import SQLiteStore
-
-
 def _json_arg(value: Optional[str], default: Any) -> Any:
     if value is None:
         return default
@@ -3013,9 +3009,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--db",
         default=None,
-        help="SQLite database path (local mode). Use this for offline work, "
-        "`init`, and `migrate`. When unset and no hub is configured, mac "
-        "refuses to run rather than writing to ./mac.db silently.",
+        help="direct SQLite control-plane authority for hub maintenance, "
+        "standalone development, tests, and migration. It is not a repository "
+        "ticket store or offline hub replica and never synchronizes with a hub. "
+        "When unset and no hub is configured, mac refuses to run.",
+    )
+    parser.add_argument(
+        "--local-authority",
+        action="store_true",
+        help="confirm that --db is the authoritative database used by this "
+        "control plane's API, dispatcher, and workers. Required before "
+        "task-producing operations against ~/.mac/mac.db.",
     )
     parser.add_argument(
         "--hub-url",
@@ -3121,7 +3125,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="replace an existing client identity/profile explicitly",
     )
-    login_parser.add_argument("--remote-mac", default="mac")
+    login_parser.add_argument(
+        "--remote-mac",
+        default="mac",
+        help="path to the mac executable on the hub; auto-discovered when omitted",
+    )
     login_parser.add_argument("--connect-timeout", type=int, default=10)
     _set(cmd_login, login_parser)
 

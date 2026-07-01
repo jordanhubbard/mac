@@ -509,6 +509,51 @@ def _validate_token(api_url: str, token: str, *, timeout: int) -> Tuple[bool, st
         return False, "hub_unreachable"
 
 
+# POSIX-sh probe that prints ``MAC_BIN=<abs path>`` for the first usable remote
+# ``mac``.  A non-interactive ``ssh host cmd`` shell does not source the login
+# profile, so a user-scoped install is not on PATH — we look where console
+# scripts actually land before falling back to the shell's own ``command -v``.
+# Output is sentinel-tagged so any profile banner noise is trivially ignored.
+_REMOTE_MAC_PROBE = (
+    'for c in "$HOME/.local/bin/mac" "$HOME/.venv/bin/mac" '
+    '"/usr/local/bin/mac" "/opt/homebrew/bin/mac" "/usr/bin/mac"; do '
+    'if [ -x "$c" ]; then printf "MAC_BIN=%s\\n" "$c"; exit 0; fi; done; '
+    'p="$(command -v mac 2>/dev/null || true)"; '
+    'if [ -n "$p" ]; then printf "MAC_BIN=%s\\n" "$p"; exit 0; fi; '
+    "exit 3"
+)
+
+
+def _resolve_remote_mac(spec: FleetSshSpec, *, timeout: int) -> Optional[str]:
+    """Best-effort discovery of the remote ``mac`` executable's absolute path.
+
+    Because a non-interactive SSH command shell skips the operator's login
+    profile, a bare ``mac`` invocation fails with exit 127 when MAC is installed
+    under ``~/.local/bin`` or a venv.  Rather than force the operator to hand
+    ``--remote-mac <abs path>`` (a deployment detail they should not have to
+    know), probe the well-known install locations and the shell's own
+    ``command -v``.  Returns the discovered path, or None when discovery cannot
+    run or finds nothing — leaving the caller to fall back to a bare ``mac``.
+    """
+
+    try:
+        result = subprocess.run(
+            ssh_argv(spec, _REMOTE_MAC_PROBE, extra=("-T",), connect_timeout=timeout),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=max(30, timeout * 3),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("MAC_BIN="):
+            path = line[len("MAC_BIN=") :].strip()
+            if path:
+                return path
+    return None
+
+
 def _run_remote_json(
     spec: FleetSshSpec, command: Iterable[str], *, timeout: int
 ) -> Dict[str, Any]:
@@ -686,6 +731,13 @@ def login(
             prepared, created_pin = prepare_login_spec(
                 spec, profile, connect_timeout=connect_timeout
             )
+            # Discover where ``mac`` lives on the hub unless the operator pinned
+            # it explicitly.  This keeps the remote install path an internal
+            # detail rather than something the operator must pass by hand.
+            if remote_mac == "mac":
+                remote_mac = _resolve_remote_mac(
+                    prepared, timeout=connect_timeout
+                ) or remote_mac
             selected_port = choose_local_port(local_port)
             process = _start_tunnel(
                 prepared,

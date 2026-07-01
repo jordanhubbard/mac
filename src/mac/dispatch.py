@@ -7,14 +7,17 @@ two transports, picked by :func:`resolve_dispatch`.
 
 A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
-* ``LocalDispatch`` — a pass-through to an in-process ``ControlPlane``.
+* ``LocalDispatch`` — direct access to an in-process ``ControlPlane`` backed by
+  one authoritative SQLite database. It is not an offline hub replica.
 * ``RemoteDispatch`` — translates each call to an HTTP request against a
   hub URL using :class:`mac.http_client.HubClient`.
 
 ``resolve_dispatch(args)`` decides which flavor to use:
 
-1. ``--db <path>`` (or ``MAC_DB`` env) → local SQLite at that path,
-   with a stderr banner so silent local writes can't happen.
+1. ``--db <path>`` (or ``MAC_DB`` env) → direct SQLite authority at that path,
+   with a stderr banner so silent isolated writes can't happen. The canonical
+   client-side ``~/.mac/mac.db`` requires ``--local-authority`` before any
+   task-producing operation; SQLite tasks are never reconciled with a hub.
 2. ``--hub-url URL`` (with optional ``--token``) → remote HTTP.
 3. ``MAC_API_URL`` / ``MAC_URL`` / ``MAC_HUB_URL`` env → remote HTTP.
 4. A fleet → its ``hub_url`` in ``~/.mac/fleets.yaml`` → remote HTTP. The
@@ -47,11 +50,11 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
-from mac.http_client import HubClient, HubClientError
-from mac.models import json_dumps
+from mac.http_client import HubClient
+from mac.models import MACError
 
 
-class DispatchError(RuntimeError):
+class DispatchError(MACError):
     """Raised when transport resolution or a remote call fails."""
 
 
@@ -123,14 +126,40 @@ def _wrap_list(items: Any) -> List[_Dictish]:
 
 
 class LocalDispatch:
-    """Pass-through to an in-process :class:`mac.services.ControlPlane`.
+    """Direct access to one authoritative :class:`mac.services.ControlPlane`.
 
     Forwarding via ``__getattr__`` keeps the implementation tiny and
-    automatically tracks new ControlPlane methods.
+    automatically tracks new ControlPlane methods. A database under a client
+    home directory is not a cache: task-producing calls are guarded until the
+    operator confirms that its API, dispatcher, and workers use this same
+    database as their authority.
     """
 
-    def __init__(self, plane: Any) -> None:
+    _TASK_PRODUCING_METHODS = frozenset(
+        {
+            "convert_ticketing_source",
+            "create_interaction_task",
+            "create_task",
+            "evaluate_rollout_health",
+            "import_project_item",
+            "onboard_repository",
+            "rescue_rollout",
+            "start_workflow",
+        }
+    )
+
+    def __init__(
+        self,
+        plane: Any,
+        *,
+        db_path: Optional[str] = None,
+        local_authority_confirmed: bool = True,
+        remote_authority: Optional[str] = None,
+    ) -> None:
         self._plane = plane
+        self._db_path = db_path
+        self._local_authority_confirmed = local_authority_confirmed
+        self._remote_authority = remote_authority
 
     @staticmethod
     def _require_hub_reconciler(*_args: Any, **_kwargs: Any) -> Any:
@@ -142,8 +171,26 @@ class LocalDispatch:
     repository_ref_reconciler_status = _require_hub_reconciler
     reconcile_repository_refs = _require_hub_reconciler
 
+    def _require_task_authority(self, operation: str) -> None:
+        if self._local_authority_confirmed:
+            return
+        raise _task_authority_error(
+            self._db_path or "the selected SQLite database",
+            operation,
+            self._remote_authority,
+        )
+
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._plane, name)
+        target = getattr(self._plane, name)
+        if name not in self._TASK_PRODUCING_METHODS:
+            return target
+
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if name != "convert_ticketing_source" or not kwargs.get("dry_run"):
+                self._require_task_authority(name.replace("_", " "))
+            return target(*args, **kwargs)
+
+        return guarded
 
     @property
     def store(self) -> Any:
@@ -1483,7 +1530,107 @@ def _maybe_print_local_banner(db_path: str) -> None:
     # Suppressable for tests / scripted users.
     if os.environ.get("MAC_QUIET_LOCAL_BANNER") == "1":
         return
-    print("mac: writing LOCAL db at %s" % resolved, file=sys.stderr)
+    print(
+        "mac: using DIRECT SQLite authority at %s; it does not synchronize "
+        "tasks with any hub" % resolved,
+        file=sys.stderr,
+    )
+
+
+def _canonical_client_db_path() -> Path:
+    return (Path.home() / ".mac" / "mac.db").expanduser().resolve()
+
+
+def _is_canonical_client_db(db_path: str) -> bool:
+    try:
+        return Path(db_path).expanduser().resolve() == _canonical_client_db_path()
+    except OSError:
+        return False
+
+
+def _configured_remote_authority(args: Any, env: Dict[str, str]) -> Optional[str]:
+    """Describe a configured remote authority without opening a login tunnel."""
+
+    profile = getattr(args, "profile", None) or env.get("MAC_PROFILE")
+    if not profile:
+        try:
+            from mac.client_profiles import active_profile_name
+
+            profile = active_profile_name()
+        except Exception:  # noqa: BLE001 - this is only an error-message hint.
+            profile = None
+    if profile:
+        return "client profile %r" % profile
+
+    explicit_url = getattr(args, "hub_url", None)
+    if explicit_url:
+        return "the explicitly selected hub"
+    if any(env.get(name) for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "HGMAC_URL")):
+        return "a hub URL from the environment"
+
+    fleet = _effective_fleet(args, env)
+    if fleet:
+        return "fleet %r" % fleet
+    return None
+
+
+def _task_authority_error(
+    db_path: str,
+    operation: str,
+    remote_authority: Optional[str],
+) -> DispatchError:
+    message = (
+        "refusing %s against %s. This is a direct SQLite control-plane "
+        "authority, not a repository ticket store or an offline hub replica; "
+        "its tasks are never uploaded or reconciled with a hub. " % (operation, db_path)
+    )
+    if remote_authority:
+        message += (
+            "%s is configured for fleet work. Omit --db and target that "
+            "authority (run `mac login` first if it has no client profile). "
+            % remote_authority
+        )
+    else:
+        message += "Target a configured hub for fleet work. "
+    message += (
+        "If this SQLite file is intentionally the authoritative database used "
+        "by the MAC API, dispatcher, and workers, rerun with --local-authority."
+    )
+    return DispatchError(message)
+
+
+def _task_producing_cli_operation(args: Any) -> Optional[str]:
+    """Return a user-facing operation name when this CLI call can create tasks."""
+
+    command = getattr(args, "command", None)
+    if command == "interaction" and getattr(args, "interaction_command", None) == "task":
+        return "interaction task creation"
+    if command == "project" and getattr(args, "project_command", None) == "onboard":
+        return "project onboarding"
+    if command == "bridge" and getattr(args, "bridge_command", None) == "import":
+        return "bridge task import"
+    if command == "workflow" and getattr(args, "workflow_command", None) == "start":
+        return "workflow start"
+    if command == "rollout" and getattr(args, "rollout_command", None) in {"health", "rescue"}:
+        return "rollout %s" % getattr(args, "rollout_command")
+    if command == "migrate":
+        migrate_command = getattr(args, "migrate_command", None)
+        if migrate_command == "import":
+            return "task migration import"
+        if migrate_command == "acc" and getattr(args, "mode", "dry-run") == "import":
+            return "ACC task migration"
+    if command != "task":
+        return None
+    task_command = getattr(args, "task_command", None)
+    if task_command == "create":
+        return "task creation"
+    if task_command == "migrate-beads" and not (
+        getattr(args, "dry_run", False) or getattr(args, "tickets_only", False)
+    ):
+        return "beads task migration"
+    if task_command == "convert-ticketing" and not getattr(args, "dry_run", False):
+        return "ticket conversion"
+    return None
 
 
 def _resolve_hub_url(args: Any, env: Dict[str, str]) -> Optional[str]:
@@ -1662,12 +1809,41 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
     # Priority 1: explicit --db beats everything (lets you debug against
     # a local copy even if a hub is configured in your shell).
     db_path = getattr(args, "db", None) or env.get("MAC_DB")
+    local_authority = bool(getattr(args, "local_authority", False))
+    explicit_remote = [
+        name
+        for name, value in (
+            ("--hub-url", getattr(args, "hub_url", None)),
+            ("--fleet", getattr(args, "fleet", None)),
+            ("--profile", getattr(args, "profile", None)),
+        )
+        if value
+    ]
+    if db_path and explicit_remote:
+        raise DispatchError(
+            "conflicting control-plane authorities: --db selects direct SQLite, "
+            "while %s selects a remote hub. Choose exactly one."
+            % ", ".join(explicit_remote)
+        )
+    if local_authority and not db_path:
+        raise DispatchError("--local-authority requires --db or MAC_DB")
     if db_path:
         from mac.services import ControlPlane
         from mac.store import SQLiteStore
 
         _maybe_print_local_banner(db_path)
-        return LocalDispatch(ControlPlane(SQLiteStore(db_path)))
+        canonical_client_db = _is_canonical_client_db(db_path)
+        resolved_db_path = str(Path(db_path).expanduser().resolve())
+        remote_authority = _configured_remote_authority(args, env)
+        operation = _task_producing_cli_operation(args)
+        if canonical_client_db and not local_authority and operation:
+            raise _task_authority_error(resolved_db_path, operation, remote_authority)
+        return LocalDispatch(
+            ControlPlane(SQLiteStore(db_path)),
+            db_path=resolved_db_path,
+            local_authority_confirmed=local_authority or not canonical_client_db,
+            remote_authority=remote_authority,
+        )
 
     # Priority 2-4: hub mode.
     url = _resolve_hub_url(args, env)
