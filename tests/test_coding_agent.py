@@ -231,3 +231,39 @@ def test_observable_is_secret_free(tmp_path):
     # Only the env var *name* is recorded, never the value.
     assert choice.observable()["auth_source"] == "ANTHROPIC_API_KEY"
     assert choice.observable()["schema"] == "mac.coding_agent.choice.v1"
+
+
+def test_detect_all_default_which_finds_binaries_on_path(tmp_path):
+    """Regression: detect_all() with no explicit `which` must actually probe
+    PATH (v1 passed which=None into the detectors, the None(name) call raised,
+    was swallowed, and every CLI reported 'not on PATH' fleet-wide)."""
+    from mac.coding_agent import detect_all
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text("#!/bin/sh\nexit 0\n")
+    fake_codex.chmod(0o755)
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text('{"t": 1}')
+
+    status = detect_all(env={"PATH": str(bin_dir)}, home=home)
+    assert status["codex"]["on_path"] is True
+    assert status["codex"]["available"] is True
+    assert status["claude"]["on_path"] is False
+
+
+def test_detect_all_augments_service_path_with_user_bins(tmp_path):
+    """A minimal supervisor PATH still finds CLIs in ~/.local/bin."""
+    from mac.coding_agent import detect_all
+
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    fake_claude = local_bin / "claude"
+    fake_claude.write_text("#!/bin/sh\nexit 0\n")
+    fake_claude.chmod(0o755)
+
+    status = detect_all(env={"PATH": "/usr/bin:/bin"}, home=home)
+    assert status["claude"]["on_path"] is True

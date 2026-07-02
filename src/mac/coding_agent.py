@@ -219,6 +219,37 @@ _DETECTORS = {
 }
 
 
+def _service_augmented_which(
+    env: Mapping[str, str], home: Path
+) -> Callable[[str], Optional[str]]:
+    """``shutil.which`` over the service PATH plus standard user install dirs.
+
+    The worker daemon runs under a minimal supervisor PATH (systemd/launchd/
+    supervisord), while the CLIs are installed into login-shell locations —
+    so a bare which() under-reports "not installed" for binaries the task
+    executor (which sources the login env) can see perfectly well. Heartbeat
+    status must reflect what task runs will actually find.
+    """
+    extra = [
+        str(home / ".local" / "bin"),
+        str(home / "bin"),
+        str(home / ".npm-global" / "bin"),
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+    ]
+    base = str(env.get("PATH") or "")
+    search = os.pathsep.join(
+        [p for p in base.split(os.pathsep) if p] + [p for p in extra if p not in base]
+    )
+
+    def _which_augmented(name: str) -> Optional[str]:
+        import shutil as _shutil
+
+        return _shutil.which(name, path=search)
+
+    return _which_augmented
+
+
 def detect_all(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
@@ -233,6 +264,8 @@ def detect_all(
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
+    if which is None:
+        which = _service_augmented_which(env, home)
     out: Dict[str, Dict[str, object]] = {}
     for name, detect in _DETECTORS.items():
         available, binary, source, detail = detect(env, home, which)
