@@ -120,6 +120,9 @@ def test_repository_contract_section_shows_existing_contract():
     assert "make test" in section
     assert "codegraph affected" in section
     assert "task contract failure" not in section
+    assert "do not fetch, rebase, commit, push, or open a PR" in section
+    assert "deterministic host finalizer owns canonical freshness" in section
+    assert "report the pushed ref" not in section
 
 
 def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypatch):

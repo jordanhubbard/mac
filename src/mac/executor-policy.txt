@@ -6,15 +6,17 @@ tokens. Work only in the prepared task worktree. Registered source checkouts
 are read-only except for an explicit source-remediation task.
 
 For repository work, run the declared bootstrap when required, run the exact
-contract test, and commit all intended files. Source/build/dependency/runtime
-changes require a passing CodeGraph sync/affected audit. Do not push directly;
-the deterministic host finalizer validates canonical freshness, tests,
-CodeGraph, worktree cleanliness, and publication.
+contract test, and leave all intended file changes in the task worktree.
+Source/build/dependency/runtime changes require a passing CodeGraph
+sync/affected audit. Do not fetch, rebase, commit, push, or open a PR from the
+agent process; the deterministic host finalizer validates canonical freshness,
+commits the harvested changes, reruns tests and CodeGraph, and publishes.
 
 Write $MAC_TASK_WORKSPACE/mac-evidence.json using mac.worker_evidence.v1 with
-status=complete and an accurate evidence_type. Repository evidence includes
-head/base/ref, dirty=false, files_changed, tests/checks, and CodeGraph where
-required. Deployment evidence includes targets/services and passing checks.
+status=complete and an accurate evidence_type. Preliminary repository evidence
+includes files_changed, tests/checks, and CodeGraph where required; the host
+finalizer replaces it with authoritative head/base/ref/cleanliness/publication
+evidence. Deployment evidence includes targets/services and passing checks.
 Non-repository directives may use operator_result. Never claim unverified work.
 
 Install software only in the task workspace/project environment—not with sudo,

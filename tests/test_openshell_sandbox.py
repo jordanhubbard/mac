@@ -194,6 +194,11 @@ def test_build_runs_private_agent_wrapper_in_workspace_subdir():
     inner = _inner(_build("/work/task-7"))
     assert inner.startswith("cd /sandbox/task-7\n")
     assert "mac_sandbox_toolchain_setup" in inner
+    assert 'rm -rf "$MAC_TASK_REPO_WORKTREE/.git"' in inner
+    assert 'git -C "$MAC_TASK_REPO_WORKTREE" init -q' in inner
+    assert "MAC OpenShell sandbox baseline" in inner
+    assert inner.index("mac_sandbox_toolchain_setup") < inner.index("sandbox baseline")
+    assert inner.index("sandbox baseline") < inner.index("\nexec ")
     assert "\nexec " in inner
     assert "mac.agent_command" in inner
     assert "hermes_cli.main" not in inner

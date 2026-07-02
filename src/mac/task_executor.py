@@ -956,7 +956,8 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             "For normal repository tasks, MAC prepares a task-owned git worktree before the executor starts.",
             "Use $MAC_TASK_REPO_WORKTREE, or metadata.runtime.repository_worktree in task.json, as the only writable checkout.",
             "Treat origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only registered source state; do not edit it for feature or bug work.",
-            "The registered checkout must remain clean. Commit, test, and publish from the task worktree branch, then report the pushed ref in evidence.",
+            "The registered checkout must remain clean. Modify and test the task worktree, but do not fetch, rebase, commit, push, or open a PR from the agent process.",
+            "The deterministic host finalizer owns canonical freshness, the Git commit, and publication after it harvests the agent's file changes. Report changed files and checks in preliminary evidence; host-finalized evidence supplies the pushed ref.",
             "Only explicit source-remediation tasks may repair origin.repository_path directly.",
             "Before build or test work, run bootstrap.command from the repository root when the declared tools or bootstrap.creates outputs are missing.",
             "Use test.command as the canonical verification command unless the task explicitly narrows the check.",
@@ -2748,6 +2749,23 @@ def _build_sandbox_create_argv(
             ". ./.mac-sandbox-toolchain.sh",
             "rm -f ./.mac-sandbox-toolchain.sh",
             "mac_sandbox_toolchain_setup || true",
+            # A host git worktree stores `.git` as a pointer into a host-only
+            # common directory.  That pointer is invalid after OpenShell uploads
+            # the workspace, and host credentials/remotes must not be copied
+            # into the sandbox merely to make Git usable.  Replace it with a
+            # credential-free snapshot repository so the agent can inspect its
+            # own diff and run tools that expect Git.  The download merger
+            # deliberately excludes this sandbox-only `.git` directory; the
+            # deterministic host finalizer commits and publishes the harvested
+            # file changes using the real task worktree.
+            'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && command -v git >/dev/null 2>&1; then',
+            '  rm -rf "$MAC_TASK_REPO_WORKTREE/.git"',
+            '  git -C "$MAC_TASK_REPO_WORKTREE" init -q',
+            '  git -C "$MAC_TASK_REPO_WORKTREE" config user.email mac-sandbox@invalid',
+            '  git -C "$MAC_TASK_REPO_WORKTREE" config user.name "MAC OpenShell sandbox"',
+            '  git -C "$MAC_TASK_REPO_WORKTREE" add -A',
+            '  git -C "$MAC_TASK_REPO_WORKTREE" commit -q --allow-empty -m "MAC OpenShell sandbox baseline"',
+            "fi",
             "exec %s" % shlex.join(agent_argv),
         ]
     )
