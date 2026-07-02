@@ -1379,6 +1379,7 @@ edges:
             "mode": "off",
             "actor": "operator",
         },
+        ("POST", "/github-ingest/run"): {},
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,
