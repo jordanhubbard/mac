@@ -1899,6 +1899,24 @@ install_github_review_key() {
   log "WARNING: no GitHub SSH identity is authorized on this spoke; repository work that requires SSH will be rejected or routed elsewhere"
 }
 
+configure_github_https_credentials() {
+  local gh_bin
+  if [ -z "${GH_TOKEN:-}" ]; then
+    log "GH_TOKEN absent; skipping GitHub HTTPS credential setup"
+    return 0
+  fi
+  gh_bin="$(command -v gh 2>/dev/null || true)"
+  if [ -z "$gh_bin" ]; then
+    log "WARNING: gh CLI not found; GitHub HTTPS credential setup skipped"
+    return 0
+  fi
+  if "$gh_bin" auth setup-git --hostname github.com >/dev/null 2>&1; then
+    log "GitHub HTTPS credential helper configured"
+  else
+    log "WARNING: gh auth setup-git failed; HTTPS repository publication may fail"
+  fi
+}
+
 # On a brand-new spoke the hub's Qdrant/Firecrawl are reached through a reverse
 # tunnel that is not fully established until this first deploy authorizes the
 # tunnel key. MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=1 (set by main() for that first
@@ -4281,6 +4299,7 @@ else
   wait_for_hub_reverse_tunnel
 fi
 install_github_review_key
+configure_github_https_credentials
 install_or_validate_shared_services
 write_hermes_memory_topology
 
