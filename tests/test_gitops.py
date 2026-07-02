@@ -155,3 +155,53 @@ def test_open_pull_request_requires_token(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv("GITEA_TOKEN", raising=False)
     with pytest.raises(ValueError, match="GITEA_TOKEN"):
         open_pull_request("https://gitea.local/x/y", head="b")
+
+
+def test_https_remote_for_token_auth_rewrites_ssh_when_token_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mac.gitops import https_remote_for_token_auth
+
+    monkeypatch.setenv("GH_TOKEN", "gho_test")
+    # scp-like and ssh:// forms both rewrite to https for token auth.
+    assert (
+        https_remote_for_token_auth("git@github.com:jordanhubbard/mac.git")
+        == "https://github.com/jordanhubbard/mac.git"
+    )
+    assert (
+        https_remote_for_token_auth("ssh://git@github.com/jordanhubbard/mac.git")
+        == "https://github.com/jordanhubbard/mac.git"
+    )
+    # https and local paths pass through untouched.
+    assert (
+        https_remote_for_token_auth("https://github.com/x/y.git")
+        == "https://github.com/x/y.git"
+    )
+    assert https_remote_for_token_auth("/srv/git/mac.git") == "/srv/git/mac.git"
+
+
+def test_https_remote_for_token_auth_keeps_ssh_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mac.gitops import https_remote_for_token_auth
+
+    for var in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    assert (
+        https_remote_for_token_auth("git@github.com:jordanhubbard/mac.git")
+        == "git@github.com:jordanhubbard/mac.git"
+    )
+
+
+def test_publish_clone_composes_token_auth_from_ssh_remote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hub publish path: SSH evidence remote + GH_TOKEN -> authed https."""
+    from mac.gitops import https_remote_for_token_auth, inject_git_remote_auth
+
+    monkeypatch.setenv("GH_TOKEN", "gho_test")
+    url = inject_git_remote_auth(
+        https_remote_for_token_auth("git@github.com:jordanhubbard/mac.git")
+    )
+    assert url.startswith("https://x-access-token:")
+    assert url.endswith("@github.com/jordanhubbard/mac.git")

@@ -146,6 +146,45 @@ def token_for_host(host_kind: str, *, fallback_env: str = "MAC_TASK_GIT_TOKEN") 
     return os.environ.get(fallback_env, "").strip()
 
 
+def https_remote_for_token_auth(url: str) -> str:
+    """Rewrite an SSH git remote to its https equivalent WHEN a token exists.
+
+    Service processes (the hub's review publish/merge step in particular)
+    cannot rely on interactive SSH state: keys and ssh-agent sockets are
+    host-local incidentals that a redeploy or a wiped ``~/.ssh`` silently
+    removes, after which every ``git@github.com:...`` clone fails with
+    ``Permission denied (publickey)`` while a valid deploy token sits in the
+    environment. When the host has an env-backed token, prefer the
+    deterministic https form so :func:`inject_git_remote_auth` can carry the
+    credential; without a token the URL passes through unchanged (SSH keys
+    remain the auth story where they exist).
+
+    Handles scp-like (``git@host:owner/repo.git``) and ``ssh://git@host/...``
+    forms; everything else passes through untouched.
+    """
+    value = str(url or "").strip()
+    host = ""
+    owner_path = ""
+    if value.startswith("ssh://"):
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        owner_path = parsed.path.lstrip("/")
+    else:
+        match = re.match(r"^[A-Za-z0-9._-]+@([A-Za-z0-9._-]+):(.+)$", value)
+        if match:
+            host = match.group(1).lower()
+            owner_path = match.group(2).lstrip("/")
+    if not host or not owner_path:
+        return url
+    try:
+        host_kind = detect_host("https://%s" % host)
+    except ValueError:
+        return url
+    if not token_for_host(host_kind):
+        return url
+    return "https://%s/%s" % (host, owner_path)
+
+
 def inject_git_remote_auth(url: str) -> str:
     """Inject ``x-access-token:<pat>`` into an https git remote URL.
 
