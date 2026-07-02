@@ -188,6 +188,20 @@ class SubprocessExecutor:
                 "MAC_TASK_WORKSPACE": str(task_dir),
             }
         )
+        # Lease id rides into the child env so LLM completions carry full
+        # route-context attribution (agent/task/lease) to the fleet router.
+        lease_id = str(self.audit_context.get("lease_id") or "").strip()
+        if lease_id:
+            env["MAC_LEASE_ID"] = lease_id
+        # Per-task model override (metadata.model / metadata.runtime.model):
+        # the vendored Hermes runtime reads MAC_TASK_MODEL at argv build time
+        # and the coding-CLI argv builders pass it as --model/-m, so a task
+        # that declares a cheaper (or stronger) model gets it without any
+        # fleet-wide config change. llm.route records requested/resolved
+        # model per completion, so the override is visible in observability.
+        model_override = _task_model_override(task)
+        if model_override:
+            env["MAC_TASK_MODEL"] = model_override
         if repository_context:
             env.update(_repository_context_env(repository_context))
         command_id = _command_audit_id()
@@ -379,6 +393,20 @@ def _detect_command_inventory() -> JsonDict:
 def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
+    # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
+    # hub — and `mac fleet creds status` on any workstation — can see which
+    # agents have lost or never had claude/codex/cursor credentials and need a
+    # sync from the operator's current environment.
+    try:
+        from mac.coding_agent import detect_all as _detect_coding_clis
+
+        merged["coding_clis"] = {
+            "schema": "mac.coding_clis.v1",
+            "refreshed_at": _utcnow(),
+            "clis": _detect_coding_clis(),
+        }
+    except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
+        pass
     # The hub owns resources["openshell_required"].  A deploy may seed it on
     # first registration through an explicit environment value, but an absent
     # local setting must not manufacture False and overwrite reconciled policy.
@@ -4579,6 +4607,25 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _task_model_override(task: JsonDict) -> str:
+    """Per-task LLM model override from task metadata.
+
+    ``metadata.model`` (flat, what ``mac task create --model`` writes) wins;
+    ``metadata.runtime.model`` is honored for callers that already organize
+    runtime knobs under the runtime bag. Empty string when the task does not
+    pin a model — the agent's fleet default applies."""
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return ""
+    value = str(metadata.get("model") or "").strip()
+    if value:
+        return value[:256]
+    runtime = metadata.get("runtime")
+    if isinstance(runtime, dict):
+        return str(runtime.get("model") or "").strip()[:256]
+    return ""
 
 
 def _task_payload_from_workspace(task_dir: Path) -> JsonDict:

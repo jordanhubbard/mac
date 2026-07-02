@@ -166,6 +166,17 @@ def _detect_claude(
         return False, "", "", "claude: not on PATH"
     if str(env.get("ANTHROPIC_API_KEY") or "").strip():
         return True, binary, "ANTHROPIC_API_KEY", "claude: authed via ANTHROPIC_API_KEY"
+    credentials = home / ".claude" / ".credentials.json"
+    try:
+        if credentials.is_file() and credentials.stat().st_size > 0:
+            return (
+                True,
+                binary,
+                "~/.claude/.credentials.json",
+                "claude: authed via ~/.claude/.credentials.json",
+            )
+    except OSError:
+        pass
     config = _read_json(home / ".claude.json")
     if config and str(config.get("primary_key") or "").strip():
         return True, binary, "~/.claude.json:primary_key", "claude: authed via ~/.claude.json primary_key"
@@ -194,9 +205,11 @@ def _detect_cursor(
     binary = _which("cursor-agent", which) or _which("cursor", which)
     if not binary:
         return False, "", "", "cursor: cursor-agent/cursor not on PATH"
+    if str(env.get("CURSOR_API_KEY") or "").strip():
+        return True, binary, "CURSOR_API_KEY", "cursor: authed via CURSOR_API_KEY"
     if (home / ".cursor").exists():
         return True, binary, "~/.cursor", "cursor: authed via ~/.cursor"
-    return False, binary, "", "cursor: on PATH but ~/.cursor missing"
+    return False, binary, "", "cursor: on PATH but no CURSOR_API_KEY and no ~/.cursor"
 
 
 _DETECTORS = {
@@ -204,6 +217,32 @@ _DETECTORS = {
     "codex": _detect_codex,
     "cursor": _detect_cursor,
 }
+
+
+def detect_all(
+    env: Optional[Mapping[str, str]] = None,
+    home: Optional[Path] = None,
+    which: Optional[Callable[[str], Optional[str]]] = None,
+) -> Dict[str, Dict[str, object]]:
+    """Secret-free per-CLI auth status for every known coding agent.
+
+    Unlike :func:`resolve_coding_agent` (first-qualifying-wins routing), this
+    reports ALL of them — the shape workers embed in their heartbeat
+    ``resources["coding_clis"]`` so the hub (and ``mac fleet creds status``)
+    can tell which agents have lost or never had CLI credentials.
+    """
+    env = os.environ if env is None else env
+    home = Path.home() if home is None else home
+    out: Dict[str, Dict[str, object]] = {}
+    for name, detect in _DETECTORS.items():
+        available, binary, source, detail = detect(env, home, which)
+        out[name] = {
+            "available": bool(available),
+            "on_path": bool(binary),
+            "auth_source": source,
+            "detail": detail,
+        }
+    return out
 
 
 def resolve_coding_agent(
@@ -266,32 +305,46 @@ def mcp_config_document(server_command: List[str], name: str = "hermes") -> Dict
     return {"mcpServers": {name: {"command": command, "args": args}}}
 
 
-def _default_argv(agent: str, binary: str, prompt: str) -> List[str]:
+def _default_argv(
+    agent: str, binary: str, prompt: str, *, model: str = ""
+) -> List[str]:
     """Non-interactive, approvals-bypassed invocation per agent.
 
     Approval bypass is intentional and *coupled to the executor's existing
     OpenShell/--yolo invariant*: these argvs are routed through the same
     sandbox-or-fail-closed gate as the Hermes ``--yolo`` invocation, so the
     coding-agent CLI is only run unconfined under the same escape hatch.
+
+    ``model`` (per-task override, from ``MAC_TASK_MODEL``) maps to each CLI's
+    own model flag so a task can pin a cheaper or stronger model without
+    touching fleet config.
     """
     if agent == "claude":
         # `-p` = headless print mode; skip Claude's own permission prompts
         # (OpenShell is the real guardrail). Plain-text output for the audit log.
-        return [binary, "--dangerously-skip-permissions", "--output-format", "text", "-p", prompt]
+        argv = [binary, "--dangerously-skip-permissions", "--output-format", "text"]
+        if model:
+            argv += ["--model", model]
+        return [*argv, "-p", prompt]
     if agent == "codex":
         # `exec` = non-interactive; bypass Codex's own approval + sandbox since
         # OpenShell provides confinement. The executor's OpenShell preflight runs
         # without uploading a git worktree, so allow that probe to reach the real
         # auth/provider check instead of failing on Codex's repo guard first.
-        return [
+        argv = [
             binary,
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
-            prompt,
         ]
+        if model:
+            argv += ["--model", model]
+        return [*argv, prompt]
     if agent == "cursor":
-        return [binary, "-p", "--force", prompt]
+        argv = [binary, "-p", "--force"]
+        if model:
+            argv += ["--model", model]
+        return [*argv, prompt]
     raise ValueError("unknown coding agent: %r" % agent)
 
 
@@ -316,7 +369,8 @@ def coding_agent_argv(
     if override:
         return [*shlex.split(override), prompt]
 
-    argv = _default_argv(choice.agent, choice.binary, prompt)
+    task_model = str(env.get("MAC_TASK_MODEL") or "").strip()
+    argv = _default_argv(choice.agent, choice.binary, prompt, model=task_model)
     if mcp_config_path and supports_per_invocation_mcp(choice.agent):
         # Insert right after the binary so it precedes the `-p <prompt>` tail.
         argv = [argv[0], "--mcp-config", mcp_config_path, *argv[1:]]

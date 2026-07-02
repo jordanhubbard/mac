@@ -1829,7 +1829,14 @@ def _hermes_python() -> str:
 
 def _hermes_argv(prompt: str) -> List[str]:
     """The vendored-Hermes-runtime agent invocation (the fallback runner)."""
-    return [_hermes_python(), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
+    argv = [_hermes_python(), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
+    # Per-task model override (task metadata.model, exported by the worker as
+    # MAC_TASK_MODEL). Wins over the deployed gateway default for this run
+    # only; llm.route records requested/resolved model so the pin is auditable.
+    task_model = (os.environ.get("MAC_TASK_MODEL") or "").strip()
+    if task_model:
+        argv += ["--model", task_model]
+    return argv
 
 
 @dataclass(frozen=True)

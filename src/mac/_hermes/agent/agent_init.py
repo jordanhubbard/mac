@@ -74,6 +74,52 @@ def _normalized_custom_base_url(value: Any) -> str:
     return value.strip().rstrip("/")
 
 
+def _mac_route_context_default_headers(effective_base_url: str) -> Dict[str, str]:
+    """X-MAC attribution headers for completions sent to the MAC fleet router.
+
+    Mirrors ``mac.router_app.mac_route_context_headers`` (this vendored tree
+    must not import mac.*): values come from the env the MAC worker/executor
+    already sets for the task run. Returns {} — and therefore stamps nothing —
+    unless BOTH an identity env var is present and the effective endpoint host
+    matches one of the MAC-managed gateway base URLs, so internal ids never
+    leak to third-party providers and non-fleet Hermes use is unaffected.
+    """
+    context = {
+        "x-mac-agent-id": (os.environ.get("MAC_AGENT_ID") or "").strip()[:256],
+        "x-mac-task-id": (os.environ.get("MAC_TASK_ID") or "").strip()[:256],
+        "x-mac-lease-id": (os.environ.get("MAC_LEASE_ID") or "").strip()[:256],
+        "x-mac-hermes-instance-id": (
+            os.environ.get("MAC_HERMES_INSTANCE_ID") or ""
+        ).strip()[:256],
+        "x-mac-fleet": (os.environ.get("MAC_FLEET_NAME") or "").strip()[:256],
+    }
+    context = {k: v for k, v in context.items() if v}
+    if not context:
+        return {}
+    try:
+        endpoint_host = (urlparse(effective_base_url).hostname or "").lower()
+    except Exception:
+        return {}
+    if not endpoint_host:
+        return {}
+    for env_var in (
+        "MAC_HERMES_GATEWAY_BASE_URL",
+        "CUSTOM_BASE_URL",
+        "OPENAI_BASE_URL",
+        "MAC_HUB_URL",
+    ):
+        raw = (os.environ.get(env_var) or "").strip()
+        if not raw:
+            continue
+        try:
+            mac_host = (urlparse(raw).hostname or "").lower()
+        except Exception:
+            continue
+        if mac_host and mac_host == endpoint_host:
+            return context
+    return {}
+
+
 def _custom_provider_model_matches(agent_model: str, entry: Dict[str, Any]) -> bool:
     provider_model = str(entry.get("model", "") or "").strip().lower()
     if not provider_model:
@@ -853,6 +899,20 @@ def init_agent(
                 else:
                     headers["x-anthropic-beta"] = _FINE_GRAINED
                 client_kwargs["default_headers"] = headers
+
+        # MAC fleet attribution: when this agent runs under the MAC executor
+        # (MAC_AGENT_ID/MAC_TASK_ID in env) and the effective endpoint is the
+        # fleet's own router, stamp X-MAC-* route-context headers so every
+        # completion row in the hub's llm.route ledger is attributable to an
+        # agent + task + lease. Only stamped toward the MAC-managed endpoint —
+        # internal ids are never sent to third-party providers.
+        _mac_ctx = _mac_route_context_default_headers(
+            str(client_kwargs.get("base_url", "") or "")
+        )
+        if _mac_ctx:
+            merged_headers = dict(client_kwargs.get("default_headers") or {})
+            merged_headers.update(_mac_ctx)
+            client_kwargs["default_headers"] = merged_headers
 
         agent.api_key = client_kwargs.get("api_key", "")
         agent.base_url = client_kwargs.get("base_url", agent.base_url)

@@ -299,6 +299,60 @@ def _is_principal_mismatch_rejected(env: Optional[Dict[str, str]] = None) -> boo
     return val in {"1", "true", "yes", "on"}
 
 
+def _usage_capturing_stream(iterator: Any, emit: Callable[[Optional[Dict[str, Any]]], None]):
+    """Pass upstream SSE bytes through unchanged while scanning for the
+    terminal ``usage`` frame; call ``emit(usage_or_None)`` exactly once when
+    the stream ends (including client disconnect / GeneratorExit).
+
+    Memory is bounded: only the current incomplete SSE line is buffered, and
+    a pathological unbroken line is truncated to its tail (usage frames are
+    small; the counts sit near the end of the frame)."""
+    buffer = b""
+    usage: Optional[Dict[str, Any]] = None
+    emitted = False
+
+    def _scan(line: bytes) -> Optional[Dict[str, Any]]:
+        line = line.strip()
+        if not line.startswith(b"data:") or b'"usage"' not in line:
+            return None
+        try:
+            frame = json.loads(line[len(b"data:") :].strip().decode("utf-8", "replace"))
+        except ValueError:
+            return None
+        candidate = frame.get("usage") if isinstance(frame, dict) else None
+        if isinstance(candidate, dict):
+            return {
+                str(k): v
+                for k, v in candidate.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            }
+        return None
+
+    try:
+        for chunk in iterator:
+            # Scan BEFORE yielding: the generator is suspended at yield, so a
+            # client disconnect right after receiving a chunk must not lose
+            # the usage frame that chunk carried.
+            if isinstance(chunk, (bytes, bytearray)):
+                buffer += bytes(chunk)
+                if b"\n" in buffer:
+                    *lines, buffer = buffer.split(b"\n")
+                    for line in lines:
+                        found = _scan(line)
+                        if found is not None:
+                            usage = found
+                if len(buffer) > 262_144:
+                    buffer = buffer[-65_536:]
+            yield chunk
+    finally:
+        found = _scan(buffer)
+        if found is not None:
+            usage = found
+        if not emitted:
+            emitted = True
+            emit(usage)
+
+
 def _strip_internal_route_context(body: Dict[str, Any]) -> Dict[str, Any]:
     if not any(key in body for key in _CONTEXT_BODY_KEYS):
         return body
@@ -580,6 +634,33 @@ class ProviderProxy:
         attempts: Iterable[Dict[str, Any]],
         outcome: str = "",
     ) -> Tuple[int, Any]:
+        if (
+            200 <= int(status) < 300
+            and not isinstance(obj, dict)
+            and hasattr(obj, "__iter__")
+            and not isinstance(obj, (bytes, bytearray, str))
+        ):
+            # Streaming response: the client asked for include_usage, so the
+            # terminal SSE frame carries the token counts — the only place
+            # aggregate cost can be metered for the ~90% of traffic that
+            # streams. Defer the observation to stream end so it records real
+            # usage and the real duration (previously duration_ms measured
+            # stream START, and streamed usage was never captured at all).
+            def _emit(usage: Optional[Dict[str, Any]]) -> None:
+                self._emit_route_observation(
+                    path=path,
+                    payload=payload,
+                    resolved_model=resolved_model,
+                    provider=provider,
+                    status=int(status),
+                    body={"usage": usage} if usage else None,
+                    started=started,
+                    route_context=route_context,
+                    attempts=attempts,
+                    outcome=outcome or self._outcome_for_status(int(status)),
+                )
+
+            return int(status), _usage_capturing_stream(obj, _emit)
         self._emit_route_observation(
             path=path,
             payload=payload,
