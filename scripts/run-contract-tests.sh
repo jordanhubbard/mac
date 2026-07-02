@@ -24,6 +24,14 @@ export HOME="$_MAC_TEST_HOME"
 export XDG_CONFIG_HOME="$_MAC_TEST_HOME/.config"
 git config --global user.email "mac-contract-tests@example.invalid" >/dev/null 2>&1 || true
 git config --global user.name "mac contract tests" >/dev/null 2>&1 || true
+# The suite has tests that shell out to git (git ls-files, etc.). When the repo
+# is a clone owned by a different uid than the test runner — e.g. the hub
+# verifier uploads a clone into an OpenShell sandbox run as the `sandbox` user —
+# git refuses with "detected dubious ownership" and those git-using tests fail
+# spuriously (the 4 test_fleet_samples failures that blocked hub-side review
+# verification). Trust the checkout regardless of ownership; this is a
+# throwaway hermetic HOME, so the wildcard is scoped to this run only.
+git config --global --add safe.directory '*' >/dev/null 2>&1 || true
 
 # Resolve a usable interpreter instead of assuming a repo-local .venv. Local
 # dev / bare-metal hosts have .venv; the OpenShell task sandbox ships the mac
