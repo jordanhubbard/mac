@@ -4768,7 +4768,19 @@ def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
     branch = str(context.get("repository_branch") or "").strip()
     repo: JsonDict = {
         "path": context.get("repository_worktree"),
-        "remote_url": context.get("repository_origin_remote"),
+        # Store the CANONICAL remote (no injected auth, no redaction) so every
+        # consumer — the reviewer's clone, the hub publish — validates it and
+        # injects credentials itself. repository_origin_remote is the redacted
+        # DISPLAY string ("https://x-access-token:<redacted>@…"); once
+        # inject_git_remote_auth began tokenizing SSH remotes, that redacted
+        # form reached the reviewer's _validate_git_remote_url and failed
+        # ("<redacted>" is not a valid URL char), so no review verdict could
+        # ever be produced. The canonical form (git@host:… or clean https)
+        # validates and re-auths cleanly.
+        "remote_url": (
+            context.get("repository_canonical_remote_url")
+            or context.get("repository_origin_remote")
+        ),
         "branch": branch,
         "base_sha": context.get("repository_base_sha"),
         "head_sha": context.get("repository_base_sha"),

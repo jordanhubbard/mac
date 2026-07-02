@@ -1340,3 +1340,37 @@ def test_non_commit_fetched_object_fails_closed(
 
     with pytest.raises(RuntimeError, match="does not resolve to a commit object"):
         worker._prepare_repository_worktree(task, lease, task_dir)
+
+
+def test_repo_snapshot_stores_canonical_remote_not_redacted_display() -> None:
+    """Regression: the reviewer clones from evidence repo.remote_url and first
+    validates it. It must be the canonical remote (git@… or clean https), NOT
+    the redacted display ('…:<redacted>@…'), whose '<redacted>' fails
+    _validate_git_remote_url and left every review unable to produce a verdict
+    once inject_git_remote_auth began tokenizing SSH remotes."""
+    from mac.worker import _repository_context_repo_snapshot, _validate_git_remote_url
+
+    context = {
+        "repository_worktree": "",
+        "repository_branch": "mac/agent/task-x",
+        "repository_base_sha": "0" * 40,
+        "repository_canonical_remote_url": "git@github.com:jordanhubbard/mac.git",
+        "repository_origin_remote": "https://x-access-token:<redacted>@github.com/jordanhubbard/mac.git",
+    }
+    repo = _repository_context_repo_snapshot(context)
+    assert repo["remote_url"] == "git@github.com:jordanhubbard/mac.git"
+    assert "<redacted>" not in repo["remote_url"]
+    # The stored value survives the reviewer's validation gate.
+    assert _validate_git_remote_url(repo["remote_url"]) == "git@github.com:jordanhubbard/mac.git"
+
+
+def test_repo_snapshot_falls_back_to_origin_remote_when_no_canonical() -> None:
+    from mac.worker import _repository_context_repo_snapshot
+
+    context = {
+        "repository_worktree": "",
+        "repository_branch": "b",
+        "repository_base_sha": "0" * 40,
+        "repository_origin_remote": "https://github.com/org/repo.git",
+    }
+    assert _repository_context_repo_snapshot(context)["remote_url"] == "https://github.com/org/repo.git"
