@@ -66,8 +66,12 @@ prepare_image_build_assets() {
     https://deb.nodesource.com/setup_22.x
   download -o "$IMAGE_ASSET_DIR/gh.tgz" \
     "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
-  download -o "$IMAGE_ASSET_DIR/lein" \
-    https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein
+  if ! download -o "$IMAGE_ASSET_DIR/lein" \
+    https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein; then
+    log "raw.githubusercontent.com unavailable; fetching Leiningen via jsDelivr"
+    download -o "$IMAGE_ASSET_DIR/lein" \
+      https://cdn.jsdelivr.net/gh/technomancy/leiningen@stable/bin/lein
+  fi
   download -o "$IMAGE_ASSET_DIR/codegraph.tgz" \
     "https://github.com/colbymchenry/codegraph/releases/download/${CODEGRAPH_VERSION}/codegraph-linux-${codegraph_arch}.tar.gz"
   chmod 0755 "$IMAGE_ASSET_DIR/nodesource_setup.sh" "$IMAGE_ASSET_DIR/lein"

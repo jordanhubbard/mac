@@ -987,7 +987,20 @@ set_remote_mac_agent_service() {
     "MAC_DEPLOY_SERVICE_ACTION=$(shell_quote "$action") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") bash -s" <<'REMOTE'
 set -euo pipefail
 action="${MAC_DEPLOY_SERVICE_ACTION:?}"
-case "${MAC_DEPLOY_SUPERVISOR:?}" in
+supervisor="${MAC_DEPLOY_SUPERVISOR:?}"
+if [ "$supervisor" = "auto" ]; then
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    supervisor=systemd
+  elif [ "$(uname -s)" = "Darwin" ]; then
+    supervisor=launchd
+  elif command -v supervisorctl >/dev/null 2>&1; then
+    supervisor=supervisord
+  else
+    echo "could not resolve supervisor=auto on remote host" >&2
+    exit 1
+  fi
+fi
+case "$supervisor" in
   supervisord)
     if [ "$action" = "stop" ]; then
       sudo supervisorctl stop mac-agent >/dev/null 2>&1 || true
@@ -1011,7 +1024,7 @@ case "${MAC_DEPLOY_SUPERVISOR:?}" in
       launchctl kickstart -k "$domain/$label"
     fi
     ;;
-  *) echo "unsupported supervisor: $MAC_DEPLOY_SUPERVISOR" >&2; exit 1 ;;
+  *) echo "unsupported supervisor: $supervisor" >&2; exit 1 ;;
 esac
 REMOTE
 }

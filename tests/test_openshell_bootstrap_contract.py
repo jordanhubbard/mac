@@ -116,6 +116,7 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert "nodesource_setup.sh" in script
     assert "gh.tgz" in script
     assert "raw.githubusercontent.com/technomancy/leiningen" in script
+    assert "cdn.jsdelivr.net/gh/technomancy/leiningen@stable/bin/lein" in script
     assert "codegraph.tgz" in script
     assert "trap cleanup_image_build_assets EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script

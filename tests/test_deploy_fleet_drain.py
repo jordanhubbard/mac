@@ -44,4 +44,8 @@ def test_openshell_deploy_holds_drain_until_bootstrap_succeeds():
     assert "keeping mac-agent stopped while OpenShell validates" in text
     assert 'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop' in text
     assert 'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart' in text
+    assert 'if [ "$supervisor" = "auto" ]; then' in text
+    assert "supervisor=systemd" in text
+    assert "supervisor=launchd" in text
+    assert "supervisor=supervisord" in text
     assert "OpenShell bootstrap failed; mac-agent remains stopped and drained" in text
