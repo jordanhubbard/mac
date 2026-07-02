@@ -47,6 +47,7 @@ the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -1984,8 +1985,42 @@ def _openshell_environment() -> Dict[str, str]:
     return values
 
 
+_LANDLOCK_CREATE_RULESET_SYSCALL = 444
+_LANDLOCK_CREATE_RULESET_VERSION = 1
+
+
+def _landlock_abi_version() -> int:
+    """Return the kernel Landlock ABI version, or zero when unavailable.
+
+    Querying ``/sys/kernel/security/lsm`` is not reliable inside containers:
+    Kubernetes commonly leaves securityfs unmounted even though the shared
+    host kernel implements and permits Landlock.  The version-query form of
+    ``landlock_create_ruleset(2)`` is the kernel's authoritative feature probe.
+
+    Linux assigned syscall number 444 to ``landlock_create_ruleset`` for the
+    architectures MAC supports (including x86_64 and arm64).  An older kernel,
+    a blocked syscall, or any execution error returns zero so callers retain
+    fail-closed behavior.
+    """
+    if not sys.platform.startswith("linux"):
+        return 0
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        syscall = libc.syscall
+        syscall.restype = ctypes.c_long
+        result = syscall(
+            ctypes.c_long(_LANDLOCK_CREATE_RULESET_SYSCALL),
+            ctypes.c_void_p(),
+            ctypes.c_size_t(0),
+            ctypes.c_uint(_LANDLOCK_CREATE_RULESET_VERSION),
+        )
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+    return int(result) if result > 0 else 0
+
+
 def _kernel_has_landlock() -> bool:
-    """True if the running kernel exposes Landlock (the LSM is listed).
+    """True if the running kernel exposes a usable Landlock ABI.
 
     The operator policy uses ``landlock: best_effort`` because OpenShell's egress
     proxy is incompatible with ``hard_requirement`` on current kernels (it adds a
@@ -1994,11 +2029,7 @@ def _kernel_has_landlock() -> bool:
     kernel, but would silently run UNCONFINED on a kernel without Landlock — so
     the executor performs this precheck to recover the fail-closed guarantee.
     """
-    try:
-        lsm = Path("/sys/kernel/security/lsm").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "landlock" in (lsm or "").split(",")
+    return _landlock_abi_version() > 0
 
 
 def _bundled_default_policy() -> Path:
@@ -2131,8 +2162,8 @@ def _ensure_landlock_or_fail() -> None:
             "documented default for macOS Docker fleet nodes)."
         )
     raise RuntimeError(
-        "OpenShell sandboxing is enabled but the kernel does not expose "
-        "Landlock (/sys/kernel/security/lsm has no 'landlock'); the policy's "
+        "OpenShell sandboxing is enabled but the Landlock ABI syscall is "
+        "unavailable or blocked; the policy's "
         "filesystem confinement (best_effort) would not be enforced. Refusing "
         "to run (fail closed). Use a Landlock-capable kernel (>=5.13, ABI>=3 "
         "recommended), or set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to override."

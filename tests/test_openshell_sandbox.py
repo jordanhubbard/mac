@@ -502,6 +502,55 @@ def test_host_alias_override(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class _FakeSyscall:
+    def __init__(self, result):
+        self.result = result
+        self.restype = None
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.result
+
+
+class _FakeLibc:
+    def __init__(self, result):
+        self.syscall = _FakeSyscall(result)
+
+
+def test_landlock_abi_probe_uses_kernel_version_syscall(monkeypatch):
+    libc = _FakeLibc(4)
+    monkeypatch.setattr(te.sys, "platform", "linux")
+    monkeypatch.setattr(te.ctypes, "CDLL", lambda *args, **kwargs: libc)
+
+    assert te._landlock_abi_version() == 4
+    assert te._kernel_has_landlock() is True
+    assert len(libc.syscall.calls) == 2
+    call = libc.syscall.calls[0]
+    assert call[0].value == te._LANDLOCK_CREATE_RULESET_SYSCALL
+    assert call[1].value is None
+    assert call[2].value == 0
+    assert call[3].value == te._LANDLOCK_CREATE_RULESET_VERSION
+
+
+@pytest.mark.parametrize("result", [-1, 0])
+def test_landlock_abi_probe_fails_closed_on_nonpositive_result(monkeypatch, result):
+    monkeypatch.setattr(te.sys, "platform", "linux")
+    monkeypatch.setattr(te.ctypes, "CDLL", lambda *args, **kwargs: _FakeLibc(result))
+    assert te._landlock_abi_version() == 0
+    assert te._kernel_has_landlock() is False
+
+
+def test_landlock_abi_probe_is_linux_only(monkeypatch):
+    monkeypatch.setattr(te.sys, "platform", "darwin")
+
+    def unexpected_cdll(*args, **kwargs):
+        raise AssertionError("CDLL must not be called off Linux")
+
+    monkeypatch.setattr(te.ctypes, "CDLL", unexpected_cdll)
+    assert te._landlock_abi_version() == 0
+
+
 def test_landlock_precheck_fail_closed(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
