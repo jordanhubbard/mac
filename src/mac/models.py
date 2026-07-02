@@ -512,6 +512,10 @@ class EvidenceArtifact:
     truncated: bool
     metadata: JsonDict
     created_at: str
+    # When artifact bytes are externalized to the hub blob store, this holds
+    # the blob URI and content_base64 is empty; readers materialize content
+    # through the blob store (see mac.evidence_blobs).
+    content_uri: str = ""
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

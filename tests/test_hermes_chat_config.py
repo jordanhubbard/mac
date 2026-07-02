@@ -128,6 +128,10 @@ def test_sync_creates_chat_config_on_stub_config(tmp_path):
     assert d["providers"]["custom"]["api_key"] == TOKEN
     assert d["providers"]["custom"]["api"] == "http://127.0.0.1:8789/v1/"
     assert d["providers"]["custom"]["transport"] == "chat_completions"
+    # Explicit timeouts so the runtime's local-endpoint heuristic can't
+    # disable stall recovery against the tailnet-addressed router.
+    assert d["providers"]["custom"]["request_timeout_seconds"] == 600
+    assert d["providers"]["custom"]["stale_timeout_seconds"] == 120
     # unrelated existing section preserved
     assert d["web"]["search_backend"] == "firecrawl"
 
@@ -219,6 +223,23 @@ def _home_with_config(tmp_path, body: str) -> Path:
     home.mkdir()
     (home / "config.yaml").write_text(body, encoding="utf-8")
     return home
+
+
+def test_sync_provider_timeouts_env_override_and_opt_out(tmp_path):
+    import yaml
+
+    mac = _mac_env(tmp_path)
+    with mac.open("a", encoding="utf-8") as fh:
+        fh.write("MAC_HERMES_GATEWAY_REQUEST_TIMEOUT_SECONDS=300\n")
+        fh.write("MAC_HERMES_GATEWAY_STALE_TIMEOUT_SECONDS=0\n")
+    home = _stale_hermes_home(tmp_path)
+
+    sync(home, mac)
+
+    d = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+    assert d["providers"]["custom"]["request_timeout_seconds"] == 300
+    # <= 0 opts out: the key is omitted so the runtime heuristic applies.
+    assert "stale_timeout_seconds" not in d["providers"]["custom"]
 
 
 def test_image_gen_defaults_to_mac_hub_when_unset(tmp_path):

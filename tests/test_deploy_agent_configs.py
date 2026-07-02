@@ -1025,6 +1025,90 @@ def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
     assert "nvapi-SECRET" not in "\n".join(out.values())
 
 
+def test_env_writer_hub_standalone_router_runs_on_its_own_port(tmp_path):
+    out = _run_env_writer(
+        tmp_path, agent="rocky", hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        extra_env={
+            **_ROUTER_ENV,
+            "MAC_DEPLOY_ROUTER_BACKEND": "standalone",
+            "MAC_DEPLOY_ROUTER_PORT": "8790",
+            "NVIDIA_API_KEY": "nvapi-SECRET",
+        },
+    )
+    # The ledger API must NOT mount /v1 (backend != inproc) — the router runs
+    # as its own service on MAC_ROUTER_PORT and the hub's gateway points there.
+    assert out.get("MAC_ROUTER_BACKEND") == "standalone"
+    assert out.get("MAC_ROUTER_PORT") == "8790"
+    assert out.get("OPENAI_BASE_URL") == "http://127.0.0.1:8790/v1"
+    assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://127.0.0.1:8790/v1"
+    assert out.get("OPENAI_API_KEY") == out.get("MAC_API_TOKEN")
+    assert "key=secret:nvidia-upstream" in out.get("MAC_ROUTER_PROVIDERS", "")
+
+
+def test_env_writer_spoke_router_url_override_points_wing_at_replica(tmp_path):
+    out = _run_env_writer(
+        tmp_path, agent="jordanh-worker1", hub_agent="rocky",
+        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        extra_env={
+            **_ROUTER_ENV,
+            "MAC_DEPLOY_ROUTER_URL": "http://router.gke-wing.internal:8790/v1",
+            "NVIDIA_API_KEY": "nvapi-SECRET",
+        },
+    )
+    # Model traffic goes to the nearby replica; the hub-facing token contract
+    # and the no-upstream-keys posture are unchanged.
+    assert out.get("OPENAI_BASE_URL") == "http://router.gke-wing.internal:8790/v1"
+    assert out.get("MAC_HERMES_GATEWAY_BASE_URL") == "http://router.gke-wing.internal:8790/v1"
+    assert out.get("NVIDIA_IMAGE_BASE_URL") == "http://router.gke-wing.internal:8790/v1/genai"
+    assert out.get("OPENAI_API_KEY") == "HUBTOK"
+    assert "MAC_ROUTER_PROVIDERS" not in out
+    assert "nvapi-SECRET" not in "\n".join(out.values())
+    # Control-plane traffic still targets the hub — only inference moved.
+    assert out.get("MAC_HUB_URL") == "http://hub.example:8789"
+
+
+def test_env_writer_hub_postgres_dsn_replaces_sqlite_authority(tmp_path):
+    out = _run_env_writer(
+        tmp_path, agent="rocky", hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        extra_env={
+            **_ROUTER_ENV,
+            "MAC_DEPLOY_DATABASE_URL": "postgresql://mac:pw@db.internal:5432/mac",
+        },
+    )
+    assert out.get("MAC_DATABASE_URL") == "postgresql://mac:pw@db.internal:5432/mac"
+    # Exactly one durable authority: the DSN displaces the SQLite path.
+    assert "MAC_DB" not in out
+
+
+def test_env_writer_hub_rejects_non_postgres_dsn(tmp_path):
+    with pytest.raises(ValueError, match="postgres"):
+        _run_env_writer(
+            tmp_path, agent="rocky", hub_agent="rocky",
+            hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+            extra_env={
+                **_ROUTER_ENV,
+                "MAC_DEPLOY_DATABASE_URL": "mysql://nope",
+            },
+        )
+
+
+def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
+    hub = _run_env_writer(
+        tmp_path, agent="rocky", hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        extra_env=_ROUTER_ENV,
+    )
+    assert hub.get("MAC_EVIDENCE_BLOB_DIR", "").endswith("evidence-blobs")
+    spoke = _run_env_writer(
+        tmp_path, agent="natasha", hub_agent="rocky",
+        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        extra_env=_ROUTER_ENV,
+    )
+    assert "MAC_EVIDENCE_BLOB_DIR" not in spoke
+
+
 def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):
     with pytest.raises(ValueError, match="hub-facing token distinct"):
         _run_env_writer(

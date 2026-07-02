@@ -79,6 +79,12 @@ mac-k8s-orchestrator = "mac.k8s.orchestrator:main"
 mac-k8s-bootstrap = "mac.k8s.bootstrap:main"
 mac-task-runner = "mac.k8s.job_executor:main"
 mac-webdav-server = "mac.webdav_server:main"
+# Standalone LLM router (MAC_ROUTER_BACKEND=standalone): same router as the
+# in-hub inproc mount, in its own process so ledger restarts don't drop
+# in-flight model streams; also deployable as a per-site replica.
+mac-router = "mac.router_service:main"
+# Verified hub-ledger snapshots for warm-standby recovery (SQLite hubs).
+mac-ledger-backup = "mac.ledger_backup:main"
 # Thin CLI shared by host-mode workers and the Job-pod codex stubs to
 # sign worker_evidence manifests without re-implementing the canonical
 # HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).

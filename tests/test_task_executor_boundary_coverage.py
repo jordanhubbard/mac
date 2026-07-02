@@ -113,8 +113,8 @@ def test_run_audited_command_records_completion(monkeypatch, tmp_path, returncod
     monkeypatch.setattr(te, "local_agent_id", lambda: "agent-a")
     monkeypatch.setattr(te, "post_command_audit", lambda agent, payload: audits.append((agent, payload)))
     monkeypatch.setattr(
-        te.subprocess,
-        "run",
+        te,
+        "_run_captured",
         lambda *_a, **_k: subprocess.CompletedProcess(["cmd"], returncode, "out", "err"),
     )
     metadata = {"purpose": "test", "timeout": 12}
@@ -137,7 +137,7 @@ def test_run_audited_command_timeout_decodes_bytes(monkeypatch, tmp_path) -> Non
     def timeout(*_args, **_kwargs):
         raise subprocess.TimeoutExpired("cmd", 2, output=b"partial", stderr=b"stuck")
 
-    monkeypatch.setattr(te.subprocess, "run", timeout)
+    monkeypatch.setattr(te, "_run_captured", timeout)
     result = te.run_audited_command(["cmd"], tmp_path, None, {"timeout": 2})
     assert result.returncode == 124
     assert result.stdout == "partial"
@@ -146,13 +146,44 @@ def test_run_audited_command_timeout_decodes_bytes(monkeypatch, tmp_path) -> Non
     assert audits[-1]["metadata"]["timeout_seconds"] == 2
 
 
+def test_run_captured_kills_process_group_on_timeout(tmp_path) -> None:
+    """The timeout path must SIGKILL the whole process tree promptly.
+
+    A grandchild inheriting the stdout pipe used to keep the post-kill
+    output drain blocked until it exited on its own (the 900s rc-124 hangs
+    on unsandboxed fleet hosts), and the grandchild itself leaked.
+    """
+    import os
+    import time
+
+    script = "echo started; sleep 30 & echo $!; wait"
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        te._run_captured(["sh", "-c", script], tmp_path, 1.0)
+    elapsed = time.monotonic() - start
+    # Old behavior blocked ~30s draining the grandchild's inherited pipe.
+    assert elapsed < 10
+    lines = (exc_info.value.output or "").split()
+    assert lines[0] == "started"
+    grandchild_pid = int(lines[1])
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(grandchild_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("grandchild survived the process-group kill")
+
+
 def test_run_audited_command_records_oserror(monkeypatch, tmp_path) -> None:
     audits = []
     monkeypatch.setattr(te, "local_agent_id", lambda: "agent-a")
     monkeypatch.setattr(te, "post_command_audit", lambda _agent, payload: audits.append(payload))
     monkeypatch.setattr(
-        te.subprocess,
-        "run",
+        te,
+        "_run_captured",
         lambda *_a, **_k: (_ for _ in ()).throw(OSError("missing command")),
     )
     with pytest.raises(OSError, match="missing command"):

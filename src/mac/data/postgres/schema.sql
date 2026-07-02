@@ -258,10 +258,14 @@ CREATE TABLE IF NOT EXISTS evidence_artifacts (
     size_bytes INTEGER NOT NULL,
     sha256 TEXT NOT NULL,
     content_base64 TEXT NOT NULL,
+    content_uri TEXT NOT NULL DEFAULT '',
     truncated INTEGER NOT NULL DEFAULT 0,
     metadata TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+-- Live DBs predate content_uri (CREATE TABLE IF NOT EXISTS skips them);
+-- idempotent ALTER mirrors the SQLite _ensure_column migration.
+ALTER TABLE evidence_artifacts ADD COLUMN IF NOT EXISTS content_uri TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_evidence
     ON evidence_artifacts (evidence_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_task

@@ -366,6 +366,7 @@ class SQLiteStore:
                     size_bytes INTEGER NOT NULL,
                     sha256 TEXT NOT NULL,
                     content_base64 TEXT NOT NULL,
+                    content_uri TEXT NOT NULL DEFAULT '',
                     truncated INTEGER NOT NULL DEFAULT 0,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL
@@ -1513,6 +1514,11 @@ class SQLiteStore:
         # PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
         # lifecycle authorship to the role agent spawned in the task Job.
         self._ensure_column("leases", "delegated_agent_id", "delegated_agent_id TEXT")
+        # Evidence artifact bytes may be externalized to the hub blob store
+        # (mac.evidence_blobs); the row keeps digest + URI, content_base64 "".
+        self._ensure_column(
+            "evidence_artifacts", "content_uri", "content_uri TEXT NOT NULL DEFAULT ''"
+        )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}

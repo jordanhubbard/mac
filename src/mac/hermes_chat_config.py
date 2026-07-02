@@ -34,6 +34,30 @@ import shlex
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Explicit provider timeouts stamped into the deployed `custom` provider block.
+#
+# The router base URL is a Tailscale CGNAT / RFC-1918 address, which the
+# vendored runtime's `is_local_endpoint()` heuristic classifies as a *local
+# inference server* (the Ollama slow-prefill case). That heuristic then
+# DISABLES the stale-stream detector and raises the httpx stream read timeout
+# to HERMES_API_TIMEOUT (1800s) — so a silently dropped mid-stream connection
+# wedges the turn until the executor's 900s kill (rc 124, evidence lost, task
+# retried). Hosts whose tailnet path to the hub crosses NAT/DERP (the
+# containerized GKE workers) hit this constantly; LAN-attached hosts never do.
+# Per-provider config takes precedence over the heuristic in the runtime
+# (`get_provider_request_timeout` / `get_provider_stale_timeout`), so stamping
+# explicit values here re-enables stall detection + bounded reads fleet-wide.
+# The router fronts cloud providers (~seconds per turn) — it is not a local
+# inference engine, so local-prefill patience is never wanted here.
+#
+# Overridable via mac.env; a value <= 0 omits the key (explicit opt-out back
+# into the runtime heuristic). Note: 180 must be avoided for the stale value —
+# the runtime treats exactly 180.0 as "default" and re-applies the heuristic.
+DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 600
+DEFAULT_PROVIDER_STALE_TIMEOUT_SECONDS = 120
+REQUEST_TIMEOUT_ENV = "MAC_HERMES_GATEWAY_REQUEST_TIMEOUT_SECONDS"
+STALE_TIMEOUT_ENV = "MAC_HERMES_GATEWAY_STALE_TIMEOUT_SECONDS"
+
 # Chat endpoint/credential vars the Hermes runtime reads; mirrored from mac.env.
 CHAT_ENV_KEYS = (
     "OPENAI_BASE_URL",
@@ -95,7 +119,26 @@ def sync_hermes_env(hermes_home: Path, mac_env: Dict[str, str]) -> List[str]:
     return changed
 
 
-def sync_config_yaml(hermes_home: Path, base_url: str, api_key: str) -> bool:
+def _provider_timeout(value: Optional[str], default: int) -> Optional[int]:
+    """Resolve a provider timeout override: unset -> default, <= 0 -> omit."""
+    raw = (value or "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(float(raw))
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else None
+
+
+def sync_config_yaml(
+    hermes_home: Path,
+    base_url: str,
+    api_key: str,
+    *,
+    request_timeout_seconds: Optional[int] = DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS,
+    stale_timeout_seconds: Optional[int] = DEFAULT_PROVIDER_STALE_TIMEOUT_SECONDS,
+) -> bool:
     """Point model.{provider,base_url} at the router and (re)define a `custom`
     provider with the bearer in `api_key` (the schema field). Line-based to
     preserve the rest of the file. Returns True if the custom provider was set.
@@ -104,20 +147,29 @@ def sync_config_yaml(hermes_home: Path, base_url: str, api_key: str) -> bool:
     `web:` block): when the `model:` block or the `providers:` section is absent
     it is *created*, not just patched. The original patch-only version silently
     no-op'd on such configs, leaving fresh nodes with no chat provider (HTTP 403
-    "unknown bearer token")."""
+    "unknown bearer token").
+
+    The explicit timeouts keep the runtime's local-endpoint heuristic from
+    treating the tailnet-addressed router as a slow local inference server
+    (which disables stall recovery — see DEFAULT_PROVIDER_*_TIMEOUT_SECONDS)."""
     cfg = hermes_home / "config.yaml"
     if not cfg.exists() or not base_url or not api_key:
         return False
     base = base_url.rstrip("/")
 
     def custom_block() -> List[str]:
-        return [
+        block = [
             "  custom:",
             "    api: %s/" % base,
             "    name: custom",
             "    transport: chat_completions",
             "    api_key: %s" % api_key,
         ]
+        if request_timeout_seconds is not None:
+            block.append("    request_timeout_seconds: %d" % request_timeout_seconds)
+        if stale_timeout_seconds is not None:
+            block.append("    stale_timeout_seconds: %d" % stale_timeout_seconds)
+        return block
 
     # 1) drop any existing top-level `  custom:` provider block (idempotent).
     pruned: List[str] = []
@@ -298,7 +350,19 @@ def sync(hermes_home: Path, mac_env_path: Path) -> Dict[str, object]:
         "base_url": base_url,
         "key_present": bool(api_key),
         "env_synced": sync_hermes_env(hermes_home, mac_env),
-        "config_custom_provider": sync_config_yaml(hermes_home, base_url, api_key),
+        "config_custom_provider": sync_config_yaml(
+            hermes_home,
+            base_url,
+            api_key,
+            request_timeout_seconds=_provider_timeout(
+                mac_env.get(REQUEST_TIMEOUT_ENV),
+                DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS,
+            ),
+            stale_timeout_seconds=_provider_timeout(
+                mac_env.get(STALE_TIMEOUT_ENV),
+                DEFAULT_PROVIDER_STALE_TIMEOUT_SECONDS,
+            ),
+        ),
         "pool_cleared": clear_stale_custom_pool(hermes_home),
         "image_gen_provider": ensure_image_gen_provider(hermes_home),
     }

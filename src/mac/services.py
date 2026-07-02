@@ -120,6 +120,7 @@ from mac.action_event_service import ActionEventService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
 from mac.codegraph_audit import codegraph_audit_manifest_problems
+from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
 from mac.fleet_learning import (
@@ -6260,9 +6261,9 @@ class ControlPlane:
                     INSERT INTO evidence_artifacts (
                         id, evidence_id, task_id, name, artifact_type, source_uri,
                         content_type, encoding, size_bytes, sha256, content_base64,
-                        truncated, metadata, created_at
+                        content_uri, truncated, metadata, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         artifact.id,
@@ -6276,6 +6277,7 @@ class ControlPlane:
                         artifact.size_bytes,
                         artifact.sha256,
                         artifact.content_base64 or "",
+                        artifact.content_uri or "",
                         1 if artifact.truncated else 0,
                         json_dumps(artifact.metadata),
                         artifact.created_at,
@@ -6354,6 +6356,20 @@ class ControlPlane:
             declared_sha = str(item.get("sha256") or "").strip()
             if declared_sha and declared_sha != digest:
                 raise ValidationError("evidence artifact %d sha256 does not match content" % index)
+            # Externalize bytes to the hub blob store when configured: the
+            # ledger row keeps digest/size/metadata + a content_uri, so ledger
+            # DB growth decouples from artifact volume. Small payloads stay
+            # inline (cheaper next to their metadata); failures fall back to
+            # inline so evidence capture never depends on the blob volume.
+            content_b64 = base64.b64encode(content).decode("ascii")
+            content_uri = ""
+            blob_root = evidence_blobs.blob_root()
+            if blob_root is not None and len(content) > evidence_blobs.inline_max_bytes():
+                try:
+                    content_uri = evidence_blobs.store_blob(blob_root, content)
+                    content_b64 = ""
+                except OSError:
+                    content_uri = ""
             prepared.append(
                 EvidenceArtifact(
                     id=new_id("eva"),
@@ -6372,10 +6388,11 @@ class ControlPlane:
                     encoding="base64",
                     size_bytes=len(content),
                     sha256=digest,
-                    content_base64=base64.b64encode(content).decode("ascii"),
+                    content_base64=content_b64,
                     truncated=_evidence_artifact_bool(item.get("truncated")),
                     metadata=ensure_json_object(item.get("metadata")),
                     created_at=created_at,
+                    content_uri=content_uri,
                 )
             )
         return prepared
@@ -6427,8 +6444,31 @@ class ControlPlane:
         )
         if row is None:
             raise NotFoundError("evidence artifact not found: %s" % artifact_id)
+        artifact = self._evidence_artifact_from_row(row)
+        # Externalized bytes: materialize content from the blob store so the
+        # response shape is identical to an inline row. Verified read — a
+        # missing or corrupted blob fails closed rather than returning wrong
+        # bytes under a valid-looking digest.
+        if not artifact.content_base64 and artifact.content_uri:
+            root = evidence_blobs.blob_root()
+            if root is None:
+                raise NotFoundError(
+                    "evidence artifact %s content is externalized but no blob store "
+                    "is configured (set %s)" % (artifact_id, evidence_blobs.BLOB_DIR_ENV)
+                )
+            try:
+                content = evidence_blobs.read_blob(
+                    root, artifact.content_uri, expected_sha256=artifact.sha256
+                )
+            except FileNotFoundError:
+                raise NotFoundError(
+                    "evidence artifact %s blob is missing from the blob store" % artifact_id
+                )
+            except evidence_blobs.BlobIntegrityError as exc:
+                raise ValidationError(str(exc))
+            artifact.content_base64 = base64.b64encode(content).decode("ascii")
         return self._evidence_artifact_public_dict(
-            self._evidence_artifact_from_row(row),
+            artifact,
             include_content=True,
         )
 
@@ -9468,6 +9508,12 @@ class ControlPlane:
         elif clone_url:
             from . import gitops as _gitops
 
+            # The hub's service environment authenticates with tokens, not a
+            # user's SSH state: convert an SSH-form remote to https when a
+            # token exists for the host, so publish/merge cannot be broken by
+            # a missing ~/.ssh key (the failure mode behind mass
+            # workflow.default_review.publish_failed events).
+            clone_url = _gitops.https_remote_for_token_auth(clone_url)
             auth_url = _gitops.inject_git_remote_auth(clone_url)
             tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
             clone = self._git_output(
@@ -10894,6 +10940,7 @@ class ControlPlane:
         )
 
     def _evidence_artifact_from_row(self, row: Any) -> EvidenceArtifact:
+        keys = row.keys() if hasattr(row, "keys") else []
         return EvidenceArtifact(
             row["id"],
             row["evidence_id"],
@@ -10909,6 +10956,7 @@ class ControlPlane:
             str(row["truncated"]).strip().lower() in {"1", "true", "yes"},
             json_loads(row["metadata"], {}),
             row["created_at"],
+            content_uri=str(row["content_uri"] or "") if "content_uri" in keys else "",
         )
 
     def _command_audit_from_row(self, row: Any) -> CommandAuditRecord:
