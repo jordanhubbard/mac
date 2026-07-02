@@ -1061,7 +1061,7 @@ validate_router_topology_spec() {
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
@@ -1183,6 +1183,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
+  add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"
   add_remote_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
   add_remote_env MAC_DEPLOY_MEMORY_EMBED_MODEL "$mem_embed_model"
   add_remote_env MAC_DEPLOY_ROUTER_BACKEND "$router_backend"
@@ -1300,6 +1301,18 @@ WEBDAV_ROOT_CONFIGURED="${MAC_DEPLOY_WEBDAV_ROOT:-}"
 WEBDAV_PUBLIC_PATH_CONFIGURED="${MAC_DEPLOY_WEBDAV_PUBLIC_PATH:-/artifacts/}"
 WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED="${MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES:-536870912}"
 NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"
+# The outer orchestrator has already proved that this spoke can reach the hub
+# URL directly over Tailscale/headscale. There is no localhost reverse-tunnel
+# control-plane forward on that path.
+DEPLOY_DIRECT_HUB="${MAC_DEPLOY_DIRECT_HUB:-0}"
+case "$NETWORK_PROVIDER" in
+  tailscale|headscale)
+    case "${HUB_URL:-}" in
+      http://127.0.0.1*) ;;
+      *) DEPLOY_DIRECT_HUB=1 ;;
+    esac
+    ;;
+esac
 # gketun-02: network=none spokes reach hub-managed shared services through the
 # reverse tunnel's localhost forwards (install_reverse_tunnel_on_hub:
 # -R 127.0.0.1:16333:hub:6333, -R 127.0.0.1:13002:hub:3002), NOT the hub FQDN —
@@ -1790,6 +1803,10 @@ install_hub_tunnel_pubkey() {
 # redeploy where allow-degraded is off).
 wait_for_hub_reverse_tunnel() {
   [ -n "$HUB_TUNNEL_PUBKEY" ] || return 0
+  if [ "${DEPLOY_DIRECT_HUB:-0}" = "1" ]; then
+    log "direct hub path (${NETWORK_PROVIDER:-mesh}); skipping reverse-tunnel wait"
+    return 0
+  fi
   local i
   for i in $(seq 1 24); do
     if curl -fsS --max-time 3 "http://127.0.0.1:18789/health" >/dev/null 2>&1; then
@@ -6118,7 +6135,7 @@ main() {
         fi
       done
     fi
-    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$allow_degraded_services" "$github_review_key_b64"
+    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$allow_degraded_services" "$github_review_key_b64" "$direct_mesh_hub"
     deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"
