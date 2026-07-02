@@ -403,6 +403,25 @@ def test_fleet_deploy_installs_github_cli_for_workers():
     assert 'brew install gh' in script
     assert 'sudo apt-get install -y gh' in script
     assert 'https://cli.github.com/packages' in script
+
+
+def test_fleet_deploy_never_forces_an_unverified_github_review_key():
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+    assert "github_ssh_auth_succeeds()" in script
+    assert "ssh-keygen -y -f \"$candidate_file\"" in script
+    assert "github_ssh_auth_succeeds \"$candidate_file\"" in script
+    assert "refusing to make it the exclusive identity" in script
+    assert "using the host's verified ambient GitHub SSH identity" in script
+    assert "the hub cannot authenticate to github.com for review publication" in script
+    assert "remove_managed_github_review_key_config \"$config_file\"" in script
+
+    exclusive_identity = "  IdentitiesOnly yes"
+    assert script.count(exclusive_identity) == 2
+    assert 'ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")' in script
+    assert exclusive_identity in script.split(
+        "github_ssh_auth_succeeds \"$candidate_file\"", 1
+    )[1]
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
 
 

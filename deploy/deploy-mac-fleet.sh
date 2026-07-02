@@ -1802,25 +1802,68 @@ wait_for_hub_reverse_tunnel() {
   return 0
 }
 
+remove_managed_github_review_key_config() {
+  local config_file="$1"
+  [ -f "$config_file" ] || return 0
+  sed -i.bak '/^# mac GitHub review deploy key$/,/^  IdentitiesOnly yes$/d' "$config_file"
+  rm -f "${config_file}.bak"
+}
+
+github_ssh_auth_succeeds() {
+  local key_file="${1:-}" output rc ssh_args
+  ssh_args=(
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+  )
+  if [ -n "$key_file" ]; then
+    ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")
+  fi
+  set +e
+  output="$("${ssh_args[@]}" -T git@github.com 2>&1)"
+  rc=$?
+  set -e
+  [ "$rc" -eq 1 ] && printf '%s' "$output" | grep -q 'successfully authenticated'
+}
+
 install_github_review_key() {
-  [ -n "$GITHUB_REVIEW_KEY_B64" ] || return 0
   local ssh_dir="$HOME/.ssh"
   local key_file="$ssh_dir/mac_github_review_id"
   local config_file="$ssh_dir/config"
+  local candidate_file="$ssh_dir/.mac_github_review_id.candidate"
   mkdir -p "$ssh_dir"
   chmod 700 "$ssh_dir"
-  "$PYTHON_BIN" -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))" "$key_file" "$GITHUB_REVIEW_KEY_B64"
-  chmod 600 "$key_file"
-  log "installed GitHub review deploy key at $key_file"
   ssh-keyscan -H github.com 2>/dev/null >> "$ssh_dir/known_hosts"
   chmod 644 "$ssh_dir/known_hosts"
   log "added github.com to SSH known_hosts"
   touch "$config_file"
   chmod 600 "$config_file"
-  if ! grep -q "mac_github_review_id" "$config_file" 2>/dev/null; then
-    printf '\n# mac GitHub review deploy key\nHost github.com\n  IdentityFile ~/.ssh/mac_github_review_id\n  IdentitiesOnly yes\n' >> "$config_file"
-    log "added GitHub review SSH config block"
+  remove_managed_github_review_key_config "$config_file"
+  rm -f "$candidate_file"
+
+  if [ -n "$GITHUB_REVIEW_KEY_B64" ]; then
+    "$PYTHON_BIN" -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))" "$candidate_file" "$GITHUB_REVIEW_KEY_B64"
+    chmod 600 "$candidate_file"
+    if ssh-keygen -y -f "$candidate_file" >/dev/null 2>&1 \
+      && github_ssh_auth_succeeds "$candidate_file"; then
+      mv -f "$candidate_file" "$key_file"
+      printf '\n# mac GitHub review deploy key\nHost github.com\n  IdentityFile ~/.ssh/mac_github_review_id\n  IdentitiesOnly yes\n' >> "$config_file"
+      log "installed and verified GitHub review deploy key at $key_file"
+      return 0
+    fi
+    log "WARNING: generated GitHub review key is not authorized by github.com; refusing to make it the exclusive identity"
   fi
+
+  rm -f "$candidate_file" "$key_file"
+  if github_ssh_auth_succeeds; then
+    log "using the host's verified ambient GitHub SSH identity"
+    return 0
+  fi
+  if [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; then
+    echo "ERROR: the hub cannot authenticate to github.com for review publication" >&2
+    echo "Authorize the deploy operator's ~/.mac/keys/mac-github-review-id.pub as an account SSH key, or configure a working ambient GitHub SSH identity, then redeploy." >&2
+    exit 1
+  fi
+  log "WARNING: no GitHub SSH identity is authorized on this spoke; repository work that requires SSH will be rejected or routed elsewhere"
 }
 
 # On a brand-new spoke the hub's Qdrant/Firecrawl are reached through a reverse
