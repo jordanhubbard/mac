@@ -564,9 +564,12 @@ if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
   if [ -s "$HOME/.codex/auth.json" ]; then
     codex_uploads="$codex_uploads --upload $HOME/.codex/auth.json:/tmp/.codex/auth.json"
   fi
-  if [ -s "$HOME/.codex/config.toml" ]; then
-    codex_uploads="$codex_uploads --upload $HOME/.codex/config.toml:/tmp/.codex/config.toml"
-  fi
+  # Deliberately NOT uploading config.toml: its top-level model pin is
+  # specific to the operator workstation's codex version and breaks a worker
+  # on an older codex ("model X requires a newer version of Codex"). auth.json
+  # is the portable credential; the fleet sets the model per task via --model.
+  # (mac fleet creds-sync ships a model-pin-stripped config.toml when custom
+  # provider config is genuinely needed.)
 else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi

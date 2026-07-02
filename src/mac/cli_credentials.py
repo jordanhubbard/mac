@@ -68,6 +68,27 @@ class CredentialSource:
         return bool(self.files or self.env)
 
 
+def _strip_codex_model_pin(config: bytes) -> bytes:
+    """Drop the top-level ``model``/``model_reasoning_effort`` pins from a codex
+    ``config.toml`` while preserving everything else (including custom provider
+    ``[tables]``).
+
+    Only lines BEFORE the first ``[table]`` header are top-level; a ``model =``
+    inside a provider table is scoped config we must not touch."""
+    out: List[bytes] = []
+    in_top_level = True
+    for raw in config.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith(b"["):
+            in_top_level = False
+        if in_top_level:
+            key = stripped.split(b"=", 1)[0].strip() if b"=" in stripped else b""
+            if key in {b"model", b"model_reasoning_effort"}:
+                continue
+        out.append(raw)
+    return b"\n".join(out) + (b"\n" if config.endswith(b"\n") else b"")
+
+
 def _keychain_password(service: str, runner: Optional[Callable] = None) -> str:
     """Export a generic password from the macOS Keychain ('' when absent)."""
     if sys.platform != "darwin" and runner is None:
@@ -120,7 +141,15 @@ def detect_local_credentials(
                 source.files[".codex/auth.json"] = auth
                 config = _file_bytes(home / ".codex" / "config.toml")
                 if config is not None:
-                    source.files[".codex/config.toml"] = config
+                    # config.toml carries per-machine tuning alongside any
+                    # custom provider blocks. The top-level model / reasoning
+                    # pin is specific to THIS workstation's codex version and
+                    # breaks a worker on an older codex ("model X requires a
+                    # newer version of Codex"). Strip those top-level pins so
+                    # each worker uses a version-appropriate default; the fleet
+                    # sets the model per-task via --model instead. Custom
+                    # provider config (and everything under [tables]) is kept.
+                    source.files[".codex/config.toml"] = _strip_codex_model_pin(config)
                 source.origin = "~/.codex/auth.json"
             sources[cli] = source
         elif cli == "claude":

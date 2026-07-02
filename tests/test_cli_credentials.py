@@ -205,3 +205,29 @@ def test_agents_needing_sync_reads_heartbeat_reports():
         {"name": "w2", "resources": {}},  # never reported -> unknown, not needy
     ]
     assert cc.agents_needing_sync(agents) == {"w1": ["claude"]}
+
+
+def test_codex_config_model_pin_is_stripped_but_provider_config_kept(tmp_path):
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text('{"tokens": "x"}')
+    (home / ".codex" / "config.toml").write_text(
+        'model = "gpt-5.6-sol"\n'
+        'model_reasoning_effort = "xhigh"\n'
+        'preferred_auth_method = "chatgpt"\n'
+        "\n"
+        '[model_providers.custom]\n'
+        'name = "custom"\n'
+        'base_url = "https://example/v1"\n'
+        'model = "keep-me-inside-table"\n'
+    )
+    sources = cc.detect_local_credentials(environ={}, home=home, keychain=lambda s: "")
+    config = sources["codex"].files[".codex/config.toml"].decode()
+    # Top-level version-specific pins removed...
+    assert "gpt-5.6-sol" not in config
+    assert "model_reasoning_effort" not in config
+    # ...but non-model top-level keys and scoped provider config preserved.
+    assert 'preferred_auth_method = "chatgpt"' in config
+    assert "[model_providers.custom]" in config
+    assert 'base_url = "https://example/v1"' in config
+    assert "keep-me-inside-table" in config  # model= inside a table is untouched
