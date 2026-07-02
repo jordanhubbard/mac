@@ -654,6 +654,14 @@ class RemoteDispatch:
     def register_agent(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agents", _drop_none(kw)))
 
+    def update_agent(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/agents/%s" % quote(agent_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 

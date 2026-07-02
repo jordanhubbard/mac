@@ -504,6 +504,7 @@ class AgentUpdate(BaseModel):
     health_status: Optional[str] = None
     hermes_instance_id: Optional[str] = None
     actor: str = "human"
+    actor: str = "human"
 
 
 class AgentBulkUpdate(BaseModel):

@@ -175,3 +175,23 @@ def test_dispatch_result_wrapper_debug_and_mapping_protocol() -> None:
     assert _wrap_list({"unexpected": "mapping"})[0].to_dict() == {
         "unexpected": "mapping"
     }
+
+
+def test_update_agent_uses_hub_put_endpoint_and_preserves_actor() -> None:
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.update_agent(
+        "agent/worker",
+        resources={"openshell_required": True},
+        actor="openshell-reconcile",
+    )
+
+    assert client.calls[-1] == (
+        "PUT",
+        "/agents/agent%2Fworker",
+        {
+            "resources": {"openshell_required": True},
+            "actor": "openshell-reconcile",
+        },
+    )
