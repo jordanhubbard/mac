@@ -20,10 +20,13 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "OSH_DRIVER is no longer supported" in script
     assert "replacing podman-docker compatibility shim" in script
     assert "Podman compatibility shim" in script
-    assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
+    assert (
+        "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store"
+        in script
+    )
     assert "podman load" in script
     assert "runtime image smoke: gh/codex/codegraph visible through OpenShell" in script
-    assert script.count('import mac.agent_command') >= 2
+    assert script.count("import mac.agent_command") >= 2
     assert "-- bash -c" in script
     assert 'current_openshell_version" != "$OPENSHELL_VERSION"' in script
     assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
@@ -38,14 +41,19 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "[program:openshell-gateway]" in script
     assert "sudo supervisorctl restart openshell-gateway" in script
     assert "run-gateway.sh" in script
-    assert "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT" in script
+    assert (
+        "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT"
+        in script
+    )
     assert "[program:mac-openshell-firewall]" in script
     assert "sudo systemctl show-environment" in script
     assert "manager=$gateway_manager state=$gateway_state" in script
-    assert 'MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0' in script
+    assert "MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0" in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
     create_arg_lines = [
-        line for line in script.splitlines() if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
+        line
+        for line in script.splitlines()
+        if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
     ]
     assert create_arg_lines
     assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
@@ -62,29 +70,53 @@ def test_openshell_image_docs_do_not_advertise_podman_builds():
 
 
 def test_openshell_image_installs_codegraph_baseline():
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     containerfile = (
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
 
+    assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.1.6}"' in bootstrap
+    assert "prefetching pinned runtime-image assets on the host" in bootstrap
+    assert "codegraph-linux-${codegraph_arch}.tar.gz" in bootstrap
+    assert 'ARG CODEGRAPH_VERSION="v1.1.6"' in containerfile
     assert (
-        "curl ${MAC_CURL_FLAGS} -fsSL "
-        "https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh "
-        "-o /tmp/codegraph-install.sh"
-    ) in containerfile
-    assert 'ARG MAC_CURL_FLAGS="--retry 5 --retry-all-errors' in containerfile
-    assert "--connect-timeout 15 --max-time 120" in containerfile
+        "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets"
+        in containerfile
+    )
+    assert "tar -xzf /tmp/mac-openshell-build-assets/codegraph.tgz" in containerfile
+    assert (
+        'CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}"'
+        in containerfile
+    )
+    assert 'ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current' in containerfile
     assert 'ARG GH_VERSION="2.95.0"' in containerfile
-    assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in containerfile
-    assert 'gh_${GH_VERSION}_linux_${gh_arch}.tar.gz' in containerfile
+    assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in bootstrap
+    assert "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" in bootstrap
     assert "https://cli.github.com/packages" not in containerfile
+    assert "github.com" not in containerfile
+    assert "raw.githubusercontent.com" not in containerfile
     assert (
-        "CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin "
-        "sh /tmp/codegraph-install.sh"
-    ) in containerfile
-    assert "rm -f /tmp/codegraph-install.sh" in containerfile
-    assert 'CG_BIN="$(readlink -f /usr/local/bin/codegraph)"' in containerfile
-    assert 'CG_HOME="$(dirname "$(dirname "$CG_BIN")")"' in containerfile
-    assert "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph" in containerfile
+        "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph"
+        in containerfile
+    )
     assert "chmod -R a+rX /usr/local/lib/codegraph" in containerfile
     assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
     assert "codegraph install --yes" in containerfile
+
+
+def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"' in script
+    assert "prepare_image_build_assets" in script
+    assert "nodesource_setup.sh" in script
+    assert "gh.tgz" in script
+    assert "raw.githubusercontent.com/technomancy/leiningen" in script
+    assert "codegraph.tgz" in script
+    assert "trap cleanup_image_build_assets EXIT" in script
+    assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
+    assert '--build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION"' in script

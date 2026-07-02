@@ -37,35 +37,32 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   refuses Node < v22.13 ("This version of pnpm requires at least Node.js
 #   v22.13"), which silently breaks every `pnpm install` repo bootstrap.
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
-ARG MAC_CURL_FLAGS="--retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120"
 ARG GH_VERSION="2.95.0"
+ARG CODEGRAPH_VERSION="v1.1.6"
+COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && curl ${MAC_CURL_FLAGS} -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
-    && bash /tmp/nodesource_setup.sh \
-    && rm -f /tmp/nodesource_setup.sh \
+    && bash /tmp/mac-openshell-build-assets/nodesource_setup.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev nodejs openjdk-17-jre-headless \
     && gh_arch="$(dpkg --print-architecture)" \
-    && curl ${MAC_CURL_FLAGS} -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" -o /tmp/gh.tgz \
-    && tar -xzf /tmp/gh.tgz -C /tmp \
+    && tar -xzf /tmp/mac-openshell-build-assets/gh.tgz -C /tmp \
     && install -m755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
-    && rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
+    && rm -rf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
     && npm install -g @openai/codex@0.140.0 \
     && npm install -g pnpm \
-    && curl ${MAC_CURL_FLAGS} -fsSL https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o /usr/local/bin/lein \
-    && chmod +x /usr/local/bin/lein \
-    && curl ${MAC_CURL_FLAGS} -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh -o /tmp/codegraph-install.sh \
-    && CODEGRAPH_INSTALL_DIR=/usr/local/lib/codegraph CODEGRAPH_BIN_DIR=/usr/local/bin sh /tmp/codegraph-install.sh \
-    && rm -f /tmp/codegraph-install.sh \
-    && CG_BIN="$(readlink -f /usr/local/bin/codegraph)" \
-    && CG_HOME="$(dirname "$(dirname "$CG_BIN")")" \
+    && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
+    && CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}" \
+    && mkdir -p "$CG_HOME" \
+    && tar -xzf /tmp/mac-openshell-build-assets/codegraph.tgz -C "$CG_HOME" --strip-components=1 \
+    && ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current \
     && printf '#!/bin/sh\nexec "%s/node" --liftoff-only "%s/lib/dist/bin/codegraph.js" "$@"\n' "$CG_HOME" "$CG_HOME" > /usr/local/bin/codegraph \
     && chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph \
     && chmod -R a+rX /usr/local/lib/codegraph \
     && chmod 0755 /usr/local/bin/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
+    && rm -rf /tmp/mac-openshell-build-assets \
     && rm -rf /var/lib/apt/lists/*
 
 # pnpm/npm: tune for a constrained L7 egress proxy. A large monorepo install
