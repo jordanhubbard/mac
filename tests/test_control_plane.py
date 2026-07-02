@@ -9576,3 +9576,84 @@ def test_rollout_deploy_environment_id_round_trips(cp):
     rollout, env, _ = _create_linked_rollout(cp, "21.0", "sha256:roundtrip01")
     fetched = cp.get_rollout(rollout.id)
     assert fetched.deploy_environment_id == env.id
+
+
+def _setup_hubverify_task(cp, runner):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    # Canonical remote lives on the task contract (the hub verifier resolves
+    # the clone target from there); the executor evidence carries no
+    # remote_url, so add_evidence performs no live git ls-remote.
+    task = cp.create_task(
+        "Implement thing",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://publish",
+            "origin": {"repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}},
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp._hub_verify_runner = runner
+    return worker, reviewer, task, evidence
+
+
+def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    seen = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda remote, branch, head, cmd: (seen.append((remote, branch, head)) or (0, "all passed")),
+    )
+    # Hub verify runs as soon as a review is pending: create review -> run the
+    # contract test on the hub -> signed verdict -> publish, within one or two
+    # ticks (no waiting on an agent).
+    statuses = [
+        cp.advance_default_review_workflow(task.id)["status"],
+        cp.advance_default_review_workflow(task.id)["status"],
+    ]
+    assert "published" in statuses
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    # The hub ran the contract test on the pushed branch (not a nudged agent).
+    assert seen and seen[0][0] == "git@github.com:org/repo.git" and seen[0][1] == "task/example"
+    reviews = cp.list_reviews(task.id)
+    assert reviews[0].status == ReviewStatus.APPROVED.value
+    # Verdict evidence is hub-produced, signed by the reviewer, no agent nudge needed.
+    verdict = next(e for e in cp.list_evidence(task.id) if (e.metadata or {}).get("hub_verified"))
+    assert verdict.created_by == reviewer.id
+    names = {ev.name for ev in cp.list_observability(limit=80)}
+    assert "workflow.default_review.hub_verified" in names
+    assert "workflow.default_review.published" in names
+
+
+def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
+    )
+    cp.advance_default_review_workflow(task.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    # A failing contract test yields a rejected verdict; nothing is published.
+    assert result["status"] not in {"published"}
+    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
+    reviews = cp.list_reviews(task.id)
+    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert not cp.list_publications(task.id)
+
+
+def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
+    monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
+    called = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda *a: called.append(a) or (0, "ok"),
+    )
+    cp.advance_default_review_workflow(task.id)
+    result = cp.advance_default_review_workflow(task.id)
+    # Hub verify off: no hub run, workflow waits for an agent verdict as before.
+    assert not called
+    assert result["status"] == "waiting_for_reviewer_verdict"

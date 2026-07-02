@@ -1101,12 +1101,15 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
         extra_env=_ROUTER_ENV,
     )
     assert hub.get("MAC_EVIDENCE_BLOB_DIR", "").endswith("evidence-blobs")
+    # Option C: hub-side review verification is enabled on the hub only.
+    assert hub.get("MAC_REVIEW_HUB_VERIFY") == "1"
     spoke = _run_env_writer(
         tmp_path, agent="natasha", hub_agent="rocky",
         hub_url="http://hub.example:8789", hub_token="HUBTOK",
         extra_env=_ROUTER_ENV,
     )
     assert "MAC_EVIDENCE_BLOB_DIR" not in spoke
+    assert "MAC_REVIEW_HUB_VERIFY" not in spoke
 
 
 def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):

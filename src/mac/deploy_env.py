@@ -840,6 +840,12 @@ def build_mac_env(
     # redeploys; set to 0 in mac.env to opt a host out.
     values.setdefault("MAC_RELAY_OBSERVABILITY", "1")
     values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.identity.shared_services_manager)
+    if cfg.identity.is_hub:
+        # Option C: the hub runs the review contract test itself in one
+        # controlled OpenShell sandbox and records the signed verdict, instead
+        # of dispatching to a reviewer agent (whose per-node host+sandbox
+        # environment was the fragility that stalled the autonomous loop).
+        values.setdefault("MAC_REVIEW_HUB_VERIFY", "1")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values

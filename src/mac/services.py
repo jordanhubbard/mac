@@ -13,7 +13,7 @@ import threading
 import urllib.parse
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
 from cryptography.fernet import Fernet
@@ -259,6 +259,23 @@ def _nested_json_object(root: JsonDict, *keys: str) -> JsonDict:
             return {}
         node = node.get(key)
     return ensure_json_object(node) if isinstance(node, dict) else {}
+
+
+def _repository_contract_test_command_for_task(task: "Task") -> str:
+    """The repository contract's test command for a task, or "" (the hub
+    verifier then defaults to scripts/run-contract-tests.sh)."""
+    metadata = ensure_json_object(task.metadata)
+    for path in (
+        ("execution_contract", "test"),
+        ("execution_contract", "repository_contract", "test"),
+        ("origin", "repository_contract", "test"),
+        ("repository_contract", "test"),
+    ):
+        node = _nested_json_object(metadata, *path)
+        command = str(node.get("command") or "").strip()
+        if command:
+            return command
+    return ""
 
 
 def _repository_contracts_from_metadata(metadata: JsonDict) -> List[JsonDict]:
@@ -919,6 +936,14 @@ def _canonicalize_for_signature(manifest: Dict[str, Any]) -> bytes:
     excluded = {"signature"}
     filtered = {k: v for k, v in manifest.items() if k not in excluded}
     return json_dumps(filtered).encode("utf-8")
+
+
+def _hub_review_verify_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """Option C: hub runs the review contract test itself (one controlled
+    sandbox) instead of dispatching to a reviewer agent. Off by default; the
+    hub deploy sets MAC_REVIEW_HUB_VERIFY=1."""
+    env = os.environ if environ is None else environ
+    return str(env.get("MAC_REVIEW_HUB_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def sign_verification_manifest(key: str, manifest: Dict[str, Any]) -> str:
@@ -10221,6 +10246,23 @@ class ControlPlane:
                 executor_evidence_id=evidence.id,
                 not_before=review.created_at,
             )
+            # Option C — hub-side verification. Instead of dispatching a nudge
+            # and waiting for a reviewer agent to independently clone + run the
+            # contract test (fragile: every reviewer node needs a working dev
+            # environment, in-sandbox and host, and the sandbox->host handoff
+            # to be perfect), the hub runs the contract test ONCE in a
+            # controlled OpenShell sandbox on the pushed branch and records the
+            # signed verdict on the selected reviewer's behalf. Second-eyes
+            # holds (the verdict is signed by a non-author agent); the fragile
+            # N-node verification collapses to one controlled environment.
+            if verdict_evidence is None and _hub_review_verify_enabled():
+                self._run_hub_review_verification(task, review, evidence, actor)
+                verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
+                    task_id,
+                    review.reviewer_agent_id,
+                    executor_evidence_id=evidence.id,
+                    not_before=review.created_at,
+                )
             if verdict_evidence is None:
                 # Bound the verdict-wait loop. mem-12 only caps RETRACTION;
                 # a reviewer that keeps producing review-attempt evidence but
@@ -12399,6 +12441,174 @@ class ControlPlane:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    def _hub_verify_repo_info(
+        self, task: Task, executor_evidence: Evidence
+    ) -> Optional[Dict[str, str]]:
+        """Extract the pushed-branch coordinates the hub verifier needs: the
+        remote (evidence repo.remote_url, else the task's canonical contract
+        remote), the branch, and head_sha. Returns None when the evidence is
+        not a pushed repo change (nothing to independently verify)."""
+        meta = ensure_json_object(executor_evidence.metadata)
+        verification = ensure_json_object(meta.get("verification"))
+        repo = ensure_json_object(verification.get("repo"))
+        remote_url = str(repo.get("remote_url") or "").strip()
+        if not remote_url:
+            md = ensure_json_object(task.metadata)
+            for path in (
+                ("execution_contract", "repository_contract"),
+                ("origin", "repository_contract"),
+                ("repository_contract",),
+                ("origin",),
+            ):
+                node = _nested_json_object(md, *path)
+                remote_url = str(
+                    node.get("canonical_remote_url") or node.get("repository_url") or ""
+                ).strip()
+                if remote_url:
+                    break
+        head_sha = str(repo.get("head_sha") or "").strip()
+        remote_ref = str(repo.get("remote_ref") or "").strip()
+        branch = remote_ref[len("refs/heads/"):] if remote_ref.startswith("refs/heads/") else remote_ref
+        if not remote_url or not _GIT_SHA_RE.match(head_sha) or not branch:
+            return None
+        if repo.get("pushed") is not True:
+            return None
+        return {"remote_url": remote_url, "head_sha": head_sha, "branch": branch}
+
+    def _hub_verify_run_contract_test(
+        self, remote_url: str, branch: str, head_sha: str, test_command: str
+    ) -> Tuple[int, str]:
+        """Clone the pushed branch and run the contract test in an isolated
+        OpenShell sandbox on the hub. Returns (returncode, tail_of_output).
+
+        Isolation is mandatory: this executes pushed (agent-authored) test code
+        on the control-plane node, so it must not run on the hub host. Injected
+        via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
+        ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+        runner = getattr(self, "_hub_verify_runner", None)
+        if runner is not None:
+            return runner(remote_url, branch, head_sha, test_command)
+        from . import gitops as _gitops
+
+        auth_url = _gitops.inject_git_remote_auth(remote_url)
+        openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+        image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "localhost/mac-hermes:net").strip()
+        policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+        try:
+            timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "1200"))
+        except ValueError:
+            timeout = 1200.0
+        tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
+        try:
+            clone = subprocess.run(
+                ["git", "clone", "--branch", branch, "--depth", "50", "--", auth_url, str(tmp / "repo")],
+                capture_output=True, text=True, timeout=300, check=False,
+            )
+            if clone.returncode != 0:
+                return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
+                    (clone.stderr or clone.stdout or "").strip()
+                )[-800:]
+            name = "mac-hubverify-%s" % head_sha[:12]
+            argv = [openshell, "sandbox", "create", "--no-auto-providers"]
+            if policy:
+                argv += ["--policy", policy]
+            argv += [
+                "--name", name, "--from", image, "--env", "HOME=/tmp",
+                "--upload", "%s:%s" % (str(tmp / "repo"), "/sandbox"),
+                "--", "bash", "-c",
+                "cd /sandbox/repo && %s" % (test_command or "scripts/run-contract-tests.sh"),
+            ]
+            try:
+                proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+                out = (proc.stdout or "") + (proc.stderr or "")
+                return int(proc.returncode), out[-2000:]
+            finally:
+                subprocess.run([openshell, "sandbox", "delete", name], capture_output=True, text=True, timeout=60, check=False)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _run_hub_review_verification(
+        self, task: Task, review: Review, executor_evidence: Evidence, actor: str
+    ) -> Optional[Evidence]:
+        """Produce a signed review_verdict by running the contract test on the
+        hub (Option C), on behalf of the selected reviewer. No-op returning None
+        when the evidence isn't a pushed repo change or the reviewer has no key
+        (the workflow then falls back to the agent-nudge path)."""
+        info = self._hub_verify_repo_info(task, executor_evidence)
+        if info is None:
+            return None
+        key = self._agent_attestation_key(review.reviewer_agent_id)
+        if not key:
+            return None
+        test_command = _repository_contract_test_command_for_task(task)
+        try:
+            returncode, output = self._hub_verify_run_contract_test(
+                info["remote_url"], info["branch"], info["head_sha"], test_command
+            )
+        except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
+            self._record_default_review_observation(
+                task.id, "workflow.default_review.hub_verify_error", "warning",
+                {"review_id": review.id, "error": str(exc)[:300]}, actor,
+            )
+            return None
+        verdict = "approved" if returncode == 0 else "rejected"
+        manifest: Dict[str, Any] = {
+            "schema": VERIFICATION_SCHEMA,
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": verdict,
+            "reviewed_evidence_id": executor_evidence.id,
+            "worktree_digest": "sha256:%s" % hashlib.sha256(info["head_sha"].encode()).hexdigest(),
+            "verified_by": "hub_review_verifier_v1",
+            # Pushed-branch anchor for the verdict — the exact commit the hub
+            # cloned and tested (mirrors the reviewed executor evidence).
+            "repo": {
+                "head_sha": info["head_sha"],
+                "dirty": False,
+                "pushed": True,
+                "remote_ref": "refs/heads/%s" % info["branch"],
+                # Mirror the reviewed change's file set — the verdict attests to
+                # the same commit's files.
+                "files_changed": _nested_json_object(
+                    ensure_json_object(executor_evidence.metadata), "verification", "repo"
+                ).get("files_changed") or [],
+            },
+            "tests": [
+                {
+                    "name": "hub contract verification",
+                    "command": test_command or "scripts/run-contract-tests.sh",
+                    "returncode": int(returncode),
+                    "status": "pass" if returncode == 0 else "fail",
+                }
+            ],
+            "signed_by": review.reviewer_agent_id,
+        }
+        # Carry the reviewed commit's codegraph audit (source/build changes
+        # require it); the hub verified the same tree, so the executor's audit
+        # result is the applicable one.
+        exec_codegraph = _nested_json_object(
+            ensure_json_object(executor_evidence.metadata), "verification"
+        ).get("codegraph")
+        if isinstance(exec_codegraph, dict) and exec_codegraph:
+            manifest["codegraph"] = exec_codegraph
+        if verdict == "rejected":
+            manifest["feedback"] = "hub contract verification failed: %s" % (output[-500:] or "nonzero exit")
+        manifest["signature"] = sign_verification_manifest(key, manifest)
+        evidence = self.add_evidence(
+            task.id,
+            "review",
+            "hub-verify://%s/%s" % (review.id, info["head_sha"][:12]),
+            "hub review verification: %s (rc=%d)" % (verdict, returncode),
+            review.reviewer_agent_id,
+            metadata={"returncode": 0, "verification": manifest, "hub_verified": True},
+        )
+        self._record_default_review_observation(
+            task.id, "workflow.default_review.hub_verified", "info",
+            {"review_id": review.id, "verdict": verdict, "returncode": returncode,
+             "reviewer_agent_id": review.reviewer_agent_id}, actor,
+        )
+        return evidence
 
     def _default_review_for_task(self, task_id: str) -> Optional[Review]:
         """Return the unambiguous review row to act on, or None.

@@ -81,10 +81,16 @@ build_runtime_image() {
   cf="$(cd "$(dirname "$0")" && pwd)/mac-hermes.Containerfile"
   prepare_image_build_assets
   log "building $OSH_IMAGE_TAG with Docker Engine/Moby from $MAC_SRC"
-  ( cd "$MAC_SRC" && "$OSH_DOCKER_BIN" build \
+  # Bypass any configured credential helper (e.g. docker-credential-desktop,
+  # which is absent from the PATH of a non-interactive SSH build session and
+  # fails the base-image pull). The Containerfile's base images are public, so
+  # no registry auth is needed; an empty DOCKER_CONFIG avoids the helper.
+  _osh_docker_config="$(mktemp -d)"; printf '{}' > "$_osh_docker_config/config.json"
+  ( cd "$MAC_SRC" && DOCKER_CONFIG="$_osh_docker_config" "$OSH_DOCKER_BIN" build \
       --build-arg "GH_VERSION=$GH_VERSION" \
       --build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION" \
       -t "$OSH_IMAGE_TAG" -f "$cf" . )
+  rm -rf "$_osh_docker_config"
   cleanup_image_build_assets
 }
 
