@@ -1829,7 +1829,7 @@ remove_managed_github_review_key_config() {
 github_ssh_auth_succeeds() {
   local key_file="${1:-}" output rc ssh_args
   ssh_args=(
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10
+    ssh -n -F /dev/null -o BatchMode=yes -o ConnectTimeout=10
     -o StrictHostKeyChecking=yes
   )
   if [ -n "$key_file" ]; then

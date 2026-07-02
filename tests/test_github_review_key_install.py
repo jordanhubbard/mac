@@ -133,3 +133,9 @@ def test_authorized_review_key_is_installed_exclusively(tmp_path):
     assert "IdentityFile ~/.ssh/mac_github_review_id" in config
     assert "IdentitiesOnly yes" in config
     assert "installed and verified GitHub review deploy key" in result.stdout
+
+
+def test_github_auth_probe_cannot_consume_remote_deploy_stdin():
+    source = _function_source()
+
+    assert "ssh -n -F /dev/null" in source
