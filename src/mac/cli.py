@@ -2023,10 +2023,10 @@ def cmd_dispatch_tick(args: argparse.Namespace) -> None:
 def cmd_message_send(args: argparse.Namespace) -> None:
     _print(
         _plane(args).send_message(
-            args.sender_agent_id,
-            args.recipient_agent_id,
-            args.message_type,
-            _json_arg(args.payload, {}),
+            sender_agent_id=args.sender_agent_id,
+            recipient_agent_id=args.recipient_agent_id,
+            message_type=args.message_type,
+            payload=_json_arg(args.payload, {}),
             task_id=args.task_id,
         )
     )
@@ -2172,8 +2172,8 @@ def cmd_review_decision(args: argparse.Namespace) -> None:
     _print(
         _plane(args).submit_review(
             args.review_id,
-            args.status,
-            args.reviewer_agent_id,
+            status=args.status,
+            reviewer_agent_id=args.reviewer_agent_id,
             reason=args.reason,
             evidence_id=args.evidence_id,
         )
