@@ -9657,3 +9657,18 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
     # Hub verify off: no hub run, workflow waits for an agent verdict as before.
     assert not called
     assert result["status"] == "waiting_for_reviewer_verdict"
+
+
+def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    calls = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda *a: calls.append(a) or (0, "ok"),
+    )
+    review = cp.request_review(task.id, reviewer.id)
+    # A verify already running for this review: the next call is a no-op and
+    # does NOT launch a second sandbox contract test.
+    cp._hub_verify_inflight = {review.id}
+    result = cp._run_hub_review_verification(task, review, evidence, "test")
+    assert result is None
+    assert calls == []

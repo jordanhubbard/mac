@@ -12499,17 +12499,29 @@ class ControlPlane:
             timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "1200"))
         except ValueError:
             timeout = 1200.0
+        import uuid as _uuid
+
         tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
+        # Unique per invocation: the review sweep may re-tick while a verify is
+        # still running, and a head_sha-derived name collides ("already
+        # exists"). The in-flight guard in the caller also prevents overlap,
+        # but a unique name is the belt-and-suspenders.
+        name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
         try:
             clone = subprocess.run(
-                ["git", "clone", "--branch", branch, "--depth", "50", "--", auth_url, str(tmp / "repo")],
+                # Shallow single-branch clone keeps the upload into the sandbox
+                # small (a deep clone's history broke the tar-over-ssh upload
+                # with a broken pipe).
+                ["git", "clone", "--branch", branch, "--depth", "1", "--single-branch",
+                 "--", auth_url, str(tmp / "repo")],
                 capture_output=True, text=True, timeout=300, check=False,
             )
             if clone.returncode != 0:
                 return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
                     (clone.stderr or clone.stdout or "").strip()
                 )[-800:]
-            name = "mac-hubverify-%s" % head_sha[:12]
+            subprocess.run([openshell, "sandbox", "delete", name],
+                           capture_output=True, text=True, timeout=60, check=False)
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
             if policy:
                 argv += ["--policy", policy]
@@ -12541,6 +12553,26 @@ class ControlPlane:
         key = self._agent_attestation_key(review.reviewer_agent_id)
         if not key:
             return None
+        # In-flight guard: the review sweep re-ticks (~30s) while a verify runs
+        # for minutes; without this, each tick would launch another concurrent
+        # sandbox for the same review. One verify per review at a time.
+        inflight = getattr(self, "_hub_verify_inflight", None)
+        if inflight is None:
+            inflight = self._hub_verify_inflight = set()
+        if review.id in inflight:
+            return None
+        inflight.add(review.id)
+        try:
+            return self._run_hub_review_verification_locked(
+                task, review, executor_evidence, actor, info, key
+            )
+        finally:
+            inflight.discard(review.id)
+
+    def _run_hub_review_verification_locked(
+        self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
+        info: Dict[str, str], key: str,
+    ) -> Optional[Evidence]:
         test_command = _repository_contract_test_command_for_task(task)
         try:
             returncode, output = self._hub_verify_run_contract_test(
