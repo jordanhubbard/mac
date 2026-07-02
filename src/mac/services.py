@@ -85,6 +85,7 @@ from mac.models import (
     SecretHandle,
     SecretRecord,
     ServiceRole,
+    metadata_declares_report_deliverable,
     Task,
     TASK_TRANSITIONS,
     TaskState,
@@ -6567,6 +6568,12 @@ class ControlPlane:
         """
         if not isinstance(metadata, dict):
             return
+        # An operator-declared report/answer task is expected to produce
+        # operator_result — that is the whole point of the declaration, so do
+        # not apply the repo-coupled bar to it. (The bar still protects tasks
+        # that carry a repository contract without such a declaration.)
+        if metadata_declares_report_deliverable(task.metadata):
+            return
         verification = metadata.get("verification")
         if not isinstance(verification, dict):
             return
@@ -12242,6 +12249,10 @@ class ControlPlane:
         rejected for such tasks (the verified task_d7c51a0b jam was a code task
         that emitted a free-text operator_result with no commit/push)."""
         metadata = ensure_json_object(task.metadata)
+        # An explicitly declared report/answer task is non-code; operator_result
+        # is its correct evidence type, so it is not repo-coupled here.
+        if metadata_declares_report_deliverable(metadata):
+            return False
         for path in (
             ("execution_contract", "repository_contract"),
             ("origin", "repository_contract"),

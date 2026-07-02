@@ -60,6 +60,7 @@ from mac.fleet_learning import (
     resolve_git_remote_access,
 )
 from mac.hermes_adapter import MacApiClient, MacApiError
+from mac.models import metadata_declares_report_deliverable
 from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
     guarded_push,
@@ -4527,6 +4528,11 @@ def _default_self_update_repo() -> Path:
 def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
+        return None
+    # Declared report/answer tasks are non-code: no managed worktree/branch is
+    # prepared and the repo finalizer never runs, so the executor's
+    # operator_result fallback provides the (substantive, diff-free) evidence.
+    if metadata_declares_report_deliverable(metadata):
         return None
     origin = metadata.get("origin")
     if not isinstance(origin, dict):

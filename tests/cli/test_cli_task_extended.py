@@ -347,3 +347,27 @@ def test_task_evidence_appears_in_task_show(tmp_path):
     evidence_list = detail.get("evidence", [])
     uris = [e.get("uri") for e in evidence_list]
     assert "logs://run/999" in uris
+
+
+def test_task_create_kind_report_sets_deliverable(tmp_path):
+    """--kind report writes metadata.deliverable=report (non-code task)."""
+    rc, task = _run(tmp_path, "task", "create", "investigate flakiness", "--kind", "report")
+    assert rc == 0
+    assert task.get("metadata", {}).get("deliverable") == "report"
+
+
+def test_task_create_kind_alias_normalizes_to_report(tmp_path):
+    rc, task = _run(tmp_path, "task", "create", "answer a question", "--kind", "answer")
+    assert rc == 0
+    assert task.get("metadata", {}).get("deliverable") == "report"
+
+
+def test_task_create_kind_code_is_default_no_metadata(tmp_path):
+    rc, task = _run(tmp_path, "task", "create", "fix the bug")
+    assert rc == 0
+    assert "deliverable" not in (task.get("metadata") or {})
+
+
+def test_task_create_rejects_unknown_kind(tmp_path):
+    rc, _ = _run(tmp_path, "task", "create", "x", "--kind", "banana")
+    assert rc != 0

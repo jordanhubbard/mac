@@ -82,6 +82,39 @@ login from the machine you're actually using.
   mac observability list --name llm.route --limit 50
   ```
 
+## Task deliverable kind (code vs report)
+
+By default a task is a **code** deliverable: the fleet expects a repository
+change and enforces the strict evidence contract (a pushed commit with changed
+files and a passing contract test). That gate is load-bearing — it is what
+stops an agent from claiming "done" with nothing — so it is not bypassable.
+
+Some tasks legitimately produce **no code change**: investigate why X is
+failing, triage an incident, answer a question, summarize the state of Y.
+Declare those at creation and they are satisfied by a substantive
+`operator_result` (a real summary / structured findings / artifacts) — no
+diff, no branch:
+
+```bash
+mac task create "why is the review loop stalling?" --kind report
+mac task create "triage the failing GKE deploy"    --kind report
+```
+
+`--kind report` (aliases: `answer`, `analysis`, `investigation`, `question`,
+`triage`) writes `metadata.deliverable = "report"`. API callers set the same
+field on task creation. A report task gets no managed worktree/branch and the
+repository finalizer never runs for it; the agent still has the `mac` CLI,
+codegraph, and git to read whatever it needs. The declaration is an
+operator/workflow-author decision at creation — an executing agent cannot set
+it for itself, so it is not a way to dodge the substance gate (it is the
+opposite of the `task_d7c51a0b` incident, where an executor *implicitly*
+emitted `operator_result` for what was really a code task).
+
+This is also the right tool for **smoke-testing the fleet itself** ("report
+which coding CLI you used") — but note that verifying MAC's own behavior
+(routing, metering, sandboxing) is usually better done from the observability
+ledger and on-host probes than by creating a task at all.
+
 ## Billing note
 
 With CLIs authenticated, coding work bills to the CLI plans/accounts the

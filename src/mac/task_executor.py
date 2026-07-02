@@ -67,6 +67,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
+from mac.models import metadata_declares_report_deliverable
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -1024,6 +1025,11 @@ def task_evidence_type(task: Dict[str, Any]) -> str:
 def task_is_repo_coupled(task: Dict[str, Any]) -> bool:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
+        return False
+    # A declared report/answer task is non-code: it must not be forced into the
+    # repo-change contract (which demands a diff + passing test), and the
+    # executor's operator_result fallback is what should fire for it.
+    if metadata_declares_report_deliverable(metadata):
         return False
     contract = metadata.get("execution_contract")
     if isinstance(contract, dict):

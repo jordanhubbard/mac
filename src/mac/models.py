@@ -81,6 +81,43 @@ TERMINAL_TASK_STATES = {
 }
 
 
+# Task deliverable kind (metadata["deliverable"]). The default, "code", expects
+# a repository change and drives the strict repo-coupled evidence contract
+# (repo_change / test / no_change with a pushed anchor). A "report" task is
+# explicitly non-code — investigation, triage, an answer, a status summary —
+# and is satisfied by an ``operator_result`` (substantive summary/findings/
+# artifacts, no diff, no pushed branch). This is an operator/workflow-author
+# declaration at creation, NOT something an executing agent can set for itself,
+# so it cannot be used to bypass the substance gate the way the task_d7c51a0b
+# incident did (an executor emitting operator_result for an implicit code task).
+REPORT_DELIVERABLE = "report"
+_REPORT_DELIVERABLE_ALIASES = frozenset(
+    {"report", "answer", "analysis", "investigation", "question", "triage"}
+)
+
+
+def normalize_deliverable_kind(value: Any) -> str:
+    """Canonicalize a deliverable-kind token: aliases -> "report"; blank/"code"
+    -> "" (the default code path). Unknown values pass through unchanged so a
+    future kind is not silently swallowed."""
+    text = str(value or "").strip().lower()
+    if not text or text == "code":
+        return ""
+    if text in _REPORT_DELIVERABLE_ALIASES:
+        return REPORT_DELIVERABLE
+    return text
+
+
+def metadata_declares_report_deliverable(metadata: Any) -> bool:
+    """True when task metadata declares a non-code (report/answer) deliverable.
+
+    The single predicate every repo-coupling check consults so a declared
+    report task is uniformly exempt from code-substance expectations."""
+    if not isinstance(metadata, Mapping):
+        return False
+    return normalize_deliverable_kind(metadata.get("deliverable")) == REPORT_DELIVERABLE
+
+
 TASK_TRANSITIONS = {
     TaskState.OPEN.value: {
         TaskState.BLOCKED.value,

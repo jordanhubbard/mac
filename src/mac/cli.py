@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from mac.migration import import_jsonl, migrate_acc_sqlite
-from mac.models import MACError
+from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -938,6 +938,19 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Per-task LLM pin: worker exports MAC_TASK_MODEL to the executor,
         # which maps it to the runtime/CLI model flag for this run only.
         metadata["model"] = model
+    kind = normalize_deliverable_kind(getattr(args, "kind", ""))
+    if kind == REPORT_DELIVERABLE:
+        # Non-code deliverable: the fleet won't demand a repo diff/pushed
+        # branch; a substantive operator_result (summary/findings/artifacts)
+        # satisfies verification. Lets investigation/answer tasks run without
+        # faking a code change — and makes system-smoke tasks trivial without
+        # a test-only bypass of the substance gate.
+        metadata["deliverable"] = REPORT_DELIVERABLE
+    elif kind:
+        raise MACError(
+            "unknown --kind %r (use 'code' or 'report' / answer / analysis / "
+            "investigation / question / triage)" % args.kind
+        )
     # bd parity: when --project is omitted, tag the task with the working
     # directory's project (git repo name, else cwd basename). Pass an explicit
     # --project (including --project '' for none) to override.
@@ -3531,6 +3544,14 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--metadata-file", dest="metadata_file",
                         help="read JSON metadata from file path (or '-' for stdin)")
     create.add_argument("--max-attempts", type=int, default=3)
+    create.add_argument(
+        "--kind",
+        default="code",
+        help="deliverable kind: 'code' (default; expects a repository change) or "
+        "'report' (investigation/answer/triage — satisfied by a substantive "
+        "operator_result, no diff required). Aliases for report: answer, "
+        "analysis, investigation, question, triage.",
+    )
     create.add_argument(
         "--model",
         default="",
