@@ -63,6 +63,27 @@ def test_direct_hub_guard_returns_without_polling() -> None:
     assert "skipping reverse-tunnel wait" in result.stdout
 
 
+def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:
+    function = _function("uses_direct_mesh_hub")
+    snippet = "\n".join(
+        [
+            function,
+            'uses_direct_mesh_hub none "http://100.72.16.110:8789"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0
+
+
+def test_nonmesh_shared_services_keep_direct_urls_when_proven() -> None:
+    text = _script()
+    assert (
+        'if [ "$NETWORK_PROVIDER" = "none" ] \\\n  && [ "$DEPLOY_DIRECT_HUB" != "1" ]' in text
+    )
+
+
 def test_remote_fallback_derives_mesh_path_but_not_tunnel_path() -> None:
     text = _script()
     start = text.index('NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"')

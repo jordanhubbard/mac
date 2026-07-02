@@ -1201,14 +1201,13 @@ def test_hub_escrows_router_provider_keys_into_vault():
 
 
 def test_network_none_spoke_uses_tunnel_forwarded_service_ports():
-    # gketun-02: cross-pod service ports are blocked under network=none, so a spoke
-    # must reach hub Qdrant/Firecrawl via the reverse tunnel's localhost forwards
-    # (16333/13002), not the hub FQDN.
+    # gketun-02: a network=none spoke without a proven direct route reaches hub
+    # Qdrant/Firecrawl via the reverse tunnel's localhost forwards. A reachable
+    # direct private route must retain its configured service URLs instead.
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    assert (
-        'if [ "$NETWORK_PROVIDER" = "none" ] && [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then'
-        in script
-    )
+    start = script.index('if [ "$NETWORK_PROVIDER" = "none" ]')
+    block = script[start : start + 180]
+    assert '[ "$DEPLOY_DIRECT_HUB" != "1" ]' in block
     assert 'QDRANT_URL_CONFIGURED="http://127.0.0.1:16333"' in script
     assert 'FIRECRAWL_URL_CONFIGURED="http://127.0.0.1:13002"' in script
 

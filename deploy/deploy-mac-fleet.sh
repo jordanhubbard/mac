@@ -1314,9 +1314,10 @@ WEBDAV_ROOT_CONFIGURED="${MAC_DEPLOY_WEBDAV_ROOT:-}"
 WEBDAV_PUBLIC_PATH_CONFIGURED="${MAC_DEPLOY_WEBDAV_PUBLIC_PATH:-/artifacts/}"
 WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED="${MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES:-536870912}"
 NETWORK_PROVIDER="${MAC_DEPLOY_NETWORK_PROVIDER:-tailscale}"
-# The outer orchestrator has already proved that this spoke can reach the hub
-# URL directly over Tailscale/headscale. There is no localhost reverse-tunnel
-# control-plane forward on that path.
+# The outer orchestrator may have proved that this spoke can reach the hub URL
+# directly. There is no localhost reverse-tunnel control-plane forward on that
+# path, regardless of whether the route is a mesh client or another reachable
+# private network.
 DEPLOY_DIRECT_HUB="${MAC_DEPLOY_DIRECT_HUB:-0}"
 case "$NETWORK_PROVIDER" in
   tailscale|headscale)
@@ -1332,7 +1333,9 @@ esac
 # cross-pod service ports are typically blocked (only port 22 is), which is the
 # whole reason the SSH tunnel exists. Mirror MAC_HUB_URL's 127.0.0.1:18789
 # convention so the agent self-test + runtime hit the tunnel-forwarded ports.
-if [ "$NETWORK_PROVIDER" = "none" ] && [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then
+if [ "$NETWORK_PROVIDER" = "none" ] \
+  && [ "$DEPLOY_DIRECT_HUB" != "1" ] \
+  && [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then
   QDRANT_URL_CONFIGURED="http://127.0.0.1:16333"
   FIRECRAWL_URL_CONFIGURED="http://127.0.0.1:13002"
 fi
@@ -6047,7 +6050,7 @@ uses_direct_mesh_hub() {
   provider="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   hub_url="${2:-}"
   case "$provider" in
-    tailscale|headscale)
+    tailscale|headscale|none)
       [ -n "$hub_url" ]
       ;;
     *)
