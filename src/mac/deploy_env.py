@@ -43,6 +43,7 @@ PROVIDERS = tuple(ROUTER_PROVIDERS)
 
 ROUTER_KEYS = (
     "MAC_ROUTER_BACKEND",
+    "MAC_ROUTER_PORT",
     "MAC_ROUTER_PROVIDERS",
     "MAC_ROUTER_DEFAULT_MODEL",
     "MAC_ROUTER_WILDCARD_MODELS",
@@ -499,6 +500,14 @@ def _deploy_router_config(env: Mapping[str, str]) -> Dict[str, str]:
         "providers": (env.get("MAC_DEPLOY_ROUTER_PROVIDERS") or "").strip(),
         "default_model": (env.get("MAC_DEPLOY_ROUTER_DEFAULT_MODEL") or "").strip(),
         "wildcard_models": (env.get("MAC_DEPLOY_ROUTER_WILDCARD_MODELS") or "").strip(),
+        # standalone backend: the router runs as its own process on this port
+        # (mac-router / python -m mac.router_service) instead of inside the
+        # hub ledger API, so ledger restarts never drop in-flight LLM streams.
+        "port": (env.get("MAC_DEPLOY_ROUTER_PORT") or "8790").strip(),
+        # Per-site replica: spokes may route model traffic to a nearby router
+        # URL instead of the hub (e.g. a replica deployed inside a remote
+        # wing whose network path to the hub is unreliable).
+        "url": (env.get("MAC_DEPLOY_ROUTER_URL") or "").strip(),
     }
 
 
@@ -548,7 +557,13 @@ def _apply_inproc_router_hub(
     if router["wildcard_models"]:
         values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
     values["MAC_ROUTER_PROVIDERS"] = router["providers"]
-    local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
+    if router["backend"] == "standalone":
+        # Router runs as its own service; the hub API (backend != inproc)
+        # does not mount /v1, so ledger and inference stop sharing fate.
+        values["MAC_ROUTER_PORT"] = router["port"]
+        local_router_v1 = "http://127.0.0.1:%s/v1" % router["port"]
+    else:
+        local_router_v1 = "http://127.0.0.1:%s/v1" % cfg.control.port
     values["OPENAI_BASE_URL"] = local_router_v1
     values["CUSTOM_BASE_URL"] = local_router_v1
     values["MAC_HERMES_GATEWAY_BASE_URL"] = local_router_v1
@@ -577,21 +592,31 @@ def _apply_inproc_router_hub(
             values["MAC_ROUTER_%s_KEY" % _m.upper()] = "secret:nvidia-%s" % _m
 
 
-def _apply_inproc_router_spoke(values: MutableMapping[str, str], cfg: DeployEnvConfig) -> None:
+def _apply_inproc_router_spoke(
+    values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> None:
     """Spoke: route the gateway (chat + image) through the hub's /v1 with the
-    validated hub-facing token and hold no upstream keys."""
+    validated hub-facing token and hold no upstream keys.
+
+    ``MAC_DEPLOY_ROUTER_URL`` overrides the routing base for a wing served by
+    a nearby router replica (same bearer token contract; still no upstream
+    keys on the spoke) — inference then stops traversing the spoke→hub path."""
     hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").rstrip("/")
+    router = _deploy_router_config(env)
+    route_base = (router["url"] or hub_base).rstrip("/")
+    if route_base.endswith("/v1"):
+        route_base = route_base[: -len("/v1")]
     hub_token = (cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or "").strip()
-    hub_v1 = "%s/v1" % hub_base
-    values["OPENAI_BASE_URL"] = hub_v1
-    values["CUSTOM_BASE_URL"] = hub_v1
-    values["MAC_HERMES_GATEWAY_BASE_URL"] = hub_v1
-    values["ACC_HERMES_GATEWAY_BASE_URL"] = hub_v1
+    route_v1 = "%s/v1" % route_base
+    values["OPENAI_BASE_URL"] = route_v1
+    values["CUSTOM_BASE_URL"] = route_v1
+    values["MAC_HERMES_GATEWAY_BASE_URL"] = route_v1
+    values["ACC_HERMES_GATEWAY_BASE_URL"] = route_v1
     values["OPENAI_API_KEY"] = hub_token
     values["MAC_HERMES_GATEWAY_API_KEY"] = hub_token
     values["ACC_HERMES_GATEWAY_API_KEY"] = hub_token
     values["NVIDIA_API_KEY"] = hub_token
-    values["NVIDIA_IMAGE_BASE_URL"] = "%s/v1/genai" % hub_base
+    values["NVIDIA_IMAGE_BASE_URL"] = "%s/v1/genai" % route_base
 
 
 def _apply_inproc_router(
@@ -644,7 +669,7 @@ def _apply_inproc_router(
         _apply_inproc_router_hub(values, cfg, env)
         values["MAC_ROUTER_PROVIDERS"] = router["providers"]
     else:
-        _apply_inproc_router_spoke(values, cfg)
+        _apply_inproc_router_spoke(values, cfg, env)
 
 
 def _apply_non_inproc_router(values: MutableMapping[str, str], env: Mapping[str, str]) -> None:
@@ -661,7 +686,10 @@ def _apply_non_inproc_router(values: MutableMapping[str, str], env: Mapping[str,
 
 def _apply_router(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> None:
     backend = (env.get("MAC_DEPLOY_ROUTER_BACKEND") or "").strip()
-    if backend.lower() == "inproc":
+    # "standalone" is the inproc router extracted into its own process; hub
+    # validation, spoke wiring, and credential centralization are identical —
+    # only where the router listens differs.
+    if backend.lower() in {"inproc", "standalone"}:
         _apply_inproc_router(values, cfg, env)
     else:
         _apply_non_inproc_router(values, env)
@@ -700,10 +728,34 @@ def build_mac_env(
                 "MAC_DATABASE_URL",
                 "MAC_CLIENT_PRINCIPALS_FILE",
                 "MAC_HUB_TICK_INTERVAL_SECONDS",
+                "MAC_EVIDENCE_BLOB_DIR",
             ),
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
+    if cfg.identity.is_hub:
+        # Evidence artifact bytes live in a hub-local blob store so ledger DB
+        # growth decouples from artifact volume (mac.evidence_blobs). setdefault
+        # preserves an operator override across redeploys.
+        values.setdefault(
+            "MAC_EVIDENCE_BLOB_DIR", str(cfg.paths.mac_home / "evidence-blobs")
+        )
+        # HA: a hub may run against Postgres (already a first-class store
+        # backend — make_store_from_env prefers MAC_DATABASE_URL) so ledger
+        # availability becomes a database-replication problem instead of a
+        # single SQLite file. The DSN comes from MAC_DEPLOY_DATABASE_URL or a
+        # previously-written mac.env; when present, MAC_DB is dropped so the
+        # node declares exactly one durable authority.
+        dsn = (env.get("MAC_DEPLOY_DATABASE_URL") or "").strip() or (
+            values.get("MAC_DATABASE_URL") or ""
+        ).strip()
+        if dsn:
+            if not dsn.startswith(("postgres://", "postgresql://")):
+                raise ValueError(
+                    "MAC_DEPLOY_DATABASE_URL must be a postgres:// or postgresql:// DSN"
+                )
+            values["MAC_DATABASE_URL"] = dsn
+            values.pop("MAC_DB", None)
     values.update(_identity_values(cfg))
     values.update(_gateway_values(cfg))
     values.update(_worker_values(cfg, values))

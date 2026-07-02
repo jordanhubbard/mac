@@ -65,7 +65,10 @@ RECORD_CLASS_CONFIG: Dict[str, Dict[str, str]] = {
         "table": "evidence_artifacts",
         "pk": "id",
         "ts": "created_at",
+        # Bytes may be externalized to the blob store (content_base64 empty);
+        # size_bytes is authoritative for both inline and externalized rows.
         "size_col": "content_base64",
+        "size_expr": "COALESCE(size_bytes, 0)",
     },
     "operator_notifications": {
         "table": "operator_notifications",
@@ -82,6 +85,19 @@ RECORD_CLASS_CONFIG: Dict[str, Dict[str, str]] = {
 }
 
 RETENTION_POLICY_SCHEMA = "mac.retention_policy.v1"
+
+
+def _size_sql(cfg: Dict[str, Any]) -> str:
+    """SQL expression estimating a row's payload bytes.
+
+    ``size_expr`` overrides the default ``LENGTH(size_col)`` for tables whose
+    payload may live outside the row (evidence artifact bytes externalized to
+    the blob store leave ``content_base64`` empty while ``size_bytes`` still
+    records the true payload size)."""
+    expr = cfg.get("size_expr")
+    if expr:
+        return str(expr)
+    return "LENGTH(COALESCE(%s, ''))" % cfg["size_col"]
 
 # Maximum rows deleted in a single DELETE statement (bounded batch).
 DEFAULT_BATCH_SIZE = 500
@@ -345,15 +361,15 @@ class RetentionService:
         cfg = RECORD_CLASS_CONFIG[record_class]
         table = cfg["table"]
         ts_col = cfg["ts"]
-        size_col = cfg["size_col"]
+        size_sql = _size_sql(cfg)
 
         # Total rows + byte estimate + oldest/newest
         row = self.store.query_one(
             "SELECT COUNT(*) AS cnt,"
-            " SUM(LENGTH(COALESCE(%s, ''))) AS total_bytes,"
+            " SUM(%s) AS total_bytes,"
             " MIN(%s) AS oldest_ts,"
             " MAX(%s) AS newest_ts"
-            " FROM %s" % (size_col, ts_col, ts_col, table)
+            " FROM %s" % (size_sql, ts_col, ts_col, table)
         )
         row_count = int(row["cnt"] or 0) if row else 0
         estimated_bytes = int(row["total_bytes"] or 0) if row else 0
@@ -474,7 +490,7 @@ class RetentionService:
         table = cfg["table"]
         pk = cfg["pk"]
         ts_col = cfg["ts"]
-        size_col = cfg["size_col"]
+        size_sql = _size_sql(cfg)
         now = utcnow()
 
         exclusion_reasons: List[str] = []
@@ -534,9 +550,9 @@ class RetentionService:
                 timespec="microseconds"
             )
             rows = self.store.query_all(
-                "SELECT %s AS pk_val, %s AS ts_val, LENGTH(COALESCE(%s,'')) AS sz"
+                "SELECT %s AS pk_val, %s AS ts_val, %s AS sz"
                 " FROM %s WHERE %s < ?"
-                " ORDER BY %s ASC" % (pk, ts_col, size_col, table, ts_col, ts_col),
+                " ORDER BY %s ASC" % (pk, ts_col, size_sql, table, ts_col, ts_col),
                 (cutoff,),
             )
             candidate_ids = [str(r["pk_val"]) for r in rows]
@@ -544,8 +560,8 @@ class RetentionService:
         elif policy.max_rows is not None:
             # Keep the newest max_rows; candidates are the excess older ones.
             rows = self.store.query_all(
-                "SELECT %s AS pk_val, %s AS ts_val, LENGTH(COALESCE(%s,'')) AS sz"
-                " FROM %s ORDER BY %s ASC" % (pk, ts_col, size_col, table, ts_col),
+                "SELECT %s AS pk_val, %s AS ts_val, %s AS sz"
+                " FROM %s ORDER BY %s ASC" % (pk, ts_col, size_sql, table, ts_col),
             )
             total = len(rows)
             keep = max(0, policy.max_rows)
@@ -596,10 +612,10 @@ class RetentionService:
             placeholders = ",".join("?" for _ in eligible_ids)
             sel_rows = self.store.query_all(
                 "SELECT %s AS pk_val, %s AS ts_val,"
-                " LENGTH(COALESCE(%s,'')) AS sz"
+                " %s AS sz"
                 " FROM %s WHERE %s IN (%s)"
                 " ORDER BY %s ASC"
-                % (pk, ts_col, size_col, table, pk, placeholders, ts_col),
+                % (pk, ts_col, size_sql, table, pk, placeholders, ts_col),
                 tuple(eligible_ids),
             )
             eligible_bytes = sum(int(r["sz"] or 0) for r in sel_rows)
