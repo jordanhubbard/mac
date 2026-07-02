@@ -121,3 +121,15 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert "trap cleanup_image_build_assets EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
     assert '--build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION"' in script
+
+
+def test_openshell_image_installs_dev_extra_for_contract_tests():
+    """The task sandbox must carry the [dev] extra (pytest, coverage, …) so the
+    repository contract test — scripts/run-contract-tests.sh, which collects the
+    full suite — can actually RUN in-sandbox. Without it, in-sandbox
+    verification of a repo-coupled code task fails to execute and the substance
+    gate can never pass, so no autonomous code change lands through OpenShell."""
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+    assert '/opt/mac-venv/bin/pip install --no-cache-dir "/tmp/mac-src[dev]"' in containerfile

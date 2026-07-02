@@ -1907,7 +1907,11 @@ def test_mac_repository_contract_test_command_uses_hermetic_runner():
     assert "gh" in contract["toolchain"]["required_commands"]
     text = runner.read_text(encoding="utf-8")
     assert 'unset "${!MAC_@}"' in text
-    assert 'exec .venv/bin/python -m pytest "$@"' in text
+    # Interpreter is discovered (repo .venv on dev hosts; /opt/mac-venv in the
+    # OpenShell task sandbox), not hardcoded to .venv — a hardcoded
+    # .venv/bin/python is rc 127 in-sandbox and blocked every code task.
+    assert 'exec "$PY" -m pytest "$@"' in text
+    assert "/opt/mac-venv/bin/python" in text
 
 
 def test_source_install_pins_exact_rev_not_ff_only():

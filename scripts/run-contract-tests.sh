@@ -25,12 +25,30 @@ export XDG_CONFIG_HOME="$_MAC_TEST_HOME/.config"
 git config --global user.email "mac-contract-tests@example.invalid" >/dev/null 2>&1 || true
 git config --global user.name "mac contract tests" >/dev/null 2>&1 || true
 
-export PATH=".venv/bin:${PATH}"
+# Resolve a usable interpreter instead of assuming a repo-local .venv. Local
+# dev / bare-metal hosts have .venv; the OpenShell task sandbox ships the mac
+# runtime at /opt/mac-venv and has no .venv (a missing .venv/bin/python is
+# exactly the rc-127 that blocked every repo-coupled code task from passing
+# in-sandbox verification). pytest's pythonpath=["src"] (pyproject) makes the
+# checked-out worktree shadow any installed mac, so tests exercise the
+# worktree's code regardless of which interpreter runs them.
+if [ -x ".venv/bin/python" ]; then
+    PY=".venv/bin/python"
+elif [ -x "/opt/mac-venv/bin/python" ]; then
+    PY="/opt/mac-venv/bin/python"
+else
+    PY="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "${PY}" ]; then
+    echo "run-contract-tests.sh: no python interpreter found (.venv, /opt/mac-venv, or PATH)" >&2
+    exit 1
+fi
+export PATH="$(cd "$(dirname "$PY")" && pwd):${PATH}"
 
 if [ "$#" -eq 0 ]; then
-    .venv/bin/python -m coverage erase
-    .venv/bin/python -m coverage run -m pytest
-    exec .venv/bin/python -m coverage report
+    "$PY" -m coverage erase
+    "$PY" -m coverage run -m pytest
+    exec "$PY" -m coverage report
 fi
 
-exec .venv/bin/python -m pytest "$@"
+exec "$PY" -m pytest "$@"

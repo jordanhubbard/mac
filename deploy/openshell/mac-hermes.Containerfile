@@ -97,7 +97,13 @@ RUN python3 -m venv /opt/mac-venv && /opt/mac-venv/bin/pip install --no-cache-di
 # on sys.path — so drop a .pth that adds it (the executor runs
 # `python -m hermes_cli.main chat`).
 COPY . /tmp/mac-src
-RUN /opt/mac-venv/bin/pip install --no-cache-dir /tmp/mac-src \
+# Install the [dev] extra (pytest, coverage, psycopg, kubernetes) so the task
+# sandbox can RUN the repository contract test — scripts/run-contract-tests.sh
+# collects the full suite, which imports those at collection time. Without it,
+# in-sandbox verification of a repo-coupled code task fails to execute
+# (ModuleNotFoundError) and the substance gate can never pass, so no autonomous
+# code change can land through OpenShell.
+RUN /opt/mac-venv/bin/pip install --no-cache-dir "/tmp/mac-src[dev]" \
     && HP="$(/opt/mac-venv/bin/python -c 'import mac,os;print(os.path.join(os.path.dirname(mac.__file__),"_hermes"))')" \
     && SP="$(/opt/mac-venv/bin/python -c 'import site;print(site.getsitepackages()[0])')" \
     && printf '%s\n' "$HP" > "$SP/zz_hermes_vendor.pth" \
