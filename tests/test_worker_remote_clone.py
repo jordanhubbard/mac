@@ -445,8 +445,22 @@ def test_inject_git_remote_auth_no_token_leaves_url_unchanged(
     assert _inject_git_remote_auth(url) == url
 
 
-def test_inject_git_remote_auth_ssh_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MAC_TASK_GIT_TOKEN", "tok")
+def test_inject_git_remote_auth_ssh_tokenized_when_token_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # New contract: an SSH remote is normalized to token-https when a token
+    # exists for the host, so the worker fetch/finalizer push don't depend on
+    # interactive SSH keys (the Permission denied (publickey) loop-blocker).
+    monkeypatch.setenv("GH_TOKEN", "tok")
+    url = "git@github.com:org/repo.git"
+    assert _inject_git_remote_auth(url) == "https://x-access-token:tok@github.com/org/repo.git"
+
+
+def test_inject_git_remote_auth_ssh_left_alone_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     url = "git@github.com:org/repo.git"
     assert _inject_git_remote_auth(url) == url
 

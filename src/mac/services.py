@@ -9592,12 +9592,10 @@ class ControlPlane:
         elif clone_url:
             from . import gitops as _gitops
 
-            # The hub's service environment authenticates with tokens, not a
-            # user's SSH state: convert an SSH-form remote to https when a
-            # token exists for the host, so publish/merge cannot be broken by
-            # a missing ~/.ssh key (the failure mode behind mass
-            # workflow.default_review.publish_failed events).
-            clone_url = _gitops.https_remote_for_token_auth(clone_url)
+            # inject_git_remote_auth now normalizes an SSH-form remote to
+            # token-https when a token exists (single source of truth), so the
+            # hub publish/merge, the worker fetch, and the finalizer push all
+            # behave identically — no per-call-site SSH handling.
             auth_url = _gitops.inject_git_remote_auth(clone_url)
             tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
             clone = self._git_output(

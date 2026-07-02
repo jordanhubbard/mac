@@ -205,3 +205,32 @@ def test_publish_clone_composes_token_auth_from_ssh_remote(
     )
     assert url.startswith("https://x-access-token:")
     assert url.endswith("@github.com/jordanhubbard/mac.git")
+
+
+def test_inject_git_remote_auth_tokenizes_ssh_remote_in_one_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the worker canonical-branch fetch and finalizer push pass an
+    SSH-form remote straight to inject_git_remote_auth. It must return a
+    token-https URL when a token exists (previously left SSH untouched ->
+    Permission denied (publickey) with no ~/.ssh)."""
+    from mac.gitops import inject_git_remote_auth
+
+    monkeypatch.setenv("GH_TOKEN", "gho_worker")
+    url = inject_git_remote_auth("git@github.com:jordanhubbard/mac.git")
+    assert url.startswith("https://x-access-token:")
+    assert url.endswith("@github.com/jordanhubbard/mac.git")
+    assert "gho_worker" in url
+
+
+def test_inject_git_remote_auth_leaves_ssh_when_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mac.gitops import inject_git_remote_auth
+
+    for var in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    assert (
+        inject_git_remote_auth("git@github.com:x/y.git")
+        == "git@github.com:x/y.git"
+    )

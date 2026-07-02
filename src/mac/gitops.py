@@ -186,13 +186,22 @@ def https_remote_for_token_auth(url: str) -> str:
 
 
 def inject_git_remote_auth(url: str) -> str:
-    """Inject ``x-access-token:<pat>`` into an https git remote URL.
+    """Inject ``x-access-token:<pat>`` into a git remote URL.
 
     Single source of truth for token-rewriting — the K8s clone wrapper,
-    host-mode worker, and any other call sites should route through
-    here. Non-https URLs are returned unchanged (auth handled by SSH
-    keys / filesystem).
+    host-mode worker fetch, the finalizer push, and the hub publish/merge
+    all route through here.
+
+    An SSH-form remote (``git@host:owner/repo`` or ``ssh://git@host/…``) is
+    first normalized to its https equivalent WHEN an env-backed token exists
+    for the host (see :func:`https_remote_for_token_auth`), so service
+    processes that authenticate with a deploy token instead of interactive
+    SSH keys — the fleet worker's canonical-branch fetch and the hub's
+    publish, both of which failed with ``Permission denied (publickey)`` when
+    ``~/.ssh`` was absent — carry the token consistently. Without a token the
+    SSH URL is returned unchanged (keyed hosts keep working).
     """
+    url = https_remote_for_token_auth(url)
     if not url or not url.startswith(("https://", "http://")):
         return url
     parts = urlsplit(url)

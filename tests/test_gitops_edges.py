@@ -47,7 +47,12 @@ def test_ref_host_token_auth_and_redaction_edges(monkeypatch) -> None:
         gitops.detect_host("/")
     monkeypatch.setenv("MAC_TASK_GIT_TOKEN", "fallback")
     assert gitops.token_for_host("other") == "fallback"
-    assert gitops.inject_git_remote_auth("ssh://host/repo") == "ssh://host/repo"
+    # An SSH remote is normalized to token-https when a token resolves for the
+    # host (fallback token covers the non-github "gitea" host here).
+    assert (
+        gitops.inject_git_remote_auth("ssh://host/repo")
+        == "https://x-access-token:fallback@host/repo"
+    )
     assert gitops.inject_git_remote_auth("https:///missing") == "https:///missing"
     assert gitops.inject_git_remote_auth("https://user@github.com/org/repo") == "https://user@github.com/org/repo"
     monkeypatch.delenv("MAC_TASK_GIT_TOKEN", raising=False)
