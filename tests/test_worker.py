@@ -289,6 +289,40 @@ def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: P
     assert any(item.subject_id == task.id for item in observations)
 
 
+def test_mac_worker_executes_assignment_already_claimed_by_dispatcher(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Push-dispatched task", required_capabilities=["python"])
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
+        assert task_payload["id"] == task.id
+        _write_worker_manifest(task_dir)
+        return WorkerExecution(0, "resumed dispatcher assignment")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "submitted_for_review"
+    assert result.task["id"] == task.id
+    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert any(
+        row.name == "worker.routing.resumed" and row.subject_id == task.id
+        for row in cp.list_observability(layer="control_plane", limit=20)
+    )
+
+
 def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

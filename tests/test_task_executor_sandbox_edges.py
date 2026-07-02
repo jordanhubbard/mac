@@ -16,20 +16,20 @@ from mac import task_executor as te
 def test_sandbox_step_success_failure_and_exception(monkeypatch) -> None:
     monkeypatch.setattr(te, "_openshell_bin", lambda: "openshell")
     monkeypatch.setattr(
-        te.subprocess,
-        "run",
+        te,
+        "_run_captured",
         lambda *_a, **_k: subprocess.CompletedProcess([], 0, "stdout", ""),
     )
     assert te._sandbox_step(["delete", "x"], timeout=1) == (True, "stdout")
     monkeypatch.setattr(
-        te.subprocess,
-        "run",
+        te,
+        "_run_captured",
         lambda *_a, **_k: subprocess.CompletedProcess([], 2, "", "stderr"),
     )
     assert te._sandbox_step(["delete", "x"], timeout=1) == (False, "stderr")
     monkeypatch.setattr(
-        te.subprocess,
-        "run",
+        te,
+        "_run_captured",
         lambda *_a, **_k: (_ for _ in ()).throw(OSError("offline")),
     )
     assert te._sandbox_step(["delete", "x"], timeout=1) == (False, "offline")

@@ -1146,26 +1146,33 @@ class ControlPlane:
             return json_dumps({})
         return row["value"]
 
-    def _agent_resources_with_preserved_startup_self_test(
+    def _agent_resources_with_preserved_control_plane_fields(
         self,
         agent_id: str,
         resources: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        """Merge self-reported resources without erasing hub-owned policy.
+
+        ``startup_self_test`` is agent-produced but sticky when omitted.
+        ``openshell_required`` is control-plane policy and is therefore always
+        retained once the agent exists; operators change it through
+        ``update_agent``/OpenShell reconciliation, not self-registration or a
+        heartbeat inventory refresh.
+        """
         if resources is None:
             raw = self._resolved_json_column("agents", "resources", agent_id, None)
             return ensure_json_object(json_loads(raw, {}))
         resource_value = ensure_json_object(resources)
-        if "startup_self_test" in resource_value:
-            return resource_value
         row = self.store.query_one("SELECT resources FROM agents WHERE id = ?", (agent_id,))
         if row is None:
             return resource_value
         existing = ensure_json_object(json_loads(row["resources"], {}))
-        if "startup_self_test" in existing:
-            merged = dict(resource_value)
+        merged = dict(resource_value)
+        if "startup_self_test" not in merged and "startup_self_test" in existing:
             merged["startup_self_test"] = existing["startup_self_test"]
-            return merged
-        return resource_value
+        if "openshell_required" in existing:
+            merged["openshell_required"] = existing["openshell_required"]
+        return merged
 
     @staticmethod
     def _startup_self_test_degrades_health(resources: Dict[str, Any]) -> bool:
@@ -6142,6 +6149,13 @@ class ControlPlane:
         # strictly owner-only and are unchanged.
         if not self._lease_actor_allowed(task, agent_id):
             raise AuthorizationError("agent does not own task lease")
+        # A loop worker may restart after it moved an assignment to RUNNING but
+        # before it recorded evidence.  Starting the same, still-active lease
+        # is idempotent so the worker can resume execution instead of stranding
+        # the dispatcher-owned assignment on an invalid RUNNING -> RUNNING
+        # transition.
+        if task.state == TaskState.RUNNING.value:
+            return task
         return self.transition_task(
             task_id,
             TaskState.RUNNING.value,
@@ -7372,7 +7386,7 @@ class ControlPlane:
             )
         else:
             capabilities_json = json_dumps(coerce_list(capabilities))
-        resource_value = self._agent_resources_with_preserved_startup_self_test(aid, resources)
+        resource_value = self._agent_resources_with_preserved_control_plane_fields(aid, resources)
         resources_json = json_dumps(resource_value)
         health_value = self._project_agent_health_for_resources(
             HealthStatus.HEALTHY.value,
@@ -7751,7 +7765,7 @@ class ControlPlane:
             except ValueError:
                 raise ValidationError("unsupported agent health_status: %s" % health_value)
         if resources is not None:
-            resource_value = self._agent_resources_with_preserved_startup_self_test(agent_id, resources)
+            resource_value = self._agent_resources_with_preserved_control_plane_fields(agent_id, resources)
             updates.append("resources = ?")
             params.append(json_dumps(resource_value))
             if resource_value != agent_before.resources:
@@ -8842,6 +8856,25 @@ class ControlPlane:
         self._expire_leases_sweep_page(limit=100)
         self._unblock_ready_sweep_page(limit=100)
         agent = self.get_agent(agent_id)
+        if not dry_run:
+            assignment = self._active_assignment_for_agent(agent)
+            if assignment is not None:
+                task = assignment["task"]
+                lease = assignment["lease"]
+                self.record_log(
+                    "worker.routing.resumed",
+                    layer="control_plane",
+                    source=agent.id,
+                    subject_type="task",
+                    subject_id=task["id"],
+                    detail={
+                        "agent_id": agent.id,
+                        "task_id": task["id"],
+                        "lease_id": lease["id"],
+                        "task_state": task["state"],
+                    },
+                )
+                return assignment
         policy = self._worker_claim_policy(
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
@@ -8926,6 +8959,50 @@ class ControlPlane:
             },
         )
         return None
+
+    def _active_assignment_for_agent(self, agent: Agent) -> Optional[JsonDict]:
+        """Return the authoritative assignment a loop worker must resume.
+
+        Push dispatch claims the task before the worker's next polling turn.
+        Looking only for OPEN work at claim-next time therefore loses the one
+        assignment the worker already owns.  Resolve it from the active lease
+        and task rows, preferring ``current_task_id`` when capacity permits an
+        agent to hold more than one lease.
+        """
+        if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
+            return None
+        row = self.store.query_one(
+            """
+            SELECT l.id AS lease_id, t.id AS task_id
+            FROM leases l
+            JOIN tasks t ON t.lease_id = l.id
+            WHERE l.agent_id = ?
+              AND l.status = ?
+              AND t.owner_agent_id = ?
+              AND t.state IN (?, ?)
+            ORDER BY CASE WHEN t.id = ? THEN 0 ELSE 1 END,
+                     l.created_at, l.id
+            LIMIT 1
+            """,
+            (
+                agent.id,
+                LeaseStatus.ACTIVE.value,
+                agent.id,
+                TaskState.CLAIMED.value,
+                TaskState.RUNNING.value,
+                agent.current_task_id or "",
+            ),
+        )
+        if row is None:
+            return None
+        task = self.get_task(str(row["task_id"]))
+        lease = self.get_lease(str(row["lease_id"]))
+        return {
+            "task": task.to_dict(),
+            "agent": self.get_agent(agent.id).to_dict(),
+            "lease": lease.to_dict(),
+            "resumed": True,
+        }
 
     def tick(
         self,

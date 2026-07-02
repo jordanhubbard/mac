@@ -379,21 +379,20 @@ def _detect_command_inventory() -> JsonDict:
 def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
-    # Stamp the sandbox requirement so it survives worker (re)registration. The
-    # hub uses resources["openshell_required"] for dispatch toolchain eligibility
-    # (a sandboxed agent only needs host PRIMITIVES, not the full repo toolchain),
-    # but registration REPLACES the resources dict — so a worker that doesn't
-    # report this drops any reconciled value on every restart, and tasks needing
-    # sandbox-provisioned tools (lein/pnpm/...) become unclaimable again. Report
-    # it from the local env (MAC_OPENSHELL_REQUIRED / name) so it stays sticky.
-    try:
-        from mac.openshell_runtime import openshell_required_for_local_agent
+    # The hub owns resources["openshell_required"].  A deploy may seed it on
+    # first registration through an explicit environment value, but an absent
+    # local setting must not manufacture False and overwrite reconciled policy.
+    explicit_openshell = os.environ.get("MAC_OPENSHELL_REQUIRED")
+    if explicit_openshell is not None:
+        try:
+            from mac.openshell_runtime import openshell_required_for_identity
 
-        merged.setdefault(
-            "openshell_required", openshell_required_for_local_agent(os.environ)
-        )
-    except Exception:  # noqa: BLE001 - resource stamping must never break registration
-        pass
+            merged.setdefault(
+                "openshell_required",
+                openshell_required_for_identity(explicit=explicit_openshell),
+            )
+        except Exception:  # noqa: BLE001 - resource stamping must never break registration
+            pass
     return merged
 
 
@@ -4139,7 +4138,21 @@ class MacWorker:
             pass
 
     def _heartbeat(self) -> None:
-        payload: JsonDict = {"status": "idle"}
+        # Push dispatch may have claimed a task since this process last polled.
+        # Read our durable agent row before declaring local idleness so the hub
+        # sees a truthful BUSY heartbeat and can return that existing lease from
+        # claim-next.  Preserve the normal idle fallback when the read itself is
+        # transiently unavailable; the heartbeat will surface any real conflict.
+        heartbeat_status = "idle"
+        try:
+            current_agent = self.client.get(
+                "/agents/%s" % quote(self.agent_id, safe="")
+            )
+            if (current_agent or {}).get("current_task_id"):
+                heartbeat_status = "busy"
+        except MacApiError:
+            pass
+        payload: JsonDict = {"status": heartbeat_status}
         command_resources = self._maybe_command_inventory_resources()
         if command_resources is not None:
             payload["resources"] = command_resources

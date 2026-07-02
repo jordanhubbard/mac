@@ -3356,6 +3356,33 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     )
 
 
+def test_claim_next_resumes_dispatcher_assigned_lease(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("dispatcher-owned", required_capabilities=["python"])
+    dispatched = cp.dispatch_once()
+
+    assert dispatched is not None
+    assert dispatched["task"]["id"] == task.id
+    lease_id = dispatched["lease"]["id"]
+
+    heartbeat = cp.heartbeat_agent(worker.id, status="busy")
+    assert heartbeat.status == "busy"
+    resumed = cp.claim_next_for_agent(worker.id)
+
+    assert resumed is not None
+    assert resumed["resumed"] is True
+    assert resumed["task"]["id"] == task.id
+    assert resumed["lease"]["id"] == lease_id
+    assert cp.get_task(task.id).attempt_count == 1
+
+    cp.start_task(task.id, worker.id)
+    assert cp.start_task(task.id, worker.id).state == TaskState.RUNNING.value
+    resumed_running = cp.claim_next_for_agent(worker.id)
+    assert resumed_running is not None
+    assert resumed_running["task"]["state"] == TaskState.RUNNING.value
+    assert resumed_running["lease"]["id"] == lease_id
+
+
 def test_claim_next_capabilities_filter_narrows_dispatch(cp):
     """``capabilities=[...]`` lets a worker narrow which tasks it claims
     below what its agent record's capabilities would otherwise allow.

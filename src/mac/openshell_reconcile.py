@@ -285,13 +285,10 @@ def reconcile_openshell_agents(
             actions.append("set_resources.openshell_required")
             if apply:
                 updated = _to_dict(
-                    plane.register_agent(
-                        machine_id=agent["machine_id"],
-                        name=agent["name"],
-                        capabilities=agent.get("capabilities") or [],
+                    plane.update_agent(
+                        agent_id,
                         resources=resources,
-                        agent_id=agent_id,
-                        hermes_instance_id=agent.get("hermes_instance_id"),
+                        actor=actor,
                     )
                 )
                 agent = updated

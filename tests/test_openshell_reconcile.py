@@ -103,6 +103,35 @@ def test_openshell_reconcile_apply_preserves_resources_and_reports_active_status
     assert out["agents"][0]["after"]["effective"]["deployed"] is True
 
 
+def test_reregistration_and_heartbeat_cannot_clear_openshell_requirement():
+    cp = ControlPlane.in_memory()
+    agent = _agent(cp, "sticky")
+    original = dict(agent.resources)
+    original["openshell_required"] = True
+    cp.update_agent(agent.id, resources=original, actor="operator")
+
+    reregistered = cp.register_agent(
+        agent.machine_id,
+        agent.name,
+        capabilities=agent.capabilities,
+        resources={"hardware": {"accelerator": "new"}, "openshell_required": False},
+        agent_id=agent.id,
+    )
+    assert reregistered.resources["openshell_required"] is True
+    assert reregistered.resources["hardware"] == {"accelerator": "new"}
+
+    heartbeat = cp.heartbeat_agent(
+        agent.id,
+        resources={"commands": {"available": ["git"]}, "openshell_required": False},
+    )
+    assert heartbeat.resources["openshell_required"] is True
+    assert heartbeat.resources["commands"] == {"available": ["git"]}
+
+    resources = dict(heartbeat.resources)
+    resources["openshell_required"] = False
+    assert cp.update_agent(agent.id, resources=resources).resources["openshell_required"] is False
+
+
 def test_openshell_reconcile_rerun_reuses_policy_and_assignment():
     cp = ControlPlane.in_memory()
     agent = _agent(cp, "bullwinkle")

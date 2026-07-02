@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -497,6 +498,55 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
     assert steps[3][0] == "download"
     assert steps[4][0] == "delete"
+
+
+def test_sandbox_repository_verifier_kills_process_tree_on_timeout(tmp_path):
+    task_file = tmp_path / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "execution_contract": {
+                            "repository_contract": {
+                                "test": {"command": "sleep 30 & wait"}
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = te._sandbox_repository_verification_shell(
+        {
+            "MAC_SANDBOX_PYTHON": sys.executable,
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_TASK_WORKSPACE": str(tmp_path),
+            "MAC_TASK_REPO_WORKTREE": str(tmp_path),
+            "MAC_WORKER_REPOSITORY_TEST_TIMEOUT": "0.1",
+        }
+    )
+
+    started = time.monotonic()
+    completed = subprocess.run(
+        ["bash", "-c", script],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    elapsed = time.monotonic() - started
+
+    assert completed.returncode == 124
+    assert elapsed < 3
+    payload = json.loads(
+        (tmp_path / "mac-sandbox-verification.json").read_text(encoding="utf-8")
+    )
+    assert payload["returncode"] == 124
+    assert payload["status"] == "fail"
+    assert "timed out" in payload["error"]
 
 
 def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_dirs(tmp_path):

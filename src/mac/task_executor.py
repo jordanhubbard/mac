@@ -2565,7 +2565,7 @@ def _sandbox_repository_verification_shell(
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
             r'''$MAC_SANDBOX_PYTHON - <<'PY'
-import json, os, subprocess, time
+import json, os, signal, subprocess, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
@@ -2600,6 +2600,28 @@ def missing_bootstrap_outputs():
         for path in bootstrap_creates
         if not os.path.exists(os.path.join(worktree, path))
     ]
+
+def run_bounded_bash(command, timeout):
+    """Run a verifier command and terminate its whole process tree on timeout."""
+    proc = subprocess.Popen(
+        ["bash", "-lc", _TC_PATH_PREFIX + command],
+        cwd=worktree,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return int(proc.returncode), stdout or "", stderr or "", False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        return 124, stdout or "", stderr or "", True
 
 bootstrap = None
 if bootstrap_command:
@@ -2640,40 +2662,19 @@ if bootstrap_command:
             )
         except ValueError:
             timeout = 600.0
-        try:
-            proc = subprocess.run(
-                ["bash", "-lc", _TC_PATH_PREFIX + bootstrap_command],
-                cwd=worktree,
-                env=os.environ.copy(),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-            bootstrap = {
-                "command": bootstrap_command,
-                "creates": bootstrap_creates,
-                "missing_before": missing_before,
-                "returncode": int(proc.returncode),
-                "status": "pass" if proc.returncode == 0 else "fail",
-                "stdout": (proc.stdout or "")[:4000],
-                "stderr": (proc.stderr or "")[:4000],
-                "duration_ms": int((time.time() - started) * 1000),
-            }
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            bootstrap = {
-                "command": bootstrap_command,
-                "creates": bootstrap_creates,
-                "missing_before": missing_before,
-                "returncode": 124,
-                "status": "fail",
-                "stdout": stdout[:4000],
-                "stderr": stderr[:4000],
-                "duration_ms": int((time.time() - started) * 1000),
-                "error": "bootstrap command timed out",
-            }
+        returncode, stdout, stderr, timed_out = run_bounded_bash(bootstrap_command, timeout)
+        bootstrap = {
+            "command": bootstrap_command,
+            "creates": bootstrap_creates,
+            "missing_before": missing_before,
+            "returncode": returncode,
+            "status": "pass" if returncode == 0 else "fail",
+            "stdout": stdout[:4000],
+            "stderr": stderr[:4000],
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+        if timed_out:
+            bootstrap["error"] = "bootstrap command timed out after %ss" % timeout
     if bootstrap.get("returncode") == 0 and bootstrap_creates:
         missing_after = missing_bootstrap_outputs()
         if missing_after:
@@ -2705,26 +2706,24 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
     }
 else:
     started = time.time()
-    proc = subprocess.run(
-        ["bash", "-lc", _TC_PATH_PREFIX + command],
-        cwd=worktree,
-        env=os.environ.copy(),
-        capture_output=True,
-        text=True,
-        timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600") or "600"),
-        check=False,
-    )
+    try:
+        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600") or "600")
+    except ValueError:
+        timeout = 600.0
+    returncode, stdout, stderr, timed_out = run_bounded_bash(command, timeout)
     payload = {
         "schema": "mac.sandbox_verification.v1",
-        "status": "pass" if proc.returncode == 0 else "fail",
+        "status": "pass" if returncode == 0 else "fail",
         "command": command,
-        "returncode": int(proc.returncode),
-        "stdout": (proc.stdout or "")[:4000],
-        "stderr": (proc.stderr or "")[:4000],
+        "returncode": returncode,
+        "stdout": stdout[:4000],
+        "stderr": stderr[:4000],
         "duration_ms": int((time.time() - started) * 1000),
         "worktree": worktree,
         "environment_delta": delta,
     }
+    if timed_out:
+        payload["error"] = "repository test command timed out after %ss" % timeout
     if bootstrap is not None:
         payload["bootstrap"] = bootstrap
 with open(result_path, "w", encoding="utf-8") as handle:
@@ -2841,9 +2840,10 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
     """Run an openshell lifecycle step (download/delete) out-of-band of the
     audited agent run. Best-effort: returns (ok, message), never raises."""
     try:
-        proc = subprocess.run(
+        proc = _run_captured(
             [_openshell_bin(), "sandbox", *args],
-            capture_output=True, text=True, timeout=timeout,
+            Path.cwd(),
+            timeout,
         )
         return proc.returncode == 0, (proc.stderr or proc.stdout or "").strip()
     except Exception as exc:  # noqa: BLE001 - teardown must never mask the run
