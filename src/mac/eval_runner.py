@@ -122,14 +122,15 @@ def run_golden_eval(
         except Exception:  # noqa: BLE001
             unit_cost = None
     case_results: List[Dict[str, Any]] = []
+    call_failures = 0
     for case in cases:
         question = str(case.get("question") or "")
         context = str(case.get("context") or "")
         try:
             answer, citations, latency_ms = model_caller(model_id, question, context)
-        except Exception as exc:  # noqa: BLE001 - a failed call scores as worst-case.
+        except Exception:  # noqa: BLE001 - record the failure; the eval is invalid.
             answer, citations, latency_ms = "", [], 0.0
-            _ = exc
+            call_failures += 1
         scores = score_case(case, answer, list(citations or []))
         per_overall = round(0.5 * scores["correctness"] + 0.5 * scores["groundedness"], 4)
         case_results.append({
@@ -169,6 +170,12 @@ def run_golden_eval(
         },
         "summary": summary,
         "per_case_overall": overalls,  # paired significance input (case-aligned)
+        # The eval is only VALID if every model call actually succeeded. A call
+        # failure (router down, timeout) must NOT be scored as an ordinary empty
+        # answer — otherwise two failed evals look "equal" and a swap is wrongly
+        # approved. evaluate_swap fails closed on an invalid eval.
+        "call_failures": call_failures,
+        "valid": call_failures == 0 and len(case_results) > 0,
     }
 
 
@@ -235,32 +242,45 @@ def evaluate_swap(
 
     cand = run_golden_eval(candidate_model, cases, model_caller=model_caller, cost_lookup=cost_lookup)
     inc = run_golden_eval(incumbent_model, cases, model_caller=model_caller, cost_lookup=cost_lookup)
+
+    # FAIL CLOSED: if either eval could not actually run (a model call failed —
+    # router down, timeout), we have no evidence the candidate is safe, so we do
+    # NOT approve. The swap stays pending. (A failed call is not an "empty
+    # answer that ties" — that was the fail-open bug.)
+    if not cand.get("valid") or not inc.get("valid"):
+        return SwapVerdict(
+            approved=False,
+            detail="eval could not run (candidate_failures=%d, incumbent_failures=%d) — staying pending"
+            % (cand.get("call_failures", -1), inc.get("call_failures", -1)),
+            candidate_summary=cand["summary"], incumbent_summary=inc["summary"],
+        )
+
     cmp = compare_eval_metrics(inc["summary"], cand["summary"], threshold=threshold)
     drifted = list(cmp["drifted"])
 
     # Safety regressions are hard blocks regardless of significance.
     safety_regressed = any(d["metric"] == "safety_violation_rate" for d in drifted)
 
-    # For overall-score quality regression, require significance: only block if
-    # we're confident (bootstrap CI upper bound still below -threshold) the
-    # candidate is really worse per-case.
-    quality_regressed = any(d["metric"] == "overall_score" for d in drifted)
-    significant = False
-    if quality_regressed:
-        deltas = [c - i for c, i in zip(cand["per_case_overall"], inc["per_case_overall"])]
-        ci_upper = _bootstrap_ci_upper(deltas)
-        significant = ci_upper < -threshold
-        if not significant:
-            # Drop the non-significant overall-score drift from the blocking set.
-            drifted = [d for d in drifted if d["metric"] != "overall_score"]
+    # Quality regressions (overall_score AND avg_correctness — a correctness
+    # collapse masked by another metric must still block) require significance:
+    # only block if the paired bootstrap CI shows the candidate is really worse.
+    deltas = [c - i for c, i in zip(cand["per_case_overall"], inc["per_case_overall"])]
+    ci_upper = _bootstrap_ci_upper(deltas) if deltas else 0.0
+    significant = ci_upper < -threshold
+    quality_metrics = {"overall_score", "avg_correctness", "avg_groundedness"}
+    quality_regressed = any(d["metric"] in quality_metrics for d in drifted)
+    if quality_regressed and not significant:
+        # Non-significant quality drift on a small set: don't block on it.
+        drifted = [d for d in drifted if d["metric"] not in quality_metrics]
+        quality_regressed = False
 
-    approved = not (safety_regressed or (quality_regressed and significant) or
-                    any(d["metric"] in ("latency_p95_ms", "latency_p50_ms", "cost_per_answer_avg")
-                        for d in drifted))
-    if approved:
-        detail = "no significant regression vs incumbent"
-    else:
-        detail = "regressed: " + ", ".join(sorted({d["metric"] for d in drifted}))
+    cost_regressed = any(
+        d["metric"] in ("latency_p95_ms", "latency_p50_ms", "cost_per_answer_avg")
+        for d in drifted
+    )
+    approved = not (safety_regressed or quality_regressed or cost_regressed)
+    detail = ("no significant regression vs incumbent" if approved
+              else "regressed: " + ", ".join(sorted({d["metric"] for d in drifted})))
     return SwapVerdict(
         approved=approved, detail=detail, drifted=drifted,
         candidate_summary=cand["summary"], incumbent_summary=inc["summary"],
@@ -329,7 +349,13 @@ def router_model_caller(
     import json as _json
     import urllib.request
 
+    # Normalize so it works whether the configured URL already includes the
+    # OpenAI ``/v1`` suffix (the hub sets OPENAI_BASE_URL to ``.../v1``) or not.
     base = router_url.rstrip("/")
+    if base.endswith("/v1"):
+        completions_url = base + "/chat/completions"
+    else:
+        completions_url = base + "/v1/chat/completions"
 
     def call(model_id: str, question: str, context: str) -> Tuple[str, List[str], float]:
         messages = []
@@ -340,7 +366,7 @@ def router_model_caller(
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer %s" % token
-        req = urllib.request.Request(base + "/v1/chat/completions", data=body, headers=headers, method="POST")
+        req = urllib.request.Request(completions_url, data=body, headers=headers, method="POST")
         start = time.monotonic()
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
@@ -370,11 +396,21 @@ def build_swap_evaluator(
     env = os.environ if environ is None else environ
     if str(env.get("MAC_MODEL_SWAP_EVAL_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
         return None
-    router_url = str(env.get("MAC_ROUTER_URL") or env.get("MAC_ROUTER_INTERNAL_URL") or "").strip()
+    # Reuse the hub's already-wired local router endpoint (OPENAI_BASE_URL points
+    # at the in-mac router's /v1) so no separate URL needs configuring; a
+    # dedicated MAC_ROUTER_(INTERNAL_)URL still wins if set.
+    router_url = str(
+        env.get("MAC_ROUTER_URL")
+        or env.get("MAC_ROUTER_INTERNAL_URL")
+        or env.get("OPENAI_BASE_URL")
+        or ""
+    ).strip()
     if not router_url:
         return None
     cases = load_golden_set(str(env.get("MAC_MODEL_SWAP_EVAL_GOLDEN_SET") or ""))
-    token = str(env.get("MAC_ROUTER_TOKEN") or env.get("MAC_API_TOKEN") or "").strip()
+    token = str(
+        env.get("MAC_ROUTER_TOKEN") or env.get("MAC_API_TOKEN") or env.get("OPENAI_API_KEY") or ""
+    ).strip()
     caller = router_model_caller(router_url, token=token)
 
     def _cost(model_id: str):

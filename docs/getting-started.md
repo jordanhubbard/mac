@@ -80,7 +80,7 @@ Think of MAC as a project office for AI workers:
   production.
 - Rollout: the controlled movement of a version through environments.
 - Eval: a measured check used to prevent regressions.
-- Secret: a credential or token, routed through TokenHub in fleet deployments.
+- Secret: a credential or token, resolved through the in-mac LLM router in fleet deployments (the standalone TokenHub is retired).
 - Qdrant: shared vector memory service for recall across agents.
 - Firecrawl: web research service used by agents for search, scrape, and crawl.
 - AgentBus: typed agent-to-agent content streams.
@@ -333,13 +333,13 @@ http://127.0.0.1:8789/ui
 In another terminal, inspect the same state through the hub CLI:
 
 ```bash
-uv run hgmac --url http://127.0.0.1:8789 projects list
-uv run hgmac --url http://127.0.0.1:8789 tasks list
+mac --hub-url http://127.0.0.1:8789 project list
+mac --hub-url http://127.0.0.1:8789 task list
 ```
 
-If you configured `MAC_API_TOKEN`, pass it with `--token` or store it in the
-`hgmac` config file. With no API token configured, the local development API is
-open on localhost.
+If you configured `MAC_API_TOKEN`, pass it with `--token`. With no API token
+configured, the local development API is open on localhost. (The legacy `hgmac`
+binary is gone — all of its functionality lives under `mac` now.)
 
 ## Split A Large Task
 
@@ -347,10 +347,15 @@ If an agent claims a task and decides it is too large, it should add child tasks
 instead of trying to finish everything in one step. The parent task becomes
 blocked until the children complete.
 
+Child tasks are added via the API (`POST /tasks/{id}/children`) — an executing
+agent typically emits a `plan_steps` list in its evidence and the executor
+posts the children automatically (auto-decompose); the Hermes adapter exposes
+`mac-hermes add-child-task` for the same. For example, over the API:
+
 ```bash
-uv run hgmac --url http://127.0.0.1:8789 tasks add-child task_... \
-  --title "Write the first draft" \
-  --description "Produce the first small deliverable."
+curl -sX POST http://127.0.0.1:8789/tasks/task_.../children \
+  -H 'Content-Type: application/json' \
+  -d '{"children":[{"title":"Write the first draft","description":"Produce the first small deliverable."}]}'
 ```
 
 This is the same idea used in systems such as Jira: large work is represented by

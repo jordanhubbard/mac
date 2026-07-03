@@ -989,8 +989,35 @@ The delivered-nudge cap prevents an unparseable or crashing reviewer from
 spinning forever. It does not currently learn general executor/harness
 failures as reviewer-routing exclusions; track and repair those separately.
 
+## Dynamic model selection (opt-in, hub only)
+
+The hub can periodically pick the fleet's "powerhouse" models from a web search
+of what's currently leading, moderated by what the gateway can actually route,
+instead of a hard-coded pin. It is **opt-in and advisory** today — a selection
+is surfaced via `GET /model-selection/status` and a *swap* is recorded pending
+(routing does not change) until promoted, so it cannot regress the fleet. Not
+enabled by default: a production-readiness gap remains (the selection namespace
+does not yet match the router's routable model namespace, and the per-worker
+strength ladder is not distributed from the hub — tracked follow-up).
+
+Environment variables (hub):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MAC_MODEL_SELECT_ENABLED` | off | Run the weekly selection refresher. |
+| `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
+| `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
+| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Auto-gate a swap on a golden-set eval-drift check (adopt only if no regression); otherwise swaps stay pending for `mac fleet model-selection promote`. |
+| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSONL golden set of eval cases. |
+
+Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
+pins by capability (resolved via the strength ladder; **hub agent only** until
+ladder distribution lands).
+
 ## Known limitations
 
+- Dynamic model selection is advisory/opt-in and not yet wired to control
+  deployed routing (namespace + ladder-distribution gaps); see above.
 - SQLite topology is single-writer. Use the Kubernetes + Postgres
   topology for multi-replica deployments.
 - No built-in TLS. Put a reverse proxy in front.
