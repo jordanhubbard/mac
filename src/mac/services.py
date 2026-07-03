@@ -110,7 +110,9 @@ from mac.repository_hygiene import (
     normalize_cancellation_detail,
     repository_ref_lifecycle_for_transition,
 )
+from mac.env_config import resolve_hub_agent
 from mac.reconciliation import ReconciliationCoordinator
+from mac.ticketing_service import TicketingCoordinator
 from mac.agent_state_service import AgentStateService
 from mac.agentbus_control import (
     ARTIFACT_PUBLISH_CONTENT_TYPE,
@@ -626,7 +628,7 @@ def _contract_relative_paths(value: Any, field: str) -> List[str]:
 def _repository_contract_root(repo_path: Path) -> Path:
     expanded = repo_path.expanduser()
     if not expanded.exists():
-        raise ValidationError("beads repository path does not exist: %s" % repo_path)
+        raise ValidationError("project repository path does not exist: %s" % repo_path)
     return expanded if expanded.is_dir() else expanded.parent
 
 
@@ -1087,6 +1089,9 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_task=self.get_task,
         )
+        # Ticketing detection + one-way conversion, delegated off the god-object
+        # (task_bf0d1f01). ControlPlane keeps thin shims below for compatibility.
+        self.ticketing = TicketingCoordinator(self)
         self.notifiers = NotifierService(
             self.store,
             list_agents=self.list_agents,
@@ -6118,21 +6123,48 @@ class ControlPlane:
         if not self._task_outbox_drain_lock.acquire(blocking=False):
             return {"processed": [], "count": 0, "status": "busy"}
         try:
-            return self.drain_task_transition_outbox(task_id=task_id, limit=limit)
+            result = self.drain_task_transition_outbox(task_id=task_id, limit=limit)
+            # Success resets the failure streak so the health signal reflects
+            # only *ongoing* trouble.
+            self._task_outbox_drain_failures = 0
+            return result
         except Exception as exc:  # noqa: BLE001 - side effects must not break API responses.
+            # Track failures in an in-memory counter that CANNOT itself fail:
+            # the previous code logged-and-swallowed, then wrapped the log in a
+            # bare `except: pass`, so a persistently failing outbox (stranded
+            # task transitions) could be entirely invisible if logging also
+            # failed and the caller ignored the return. The counter guarantees
+            # the failure is observable via status(), and severity escalates
+            # once failures persist.
+            self._task_outbox_drain_failures = (
+                getattr(self, "_task_outbox_drain_failures", 0) + 1
+            )
+            failures = self._task_outbox_drain_failures
             try:
                 self.record_log(
                     "task.transition_outbox.drain_failed",
                     layer="control_plane",
                     source="task-ledger",
-                    level="warning",
+                    # A one-off drain miss is a warning; a sustained failure
+                    # streak means transitions are stranding — escalate.
+                    level="error" if failures >= 3 else "warning",
                     subject_type="task" if task_id else None,
                     subject_id=task_id,
-                    detail={"error": str(exc), "limit": limit},
+                    detail={
+                        "error": str(exc),
+                        "limit": limit,
+                        "consecutive_failures": failures,
+                    },
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - telemetry may be down; counter still holds it.
                 pass
-            return {"processed": [], "count": 0, "status": "failed", "error": str(exc)}
+            return {
+                "processed": [],
+                "count": 0,
+                "status": "failed",
+                "error": str(exc),
+                "consecutive_failures": failures,
+            }
         finally:
             self._task_outbox_drain_lock.release()
 
@@ -7946,13 +7978,10 @@ class ControlPlane:
         """
         if not _truthy_env("MAC_NOTIFIER_DRAIN_ON_HEARTBEAT", "1"):
             return
-        hub_agent = os.environ.get(
+        hub_agent = resolve_hub_agent(
             "MAC_NOTIFIER_DRAIN_HUB_AGENT",
-            os.environ.get(
-                "MAC_REVIEW_TICK_HUB_AGENT",
-                os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
-            ),
-        ).strip()
+            "MAC_REVIEW_TICK_HUB_AGENT",
+        )
         if not hub_agent:
             return
         if agent.name != hub_agent and agent.id != hub_agent:
@@ -7991,10 +8020,7 @@ class ControlPlane:
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):
             return
-        hub_agent = os.environ.get(
-            "MAC_REVIEW_TICK_HUB_AGENT",
-            os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
-        ).strip()
+        hub_agent = resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT")
         if not hub_agent:
             return
         if agent.name != hub_agent and agent.id != hub_agent:
@@ -8592,36 +8618,9 @@ class ControlPlane:
     # future ticketing system plugs in the same way.
 
     def detect_ticketing(self, repo_path: str) -> JsonDict:
-        """Report which ticketing sources a repo has + whether a one-way
-        ledger import should be offered (foreign source present, no local
-        .tickets/ compatibility mirror). Read-only. Emits a
-        ``ticketing.conversion_available`` observation the hub's hermes agent
-        can surface to the user."""
-        from pathlib import Path as _Path
-        from mac.ticketing import detect_ticketing as _detect
-
-        detection = _detect(_Path(repo_path))
-        if detection.needs_conversion:
-            self.record_log(
-                "ticketing.conversion_available",
-                layer="control_plane",
-                source="ticketing",
-                level="info",
-                subject_type="environment",
-                subject_id=str(repo_path),
-                detail={
-                    "schema": "mac.ticketing_conversion.v1",
-                    "conversion_from": detection.conversion_from,
-                    "message": detection.message,
-                    "prompt": (
-                        "Repo %s has a '%s' ticket source but no local .tickets "
-                        "compatibility mirror. Import it one-way into the MAC "
-                        "task ledger?"
-                        % (repo_path, detection.conversion_from)
-                    ),
-                },
-            )
-        return detection.to_dict()
+        # Delegated to TicketingCoordinator (task_bf0d1f01). Thin shim kept for
+        # API/call-site compatibility.
+        return self.ticketing.detect_ticketing(repo_path)
 
     def convert_ticketing_source(
         self,
@@ -8631,32 +8630,10 @@ class ControlPlane:
         actor: str = "hermes",
         dry_run: bool = False,
     ) -> JsonDict:
-        """Run the one-way conversion of a detected foreign source (e.g. beads)
-        into MAC ledger tasks plus optional local compatibility files. Hermes
-        calls this only after the user agrees. Never writes back to the foreign
-        source."""
-        from pathlib import Path as _Path
-        from mac.ticketing import detect_ticketing as _detect, connector_for
-
-        detection = _detect(_Path(repo_path))
-        if not detection.needs_conversion or not detection.conversion_from:
-            return {"status": "no_conversion_needed", "detection": detection.to_dict()}
-        connector = connector_for(detection.conversion_from)
-        if connector is None:
-            return {"status": "unknown_connector", "detection": detection.to_dict()}
-        report = connector.convert(
-            _Path(repo_path), project=project, cp=None if dry_run else self, actor=actor, dry_run=dry_run
+        # Delegated to TicketingCoordinator (task_bf0d1f01).
+        return self.ticketing.convert_ticketing_source(
+            repo_path, project=project, actor=actor, dry_run=dry_run
         )
-        self.record_log(
-            "ticketing.converted",
-            layer="control_plane",
-            source="ticketing",
-            level="info",
-            subject_type="environment",
-            subject_id=str(repo_path),
-            detail={"schema": "mac.ticketing_conversion.v1", "from": detection.conversion_from, "report": report},
-        )
-        return {"status": "converted", "from": detection.conversion_from, "report": report}
 
     # -- Fleet awareness (fleet-01/02) --------------------------------------
 
@@ -10377,6 +10354,17 @@ class ControlPlane:
                     },
                     actor,
                 )
+                # Distill the rejection into a durable, project-scoped lesson so
+                # the next execution run on this project recalls it (the review
+                # branch never wrote a deployment_learning record, so rejected
+                # work taught the fleet nothing — a real learn-from-bad gap).
+                self._record_project_failure_lesson(
+                    task_id,
+                    evidence_type="review_verdict",
+                    error_signature="review_rejected",
+                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
+                    evidence_id=verdict_evidence.id,
+                )
             else:
                 review = self.submit_review(
                     review.id,
@@ -10696,16 +10684,16 @@ class ControlPlane:
         enabled: bool = True,
         poll_interval_seconds: int = 60,
         metadata: Optional[Dict[str, Any]] = None,
-        actor: str = "beads-bridge",
+        actor: str = "project-repo",
     ) -> ProjectRepository:
         name = name.strip()
         if not name:
-            raise ValidationError("beads repository name is required")
+            raise ValidationError("project repository name is required")
         repo_path_obj = Path(path).expanduser()
         repo_path = str(repo_path_obj)
-        repo_source = (source or "repo-beads-%s" % _safe_slug(name)).strip()
+        repo_source = (source or "repo-%s" % _safe_slug(name)).strip()
         if not repo_source:
-            raise ValidationError("beads repository source is required")
+            raise ValidationError("project repository source is required")
         repo_project = (project or repo_source).strip()
         contract = _load_repository_contract(repo_path_obj)
         if contract["project"] != repo_project:
@@ -10776,7 +10764,7 @@ class ControlPlane:
             (repo_id_or_name, repo_id_or_name),
         )
         if row is None:
-            raise NotFoundError("beads repository not found: %s" % repo_id_or_name)
+            raise NotFoundError("project repository not found: %s" % repo_id_or_name)
         return self._repository_from_row(row)
 
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
@@ -13526,6 +13514,65 @@ class ControlPlane:
             subject_id=task_id,
             detail={"actor": actor, **detail},
         )
+
+    def _record_project_failure_lesson(
+        self,
+        task_id: str,
+        *,
+        evidence_type: str,
+        error_signature: str,
+        signals: Optional[JsonDict] = None,
+        evidence_id: Optional[str] = None,
+    ) -> None:
+        """Persist a hub-side, project-scoped ``mac.deployment_learning.v1``
+        failure lesson so the next execution run on this project recalls it.
+
+        The executor records deployment lessons for failed *runs*, but review
+        rejections and hub-side terminal failures produced no lesson — so the
+        fleet never learned from rejected or force-failed work. The record
+        shape matches the executor's ``build_learning_record`` so
+        ``recall_deployment_lessons`` renders and injects it unchanged.
+        Best-effort: telemetry-only, never breaks the caller.
+        """
+        try:
+            task = self.get_task(task_id)
+        except Exception:  # noqa: BLE001 - lesson recording must not break the workflow.
+            return
+        try:
+            project = self._hermes_task_project_key(task) or (task.project or "unassigned")
+            metadata = ensure_json_object(task.metadata)
+            origin = metadata.get("origin") if isinstance(metadata, dict) else {}
+            repo_name = str(origin.get("repository_name") or "") if isinstance(origin, dict) else ""
+            content = {
+                "schema": "mac.deployment_learning.v1",
+                "task_id": task.id,
+                "task_title": task.title,
+                "project": project,
+                "repository": repo_name,
+                "evidence_type": evidence_type,
+                "outcome": "failure",
+                "signals": signals or {},
+                "error_signature": error_signature or "",
+                "at": utcnow(),
+            }
+            self.add_memory(
+                task_id=task.id,
+                subject_type="project",
+                subject_id=project,
+                # Matches the executor's DEPLOYMENT_LEARNING_PREFIX contract so
+                # recall_deployment_lessons (which filters by this record_type
+                # prefix + project) picks it up.
+                record_type="deployment_learning:%s" % project,
+                content=json_dumps(content),
+                evidence_id=evidence_id,
+                created_by="mac-hub-review",
+            )
+        except Exception:  # noqa: BLE001 - best-effort durable learning.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "could not record project failure lesson for %s", task_id, exc_info=True
+            )
 
     def _set_agent_idle(self, agent_id: str, conn: Any = None) -> None:
         now = utcnow()

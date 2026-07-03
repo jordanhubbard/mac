@@ -613,6 +613,66 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_fleet_github_ingest_status(args: argparse.Namespace) -> None:
+    """Show the GitHub-issue ingestor's config + last run report (hub read)."""
+    cp = _plane(args)
+    status = cp.github_ingest_status()
+    _print(status.to_dict() if hasattr(status, "to_dict") else status)
+
+
+def cmd_fleet_github_ingest_run(args: argparse.Namespace) -> None:
+    """Trigger one immediate ingestion pass across all opted-in repos."""
+    cp = _plane(args)
+    report = cp.github_ingest_run()
+    _print(report.to_dict() if hasattr(report, "to_dict") else report)
+
+
+def _project_record_metadata(cp: Any, project: str) -> Dict[str, Any]:
+    """Return the mutable metadata dict of a project's record, or error out.
+
+    Issue ingestion targets onboarded projects (those with a ProjectRecord and
+    a repository_url); a derived, record-less project cannot be opted in.
+    """
+    detail = cp.get_project(project)
+    data = detail.to_dict() if hasattr(detail, "to_dict") else detail
+    record = data.get("record") if isinstance(data, dict) else None
+    if not record:
+        raise SystemExit(
+            "mac: project %r has no project record (onboard it first: "
+            "`mac onboard <repo-url> --project %s`)" % (project, project)
+        )
+    metadata = record.get("metadata")
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def cmd_project_ingest_enable(args: argparse.Namespace) -> None:
+    """Opt a project into GitHub-issue ingestion (merges its metadata block)."""
+    cp = _plane(args)
+    metadata = _project_record_metadata(cp, args.project)
+    block = dict(metadata.get("github_issue_ingest") or {})
+    block["enabled"] = True
+    if args.label:
+        block["labels"] = list(args.label)
+    if args.capability:
+        block["default_capabilities"] = list(args.capability)
+    if args.auto_cancel_closed:
+        block["auto_cancel_closed"] = True
+    metadata["github_issue_ingest"] = block
+    cp.update_project(args.project, metadata=metadata, actor="human")
+    _print({"project": args.project, "github_issue_ingest": block})
+
+
+def cmd_project_ingest_disable(args: argparse.Namespace) -> None:
+    """Opt a project out of GitHub-issue ingestion (keeps its config block)."""
+    cp = _plane(args)
+    metadata = _project_record_metadata(cp, args.project)
+    block = dict(metadata.get("github_issue_ingest") or {})
+    block["enabled"] = False
+    metadata["github_issue_ingest"] = block
+    cp.update_project(args.project, metadata=metadata, actor="human")
+    _print({"project": args.project, "github_issue_ingest": block})
+
+
 def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
     """Push this workstation's coding-CLI credentials to workers, on demand.
 
@@ -4450,6 +4510,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="show what would be synced where, without moving any secret",
     )
     _set(cmd_fleet_creds_sync, fleet_creds_sync)
+
+    # mac-ghingest: GitHub issues as an asynchronous work generator. Poll
+    # opted-in repos and file idempotent mac tasks; observe/trigger it and opt
+    # projects in/out from here.
+    fleet_ghingest = fleet.add_parser(
+        "github-ingest",
+        help="GitHub-issue work generator: status, manual run, and per-project opt-in",
+    )
+    ghingest_sub = fleet_ghingest.add_subparsers(dest="github_ingest_command")
+    ghingest_sub.required = True
+
+    ghingest_status = ghingest_sub.add_parser(
+        "status", help="show ingestor config + last run report (hub read)"
+    )
+    _set(cmd_fleet_github_ingest_status, ghingest_status)
+
+    ghingest_run = ghingest_sub.add_parser(
+        "run", help="trigger one immediate ingestion pass across opted-in repos"
+    )
+    _set(cmd_fleet_github_ingest_run, ghingest_run)
+
+    ghingest_enable = ghingest_sub.add_parser(
+        "enable", help="opt a project into GitHub-issue ingestion"
+    )
+    ghingest_enable.add_argument("project", help="project name (must be onboarded)")
+    ghingest_enable.add_argument(
+        "--label",
+        action="append",
+        default=None,
+        help="only ingest issues carrying this label; repeatable (default: all open issues)",
+    )
+    ghingest_enable.add_argument(
+        "--capability",
+        action="append",
+        default=None,
+        help="required capability to stamp on created tasks; repeatable",
+    )
+    ghingest_enable.add_argument(
+        "--auto-cancel-closed",
+        action="store_true",
+        help="cancel the OPEN task for an issue when the issue closes on GitHub",
+    )
+    _set(cmd_project_ingest_enable, ghingest_enable)
+
+    ghingest_disable = ghingest_sub.add_parser(
+        "disable", help="opt a project out of GitHub-issue ingestion"
+    )
+    ghingest_disable.add_argument("project", help="project name")
+    _set(cmd_project_ingest_disable, ghingest_disable)
 
     # auth-token-sync-01: graceful rotation via the overlapping MAC_API_TOKENS map.
     fleet_rotate_token = fleet.add_parser(

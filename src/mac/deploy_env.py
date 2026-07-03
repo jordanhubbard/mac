@@ -846,6 +846,11 @@ def build_mac_env(
         # of dispatching to a reviewer agent (whose per-node host+sandbox
         # environment was the fragility that stalled the autonomous loop).
         values.setdefault("MAC_REVIEW_HUB_VERIFY", "1")
+        # mac-ghingest: run the GitHub-issue work generator on the hub. It is a
+        # no-op for every project that has not opted in via
+        # metadata["github_issue_ingest"], so enabling it by default is safe;
+        # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
+        values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
         # mac-backlog-groom: run the autonomous backlog groomer on the hub. It is
         # a no-op for every project that has not opted in via
         # metadata["backlog_grooming"], so enabling it by default is safe.

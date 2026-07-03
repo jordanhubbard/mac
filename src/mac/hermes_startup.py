@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from mac.agent_provider import resolve_agent_provider
+from mac.env_config import resolve_hub_agent
 from mac.hermes_runtime import RUNTIME_CONTEXT_SCHEMA
 
 
@@ -771,9 +772,7 @@ def _qdrant_memory_report(hermes_home: Path) -> Dict[str, Any]:
         "endpoint_source": endpoint_source,
         "api_key_present": bool(api_key),
         "role": os.environ.get("MAC_QDRANT_MEMORY_ROLE", "shared_level2"),
-        "manager_agent": os.environ.get("MAC_SHARED_SERVICES_MANAGER_AGENT")
-        or os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT")
-        or "",
+        "manager_agent": resolve_hub_agent("MAC_SHARED_SERVICES_MANAGER_AGENT"),
         "topology": topology,
         "collection_count": None,
         "warning": "",

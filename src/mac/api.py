@@ -51,6 +51,7 @@ from mac.models import AuthorizationError, MACError, NotFoundError, ValidationEr
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
+from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
     RepositoryRefReconcilerConfig,
@@ -2940,6 +2941,11 @@ def create_app(
         cp,
         RepositoryRefReconcilerConfig.from_env(),
     )
+    # mac-ghingest: GitHub issues as an asynchronous work generator. The
+    # ingestor polls opted-in repos and files idempotent mac tasks; it no-ops
+    # for any project that has not set metadata["github_issue_ingest"], so
+    # enabling it fleet-wide is safe.
+    github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
     # mac-backlog-groom: seed grooming tasks for opted-in repos going idle, so
     # the fleet manufactures its own backlog instead of starving when the
     # human/GitHub-issue queue drains. No-op until a project opts in via
@@ -2949,11 +2955,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         repository_ref_reconciler.start()
+        github_ingestor.start()
         backlog_groomer.start()
         try:
             yield
         finally:
             repository_ref_reconciler.stop()
+            github_ingestor.stop()
             backlog_groomer.stop()
 
     app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
@@ -2961,6 +2969,7 @@ def create_app(
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
     app.state.repository_ref_reconciler = repository_ref_reconciler
+    app.state.github_ingestor = github_ingestor
     app.state.backlog_groomer = backlog_groomer
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
@@ -3117,6 +3126,17 @@ def create_app(
             actor=body.actor,
             trigger="operator",
         )
+
+    @app.get("/github-ingest/status")
+    def github_ingest_status() -> Dict[str, Any]:
+        return github_ingestor.status()
+
+    @app.post("/github-ingest/run")
+    def github_ingest_run(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return github_ingestor.run_once(trigger="operator")
 
     @app.get("/backlog-groom/status")
     def backlog_groom_status() -> Dict[str, Any]:

@@ -499,7 +499,15 @@ class RemoteDispatch:
                 "actor": actor,
             }
         )
-        return _Dictish(self._put("/projects/%s" % quote(name_or_id, safe=""), body))
+        return _Dictish(
+            self._put("/projects/%s" % quote(name_or_id, safe=""), body)
+        )
+
+    def github_ingest_status(self) -> _Dictish:
+        return _Dictish(self._get("/github-ingest/status"))
+
+    def github_ingest_run(self) -> _Dictish:
+        return _Dictish(self._post("/github-ingest/run", {}))
 
     def backlog_groom_status(self) -> _Dictish:
         return _Dictish(self._get("/backlog-groom/status"))
