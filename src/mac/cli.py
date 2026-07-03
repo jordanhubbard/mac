@@ -99,6 +99,35 @@ def _trunc(text: Any, n: int = 72) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _agent_hw_summary(d: dict) -> str:
+    """Compact measured-hardware string for an agent line, from the
+    ``resources.hardware`` block the agent reports at registration/heartbeat
+    (``mac.hardware.v1``). "-" when the agent hasn't reported hardware."""
+    res = d.get("resources")
+    hw = (res.get("hardware") or {}) if isinstance(res, dict) else {}
+    if not isinstance(hw, dict) or not hw:
+        return "-"
+    bits = []
+    if hw.get("os"):
+        bits.append("%s/%s" % (hw.get("os"), hw.get("arch") or "?"))
+    if hw.get("cpu_count"):
+        bits.append("%sc" % hw.get("cpu_count"))
+    if hw.get("memory_mb"):
+        bits.append("%dG" % round(float(hw["memory_mb"]) / 1024))
+    gpu = hw.get("gpu") or {}
+    name = str(gpu.get("name") or "").replace("NVIDIA ", "").replace("GeForce ", "")
+    name = name.replace(" Server Edition", "").replace("Apple ", "")
+    if name:
+        vram = gpu.get("vram_mb")
+        bits.append(name + (" %dG" % round(float(vram) / 1024) if vram else ""))
+    accel = hw.get("accelerator")
+    # cuda is implied by an NVIDIA gpu name; spell out anything else (metal),
+    # or cuda with no name to identify the accelerator at all.
+    if accel and (accel != "cuda" or not name):
+        bits.append(str(accel))
+    return " ".join(bits) or "-"
+
+
 def _one_liner(value: Any) -> str:
     """A single compact line for one record (task / agent / generic dict)."""
     d = _unwrap(value)
@@ -117,9 +146,10 @@ def _one_liner(value: Any) -> str:
         )
     if "status" in d and ("name" in d or "current_task_id" in d or "capabilities" in d):
         cur = d.get("current_task_id")
-        return "%-16s %-9s %s" % (
+        return "%-16s %-9s %-28s %s" % (
             d.get("name") or ident,
             d.get("status", "?"),
+            _agent_hw_summary(d),
             ("▶ " + str(cur)) if cur else "idle",
         )
     scal = [

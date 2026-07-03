@@ -51,6 +51,33 @@ if [ -z "${PY}" ]; then
     echo "run-contract-tests.sh: no python interpreter found (.venv, /opt/mac-venv, or PATH)" >&2
     exit 1
 fi
+
+# The resolved interpreter must actually carry the suite's toolchain: the dev
+# extras (coverage, pytest) AND the project deps. A worker host's PATH python
+# is its runtime venv — mac's runtime deps but no dev extras — and verification
+# there died with "No module named coverage" (observed live on the GKE pods,
+# blocking every repo-change task); a dev host's bare python3 can have the
+# opposite hole (global pytest/coverage, no project deps). Probe both classes
+# cheaply; when the interpreter can't run the suite and the repo ships its
+# bootstrap, build the hermetic .venv the execution contract already promises.
+_py_can_run_suite() {
+    "$1" -m coverage --version >/dev/null 2>&1 \
+        && "$1" -m pytest --version >/dev/null 2>&1 \
+        && "$1" -c "import cryptography, fastapi, yaml" >/dev/null 2>&1
+}
+if ! _py_can_run_suite "$PY"; then
+    if [ ! -x ".venv/bin/python" ] && [ -f "scripts/bootstrap-project.py" ]; then
+        echo "run-contract-tests.sh: $PY cannot run the suite; bootstrapping .venv" >&2
+        "$PY" scripts/bootstrap-project.py --venv-only >&2
+    fi
+    if [ -x ".venv/bin/python" ] && _py_can_run_suite ".venv/bin/python"; then
+        PY=".venv/bin/python"
+    else
+        echo "run-contract-tests.sh: no interpreter can run the suite (tried $PY and .venv;" \
+             "need coverage+pytest+project deps)" >&2
+        exit 1
+    fi
+fi
 export PATH="$(cd "$(dirname "$PY")" && pwd):${PATH}"
 
 if [ "$#" -eq 0 ]; then
