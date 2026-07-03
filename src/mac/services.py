@@ -9693,6 +9693,30 @@ class ControlPlane:
             run_step("create_main", ["checkout", "-B", "main", "origin/main"])
         run_step("pull_main", ["pull", "--ff-only", "origin", "main"])
         run_step("verify_commit", ["cat-file", "-e", "%s^{commit}" % head_sha])
+
+        # Merge-queue gate (optimistic-concurrency validation phase): validate
+        # the task branch against the CURRENT main tip we just pulled — not the
+        # stale base the branch was authored on — before landing. A clean result
+        # means the branch integrates onto trunk-as-it-is-now; a conflict must
+        # route the task to integration (rebase + resolve + re-verify: the third
+        # agent) rather than fail cryptically or land skewed. See
+        # mac.merge_queue for the model (Not-Rocket-Science-Rule / merge queue /
+        # OCC). This makes conflict detection proactive and names the files.
+        from mac.merge_queue import validate_projected_merge
+
+        gate = validate_projected_merge(str(root), "HEAD", head_sha)
+        commands.append({"name": "merge_gate", **gate.to_dict()})
+        if not gate.clean:
+            raise ValidationError(
+                "git publication merge gate: task branch does not integrate onto "
+                "the current main tip (%s); conflicts: %s — route to integration "
+                "(rebase + resolve + re-verify), do not merge"
+                % (
+                    gate.base_sha[:12] or "?",
+                    ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
+                )
+            )
+
         publication_mode = "fast_forward"
         ff_merge = git_step("merge_source_ff", ["merge", "--ff-only", head_sha], check=False)
         if ff_merge["returncode"] != 0:
