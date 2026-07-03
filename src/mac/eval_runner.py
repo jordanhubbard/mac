@@ -329,7 +329,13 @@ def router_model_caller(
     import json as _json
     import urllib.request
 
+    # Normalize so it works whether the configured URL already includes the
+    # OpenAI ``/v1`` suffix (the hub sets OPENAI_BASE_URL to ``.../v1``) or not.
     base = router_url.rstrip("/")
+    if base.endswith("/v1"):
+        completions_url = base + "/chat/completions"
+    else:
+        completions_url = base + "/v1/chat/completions"
 
     def call(model_id: str, question: str, context: str) -> Tuple[str, List[str], float]:
         messages = []
@@ -340,7 +346,7 @@ def router_model_caller(
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer %s" % token
-        req = urllib.request.Request(base + "/v1/chat/completions", data=body, headers=headers, method="POST")
+        req = urllib.request.Request(completions_url, data=body, headers=headers, method="POST")
         start = time.monotonic()
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
@@ -370,11 +376,21 @@ def build_swap_evaluator(
     env = os.environ if environ is None else environ
     if str(env.get("MAC_MODEL_SWAP_EVAL_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
         return None
-    router_url = str(env.get("MAC_ROUTER_URL") or env.get("MAC_ROUTER_INTERNAL_URL") or "").strip()
+    # Reuse the hub's already-wired local router endpoint (OPENAI_BASE_URL points
+    # at the in-mac router's /v1) so no separate URL needs configuring; a
+    # dedicated MAC_ROUTER_(INTERNAL_)URL still wins if set.
+    router_url = str(
+        env.get("MAC_ROUTER_URL")
+        or env.get("MAC_ROUTER_INTERNAL_URL")
+        or env.get("OPENAI_BASE_URL")
+        or ""
+    ).strip()
     if not router_url:
         return None
     cases = load_golden_set(str(env.get("MAC_MODEL_SWAP_EVAL_GOLDEN_SET") or ""))
-    token = str(env.get("MAC_ROUTER_TOKEN") or env.get("MAC_API_TOKEN") or "").strip()
+    token = str(
+        env.get("MAC_ROUTER_TOKEN") or env.get("MAC_API_TOKEN") or env.get("OPENAI_API_KEY") or ""
+    ).strip()
     caller = router_model_caller(router_url, token=token)
 
     def _cost(model_id: str):

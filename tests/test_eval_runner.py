@@ -166,3 +166,28 @@ def test_service_builds_no_evaluator_when_disabled(tmp_path, monkeypatch):
     monkeypatch.delenv("MAC_MODEL_SWAP_EVAL_ENABLED", raising=False)
     svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True), environ=dict(os.environ))
     assert svc._swap_evaluator is None
+
+
+def test_builder_uses_openai_base_url_when_enabled(monkeypatch):
+    # The hub wires OPENAI_BASE_URL to its local router; the builder should use
+    # it (no dedicated router var needed) and produce a live evaluator.
+    from mac.eval_runner import build_swap_evaluator
+    env = {"MAC_MODEL_SWAP_EVAL_ENABLED": "1",
+           "OPENAI_BASE_URL": "http://127.0.0.1:8789/v1",
+           "MAC_API_TOKEN": "t"}
+    ev = build_swap_evaluator(env)
+    assert ev is not None
+    # Missing model args -> not approved, no network call.
+    assert ev([], ["inc"]) == {"approved": False, "detail": "missing candidate/incumbent model"}
+
+
+def test_builder_none_without_router_url(monkeypatch):
+    from mac.eval_runner import build_swap_evaluator
+    assert build_swap_evaluator({"MAC_MODEL_SWAP_EVAL_ENABLED": "1"}) is None
+
+
+def test_deploy_env_enables_swap_eval_on_hub():
+    from mac import deploy_env as de
+    # Grep the source: the hub block sets MAC_MODEL_SWAP_EVAL_ENABLED.
+    src = open(de.__file__, encoding="utf-8").read()
+    assert 'values.setdefault("MAC_MODEL_SWAP_EVAL_ENABLED", "1")' in src

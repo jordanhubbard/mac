@@ -860,6 +860,12 @@ def build_mac_env(
         # route (vs a hard-coded pin). Falls back to the configured default on
         # any discovery failure, so enabling it by default is safe.
         values.setdefault("MAC_MODEL_SELECT_ENABLED", "1")
+        # mac-model-select: gate model SWAPS on an automated golden-set eval so a
+        # newly-"leading" model is adopted only if it doesn't regress quality/
+        # safety on our tasks. Uses the hub's local router (OPENAI_BASE_URL) —
+        # no extra URL to configure. Fully safe: if the eval can't run, the swap
+        # stays pending for operator promotion (routing never changes blindly).
+        values.setdefault("MAC_MODEL_SWAP_EVAL_ENABLED", "1")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values
