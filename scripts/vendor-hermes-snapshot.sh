@@ -102,6 +102,21 @@ for inc in "${INCLUDE[@]}"; do
     cp -rf "$WORK/hermes/$inc" "$DEST/"
   fi
 done
+
+# MAC does not vendor built dashboard bundles; drop them so a re-vendor does not
+# reintroduce plugins/*/dashboard/dist. (See deploy/hermes/LOCAL_PATCHES.md.)
+echo "Removing built dashboard artifacts ..."
+find "$DEST" -type d -path '*/dashboard/dist' -exec rm -rf {} + 2>/dev/null || true
+
+# Lay down MAC-authored files that are not part of the upstream surface (the
+# mac-hub/nvidia image-gen plugins, fleet/embedding tools, the vendoring README).
+# These are dropped by the rm -rf "$DEST" above, so they must be re-applied here
+# or they are silently lost on every re-vendor.
+if [ -d "$PATCH_DIR/overlay" ]; then
+  echo "Applying MAC overlay files ..."
+  cp -rf "$PATCH_DIR/overlay/." "$DEST/"
+fi
+
 # Stamp provenance so the vendored tree is self-describing.
 printf 'upstream %s\ncommit %s\nvendored %s\n' \
   "$UPSTREAM" "$PIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEST/SNAPSHOT_PIN"

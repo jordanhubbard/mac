@@ -626,7 +626,7 @@ def _contract_relative_paths(value: Any, field: str) -> List[str]:
 def _repository_contract_root(repo_path: Path) -> Path:
     expanded = repo_path.expanduser()
     if not expanded.exists():
-        raise ValidationError("beads repository path does not exist: %s" % repo_path)
+        raise ValidationError("project repository path does not exist: %s" % repo_path)
     return expanded if expanded.is_dir() else expanded.parent
 
 
@@ -6118,21 +6118,48 @@ class ControlPlane:
         if not self._task_outbox_drain_lock.acquire(blocking=False):
             return {"processed": [], "count": 0, "status": "busy"}
         try:
-            return self.drain_task_transition_outbox(task_id=task_id, limit=limit)
+            result = self.drain_task_transition_outbox(task_id=task_id, limit=limit)
+            # Success resets the failure streak so the health signal reflects
+            # only *ongoing* trouble.
+            self._task_outbox_drain_failures = 0
+            return result
         except Exception as exc:  # noqa: BLE001 - side effects must not break API responses.
+            # Track failures in an in-memory counter that CANNOT itself fail:
+            # the previous code logged-and-swallowed, then wrapped the log in a
+            # bare `except: pass`, so a persistently failing outbox (stranded
+            # task transitions) could be entirely invisible if logging also
+            # failed and the caller ignored the return. The counter guarantees
+            # the failure is observable via status(), and severity escalates
+            # once failures persist.
+            self._task_outbox_drain_failures = (
+                getattr(self, "_task_outbox_drain_failures", 0) + 1
+            )
+            failures = self._task_outbox_drain_failures
             try:
                 self.record_log(
                     "task.transition_outbox.drain_failed",
                     layer="control_plane",
                     source="task-ledger",
-                    level="warning",
+                    # A one-off drain miss is a warning; a sustained failure
+                    # streak means transitions are stranding — escalate.
+                    level="error" if failures >= 3 else "warning",
                     subject_type="task" if task_id else None,
                     subject_id=task_id,
-                    detail={"error": str(exc), "limit": limit},
+                    detail={
+                        "error": str(exc),
+                        "limit": limit,
+                        "consecutive_failures": failures,
+                    },
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - telemetry may be down; counter still holds it.
                 pass
-            return {"processed": [], "count": 0, "status": "failed", "error": str(exc)}
+            return {
+                "processed": [],
+                "count": 0,
+                "status": "failed",
+                "error": str(exc),
+                "consecutive_failures": failures,
+            }
         finally:
             self._task_outbox_drain_lock.release()
 
@@ -10696,16 +10723,16 @@ class ControlPlane:
         enabled: bool = True,
         poll_interval_seconds: int = 60,
         metadata: Optional[Dict[str, Any]] = None,
-        actor: str = "beads-bridge",
+        actor: str = "project-repo",
     ) -> ProjectRepository:
         name = name.strip()
         if not name:
-            raise ValidationError("beads repository name is required")
+            raise ValidationError("project repository name is required")
         repo_path_obj = Path(path).expanduser()
         repo_path = str(repo_path_obj)
-        repo_source = (source or "repo-beads-%s" % _safe_slug(name)).strip()
+        repo_source = (source or "repo-%s" % _safe_slug(name)).strip()
         if not repo_source:
-            raise ValidationError("beads repository source is required")
+            raise ValidationError("project repository source is required")
         repo_project = (project or repo_source).strip()
         contract = _load_repository_contract(repo_path_obj)
         if contract["project"] != repo_project:
@@ -10776,7 +10803,7 @@ class ControlPlane:
             (repo_id_or_name, repo_id_or_name),
         )
         if row is None:
-            raise NotFoundError("beads repository not found: %s" % repo_id_or_name)
+            raise NotFoundError("project repository not found: %s" % repo_id_or_name)
         return self._repository_from_row(row)
 
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:

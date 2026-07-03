@@ -1307,7 +1307,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_detail.add_argument("project")
     project_detail.set_defaults(func=_cmd_project_detail)
 
-    project_repositories = sub.add_parser("project-repositories", help="list registered Beads repositories")
+    project_repositories = sub.add_parser("project-repositories", help="list registered project repositories")
     project_repositories.add_argument("--enabled", action="store_true", default=None)
     project_repositories.set_defaults(func=_cmd_project_repositories)
 

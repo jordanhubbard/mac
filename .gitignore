@@ -27,3 +27,5 @@ dist/
 
 # Ephemeral host-prefetched assets used by the OpenShell image build.
 .mac-openshell-build-assets/
+.vendor-check.sh
+.vendor-check-work/

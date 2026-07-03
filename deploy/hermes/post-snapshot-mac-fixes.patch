@@ -1,0 +1,915 @@
+diff --git a/agent/agent_init.py b/agent/agent_init.py
+index 675130a..299b477 100644
+--- a/agent/agent_init.py
++++ b/agent/agent_init.py
+@@ -74,6 +74,52 @@ def _normalized_custom_base_url(value: Any) -> str:
+     return value.strip().rstrip("/")
+ 
+ 
++def _mac_route_context_default_headers(effective_base_url: str) -> Dict[str, str]:
++    """X-MAC attribution headers for completions sent to the MAC fleet router.
++
++    Mirrors ``mac.router_app.mac_route_context_headers`` (this vendored tree
++    must not import mac.*): values come from the env the MAC worker/executor
++    already sets for the task run. Returns {} — and therefore stamps nothing —
++    unless BOTH an identity env var is present and the effective endpoint host
++    matches one of the MAC-managed gateway base URLs, so internal ids never
++    leak to third-party providers and non-fleet Hermes use is unaffected.
++    """
++    context = {
++        "x-mac-agent-id": (os.environ.get("MAC_AGENT_ID") or "").strip()[:256],
++        "x-mac-task-id": (os.environ.get("MAC_TASK_ID") or "").strip()[:256],
++        "x-mac-lease-id": (os.environ.get("MAC_LEASE_ID") or "").strip()[:256],
++        "x-mac-hermes-instance-id": (
++            os.environ.get("MAC_HERMES_INSTANCE_ID") or ""
++        ).strip()[:256],
++        "x-mac-fleet": (os.environ.get("MAC_FLEET_NAME") or "").strip()[:256],
++    }
++    context = {k: v for k, v in context.items() if v}
++    if not context:
++        return {}
++    try:
++        endpoint_host = (urlparse(effective_base_url).hostname or "").lower()
++    except Exception:
++        return {}
++    if not endpoint_host:
++        return {}
++    for env_var in (
++        "MAC_HERMES_GATEWAY_BASE_URL",
++        "CUSTOM_BASE_URL",
++        "OPENAI_BASE_URL",
++        "MAC_HUB_URL",
++    ):
++        raw = (os.environ.get(env_var) or "").strip()
++        if not raw:
++            continue
++        try:
++            mac_host = (urlparse(raw).hostname or "").lower()
++        except Exception:
++            continue
++        if mac_host and mac_host == endpoint_host:
++            return context
++    return {}
++
++
+ def _custom_provider_model_matches(agent_model: str, entry: Dict[str, Any]) -> bool:
+     provider_model = str(entry.get("model", "") or "").strip().lower()
+     if not provider_model:
+@@ -854,6 +900,20 @@ def init_agent(
+                     headers["x-anthropic-beta"] = _FINE_GRAINED
+                 client_kwargs["default_headers"] = headers
+ 
++        # MAC fleet attribution: when this agent runs under the MAC executor
++        # (MAC_AGENT_ID/MAC_TASK_ID in env) and the effective endpoint is the
++        # fleet's own router, stamp X-MAC-* route-context headers so every
++        # completion row in the hub's llm.route ledger is attributable to an
++        # agent + task + lease. Only stamped toward the MAC-managed endpoint —
++        # internal ids are never sent to third-party providers.
++        _mac_ctx = _mac_route_context_default_headers(
++            str(client_kwargs.get("base_url", "") or "")
++        )
++        if _mac_ctx:
++            merged_headers = dict(client_kwargs.get("default_headers") or {})
++            merged_headers.update(_mac_ctx)
++            client_kwargs["default_headers"] = merged_headers
++
+         agent.api_key = client_kwargs.get("api_key", "")
+         agent.base_url = client_kwargs.get("base_url", agent.base_url)
+         try:
+diff --git a/agent/chat_completion_helpers.py b/agent/chat_completion_helpers.py
+index cc74279..6ddd5ab 100644
+--- a/agent/chat_completion_helpers.py
++++ b/agent/chat_completion_helpers.py
+@@ -39,6 +39,35 @@ from utils import base_url_host_matches, base_url_hostname
+ logger = logging.getLogger(__name__)
+ 
+ 
++def _relay_llm_ctx(agent: Any, api_kwargs: dict):
++    """Return a relay_llm_context manager, or a no-op if relay unavailable.
++
++    Extracts model/provider/token information from the agent and api_kwargs,
++    ensuring only JSON-serialisable scalars reach the relay attributes.
++    Imported lazily so there is zero overhead when MAC_RELAY_OBSERVABILITY is off.
++    """
++    try:
++        from mac.relay_observability import relay_llm_context
++        model: str = str(getattr(agent, "model", "") or "")
++        provider: str = str(getattr(agent, "provider", "") or "")
++        # Rough token estimate from api_kwargs messages (char/4 heuristic)
++        tokens: Optional[int] = None
++        msgs = api_kwargs.get("messages")
++        if isinstance(msgs, list):
++            try:
++                total_chars = sum(
++                    len(str(m.get("content") or "")) for m in msgs
++                    if isinstance(m, dict)
++                )
++                tokens = total_chars // 4
++            except Exception:
++                pass
++        return relay_llm_context(model, provider, tokens=tokens)
++    except Exception:
++        import contextlib
++        return contextlib.nullcontext()
++
++
+ def _ra():
+     """Lazy ``run_agent`` reference.
+ 
+@@ -183,51 +212,52 @@ def interruptible_api_call(agent, api_kwargs: dict):
+ 
+     def _call():
+         try:
+-            if agent.api_mode == "codex_responses":
+-                request_client = _set_request_client(
+-                    agent._create_request_openai_client(
+-                        reason="codex_stream_request",
+-                        api_kwargs=api_kwargs,
++            with _relay_llm_ctx(agent, api_kwargs):
++                if agent.api_mode == "codex_responses":
++                    request_client = _set_request_client(
++                        agent._create_request_openai_client(
++                            reason="codex_stream_request",
++                            api_kwargs=api_kwargs,
++                        )
+                     )
+-                )
+-                result["response"] = agent._run_codex_stream(
+-                    api_kwargs,
+-                    client=request_client,
+-                    on_first_delta=getattr(agent, "_codex_on_first_delta", None),
+-                )
+-            elif agent.api_mode == "anthropic_messages":
+-                result["response"] = agent._anthropic_messages_create(api_kwargs)
+-            elif agent.api_mode == "bedrock_converse":
+-                # Bedrock uses boto3 directly — no OpenAI client needed.
+-                # normalize_converse_response produces an OpenAI-compatible
+-                # SimpleNamespace so the rest of the agent loop can treat
+-                # bedrock responses like chat_completions responses.
+-                from agent.bedrock_adapter import (
+-                    _get_bedrock_runtime_client,
+-                    invalidate_runtime_client,
+-                    is_stale_connection_error,
+-                    normalize_converse_response,
+-                )
+-                region = api_kwargs.pop("__bedrock_region__", "us-east-1")
+-                api_kwargs.pop("__bedrock_converse__", None)
+-                client = _get_bedrock_runtime_client(region)
+-                try:
+-                    raw_response = client.converse(**api_kwargs)
+-                except Exception as _bedrock_exc:
+-                    # Evict the cached client on stale-connection failures
+-                    # so the outer retry loop builds a fresh client/pool.
+-                    if is_stale_connection_error(_bedrock_exc):
+-                        invalidate_runtime_client(region)
+-                    raise
+-                result["response"] = normalize_converse_response(raw_response)
+-            else:
+-                request_client = _set_request_client(
+-                    agent._create_request_openai_client(
+-                        reason="chat_completion_request",
+-                        api_kwargs=api_kwargs,
++                    result["response"] = agent._run_codex_stream(
++                        api_kwargs,
++                        client=request_client,
++                        on_first_delta=getattr(agent, "_codex_on_first_delta", None),
+                     )
+-                )
+-                result["response"] = request_client.chat.completions.create(**api_kwargs)
++                elif agent.api_mode == "anthropic_messages":
++                    result["response"] = agent._anthropic_messages_create(api_kwargs)
++                elif agent.api_mode == "bedrock_converse":
++                    # Bedrock uses boto3 directly — no OpenAI client needed.
++                    # normalize_converse_response produces an OpenAI-compatible
++                    # SimpleNamespace so the rest of the agent loop can treat
++                    # bedrock responses like chat_completions responses.
++                    from agent.bedrock_adapter import (
++                        _get_bedrock_runtime_client,
++                        invalidate_runtime_client,
++                        is_stale_connection_error,
++                        normalize_converse_response,
++                    )
++                    region = api_kwargs.pop("__bedrock_region__", "us-east-1")
++                    api_kwargs.pop("__bedrock_converse__", None)
++                    client = _get_bedrock_runtime_client(region)
++                    try:
++                        raw_response = client.converse(**api_kwargs)
++                    except Exception as _bedrock_exc:
++                        # Evict the cached client on stale-connection failures
++                        # so the outer retry loop builds a fresh client/pool.
++                        if is_stale_connection_error(_bedrock_exc):
++                            invalidate_runtime_client(region)
++                        raise
++                    result["response"] = normalize_converse_response(raw_response)
++                else:
++                    request_client = _set_request_client(
++                        agent._create_request_openai_client(
++                            reason="chat_completion_request",
++                            api_kwargs=api_kwargs,
++                        )
++                    )
++                    result["response"] = request_client.chat.completions.create(**api_kwargs)
+         except Exception as e:
+             result["error"] = e
+         finally:
+@@ -2058,9 +2088,11 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
+                 try:
+                     if agent.api_mode == "anthropic_messages":
+                         agent._try_refresh_anthropic_client_credentials()
+-                        result["response"] = _call_anthropic()
++                        with _relay_llm_ctx(agent, api_kwargs):
++                            result["response"] = _call_anthropic()
+                     else:
+-                        result["response"] = _call_chat_completions()
++                        with _relay_llm_ctx(agent, api_kwargs):
++                            result["response"] = _call_chat_completions()
+                     return  # success
+                 except Exception as e:
+                     _is_timeout = isinstance(
+diff --git a/agent/tool_executor.py b/agent/tool_executor.py
+index bbbd239..936deb7 100644
+--- a/agent/tool_executor.py
++++ b/agent/tool_executor.py
+@@ -47,6 +47,19 @@ from tools.tool_result_storage import (
+ 
+ logger = logging.getLogger(__name__)
+ 
++
++def _relay_tool_ctx(function_name: str, function_args: dict):
++    """Return a relay_tool_context manager, or a no-op if relay unavailable.
++
++    Imported lazily to avoid any overhead when MAC_RELAY_OBSERVABILITY is off.
++    """
++    try:
++        from mac.relay_observability import relay_tool_context
++        return relay_tool_context(function_name, function_args)
++    except Exception:
++        import contextlib
++        return contextlib.nullcontext()
++
+ # Maximum number of concurrent worker threads for parallel tool execution.
+ # Mirrors the constant in ``run_agent`` for tests/imports that look here.
+ _MAX_TOOL_WORKERS = 8
+@@ -307,14 +320,15 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
+         start = time.time()
+         try:
+             try:
+-                result = agent._invoke_tool(
+-                    function_name,
+-                    function_args,
+-                    effective_task_id,
+-                    tool_call.id,
+-                    messages=messages,
+-                    pre_tool_block_checked=True,
+-                )
++                with _relay_tool_ctx(function_name, function_args):
++                    result = agent._invoke_tool(
++                        function_name,
++                        function_args,
++                        effective_task_id,
++                        tool_call.id,
++                        messages=messages,
++                        pre_tool_block_checked=True,
++                    )
+             except Exception as tool_error:
+                 result = f"Error executing tool '{function_name}': {tool_error}"
+                 logger.error("_invoke_tool raised for %s: %s", function_name, tool_error, exc_info=True)
+@@ -846,15 +860,16 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
+                 spinner.start()
+             _spinner_result = None
+             try:
+-                function_result = _ra().handle_function_call(
+-                    function_name, function_args, effective_task_id,
+-                    tool_call_id=tool_call.id,
+-                    session_id=agent.session_id or "",
+-                    enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
+-                    skip_pre_tool_call_hook=True,
+-                    enabled_toolsets=getattr(agent, "enabled_toolsets", None),
+-                    disabled_toolsets=getattr(agent, "disabled_toolsets", None),
+-                )
++                with _relay_tool_ctx(function_name, function_args):
++                    function_result = _ra().handle_function_call(
++                        function_name, function_args, effective_task_id,
++                        tool_call_id=tool_call.id,
++                        session_id=agent.session_id or "",
++                        enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
++                        skip_pre_tool_call_hook=True,
++                        enabled_toolsets=getattr(agent, "enabled_toolsets", None),
++                        disabled_toolsets=getattr(agent, "disabled_toolsets", None),
++                    )
+                 _spinner_result = function_result
+             except Exception as tool_error:
+                 function_result = f"Error executing tool '{function_name}': {tool_error}"
+@@ -867,21 +882,22 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
+                 elif agent._should_emit_quiet_tool_messages():
+                     agent._vprint(f"  {cute_msg}")
+         else:
++
+             try:
+-                function_result = _ra().handle_function_call(
+-                    function_name, function_args, effective_task_id,
+-                    tool_call_id=tool_call.id,
+-                    session_id=agent.session_id or "",
+-                    enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
+-                    skip_pre_tool_call_hook=True,
+-                    enabled_toolsets=getattr(agent, "enabled_toolsets", None),
+-                    disabled_toolsets=getattr(agent, "disabled_toolsets", None),
+-                )
++                with _relay_tool_ctx(function_name, function_args):
++                    function_result = _ra().handle_function_call(
++                        function_name, function_args, effective_task_id,
++                        tool_call_id=tool_call.id,
++                        session_id=agent.session_id or "",
++                        enabled_tools=list(agent.valid_tool_names) if agent.valid_tool_names else None,
++                        skip_pre_tool_call_hook=True,
++                        enabled_toolsets=getattr(agent, "enabled_toolsets", None),
++                        disabled_toolsets=getattr(agent, "disabled_toolsets", None),
++                    )
+             except Exception as tool_error:
+                 function_result = f"Error executing tool '{function_name}': {tool_error}"
+                 logger.error("handle_function_call raised for %s: %s", function_name, tool_error, exc_info=True)
+             tool_duration = time.time() - tool_start_time
+-
+         if isinstance(function_result, str):
+             result_preview = function_result if agent.verbose_logging else (
+                 function_result[:200] if len(function_result) > 200 else function_result
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index a51ade8..8d4d55d 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -637,13 +637,15 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
+     from tools.send_message_tool import _send_to_platform
+     from gateway.config import load_gateway_config, Platform
+ 
+-    # Optionally wrap the content with a header/footer so the user knows this
+-    # is a cron delivery.  Wrapping is on by default; set cron.wrap_response: false
+-    # in config.yaml for clean output.
+-    wrap_response = True
++    # Optionally wrap the content with a header/footer identifying the cron job.
++    # Off by default: the boilerplate ("Cronjob Response: ... (job_id: ...)" +
++    # "To stop or manage this job ...") makes scheduled posts read as insincere,
++    # so cron output goes out as just the content. Set cron.wrap_response: true
++    # in config.yaml to re-enable the wrapper.
++    wrap_response = False
+     try:
+         user_cfg = load_config()
+-        wrap_response = user_cfg.get("cron", {}).get("wrap_response", True)
++        wrap_response = user_cfg.get("cron", {}).get("wrap_response", False)
+     except Exception:
+         pass
+ 
+diff --git a/gateway/config.py b/gateway/config.py
+index abc40d8..6c17e52 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -552,7 +552,27 @@ class GatewayConfig:
+         if config:
+             return config.home_channel
+         return None
+-    
++
++    def get_home_channels(self, platform: Platform) -> "List[HomeChannel]":
++        """All home channels for a platform — one per connected workspace.
++
++        Slack can be connected to several workspaces at once, each with its own
++        resolved home channel (slack_home_channels.json). Broadcast-style
++        deliveries (gateway online/offline notices) should reach every
++        workspace's home channel, not just the first. Other platforms have at
++        most the single configured home channel. The adapter routes each
++        ``send(channel_id)`` to the owning workspace via its channel→team map."""
++        if platform == Platform.SLACK:
++            homes = [
++                HomeChannel(platform=Platform.SLACK, chat_id=chan, name=name)
++                for chan, name in _slack_homes_from_resolved_file()
++                if chan
++            ]
++            if homes:
++                return homes
++        home = self.get_home_channel(platform)
++        return [home] if home and home.chat_id else []
++
+     def get_reset_policy(
+         self, 
+         platform: Optional[Platform] = None,
+@@ -1245,6 +1265,49 @@ def _validate_gateway_config(config: "GatewayConfig") -> None:
+                 pconfig.enabled = False
+ 
+ 
++def _slack_home_from_resolved_file(default_name: str = "") -> "tuple[str, str]":
++    """th-merge-07: read the primary resolved Slack home channel from
++    ``<hermes_home>/slack_home_channels.json`` (written by the deploy's
++    home-channel sync from the fleet's configured channel name). Returns
++    ``(channel_id, name)`` or ``("", default_name)`` if unavailable."""
++    try:
++        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
++        with open(path, "r", encoding="utf-8") as fh:
++            homes = json.load(fh)
++        if isinstance(homes, list) and homes:
++            entry = homes[0]
++            chan = str(entry.get("channel_id") or "")
++            name = str(entry.get("channel_name") or "").lstrip("#") or default_name
++            return chan, name
++    except Exception:
++        pass
++    return "", default_name
++
++
++def _slack_homes_from_resolved_file() -> "List[tuple[str, str]]":
++    """All resolved Slack home channels — one per connected workspace — from
++    ``<hermes_home>/slack_home_channels.json``. Returns ``[(channel_id, name), …]``
++    (empty on any failure). The single-home reader above keeps the first entry as
++    the primary; this is for broadcast deliveries that should reach every
++    workspace."""
++    out: "List[tuple[str, str]]" = []
++    try:
++        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
++        with open(path, "r", encoding="utf-8") as fh:
++            homes = json.load(fh)
++        if isinstance(homes, list):
++            for entry in homes:
++                if not isinstance(entry, dict):
++                    continue
++                chan = str(entry.get("channel_id") or "")
++                name = str(entry.get("channel_name") or "").lstrip("#")
++                if chan:
++                    out.append((chan, name))
++    except Exception:
++        pass
++    return out
++
++
+ def _apply_env_overrides(config: GatewayConfig) -> None:
+     """Apply environment variable overrides to config."""
+     
+@@ -1346,11 +1409,19 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+         # send Slack messages can use it without activating the gateway adapter.
+         config.platforms[Platform.SLACK].token = slack_token
+     slack_home = os.getenv("SLACK_HOME_CHANNEL")
++    slack_home_name = os.getenv("SLACK_HOME_CHANNEL_NAME", "")
++    if not slack_home:
++        # th-merge-07: the deploy retires the legacy SLACK_HOME_CHANNEL env in
++        # favour of the multi-account slack_home_channels.json (resolved from the
++        # fleet's configured home-channel name). Load the primary resolved channel
++        # so get_home_channel(SLACK) is populated and Hermes stops reporting
++        # "No home channel set".
++        slack_home, slack_home_name = _slack_home_from_resolved_file(slack_home_name)
+     if slack_home and Platform.SLACK in config.platforms:
+         config.platforms[Platform.SLACK].home_channel = HomeChannel(
+             platform=Platform.SLACK,
+             chat_id=slack_home,
+-            name=os.getenv("SLACK_HOME_CHANNEL_NAME", ""),
++            name=slack_home_name,
+             thread_id=os.getenv("SLACK_HOME_CHANNEL_THREAD_ID") or None,
+         )
+     
+diff --git a/gateway/platforms/slack.py b/gateway/platforms/slack.py
+index 6062594..13dad5a 100644
+--- a/gateway/platforms/slack.py
++++ b/gateway/platforms/slack.py
+@@ -974,6 +974,61 @@ class SlackAdapter(BasePlatformAdapter):
+     def _status_key(team_id: str, chat_id: str) -> Any:
+         return (team_id, chat_id) if team_id else chat_id
+ 
++    def _remember_bounded_marker(
++        self,
++        markers: set,
++        marker: Optional[str],
++        max_size: int,
++    ) -> None:
++        if not marker:
++            return
++        markers.add(marker)
++        if len(markers) > max_size:
++            excess = len(markers) - max_size // 2
++            for old_marker in list(markers)[:excess]:
++                markers.discard(old_marker)
++
++    def _thread_markers(self, team_id: str, thread_ts: Optional[str]) -> List[str]:
++        if not thread_ts:
++            return []
++        return [self._thread_marker(team_id, str(thread_ts))]
++
++    def _remember_bot_thread_participation(
++        self,
++        team_id: str,
++        thread_ts: Optional[str],
++    ) -> None:
++        """Remember a Slack thread the gateway should keep routing to the bot."""
++        for marker in self._thread_markers(team_id, thread_ts):
++            self._remember_bounded_marker(self._bot_message_ts, marker, self._BOT_TS_MAX)
++
++    def _has_bot_thread_participation(
++        self,
++        team_id: str,
++        thread_ts: Optional[str],
++    ) -> bool:
++        return any(marker in self._bot_message_ts for marker in self._thread_markers(team_id, thread_ts))
++
++    def _remember_mentioned_thread(
++        self,
++        team_id: str,
++        thread_ts: Optional[str],
++    ) -> None:
++        """Remember a thread where the bot was directly addressed."""
++        for marker in self._thread_markers(team_id, thread_ts):
++            self._remember_bounded_marker(
++                self._mentioned_threads,
++                marker,
++                self._MENTIONED_THREADS_MAX,
++            )
++
++    def _has_mentioned_thread(
++        self,
++        team_id: str,
++        thread_ts: Optional[str],
++    ) -> bool:
++        return any(marker in self._mentioned_threads for marker in self._thread_markers(team_id, thread_ts))
++
+     async def send(
+         self,
+         chat_id: str,
+@@ -1033,18 +1088,10 @@ class SlackAdapter(BasePlatformAdapter):
+             # replies without requiring @mention.
+             sent_ts = last_result.get("ts") if last_result else None
+             if sent_ts:
+-                self._bot_message_ts.add(self._thread_marker(team_id, sent_ts))
+-                if team_id:
+-                    self._bot_message_ts.add(sent_ts)
++                self._remember_bot_thread_participation(team_id, sent_ts)
+                 # Also register the thread root so replies-to-my-replies work
+                 if thread_ts:
+-                    self._bot_message_ts.add(self._thread_marker(team_id, thread_ts))
+-                    if team_id:
+-                        self._bot_message_ts.add(thread_ts)
+-                if len(self._bot_message_ts) > self._BOT_TS_MAX:
+-                    excess = len(self._bot_message_ts) - self._BOT_TS_MAX // 2
+-                    for old_ts in list(self._bot_message_ts)[:excess]:
+-                        self._bot_message_ts.discard(old_ts)
++                    self._remember_bot_thread_participation(team_id, thread_ts)
+ 
+             return SendResult(
+                 success=True,
+@@ -1374,16 +1421,8 @@ class SlackAdapter(BasePlatformAdapter):
+ 
+     def _record_uploaded_file_thread(self, chat_id: str, thread_ts: Optional[str]) -> None:
+         """Treat successful file uploads as bot participation in a thread."""
+-        if not thread_ts:
+-            return
+         team_id = self._channel_team.get(chat_id, "")
+-        self._bot_message_ts.add(self._thread_marker(team_id, thread_ts))
+-        if team_id:
+-            self._bot_message_ts.add(thread_ts)
+-        if len(self._bot_message_ts) > self._BOT_TS_MAX:
+-            excess = len(self._bot_message_ts) - self._BOT_TS_MAX // 2
+-            for old_ts in list(self._bot_message_ts)[:excess]:
+-                self._bot_message_ts.discard(old_ts)
++        self._remember_bot_thread_participation(team_id, thread_ts)
+ 
+     def _is_retryable_upload_error(self, exc: Exception) -> bool:
+         """Best-effort detection for transient Slack upload failures."""
+@@ -2170,6 +2209,7 @@ class SlackAdapter(BasePlatformAdapter):
+             event.get("team")
+             or event.get("team_id")
+             or assistant_meta.get("team_id", "")
++            or self._channel_team.get(channel_id, "")
+         )
+ 
+         # Track which workspace owns this channel
+@@ -2223,14 +2263,11 @@ class SlackAdapter(BasePlatformAdapter):
+             elif self._slack_strict_mention() and not is_mentioned:
+                 return  # Strict mode: ignore until @-mentioned again
+             elif not is_mentioned:
+-                event_thread_marker = self._thread_marker(team_id, event_thread_ts)
+-                reply_to_bot_thread = (
+-                    is_thread_reply and event_thread_marker in self._bot_message_ts
+-                )
+-                in_mentioned_thread = (
+-                    event_thread_ts is not None
+-                    and event_thread_marker in self._mentioned_threads
++                reply_to_bot_thread = is_thread_reply and self._has_bot_thread_participation(
++                    team_id,
++                    event_thread_ts,
+                 )
++                in_mentioned_thread = self._has_mentioned_thread(team_id, event_thread_ts)
+                 has_session = (
+                     is_thread_reply
+                     and self._has_active_session_for_thread(
+@@ -2250,12 +2287,8 @@ class SlackAdapter(BasePlatformAdapter):
+             # Skipped in strict mode: strict_mention=true bots must be
+             # re-mentioned every turn, so remembering the thread would
+             # defeat the feature (and re-enable agent-to-agent ack loops).
+-            if event_thread_ts and not self._slack_strict_mention():
+-                self._mentioned_threads.add(self._thread_marker(team_id, event_thread_ts))
+-                if len(self._mentioned_threads) > self._MENTIONED_THREADS_MAX:
+-                    to_remove = list(self._mentioned_threads)[:self._MENTIONED_THREADS_MAX // 2]
+-                    for t in to_remove:
+-                        self._mentioned_threads.discard(t)
++            if not self._slack_strict_mention():
++                self._remember_mentioned_thread(team_id, event_thread_ts or thread_ts)
+ 
+         # When entering a thread for the first time (no existing session),
+         # fetch thread context so the agent understands the conversation.
+@@ -2486,6 +2519,9 @@ class SlackAdapter(BasePlatformAdapter):
+         if _should_react:
+             self._reacting_message_ids.add(ts)
+ 
++        if not is_dm and thread_ts and not self._slack_strict_mention():
++            self._remember_bot_thread_participation(team_id, thread_ts)
++
+         await self.handle_message(msg_event)
+ 
+     # ----- Approval button support (Block Kit) -----
+diff --git a/gateway/run.py b/gateway/run.py
+index 10c983c..0d00582 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -3619,10 +3619,6 @@ class GatewayRunner:
+         # ``RuntimeError: dictionary changed size during iteration`` —
+         # observed in a user report during gateway shutdown.
+         for platform, adapter in list(self.adapters.items()):
+-            home = self.config.get_home_channel(platform)
+-            if not home or not home.chat_id:
+-                continue
+-
+             platform_cfg = self.config.platforms.get(platform)
+             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
+                 logger.info(
+@@ -3631,38 +3627,44 @@ class GatewayRunner:
+                 )
+                 continue
+ 
+-            dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+-            if dedup_key in notified:
+-                continue
++            # One home channel per connected workspace (Slack can have several);
++            # notify each so every workspace sees the gateway going offline.
++            for home in self.config.get_home_channels(platform):
++                if not home or not home.chat_id:
++                    continue
+ 
+-            try:
+-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
+-                if metadata:
+-                    result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
+-                else:
+-                    result = await adapter.send(str(home.chat_id), msg)
+-                if result is not None and getattr(result, "success", True) is False:
++                dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
++                if dedup_key in notified:
++                    continue
++
++                try:
++                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
++                    if metadata:
++                        result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
++                    else:
++                        result = await adapter.send(str(home.chat_id), msg)
++                    if result is not None and getattr(result, "success", True) is False:
++                        logger.debug(
++                            "Failed to send shutdown notification to home channel %s:%s: %s",
++                            platform.value,
++                            home.chat_id,
++                            getattr(result, "error", "send returned success=False"),
++                        )
++                        continue
++
++                    notified.add(dedup_key)
++                    logger.info(
++                        "Sent shutdown notification to home channel %s:%s",
++                        platform.value,
++                        home.chat_id,
++                    )
++                except Exception as e:
+                     logger.debug(
+                         "Failed to send shutdown notification to home channel %s:%s: %s",
+                         platform.value,
+                         home.chat_id,
+-                        getattr(result, "error", "send returned success=False"),
++                        e,
+                     )
+-                    continue
+-
+-                notified.add(dedup_key)
+-                logger.info(
+-                    "Sent shutdown notification to home channel %s:%s",
+-                    platform.value,
+-                    home.chat_id,
+-                )
+-            except Exception as e:
+-                logger.debug(
+-                    "Failed to send shutdown notification to home channel %s:%s: %s",
+-                    platform.value,
+-                    home.chat_id,
+-                    e,
+-                )
+ 
+     def _finalize_shutdown_agents(self, active_agents: Dict[str, Any]) -> None:
+         for agent in active_agents.values():
+@@ -8988,7 +8990,13 @@ class GatewayRunner:
+         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
+             platform_name = source.platform.value
+             env_key = _home_target_env_var(platform_name)
+-            if not os.getenv(env_key):
++            # A home channel may be configured either via the legacy
++            # <PLATFORM>_HOME_CHANNEL env var OR via config (e.g. the mac deploy
++            # retires SLACK_HOME_CHANNEL in favour of slack_home_channels.json,
++            # which is applied to config.home_channel). Only prompt when neither
++            # is present, otherwise a correctly-configured fleet is told to run
++            # /sethome even though cron delivery already has a home channel.
++            if not os.getenv(env_key) and self.config.get_home_channel(source.platform) is None:
+                 # Slack dispatches all Hermes commands through a single
+                 # parent slash command `/hermes`; bare `/sethome` is not
+                 # registered and would fail with "app did not respond".
+@@ -14885,10 +14893,6 @@ class GatewayRunner:
+         message = "♻️ Gateway online — Hermes is back and ready."
+ 
+         for platform, adapter in self.adapters.items():
+-            home = self.config.get_home_channel(platform)
+-            if not home or not home.chat_id:
+-                continue
+-
+             platform_cfg = self.config.platforms.get(platform)
+             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
+                 logger.info(
+@@ -14897,38 +14901,44 @@ class GatewayRunner:
+                 )
+                 continue
+ 
+-            target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+-            if target in skipped or target in delivered:
+-                continue
++            # One home channel per connected workspace (Slack can have several);
++            # notify each so every workspace sees the gateway is back.
++            for home in self.config.get_home_channels(platform):
++                if not home or not home.chat_id:
++                    continue
+ 
+-            try:
+-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
+-                if metadata:
+-                    result = await adapter.send(str(home.chat_id), message, metadata=metadata)
+-                else:
+-                    result = await adapter.send(str(home.chat_id), message)
+-                if result is not None and getattr(result, "success", True) is False:
++                target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
++                if target in skipped or target in delivered:
++                    continue
++
++                try:
++                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
++                    if metadata:
++                        result = await adapter.send(str(home.chat_id), message, metadata=metadata)
++                    else:
++                        result = await adapter.send(str(home.chat_id), message)
++                    if result is not None and getattr(result, "success", True) is False:
++                        logger.warning(
++                            "Home-channel startup notification failed for %s:%s: %s",
++                            platform.value,
++                            home.chat_id,
++                            getattr(result, "error", "send returned success=False"),
++                        )
++                        continue
++
++                    delivered.add(target)
++                    logger.info(
++                        "Sent home-channel startup notification to %s:%s",
++                        platform.value,
++                        home.chat_id,
++                    )
++                except Exception as exc:
+                     logger.warning(
+                         "Home-channel startup notification failed for %s:%s: %s",
+                         platform.value,
+                         home.chat_id,
+-                        getattr(result, "error", "send returned success=False"),
++                        exc,
+                     )
+-                    continue
+-
+-                delivered.add(target)
+-                logger.info(
+-                    "Sent home-channel startup notification to %s:%s",
+-                    platform.value,
+-                    home.chat_id,
+-                )
+-            except Exception as exc:
+-                logger.warning(
+-                    "Home-channel startup notification failed for %s:%s: %s",
+-                    platform.value,
+-                    home.chat_id,
+-                    exc,
+-                )
+ 
+         return delivered
+ 
+diff --git a/tools/code_execution_tool.py b/tools/code_execution_tool.py
+index 40581e5..cdf28c3 100644
+--- a/tools/code_execution_tool.py
++++ b/tools/code_execution_tool.py
+@@ -66,6 +66,7 @@ SANDBOX_ALLOWED_TOOLS = frozenset([
+     "search_files",
+     "patch",
+     "terminal",
++    "embed",
+ ])
+ 
+ # Resource limit defaults (overridable via config.yaml → code_execution.*)
+@@ -253,6 +254,12 @@ _TOOL_STUBS = {
+         '"""Run a shell command (foreground only). Returns dict with "output" and "exit_code"."""',
+         '{"command": command, "timeout": timeout, "workdir": workdir}',
+     ),
++    "embed": (
++        "embed",
++        "text, model: str = None",
++        '"""Embed a string or list of strings via the fleet embedding model. Returns dict {model, dim, count, embeddings:[[float,...],...]}. Pair with centroid()/cosine_similarity()/nearest_neighbors() for memory/dream review."""',
++        '{"input": text, "model": model}',
++    ),
+ }
+ 
+ 
+@@ -329,6 +336,51 @@ def retry(fn, max_attempts=3, delay=2):
+                 time.sleep(delay * (2 ** attempt))
+     raise last_err
+ 
++
++# --- Vector math (numpy) for embeddings: review memories/dreams/concepts ------
++# Typical flow:
++#   e = embed(["concept a", "concept b", ...]); V = e["embeddings"]
++#   c = centroid(V); ranked = nearest_neighbors(c, V, k=3)
++# numpy is imported lazily so importing hermes_tools never fails without it.
++
++def _np():
++    try:
++        import numpy as _n
++    except ImportError as exc:  # pragma: no cover - guidance only
++        raise RuntimeError("numpy is required for vector math (pip install numpy)") from exc
++    return _n
++
++
++def centroid(vectors):
++    """Mean (centroid) of a list of embedding vectors. Returns a list of floats."""
++    return _np().asarray(vectors, dtype=float).mean(axis=0).tolist()
++
++
++def cosine_similarity(a, b):
++    """Cosine similarity of two vectors, a float in [-1, 1]."""
++    np = _np()
++    a = np.asarray(a, dtype=float)
++    b = np.asarray(b, dtype=float)
++    na = np.linalg.norm(a)
++    nb = np.linalg.norm(b)
++    if na == 0 or nb == 0:
++        return 0.0
++    return float(a.dot(b) / (na * nb))
++
++
++def nearest_neighbors(query, candidates, k=5):
++    """Rank candidate vectors by cosine similarity to query (highest first).
++    Returns [{"index": i, "score": float}, ...]; k<=0 returns all."""
++    np = _np()
++    q = np.asarray(query, dtype=float)
++    C = np.asarray(candidates, dtype=float)
++    denom = np.linalg.norm(q) * np.linalg.norm(C, axis=1)
++    sims = np.divide(C.dot(q), denom, out=np.zeros(C.shape[0]), where=denom > 0)
++    order = np.argsort(-sims)
++    if k and k > 0:
++        order = order[:k]
++    return [{"index": int(i), "score": float(sims[i])} for i in order]
++
+ '''
+ 
+ # ---- UDS transport (local backend) ---------------------------------------
+diff --git a/tools/todo_tool.py b/tools/todo_tool.py
+index 99d9ffe..d8ffb51 100644
+--- a/tools/todo_tool.py
++++ b/tools/todo_tool.py
+@@ -209,8 +209,12 @@ def check_todo_requirements() -> bool:
+ TODO_SCHEMA = {
+     "name": "todo",
+     "description": (
+-        "Manage your task list for the current session. Use for complex tasks "
+-        "with 3+ steps or when the user provides multiple tasks. "
++        "Manage your PRIVATE, session-local task list — in-memory scratch for "
++        "decomposing a complex request within THIS conversation. It is NOT shared: "
++        "other agents cannot see it and it is lost when the session ends. For work "
++        "that should be tracked, handed off, or visible to the rest of the fleet, use "
++        "the `tasks` tool (the shared hub ledger) instead. "
++        "Use for complex tasks with 3+ steps or when the user provides multiple tasks. "
+         "Call with no parameters to read the current list.\n\n"
+         "Writing:\n"
+         "- Provide 'todos' array to create/update items\n"
+diff --git a/toolsets.py b/toolsets.py
+index 10c5dbb..639b9e4 100644
+--- a/toolsets.py
++++ b/toolsets.py
+@@ -58,6 +58,10 @@ _HERMES_CORE_TOOLS = [
+     "cronjob",
+     # Cross-platform messaging (gated on gateway running via check_fn)
+     "send_message",
++    # Fleet awareness + inter-agent agentbus messaging (fleet-01): group view of
++    # what other agents are doing + quick agent-to-agent coordination. Gated on
++    # hub access via check_fn.
++    "fleet",
+     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
+     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+     # Kanban multi-agent coordination — only in schema when the agent is
