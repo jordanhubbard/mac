@@ -110,6 +110,7 @@ from mac.repository_hygiene import (
     normalize_cancellation_detail,
     repository_ref_lifecycle_for_transition,
 )
+from mac.env_config import resolve_hub_agent
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
 from mac.agent_state_service import AgentStateService
@@ -7977,13 +7978,10 @@ class ControlPlane:
         """
         if not _truthy_env("MAC_NOTIFIER_DRAIN_ON_HEARTBEAT", "1"):
             return
-        hub_agent = os.environ.get(
+        hub_agent = resolve_hub_agent(
             "MAC_NOTIFIER_DRAIN_HUB_AGENT",
-            os.environ.get(
-                "MAC_REVIEW_TICK_HUB_AGENT",
-                os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
-            ),
-        ).strip()
+            "MAC_REVIEW_TICK_HUB_AGENT",
+        )
         if not hub_agent:
             return
         if agent.name != hub_agent and agent.id != hub_agent:
@@ -8022,10 +8020,7 @@ class ControlPlane:
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):
             return
-        hub_agent = os.environ.get(
-            "MAC_REVIEW_TICK_HUB_AGENT",
-            os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT", ""),
-        ).strip()
+        hub_agent = resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT")
         if not hub_agent:
             return
         if agent.name != hub_agent and agent.id != hub_agent:

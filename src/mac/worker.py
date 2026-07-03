@@ -46,6 +46,7 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
     debug_terminal_output_payload,
 )
+from mac.env_config import resolve_hub_agent
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -5857,11 +5858,7 @@ def _ensure_worker_fleet_membership(
     if not tenant_id:
         return
     fleet_name = _fleet_name_from_env(tenant_id)
-    shared_services_manager = (
-        os.environ.get("MAC_SHARED_SERVICES_MANAGER_AGENT")
-        or os.environ.get("MAC_BEADS_BRIDGE_HUB_AGENT")
-        or ""
-    ).strip()
+    shared_services_manager = resolve_hub_agent("MAC_SHARED_SERVICES_MANAGER_AGENT")
     metadata = {
         "source": "mac-agent",
         "fleet": fleet_name,
