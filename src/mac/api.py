@@ -50,6 +50,7 @@ from mac.hermes_startup import build_hermes_startup_report
 from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
+from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
     RepositoryRefReconcilerConfig,
@@ -2939,20 +2940,28 @@ def create_app(
         cp,
         RepositoryRefReconcilerConfig.from_env(),
     )
+    # mac-backlog-groom: seed grooming tasks for opted-in repos going idle, so
+    # the fleet manufactures its own backlog instead of starving when the
+    # human/GitHub-issue queue drains. No-op until a project opts in via
+    # metadata["backlog_grooming"].
+    backlog_groomer = BacklogGroomer(cp, BacklogGroomerConfig.from_env())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         repository_ref_reconciler.start()
+        backlog_groomer.start()
         try:
             yield
         finally:
             repository_ref_reconciler.stop()
+            backlog_groomer.stop()
 
     app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.control_plane = cp
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
     app.state.repository_ref_reconciler = repository_ref_reconciler
+    app.state.backlog_groomer = backlog_groomer
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -3108,6 +3117,17 @@ def create_app(
             actor=body.actor,
             trigger="operator",
         )
+
+    @app.get("/backlog-groom/status")
+    def backlog_groom_status() -> Dict[str, Any]:
+        return backlog_groomer.status()
+
+    @app.post("/backlog-groom/run")
+    def backlog_groom_run(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return backlog_groomer.run_once(trigger="operator")
 
     @app.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:

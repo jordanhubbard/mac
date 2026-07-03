@@ -846,6 +846,10 @@ def build_mac_env(
         # of dispatching to a reviewer agent (whose per-node host+sandbox
         # environment was the fragility that stalled the autonomous loop).
         values.setdefault("MAC_REVIEW_HUB_VERIFY", "1")
+        # mac-backlog-groom: run the autonomous backlog groomer on the hub. It is
+        # a no-op for every project that has not opted in via
+        # metadata["backlog_grooming"], so enabling it by default is safe.
+        values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values
