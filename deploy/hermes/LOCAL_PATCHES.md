@@ -1,59 +1,58 @@
-# Local edits to the vendored Hermes tree (`src/mac/_hermes`)
+# Local delta of the vendored Hermes tree (`src/mac/_hermes`)
 
-`src/mac/_hermes` is a pinned snapshot of upstream (see `../../src/mac/_hermes/SNAPSHOT_PIN`).
-`scripts/vendor-hermes-snapshot.sh` re-vendors by copying **pristine upstream**
-at the pinned commit and then re-applying the `*.patch` files in this directory.
+`src/mac/_hermes` is a pinned snapshot of upstream (see
+`../../src/mac/_hermes/SNAPSHOT_PIN`). `scripts/vendor-hermes-snapshot.sh`
+reproduces it from **pristine upstream at the pinned commit** via three deltas,
+which together were validated to reproduce the committed tree **byte-for-byte**
+(a fresh pristine clone → all patches → prune → copy INCLUDE → remove dashboard
+bundles → copy overlay → `diff` clean):
 
-**Anything edited directly inside `_hermes` that is NOT captured as a `.patch`
-here will be silently lost on the next re-vendor.** The post-snapshot direct
-edits below are now captured as `post-snapshot-mac-fixes.patch` so the vendoring
-pipeline is idempotent again.
+1. **Patches** — `deploy/hermes/*.patch`, `git apply`-ed to the upstream tree in
+   alphabetical order. These are text-source edits to files that survive into
+   the vendored surface, so they ride on top of upstream and conflict loudly if
+   upstream moves.
+2. **Removals** — the pipeline deletes `plugins/*/dashboard/dist` (built
+   dashboard bundles that MAC does not vendor; upstream ships them, so a
+   re-vendor would otherwise reintroduce them).
+3. **Overlay** — `deploy/hermes/overlay/` holds MAC-**authored** files that are
+   not part of the upstream surface. `rm -rf "$DEST"` at the start of a re-vendor
+   drops them, so they are copied back in after the upstream copy.
 
 `tests/test_hermes_vendor_integrity.py` pins a content digest of the tree so any
-further drift is caught by CI rather than discovered after a re-vendor.
+future drift — a hand edit or a re-vendor — fails loudly rather than silently.
 
-## Direct edits made after the snapshot — captured in `post-snapshot-mac-fixes.patch`
+## Patch set
 
-| Commit | Summary | `_hermes` files touched |
-|--------|---------|--------------------------|
-| `1f62322` | Meter LLM usage per agent/task | `agent/agent_init.py` (X-MAC-{agent,task,lease} attribution headers — the fleet's billing-attribution mechanism) |
-| `88ee3da` | Fix Slack thread participant triggers | `gateway/platforms/slack.py` |
-| `e635c16` | Reconcile mac↔mac-dev ports | `agent/chat_completion_helpers.py`, `agent/tool_executor.py` |
-| `526d50e` | Reconcile mac↔mac-dev tree alignment | `agent/tool_executor.py`, `hermes_cli/main.py` |
+| Patch | Purpose |
+|-------|---------|
+| `disable-shutdown-chat-notices.patch` | (pre-existing) |
+| `mac-provider-decision.patch` | (pre-existing) |
+| `mac-runtime-context-prompt.patch` | (pre-existing) |
+| `multi-slack-mvp.patch` | (pre-existing) |
+| `post-snapshot-mac-fixes.patch` | **reconstructed** — the 10 text-source edits that had been made directly to the vendored tree without a patch (X-MAC billing-attribution headers in `agent/agent_init.py`, the Slack thread-trigger fix, reconciliation edits, and other de-personalization/runtime edits across `agent/`, `gateway/`, `cron/scheduler.py`, `tools/{code_execution,todo}_tool.py`, `toolsets.py`). Sorts last so it applies after `multi-slack-mvp.patch` (both touch `gateway/platforms/slack.py`). |
 
-### How the patch was reconstructed and validated
+## Overlay files (`deploy/hermes/overlay/`)
 
-The initial snapshot commit `48ac569` was itself produced by the vendor script
-(pristine upstream @ pin + the then-existing `deploy/hermes/*.patch`, pruned), so
-`git diff 48ac569 HEAD -- <these files>` **is** exactly the delta that must be
-re-applied on top of the existing patches. It was generated with upstream-rooted
-paths and validated to be well-formed and `-p1`-applicable, with its "after" side
-matching the current tree:
+MAC-authored, not in upstream — dropped by `rm -rf "$DEST"` on re-vendor unless
+copied back:
 
-```bash
-git diff --relative=src/mac/_hermes 48ac569 HEAD -- \
-  src/mac/_hermes/agent/agent_init.py \
-  src/mac/_hermes/agent/chat_completion_helpers.py \
-  src/mac/_hermes/agent/tool_executor.py \
-  src/mac/_hermes/gateway/platforms/slack.py \
-  src/mac/_hermes/hermes_cli/main.py \
-  > deploy/hermes/post-snapshot-mac-fixes.patch
+- `README.md` (the "this tree is vendored, re-vendor with the script" doc)
+- `plugins/image_gen/mac-hub/{__init__.py,plugin.yaml}` (the mac-hub image-gen plugin)
+- `plugins/image_gen/nvidia/{__init__.py,plugin.yaml}` (the NVIDIA image-gen plugin)
+- `tools/fleet_tool.py`, `tools/embedding_tool.py` (MAC agent tools)
 
-# validation (non-destructive): 'after' side must match current _hermes
-git apply --check -R -p1 --directory=src/mac/_hermes \
-  deploy/hermes/post-snapshot-mac-fixes.patch
-```
+## How the patch was reconstructed and validated
 
-**Ordering:** the vendor script applies `*.patch` in alphabetical (glob) order.
-`post-snapshot-mac-fixes.patch` sorts after `multi-slack-mvp.patch`, which is
-required because both touch `gateway/platforms/slack.py` and this patch's context
-is the post-`multi-slack-mvp` state.
+The reconstruction diffed the **real pipeline output** (pristine@pin + the
+existing patches, pruned to the vendored surface) against the committed tree —
+the initial-snapshot commit turned out **not** to be byte-identical to
+pristine+patches (de-personalization altered more files than the post-snapshot
+commits), so an earlier attempt that diffed against the snapshot commit was
+wrong and was discarded. `.vendor-check.sh` (temporary; not committed) performed
+the reconstruction and the end-to-end validation against a fresh network clone
+of pristine upstream. It printed `IDENTICAL`, i.e. the three deltas fully
+reproduce the committed `_hermes`.
 
-**Caveat (honest):** this was reconstructed against `48ac569` (the vendored
-snapshot), not against a fresh network clone of pristine upstream — which was
-unavailable in the environment where this was produced. It is exact under the
-assumption that `48ac569` equals pristine-at-pin + the existing patches for these
-files (which holds, since `48ac569` was produced by the vendor script). Before
-the next real re-vendor, run `scripts/vendor-hermes-snapshot.sh` once end-to-end
-and confirm the resulting tree matches the pinned digest in
-`tests/test_hermes_vendor_integrity.py`.
+Before the next pin bump, re-run `scripts/vendor-hermes-snapshot.sh --apply` end
+to end and confirm the resulting tree still matches the digest in
+`tests/test_hermes_vendor_integrity.py` (it will fail loudly if not).

@@ -333,6 +333,135 @@ index bbbd239..936deb7 100644
          if isinstance(function_result, str):
              result_preview = function_result if agent.verbose_logging else (
                  function_result[:200] if len(function_result) > 200 else function_result
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index a51ade8..8d4d55d 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -637,13 +637,15 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
+     from tools.send_message_tool import _send_to_platform
+     from gateway.config import load_gateway_config, Platform
+ 
+-    # Optionally wrap the content with a header/footer so the user knows this
+-    # is a cron delivery.  Wrapping is on by default; set cron.wrap_response: false
+-    # in config.yaml for clean output.
+-    wrap_response = True
++    # Optionally wrap the content with a header/footer identifying the cron job.
++    # Off by default: the boilerplate ("Cronjob Response: ... (job_id: ...)" +
++    # "To stop or manage this job ...") makes scheduled posts read as insincere,
++    # so cron output goes out as just the content. Set cron.wrap_response: true
++    # in config.yaml to re-enable the wrapper.
++    wrap_response = False
+     try:
+         user_cfg = load_config()
+-        wrap_response = user_cfg.get("cron", {}).get("wrap_response", True)
++        wrap_response = user_cfg.get("cron", {}).get("wrap_response", False)
+     except Exception:
+         pass
+ 
+diff --git a/gateway/config.py b/gateway/config.py
+index abc40d8..6c17e52 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -552,7 +552,27 @@ class GatewayConfig:
+         if config:
+             return config.home_channel
+         return None
+-    
++
++    def get_home_channels(self, platform: Platform) -> "List[HomeChannel]":
++        """All home channels for a platform — one per connected workspace.
++
++        Slack can be connected to several workspaces at once, each with its own
++        resolved home channel (slack_home_channels.json). Broadcast-style
++        deliveries (gateway online/offline notices) should reach every
++        workspace's home channel, not just the first. Other platforms have at
++        most the single configured home channel. The adapter routes each
++        ``send(channel_id)`` to the owning workspace via its channel→team map."""
++        if platform == Platform.SLACK:
++            homes = [
++                HomeChannel(platform=Platform.SLACK, chat_id=chan, name=name)
++                for chan, name in _slack_homes_from_resolved_file()
++                if chan
++            ]
++            if homes:
++                return homes
++        home = self.get_home_channel(platform)
++        return [home] if home and home.chat_id else []
++
+     def get_reset_policy(
+         self, 
+         platform: Optional[Platform] = None,
+@@ -1245,6 +1265,49 @@ def _validate_gateway_config(config: "GatewayConfig") -> None:
+                 pconfig.enabled = False
+ 
+ 
++def _slack_home_from_resolved_file(default_name: str = "") -> "tuple[str, str]":
++    """th-merge-07: read the primary resolved Slack home channel from
++    ``<hermes_home>/slack_home_channels.json`` (written by the deploy's
++    home-channel sync from the fleet's configured channel name). Returns
++    ``(channel_id, name)`` or ``("", default_name)`` if unavailable."""
++    try:
++        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
++        with open(path, "r", encoding="utf-8") as fh:
++            homes = json.load(fh)
++        if isinstance(homes, list) and homes:
++            entry = homes[0]
++            chan = str(entry.get("channel_id") or "")
++            name = str(entry.get("channel_name") or "").lstrip("#") or default_name
++            return chan, name
++    except Exception:
++        pass
++    return "", default_name
++
++
++def _slack_homes_from_resolved_file() -> "List[tuple[str, str]]":
++    """All resolved Slack home channels — one per connected workspace — from
++    ``<hermes_home>/slack_home_channels.json``. Returns ``[(channel_id, name), …]``
++    (empty on any failure). The single-home reader above keeps the first entry as
++    the primary; this is for broadcast deliveries that should reach every
++    workspace."""
++    out: "List[tuple[str, str]]" = []
++    try:
++        path = os.path.join(str(get_hermes_home()), "slack_home_channels.json")
++        with open(path, "r", encoding="utf-8") as fh:
++            homes = json.load(fh)
++        if isinstance(homes, list):
++            for entry in homes:
++                if not isinstance(entry, dict):
++                    continue
++                chan = str(entry.get("channel_id") or "")
++                name = str(entry.get("channel_name") or "").lstrip("#")
++                if chan:
++                    out.append((chan, name))
++    except Exception:
++        pass
++    return out
++
++
+ def _apply_env_overrides(config: GatewayConfig) -> None:
+     """Apply environment variable overrides to config."""
+     
+@@ -1346,11 +1409,19 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+         # send Slack messages can use it without activating the gateway adapter.
+         config.platforms[Platform.SLACK].token = slack_token
+     slack_home = os.getenv("SLACK_HOME_CHANNEL")
++    slack_home_name = os.getenv("SLACK_HOME_CHANNEL_NAME", "")
++    if not slack_home:
++        # th-merge-07: the deploy retires the legacy SLACK_HOME_CHANNEL env in
++        # favour of the multi-account slack_home_channels.json (resolved from the
++        # fleet's configured home-channel name). Load the primary resolved channel
++        # so get_home_channel(SLACK) is populated and Hermes stops reporting
++        # "No home channel set".
++        slack_home, slack_home_name = _slack_home_from_resolved_file(slack_home_name)
+     if slack_home and Platform.SLACK in config.platforms:
+         config.platforms[Platform.SLACK].home_channel = HomeChannel(
+             platform=Platform.SLACK,
+             chat_id=slack_home,
+-            name=os.getenv("SLACK_HOME_CHANNEL_NAME", ""),
++            name=slack_home_name,
+             thread_id=os.getenv("SLACK_HOME_CHANNEL_THREAD_ID") or None,
+         )
+     
 diff --git a/gateway/platforms/slack.py b/gateway/platforms/slack.py
 index 6062594..13dad5a 100644
 --- a/gateway/platforms/slack.py
@@ -490,16 +619,297 @@ index 6062594..13dad5a 100644
          await self.handle_message(msg_event)
  
      # ----- Approval button support (Block Kit) -----
-diff --git a/hermes_cli/main.py b/hermes_cli/main.py
-index d053d18..27105c5 100644
---- a/hermes_cli/main.py
-+++ b/hermes_cli/main.py
-@@ -8761,7 +8761,7 @@ def _ensure_fhs_path_guard() -> None:
-     """Ensure /usr/local/bin is on PATH for RHEL-family root non-login shells.
+diff --git a/gateway/run.py b/gateway/run.py
+index 10c983c..0d00582 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -3619,10 +3619,6 @@ class GatewayRunner:
+         # ``RuntimeError: dictionary changed size during iteration`` —
+         # observed in a user report during gateway shutdown.
+         for platform, adapter in list(self.adapters.items()):
+-            home = self.config.get_home_channel(platform)
+-            if not home or not home.chat_id:
+-                continue
+-
+             platform_cfg = self.config.platforms.get(platform)
+             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
+                 logger.info(
+@@ -3631,38 +3627,44 @@ class GatewayRunner:
+                 )
+                 continue
  
-     Mirrors the post-symlink probe added to ``scripts/install.sh`` so that
--    existing FHS-layout root installs on RHEL/CentOS/Hosta/Alma 8+ get
-+    existing FHS-layout root installs on RHEL/CentOS/Rocky/Alma 8+ get
-     repaired on ``hermes update`` without requiring a reinstall.  The
-     installer's assumption that ``/usr/local/bin`` is on PATH for every
-     standard shell breaks on those distros in non-login interactive shells
+-            dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+-            if dedup_key in notified:
+-                continue
++            # One home channel per connected workspace (Slack can have several);
++            # notify each so every workspace sees the gateway going offline.
++            for home in self.config.get_home_channels(platform):
++                if not home or not home.chat_id:
++                    continue
+ 
+-            try:
+-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
+-                if metadata:
+-                    result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
+-                else:
+-                    result = await adapter.send(str(home.chat_id), msg)
+-                if result is not None and getattr(result, "success", True) is False:
++                dedup_key = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
++                if dedup_key in notified:
++                    continue
++
++                try:
++                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
++                    if metadata:
++                        result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
++                    else:
++                        result = await adapter.send(str(home.chat_id), msg)
++                    if result is not None and getattr(result, "success", True) is False:
++                        logger.debug(
++                            "Failed to send shutdown notification to home channel %s:%s: %s",
++                            platform.value,
++                            home.chat_id,
++                            getattr(result, "error", "send returned success=False"),
++                        )
++                        continue
++
++                    notified.add(dedup_key)
++                    logger.info(
++                        "Sent shutdown notification to home channel %s:%s",
++                        platform.value,
++                        home.chat_id,
++                    )
++                except Exception as e:
+                     logger.debug(
+                         "Failed to send shutdown notification to home channel %s:%s: %s",
+                         platform.value,
+                         home.chat_id,
+-                        getattr(result, "error", "send returned success=False"),
++                        e,
+                     )
+-                    continue
+-
+-                notified.add(dedup_key)
+-                logger.info(
+-                    "Sent shutdown notification to home channel %s:%s",
+-                    platform.value,
+-                    home.chat_id,
+-                )
+-            except Exception as e:
+-                logger.debug(
+-                    "Failed to send shutdown notification to home channel %s:%s: %s",
+-                    platform.value,
+-                    home.chat_id,
+-                    e,
+-                )
+ 
+     def _finalize_shutdown_agents(self, active_agents: Dict[str, Any]) -> None:
+         for agent in active_agents.values():
+@@ -8988,7 +8990,13 @@ class GatewayRunner:
+         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
+             platform_name = source.platform.value
+             env_key = _home_target_env_var(platform_name)
+-            if not os.getenv(env_key):
++            # A home channel may be configured either via the legacy
++            # <PLATFORM>_HOME_CHANNEL env var OR via config (e.g. the mac deploy
++            # retires SLACK_HOME_CHANNEL in favour of slack_home_channels.json,
++            # which is applied to config.home_channel). Only prompt when neither
++            # is present, otherwise a correctly-configured fleet is told to run
++            # /sethome even though cron delivery already has a home channel.
++            if not os.getenv(env_key) and self.config.get_home_channel(source.platform) is None:
+                 # Slack dispatches all Hermes commands through a single
+                 # parent slash command `/hermes`; bare `/sethome` is not
+                 # registered and would fail with "app did not respond".
+@@ -14885,10 +14893,6 @@ class GatewayRunner:
+         message = "♻️ Gateway online — Hermes is back and ready."
+ 
+         for platform, adapter in self.adapters.items():
+-            home = self.config.get_home_channel(platform)
+-            if not home or not home.chat_id:
+-                continue
+-
+             platform_cfg = self.config.platforms.get(platform)
+             if platform_cfg is not None and not platform_cfg.gateway_restart_notification:
+                 logger.info(
+@@ -14897,38 +14901,44 @@ class GatewayRunner:
+                 )
+                 continue
+ 
+-            target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
+-            if target in skipped or target in delivered:
+-                continue
++            # One home channel per connected workspace (Slack can have several);
++            # notify each so every workspace sees the gateway is back.
++            for home in self.config.get_home_channels(platform):
++                if not home or not home.chat_id:
++                    continue
+ 
+-            try:
+-                metadata = {"thread_id": home.thread_id} if home.thread_id else None
+-                if metadata:
+-                    result = await adapter.send(str(home.chat_id), message, metadata=metadata)
+-                else:
+-                    result = await adapter.send(str(home.chat_id), message)
+-                if result is not None and getattr(result, "success", True) is False:
++                target = (platform.value, str(home.chat_id), str(home.thread_id) if home.thread_id else None)
++                if target in skipped or target in delivered:
++                    continue
++
++                try:
++                    metadata = {"thread_id": home.thread_id} if home.thread_id else None
++                    if metadata:
++                        result = await adapter.send(str(home.chat_id), message, metadata=metadata)
++                    else:
++                        result = await adapter.send(str(home.chat_id), message)
++                    if result is not None and getattr(result, "success", True) is False:
++                        logger.warning(
++                            "Home-channel startup notification failed for %s:%s: %s",
++                            platform.value,
++                            home.chat_id,
++                            getattr(result, "error", "send returned success=False"),
++                        )
++                        continue
++
++                    delivered.add(target)
++                    logger.info(
++                        "Sent home-channel startup notification to %s:%s",
++                        platform.value,
++                        home.chat_id,
++                    )
++                except Exception as exc:
+                     logger.warning(
+                         "Home-channel startup notification failed for %s:%s: %s",
+                         platform.value,
+                         home.chat_id,
+-                        getattr(result, "error", "send returned success=False"),
++                        exc,
+                     )
+-                    continue
+-
+-                delivered.add(target)
+-                logger.info(
+-                    "Sent home-channel startup notification to %s:%s",
+-                    platform.value,
+-                    home.chat_id,
+-                )
+-            except Exception as exc:
+-                logger.warning(
+-                    "Home-channel startup notification failed for %s:%s: %s",
+-                    platform.value,
+-                    home.chat_id,
+-                    exc,
+-                )
+ 
+         return delivered
+ 
+diff --git a/tools/code_execution_tool.py b/tools/code_execution_tool.py
+index 40581e5..cdf28c3 100644
+--- a/tools/code_execution_tool.py
++++ b/tools/code_execution_tool.py
+@@ -66,6 +66,7 @@ SANDBOX_ALLOWED_TOOLS = frozenset([
+     "search_files",
+     "patch",
+     "terminal",
++    "embed",
+ ])
+ 
+ # Resource limit defaults (overridable via config.yaml → code_execution.*)
+@@ -253,6 +254,12 @@ _TOOL_STUBS = {
+         '"""Run a shell command (foreground only). Returns dict with "output" and "exit_code"."""',
+         '{"command": command, "timeout": timeout, "workdir": workdir}',
+     ),
++    "embed": (
++        "embed",
++        "text, model: str = None",
++        '"""Embed a string or list of strings via the fleet embedding model. Returns dict {model, dim, count, embeddings:[[float,...],...]}. Pair with centroid()/cosine_similarity()/nearest_neighbors() for memory/dream review."""',
++        '{"input": text, "model": model}',
++    ),
+ }
+ 
+ 
+@@ -329,6 +336,51 @@ def retry(fn, max_attempts=3, delay=2):
+                 time.sleep(delay * (2 ** attempt))
+     raise last_err
+ 
++
++# --- Vector math (numpy) for embeddings: review memories/dreams/concepts ------
++# Typical flow:
++#   e = embed(["concept a", "concept b", ...]); V = e["embeddings"]
++#   c = centroid(V); ranked = nearest_neighbors(c, V, k=3)
++# numpy is imported lazily so importing hermes_tools never fails without it.
++
++def _np():
++    try:
++        import numpy as _n
++    except ImportError as exc:  # pragma: no cover - guidance only
++        raise RuntimeError("numpy is required for vector math (pip install numpy)") from exc
++    return _n
++
++
++def centroid(vectors):
++    """Mean (centroid) of a list of embedding vectors. Returns a list of floats."""
++    return _np().asarray(vectors, dtype=float).mean(axis=0).tolist()
++
++
++def cosine_similarity(a, b):
++    """Cosine similarity of two vectors, a float in [-1, 1]."""
++    np = _np()
++    a = np.asarray(a, dtype=float)
++    b = np.asarray(b, dtype=float)
++    na = np.linalg.norm(a)
++    nb = np.linalg.norm(b)
++    if na == 0 or nb == 0:
++        return 0.0
++    return float(a.dot(b) / (na * nb))
++
++
++def nearest_neighbors(query, candidates, k=5):
++    """Rank candidate vectors by cosine similarity to query (highest first).
++    Returns [{"index": i, "score": float}, ...]; k<=0 returns all."""
++    np = _np()
++    q = np.asarray(query, dtype=float)
++    C = np.asarray(candidates, dtype=float)
++    denom = np.linalg.norm(q) * np.linalg.norm(C, axis=1)
++    sims = np.divide(C.dot(q), denom, out=np.zeros(C.shape[0]), where=denom > 0)
++    order = np.argsort(-sims)
++    if k and k > 0:
++        order = order[:k]
++    return [{"index": int(i), "score": float(sims[i])} for i in order]
++
+ '''
+ 
+ # ---- UDS transport (local backend) ---------------------------------------
+diff --git a/tools/todo_tool.py b/tools/todo_tool.py
+index 99d9ffe..d8ffb51 100644
+--- a/tools/todo_tool.py
++++ b/tools/todo_tool.py
+@@ -209,8 +209,12 @@ def check_todo_requirements() -> bool:
+ TODO_SCHEMA = {
+     "name": "todo",
+     "description": (
+-        "Manage your task list for the current session. Use for complex tasks "
+-        "with 3+ steps or when the user provides multiple tasks. "
++        "Manage your PRIVATE, session-local task list — in-memory scratch for "
++        "decomposing a complex request within THIS conversation. It is NOT shared: "
++        "other agents cannot see it and it is lost when the session ends. For work "
++        "that should be tracked, handed off, or visible to the rest of the fleet, use "
++        "the `tasks` tool (the shared hub ledger) instead. "
++        "Use for complex tasks with 3+ steps or when the user provides multiple tasks. "
+         "Call with no parameters to read the current list.\n\n"
+         "Writing:\n"
+         "- Provide 'todos' array to create/update items\n"
+diff --git a/toolsets.py b/toolsets.py
+index 10c5dbb..639b9e4 100644
+--- a/toolsets.py
++++ b/toolsets.py
+@@ -58,6 +58,10 @@ _HERMES_CORE_TOOLS = [
+     "cronjob",
+     # Cross-platform messaging (gated on gateway running via check_fn)
+     "send_message",
++    # Fleet awareness + inter-agent agentbus messaging (fleet-01): group view of
++    # what other agents are doing + quick agent-to-agent coordination. Gated on
++    # hub access via check_fn.
++    "fleet",
+     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
+     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+     # Kanban multi-agent coordination — only in schema when the agent is
