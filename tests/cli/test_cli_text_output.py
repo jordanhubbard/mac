@@ -28,6 +28,34 @@ def test_agent_one_liner():
     assert "idle" in out
 
 
+def test_agent_one_liner_shows_measured_hardware():
+    # Agents report resources.hardware (mac.hardware.v1) at registration; the
+    # human list line surfaces it so operators see real HW without --json.
+    agents = [
+        {"name": "bullwinkle", "status": "idle", "current_task_id": None,
+         "resources": {"hardware": {
+             "os": "linux", "arch": "x86_64", "cpu_count": 32, "memory_mb": 188647,
+             "accelerator": "cuda",
+             "gpu": {"name": "NVIDIA GeForce RTX 5090", "vram_mb": 32607}}}},
+        {"name": "rocky", "status": "busy", "current_task_id": "task_1",
+         "resources": {"hardware": {
+             "os": "darwin", "arch": "arm64", "cpu_count": 12, "memory_mb": 65536,
+             "accelerator": "metal", "gpu": {"name": "Apple M4 Pro"}}}},
+    ]
+    lines = cli._render_text(agents).splitlines()
+    assert "linux/x86_64" in lines[0] and "32c" in lines[0]
+    assert "184G" in lines[0] and "RTX 5090 32G" in lines[0]
+    assert "cuda" not in lines[0]  # implied by the NVIDIA gpu name
+    assert "darwin/arm64" in lines[1] and "M4 Pro" in lines[1] and "metal" in lines[1]
+    assert "▶ task_1" in lines[1]
+
+
+def test_agent_one_liner_without_hardware_shows_dash():
+    out = cli._render_text([{"name": "x", "status": "idle", "current_task_id": None}])
+    assert out.startswith("x")
+    assert "-" in out.split()
+
+
 def test_task_show_wrapper_is_compact():
     detail = {
         "task": {"id": "task_x", "state": "completed", "project": "mac", "title": "T", "attempt_count": 1},

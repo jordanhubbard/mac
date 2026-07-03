@@ -26,6 +26,12 @@ def run(command: list[str]) -> None:
 
 
 def main() -> int:
+    # --venv-only: build just the .venv (pip install -e .[dev]) without the
+    # dev-workflow tool checks. git/gh serve the human dev loop; verification
+    # hosts (worker venvs, sandboxes) need only the venv, and requiring gh
+    # there blocked contract-test bootstrap on the GKE pods.
+    venv_only = "--venv-only" in sys.argv[1:]
+    required = ("python3",) if venv_only else REQUIRED_COMMANDS
     if not (ROOT / "pyproject.toml").exists():
         print("bootstrap-project.py must be run from a mac checkout", file=sys.stderr)
         return 2
@@ -36,7 +42,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
+    missing = [command for command in required if shutil.which(command) is None]
     if missing:
         print(
             "missing required command(s): %s" % ", ".join(missing),
