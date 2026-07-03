@@ -482,6 +482,33 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    def update_project(
+        self,
+        name_or_id: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "metadata": metadata,
+                "description": description,
+                "status": status,
+                "actor": actor,
+            }
+        )
+        return _Dictish(
+            self._put("/projects/%s" % quote(name_or_id, safe=""), body)
+        )
+
+    def github_ingest_status(self) -> _Dictish:
+        return _Dictish(self._get("/github-ingest/status"))
+
+    def github_ingest_run(self) -> _Dictish:
+        return _Dictish(self._post("/github-ingest/run", {}))
+
     def onboard_repository(
         self,
         repository_url: str,
