@@ -74,8 +74,9 @@ Relevant environment:
 - `HERMES_HOME`: Hermes state directory; defaults to `~/.hermes`.
 - `ACC_DIR`: legacy ACC data directory for migration references; defaults to
   `~/.acc`.
-- `MAC_HERMES_AGENT_DIR` / `HERMES_AGENT_DIR`: upstream Hermes checkout to
-  inspect for the Slack account-file activation shim.
+- `MAC_HERMES_AGENT_DIR` / `HERMES_AGENT_DIR`: explicit external Hermes checkout
+  to inspect for legacy shim compatibility. Normal fleet deployment uses the
+  vendored runtime under `src/mac/_hermes`.
 - `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM=0`: disable the startup shim patcher
   when `MAC_HERMES_AGENT_DIR` points at an explicit checkout. It is enabled by
   default only for explicit checkout paths.
@@ -85,10 +86,11 @@ Relevant environment:
   mirrors it to `HERMES_INFERENCE_MODEL` so gateway conversations and worker
   oneshot execution use the same model on that host.
 - `MAC_HERMES_GATEWAY_PROVIDER`: provider selector for the per-agent model.
-  Fleets normally use `custom` with TokenHub as the shared OpenAI-compatible
-  endpoint.
-- `MAC_HERMES_GATEWAY_BASE_URL`: optional explicit base URL. Usually omitted
-  when `TOKENHUB_URL` is available because mac derives `${TOKENHUB_URL}/v1`.
+  Fleets normally use `custom` and send OpenAI-compatible requests through the
+  in-mac router.
+- `MAC_HERMES_GATEWAY_BASE_URL`: OpenAI-compatible base URL. Fleet deploy points
+  the hub at its local `/v1` router and spokes at the hub or configured wing
+  router.
 - `MAC_HERMES_STARTUP_CHECK=0`: disable the check.
 - `MAC_REQUIRE_HERMES_STARTUP_READY=1`: fail startup when warnings are present.
 - `MAC_HERMES_SLACK_HOME_CHANNEL_NAME`: Slack home-channel name, without `#`,
@@ -96,20 +98,11 @@ Relevant environment:
 - `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS=0`: preserve existing home-channel files
   without discovery.
 
-One current deployment caveat matters for an upstream-Hermes-based install:
-upstream `NousResearch/hermes-agent` enables Slack from `SLACK_BOT_TOKEN` or
-explicit Slack config. If a deployed agent relies only on
-`slack_accounts.json`, `mac` applies the account-file activation shim from
-ACC's `deploy/setup-hermes-venv.sh` when `MAC_HERMES_AGENT_DIR` explicitly
-points at the Hermes checkout. Without an explicit checkout path, `mac` only
-reports that the shim is missing and marks startup unready.
-
-The same explicit-checkout rule applies to the gateway runtime shim. When a
-per-agent model/provider/base URL is configured, `mac` patches upstream Hermes
-`gateway/run.py` so the gateway resolves runtime credentials from TokenHub or
-host-local secrets while preserving the agent-specific model. This is how mac
-keeps configured agents on different model families for review diversity
-without forking Hermes or storing provider secrets in Git.
+The default deployment runs MAC's vendored Hermes snapshot. The explicit-checkout
+shim settings above remain only for compatibility with an operator-managed
+external checkout. In the normal topology the gateway receives its model,
+provider, base URL, and hub-facing token from fleet deploy; upstream provider
+credentials remain on the hub behind the in-mac router.
 
 ## Creating Tasks
 
@@ -160,37 +153,42 @@ mac-hermes work-context <hermes_instance_id>
 mac-hermes tasks --state open
 ```
 
-Hermes can also use the same project bridge operators use. This keeps
-Beads-backed project registration, issue import, and repository polling as MAC
-state instead of hidden local Hermes state:
+Hermes can also use the same project and repository registry operators use.
+Projects and repository bindings are MAC state rather than hidden local Hermes
+state. Beads commands are migration-only and are not part of this workflow:
 
 ```python
+adapter.create_project("nanolang", status="active")
 adapter.list_projects()
-adapter.project_detail("repo-beads-nanolang")
+adapter.project_detail("nanolang")
 adapter.list_project_items()
 adapter.import_project_item(
-    "repo-beads-nanolang",
+    "github",
     "nanolang-42",
     "Update parser dependency",
-    project="repo-beads-nanolang",
+    project="nanolang",
     priority=10,
     dependencies=["task_parent"],
 )
-adapter.register_beads_repository("nanolang", "/Users/jordanh/Src/nanolang", project="repo-beads-nanolang")
-adapter.list_beads_repositories()
-adapter.poll_beads_repositories(repository="nanolang", force=True)
+adapter.register_project_repository(
+    "nanolang", "/Users/jordanh/Src/nanolang", project="nanolang"
+)
+adapter.list_project_repositories()
 ```
 
 ```bash
+mac project create nanolang --active
 mac project list
-mac project show repo-beads-nanolang
+mac project show nanolang
+mac bridge repository register nanolang /Users/jordanh/Src/nanolang --project=nanolang
+mac bridge repository repos
+mac-hermes create-project nanolang --status active
 mac-hermes projects
-mac-hermes project-detail repo-beads-nanolang
+mac-hermes project-detail nanolang
 mac-hermes project-items
-mac-hermes import-project-item repo-beads-nanolang nanolang-42 "Update parser dependency" --project repo-beads-nanolang --priority 10 --dependencies task_parent
-mac-hermes beads-repositories
-mac-hermes register-beads-repository nanolang /Users/jordanh/Src/nanolang --project repo-beads-nanolang
-mac-hermes poll-beads-repositories --repository nanolang --force
+mac-hermes import-project-item github nanolang-42 "Update parser dependency" --project nanolang --priority 10 --dependencies task_parent
+mac-hermes register-project-repository nanolang /Users/jordanh/Src/nanolang --project nanolang
+mac-hermes project-repositories
 ```
 
 Agent state is also MAC-owned. Hermes can inspect the same agent records and
@@ -206,8 +204,6 @@ adapter.agent_identity(agent_id)
 mac-hermes agents
 mac-hermes agent-detail <agent_id>
 mac-hermes agent-identity <agent_id>
-hgmac agents list
-hgmac agents identity <agent_id>
 ```
 
 Operators and Hermes agents can also request an auditable readiness proof for
@@ -268,15 +264,15 @@ is missing or incomplete, so a deployed Hermes agent cannot silently regress to
 treating tasks, projects, or agents as informal prompt text.
 
 The same runtime context now carries a direct-session capability contract. A
-Hermes session sees the MAC source workspace, the repository Beads contract,
-the `bd prime` workflow, the `mac`, `mac-hermes`, and `hgmac` CLIs, Git status
-and quality-gate commands, shell execution, writable workspace access, the
-`mac-hermes-task-executor` oneshot worker path, and the hub Firecrawl web-search
-affordance. Startup health and runtime proof reports treat those declarations
-as part of the MAC/Hermes bridge rather than as tribal knowledge from an
-operator shell. Startup proof also verifies the declared commands, workspace,
-project contract, quality gate, Hermes oneshot executor, workspace file access,
-and web-search environment are available in the Hermes runtime.
+Hermes session sees the MAC source workspace, the repository contract, the
+`mac` and `mac-hermes` CLIs, Git status and quality-gate commands, shell
+execution, writable workspace access, the `mac-hermes-task-executor` oneshot
+worker path, and the hub Firecrawl web-search affordance. Startup health and
+runtime proof reports treat those declarations as part of the MAC/Hermes bridge
+rather than as tribal knowledge from an operator shell. Startup proof also
+verifies the declared commands, workspace, project contract, quality gate,
+Hermes oneshot executor, workspace file access, and web-search environment are
+available in the Hermes runtime.
 
 Deployment also patches Hermes' prompt builder to load
 `mac-runtime-context.md` as a normal context source. That means gateway, CLI,

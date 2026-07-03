@@ -108,14 +108,15 @@ during migration. The recall API filters by `schema in (allowed)`.
 
 ## Embedding model
 
-**Decided: TokenHub-routed via the Hermes gateway.** mac already runs
-`mac-tokenhub.service` and `mac-hermes-gateway.service`. The vector
-writer (mem-07) calls TokenHub for embeddings rather than spinning up
-its own model server. This keeps the writer stateless and reuses the
-existing key + quota plumbing.
+**Implemented: OpenAI-compatible embedding endpoint.** The vector writer
+(mem-07) calls the endpoint selected by `MAC_MEMORY_EMBED_BASE_URL` or
+`OPENAI_BASE_URL` rather than running its own model server. Current fleet
+deployment points `OPENAI_BASE_URL` at MAC's in-mac router; the historical
+`tokenhub_embedding_*` helper names and `MAC_MEMORY_EMBED_BACKEND=tokenhub`
+value remain compatibility names for this generic protocol client.
 
 **Decided model: `text-embedding-3-small` (1536 dims).** Rationale:
-- Wide compatibility (TokenHub already routes it).
+- Wide compatibility with OpenAI-compatible embedding endpoints.
 - Smallest of the modern OpenAI-class models — keeps point size and
   HNSW memory tight.
 - "Small" beats "ada-002" on benchmarks at lower cost.

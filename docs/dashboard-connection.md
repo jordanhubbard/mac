@@ -69,8 +69,9 @@ HTTP proxy. If `request` is supplied, Electron main can bypass browser CORS and
 attach SSO/session credentials.
 
 Service navigation also goes through the bridge. That lets Electron open or
-reuse tunnels for Qdrant, Firecrawl, TokenHub, or future services without
-showing users port-forwarding details.
+reuse tunnels for Qdrant, Firecrawl, or other explicitly configured services
+without showing users port-forwarding details. Standalone TokenHub is not part
+of the default fleet topology.
 
 The packaged Electron app first reads secure profiles from
 `~/.mac/clients/*.yaml`, keeping the bearer in Electron main via the referenced

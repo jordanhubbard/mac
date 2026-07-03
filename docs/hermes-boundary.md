@@ -79,9 +79,9 @@ than importing `ControlPlane` or editing SQLite directly.
    worker agent.
 5. Workers produce typed evidence. Reviewers approve or request changes through
    the same durable review API.
-6. Publication or completion evidence closes the task. For Beads-backed work,
-   `mac` also mirrors key milestones into Beads comments prefixed
-   `mac-ledger v1` so the issue itself shows what happened.
+6. Publication or completion evidence closes the task. Legacy Beads data may be
+   imported through the one-way migration commands, but normal task lifecycle
+   updates remain in the MAC ledger and are not written back to Beads.
 7. Hermes reads the durable result and updates its own conversational/user
    memory when appropriate.
 
@@ -97,7 +97,9 @@ associated memory store.
 - Own `SOUL.md`, `USER.md`, or `MEMORY.md` semantics.
 - Store raw private conversation memory as task metadata.
 - Decide how a personality should speak to a user.
-- Become a model provider router.
+- Become a general-purpose external model marketplace. MAC's in-mac router is a
+  narrow fleet control-plane boundary for centralized credentials, routing, and
+  observability.
 
 The clean-room goal is a small, inspectable operational substrate that can serve
 many richer Hermes identities.

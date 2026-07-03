@@ -18,6 +18,12 @@ end to end on a live fleet, not just in unit tests.
 **Test counts:** 631 unit tests green throughout, 1 unrelated e2e
 deselected.
 
+> Historical topology note: this record correctly describes the TokenHub-backed
+> fleet exercised on 2026-05-30. Standalone TokenHub has since been retired from
+> the default deployment; the current vector writer uses the same
+> OpenAI-compatible interface through `OPENAI_BASE_URL`, normally MAC's in-mac
+> router. Do not use the commands below as current TokenHub deployment guidance.
+
 ## What was verified
 
 | Component | How | Result |

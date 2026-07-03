@@ -53,8 +53,8 @@ database variable is reintroduced.
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | no | Set `0` to disable startup patching of an explicit `MAC_HERMES_AGENT_DIR`. Default enabled only when the checkout path is explicit. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | no | Set `0` to disable startup patching of Hermes gateway model/runtime overrides. Default enabled for explicit checkout paths. |
 | `MAC_HERMES_GATEWAY_MODEL` | no | Per-agent model used by Hermes gateway conversations and mirrored to `HERMES_INFERENCE_MODEL` for oneshot worker execution. |
-| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet deploy uses `custom` so TokenHub remains the shared OpenAI-compatible endpoint. |
-| `MAC_HERMES_GATEWAY_BASE_URL` | no | Optional explicit OpenAI-compatible base URL. Usually omitted because deployed hosts derive TokenHub's `/v1` endpoint from `TOKENHUB_URL`. |
+| `MAC_HERMES_GATEWAY_PROVIDER` | no | Runtime provider for the per-agent model. Fleet deploy normally uses `custom` so Hermes sends OpenAI-compatible requests through MAC's router. |
+| `MAC_HERMES_GATEWAY_BASE_URL` | no | OpenAI-compatible base URL for Hermes. Fleet deploy writes the hub's local in-mac `/v1` endpoint on the hub and the hub or wing-router `/v1` endpoint on spokes. |
 | `MAC_HERMES_STARTUP_CHECK` | no | Set `0` to disable Hermes state and Slack startup checks. Enabled by default. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | no | Set `1` to fail `mac` startup when Hermes soul/memory/state references or Slack activation are not ready. |
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | no | Slack home-channel name, without `#`, used to write `~/.hermes/slack_home_channels.json` from `slack_accounts.json`. Empty skips discovery. |
@@ -465,7 +465,9 @@ that is the available process supervisor. The selected value is written to
 Fleet deploy mirrors each configured per-agent model into `ACC_HERMES_GATEWAY_MODEL`,
 `HERMES_INFERENCE_MODEL`, and `ACC_LLM_MODEL` so upstream Hermes gateway turns
 and `mac-hermes-task-executor` oneshot work use the same per-agent identity.
-Provider credentials remain in TokenHub or inherited host-local env files.
+Upstream provider credentials remain centralized on the hub, resolved by the
+in-mac router from MAC's encrypted vault or inherited host-local environment;
+spokes receive only their hub-facing MAC token.
 Git-host credentials are a separate execution concern: when
 `MAC_DEPLOY_GH_TOKEN` is present in the operator's `~/.mac/.env`, deploy writes
 it to each managed runtime as `GH_TOKEN`. Do not put the value in
@@ -991,14 +993,19 @@ failures as reviewer-routing exclusions; track and repair those separately.
 
 ## Dynamic model selection (opt-in, hub only)
 
-The hub can periodically pick the fleet's "powerhouse" models from a web search
-of what's currently leading, moderated by what the gateway can actually route,
-instead of a hard-coded pin. It is **opt-in and advisory** today — a selection
-is surfaced via `GET /model-selection/status` and a *swap* is recorded pending
-(routing does not change) until promoted, so it cannot regress the fleet. Not
-enabled by default: a production-readiness gap remains (the selection namespace
-does not yet match the router's routable model namespace, and the per-worker
-strength ladder is not distributed from the hub — tracked follow-up).
+The hub can periodically propose the fleet's "powerhouse" models from web-search
+mentions, filtered against the configured providers' models.dev catalogs. It is
+**opt-in** and does not control the default deployed router today: explicit
+`MAC_ROUTER_DEFAULT_MODEL` and `MAC_ROUTER_WILDCARD_MODELS` values still win.
+The first successful selection is stored as active because there is no incumbent;
+later dynamic changes remain pending unless an enabled eval gate approves them or
+an operator runs `mac fleet model-selection promote`.
+
+Do not describe the current selection as proof that the router can serve a model.
+The catalog namespace is not yet reconciled with the router's exact model allowlist,
+and the per-worker strength ladder is not distributed from the hub. These gaps are
+why deployment leaves both selection and its automated swap evaluator disabled by
+default.
 
 Environment variables (hub):
 
@@ -1007,7 +1014,7 @@ Environment variables (hub):
 | `MAC_MODEL_SELECT_ENABLED` | off | Run the weekly selection refresher. |
 | `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
 | `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
-| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Auto-gate a swap on a golden-set eval-drift check (adopt only if no regression); otherwise swaps stay pending for `mac fleet model-selection promote`. |
+| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac fleet model-selection promote`. |
 | `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSONL golden set of eval cases. |
 
 Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
@@ -1016,8 +1023,9 @@ ladder distribution lands).
 
 ## Known limitations
 
-- Dynamic model selection is advisory/opt-in and not yet wired to control
-  deployed routing (namespace + ladder-distribution gaps); see above.
+- Dynamic model selection is opt-in and does not override the explicit router
+  defaults installed by fleet deployment. Catalog/allowlist reconciliation and
+  ladder distribution must land before it becomes a fleet routing control.
 - SQLite topology is single-writer. Use the Kubernetes + Postgres
   topology for multi-replica deployments.
 - No built-in TLS. Put a reverse proxy in front.

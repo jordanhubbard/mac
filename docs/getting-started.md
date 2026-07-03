@@ -453,9 +453,10 @@ make setup
 make deploy HUB=horde
 ```
 
-MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. TokenHub,
-Qdrant, Firecrawl, the MAC API, worker services, and Hermes bridge files are
-bootstrapped as part of the fleet service picture.
+MAC state lives under `~/.mac`. Hermes state lives under `~/.hermes`. The
+in-mac LLM router, Qdrant, Firecrawl, the MAC API, worker services, and Hermes
+bridge files are bootstrapped as part of the fleet service picture. Standalone
+TokenHub is retired from the default fleet topology.
 
 Private GitHub HTTPS repositories require a credential on every host or task
 runner that performs Git work. Keep it in the host-local `~/.mac/.env` (mode
