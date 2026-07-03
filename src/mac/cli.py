@@ -511,6 +511,66 @@ def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
     _print(spec.to_dict())
 
 
+def cmd_fleet_backlog_groom_status(args: argparse.Namespace) -> None:
+    """Show the backlog groomer's config + last run report (hub read)."""
+    cp = _plane(args)
+    status = cp.backlog_groom_status()
+    _print(status.to_dict() if hasattr(status, "to_dict") else status)
+
+
+def cmd_fleet_backlog_groom_run(args: argparse.Namespace) -> None:
+    """Trigger one immediate grooming pass across opted-in idle repos."""
+    cp = _plane(args)
+    report = cp.backlog_groom_run()
+    _print(report.to_dict() if hasattr(report, "to_dict") else report)
+
+
+def _backlog_project_metadata(cp: Any, project: str) -> Dict[str, Any]:
+    """Return a project record's mutable metadata dict, or error out.
+
+    Backlog grooming targets onboarded projects (those with a ProjectRecord and
+    a repository_url); a derived, record-less project cannot be opted in.
+    """
+    detail = cp.get_project(project)
+    data = detail.to_dict() if hasattr(detail, "to_dict") else detail
+    record = data.get("record") if isinstance(data, dict) else None
+    if not record:
+        raise SystemExit(
+            "mac: project %r has no project record (onboard it first: "
+            "`mac onboard <repo-url> --project %s`)" % (project, project)
+        )
+    metadata = record.get("metadata")
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def cmd_fleet_backlog_groom_enable(args: argparse.Namespace) -> None:
+    """Opt a project into autonomous backlog grooming."""
+    cp = _plane(args)
+    metadata = _backlog_project_metadata(cp, args.project)
+    block = dict(metadata.get("backlog_grooming") or {})
+    block["enabled"] = True
+    if args.backlog_size is not None:
+        block["backlog_size"] = args.backlog_size
+    if args.min_ready is not None:
+        block["min_ready"] = args.min_ready
+    if args.capability:
+        block["default_capabilities"] = list(args.capability)
+    metadata["backlog_grooming"] = block
+    cp.update_project(args.project, metadata=metadata, actor="human")
+    _print({"project": args.project, "backlog_grooming": block})
+
+
+def cmd_fleet_backlog_groom_disable(args: argparse.Namespace) -> None:
+    """Opt a project out of autonomous backlog grooming."""
+    cp = _plane(args)
+    metadata = _backlog_project_metadata(cp, args.project)
+    block = dict(metadata.get("backlog_grooming") or {})
+    block["enabled"] = False
+    metadata["backlog_grooming"] = block
+    cp.update_project(args.project, metadata=metadata, actor="human")
+    _print({"project": args.project, "backlog_grooming": block})
+
+
 def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     """Per-agent coding-CLI auth status from the agents' heartbeat reports.
 
@@ -4159,6 +4219,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    # mac-backlog-groom: autonomous per-repo backlog grooming — status, manual
+    # run, and per-project opt-in.
+    fleet_groom = fleet.add_parser(
+        "backlog-groom",
+        help="autonomous backlog grooming: status, manual run, per-project opt-in",
+    )
+    groom_sub = fleet_groom.add_subparsers(dest="backlog_groom_command")
+    groom_sub.required = True
+    _set(cmd_fleet_backlog_groom_status, groom_sub.add_parser(
+        "status", help="show groomer config + last run report (hub read)"))
+    _set(cmd_fleet_backlog_groom_run, groom_sub.add_parser(
+        "run", help="trigger one immediate grooming pass across opted-in idle repos"))
+    groom_enable = groom_sub.add_parser("enable", help="opt a project into backlog grooming")
+    groom_enable.add_argument("project", help="project name (must be onboarded)")
+    groom_enable.add_argument("--backlog-size", type=int, default=None,
+                              help="number of backlog items to request per grooming pass")
+    groom_enable.add_argument("--min-ready", type=int, default=None,
+                              help="only groom when the project has fewer than N pending tasks")
+    groom_enable.add_argument("--capability", action="append", default=None,
+                              help="required capability to stamp on the grooming task; repeatable")
+    _set(cmd_fleet_backlog_groom_enable, groom_enable)
+    groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
+    groom_disable.add_argument("project", help="project name")
+    _set(cmd_fleet_backlog_groom_disable, groom_disable)
 
     fleet_ssh_spec = fleet.add_parser(
         "ssh-spec",

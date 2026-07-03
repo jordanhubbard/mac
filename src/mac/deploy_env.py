@@ -851,6 +851,10 @@ def build_mac_env(
         # metadata["github_issue_ingest"], so enabling it by default is safe;
         # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
         values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
+        # mac-backlog-groom: run the autonomous backlog groomer on the hub. It is
+        # a no-op for every project that has not opted in via
+        # metadata["backlog_grooming"], so enabling it by default is safe.
+        values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values

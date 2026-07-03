@@ -1380,6 +1380,7 @@ edges:
             "actor": "operator",
         },
         ("POST", "/github-ingest/run"): {},
+        ("POST", "/backlog-groom/run"): {},
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,

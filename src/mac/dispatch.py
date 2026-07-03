@@ -509,6 +509,12 @@ class RemoteDispatch:
     def github_ingest_run(self) -> _Dictish:
         return _Dictish(self._post("/github-ingest/run", {}))
 
+    def backlog_groom_status(self) -> _Dictish:
+        return _Dictish(self._get("/backlog-groom/status"))
+
+    def backlog_groom_run(self) -> _Dictish:
+        return _Dictish(self._post("/backlog-groom/run", {}))
+
     def onboard_repository(
         self,
         repository_url: str,
