@@ -1381,6 +1381,7 @@ edges:
         },
         ("POST", "/github-ingest/run"): {},
         ("POST", "/backlog-groom/run"): {},
+        ("POST", "/model-selection/refresh"): {},
         ("POST", "/observability/metrics"): {
             "name": "route.metric",
             "value": 1.0,

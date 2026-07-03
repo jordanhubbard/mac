@@ -855,6 +855,11 @@ def build_mac_env(
         # a no-op for every project that has not opted in via
         # metadata["backlog_grooming"], so enabling it by default is safe.
         values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
+        # mac-model-select: periodically choose the fleet's powerhouse models
+        # from a web search of what's leading, moderated by what the gateway can
+        # route (vs a hard-coded pin). Falls back to the configured default on
+        # any discovery failure, so enabling it by default is safe.
+        values.setdefault("MAC_MODEL_SELECT_ENABLED", "1")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values

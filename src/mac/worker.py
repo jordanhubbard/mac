@@ -4747,16 +4747,33 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
 def _task_model_override(task: JsonDict) -> str:
     """Per-task LLM model override from task metadata.
 
-    ``metadata.model`` (flat, what ``mac task create --model`` writes) wins;
-    ``metadata.runtime.model`` is honored for callers that already organize
-    runtime knobs under the runtime bag. Empty string when the task does not
-    pin a model — the agent's fleet default applies."""
+    ``metadata.model`` (flat, what ``mac task create --model`` writes) wins —
+    the by-name override that lets a task pick a faster/cheaper model directly.
+    ``metadata.model_strength`` (int 1..10) is the name-decoupled alternative:
+    1 = cheapest/weakest, 10 = strongest, resolved to a concrete available model
+    via the persisted strength ladder (so the task stays decoupled from model
+    names as they churn). ``metadata.runtime.model`` is honored last. Empty
+    string when the task pins nothing — the agent's fleet default applies."""
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
     value = str(metadata.get("model") or "").strip()
     if value:
         return value[:256]
+    strength = metadata.get("model_strength")
+    if strength is None and isinstance(metadata.get("runtime"), dict):
+        strength = metadata["runtime"].get("model_strength")
+    if strength is not None and str(strength).strip():
+        try:
+            from mac.model_selection import resolve_strength_from_selection
+
+            resolved = resolve_strength_from_selection(int(strength))
+            if resolved:
+                return resolved[:256]
+        except (TypeError, ValueError):
+            pass
+        except Exception:  # noqa: BLE001 - strength resolution is best-effort.
+            pass
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
         return str(runtime.get("model") or "").strip()[:256]

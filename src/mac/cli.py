@@ -1055,9 +1055,17 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         metadata["no_decompose"] = True
     model = str(getattr(args, "model", "") or "").strip()
     if model:
-        # Per-task LLM pin: worker exports MAC_TASK_MODEL to the executor,
-        # which maps it to the runtime/CLI model flag for this run only.
+        # Per-task LLM pin by NAME: worker exports MAC_TASK_MODEL to the
+        # executor, which maps it to the runtime/CLI model flag for this run.
         metadata["model"] = model
+    strength = getattr(args, "model_strength", None)
+    if strength is not None:
+        # Name-decoupled pin: 1 = cheapest/weakest .. 10 = strongest. Resolved
+        # to a concrete available model at run time via the strength ladder, so
+        # the task stays valid as model names churn. --model wins if both given.
+        if not 1 <= int(strength) <= 10:
+            raise MACError("--model-strength must be an integer 1..10")
+        metadata["model_strength"] = int(strength)
     kind = normalize_deliverable_kind(getattr(args, "kind", ""))
     if kind == REPORT_DELIVERABLE:
         # Non-code deliverable: the fleet won't demand a repo diff/pushed
@@ -3675,9 +3683,18 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--model",
         default="",
-        help="pin the LLM model for THIS task only (e.g. a cheaper model for a "
-        "simple task or a stronger one for complex work); agents pass it to "
+        help="pin the LLM model BY NAME for THIS task only (e.g. a cheaper model "
+        "for a simple task or a stronger one for complex work); agents pass it to "
         "their runtime/coding CLI and llm.route records it per completion",
+    )
+    create.add_argument(
+        "--model-strength",
+        type=int,
+        default=None,
+        metavar="1..10",
+        help="pin the model by STRENGTH instead of name: 1 = cheapest/weakest .. "
+        "10 = strongest/most expensive. Resolved to a concrete available model at "
+        "run time, so it stays valid as model names change. --model wins if both.",
     )
     create.add_argument("--actor", default="human")
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
