@@ -9,7 +9,9 @@ NPM ?= npm
 UV ?= uv
 CODEGRAPH ?= codegraph
 IDE_DIR ?= ide
-IDE_API_URL ?= http://127.0.0.1:8789
+IDE_API_URL ?=
+IDE_AUTH ?= auto
+IDE_PROFILE ?=
 IDE_FLEET ?=
 IDE_HOST ?= 127.0.0.1
 IDE_PORT ?= 5273
@@ -36,7 +38,7 @@ help: ## Show the supported local build, install, run, test, and cleanup command
 		'' \
 		'  make install       Install/link the CLI and prepare the canonical Fleet IDE' \
 		'  make build         Build the CLI wheel and canonical Fleet IDE' \
-		'  make run-gui       Run the Fleet IDE (IDE_API_URL=http://127.0.0.1:8789)' \
+		'  make run-gui       Run the Fleet IDE using the active mac login profile' \
 		'  make test          Run the hermetic contract test suite' \
 		'  make clean         Remove generated build artifacts (keep installed dependencies)' \
 		'  make distclean     Also remove .venv and JavaScript dependencies' \
@@ -73,7 +75,7 @@ install: install-cli install-gui ## Install the CLI and canonical Fleet IDE from
 	@printf '%s\n' \
 		'Installed MAC CLI + Fleet IDE.' \
 		'  CLI:  mac --help' \
-		'  GUI:  make run-gui IDE_API_URL=http://127.0.0.1:8789'
+		'  GUI:  mac login && make run-gui'
 
 install-cli: require-python codegraph-sync link-cli ## Create the Python environment and link MAC commands into ~/.local/bin.
 	@echo "CLI installed from $(abspath $(VENV))"
@@ -231,26 +233,19 @@ cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 
 ide-install: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE dependencies.
 
-ide-run ide-dev: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the Fleet IDE development server.
-	cd $(IDE_DIR) && \
+ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the Fleet IDE development server.
+	@set -a; \
 	if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
-	token="$${IDE_TOKEN:-$${VITE_MAC_TOKEN:-}}"; \
-	token_source="$${IDE_TOKEN:+IDE_TOKEN}"; \
-	if [ -z "$$token_source" ] && [ -n "$${VITE_MAC_TOKEN:-}" ]; then token_source="VITE_MAC_TOKEN"; fi; \
-	fleet="$(IDE_FLEET)"; \
-	if [ -z "$$fleet" ]; then fleet="$${MAC_FLEET:-}"; fi; \
-	if [ -z "$$token" ] && [ -n "$$fleet" ]; then \
-		suffix="$$(printf '%s' "$$fleet" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$$//')"; \
-		if [ -n "$$suffix" ]; then \
-			key="MAC_API_TOKEN__$$suffix"; \
-			candidate="$$(printenv "$$key" 2>/dev/null || true)"; \
-			if [ -n "$$candidate" ]; then token="$$candidate"; token_source="$$key"; fi; \
-		fi; \
-	fi; \
-	if [ -z "$$token" ] && [ -n "$${MAC_DEPLOY_HUB_TOKEN:-}" ]; then token="$${MAC_DEPLOY_HUB_TOKEN}"; token_source="MAC_DEPLOY_HUB_TOKEN"; fi; \
-	if [ -z "$$token" ] && [ -n "$${MAC_API_TOKEN:-}" ]; then token="$${MAC_API_TOKEN}"; token_source="MAC_API_TOKEN"; fi; \
-	if [ -n "$$token_source" ]; then printf 'IDE auth token source: %s\n' "$$token_source"; else printf 'IDE auth token source: none (paste a token in the browser)\n'; fi; \
-	MAC_API_URL="$(IDE_API_URL)" VITE_MAC_TOKEN="$$token" $(NPM) run dev -- --host $(IDE_HOST) --port $(IDE_PORT)
+	PYTHONPATH="$(abspath src)" \
+	IDE_DIR="$(abspath $(IDE_DIR))" \
+	IDE_API_URL="$(IDE_API_URL)" \
+	IDE_AUTH="$(IDE_AUTH)" \
+	IDE_PROFILE="$(IDE_PROFILE)" \
+	IDE_FLEET="$(IDE_FLEET)" \
+	IDE_HOST="$(IDE_HOST)" \
+	IDE_PORT="$(IDE_PORT)" \
+	NPM="$(NPM)" \
+	"$(PYTHON)" -m mac.ide_launcher
 
 ide-check: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE.
 	cd $(IDE_DIR) && $(NPM) run typecheck

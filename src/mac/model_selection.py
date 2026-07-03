@@ -122,9 +122,12 @@ def model_strength_ladder(
                 cost = cost_lookup(mid)
             except Exception:  # noqa: BLE001
                 cost = None
-        # (has_cost, cost, name_tier, id) — models with known cost sort by cost;
-        # the rest fall back to name tier. All ascending = weakest first.
-        return (0 if cost is None else 1, cost if cost is not None else 0.0, _name_tier(mid), mid)
+        # name_tier is the PRIMARY signal so an unknown-cost strong model (e.g.
+        # an Opus with no catalog price) is not sorted to strength 1 — the
+        # previous (has_cost, cost, ...) key clustered every unpriced model at
+        # the weak end regardless of capability. Cost refines ordering WITHIN a
+        # tier. Ascending = weakest first.
+        return (_name_tier(mid), cost if cost is not None else 0.0, mid)
 
     return sorted(models, key=key)
 
@@ -150,10 +153,11 @@ def _models_dev_cost(model_id: str) -> Optional[float]:
 
     The real catalog API is ``get_model_info(provider_id, model_id)`` and the
     field is ``cost_output`` (``get_model_capabilities(model_id)`` — the previous
-    call — is the wrong API and carries no cost). Ids may be provider-prefixed
-    (``provider/model`` from available_models_from_providers); parse the provider
-    and use the bare model id. Returns None (=> name-tier ladder fallback) when
-    unavailable.
+    call — is the wrong API and carries no cost). Ids are normally the router's
+    native bare form (``gpt-5-2``), but may carry provider path segments
+    (``nvidia/meta/llama``); we try every provider-boundary split plus a bare
+    fallback across common providers. Returns None (=> name-tier ladder
+    fallback) when unavailable.
     """
     try:
         from mac.hermes_vendor import ensure_on_path
@@ -166,12 +170,19 @@ def _models_dev_cost(model_id: str) -> Optional[float]:
     # Candidate (provider, model) splits: the leading segment as provider with
     # the rest as the model, plus a bare fallback across common providers.
     candidates: List[Tuple[str, str]] = []
-    if "/" in mid:
-        head, _, tail = mid.partition("/")
-        candidates.append((head, tail.rsplit("/", 1)[-1]))
-    bare = mid.rsplit("/", 1)[-1]
+    segments = [s for s in mid.split("/") if s]
+    # Try every provider-boundary split, keeping the FULL remainder as the model
+    # id (so nvidia/meta/llama -> (nvidia, "meta/llama") and (meta, "llama"),
+    # not the previous (nvidia, "llama") which dropped the intermediate path).
+    for i in range(len(segments) - 1):
+        candidates.append((segments[i], "/".join(segments[i + 1:])))
+        candidates.append((segments[i], segments[-1]))
+    bare = segments[-1] if segments else mid
     for provider in ("anthropic", "openai", "google", "xai", "deepseek", "meta", "mistral", "qwen"):
         candidates.append((provider, bare))
+    # De-dup, preserve order.
+    seen_c: set = set()
+    candidates = [c for c in candidates if not (c in seen_c or seen_c.add(c))]
     for provider, model in candidates:
         try:
             info = get_model_info(provider, model)
@@ -315,34 +326,61 @@ def discover_via_web(
     return results
 
 
-def available_models_from_providers(providers: Iterable[str]) -> List[str]:
-    """Concrete agentic model ids the gateway can route to, per the fleet's
-    configured providers, via the models.dev catalog. Empty on any failure.
+def available_models_from_providers(providers: Iterable[Any]) -> List[str]:
+    """The exact model ids the router can serve AND the upstream will accept.
 
-    Ids are returned provider-prefixed (``provider/model``) so the provider is
-    recoverable downstream (cost lookup needs it) — the vendored catalog's
-    ``list_agentic_models`` returns bare ids per provider.
+    ``providers`` may be ``provider_router.Provider`` objects (allowlist-aware,
+    the production path) or bare provider-name strings (legacy — treated as
+    wildcard). Ids are returned in the router's NATIVE namespace, NOT
+    provider-prefixed:
+
+    * A provider with an explicit ``models=`` allowlist contributes those ids
+      verbatim — they are exactly what ``ProviderRouter._serves`` matches and
+      what the upstream API expects.
+    * A wildcard (``models=*``) provider serves any id, so its offerings are
+      enumerated from the models.dev catalog as the catalog's own bare ids.
+
+    The previous ``provider/model`` prefixing was wrong on both counts: an
+    explicit allowlist rejected the prefixed id at ``_serves``, and a wildcard
+    provider forwarded ``openai/gpt-5-2`` to the upstream, which only knows
+    ``gpt-5-2``. Empty on any failure — the caller falls back.
     """
     out: List[str] = []
-    try:
-        # The vendored Hermes catalog is only importable after its path is set
-        # up; without this the import raises ModuleNotFoundError and the whole
-        # selection silently degrades to [] (the fleet never sees any models).
-        from mac.hermes_vendor import ensure_on_path
-
-        ensure_on_path()
-        from mac._hermes.agent.models_dev import list_agentic_models
-    except Exception:  # noqa: BLE001 - catalog optional; caller falls back.
-        return out
-    for provider in providers or []:
-        p = str(provider)
-        try:
-            for mid in list_agentic_models(p):
-                out.append("%s/%s" % (p, mid))
-        except Exception:  # noqa: BLE001
+    wildcard_providers: List[str] = []
+    for entry in providers or []:
+        name = getattr(entry, "name", None)
+        models = getattr(entry, "models", None)
+        if name is None:
+            # Legacy bare-name string: no allowlist known -> enumerate via catalog.
+            wildcard_providers.append(str(entry))
             continue
+        if models and "*" not in tuple(models):
+            # Explicit allowlist: these ARE the routable+native ids.
+            out.extend(str(m) for m in models if str(m).strip())
+        else:
+            wildcard_providers.append(str(name))
+
+    if wildcard_providers:
+        try:
+            # The vendored Hermes catalog is only importable after its path is
+            # set up; without this the import raises ModuleNotFoundError and the
+            # wildcard providers silently contribute nothing.
+            from mac.hermes_vendor import ensure_on_path
+
+            ensure_on_path()
+            from mac._hermes.agent.models_dev import list_agentic_models
+        except Exception:  # noqa: BLE001 - catalog optional; caller falls back.
+            list_agentic_models = None
+        if list_agentic_models is not None:
+            for p in wildcard_providers:
+                try:
+                    for mid in list_agentic_models(p):
+                        out.append(str(mid))  # native bare id, NOT prefixed
+                except Exception:  # noqa: BLE001
+                    continue
+
     seen: set = set()
-    return [m for m in out if not (m in seen or seen.add(m))]
+    return [m for m in out if m.strip() and not (m in seen or seen.add(m))]
 
 
 # --------------------------------------------------------------------------- #
@@ -350,6 +388,12 @@ def available_models_from_providers(providers: Iterable[str]) -> List[str]:
 # --------------------------------------------------------------------------- #
 
 _log = logging.getLogger("mac.model_selection")
+
+# Serializes the read-modify-write store mutations below. The atomic rename in
+# _write_store prevents torn files, but set_pending / promote_pending / set_active
+# each read-then-write; without this lock two hub threads (refresh + operator
+# promote) can interleave and one silently drops the other's update (lost update).
+_STORE_LOCK = threading.RLock()
 
 DEFAULT_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0   # weekly — "what's leading" moves slowly
 DEFAULT_INITIAL_DELAY_SECONDS = 300.0
@@ -451,25 +495,28 @@ def resolve_strength_from_selection(
 
 def set_active(sel: ModelSelection, environ: Optional[Mapping[str, str]] = None) -> Path:
     """Adopt ``sel`` as active and clear any pending candidate."""
-    return _write_store({"active": sel.to_dict(), "pending": None}, None, environ)
+    with _STORE_LOCK:
+        return _write_store({"active": sel.to_dict(), "pending": None}, None, environ)
 
 
 def set_pending(sel: ModelSelection, environ: Optional[Mapping[str, str]] = None) -> Path:
     """Record ``sel`` as a pending swap (does not affect routing)."""
-    store = _read_store(None, environ)
-    store["pending"] = sel.to_dict()
-    return _write_store(store, None, environ)
+    with _STORE_LOCK:
+        store = _read_store(None, environ)
+        store["pending"] = sel.to_dict()
+        return _write_store(store, None, environ)
 
 
 def promote_pending(environ: Optional[Mapping[str, str]] = None) -> Optional[dict]:
     """Promote the pending candidate to active (operator/gate action). Returns
     the promoted selection dict, or None if there was nothing pending."""
-    store = _read_store(None, environ)
-    pending = store.get("pending")
-    if not (isinstance(pending, dict) and pending.get("models")):
-        return None
-    _write_store({"active": pending, "pending": None}, None, environ)
-    return pending
+    with _STORE_LOCK:
+        store = _read_store(None, environ)
+        pending = store.get("pending")
+        if not (isinstance(pending, dict) and pending.get("models")):
+            return None
+        _write_store({"active": pending, "pending": None}, None, environ)
+        return pending
 
 
 # Legacy name retained for callers/tests that adopt directly (bootstrap path).
@@ -486,7 +533,7 @@ def write_selection(sel: ModelSelection, path: Optional[Path] = None,
 # review): quality metrics regress DOWN; safety-violation regresses on ANY
 # increase; latency/cost regress UP.
 _QUALITY_METRICS = ("overall_score", "avg_correctness", "avg_groundedness")
-_COST_METRICS = ("latency_p50_ms", "latency_p95_ms", "cost_per_answer_avg")
+_COST_METRICS = ("latency_p50_ms", "latency_p95_ms", "unit_output_cost_avg")
 _SAFETY_METRIC = "safety_violation_rate"
 
 
@@ -525,18 +572,6 @@ def compare_eval_metrics(
             if d > threshold:
                 drifted.append({"metric": metric, "rel_delta": d, "direction": "up"})
     return {"regressed": bool(drifted), "drifted": drifted}
-
-
-def _providers_from_env(environ: Mapping[str, str]) -> List[str]:
-    """Provider ids from MAC_ROUTER_PROVIDERS (``id=base,prio,key=...;...``)."""
-    raw = str(environ.get("MAC_ROUTER_PROVIDERS") or "").strip()
-    out: List[str] = []
-    for spec in raw.split(";"):
-        spec = spec.strip()
-        if not spec:
-            continue
-        out.append(spec.split("=", 1)[0].strip())
-    return [p for p in out if p]
 
 
 @dataclass(frozen=True)
@@ -681,8 +716,13 @@ class ModelSelectionService:
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             searcher = self._resolve_searcher()
             results = discover_via_web(searcher) if searcher is not None else []
-            providers = _providers_from_env(self._environ)
-            available = available_models_from_providers(providers)
+            # Parse the FULL provider specs (allowlist-aware) so available models
+            # are the router's exact native ids, not provider-name-prefixed ones.
+            from mac.provider_router import providers_from_env
+
+            provider_objs = providers_from_env(self._environ)
+            available = available_models_from_providers(provider_objs)
+            providers = [p.name for p in provider_objs]
             sel = select_powerhouse_models(
                 results, available, n=self.config.count,
                 fallback=self.config.fallback_model, now=now,
@@ -698,9 +738,36 @@ class ModelSelectionService:
                 # active. Never blank the model.
                 report["outcome"] = "no_candidate"
             elif active is None:
-                # Bootstrap: nothing to regress from, adopt immediately.
-                set_active(sel, environ=self._environ)
-                report["outcome"] = "adopted_bootstrap"
+                # Bootstrap. There IS an incumbent even with nothing adopted yet:
+                # the fleet's deploy-default model that tasks serve today. If an
+                # eval gate is enabled and that default differs from the proposed
+                # set, gate the first adoption against it too — otherwise the very
+                # first selection would flip routing to unvalidated models,
+                # exactly the regression the gate exists to prevent.
+                incumbent = [self.config.fallback_model] if self.config.fallback_model else []
+                if self._swap_evaluator is not None and incumbent and incumbent != sel.models:
+                    gate = None
+                    try:
+                        gate = self._swap_evaluator(sel.models, incumbent)
+                    except Exception as exc:  # noqa: BLE001 - gate failure => don't adopt.
+                        gate = {"approved": False, "detail": "evaluator error: %s" % exc}
+                    report["gate"] = gate
+                    if gate and gate.get("approved"):
+                        set_active(sel, environ=self._environ)
+                        report["outcome"] = "adopted_bootstrap_gate_passed"
+                    else:
+                        set_pending(sel, environ=self._environ)
+                        report["outcome"] = "pending_promotion"
+                        report["note"] = (
+                            "first selection proposed; routing stays on the deploy "
+                            "default until promoted (eval-drift gate or "
+                            "`mac fleet model-selection promote`)"
+                        )
+                else:
+                    # No gate configured, or no distinct incumbent to compare
+                    # against — adopt immediately (nothing to regress from).
+                    set_active(sel, environ=self._environ)
+                    report["outcome"] = "adopted_bootstrap"
             elif sel.models == active_models:
                 # Same choice — refresh in place (ladder/provenance may change),
                 # no swap, no gate.

@@ -213,6 +213,7 @@ from mac.model_selection import (  # noqa: E402
     read_active,
     read_pending,
     set_active,
+    set_pending,
 )
 
 
@@ -272,15 +273,15 @@ def test_swap_stays_pending_when_evaluator_rejects(tmp_path, monkeypatch):
 
 
 def test_compare_eval_metrics_direction_rules():
-    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "latency_p95_ms": 1000, "cost_per_answer_avg": 0.02}
+    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "latency_p95_ms": 1000, "unit_output_cost_avg": 0.02}
     # Quality drop >3%, safety up, latency up >3% => all regressions.
-    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "latency_p95_ms": 1200, "cost_per_answer_avg": 0.02}
+    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "latency_p95_ms": 1200, "unit_output_cost_avg": 0.02}
     res = compare_eval_metrics(base, worse, threshold=0.03)
     assert res["regressed"] is True
     metrics = {d["metric"] for d in res["drifted"]}
     assert {"overall_score", "safety_violation_rate", "latency_p95_ms"} <= metrics
     # A better candidate does not regress.
-    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "latency_p95_ms": 900, "cost_per_answer_avg": 0.02}
+    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "latency_p95_ms": 900, "unit_output_cost_avg": 0.02}
     assert compare_eval_metrics(base, better)["regressed"] is False
 
 
@@ -298,3 +299,175 @@ def test_moderate_natural_version_order():
     from mac.model_selection import moderate_by_availability
     avail = ["anthropic/claude-opus-4-9", "anthropic/claude-opus-4-10", "anthropic/claude-opus-4-2"]
     assert moderate_by_availability(["claude-opus"], avail) == ["anthropic/claude-opus-4-10"]
+
+
+# --------------------------------------------------------------------------- #
+# #1 Namespace: available models are the router's exact native ids
+# --------------------------------------------------------------------------- #
+
+
+def test_available_models_uses_allowlist_verbatim_not_prefixed():
+    # A provider with an explicit models= allowlist contributes those ids VERBATIM
+    # (exactly what ProviderRouter._serves matches and the upstream expects) — not
+    # provider-name-prefixed ids that the router would reject.
+    from mac.provider_router import providers_from_env
+    providers = providers_from_env(
+        {"MAC_ROUTER_PROVIDERS": "openai=https://x,0,models=gpt-5-2|o3,key=K"}
+    )
+    got = available_models_from_providers(providers)
+    assert got == ["gpt-5-2", "o3"]
+    assert not any("/" in m for m in got)  # never "openai/gpt-5-2"
+
+
+def test_available_models_wildcard_provider_enumerates_catalog(monkeypatch):
+    # A wildcard (models=*) provider has no allowlist, so it enumerates the
+    # catalog — and returns the catalog's own bare ids, unprefixed.
+    import mac.model_selection as ms
+    from mac.provider_router import providers_from_env
+    monkeypatch.setattr(ms, "available_models_from_providers",
+                        ms.available_models_from_providers)  # ensure real impl
+    # Patch the lazy catalog import target.
+    import sys
+    import types
+    fake = types.ModuleType("mac._hermes.agent.models_dev")
+    fake.list_agentic_models = lambda p: ["gpt-5-2", "gpt-5-mini"] if p == "openai" else []
+    monkeypatch.setitem(sys.modules, "mac._hermes.agent.models_dev", fake)
+    monkeypatch.setattr("mac.hermes_vendor.ensure_on_path", lambda: None)
+    providers = providers_from_env({"MAC_ROUTER_PROVIDERS": "openai=https://x,0,models=*,key=K"})
+    got = available_models_from_providers(providers)
+    assert got == ["gpt-5-2", "gpt-5-mini"]
+
+
+# --------------------------------------------------------------------------- #
+# #5 Cost/strength ranking: unknown-cost strong model is not strength 1
+# --------------------------------------------------------------------------- #
+
+
+def test_unknown_cost_strong_model_is_not_weakest():
+    # An Opus with no catalog price must NOT collapse to strength 1 just because
+    # its cost is unknown — name tier is the primary strength signal.
+    available = ["anthropic/claude-opus-4-8", "openai/gpt-5-mini", "openai/gpt-5-base"]
+    # Only the mini has a known price; opus + base are unknown.
+    costs = {"openai/gpt-5-mini": 0.2}
+    ladder = model_strength_ladder(available, cost_lookup=lambda m: costs.get(m))
+    assert ladder[-1] == "anthropic/claude-opus-4-8"   # strong tier wins the top
+    assert ladder[0] == "openai/gpt-5-mini"            # weak tier at the bottom
+
+
+def test_models_dev_cost_nested_id_keeps_middle_segment(monkeypatch):
+    # nvidia/meta/llama must try (nvidia, "meta/llama") and (meta, "llama"),
+    # never the old (nvidia, "llama") which dropped the middle path.
+    import mac.model_selection as ms
+    seen = []
+
+    class _Info:
+        cost_output = 4.2
+
+    def fake_get_model_info(provider, model):
+        seen.append((provider, model))
+        if (provider, model) == ("meta", "llama"):
+            return _Info()
+        raise KeyError("not found")
+
+    import sys
+    import types
+    fake = types.ModuleType("mac._hermes.agent.models_dev")
+    fake.get_model_info = fake_get_model_info
+    monkeypatch.setitem(sys.modules, "mac._hermes.agent.models_dev", fake)
+    monkeypatch.setattr("mac.hermes_vendor.ensure_on_path", lambda: None)
+    assert ms._models_dev_cost("nvidia/meta/llama") == 4.2
+    assert ("nvidia", "meta/llama") in seen   # full remainder tried
+    assert ("meta", "llama") in seen          # deeper boundary tried
+
+
+# --------------------------------------------------------------------------- #
+# #6 Persistence: concurrent set_pending / promote do not lose updates
+# --------------------------------------------------------------------------- #
+
+
+def test_concurrent_set_pending_and_active_no_lost_update(tmp_path, monkeypatch):
+    import threading
+    env = dict(os.environ)
+    monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "sel.json"))
+    env["MAC_MODEL_SELECTION_FILE"] = str(tmp_path / "sel.json")
+    set_active(ModelSelection(models=["a/active"], source="dynamic", at="T",
+                              ladder=["a/active"]), environ=env)
+
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def writer_pending():
+        try:
+            barrier.wait()
+            for _ in range(50):
+                set_pending(ModelSelection(models=["p/pending"], source="dynamic", at="T",
+                                           ladder=["p/pending"]), environ=env)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def writer_active():
+        try:
+            barrier.wait()
+            for _ in range(50):
+                set_active(ModelSelection(models=["a/active"], source="dynamic", at="T",
+                                          ladder=["a/active"]), environ=env)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t1 = threading.Thread(target=writer_pending)
+    t2 = threading.Thread(target=writer_active)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert not errors, errors
+    # The store is never corrupted; active is always readable and intact.
+    assert read_active(env)["models"] == ["a/active"]
+
+
+# --------------------------------------------------------------------------- #
+# #7 First selection is gated against the deploy default when eval is enabled
+# --------------------------------------------------------------------------- #
+
+
+def test_bootstrap_gated_against_deploy_default(tmp_path, monkeypatch):
+    # With an eval gate enabled and a deploy default incumbent, the FIRST
+    # selection must not flip routing until it passes the gate.
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    svc = ModelSelectionService(
+        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        swap_evaluator=lambda cand, inc: {"approved": False, "detail": "regressed vs default"},
+        environ=env,
+    )
+    report = svc.run_once()
+    assert report["outcome"] == "pending_promotion"
+    assert read_active(env) is None                   # routing still on the deploy default
+    assert read_pending(env)["models"] == ["openai/gpt-5-2"]
+
+
+def test_bootstrap_adopts_when_gate_passes(tmp_path, monkeypatch):
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    svc = ModelSelectionService(
+        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        swap_evaluator=lambda cand, inc: {"approved": True, "detail": "no regression"},
+        environ=env,
+    )
+    report = svc.run_once()
+    assert report["outcome"] == "adopted_bootstrap_gate_passed"
+    assert selected_models(env) == ["openai/gpt-5-2"]
+
+
+def test_bootstrap_adopts_immediately_without_evaluator(tmp_path, monkeypatch):
+    # No eval gate configured -> first selection adopts immediately (nothing to
+    # regress against). This preserves the operator-gated default behavior.
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    svc = ModelSelectionService(
+        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        environ=env,
+    )
+    report = svc.run_once()
+    assert report["outcome"] == "adopted_bootstrap"
+    assert selected_models(env) == ["openai/gpt-5-2"]

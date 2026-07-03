@@ -1311,7 +1311,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_repositories.add_argument("--enabled", action="store_true", default=None)
     project_repositories.set_defaults(func=_cmd_project_repositories)
 
-    register_project_repository = sub.add_parser("register-project-repository", help="register a Beads-backed project repository")
+    register_project_repository = sub.add_parser("register-project-repository", help="register a mac-task-backed project repository")
     register_project_repository.add_argument("name")
     register_project_repository.add_argument("path")
     register_project_repository.add_argument("--source")

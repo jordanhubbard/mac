@@ -315,6 +315,12 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .login-card input { height: 38px; padding: 0 10px; border: 1px solid var(--border-strong); background: #081219; }
 .login-card .button { width: 100%; margin-top: 10px; }
 .login-card .login-error { margin: 10px 0 0; color: var(--coral); }
+.login-recommended { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 18px 0; padding: 12px; border: 1px solid rgb(0 188 242 / 32%); background: rgb(0 188 242 / 7%); }
+.login-recommended > span { align-self: center; color: var(--cyan); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.login-recommended code { align-self: center; color: var(--text-strong); font-size: 13px; }
+.login-recommended small { grid-column: 1 / -1; color: var(--muted); line-height: 1.45; }
+.login-divider { display: flex; align-items: center; gap: 10px; margin: 20px 0 2px; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.login-divider::before, .login-divider::after { height: 1px; flex: 1; background: var(--border); content: ""; }
 
 @media (max-width: 1180px) {
   .command-bar { grid-template-columns: 235px 70px minmax(250px, 1fr) auto; }
