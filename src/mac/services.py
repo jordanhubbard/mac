@@ -569,6 +569,21 @@ REPOSITORY_CONTRACT_FILES = (
 )
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+# Sandbox git preflight for hub verification. The repo is tar-uploaded into the
+# sandbox, so its files can be owned by a different uid than the user running
+# the tests (HOME=/tmp guarantees no .gitconfig safe.directory whitelist).
+# Without this, git refuses the uploaded repo ("dubious ownership") and the
+# contract tests that run `git` against the checkout itself fail — rejecting
+# work whose tests pass everywhere else. GIT_CONFIG_* env (not --global) so the
+# whitelist reaches every git subprocess the suite spawns without a writable
+# HOME; the rev-parse probe distinguishes a lost-.git upload from a test
+# failure with an unmistakable message and exit code.
+_HUB_VERIFY_GIT_PREFLIGHT = (
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'; "
+    "git -C /sandbox/repo rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
+    "{ echo 'hub verify: /sandbox/repo is not a usable git repo after upload"
+    " (missing .git or git unavailable)'; exit 97; }; "
+)
 # mac-5xwh: bd issue ids look like ``<prefix>-<slug>`` where the slug
 # may itself contain dashes (e.g. ``mac-defer-claim``). Reject anything
 # that could be misread as a CLI flag (leading ``-``) or that contains
@@ -12541,7 +12556,10 @@ class ControlPlane:
                 "--name", name, "--from", image, "--env", "HOME=/tmp",
                 "--upload", "%s:%s" % (str(tmp / "repo"), "/sandbox"),
                 "--", "bash", "-c",
-                "cd /sandbox/repo && %s" % (test_command or "scripts/run-contract-tests.sh"),
+                "%scd /sandbox/repo && %s" % (
+                    _HUB_VERIFY_GIT_PREFLIGHT,
+                    test_command or "scripts/run-contract-tests.sh",
+                ),
             ]
             try:
                 proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
