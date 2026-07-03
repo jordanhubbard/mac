@@ -536,10 +536,19 @@ class ModelSelectionService:
         self.config = config
         self._environ = os.environ if environ is None else environ
         # swap_evaluator(candidate_models, incumbent_models) -> {"approved": bool,
-        # "detail": ...}. When None, a swap is NOT auto-adopted: it is recorded
-        # pending an operator/eval promotion (the safety net — routing never
-        # changes on an unvalidated swap). The concrete golden-set evaluator is
-        # the injectable extension (task_7ae3b6bd).
+        # "detail": ...}. When None, a swap is recorded pending an operator/eval
+        # promotion (the safety net — routing never changes on an unvalidated
+        # swap). If no evaluator is injected, try to auto-build the golden-set
+        # eval-drift evaluator from config (task_7ae3b6bd); it stays None (=>
+        # operator-gated) unless MAC_MODEL_SWAP_EVAL_ENABLED + a router URL are
+        # set, so the safe default is preserved.
+        if swap_evaluator is None:
+            try:
+                from mac.eval_runner import build_swap_evaluator
+
+                swap_evaluator = build_swap_evaluator(self._environ)
+            except Exception:  # noqa: BLE001 - evaluator is optional; stay operator-gated.
+                swap_evaluator = None
         self._swap_evaluator = swap_evaluator
         self._searcher = searcher
         self._stop = threading.Event()
