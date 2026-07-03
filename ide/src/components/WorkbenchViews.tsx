@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { api, type Agent, type AgentCard, type DashboardState, type TaskDetail } from "../api/mac";
 import type { WorkbenchView } from "./ActivityRail";
+import { TaskInspector } from "./TaskInspector";
+import { TaskKanban } from "./TaskKanban";
 import { WorkGraph } from "./WorkGraph";
 
 const TERMINAL_STATES = new Set(["completed", "cancelled", "failed"]);
@@ -40,12 +42,12 @@ export function WorkbenchViewContent({
   selectedAgentId: string | null;
   onSelectTask: (taskId: string) => void;
   onSelectAgent: (agentId: string) => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const agents = data.agents.map((item) => item.agent);
   switch (view) {
     case "work":
-      return <WorkView data={data} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} />;
+      return <WorkView data={data} onRefresh={onRefresh} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} />;
     case "workflows":
       return <WorkflowView data={data} onRefresh={onRefresh} />;
     case "agents":
@@ -169,17 +171,28 @@ function WorkView({
   data,
   selectedTaskId,
   onSelectTask,
+  onRefresh,
 }: {
   data: DashboardState;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return data.tasks.filter(({ task }) => !needle || [task.title, task.project, task.state, task.id]
       .some((value) => String(value || "").toLowerCase().includes(needle)));
   }, [data.tasks, query]);
+  const inspectedTask = inspectedTaskId
+    ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
+    : null;
+  const canWrite = data.session?.can_write !== false;
+  function inspectTask(taskId: string) {
+    onSelectTask(taskId);
+    setInspectedTaskId(taskId);
+  }
   return (
     <main className="workbench-view">
       <ViewHeader description="Search, inspect, and steer every ledger task." eyebrow="Ledger" title="Work" />
@@ -190,27 +203,21 @@ function WorkView({
         </label>
         <span>{visible.length} tasks</span>
       </div>
-      <div className="data-table task-table" role="table">
-        <div className="data-row table-head" role="row">
-          <span>State</span><span>Task</span><span>Project</span><span>Owner</span><span>Priority</span><span>Updated</span>
-        </div>
-        {visible.map(({ task }) => (
-          <button
-            className={`data-row ${task.id === selectedTaskId ? "selected" : ""}`}
-            key={task.id}
-            onClick={() => onSelectTask(task.id)}
-            role="row"
-            type="button"
-          >
-            <span><span className={`state-dot state-${task.state || "open"}`} /> {text(task.state)}</span>
-            <span className="record-title"><strong>{text(task.title, task.id)}</strong><small>{task.id}</small></span>
-            <span>{text(task.project, "unassigned")}</span>
-            <span>{text(task.owner_agent_id, "unassigned").replace(/^agent_/, "")}</span>
-            <span>P{task.priority ?? 0}</span>
-            <span>{age(task.updated_at)}</span>
-          </button>
-        ))}
-      </div>
+      <TaskKanban
+        onInspectTask={inspectTask}
+        onSelectTask={onSelectTask}
+        selectedTaskId={selectedTaskId}
+        tasks={visible}
+      />
+      {inspectedTask ? (
+        <TaskInspector
+          canWrite={canWrite}
+          detail={inspectedTask}
+          key={inspectedTask.task.id}
+          onClose={() => setInspectedTaskId(null)}
+          onRefresh={onRefresh}
+        />
+      ) : null}
     </main>
   );
 }

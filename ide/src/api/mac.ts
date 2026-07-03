@@ -135,6 +135,12 @@ export interface TaskCreatePayload {
   metadata?: Record<string, unknown>;
 }
 
+export interface TaskUpdatePayload {
+  actor?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
 interface A2AResponse<T> {
   jsonrpc: "2.0";
   id: string;
@@ -272,6 +278,13 @@ export const api = {
   getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}`),
   listAgents: () => req<Agent[]>("GET", "/agents"),
   createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
+  updateTask: (taskId: string, payload: TaskUpdatePayload) =>
+    req<Task>("PUT", `/tasks/${encodeURIComponent(taskId)}`, payload),
+  reopenTask: (taskId: string, reason: string) =>
+    req<Task>("POST", `/tasks/${encodeURIComponent(taskId)}/reopen`, {
+      actor: "human",
+      reason,
+    }),
   claimTask: (taskId: string, agentId: string) =>
     req<Record<string, unknown>>(
       "POST",

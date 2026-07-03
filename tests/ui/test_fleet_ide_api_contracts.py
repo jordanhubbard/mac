@@ -11,6 +11,8 @@ Client-to-route mapping (as of current ide/src/api/mac.ts):
   getTask     -> GET  /tasks/{id}          (TaskDetail: task + evidence + history + reviews)
   listAgents  -> GET  /agents
   createTask  -> POST /tasks               (Fleet IDE payload shape)
+  updateTask  -> PUT  /tasks/{id}          (operator guidance persisted on task)
+  reopenTask  -> POST /tasks/{id}/reopen   (audited blocked-task recovery)
   claimTask   -> POST /tasks/{id}/claim    (specific agent assignment)
   summary     -> GET  /tasks/{id}          (same route as getTask; alias in client)
   requestReview -> POST /tasks/{id}/reviews
@@ -287,6 +289,59 @@ def test_create_task_invalid_payload_returns_422():
     resp = client.post("/tasks", json={"description": "no title"}, headers=_AUTH_HEADERS)
 
     assert resp.status_code == 422
+
+
+def test_workbench_blocked_task_context_and_operator_direction_round_trip():
+    cp = ControlPlane.in_memory()
+    task_id = _seed_task(cp, title="Waiting for operator direction")
+    cp.transition_task(
+        task_id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {
+            "reason": "missing_target_region",
+            "question": "Which production region should receive this deployment?",
+            "manual_repair_required": True,
+        },
+    )
+    client = _make_client(cp)
+
+    state_response = client.get("/dashboard/state", headers=_AUTH_HEADERS)
+    assert state_response.status_code == 200
+    detail = next(item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id)
+    blocked_event = detail["history"][-1]
+    assert blocked_event["to_state"] == TaskState.BLOCKED.value
+    assert blocked_event["detail"]["reason"] == "missing_target_region"
+    assert blocked_event["detail"]["question"].startswith("Which production region")
+
+    direction = "Deploy to eu-west-1 and use the existing production account."
+    task = detail["task"]
+    metadata = dict(task.get("metadata") or {})
+    metadata["operator_guidance"] = [
+        {"actor": "human", "at": "2026-07-03T22:00:00Z", "direction": direction}
+    ]
+    update_response = client.put(
+        "/tasks/" + task_id,
+        headers=_AUTH_HEADERS,
+        json={
+            "actor": "human",
+            "description": task["description"] + "\n\nOperator direction:\n" + direction,
+            "metadata": metadata,
+        },
+    )
+    assert update_response.status_code == 200
+    assert direction in update_response.json()["description"]
+    assert update_response.json()["metadata"]["operator_guidance"][-1]["direction"] == direction
+
+    reopen_response = client.post(
+        "/tasks/%s/reopen" % task_id,
+        headers=_AUTH_HEADERS,
+        json={"actor": "human", "reason": direction},
+    )
+    assert reopen_response.status_code == 200
+    assert reopen_response.json()["state"] == TaskState.OPEN.value
+    history = cp.task_history(task_id)
+    assert history[-1].detail == {"via": "operator_reopen", "reason": direction}
 
 
 # ---------------------------------------------------------------------------
