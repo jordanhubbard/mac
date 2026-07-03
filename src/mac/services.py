@@ -111,6 +111,7 @@ from mac.repository_hygiene import (
     repository_ref_lifecycle_for_transition,
 )
 from mac.reconciliation import ReconciliationCoordinator
+from mac.ticketing_service import TicketingCoordinator
 from mac.agent_state_service import AgentStateService
 from mac.agentbus_control import (
     ARTIFACT_PUBLISH_CONTENT_TYPE,
@@ -1087,6 +1088,9 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_task=self.get_task,
         )
+        # Ticketing detection + one-way conversion, delegated off the god-object
+        # (task_bf0d1f01). ControlPlane keeps thin shims below for compatibility.
+        self.ticketing = TicketingCoordinator(self)
         self.notifiers = NotifierService(
             self.store,
             list_agents=self.list_agents,
@@ -8592,36 +8596,9 @@ class ControlPlane:
     # future ticketing system plugs in the same way.
 
     def detect_ticketing(self, repo_path: str) -> JsonDict:
-        """Report which ticketing sources a repo has + whether a one-way
-        ledger import should be offered (foreign source present, no local
-        .tickets/ compatibility mirror). Read-only. Emits a
-        ``ticketing.conversion_available`` observation the hub's hermes agent
-        can surface to the user."""
-        from pathlib import Path as _Path
-        from mac.ticketing import detect_ticketing as _detect
-
-        detection = _detect(_Path(repo_path))
-        if detection.needs_conversion:
-            self.record_log(
-                "ticketing.conversion_available",
-                layer="control_plane",
-                source="ticketing",
-                level="info",
-                subject_type="environment",
-                subject_id=str(repo_path),
-                detail={
-                    "schema": "mac.ticketing_conversion.v1",
-                    "conversion_from": detection.conversion_from,
-                    "message": detection.message,
-                    "prompt": (
-                        "Repo %s has a '%s' ticket source but no local .tickets "
-                        "compatibility mirror. Import it one-way into the MAC "
-                        "task ledger?"
-                        % (repo_path, detection.conversion_from)
-                    ),
-                },
-            )
-        return detection.to_dict()
+        # Delegated to TicketingCoordinator (task_bf0d1f01). Thin shim kept for
+        # API/call-site compatibility.
+        return self.ticketing.detect_ticketing(repo_path)
 
     def convert_ticketing_source(
         self,
@@ -8631,32 +8608,10 @@ class ControlPlane:
         actor: str = "hermes",
         dry_run: bool = False,
     ) -> JsonDict:
-        """Run the one-way conversion of a detected foreign source (e.g. beads)
-        into MAC ledger tasks plus optional local compatibility files. Hermes
-        calls this only after the user agrees. Never writes back to the foreign
-        source."""
-        from pathlib import Path as _Path
-        from mac.ticketing import detect_ticketing as _detect, connector_for
-
-        detection = _detect(_Path(repo_path))
-        if not detection.needs_conversion or not detection.conversion_from:
-            return {"status": "no_conversion_needed", "detection": detection.to_dict()}
-        connector = connector_for(detection.conversion_from)
-        if connector is None:
-            return {"status": "unknown_connector", "detection": detection.to_dict()}
-        report = connector.convert(
-            _Path(repo_path), project=project, cp=None if dry_run else self, actor=actor, dry_run=dry_run
+        # Delegated to TicketingCoordinator (task_bf0d1f01).
+        return self.ticketing.convert_ticketing_source(
+            repo_path, project=project, actor=actor, dry_run=dry_run
         )
-        self.record_log(
-            "ticketing.converted",
-            layer="control_plane",
-            source="ticketing",
-            level="info",
-            subject_type="environment",
-            subject_id=str(repo_path),
-            detail={"schema": "mac.ticketing_conversion.v1", "from": detection.conversion_from, "report": report},
-        )
-        return {"status": "converted", "from": detection.conversion_from, "report": report}
 
     # -- Fleet awareness (fleet-01/02) --------------------------------------
 
