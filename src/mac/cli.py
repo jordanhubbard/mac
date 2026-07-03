@@ -571,6 +571,29 @@ def cmd_fleet_backlog_groom_disable(args: argparse.Namespace) -> None:
     _print({"project": args.project, "backlog_grooming": block})
 
 
+def cmd_fleet_model_selection_status(args: argparse.Namespace) -> None:
+    """Show the active/pending powerhouse-model selection + last refresh."""
+    cp = _plane(args)
+    status = cp.model_selection_status()
+    _print(status.to_dict() if hasattr(status, "to_dict") else status)
+
+
+def cmd_fleet_model_selection_refresh(args: argparse.Namespace) -> None:
+    """Trigger an immediate refresh (discover → moderate → select). A swap is
+    recorded pending, not adopted, until promoted."""
+    cp = _plane(args)
+    out = cp.model_selection_refresh()
+    _print(out.to_dict() if hasattr(out, "to_dict") else out)
+
+
+def cmd_fleet_model_selection_promote(args: argparse.Namespace) -> None:
+    """Promote the pending model swap to active (operator gate). Routing changes
+    only here — never on an unvalidated swap."""
+    cp = _plane(args)
+    out = cp.model_selection_promote()
+    _print(out.to_dict() if hasattr(out, "to_dict") else out)
+
+
 def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     """Per-agent coding-CLI auth status from the agents' heartbeat reports.
 
@@ -1055,9 +1078,17 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         metadata["no_decompose"] = True
     model = str(getattr(args, "model", "") or "").strip()
     if model:
-        # Per-task LLM pin: worker exports MAC_TASK_MODEL to the executor,
-        # which maps it to the runtime/CLI model flag for this run only.
+        # Per-task LLM pin by NAME: worker exports MAC_TASK_MODEL to the
+        # executor, which maps it to the runtime/CLI model flag for this run.
         metadata["model"] = model
+    strength = getattr(args, "model_strength", None)
+    if strength is not None:
+        # Name-decoupled pin: 1 = cheapest/weakest .. 10 = strongest. Resolved
+        # to a concrete available model at run time via the strength ladder, so
+        # the task stays valid as model names churn. --model wins if both given.
+        if not 1 <= int(strength) <= 10:
+            raise MACError("--model-strength must be an integer 1..10")
+        metadata["model_strength"] = int(strength)
     kind = normalize_deliverable_kind(getattr(args, "kind", ""))
     if kind == REPORT_DELIVERABLE:
         # Non-code deliverable: the fleet won't demand a repo diff/pushed
@@ -3675,9 +3706,18 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--model",
         default="",
-        help="pin the LLM model for THIS task only (e.g. a cheaper model for a "
-        "simple task or a stronger one for complex work); agents pass it to "
+        help="pin the LLM model BY NAME for THIS task only (e.g. a cheaper model "
+        "for a simple task or a stronger one for complex work); agents pass it to "
         "their runtime/coding CLI and llm.route records it per completion",
+    )
+    create.add_argument(
+        "--model-strength",
+        type=int,
+        default=None,
+        metavar="1..10",
+        help="pin the model by STRENGTH instead of name: 1 = cheapest/weakest .. "
+        "10 = strongest/most expensive. Resolved to a concrete available model at "
+        "run time, so it stays valid as model names change. --model wins if both.",
     )
     create.add_argument("--actor", default="human")
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
@@ -4244,6 +4284,21 @@ def build_parser() -> argparse.ArgumentParser:
     groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
     groom_disable.add_argument("project", help="project name")
     _set(cmd_fleet_backlog_groom_disable, groom_disable)
+
+    # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
+    # pending and only changes routing when promoted (operator/eval gate).
+    fleet_msel = fleet.add_parser(
+        "model-selection",
+        help="dynamic powerhouse-model selection: status, refresh, promote a pending swap",
+    )
+    msel_sub = fleet_msel.add_subparsers(dest="model_selection_command")
+    msel_sub.required = True
+    _set(cmd_fleet_model_selection_status, msel_sub.add_parser(
+        "status", help="show active + pending selection and last refresh"))
+    _set(cmd_fleet_model_selection_refresh, msel_sub.add_parser(
+        "refresh", help="refresh now (a swap is recorded pending, not adopted)"))
+    _set(cmd_fleet_model_selection_promote, msel_sub.add_parser(
+        "promote", help="promote the pending swap to active (routing changes here)"))
 
     fleet_ssh_spec = fleet.add_parser(
         "ssh-spec",

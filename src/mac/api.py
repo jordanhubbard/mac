@@ -51,6 +51,7 @@ from mac.models import AuthorizationError, MACError, NotFoundError, ValidationEr
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
+from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
@@ -2951,18 +2952,25 @@ def create_app(
     # human/GitHub-issue queue drains. No-op until a project opts in via
     # metadata["backlog_grooming"].
     backlog_groomer = BacklogGroomer(cp, BacklogGroomerConfig.from_env())
+    # mac-model-select: periodically pick the fleet's powerhouse models from a
+    # web search of what's currently leading, moderated by what the gateway can
+    # actually route — instead of a hard-coded, forever-pinned default. No-op
+    # unless MAC_MODEL_SELECT_ENABLED is set.
+    model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         repository_ref_reconciler.start()
         github_ingestor.start()
         backlog_groomer.start()
+        model_selection_service.start()
         try:
             yield
         finally:
             repository_ref_reconciler.stop()
             github_ingestor.stop()
             backlog_groomer.stop()
+            model_selection_service.stop()
 
     app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.control_plane = cp
@@ -2971,6 +2979,7 @@ def create_app(
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.backlog_groomer = backlog_groomer
+    app.state.model_selection_service = model_selection_service
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -3148,6 +3157,24 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.require_global_fleet()
         return backlog_groomer.run_once(trigger="operator")
+
+    @app.get("/model-selection/status")
+    def model_selection_status() -> Dict[str, Any]:
+        return model_selection_service.status()
+
+    @app.post("/model-selection/refresh")
+    def model_selection_refresh(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return model_selection_service.run_once(trigger="operator")
+
+    @app.post("/model-selection/promote")
+    def model_selection_promote(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return model_selection_service.promote(actor="operator")
 
     @app.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:

@@ -143,6 +143,19 @@ def _forbidden_wildcard_model(model: str) -> bool:
 
 
 def _strong_wildcard_default(env: Dict[str, str]) -> str:
+    # Prefer the dynamically-selected powerhouse model (periodic web-search of
+    # what's currently leading, moderated by what the gateway can actually
+    # route) over the hard-coded constant, so the fleet tracks the current best
+    # model instead of a weeks-stale pin. Falls through to the env/constant when
+    # no selection has been persisted yet (fresh fleet / refresher not run).
+    try:
+        from mac.model_selection import selected_models
+
+        for value in selected_models(env):
+            if value and value != "*" and not _forbidden_wildcard_model(value):
+                return value
+    except Exception:  # noqa: BLE001 - selection is best-effort; never break routing.
+        pass
     for key in ("MAC_HERMES_GATEWAY_MODEL", "HERMES_INFERENCE_MODEL", "ACC_LLM_MODEL"):
         value = (env.get(key) or "").strip()
         if value and value != "*" and not _forbidden_wildcard_model(value):
