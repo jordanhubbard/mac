@@ -10377,6 +10377,17 @@ class ControlPlane:
                     },
                     actor,
                 )
+                # Distill the rejection into a durable, project-scoped lesson so
+                # the next execution run on this project recalls it (the review
+                # branch never wrote a deployment_learning record, so rejected
+                # work taught the fleet nothing — a real learn-from-bad gap).
+                self._record_project_failure_lesson(
+                    task_id,
+                    evidence_type="review_verdict",
+                    error_signature="review_rejected",
+                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
+                    evidence_id=verdict_evidence.id,
+                )
             else:
                 review = self.submit_review(
                     review.id,
@@ -13526,6 +13537,65 @@ class ControlPlane:
             subject_id=task_id,
             detail={"actor": actor, **detail},
         )
+
+    def _record_project_failure_lesson(
+        self,
+        task_id: str,
+        *,
+        evidence_type: str,
+        error_signature: str,
+        signals: Optional[JsonDict] = None,
+        evidence_id: Optional[str] = None,
+    ) -> None:
+        """Persist a hub-side, project-scoped ``mac.deployment_learning.v1``
+        failure lesson so the next execution run on this project recalls it.
+
+        The executor records deployment lessons for failed *runs*, but review
+        rejections and hub-side terminal failures produced no lesson — so the
+        fleet never learned from rejected or force-failed work. The record
+        shape matches the executor's ``build_learning_record`` so
+        ``recall_deployment_lessons`` renders and injects it unchanged.
+        Best-effort: telemetry-only, never breaks the caller.
+        """
+        try:
+            task = self.get_task(task_id)
+        except Exception:  # noqa: BLE001 - lesson recording must not break the workflow.
+            return
+        try:
+            project = self._hermes_task_project_key(task) or (task.project or "unassigned")
+            metadata = ensure_json_object(task.metadata)
+            origin = metadata.get("origin") if isinstance(metadata, dict) else {}
+            repo_name = str(origin.get("repository_name") or "") if isinstance(origin, dict) else ""
+            content = {
+                "schema": "mac.deployment_learning.v1",
+                "task_id": task.id,
+                "task_title": task.title,
+                "project": project,
+                "repository": repo_name,
+                "evidence_type": evidence_type,
+                "outcome": "failure",
+                "signals": signals or {},
+                "error_signature": error_signature or "",
+                "at": utcnow(),
+            }
+            self.add_memory(
+                task_id=task.id,
+                subject_type="project",
+                subject_id=project,
+                # Matches the executor's DEPLOYMENT_LEARNING_PREFIX contract so
+                # recall_deployment_lessons (which filters by this record_type
+                # prefix + project) picks it up.
+                record_type="deployment_learning:%s" % project,
+                content=json_dumps(content),
+                evidence_id=evidence_id,
+                created_by="mac-hub-review",
+            )
+        except Exception:  # noqa: BLE001 - best-effort durable learning.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "could not record project failure lesson for %s", task_id, exc_info=True
+            )
 
     def _set_agent_idle(self, agent_id: str, conn: Any = None) -> None:
         now = utcnow()
