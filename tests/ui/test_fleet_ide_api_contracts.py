@@ -33,9 +33,9 @@ from mac.services import ControlPlane
 
 # ---------------------------------------------------------------------------
 # Test token -- explicit, not ambient MAC_API_TOKEN.
-# The Fleet IDE reads its token from localStorage or VITE_MAC_TOKEN; tests
-# supply a fixed synthetic token so there is no dependency on the host
-# environment.
+# The Fleet IDE normally receives auth through the local launcher's Vite proxy;
+# its manual fallback stores a token in sessionStorage. Tests supply a fixed
+# synthetic token directly so there is no dependency on the host environment.
 # ---------------------------------------------------------------------------
 
 # A fixed synthetic bearer token used only in this test module.

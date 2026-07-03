@@ -83,16 +83,26 @@ def test_make_dry_run_builds_both_supported_surfaces() -> None:
 
 def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    launcher = (ROOT / "src" / "mac" / "ide_launcher.py").read_text(encoding="utf-8")
+    vite_config = (ROOT / "ide" / "vite.config.ts").read_text(encoding="utf-8")
+    app = (ROOT / "ide" / "src" / "App.tsx").read_text(encoding="utf-8")
 
     assert "IDE_FLEET ?=" in makefile
+    assert "IDE_AUTH ?= auto" in makefile
+    assert "IDE_PROFILE ?=" in makefile
     assert "run-gui: ide-run" in makefile
     assert 'if [ -f "$$HOME/.mac/.env" ]' in makefile
-    assert 'key="MAC_API_TOKEN__$$suffix"' in makefile
-    assert 'token="$${MAC_DEPLOY_HUB_TOKEN}"' in makefile
-    assert 'token="$${MAC_API_TOKEN}"' in makefile
-    assert 'IDE auth token source: %s' in makefile
-    assert 'VITE_MAC_TOKEN="$$token"' in makefile
+    assert '"$(PYTHON)" -m mac.ide_launcher' in makefile
     assert "IDE auth token: %s" not in makefile
+    assert "ensure_session(selected_profile)" in launcher
+    assert 'load_profile(selected_profile, include_token=True)' in launcher
+    assert 'child["MAC_IDE_PROXY_TOKEN"] = connection.token' in launcher
+    assert 'child.pop("VITE_MAC_TOKEN"' not in launcher
+    assert '"VITE_MAC_TOKEN",' in launcher
+    assert "MAC_IDE_PROXY_TOKEN" in vite_config
+    assert 'proxyRequest.setHeader("Authorization"' in vite_config
+    assert "hasManagedAuth" in app
+    assert "authLabel" in app
 
 
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:

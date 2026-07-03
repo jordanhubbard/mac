@@ -5,6 +5,8 @@ import {
   bootstrapTokenFromUrl,
   clearToken,
   getApiBaseUrl,
+  hasManagedAuth,
+  managedAuthLabel,
   setApiBaseUrl,
   setToken,
   streamDashboard,
@@ -40,6 +42,8 @@ function initialSelection(): string | null {
 
 export function App() {
   const compactLayout = useCompactLayout();
+  const managedAuth = hasManagedAuth();
+  const authLabel = managedAuthLabel();
   const [data, setData] = useState<DashboardState>(EMPTY_STATE);
   const [card, setCard] = useState<AgentCard | null>(null);
   const [view, setView] = useState<WorkbenchView>(initialView);
@@ -48,7 +52,10 @@ export function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [streamStatus, setStreamStatus] = useState<"connecting" | "connected" | "degraded">("connecting");
-  const [needToken, setNeedToken] = useState(() => !bootstrapTokenFromUrl());
+  const [needToken, setNeedToken] = useState(() => {
+    const token = bootstrapTokenFromUrl();
+    return !hasManagedAuth() && !token;
+  });
   const [tokenInput, setTokenInput] = useState("");
   const [targetInput, setTargetInput] = useState(getApiBaseUrl);
   const [tokenError, setTokenError] = useState("");
@@ -84,12 +91,16 @@ export function App() {
       setError(message);
       setLoading(false);
       if (/HTTP\s+(401|403)\b/.test(message)) {
-        clearToken();
-        setTokenError("The hub rejected this token. Paste the current fleet-scoped bearer token.");
-        setNeedToken(true);
+        if (managedAuth) {
+          setError("The active CLI login was rejected. Run `mac login renew`, then restart the Fleet IDE.");
+        } else {
+          clearToken();
+          setTokenError("The hub rejected this token. Paste the current fleet-scoped bearer token.");
+          setNeedToken(true);
+        }
       }
     }
-  }, []);
+  }, [managedAuth]);
 
   useEffect(() => {
     if (needToken) return;
@@ -173,7 +184,13 @@ export function App() {
         <form className="login-card" onSubmit={submitToken}>
           <span className="eyebrow">Control plane connection</span>
           <h1>Connect to a fleet hub</h1>
-          <p>Use a read/write token for operator actions. Tokens live in this browser tab and URL bootstrap tokens are removed immediately.</p>
+          <p>The normal connection is your active MAC CLI login. Run the command below, then restart the Fleet IDE.</p>
+          <div className="login-recommended">
+            <span>Recommended</span>
+            <code>mac login</code>
+            <small>The launcher reuses the scoped profile and SSH tunnel automatically.</small>
+          </div>
+          <div className="login-divider"><span>Manual fallback</span></div>
           <label>Hub URL<input aria-label="Hub URL" onChange={(event) => setTargetInput(event.target.value)} placeholder="/api or https://hub.example" value={targetInput} /></label>
           <label>Bearer token<input autoComplete="off" autoFocus aria-label="Hub bearer token" onChange={(event) => { setTokenInput(event.target.value); setTokenError(""); }} type="password" value={tokenInput} /></label>
           <button className="button primary" disabled={!tokenInput.trim()} type="submit">Connect to hub</button>
@@ -301,7 +318,11 @@ export function App() {
         <span><i className="codicon codicon-symbol-structure" /> CodeGraph ready</span>
         <span className="status-spacer" />
         <span>{busy}/{agents.length} busy</span>
-        <button onClick={disconnect} type="button">disconnect</button>
+        {managedAuth ? (
+          <span title="Authentication is supplied by the local MAC launcher"><i className="codicon codicon-lock" /> {authLabel}</span>
+        ) : (
+          <button onClick={disconnect} type="button">disconnect</button>
+        )}
       </footer>
     </div>
   );

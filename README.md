@@ -98,9 +98,10 @@ make help
 # Install/link the CLI and prepare the canonical Fleet IDE.
 make install
 
-# Verify the checkout, or launch the GUI against a hub.
+# Verify the checkout, or log in and launch the GUI against that hub.
 make test
-make run-gui IDE_API_URL=http://127.0.0.1:8789
+mac login
+make run-gui
 ```
 
 `make test` runs the complete hermetic pytest suite with source coverage and
@@ -312,7 +313,8 @@ The React + Monaco fleet IDE lives in `ide/`. From the repository root:
 
 ```bash
 make install-gui
-make run-gui IDE_API_URL=http://127.0.0.1:8789
+mac login
+make run-gui
 make build-gui
 make package-gui
 ```
@@ -322,7 +324,10 @@ writes a static web bundle to `dist/mac-ide-web.tar.gz`. This is separate from
 the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
 `ide-*` target names remain as compatibility aliases.
 
-For local auth, `make run-gui` sources `~/.mac/.env` and passes a token to Vite
+For local auth, `make run-gui` first reuses the active scoped client profile
+created by `mac login`, including its managed SSH tunnel. The credential stays
+inside the local Vite proxy and is not exposed to browser storage. If no active
+profile exists, the launcher sources `~/.mac/.env` and selects a token
 without printing it. Set `IDE_FLEET=<fleet>` to prefer the matching
 `MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls back to
 `MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run` compatibility

@@ -5,6 +5,10 @@ const DEFAULT_BASE = "/api";
 const TOKEN_KEY = "mac.token";
 const API_BASE_KEY = "mac.apiBaseUrl";
 
+function runtimeEnv(): Record<string, string> {
+  return (import.meta as ImportMeta & { env?: Record<string, string> }).env || {};
+}
+
 export interface ActivityEntry {
   phase: string;
   actor: string;
@@ -149,9 +153,17 @@ export function getToken(): string {
   return (
     sessionStorage.getItem(TOKEN_KEY) ||
     localStorage.getItem(TOKEN_KEY) ||
-    (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_MAC_TOKEN ||
+    runtimeEnv().VITE_MAC_TOKEN ||
     ""
   );
+}
+
+export function hasManagedAuth(): boolean {
+  return runtimeEnv().VITE_MAC_AUTH_MODE === "managed";
+}
+
+export function managedAuthLabel(): string {
+  return runtimeEnv().VITE_MAC_AUTH_LABEL || "CLI profile";
 }
 
 export function setToken(raw: string): string {

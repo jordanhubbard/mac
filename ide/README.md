@@ -20,29 +20,36 @@ From the repository root:
 
 ```bash
 make install-gui
-make run-gui IDE_API_URL=http://100.72.16.110:8789
-# open http://127.0.0.1:5273, paste a hub bearer token when prompted
+mac login
+make run-gui
+# open http://127.0.0.1:5273; the active CLI profile connects automatically
 ```
 
-`make run-gui` reads `~/.mac/.env` and passes a token to Vite when it can. If
-`IDE_FLEET=<fleet>` or `MAC_FLEET=<fleet>` is set, the launcher prefers
-`MAC_API_TOKEN__<FLEET>`; otherwise it falls back to `MAC_DEPLOY_HUB_TOKEN` and
-then `MAC_API_TOKEN`. It prints the selected key name, never the token value.
-The existing `make ide-run` target is a compatibility alias.
+`make run-gui` reuses the active scoped client profile created by `mac login`,
+ensures its SSH tunnel is running, and attaches the credential inside the local
+Vite proxy. The token is not printed, placed in the URL, or exposed to browser
+storage. Set `IDE_PROFILE=<name>` to select a non-active profile.
+
+If no client profile exists, the launcher falls back to the existing
+fleet-scoped environment token lookup and finally to the browser's manual
+connection form. Use `IDE_AUTH=manual make run-gui` to force that fallback, or
+`IDE_API_URL=<url>` to override the selected profile's endpoint. The existing
+`make ide-run` target is a compatibility alias.
 
 Or from this package:
 
 ```bash
 cd ide
 npm ci
-MAC_API_URL=http://100.72.16.110:8789 npm run dev   # hub to talk to
-# open http://localhost:5273, paste a hub bearer token when prompted
+MAC_API_URL=http://100.72.16.110:8789 npm run dev   # manual development fallback
+# open http://localhost:5273 and paste a scoped hub token when prompted
 ```
 
-`/api/*` is proxied to the hub (see `vite.config.ts`). The token is stored in
-tab-scoped `sessionStorage["mac.token"]` (with a migration fallback for an old
-local value), or set with `VITE_MAC_TOKEN`. `?t=` bootstrap values are removed
-from the URL immediately.
+`/api/*` is proxied to the hub (see `vite.config.ts`). In the normal root-level
+launcher flow, Vite adds the profile credential server-side. In the manual
+fallback, a pasted token is stored in tab-scoped `sessionStorage["mac.token"]`
+(with a migration fallback for an old local value). `?t=` bootstrap values are
+removed from the URL immediately.
 
 ## Build and package
 
