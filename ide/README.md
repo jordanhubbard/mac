@@ -26,15 +26,18 @@ make run-gui
 ```
 
 `make run-gui` reuses the active scoped client profile created by `mac login`,
-ensures its SSH tunnel is running, and attaches the credential inside the local
-Vite proxy. The token is not printed, placed in the URL, or exposed to browser
-storage. Set `IDE_PROFILE=<name>` to select a non-active profile.
+ensures its SSH tunnel is running, and prompts for the target hub URL before it
+starts Vite. Press Enter to accept the profile endpoint, or enter another
+`http://` or `https://` host. The credential stays inside the local Vite proxy;
+it is not printed, placed in the URL, or exposed to browser storage. Set
+`IDE_PROFILE=<name>` to select a non-active profile.
 
 If no client profile exists, the launcher falls back to the existing
 fleet-scoped environment token lookup and finally to the browser's manual
 connection form. Use `IDE_AUTH=manual make run-gui` to force that fallback, or
-`IDE_API_URL=<url>` to override the selected profile's endpoint. The existing
-`make ide-run` target is a compatibility alias.
+`IDE_API_URL=<url>` to select the endpoint without an interactive prompt. The
+existing `make ide-run` target is a compatibility alias. Non-interactive runs
+also skip the prompt and retain the resolved profile or default endpoint.
 
 Or from this package:
 

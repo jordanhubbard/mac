@@ -122,6 +122,70 @@ def test_vite_environment_keeps_token_server_side() -> None:
     assert "MAC_API_TOKEN__DEFAULT" not in child
 
 
+def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
+    connection = ide_launcher.IdeConnection(
+        api_url="http://127.0.0.1:48789",
+        token="profile-token",
+        source="client-profile:default",
+        profile="default",
+    )
+    prompts: list[str] = []
+
+    selected = ide_launcher.prompt_for_ide_connection(
+        connection,
+        {},
+        interactive=True,
+        input_fn=lambda prompt: prompts.append(prompt) or "https://192.0.2.10:8789/",
+    )
+
+    assert prompts == ["Target hub URL [http://127.0.0.1:48789]: "]
+    assert selected == ide_launcher.IdeConnection(
+        api_url="https://192.0.2.10:8789",
+        token="profile-token",
+        source="client-profile:default",
+        profile="default",
+    )
+
+
+def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
+    capsys,
+) -> None:
+    connection = ide_launcher.IdeConnection(api_url=ide_launcher.DEFAULT_API_URL)
+    answers = iter(["hub.example:8789", "http://hub.example:8789"])
+
+    selected = ide_launcher.prompt_for_ide_connection(
+        connection,
+        {},
+        interactive=True,
+        input_fn=lambda _prompt: next(answers),
+    )
+
+    assert selected.api_url == "http://hub.example:8789"
+    assert "must include http:// or https://" in capsys.readouterr().err
+    assert (
+        ide_launcher.prompt_for_ide_connection(
+            connection,
+            {"IDE_API_URL": "http://explicit.example:8789"},
+            interactive=True,
+            input_fn=lambda _prompt: (_ for _ in ()).throw(
+                AssertionError("unexpected prompt")
+            ),
+        )
+        is connection
+    )
+    assert (
+        ide_launcher.prompt_for_ide_connection(
+            connection,
+            {},
+            interactive=False,
+            input_fn=lambda _prompt: (_ for _ in ()).throw(
+                AssertionError("unexpected prompt")
+            ),
+        )
+        is connection
+    )
+
+
 def test_run_starts_vite_without_token_in_command(tmp_path, monkeypatch) -> None:
     ide_dir = tmp_path / "ide"
     ide_dir.mkdir()

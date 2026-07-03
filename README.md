@@ -325,9 +325,12 @@ the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
 `ide-*` target names remain as compatibility aliases.
 
 For local auth, `make run-gui` first reuses the active scoped client profile
-created by `mac login`, including its managed SSH tunnel. The credential stays
-inside the local Vite proxy and is not exposed to browser storage. If no active
-profile exists, the launcher sources `~/.mac/.env` and selects a token
+created by `mac login`, including its managed SSH tunnel. In an interactive
+terminal it then prompts for the target hub URL; press Enter for the profile
+endpoint, enter another `http://` or `https://` host, or set `IDE_API_URL`
+beforehand to skip the prompt. The credential stays inside the local Vite proxy
+and is not exposed to browser storage. If no active profile exists, the launcher
+sources `~/.mac/.env` and selects a token
 without printing it. Set `IDE_FLEET=<fleet>` to prefer the matching
 `MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls back to
 `MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run` compatibility

@@ -12,9 +12,10 @@ import os
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Mapping, MutableMapping, Optional, Sequence
+from typing import Callable, Mapping, MutableMapping, Optional, Sequence
+from urllib.parse import urlsplit
 
 from mac.client_login import ClientLoginError, ensure_session
 from mac.client_profiles import (
@@ -139,6 +140,57 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
     )
 
 
+def _validated_api_url(raw: str) -> str:
+    value = raw.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise IdeLauncherError(
+            "hub URL must include http:// or https:// and a hostname"
+        )
+    if parsed.username or parsed.password:
+        raise IdeLauncherError("hub URL must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise IdeLauncherError("hub URL must not contain a query string or fragment")
+    return value
+
+
+def prompt_for_ide_connection(
+    connection: IdeConnection,
+    env: Optional[Mapping[str, str]] = None,
+    *,
+    input_fn: Optional[Callable[[str], str]] = None,
+    interactive: Optional[bool] = None,
+) -> IdeConnection:
+    """Let an interactive operator override the hub before Vite starts.
+
+    Explicit ``IDE_API_URL`` values and non-interactive launches remain
+    prompt-free.  The selected URL still flows through Vite's local proxy, so
+    a managed profile token never needs to enter browser storage.
+    """
+
+    values = os.environ if env is None else env
+    if _value(values, "IDE_API_URL"):
+        return connection
+    should_prompt = sys.stdin.isatty() if interactive is None else interactive
+    if not should_prompt:
+        return connection
+
+    read = input if input_fn is None else input_fn
+    while True:
+        try:
+            entered = read("Target hub URL [%s]: " % connection.api_url).strip()
+        except EOFError:
+            return connection
+        if not entered:
+            return connection
+        try:
+            api_url = _validated_api_url(entered)
+        except IdeLauncherError as exc:
+            print("Invalid hub URL: %s" % exc, file=sys.stderr)
+            continue
+        return replace(connection, api_url=api_url)
+
+
 def build_vite_environment(
     connection: IdeConnection,
     env: Optional[Mapping[str, str]] = None,
@@ -182,6 +234,7 @@ def vite_command(env: Mapping[str, str]) -> Sequence[str]:
 def run(env: Optional[Mapping[str, str]] = None) -> int:
     values = dict(os.environ if env is None else env)
     connection = resolve_ide_connection(values)
+    connection = prompt_for_ide_connection(connection, values)
     child = build_vite_environment(connection, values)
     ide_dir = Path(_value(values, "IDE_DIR") or "ide").expanduser().resolve()
     if not (ide_dir / "package.json").is_file():
