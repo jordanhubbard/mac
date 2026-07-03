@@ -141,7 +141,10 @@ def run_golden_eval(
             "overall": per_overall,
             "safety_flags": scores["safety_flags"],
             "latency_ms": float(latency_ms or 0.0),
-            "cost_per_answer": float(unit_cost) if unit_cost is not None else 0.0,
+            # Model's per-token OUTPUT unit price (models.dev), constant across
+            # cases — NOT a token-accounted per-answer cost. Named accordingly so
+            # it is not mistaken for actual answer spend.
+            "unit_output_cost": float(unit_cost) if unit_cost is not None else 0.0,
         })
 
     n = len(case_results) or 1
@@ -158,7 +161,7 @@ def run_golden_eval(
         "safety_violation_rate": round(violations / n, 4),
         "latency_p50_ms": round(_percentile(latencies, 0.5), 2),
         "latency_p95_ms": round(_percentile(latencies, 0.95), 2),
-        "cost_per_answer_avg": round(float(unit_cost), 6) if unit_cost is not None else 0.0,
+        "unit_output_cost_avg": round(float(unit_cost), 6) if unit_cost is not None else 0.0,
     }
     return {
         "meta": {
@@ -169,7 +172,15 @@ def run_golden_eval(
             "dataset_sha256": dataset_sha256(cases),
         },
         "summary": summary,
-        "per_case_overall": overalls,  # paired significance input (case-aligned)
+        # Case-aligned per-metric series so significance is tested on the SPECIFIC
+        # regressed metric (a correctness collapse must be judged on correctness
+        # deltas, not overall — #4), not just the blended overall score.
+        "per_case_overall": overalls,
+        "per_case": {
+            "overall_score": overalls,
+            "avg_correctness": corr,
+            "avg_groundedness": grnd,
+        },
         # The eval is only VALID if every model call actually succeeded. A call
         # failure (router down, timeout) must NOT be scored as an ordinary empty
         # answer — otherwise two failed evals look "equal" and a swap is wrongly
@@ -261,21 +272,32 @@ def evaluate_swap(
     # Safety regressions are hard blocks regardless of significance.
     safety_regressed = any(d["metric"] == "safety_violation_rate" for d in drifted)
 
-    # Quality regressions (overall_score AND avg_correctness — a correctness
-    # collapse masked by another metric must still block) require significance:
-    # only block if the paired bootstrap CI shows the candidate is really worse.
-    deltas = [c - i for c, i in zip(cand["per_case_overall"], inc["per_case_overall"])]
-    ci_upper = _bootstrap_ci_upper(deltas) if deltas else 0.0
-    significant = ci_upper < -threshold
-    quality_metrics = {"overall_score", "avg_correctness", "avg_groundedness"}
-    quality_regressed = any(d["metric"] in quality_metrics for d in drifted)
-    if quality_regressed and not significant:
-        # Non-significant quality drift on a small set: don't block on it.
-        drifted = [d for d in drifted if d["metric"] not in quality_metrics]
-        quality_regressed = False
+    # Quality regressions require significance — but tested on the SPECIFIC
+    # metric's per-case deltas, not the blended overall (a correctness collapse
+    # offset by groundedness would hide in the overall series; #4). Each quality
+    # metric that drifted is kept only if ITS own paired bootstrap CI confirms a
+    # real per-case regression.
+    quality_metrics = ("overall_score", "avg_correctness", "avg_groundedness")
+    cand_series = cand.get("per_case", {})
+    inc_series = inc.get("per_case", {})
+    kept_quality = []
+    for d in drifted:
+        metric = d["metric"]
+        if metric not in quality_metrics:
+            continue
+        c_series = cand_series.get(metric) or []
+        i_series = inc_series.get(metric) or []
+        d_deltas = [c - i for c, i in zip(c_series, i_series)]
+        ci_upper = _bootstrap_ci_upper(d_deltas) if d_deltas else 0.0
+        if ci_upper < -threshold:
+            kept_quality.append(metric)
+    # Drop non-significant quality drift from the blocking set.
+    drifted = [d for d in drifted
+               if d["metric"] not in quality_metrics or d["metric"] in kept_quality]
+    quality_regressed = bool(kept_quality)
 
     cost_regressed = any(
-        d["metric"] in ("latency_p95_ms", "latency_p50_ms", "cost_per_answer_avg")
+        d["metric"] in ("latency_p95_ms", "latency_p50_ms", "unit_output_cost_avg")
         for d in drifted
     )
     approved = not (safety_regressed or quality_regressed or cost_regressed)
@@ -371,12 +393,18 @@ def router_model_caller(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = _json.loads(resp.read().decode("utf-8"))
         latency_ms = (time.monotonic() - start) * 1000.0
-        answer = ""
+        # A malformed 200 (``{}``, missing choices, null content) is a FAILURE,
+        # not an empty successful answer — otherwise two malformed responses look
+        # "equal" and the swap is wrongly approved (the fail-open bug #3). Raise
+        # so run_golden_eval counts it as a call failure -> eval invalid -> the
+        # gate fails closed.
         try:
-            answer = str(data["choices"][0]["message"]["content"] or "")
-        except (KeyError, IndexError, TypeError):
-            answer = ""
-        return answer, [], latency_ms
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("malformed completion response (no choices/content)") from exc
+        if content is None:
+            raise ValueError("completion response has null content")
+        return str(content), [], latency_ms
 
     return call
 

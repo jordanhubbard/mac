@@ -127,7 +127,6 @@ from mac.model_selection import (  # noqa: E402
     ModelSelection,
     ModelSelectionConfig,
     ModelSelectionService,
-    read_pending,
     selected_models,
     set_active,
 )
@@ -202,6 +201,50 @@ def test_evaluate_swap_fails_closed_when_calls_error():
         raise ConnectionError("router down")
 
     v = evaluate_swap("cand", "inc", GOLDEN, model_caller=raising_caller)
+    assert v.approved is False
+    assert "could not run" in v.detail
+
+
+def test_router_caller_raises_on_malformed_200():
+    # #3: a 200 with no choices/null content is a FAILURE, not an empty answer.
+    # If it returned "" both models would look "equal" and the swap would be
+    # wrongly approved. The caller must raise so the eval is marked invalid.
+    import urllib.request
+
+    from mac.eval_runner import router_model_caller
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def read(self):
+            return self._payload.encode("utf-8")
+
+    import pytest
+
+    for payload in ("{}", '{"choices": []}', '{"choices": [{"message": {"content": null}}]}'):
+        def fake_urlopen(req, timeout=0, _p=payload):
+            return _Resp(_p)
+        orig = urllib.request.urlopen
+        urllib.request.urlopen = fake_urlopen
+        try:
+            caller = router_model_caller("http://x/v1", token="t")
+            with pytest.raises(ValueError):
+                caller("m", "q", "")
+        finally:
+            urllib.request.urlopen = orig
+
+
+def test_malformed_200_fails_gate_closed():
+    # End-to-end: a model_caller that yields malformed responses (surfaced as a
+    # raise) makes the eval invalid -> the swap is NOT approved.
+    def bad_caller(model, question, context):
+        raise ValueError("malformed completion response (no choices/content)")
+
+    v = evaluate_swap("cand", "inc", GOLDEN, model_caller=bad_caller)
     assert v.approved is False
     assert "could not run" in v.detail
 

@@ -208,7 +208,6 @@ interface HermesWorkContext {
     api?: JsonObject[];
     mac_cli?: string[];
     mac_hermes_cli?: string[];
-    hgmac_cli?: string[];
     task_state_transitions?: Record<string, string[]>;
   };
 }
@@ -4684,11 +4683,10 @@ function roleRecord(role: ApiRecord): string {
 }
 
 function operationContractRecord(instanceId: string, context: HermesWorkContext): string {
-  const operations = context.operations || { api: [], mac_cli: [], mac_hermes_cli: [], hgmac_cli: [] };
+  const operations = context.operations || { api: [], mac_cli: [], mac_hermes_cli: [] };
   const apiOps = (operations.api || []) as JsonObject[];
   const macCli = operations.mac_cli || [];
   const hermesCli = operations.mac_hermes_cli || [];
-  const hgmacCli = operations.hgmac_cli || [];
   const dashboard = ((operations as JsonObject).dashboard || {}) as JsonObject;
   const dashboardViews = arrayOfStrings(dashboard.views);
   const transitions = operations.task_state_transitions || {};
@@ -4708,7 +4706,6 @@ function operationContractRecord(instanceId: string, context: HermesWorkContext)
         ${field("API operations", apiOps.length)}
         ${field("MAC CLI", macCli.length)}
         ${field("Hermes CLI", hermesCli.length)}
-        ${field("hgmac CLI", hgmacCli.length)}
         ${field("Dashboard views", dashboardViews.length)}
         ${field("Transitions", transitionCount)}
       </div>
@@ -4718,7 +4715,7 @@ function operationContractRecord(instanceId: string, context: HermesWorkContext)
       <div class="chip-row">
         ${dashboardViews.slice(0, 12).map((view) => chip(view, view === "ops" ? "good" : "info")).join("") || chip("dashboard contract missing", "bad")}
       </div>
-      <div class="observation-detail mono">${escapeHtml([...hermesCli, ...hgmacCli].slice(0, 8).join(" | ") || "No CLI operations")}</div>
+      <div class="observation-detail mono">${escapeHtml([...macCli, ...hermesCli].slice(0, 8).join(" | ") || "No CLI operations")}</div>
     </article>
   `;
 }

@@ -200,7 +200,7 @@ class SubprocessExecutor:
         # that declares a cheaper (or stronger) model gets it without any
         # fleet-wide config change. llm.route records requested/resolved
         # model per completion, so the override is visible in observability.
-        model_override = _task_model_override(task)
+        model_override = _task_model_override(task, hub_client=getattr(self, "client", None))
         if model_override:
             env["MAC_TASK_MODEL"] = model_override
         if repository_context:
@@ -4743,16 +4743,22 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _task_model_override(task: JsonDict) -> str:
+def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     """Per-task LLM model override from task metadata.
 
     ``metadata.model`` (flat, what ``mac task create --model`` writes) wins —
     the by-name override that lets a task pick a faster/cheaper model directly.
     ``metadata.model_strength`` (int 1..10) is the name-decoupled alternative:
     1 = cheapest/weakest, 10 = strongest, resolved to a concrete available model
-    via the persisted strength ladder (so the task stays decoupled from model
-    names as they churn). ``metadata.runtime.model`` is honored last. Empty
-    string when the task pins nothing — the agent's fleet default applies."""
+    via the active strength ladder (so the task stays decoupled from model names
+    as they churn). ``metadata.runtime.model`` is honored last. Empty string when
+    the task pins nothing — the agent's fleet default applies.
+
+    The ladder is resolved from the LOCAL selection store first (co-located hub
+    process), then, if that is empty, from the hub's ``/model-selection/status``
+    via ``hub_client`` — without that fallback a spoke worker (which has no local
+    selection file) would silently ignore ``--model-strength`` and always drop to
+    the fleet default."""
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
@@ -4764,18 +4770,40 @@ def _task_model_override(task: JsonDict) -> str:
         strength = metadata["runtime"].get("model_strength")
     if strength is not None and str(strength).strip():
         try:
-            from mac.model_selection import resolve_strength_from_selection
-
-            resolved = resolve_strength_from_selection(int(strength))
+            scale = int(strength)
+        except (TypeError, ValueError):
+            scale = None
+        if scale is not None:
+            resolved = _resolve_strength_local_or_hub(scale, hub_client)
             if resolved:
                 return resolved[:256]
-        except (TypeError, ValueError):
-            pass
-        except Exception:  # noqa: BLE001 - strength resolution is best-effort.
-            pass
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
         return str(runtime.get("model") or "").strip()[:256]
+    return ""
+
+
+def _resolve_strength_local_or_hub(scale: int, hub_client: Any = None) -> str:
+    """Resolve a 1..10 strength to a concrete model via the LOCAL active ladder,
+    falling back to the hub's ``/model-selection/status`` ladder for spoke
+    workers that have no local selection file. Best-effort — "" on any failure."""
+    try:
+        from mac.model_selection import resolve_strength, resolve_strength_from_selection
+    except Exception:  # noqa: BLE001
+        return ""
+    try:
+        resolved = resolve_strength_from_selection(scale)
+    except Exception:  # noqa: BLE001
+        resolved = ""
+    if resolved:
+        return resolved
+    if hub_client is not None:
+        try:
+            status = hub_client.get("/model-selection/status")
+            ladder = (((status or {}).get("active") or {}).get("ladder")) or []
+            return resolve_strength(scale, [str(m) for m in ladder if str(m).strip()])
+        except Exception:  # noqa: BLE001 - hub fallback is best-effort.
+            return ""
     return ""
 
 
