@@ -204,6 +204,21 @@ def test_build_runs_private_agent_wrapper_in_workspace_subdir():
     assert "hermes_cli.main" not in inner
 
 
+def test_build_whitelists_uploaded_paths_for_git():
+    # The workspace is tar-uploaded, so its files can be owned by a different
+    # uid than the sandbox user; without a safe.directory whitelist every git
+    # command against uploaded paths dies with "dubious ownership" — including
+    # the contract tests the agent runs before declaring done (observed live:
+    # workers failed verification on the only 4 tests that run git against the
+    # checkout, then correctly refused to push).
+    inner = _inner(_build("/work/task-7"))
+    assert "GIT_CONFIG_KEY_0=safe.directory" in inner
+    assert "GIT_CONFIG_VALUE_0='*'" in inner
+    # Must be in force before the git snapshot section AND the agent exec.
+    assert inner.index("safe.directory") < inner.index('init -q')
+    assert inner.index("safe.directory") < inner.index("\nexec ")
+
+
 def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
     workspace = tmp_path / "task-7"
     workspace.mkdir()

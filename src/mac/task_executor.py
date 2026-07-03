@@ -2825,6 +2825,13 @@ def _build_sandbox_create_argv(
             ". ./.mac-sandbox-toolchain.sh",
             "rm -f ./.mac-sandbox-toolchain.sh",
             "mac_sandbox_toolchain_setup || true",
+            # The workspace is tar-uploaded, so its files can be owned by a
+            # different uid than the sandbox user; without a safe.directory
+            # whitelist every git command against uploaded paths dies with
+            # "dubious ownership" (the sandbox is single-purpose and isolated,
+            # so trusting all paths inside it is safe). Env form, not --global,
+            # so it reaches every git subprocess regardless of HOME.
+            "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'",
             # A host git worktree stores `.git` as a pointer into a host-only
             # common directory.  That pointer is invalid after OpenShell uploads
             # the workspace, and host credentials/remotes must not be copied

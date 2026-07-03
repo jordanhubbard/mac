@@ -9672,3 +9672,37 @@ def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
     result = cp._run_hub_review_verification(task, review, evidence, "test")
     assert result is None
     assert calls == []
+
+
+def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):
+    """The tar-uploaded repo can be owned by a different uid than the sandbox
+    user, and HOME=/tmp means no safe.directory whitelist exists — without the
+    preflight, the contract tests that run git against the checkout itself die
+    with "dubious ownership" and good work is rejected (observed live: exactly
+    the 4 git-at-ROOT tests failed while ~4290 passed)."""
+    import subprocess as _subprocess
+
+    from mac import services as services_mod
+
+    captured = []
+
+    def fake_run(argv, **kwargs):
+        captured.append(list(argv))
+        return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
+    rc, out = cp._hub_verify_run_contract_test(
+        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
+    )
+    assert rc == 0
+    create = next(a for a in captured if "create" in a and "--upload" in a)
+    inner = create[create.index("-c") + 1]
+    # Whitelist reaches every git subprocess the suite spawns (env form, not
+    # --global), and it precedes the test command.
+    assert "GIT_CONFIG_KEY_0=safe.directory" in inner
+    assert "GIT_CONFIG_VALUE_0='*'" in inner
+    assert inner.index("safe.directory") < inner.index("cd /sandbox/repo")
+    # Lost-.git uploads fail fast with a distinguishable message, not 4
+    # confusing test failures.
+    assert "rev-parse --is-inside-work-tree" in inner
+    assert "not a usable git repo after upload" in inner
