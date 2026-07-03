@@ -3169,6 +3169,13 @@ def create_app(
         principal.require_global_fleet()
         return model_selection_service.run_once(trigger="operator")
 
+    @app.post("/model-selection/promote")
+    def model_selection_promote(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return model_selection_service.promote(actor="operator")
+
     @app.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:
         # ADR 0006 Phase 3: the well-known ACP discovery manifest. Unauthenticated

@@ -146,6 +146,10 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
     [
+        # fleet model-selection: hub-only (calls the running ModelSelectionService,
+        # not the local ControlPlane), so it can't run in the --db CLI harness;
+        # the endpoints it wraps are exercised by the API route-coverage gate.
+        ("fleet", "model-selection"),
         # action-events domain
         ("action-events", "export-otlp"),
         ("action-events", "list"),

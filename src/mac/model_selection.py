@@ -325,45 +325,152 @@ def selection_file_path(environ: Optional[Mapping[str, str]] = None) -> Path:
     return base / "model-selection.json"
 
 
-def read_selection(path: Optional[Path] = None, environ: Optional[Mapping[str, str]] = None) -> Optional[dict]:
-    """Read the persisted selection (the router's dynamic source). None if absent/invalid."""
+def _read_store(path: Optional[Path], environ: Optional[Mapping[str, str]]) -> dict:
+    """Read the selection store: ``{"active": <sel|null>, "pending": <sel|null>}``.
+
+    Tolerates the flat legacy shape (a bare selection dict) by treating it as the
+    active selection, so an older on-disk file still resolves.
+    """
     p = path if path is not None else selection_file_path(environ)
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    if isinstance(data, dict) and isinstance(data.get("models"), list) and data["models"]:
-        return data
+        return {"active": None, "pending": None}
+    if not isinstance(data, dict):
+        return {"active": None, "pending": None}
+    if "active" in data or "pending" in data:
+        return {"active": data.get("active"), "pending": data.get("pending")}
+    # Legacy flat selection dict -> active.
+    if isinstance(data.get("models"), list):
+        return {"active": data, "pending": None}
+    return {"active": None, "pending": None}
+
+
+def _write_store(store: dict, path: Optional[Path], environ: Optional[Mapping[str, str]]) -> Path:
+    p = path if path is not None else selection_file_path(environ)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(p)  # atomic
+    return p
+
+
+def read_active(environ: Optional[Mapping[str, str]] = None) -> Optional[dict]:
+    """The ACTIVE selection the router/tasks consume. None if none adopted yet."""
+    active = _read_store(None, environ).get("active")
+    if isinstance(active, dict) and isinstance(active.get("models"), list) and active["models"]:
+        return active
     return None
 
 
+def read_pending(environ: Optional[Mapping[str, str]] = None) -> Optional[dict]:
+    """A proposed swap awaiting the eval-drift gate / operator promotion, or None."""
+    pending = _read_store(None, environ).get("pending")
+    if isinstance(pending, dict) and isinstance(pending.get("models"), list) and pending["models"]:
+        return pending
+    return None
+
+
+# Back-compat alias: the router reads the ACTIVE selection.
+read_selection = read_active
+
+
 def selected_models(environ: Optional[Mapping[str, str]] = None) -> List[str]:
-    """The dynamically-selected powerhouse models, or [] if none persisted yet."""
-    data = read_selection(environ=environ)
+    """The ACTIVE powerhouse models, or [] if none adopted yet. A pending swap
+    does NOT affect this — routing never changes until a swap is promoted."""
+    data = read_active(environ=environ)
     return [str(m) for m in (data or {}).get("models", []) if str(m).strip()]
 
 
 def resolve_strength_from_selection(
     scale: int, environ: Optional[Mapping[str, str]] = None
 ) -> str:
-    """Resolve a 1..10 strength to a concrete model via the persisted ladder.
+    """Resolve a 1..10 strength to a concrete model via the ACTIVE ladder.
 
-    Returns "" when no ladder is persisted yet (caller falls back to the fleet
-    default). This is the fast, network-free per-task path: the periodic service
-    computes the ladder once; each task just indexes it."""
-    data = read_selection(environ=environ)
+    Returns "" when no ladder is adopted yet (caller falls back to the fleet
+    default). Fast, network-free per-task path: the service computes the ladder
+    once; each task just indexes the active one."""
+    data = read_active(environ=environ)
     ladder = (data or {}).get("ladder") or []
     return resolve_strength(scale, [str(m) for m in ladder if str(m).strip()])
 
 
+def set_active(sel: ModelSelection, environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Adopt ``sel`` as active and clear any pending candidate."""
+    return _write_store({"active": sel.to_dict(), "pending": None}, None, environ)
+
+
+def set_pending(sel: ModelSelection, environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Record ``sel`` as a pending swap (does not affect routing)."""
+    store = _read_store(None, environ)
+    store["pending"] = sel.to_dict()
+    return _write_store(store, None, environ)
+
+
+def promote_pending(environ: Optional[Mapping[str, str]] = None) -> Optional[dict]:
+    """Promote the pending candidate to active (operator/gate action). Returns
+    the promoted selection dict, or None if there was nothing pending."""
+    store = _read_store(None, environ)
+    pending = store.get("pending")
+    if not (isinstance(pending, dict) and pending.get("models")):
+        return None
+    _write_store({"active": pending, "pending": None}, None, environ)
+    return pending
+
+
+# Legacy name retained for callers/tests that adopt directly (bootstrap path).
 def write_selection(sel: ModelSelection, path: Optional[Path] = None,
                     environ: Optional[Mapping[str, str]] = None) -> Path:
-    p = path if path is not None else selection_file_path(environ)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(sel.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(p)  # atomic
-    return p
+    return _write_store({"active": sel.to_dict(), "pending": None}, path, environ)
+
+
+# --------------------------------------------------------------------------- #
+# Eval-drift gate for swaps (the safety net: a swap must not regress behavior)
+# --------------------------------------------------------------------------- #
+
+# Per-metric direction rules (adopted from the llm-eval-drift-release-gates
+# review): quality metrics regress DOWN; safety-violation regresses on ANY
+# increase; latency/cost regress UP.
+_QUALITY_METRICS = ("overall_score", "avg_correctness", "avg_groundedness")
+_COST_METRICS = ("latency_p50_ms", "latency_p95_ms", "cost_per_answer_avg")
+_SAFETY_METRIC = "safety_violation_rate"
+
+
+def compare_eval_metrics(
+    baseline: Mapping[str, float],
+    current: Mapping[str, float],
+    *,
+    threshold: float = 0.03,
+) -> dict:
+    """Multi-metric drift comparison between a candidate's eval (``current``) and
+    the incumbent's (``baseline``). Returns ``{"regressed": bool, "drifted": [...]}``.
+
+    Quality down > threshold, safety up at all, latency/cost up > threshold each
+    count as a regression. ``threshold`` is a relative delta; NOTE this is a
+    simple ratio, not a significance test — small eval sets make it noise-prone,
+    so treat it as a floor and prefer a statistical test when the golden set is
+    small (tracked in task_7ae3b6bd)."""
+    drifted: List[dict] = []
+
+    def rel(b: float, c: float) -> float:
+        return (c - b) / b if b else (0.0 if c == 0 else 1.0)
+
+    for metric in _QUALITY_METRICS:
+        if metric in baseline and metric in current:
+            d = rel(float(baseline[metric]), float(current[metric]))
+            if d < -threshold:
+                drifted.append({"metric": metric, "rel_delta": d, "direction": "down"})
+    if _SAFETY_METRIC in baseline and _SAFETY_METRIC in current:
+        if float(current[_SAFETY_METRIC]) > float(baseline[_SAFETY_METRIC]):
+            drifted.append({"metric": _SAFETY_METRIC,
+                            "abs_delta": float(current[_SAFETY_METRIC]) - float(baseline[_SAFETY_METRIC]),
+                            "direction": "up"})
+    for metric in _COST_METRICS:
+        if metric in baseline and metric in current:
+            d = rel(float(baseline[metric]), float(current[metric]))
+            if d > threshold:
+                drifted.append({"metric": metric, "rel_delta": d, "direction": "up"})
+    return {"regressed": bool(drifted), "drifted": drifted}
 
 
 def _providers_from_env(environ: Mapping[str, str]) -> List[str]:
@@ -423,10 +530,17 @@ class ModelSelectionService:
 
     def __init__(self, control_plane: Any, config: ModelSelectionConfig, *,
                  searcher: Optional[Callable[[str, int], List[dict]]] = None,
+                 swap_evaluator: Optional[Callable[[List[str], List[str]], dict]] = None,
                  environ: Optional[Mapping[str, str]] = None) -> None:
         self.control_plane = control_plane
         self.config = config
         self._environ = os.environ if environ is None else environ
+        # swap_evaluator(candidate_models, incumbent_models) -> {"approved": bool,
+        # "detail": ...}. When None, a swap is NOT auto-adopted: it is recorded
+        # pending an operator/eval promotion (the safety net — routing never
+        # changes on an unvalidated swap). The concrete golden-set evaluator is
+        # the injectable extension (task_7ae3b6bd).
+        self._swap_evaluator = swap_evaluator
         self._searcher = searcher
         self._stop = threading.Event()
         self._run_lock = threading.Lock()
@@ -472,9 +586,19 @@ class ModelSelectionService:
             "schema": "mac.model_selection_service.v1",
             "config": self.config.to_dict(),
             "thread_alive": bool(t is not None and t.is_alive()),
-            "current": read_selection(environ=self._environ),
+            "active": read_active(environ=self._environ),
+            "pending": read_pending(environ=self._environ),
             "last_run": last,
         }
+
+    def promote(self, *, actor: str = "operator") -> dict:
+        """Promote the pending swap to active (operator action, or an automated
+        eval-drift gate). No-op if nothing is pending."""
+        promoted = promote_pending(environ=self._environ)
+        report = {"status": "ok" if promoted else "nothing_pending",
+                  "promoted": promoted, "actor": actor}
+        self._observe("model.selection.promote", "info", report)
+        return report
 
     def _loop(self) -> None:
         if self._stop.wait(max(0.0, self.config.initial_delay_seconds)):
@@ -501,18 +625,52 @@ class ModelSelectionService:
                 fallback=self.config.fallback_model, now=now,
                 cost_lookup=_models_dev_cost,
             )
-            # Only persist a dynamic result, or a fallback when nothing is
-            # persisted yet — never overwrite a good dynamic choice with a
-            # fallback caused by a transient discovery/network failure.
             report = {"status": "ok", "trigger": trigger, "selection": sel.to_dict(),
                       "providers": providers}
-            if sel.source == "dynamic" or read_selection(environ=self._environ) is None:
-                if sel.models:
-                    write_selection(sel, environ=self._environ)
-                    report["persisted"] = True
+            active = read_active(environ=self._environ)
+            active_models = list((active or {}).get("models", []))
+
+            if not sel.models:
+                # Discovery yielded nothing (and no fallback) — keep whatever's
+                # active. Never blank the model.
+                report["outcome"] = "no_candidate"
+            elif active is None:
+                # Bootstrap: nothing to regress from, adopt immediately.
+                set_active(sel, environ=self._environ)
+                report["outcome"] = "adopted_bootstrap"
+            elif sel.models == active_models:
+                # Same choice — refresh in place (ladder/provenance may change),
+                # no swap, no gate.
+                set_active(sel, environ=self._environ)
+                report["outcome"] = "refreshed"
+            elif sel.source != "dynamic":
+                # A fallback must never displace a good active choice on a
+                # transient discovery failure.
+                report["outcome"] = "kept_active_fallback_only"
             else:
-                report["persisted"] = False
-                report["note"] = "kept existing selection; discovery yielded only fallback"
+                # A genuine SWAP. This is the safety net: routing must not change
+                # on an unvalidated swap. Gate it — adopt only if an evaluator
+                # approves (no behavioral regression); else record pending for
+                # an operator/eval to promote.
+                gate = None
+                if self._swap_evaluator is not None:
+                    try:
+                        gate = self._swap_evaluator(sel.models, active_models)
+                    except Exception as exc:  # noqa: BLE001 - gate failure => don't adopt.
+                        gate = {"approved": False, "detail": "evaluator error: %s" % exc}
+                report["gate"] = gate
+                if gate and gate.get("approved"):
+                    set_active(sel, environ=self._environ)
+                    report["outcome"] = "adopted_gate_passed"
+                else:
+                    set_pending(sel, environ=self._environ)
+                    report["outcome"] = "pending_promotion"
+                    report["note"] = (
+                        "swap proposed; routing unchanged until promoted "
+                        "(eval-drift gate or `mac fleet model-selection promote`)"
+                    )
+            report["active"] = read_active(environ=self._environ)
+            report["pending"] = read_pending(environ=self._environ)
             with self._state_lock:
                 self._last = report
             self._observe("model.selection.run", "info", report)
@@ -546,7 +704,13 @@ __all__ = [
     "available_models_from_providers",
     "selection_file_path",
     "read_selection",
+    "read_active",
+    "read_pending",
     "selected_models",
+    "set_active",
+    "set_pending",
+    "promote_pending",
     "write_selection",
+    "compare_eval_metrics",
     "DEFAULT_QUERIES",
 ]

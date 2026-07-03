@@ -197,10 +197,97 @@ def test_service_run_once_persists_dynamic_selection(tmp_path, monkeypatch):
     report = svc.run_once()
     assert report["status"] == "ok"
     assert report["selection"]["source"] == "dynamic"
-    assert report.get("persisted") is True
-    # The persisted file drives both the powerhouse pick and the strength ladder.
+    # Bootstrap: nothing to regress from, so the first dynamic pick is adopted.
+    assert report["outcome"] == "adopted_bootstrap"
+    # The active file drives both the powerhouse pick and the strength ladder.
     assert "azure/anthropic/claude-opus-4-8" in selected_models(dict(os.environ))
     assert resolve_strength_from_selection(10, dict(os.environ)) == "azure/anthropic/claude-opus-4-8"
+
+
+# --------------------------------------------------------------------------- #
+# Swap gate: a swap never silently changes routing
+# --------------------------------------------------------------------------- #
+
+from mac.model_selection import (  # noqa: E402
+    compare_eval_metrics,
+    read_active,
+    read_pending,
+    set_active,
+)
+
+
+def _svc_env(tmp_path, monkeypatch, providers="openai=https://x,0,key=secret:o", avail=None):
+    monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "sel.json"))
+    monkeypatch.setenv("MAC_ROUTER_PROVIDERS", providers)
+    if avail is not None:
+        import mac.model_selection as ms
+        monkeypatch.setattr(ms, "available_models_from_providers", lambda p: avail)
+    return dict(os.environ)
+
+
+def test_swap_is_pending_not_adopted_without_evaluator(tmp_path, monkeypatch):
+    # Active = opus. A refresh now finds gpt-5 leading+available -> a SWAP.
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic",
+                              at="T0", ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
+    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
+                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+                                environ=env)
+    report = svc.run_once()
+    assert report["outcome"] == "pending_promotion"
+    # Routing is UNCHANGED — active still the incumbent.
+    assert selected_models(env) == ["azure/anthropic/claude-opus-4-8"]
+    assert read_pending(env)["models"] == ["openai/gpt-5-2"]
+
+
+def test_swap_adopted_when_evaluator_approves(tmp_path, monkeypatch):
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic", at="T0",
+                              ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
+    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
+                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+                                swap_evaluator=lambda cand, inc: {"approved": True, "detail": "no regression"},
+                                environ=env)
+    report = svc.run_once()
+    assert report["outcome"] == "adopted_gate_passed"
+    assert selected_models(env) == ["openai/gpt-5-2"]
+    assert read_pending(env) is None
+
+
+def test_swap_stays_pending_when_evaluator_rejects(tmp_path, monkeypatch):
+    env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
+    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic", at="T0",
+                              ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
+    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
+                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+                                swap_evaluator=lambda cand, inc: {"approved": False, "detail": "correctness regressed"},
+                                environ=env)
+    report = svc.run_once()
+    assert report["outcome"] == "pending_promotion"
+    assert selected_models(env) == ["azure/anthropic/claude-opus-4-8"]  # incumbent kept
+    # Operator promotion flips it.
+    svc.promote()
+    assert selected_models(env) == ["openai/gpt-5-2"]
+    assert read_pending(env) is None
+
+
+def test_compare_eval_metrics_direction_rules():
+    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "latency_p95_ms": 1000, "cost_per_answer_avg": 0.02}
+    # Quality drop >3%, safety up, latency up >3% => all regressions.
+    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "latency_p95_ms": 1200, "cost_per_answer_avg": 0.02}
+    res = compare_eval_metrics(base, worse, threshold=0.03)
+    assert res["regressed"] is True
+    metrics = {d["metric"] for d in res["drifted"]}
+    assert {"overall_score", "safety_violation_rate", "latency_p95_ms"} <= metrics
+    # A better candidate does not regress.
+    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "latency_p95_ms": 900, "cost_per_answer_avg": 0.02}
+    assert compare_eval_metrics(base, better)["regressed"] is False
+
+
+def test_safety_regresses_on_any_increase():
+    base = {"overall_score": 0.9, "safety_violation_rate": 0.0}
+    cur = {"overall_score": 0.9, "safety_violation_rate": 0.001}  # tiny safety increase
+    assert compare_eval_metrics(base, cur)["regressed"] is True
 
 
 import os  # noqa: E402
