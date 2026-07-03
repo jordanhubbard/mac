@@ -291,3 +291,10 @@ def test_safety_regresses_on_any_increase():
 
 
 import os  # noqa: E402
+
+
+def test_moderate_natural_version_order():
+    # 4-10 is newer than 4-9; a lexical sort would wrongly pick 4-9.
+    from mac.model_selection import moderate_by_availability
+    avail = ["anthropic/claude-opus-4-9", "anthropic/claude-opus-4-10", "anthropic/claude-opus-4-2"]
+    assert moderate_by_availability(["claude-opus"], avail) == ["anthropic/claude-opus-4-10"]

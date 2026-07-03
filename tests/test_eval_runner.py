@@ -186,8 +186,34 @@ def test_builder_none_without_router_url(monkeypatch):
     assert build_swap_evaluator({"MAC_MODEL_SWAP_EVAL_ENABLED": "1"}) is None
 
 
-def test_deploy_env_enables_swap_eval_on_hub():
+def test_deploy_env_does_not_default_enable_model_selection():
+    # Model selection is OPT-IN until production-ready (namespace/distribution
+    # gaps): deploy must NOT default-enable it.
     from mac import deploy_env as de
-    # Grep the source: the hub block sets MAC_MODEL_SWAP_EVAL_ENABLED.
     src = open(de.__file__, encoding="utf-8").read()
-    assert 'values.setdefault("MAC_MODEL_SWAP_EVAL_ENABLED", "1")' in src
+    assert 'setdefault("MAC_MODEL_SELECT_ENABLED", "1")' not in src
+    assert 'setdefault("MAC_MODEL_SWAP_EVAL_ENABLED", "1")' not in src
+
+
+def test_evaluate_swap_fails_closed_when_calls_error():
+    # The fail-open bug: a router outage made both evals empty -> "equal" ->
+    # approved. Now a call that raises marks the eval invalid -> NOT approved.
+    def raising_caller(model, question, context):
+        raise ConnectionError("router down")
+
+    v = evaluate_swap("cand", "inc", GOLDEN, model_caller=raising_caller)
+    assert v.approved is False
+    assert "could not run" in v.detail
+
+
+def test_evaluate_swap_blocks_correctness_collapse():
+    # Correctness 100% -> 0% across many cases must block even if other metrics
+    # look fine (previously only overall_score was checked).
+    cases = [{"id": "c%d" % i, "question": "q%d" % i, "expected_points": ["target%d" % i]}
+             for i in range(12)]
+    answers = {
+        "inc": {"q%d" % i: ("target%d is the answer" % i, [], 10.0) for i in range(12)},
+        "cand": {"q%d" % i: ("completely wrong", [], 10.0) for i in range(12)},
+    }
+    v = evaluate_swap("cand", "inc", cases, model_caller=lambda m, q, c: answers[m][q])
+    assert v.approved is False

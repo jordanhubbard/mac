@@ -27,9 +27,16 @@ adding a new family here just lets discovery see it.
 
 from __future__ import annotations
 
+import copy
+import json
+import logging
+import os
 import re
+import threading
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 # Recognition registry: canonical family -> regex matching how it's written on
 # the web AND (loosely) how its concrete model ids look. This only lets the
@@ -139,17 +146,41 @@ def resolve_strength(scale: int, ladder: Sequence[str]) -> str:
 
 
 def _models_dev_cost(model_id: str) -> Optional[float]:
-    """Output cost per token for a concrete model id via models.dev, or None."""
-    try:
-        from mac._hermes.agent.models_dev import get_model_capabilities  # type: ignore
+    """Output cost per token for a model id via models.dev, or None.
 
-        info = get_model_capabilities(model_id)
+    The real catalog API is ``get_model_info(provider_id, model_id)`` and the
+    field is ``cost_output`` (``get_model_capabilities(model_id)`` — the previous
+    call — is the wrong API and carries no cost). Ids may be provider-prefixed
+    (``provider/model`` from available_models_from_providers); parse the provider
+    and use the bare model id. Returns None (=> name-tier ladder fallback) when
+    unavailable.
+    """
+    try:
+        from mac.hermes_vendor import ensure_on_path
+
+        ensure_on_path()
+        from mac._hermes.agent.models_dev import get_model_info  # type: ignore
     except Exception:  # noqa: BLE001
         return None
-    for attr in ("output_cost", "cost_output", "output_price"):
-        val = getattr(info, attr, None)
-        if isinstance(val, (int, float)):
-            return float(val)
+    mid = str(model_id)
+    # Candidate (provider, model) splits: the leading segment as provider with
+    # the rest as the model, plus a bare fallback across common providers.
+    candidates: List[Tuple[str, str]] = []
+    if "/" in mid:
+        head, _, tail = mid.partition("/")
+        candidates.append((head, tail.rsplit("/", 1)[-1]))
+    bare = mid.rsplit("/", 1)[-1]
+    for provider in ("anthropic", "openai", "google", "xai", "deepseek", "meta", "mistral", "qwen"):
+        candidates.append((provider, bare))
+    for provider, model in candidates:
+        try:
+            info = get_model_info(provider, model)
+        except Exception:  # noqa: BLE001
+            info = None
+        if info is not None:
+            val = getattr(info, "cost_output", None)
+            if isinstance(val, (int, float)):
+                return float(val)
     return None
 
 
@@ -190,9 +221,9 @@ def moderate_by_availability(
     model id for it. Families with no available model are dropped — that is the
     'moderate by what the gateway/CLI actually has' constraint.
 
-    'Best' within a family = the available id whose family matches, preferring
-    the lexically-greatest id (later versions/snapshots sort higher) so we pick
-    the newest available of the leading family.
+    'Best' within a family = the newest available id, by a NATURAL version sort
+    (numeric segments compared as integers) so ``claude-opus-4-10`` beats
+    ``claude-opus-4-9`` — a lexical sort would wrongly prefer 4-9.
     """
     by_family: Dict[str, List[str]] = {}
     for mid in available_models or []:
@@ -203,8 +234,15 @@ def moderate_by_availability(
     for family in leading_families:
         candidates = by_family.get(family)
         if candidates:
-            chosen.append(sorted(candidates)[-1])
+            chosen.append(max(candidates, key=_version_key))
     return chosen
+
+
+def _version_key(model_id: str):
+    """Natural-order key: split into numeric and non-numeric runs so numeric
+    segments compare as integers (4-10 > 4-9), not lexically."""
+    parts = re.findall(r"\d+|\D+", str(model_id))
+    return [(1, int(p)) if p.isdigit() else (0, p) for p in parts]
 
 
 def select_powerhouse_models(
@@ -279,18 +317,30 @@ def discover_via_web(
 
 def available_models_from_providers(providers: Iterable[str]) -> List[str]:
     """Concrete agentic model ids the gateway can route to, per the fleet's
-    configured providers, via the models.dev catalog. Empty on any failure."""
+    configured providers, via the models.dev catalog. Empty on any failure.
+
+    Ids are returned provider-prefixed (``provider/model``) so the provider is
+    recoverable downstream (cost lookup needs it) — the vendored catalog's
+    ``list_agentic_models`` returns bare ids per provider.
+    """
     out: List[str] = []
     try:
+        # The vendored Hermes catalog is only importable after its path is set
+        # up; without this the import raises ModuleNotFoundError and the whole
+        # selection silently degrades to [] (the fleet never sees any models).
+        from mac.hermes_vendor import ensure_on_path
+
+        ensure_on_path()
         from mac._hermes.agent.models_dev import list_agentic_models
     except Exception:  # noqa: BLE001 - catalog optional; caller falls back.
         return out
     for provider in providers or []:
+        p = str(provider)
         try:
-            out.extend(list_agentic_models(str(provider)))
+            for mid in list_agentic_models(p):
+                out.append("%s/%s" % (p, mid))
         except Exception:  # noqa: BLE001
             continue
-    # De-dup, preserve order.
     seen: set = set()
     return [m for m in out if not (m in seen or seen.add(m))]
 
@@ -298,15 +348,6 @@ def available_models_from_providers(providers: Iterable[str]) -> List[str]:
 # --------------------------------------------------------------------------- #
 # Persistence + periodic refresher
 # --------------------------------------------------------------------------- #
-
-import copy
-import json
-import logging
-import os
-import threading
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Mapping
 
 _log = logging.getLogger("mac.model_selection")
 
@@ -347,11 +388,24 @@ def _read_store(path: Optional[Path], environ: Optional[Mapping[str, str]]) -> d
 
 
 def _write_store(store: dict, path: Optional[Path], environ: Optional[Mapping[str, str]]) -> Path:
+    import os as _os
+    import tempfile as _tempfile
+
     p = path if path is not None else selection_file_path(environ)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(p)  # atomic
+    # Unique temp in the same dir (not a fixed ``.tmp``) so a concurrent refresh
+    # and promote can't clobber each other's temp mid-write; the rename is atomic.
+    fd, tmp_name = _tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(store, indent=2, sort_keys=True) + "\n")
+        _os.replace(tmp_name, str(p))  # atomic
+    except BaseException:
+        try:
+            _os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     return p
 
 

@@ -855,17 +855,14 @@ def build_mac_env(
         # a no-op for every project that has not opted in via
         # metadata["backlog_grooming"], so enabling it by default is safe.
         values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
-        # mac-model-select: periodically choose the fleet's powerhouse models
-        # from a web search of what's leading, moderated by what the gateway can
-        # route (vs a hard-coded pin). Falls back to the configured default on
-        # any discovery failure, so enabling it by default is safe.
-        values.setdefault("MAC_MODEL_SELECT_ENABLED", "1")
-        # mac-model-select: gate model SWAPS on an automated golden-set eval so a
-        # newly-"leading" model is adopted only if it doesn't regress quality/
-        # safety on our tasks. Uses the hub's local router (OPENAI_BASE_URL) —
-        # no extra URL to configure. Fully safe: if the eval can't run, the swap
-        # stays pending for operator promotion (routing never changes blindly).
-        values.setdefault("MAC_MODEL_SWAP_EVAL_ENABLED", "1")
+        # mac-model-select: dynamic powerhouse-model selection is OPT-IN, not
+        # default-on. It is not yet production-ready: the selection namespace
+        # (bare models.dev ids) does not match the router's routable namespace,
+        # so a selection cannot yet safely control routing, and the per-worker
+        # strength ladder is not distributed from the hub. Until those are closed
+        # (tracked follow-up) selection stays advisory (observable via
+        # /model-selection/status) and the eval-swap gate is operator-driven.
+        # Operators opt in with MAC_MODEL_SELECT_ENABLED / MAC_MODEL_SWAP_EVAL_ENABLED.
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values
