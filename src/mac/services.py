@@ -4,6 +4,7 @@ import base64
 import binascii
 import fnmatch
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -1164,6 +1165,63 @@ class ControlPlane:
             get_environment=self.deploy.get_environment,
             current_deployment=self.deploy.current_deployment,
         )
+        # Event-driven review advancement (opt-in; enabled by the hub's tick
+        # wiring). Review-stage transitions used to wait for the next periodic
+        # sweep, so every hop of work -> verify -> publish paid up to a full
+        # tick interval of latency. When enabled, the moment an advancing event
+        # lands (submit_for_review, a recorded hub verdict) the task is nudged
+        # onto a queue consumed by a daemon thread; the periodic sweep remains
+        # as the fallback. None (default) = disabled: CLI invocations and tests
+        # never spawn the thread.
+        self._advance_queue: Optional[Any] = None
+        self._advance_queued: set = set()
+        self._advance_state_lock = threading.Lock()
+
+    def enable_event_driven_review_advance(self) -> None:
+        """Start the review-advance nudge consumer (idempotent).
+
+        Called from the hub's self-drive wiring only — the same gate that owns
+        the periodic tick — so stateless replicas, the CLI, and the test suite
+        never spawn a competing advancer."""
+        import queue as _queue
+
+        with self._advance_state_lock:
+            if self._advance_queue is not None:
+                return
+            q: "_queue.Queue[str]" = _queue.Queue()
+            self._advance_queue = q
+
+        def _consume() -> None:
+            while True:
+                task_id = q.get()
+                with self._advance_state_lock:
+                    self._advance_queued.discard(task_id)
+                try:
+                    self.advance_default_review_workflow(
+                        task_id, actor="event-driven-review"
+                    )
+                except Exception:  # noqa: BLE001 - the advancer must never die; the sweep is the fallback.
+                    logging.getLogger("mac.review_advance").warning(
+                        "event-driven review advance failed for %s", task_id, exc_info=True
+                    )
+
+        threading.Thread(
+            target=_consume, name="mac-review-advance", daemon=True
+        ).start()
+
+    def _nudge_review_workflow(self, task_id: str) -> None:
+        """Queue an immediate workflow advance for ``task_id``.
+
+        No-op unless event-driven advancement is enabled; de-duplicates so a
+        burst of events for one task costs one advance."""
+        q = self._advance_queue
+        if q is None or not task_id:
+            return
+        with self._advance_state_lock:
+            if task_id in self._advance_queued:
+                return
+            self._advance_queued.add(task_id)
+        q.put(task_id)
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
@@ -6256,6 +6314,9 @@ class ControlPlane:
             {},
             drain_outbox=drain_outbox,
         )
+        # Event, not sweep: start the review workflow the moment work is
+        # submitted instead of waiting up to a full tick interval.
+        self._nudge_review_workflow(task_id)
         return reviewed
 
     def _require_review_ready(self, task: Task) -> Evidence:
@@ -12670,6 +12731,9 @@ class ControlPlane:
             {"review_id": review.id, "verdict": verdict, "returncode": returncode,
              "reviewer_agent_id": review.reviewer_agent_id}, actor,
         )
+        # The verdict is the event that unlocks the next stage (publish on
+        # approval / feedback on rejection) — advance now, not on the next sweep.
+        self._nudge_review_workflow(task.id)
         return evidence
 
     def _default_review_for_task(self, task_id: str) -> Optional[Review]:

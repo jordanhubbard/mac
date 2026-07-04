@@ -3611,34 +3611,14 @@ class MacWorker:
                 "stderr": "repository contract test.command is missing",
             }
         try:
-            # 600s fit the bare suite (~7 min), but verification may now
-            # bootstrap the repo .venv first (pip install -e .[dev]) on hosts
-            # whose interpreter can't run the suite — bootstrap + suite blows
-            # a 600s budget and the kill landed mid-run with rc 124/1 and a
-            # truncated log, indistinguishable from a test failure.
-            timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800"))
-        except ValueError:
-            timeout = 1800.0
-        try:
-            proc = subprocess.run(
-                ["bash", "-lc", command],
-                cwd=str(worktree),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            return {
-                "name": "repository contract test",
-                "command": command,
-                "returncode": 124,
-                "status": "fail",
-                "stdout": _truncate_process_text(stdout),
-                "stderr": _truncate_process_text(stderr or "test command timed out"),
-            }
+            # Progress-based watchdog: kills only when the command stops
+            # emitting output (MAC_TEST_STALL_TIMEOUT, default 300s), with
+            # MAC_WORKER_REPOSITORY_TEST_TIMEOUT (1800s) as a hard backstop.
+            # Total-runtime constants kept going stale as legitimate work grew
+            # (venv bootstrap + suite) and killed healthy runs mid-flight.
+            from mac.task_executor import run_with_stall_watchdog
+
+            proc = run_with_stall_watchdog(["bash", "-lc", command], worktree)
         except Exception as exc:  # noqa: BLE001 - report as verification failure.
             return {
                 "name": "repository contract test",

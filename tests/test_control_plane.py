@@ -9706,3 +9706,37 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     # confusing test failures.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner
+
+
+def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
+    """With the event-driven advancer enabled (hub wiring), submitting work
+    for review triggers the workflow immediately — no periodic sweep needed.
+    Previously every stage waited up to a full MAC_HUB_TICK_INTERVAL_SECONDS."""
+    import time as _time
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda remote, branch, head, cmd: (0, "all passed"),
+    )
+    # _setup_hubverify_task already called submit_for_review BEFORE the
+    # advancer existed; enable it and nudge as submit_for_review now does.
+    cp.enable_event_driven_review_advance()
+    cp._nudge_review_workflow(task.id)
+
+    deadline = _time.monotonic() + 10.0
+    while _time.monotonic() < deadline:
+        if cp.get_task(task.id).state == TaskState.COMPLETED.value:
+            break
+        _time.sleep(0.05)
+    # verdict recording re-nudges, so review AND publication complete without
+    # any cp.tick()/advance call from a sweep.
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    reviews = cp.list_reviews(task.id)
+    assert reviews and reviews[0].status == ReviewStatus.APPROVED.value
+
+
+def test_nudge_is_noop_when_advancer_disabled(cp):
+    """CLI/test constructions never spawn the advancer thread; nudges are free."""
+    assert cp._advance_queue is None
+    cp._nudge_review_workflow("task_whatever")  # must not raise or spawn
+    assert cp._advance_queue is None

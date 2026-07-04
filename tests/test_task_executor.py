@@ -2379,3 +2379,44 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
     # children were posted
     assert captured_children.get("task_id") == "t_plan"
     assert len(captured_children.get("children", [])) == 3
+
+
+# --------------------------------------------------------------------------- #
+# run_with_stall_watchdog: progress-based, not total-runtime-based
+# --------------------------------------------------------------------------- #
+
+
+def test_stall_watchdog_kills_silent_hang_quickly(tmp_path):
+    # A hung process goes quiet; the watchdog kills on output stall — long
+    # before any total-runtime budget — with an explicit diagnosable marker.
+    import time as _time
+    start = _time.monotonic()
+    r = te.run_with_stall_watchdog(
+        ["bash", "-c", "echo working; sleep 60"], tmp_path,
+        stall_timeout=1.0, hard_timeout=120.0,
+    )
+    assert r.returncode == 124
+    assert "stalled: no output" in r.stderr
+    assert "working" in r.stdout            # pre-hang output preserved
+    assert _time.monotonic() - start < 20   # killed on stall, not after 60s
+
+
+def test_stall_watchdog_lets_slow_but_chatty_work_finish(tmp_path):
+    # Steady progress output means NO kill even when total runtime exceeds the
+    # stall window — the exact scenario stale total-runtime budgets murdered.
+    r = te.run_with_stall_watchdog(
+        ["bash", "-c", "for i in 1 2 3 4 5 6; do echo tick $i; sleep 0.5; done; echo done"],
+        tmp_path, stall_timeout=1.5, hard_timeout=120.0,
+    )
+    assert r.returncode == 0
+    assert "done" in r.stdout
+
+
+def test_stall_watchdog_hard_ceiling_stops_chatty_loops(tmp_path):
+    # The backstop: a pathological always-printing loop still dies at the ceiling.
+    r = te.run_with_stall_watchdog(
+        ["bash", "-c", "while true; do echo spin; sleep 0.2; done"], tmp_path,
+        stall_timeout=5.0, hard_timeout=2.0,
+    )
+    assert r.returncode == 124
+    assert "hard ceiling" in r.stderr
