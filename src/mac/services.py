@@ -4,6 +4,7 @@ import base64
 import binascii
 import fnmatch
 import hashlib
+import json
 import logging
 import os
 import re
@@ -10799,12 +10800,58 @@ class ControlPlane:
             },
             actor,
         )
+        # Ground truth into memory: publication is the strongest outcome signal
+        # the pipeline produces, and until now it never became a lesson (the
+        # executor's deployment_learning writeback happens BEFORE review).
+        self._record_review_outcome_lesson(
+            task_id, outcome="approved_published", detail="published to %s" % publication.target
+        )
         return {
             "task_id": task_id,
             "status": "published",
             "review_id": review.id,
             "publication_id": publication.id,
         }
+
+    def _record_review_outcome_lesson(
+        self, task_id: str, *, outcome: str, detail: str
+    ) -> None:
+        """Distill a review-stage outcome into a ``deployment_learning`` memory
+        record (best-effort; never breaks the workflow).
+
+        Emitted with schema ``mac.deployment_learning.v1`` so the executor's
+        existing ``recall_deployment_lessons`` surfaces it to the NEXT task on
+        the project with zero reader changes — the fleet learns from verdicts,
+        not just from its own exit codes."""
+        try:
+            task = self.get_task(task_id)
+            project = str(task.project or "") or "unknown"
+            content = {
+                "schema": "mac.deployment_learning.v1",
+                "task_id": task_id,
+                "task_title": task.title,
+                "project": project,
+                "repository": "",
+                "evidence_type": "review_verdict",
+                "outcome": outcome,
+                "signals": {"stage": "hub_review"},
+                "error_signature": ("" if outcome == "approved_published" else str(detail)[:200]),
+                "detail": str(detail)[:300],
+                "at": utcnow(),
+            }
+            self.add_memory(
+                task_id,
+                "project",
+                project,
+                "deployment_learning:%s" % project,
+                json.dumps(content, sort_keys=True, separators=(",", ":")),
+                None,
+                "hub-review-workflow",
+            )
+        except Exception:  # noqa: BLE001 - lessons are advisory, workflow is not.
+            logging.getLogger("mac.review_lessons").warning(
+                "could not record review outcome lesson for %s", task_id, exc_info=True
+            )
 
     # Secrets boundary: thin facade over ``self.secrets``. New code should
     # call ``cp.secrets.<method>`` directly.
@@ -12965,6 +13012,12 @@ class ControlPlane:
             {"review_id": review.id, "verdict": verdict, "returncode": returncode,
              "reviewer_agent_id": review.reviewer_agent_id}, actor,
         )
+        if verdict == "rejected":
+            self._record_review_outcome_lesson(
+                task.id,
+                outcome="review_rejected",
+                detail=str(manifest.get("feedback") or "hub contract verification failed")[:300],
+            )
         # The verdict is the event that unlocks the next stage (publish on
         # approval / feedback on rejection) — advance now, not on the next sweep.
         self._nudge_review_workflow(task.id)

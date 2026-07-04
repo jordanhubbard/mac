@@ -6136,6 +6136,7 @@ def create_app(
         until: Optional[str] = Query(default=None, description="ISO-8601 upper bound on created_at (inclusive)"),
         limit: Optional[int] = Query(default=None, ge=1, description="Maximum number of records to return"),
         order: str = Query(default="asc", description="Sort order: asc (oldest first) or desc (newest first)"),
+        content_contains: Optional[str] = Query(default=None, description="Case-insensitive substring match on record content"),
     ) -> List[Dict[str, Any]]:
         return [
             record.to_dict()
@@ -6150,6 +6151,7 @@ def create_app(
                 until=until,
                 limit=limit,
                 order=order,
+                content_contains=content_contains,
             )
         ]
 

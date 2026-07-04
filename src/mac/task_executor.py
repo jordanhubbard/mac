@@ -957,6 +957,97 @@ def record_deployment_learning(task: Dict[str, Any], outcome: Dict[str, Any]) ->
     return _hub_post("/memory", build_learning_record(task, outcome))
 
 
+_LESSON_CURATION_PROMPT = """You are the fleet's lesson curator. A task just finished; distill what the NEXT agent working on this project should know.
+
+Task: {title}
+Outcome: {outcome} (evidence_type={evidence_type})
+Signals: {signals}
+Failure hint: {error_signature}
+
+Write 1-3 lessons, ONE PER LINE, no bullets or numbering. Each lesson must be a single self-contained sentence under 250 characters stating a reusable, project-specific fact or pitfall (environment quirks, commands that worked/failed, gotchas). Ground every lesson in the outcome above - do not speculate. If nothing generalizes beyond this one task, output exactly: NOTHING
+"""
+
+
+def curate_lessons_from_outcome(
+    task: Dict[str, Any], outcome: Dict[str, Any]
+) -> List[str]:
+    """LLM-curated lessons from a finished run (the Hermes background-review
+    pattern, made outcome-grounded and fleet-shared).
+
+    Hermes forks an LLM every N iterations to journal into per-host text files
+    with no outcome signal; here the fork runs ONCE per task, is shown the
+    VERIFIED outcome (tests/push/checks signals), and its lessons land in the
+    HUB memory service as ``mac.deployment_learning.v1`` records - recalled by
+    every agent on the project via the existing lesson recall, and promoted to
+    the vector tier by the nap consolidator. Opt-in via
+    MAC_LESSON_CURATION_ENABLED; router endpoint from
+    MAC_ROUTER_URL/OPENAI_BASE_URL (the eval runner's seam). Best-effort: any
+    failure returns [] and the run's outcome is unaffected."""
+    if str(os.environ.get("MAC_LESSON_CURATION_ENABLED") or "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return []
+    router_url = str(
+        os.environ.get("MAC_ROUTER_URL")
+        or os.environ.get("MAC_ROUTER_INTERNAL_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or ""
+    ).strip()
+    model = str(
+        os.environ.get("MAC_LESSON_CURATION_MODEL")
+        or os.environ.get("MAC_TASK_MODEL")
+        or os.environ.get("MAC_HERMES_GATEWAY_MODEL")
+        or ""
+    ).strip()
+    if not router_url or not model:
+        return []
+    try:
+        from mac.eval_runner import router_model_caller
+
+        prompt = _LESSON_CURATION_PROMPT.format(
+            title=str(task.get("title") or "")[:200],
+            outcome=outcome.get("outcome"),
+            evidence_type=outcome.get("evidence_type"),
+            signals=json.dumps(outcome.get("signals") or {}, sort_keys=True)[:400],
+            error_signature=str(outcome.get("error_signature") or "none")[:200],
+        )
+        caller = router_model_caller(
+            router_url, token=str(os.environ.get("MAC_API_TOKEN") or "")
+        )
+        answer, _cites, _ms = caller(model, prompt, "")
+    except Exception:  # noqa: BLE001 - curation is advisory.
+        return []
+    lessons: List[str] = []
+    for line in str(answer or "").splitlines():
+        text = line.strip().strip("-*\u2022 ").strip()
+        if not text or text.upper() == "NOTHING":
+            continue
+        lessons.append(text[:250])
+        if len(lessons) >= 3:
+            break
+    return lessons
+
+
+def record_curated_lessons(task: Dict[str, Any], outcome: Dict[str, Any]) -> int:
+    """Persist LLM-curated lessons as deployment-learning records (best-effort).
+    Returns the number recorded."""
+    lessons = curate_lessons_from_outcome(task, outcome)
+    recorded = 0
+    for lesson in lessons:
+        payload = build_learning_record(
+            task,
+            {
+                "evidence_type": outcome.get("evidence_type"),
+                "outcome": outcome.get("outcome"),
+                "signals": {**(outcome.get("signals") or {}), "curated": True},
+                "error_signature": lesson,
+            },
+        )
+        if _hub_post("/memory", payload):
+            recorded += 1
+    return recorded
+
+
 def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int) -> Dict[str, Any]:
     """Derive a compact, recall-friendly outcome from the final evidence
     manifest (read from disk) + the executor return code."""
@@ -4508,6 +4599,7 @@ def _run_executor(
             signals=outcome["signals"],
         )
         record_deployment_learning(task, outcome)
+        record_curated_lessons(task, outcome)
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)

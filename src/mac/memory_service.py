@@ -108,6 +108,7 @@ class MemoryService:
         until: Optional[str] = None,
         limit: Optional[int] = None,
         order: str = "asc",
+        content_contains: Optional[str] = None,
     ) -> List[MemoryRecord]:
         """Query memory records with operator-grade filters.
 
@@ -136,6 +137,9 @@ class MemoryService:
             Maximum number of records to return.  ``None`` returns all.
         order:
             ``"asc"`` (oldest first, default) or ``"desc"`` (newest first).
+        content_contains:
+            Case-insensitive substring match against record content (how an
+            agent finds prior lessons about e.g. "merge-tree" or a host name).
         """
         clauses: List[str] = []
         params: List[Any] = []
@@ -163,6 +167,12 @@ class MemoryService:
         if until:
             clauses.append("created_at <= ?")
             params.append(until)
+        if content_contains:
+            # Case-insensitive substring match on record content. Deliberately
+            # LIKE, not FTS: works identically on SQLite and Postgres stores at
+            # this table's scale, and stays honest about what it is.
+            clauses.append("LOWER(content) LIKE ?")
+            params.append("%" + str(content_contains).lower() + "%")
         sql = "SELECT * FROM memory_records"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
