@@ -1,0 +1,75 @@
+# NemoClaw pilot — provider and MAC router configuration.
+#
+# This file configures the provider settings for the NemoClaw pilot agent.
+# It points at MAC's router base URL with the required static identity headers.
+# It is a TEMPLATE: substitute all <placeholder> values at deploy time.
+# Never commit live tokens or API keys here.
+#
+# Deployment:
+#   Copy or render this file to HERMES_HOME/config.yaml on the pilot host
+#   before starting the nemoclaw-gateway service.
+#
+# Static headers:
+#   MAC's router requires two headers on every inference call so it can
+#   attribute usage and apply per-agent policy:
+#     x-mac-agent-id           — the deploying agent's stable fleet identity
+#     x-mac-hermes-instance-id — the Hermes instance ID assigned by MAC
+#   These are set as static_headers on the custom provider below.
+
+provider: custom
+base_url: "http://hub.example.internal:8789/v1"
+# API key is provided via OPENAI_API_KEY or MAC_HERMES_GATEWAY_API_KEY env var.
+# Do not hardcode it here.
+
+# Model: MAC's router resolves the real upstream model per agent.
+# '*' passes model selection through to the router.
+model: "*"
+
+# Auxiliary provider for NemoClaw (MAC router with static identity headers).
+# The gateway reads this block when the 'custom' provider is active.
+custom_providers:
+  mac-router:
+    provider: custom
+    base_url: "http://hub.example.internal:8789/v1"
+    # These headers are injected into every request to the MAC router.
+    # Replace <agent-id> and <hermes-instance-id> with the values from
+    # this agent's mac.env before deploying.
+    static_headers:
+      x-mac-agent-id: "<agent-id>"
+      x-mac-hermes-instance-id: "<hermes-instance-id>"
+
+# Inference provider override (used by agent sessions spawned from this gateway).
+inference_provider: custom
+inference_model: "*"
+
+# Gateway configuration.
+gateway:
+  # Home channel for the NemoClaw pilot Slack workspace.
+  # Replace with the actual Slack channel name (without '#').
+  home_channel: "<nemoclaw-slack-home-channel>"
+
+  # NemoClaw runs on its own gateway port so it does not conflict with
+  # the existing hermes gateway service on the same host.
+  port: 18765
+
+  # Session behavior.
+  session_reset_trigger: "!reset"
+  notice_delivery: public
+
+  # Slack Socket Mode settings for the pilot workspace.
+  # The slack_accounts.json file (see slack-account.yaml.example) provides
+  # the bot and app tokens; do not duplicate them here.
+  platforms:
+    slack:
+      enabled: true
+      require_mention: true
+      strict_mention: true
+      allowed_users: "*"
+
+# Toolsets enabled for the NemoClaw pilot.
+# Adjust to match the capabilities desired for this pilot deployment.
+enabled_toolsets:
+  - terminal
+  - file
+  - web
+  - search

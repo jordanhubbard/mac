@@ -1,0 +1,121 @@
+# NemoClaw pilot — single-host OpenClaw sandbox image configuration.
+#
+# Runs the Hermes agent gateway inside an OpenClaw sandbox on one host
+# alongside (not replacing) the existing hermes gateway service.
+# The MAC router base URL and static identity headers are injected via
+# the environment block below; swap the placeholder values for real ones
+# at deploy time (never commit secrets here).
+#
+# Digest pin: docker.io/library/python:3.12-slim-bookworm
+#   sha256 as of 2026-06-27 — bump only on deliberate, reviewed upgrade.
+#
+# Build the runtime image first:
+#   docker build -t localhost/mac-hermes:net \
+#     -f deploy/openshell/mac-hermes.Containerfile <mac-src>
+#
+# Then start this service:
+#   docker compose -f deploy/nemoclaw/docker-compose.yaml up -d
+#
+# The port below (18765) is the NemoClaw pilot gateway port; it must
+# not conflict with the existing hermes gateway (default 8765).  Change
+# MAC_NEMOCLAW_GATEWAY_PORT in the environment block if you need a
+# different port.
+
+version: "3.9"
+
+services:
+  nemoclaw-gateway:
+    image: "localhost/mac-hermes:net"
+    # Digest pin for the base image baked into mac-hermes:net.
+    # Update together with mac-hermes.Containerfile whenever you rebuild.
+    # Base: docker.io/library/python:3.12-slim-bookworm
+    #   sha256:fb5e45b8f3f6b3d9ce5cd2bdd5ddb5b57c5a0d1a1c67a9e6b3b7c9d4e5f1a2b3
+    #   (placeholder — replace with the digest from `docker inspect localhost/mac-hermes:net`)
+    command:
+      - python3
+      - -m
+      - mac.hermes_gateway
+    restart: unless-stopped
+    user: "sandbox:sandbox"
+    ports:
+      # NemoClaw pilot gateway listens on a dedicated port so it coexists
+      # with the existing hermes gateway on the same host.
+      - "127.0.0.1:18765:18765"
+    environment:
+      # --- MAC router connection ---
+      # Point at MAC's in-process router base URL on this host.
+      # Replace <mac-router-base-url> with the real hub URL (e.g.
+      # http://hub.example.internal:8789/v1).
+      OPENAI_BASE_URL: "http://hub.example.internal:8789/v1"
+      CUSTOM_BASE_URL: "http://hub.example.internal:8789/v1"
+      MAC_HERMES_GATEWAY_BASE_URL: "http://hub.example.internal:8789/v1"
+      MAC_HERMES_GATEWAY_PROVIDER: "custom"
+      # Wildcard model: MAC's router resolves the real model per-agent.
+      MAC_HERMES_GATEWAY_MODEL: "*"
+      HERMES_INFERENCE_PROVIDER: "custom"
+      HERMES_INFERENCE_MODEL: "*"
+
+      # --- Static MAC identity headers (injected into every router call) ---
+      # These are resolved from mac.env at deploy time.  The deploy script
+      # writes the actual values; placeholders here keep the file
+      # secret-free for the repository.
+      MAC_HERMES_INSTANCE_ID: "<nemoclaw-hermes-instance-id>"
+      # x-mac-agent-id and x-mac-hermes-instance-id are forwarded by the
+      # mac router adapter; set these so the router can attribute calls.
+      OPENAI_API_KEY: "***"
+      MAC_HERMES_GATEWAY_API_KEY: "***"
+
+      # --- NemoClaw gateway port ---
+      MAC_NEMOCLAW_GATEWAY_PORT: "18765"
+
+      # --- Hermes home (per-pilot, isolated from the main hermes service) ---
+      HERMES_HOME: "/home/sandbox/.hermes-nemoclaw"
+
+      # --- Slack Socket Mode (single workspace, NemoClaw pilot) ---
+      # See slack-account.yaml.example for the account file format.
+      # Place the rendered account file at HERMES_HOME/slack_accounts.json
+      # before starting this service.
+
+      # --- Runtime context injection ---
+      # The MAC runtime context file is written by the fleet deploy and
+      # injected into every agent session as an operator instruction block.
+      MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN: "/home/sandbox/.hermes-nemoclaw/mac-runtime-context.md"
+      MAC_HERMES_RUNTIME_CONTEXT_REQUIRED: "1"
+
+      # --- OpenClaw sandbox policy ---
+      MAC_OPENSHELL_REQUIRED: "1"
+      MAC_OPENSHELL_POLICY: "/home/sandbox/.mac/openshell/<agent-id>-policy.yaml"
+
+      # --- Shared services (point at hub) ---
+      QDRANT_URL: "http://hub.example.internal:6333"
+      QDRANT_ADDRESS: "http://hub.example.internal:6333"
+      FIRECRAWL_API_URL: "http://hub.example.internal:3002"
+      FIRECRAWL_GATEWAY_URL: "http://hub.example.internal:3002"
+      FIRECRAWL_API_KEY: "***"
+
+      # --- Slack connection flags ---
+      SLACK_ALLOWED_USERS: "*"
+      SLACK_REQUIRE_MENTION: "true"
+      SLACK_STRICT_MENTION: "true"
+
+    volumes:
+      # Mount the per-pilot Hermes home (contains config, slack_accounts.json,
+      # runtime-context.md, etc.).  Create this directory on the host and
+      # populate it before starting the service.
+      - type: bind
+        source: "${NEMOCLAW_HERMES_HOME:-/home/<operator-user>/.hermes-nemoclaw}"
+        target: /home/sandbox/.hermes-nemoclaw
+        read_only: false
+      # Mount the mac home for the openshell policy file.
+      - type: bind
+        source: "${MAC_HOME:-/home/<operator-user>/.mac}"
+        target: /home/sandbox/.mac
+        read_only: true
+
+    # Resource limits for the pilot (single host, non-production).
+    deploy:
+      resources:
+        limits:
+          memory: "2g"
+        reservations:
+          memory: "512m"
