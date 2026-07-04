@@ -10,6 +10,12 @@ unset "${!MAC_@}"
 unset "${!QDRANT_@}"
 unset "${!SLACK_@}"
 unset "${!TOKENHUB_@}"
+# Git-forge credentials: worker hosts MUST carry these to publish, but
+# gitops.token_for_host() consults them, so a live GH_TOKEN/GITHUB_TOKEN
+# changes inject_git_remote_auth() behavior under test — one leaked token
+# failed test_ref_host_token_auth_and_redaction_edges on every fleet host
+# while the same suite passed on tokenless dev machines and hub sandboxes.
+unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
 
 # Hermetic HOME: unsetting env vars is not enough — a deployed host also carries
 # real fleet config under ~/.hermes, ~/.mac and ~/.config, which leaked into
