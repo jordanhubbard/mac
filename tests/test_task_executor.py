@@ -1959,7 +1959,6 @@ def test_review_finalizer_signs_experiment_protocol_and_independent_findings(
     )
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
     task = {
-        "owner_agent_id": "agent_review",
         "metadata": {
             "review_experiment": {
                 "schema": "mac.review_experiment.v1",
@@ -1971,7 +1970,13 @@ def test_review_finalizer_signs_experiment_protocol_and_independent_findings(
     }
 
     te.run_deterministic_review_verdict(
-        ws, task, {"executor_evidence_id": "ev1", "review_id": "review1"}
+        ws,
+        task,
+        {
+            "executor_evidence_id": "ev1",
+            "review_id": "review1",
+            "review_claim": {"reviewer_agent_id": "agent_review"},
+        },
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
@@ -1980,6 +1985,7 @@ def test_review_finalizer_signs_experiment_protocol_and_independent_findings(
     assert manifest["independent_findings"] == [
         {"summary": "one independent concern"}
     ]
+    assert manifest["signed_by"] == "agent_review"
     assert manifest["signature"]
 
 

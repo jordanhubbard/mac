@@ -285,6 +285,17 @@ def test_env_passthrough_defaults_include_yolo_bypass(monkeypatch):
     assert te._openshell_environment()["HERMES_YOLO_MODE"] == "1"
 
 
+def test_env_passthrough_defaults_include_task_route_context(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_ENV_PASSTHROUGH", raising=False)
+    monkeypatch.setenv("MAC_TASK_ID", "task_route")
+    monkeypatch.setenv("MAC_LEASE_ID", "lease_route")
+
+    values = te._openshell_environment()
+
+    assert values["MAC_TASK_ID"] == "task_route"
+    assert values["MAC_LEASE_ID"] == "lease_route"
+
+
 # ---------------------------------------------------------------------------
 # sandbox lifecycle orchestration: create -> download -> always delete
 # ---------------------------------------------------------------------------

@@ -3122,8 +3122,11 @@ def create_app(
     def _router_route_observer(detail: Dict[str, Any]) -> None:
         agent_id = str(detail.get("agent_id") or "").strip()
         task_id = str(detail.get("task_id") or "").strip()
-        subject_type = "agent" if agent_id else "task" if task_id else None
-        subject_id = agent_id or task_id or None
+        # The task is the durable join for experiment and per-task usage
+        # reports.  Agent identity remains available as the source and in the
+        # detail object.
+        subject_type = "task" if task_id else "agent" if agent_id else None
+        subject_id = task_id or agent_id or None
         source = _safe_observation_source(agent_id or "router")
         try:
             cp.record_log(

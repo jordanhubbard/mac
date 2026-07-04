@@ -172,6 +172,65 @@ def test_observation_links_signed_review_models_findings_and_outcomes():
     assert observation["totals"]["confirmed_findings"] == 1
 
 
+def test_observation_joins_task_routes_and_id_keyed_findings():
+    detail = _detail("blind", "confirmed")
+    executor = detail["evidence"][0]
+    review = detail["evidence"][1]
+    executor["created_by"] = "agent_executor"
+    executor["created_at"] = "2026-01-01T00:01:00+00:00"
+    review["created_by"] = "agent_reviewer"
+    executor["metadata"]["verification"].pop("llm")
+    review["metadata"]["verification"].pop("llm")
+    finding = review["metadata"]["verification"]["findings"][0]
+    review["metadata"]["verification"]["findings"] = {
+        finding["id"]: {"summary": finding["summary"]}
+    }
+    detail["reviews"][0].update(
+        {
+            "reviewer_agent_id": "agent_reviewer",
+            "created_at": "2026-01-01T00:01:01+00:00",
+            "completed_at": "2026-01-01T00:02:00+00:00",
+        }
+    )
+    routes = [
+        {
+            "created_at": "2026-01-01T00:00:30+00:00",
+            "source": "agent_executor",
+            "detail": {
+                "schema": "mac.llm_route.v1",
+                "agent_id": "agent_executor",
+                "resolved_model": "gpt-5.1-codex",
+                "provider": "openai",
+                "duration_ms": 10,
+                "usage": {"prompt_tokens": 20, "completion_tokens": 3},
+            },
+        },
+        {
+            "created_at": "2026-01-01T00:01:30+00:00",
+            "source": "agent_reviewer",
+            "detail": {
+                "schema": "mac.llm_route.v1",
+                "agent_id": "agent_reviewer",
+                "resolved_model": "claude-sonnet-4.6",
+                "provider": "anthropic",
+                "duration_ms": 15,
+                "usage": {"prompt_tokens": 30, "completion_tokens": 4},
+            },
+        },
+    ]
+
+    observation = build_observation(detail, llm_routes=routes)
+    review_pass = observation["review_passes"][0]
+
+    assert review_pass["actual_strategy"] == "cross_family"
+    assert review_pass["executor_model"]["model"] == "gpt-5.1-codex"
+    assert review_pass["reviewer_model"]["model"] == "claude-sonnet-4.6"
+    assert review_pass["usage"]["input_tokens"] == 30
+    assert review_pass["usage"]["output_tokens"] == 4
+    assert review_pass["findings"][0]["id"] == "finding_blind"
+    assert observation["totals"]["findings"] == 1
+
+
 def test_report_requires_completed_compliant_lifecycles_and_positive_separation():
     blind = build_observation(_detail("blind", "confirmed"))
     standard = build_observation(_detail("standard", "refuted"))

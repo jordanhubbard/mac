@@ -24,6 +24,12 @@ this makes a choice reproducible while retaining the probability needed for
 later analysis. An assignment is immutable and must be made before a task is
 claimed.
 
+For controlled cross-model trials, set task metadata `model` for the executor
+and `review_model` for the reviewer. Review payloads never inherit the executor
+pin; when `review_model` is absent they use the review worker's fleet default.
+The observation joins task-attributed `llm.route` records and reports the
+resolved models, token counts, and latency actually used.
+
 For every task, `mac.review_observation.v1` derives:
 
 - executor and reviewer model identities, including model family/provider
@@ -149,4 +155,3 @@ knowing the arm where practical, and keep observing escaped defects after
 merge. Compare quality, completion, latency, and cost together. Do not promote
 an arm merely because it won a tiny run or because both arms tied at zero;
 MAC reports ties as `inconclusive`.
-

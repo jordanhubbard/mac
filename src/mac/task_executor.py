@@ -1836,7 +1836,17 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     by the repository's test suite (design errors, unsafe behavior, incomplete
     requirements, and similar review findings).
     """
-    reviewer_agent_id = str(task.get("owner_agent_id") or os.environ.get("MAC_WORKER_AGENT_ID") or "").strip()
+    review_claim = review_context.get("review_claim")
+    if not isinstance(review_claim, dict):
+        review_claim = {}
+    reviewer_agent_id = str(
+        task.get("owner_agent_id")
+        or review_context.get("reviewer_agent_id")
+        or review_claim.get("reviewer_agent_id")
+        or os.environ.get("MAC_WORKER_AGENT_ID")
+        or os.environ.get("MAC_AGENT_ID")
+        or ""
+    ).strip()
     attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
     if not reviewer_agent_id or not attestation_key:
         return
@@ -2222,7 +2232,7 @@ def _mcp_serve_argv() -> List[str]:
 # this only makes the values visible to the process.)
 _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "MAC_HUB_URL,MAC_URL,MAC_WORKER_TOKEN,MAC_TOKEN,MAC_API_TOKEN,"
-    "MAC_WORKER_AGENT_ID,MAC_WORKER_AGENT_NAME,MAC_AGENT_ID,"
+    "MAC_WORKER_AGENT_ID,MAC_WORKER_AGENT_NAME,MAC_AGENT_ID,MAC_TASK_ID,MAC_LEASE_ID,"
     "HERMES_GATEWAY_BASE_URL,HERMES_GATEWAY_MODEL,HERMES_SESSION_KEY,HERMES_YOLO_MODE,"
     # Model-gateway base_url + api_key live in the agent's ~/.hermes/.env, which
     # is NOT in the sandbox image; the gateway requires auth. Forward them so the

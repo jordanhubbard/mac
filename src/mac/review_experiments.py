@@ -297,6 +297,95 @@ def _usage(manifest: Mapping[str, Any]) -> Dict[str, float]:
     }
 
 
+def _finding_items(value: Any) -> List[Any]:
+    """Accept both canonical list findings and common id-keyed manifests."""
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, Mapping):
+        items: List[Any] = []
+        for key, raw in value.items():
+            if isinstance(raw, Mapping):
+                item = dict(raw)
+                item.setdefault("id", _text(key))
+                items.append(item)
+            else:
+                items.append({"id": _text(key), "summary": _text(raw)})
+        return items
+    return []
+
+
+def _route_summary(
+    routes: Iterable[Mapping[str, Any]],
+    *,
+    agent_id: str,
+    since: str = "",
+    until: str = "",
+) -> Dict[str, Any]:
+    """Aggregate task-attributed router observations for one worker interval."""
+    selected: List[Dict[str, Any]] = []
+    for raw in routes:
+        route = _object(raw)
+        detail = _object(route.get("detail"))
+        created_at = _text(route.get("created_at"))
+        route_agent = _text(detail.get("agent_id") or route.get("source"))
+        if agent_id and route_agent != agent_id:
+            continue
+        if since and created_at and created_at < since:
+            continue
+        if until and created_at and created_at > until:
+            continue
+        if _text(detail.get("schema")) != "mac.llm_route.v1":
+            continue
+        selected.append(detail)
+
+    models = sorted(
+        {
+            _text(item.get("response_model") or item.get("resolved_model"))
+            for item in selected
+            if _text(item.get("response_model") or item.get("resolved_model"))
+        }
+    )
+    providers = sorted(
+        {_text(item.get("provider")) for item in selected if _text(item.get("provider"))}
+    )
+    if len(models) == 1:
+        model = models[0]
+    elif models:
+        model = "mixed:" + ",".join(models)
+    else:
+        model = ""
+    provider = providers[0] if len(providers) == 1 else ""
+    identity = _model_identity(
+        {
+            "llm": {
+                "model": model,
+                "provider": provider,
+                "tool": "mac-router",
+                "agent": agent_id,
+            }
+        }
+    )
+    usage = {
+        "input_tokens": sum(
+            _numeric(_object(item.get("usage")), "prompt_tokens", "input_tokens")
+            for item in selected
+        ),
+        "output_tokens": sum(
+            _numeric(_object(item.get("usage")), "completion_tokens", "output_tokens")
+            for item in selected
+        ),
+        "cost_usd": sum(_numeric(item, "cost_usd", "usage.cost_usd") for item in selected),
+        "latency_ms": sum(_numeric(item, "duration_ms") for item in selected),
+    }
+    return {
+        "model": identity,
+        "usage": usage,
+        "route_count": len(selected),
+        "resolved_models": models,
+        "providers": providers,
+    }
+
+
 def _finding_payload(value: Any) -> Dict[str, Any]:
     if isinstance(value, Mapping):
         payload = dict(value)
@@ -359,7 +448,11 @@ def _outcomes(metadata: Mapping[str, Any]) -> List[Dict[str, Any]]:
     ]
 
 
-def build_observation(task_detail: Mapping[str, Any]) -> Dict[str, Any]:
+def build_observation(
+    task_detail: Mapping[str, Any],
+    *,
+    llm_routes: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
     task = _object(task_detail.get("task"))
     task_id = _text(task.get("id"))
     metadata = _object(task.get("metadata"))
@@ -367,6 +460,7 @@ def build_observation(task_detail: Mapping[str, Any]) -> Dict[str, Any]:
     evidence = [_object(item) for item in _list(task_detail.get("evidence"))]
     evidence_by_id = {_text(item.get("id")): item for item in evidence}
     reviews = [_object(item) for item in _list(task_detail.get("reviews"))]
+    routes = list(llm_routes or [])
     review_by_evidence = {
         _text(item.get("evidence_id")): item
         for item in reviews
@@ -392,8 +486,33 @@ def build_observation(task_detail: Mapping[str, Any]) -> Dict[str, Any]:
         executor_manifest = _verification(executor_evidence)
         executor_model = _model_identity(executor_manifest)
         reviewer_model = _model_identity(manifest)
+        review_record = review_by_evidence.get(review_evidence_id, {})
+        executor_route = _route_summary(
+            routes,
+            agent_id=_text(
+                executor_evidence.get("created_by")
+                or executor_manifest.get("signed_by")
+            ),
+            since=_text(task.get("created_at")),
+            until=_text(executor_evidence.get("created_at")),
+        )
+        reviewer_route = _route_summary(
+            routes,
+            agent_id=_text(
+                review_record.get("reviewer_agent_id")
+                or review_evidence.get("created_by")
+                or manifest.get("signed_by")
+            ),
+            since=_text(review_record.get("created_at")),
+            until=_text(review_record.get("completed_at"))
+            or _text(review_evidence.get("created_at")),
+        )
+        if not _text(executor_model.get("model")):
+            executor_model = _object(executor_route.get("model"))
+        if not _text(reviewer_model.get("model")):
+            reviewer_model = _object(reviewer_route.get("model"))
         findings: List[Dict[str, Any]] = []
-        for index, raw_finding in enumerate(_list(manifest.get("findings"))):
+        for index, raw_finding in enumerate(_finding_items(manifest.get("findings"))):
             finding = _finding_payload(raw_finding)
             finding_id = _text(finding.get("id")) or finding_fingerprint(
                 task_id, review_evidence_id, index, finding
@@ -405,7 +524,9 @@ def build_observation(task_detail: Mapping[str, Any]) -> Dict[str, Any]:
                 _text(labels[-1].get("status")) if labels else "unresolved"
             )
             findings.append(finding)
-        review_record = review_by_evidence.get(review_evidence_id, {})
+        manifest_usage = _usage(manifest)
+        if not any(manifest_usage.values()):
+            manifest_usage = _object(reviewer_route.get("usage"))
         review_passes.append(
             {
                 "review_id": _text(manifest.get("review_id") or review_record.get("id")),
@@ -420,7 +541,11 @@ def build_observation(task_detail: Mapping[str, Any]) -> Dict[str, Any]:
                 "experiment_protocol": _object(manifest.get("review_experiment")),
                 "independent_findings": _list(manifest.get("independent_findings")),
                 "findings": findings,
-                "usage": _usage(manifest),
+                "usage": manifest_usage,
+                "llm_routes": {
+                    "executor": executor_route,
+                    "reviewer": reviewer_route,
+                },
                 "created_at": _text(review_evidence.get("created_at")),
             }
         )

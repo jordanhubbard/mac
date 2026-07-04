@@ -4774,8 +4774,12 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
 def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     """Per-task LLM model override from task metadata.
 
-    ``metadata.model`` (flat, what ``mac task create --model`` writes) wins —
-    the by-name override that lets a task pick a faster/cheaper model directly.
+    Executor tasks use ``metadata.model`` (flat, what ``mac task create
+    --model`` writes). Review payloads deliberately do not inherit that model:
+    they use ``metadata.review_model`` (or the corresponding runtime key) and
+    otherwise fall back to the reviewer's fleet default. This preserves model
+    independence instead of silently asking the reviewer to use the author's
+    pinned model.
     ``metadata.model_strength`` (int 1..10) is the name-decoupled alternative:
     1 = cheapest/weakest, 10 = strongest, resolved to a concrete available model
     via the active strength ladder (so the task stays decoupled from model names
@@ -4790,12 +4794,15 @@ def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return ""
-    value = str(metadata.get("model") or "").strip()
+    is_review = isinstance(metadata.get("review_context"), dict)
+    model_key = "review_model" if is_review else "model"
+    strength_key = "review_model_strength" if is_review else "model_strength"
+    value = str(metadata.get(model_key) or "").strip()
     if value:
         return value[:256]
-    strength = metadata.get("model_strength")
+    strength = metadata.get(strength_key)
     if strength is None and isinstance(metadata.get("runtime"), dict):
-        strength = metadata["runtime"].get("model_strength")
+        strength = metadata["runtime"].get(strength_key)
     if strength is not None and str(strength).strip():
         try:
             scale = int(strength)
@@ -4807,7 +4814,7 @@ def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
                 return resolved[:256]
     runtime = metadata.get("runtime")
     if isinstance(runtime, dict):
-        return str(runtime.get("model") or "").strip()[:256]
+        return str(runtime.get(model_key) or "").strip()[:256]
     return ""
 
 

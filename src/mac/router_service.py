@@ -100,11 +100,15 @@ def _route_observer_for(cp: Any) -> Callable[[Dict[str, Any]], None]:
     def _observe(detail: Dict[str, Any]) -> None:
         try:
             if cp is not None:
+                agent_id = str(detail.get("agent_id") or "").strip()
+                task_id = str(detail.get("task_id") or "").strip()
                 cp.record_log(
                     "llm.route",
                     layer="router",
-                    source="router",
+                    source=agent_id or "router",
                     level="info" if detail.get("outcome") == "success" else "warning",
+                    subject_type="task" if task_id else "agent" if agent_id else None,
+                    subject_id=task_id or agent_id or None,
                     detail=detail,
                 )
             else:

@@ -80,3 +80,26 @@ def test_no_providers_fails_closed():
         router_service.build_router_app(
             {"MAC_ROUTER_BACKEND": "standalone", "MAC_API_TOKEN": "t"}
         )
+
+
+def test_route_observer_prefers_task_subject_and_keeps_agent_source():
+    calls = []
+
+    class FakeControlPlane:
+        def record_log(self, name, **kwargs):
+            calls.append((name, kwargs))
+
+    observe = router_service._route_observer_for(FakeControlPlane())
+    observe(
+        {
+            "schema": "mac.llm_route.v1",
+            "agent_id": "agent_review",
+            "task_id": "task_review",
+            "outcome": "success",
+        }
+    )
+
+    assert calls[0][0] == "llm.route"
+    assert calls[0][1]["source"] == "agent_review"
+    assert calls[0][1]["subject_type"] == "task"
+    assert calls[0][1]["subject_id"] == "task_review"

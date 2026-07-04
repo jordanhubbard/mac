@@ -4730,7 +4730,17 @@ class ControlPlane:
     def review_observation(self, task_id: str) -> JsonDict:
         from mac.review_experiments import build_observation
 
-        return build_observation(self.task_detail(task_id))
+        routes = self.list_observability(
+            kind="log",
+            name="llm.route",
+            subject_type="task",
+            subject_id=task_id,
+            limit=1000,
+        )
+        return build_observation(
+            self.task_detail(task_id),
+            llm_routes=[item.to_dict() for item in routes],
+        )
 
     def review_experiment_report(
         self,
