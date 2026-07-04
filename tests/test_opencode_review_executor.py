@@ -108,9 +108,26 @@ def _run_review(
         encoding="utf-8",
     )
     env = os.environ.copy()
+    # Ensure the subprocess's python3 can import `mac`.  In production the
+    # container installs mac system-wide; in the dev / sandbox environment
+    # mac is installed into a project-local .venv.  Prepend both the venv
+    # bin directory (so `python3` resolves to the venv interpreter) and the
+    # package source root to PYTHONPATH so either path works.
+    venv_bin = REPO_ROOT / ".venv" / "bin"
+    src_root = REPO_ROOT / "src"
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    extra_pythonpath = str(src_root)
+    env["PYTHONPATH"] = (
+        extra_pythonpath + os.pathsep + existing_pythonpath
+        if existing_pythonpath
+        else extra_pythonpath
+    )
+    extra_path = str(fake_bin)
+    if venv_bin.is_dir():
+        extra_path = extra_path + os.pathsep + str(venv_bin)
     env.update(
         {
-            "PATH": str(fake_bin) + os.pathsep + env.get("PATH", ""),
+            "PATH": extra_path + os.pathsep + env.get("PATH", ""),
             "MAC_TASK_ID": "task_test",
             "MAC_REVIEW_ID": "rev_test",
             "MAC_REVIEW_TARGET_EVIDENCE_ID": "ev_executor",
