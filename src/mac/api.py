@@ -2833,6 +2833,11 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
         interval = 0.0
     if interval <= 0:
         return
+    # Event-driven review advancement rides the same gate as the tick: on the
+    # hub, review-stage transitions fire the moment their triggering event
+    # lands (submit_for_review, hub verdict) instead of waiting for the next
+    # sweep; the periodic tick below remains the fallback for anything missed.
+    cp.enable_event_driven_review_advance()
     try:
         stale_after = int(float((os.environ.get("MAC_HUB_TICK_STALE_AFTER_SECONDS") or "300").strip()))
     except ValueError:

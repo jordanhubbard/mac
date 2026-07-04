@@ -543,6 +543,93 @@ def _run_captured(argv: List[str], cwd: Path, timeout: Optional[float]):
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
+def run_with_stall_watchdog(
+    argv: List[str],
+    cwd: Path,
+    *,
+    stall_timeout: Optional[float] = None,
+    hard_timeout: Optional[float] = None,
+) -> "subprocess.CompletedProcess[str]":
+    """Run a command, killing it only when it STOPS MAKING PROGRESS.
+
+    Total-runtime budgets on verification commands have a long history of
+    going stale: every time legitimate work grows (a venv bootstrap, a bigger
+    suite), the constant kills healthy runs mid-flight, indistinguishable from
+    real failures. A progress-based watchdog ends that lineage: the child is
+    killed when it emits NO output for ``stall_timeout`` seconds (a genuinely
+    hung process goes quiet; a slow suite keeps printing progress). The
+    ``hard_timeout`` ceiling remains as a backstop against pathological
+    always-printing loops. Either kill takes the whole process group
+    (start_new_session), same as ``_run_captured``, and returns rc 124 with an
+    explicit marker appended to stderr instead of raising — callers treat it
+    as a failed check with a diagnosable reason.
+
+    Defaults: MAC_TEST_STALL_TIMEOUT (300s) / MAC_WORKER_REPOSITORY_TEST_TIMEOUT
+    (1800s).
+    """
+    import signal
+
+    def _env_float(name: str, fallback: float) -> float:
+        try:
+            value = float(os.environ.get(name, "") or fallback)
+            return value if value > 0 else fallback
+        except ValueError:
+            return fallback
+
+    stall = stall_timeout if stall_timeout is not None else _env_float("MAC_TEST_STALL_TIMEOUT", 300.0)
+    hard = hard_timeout if hard_timeout is not None else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 1800.0)
+
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    chunks: Dict[str, List[bytes]] = {"out": [], "err": []}
+    last_activity = [time.monotonic()]
+
+    def _drain(stream, key: str) -> None:
+        for chunk in iter(lambda: stream.read1(65536), b""):
+            chunks[key].append(chunk)
+            last_activity[0] = time.monotonic()
+        stream.close()
+
+    readers = [
+        threading.Thread(target=_drain, args=(proc.stdout, "out"), daemon=True),
+        threading.Thread(target=_drain, args=(proc.stderr, "err"), daemon=True),
+    ]
+    for r in readers:
+        r.start()
+
+    started = time.monotonic()
+    kill_reason = ""
+    while True:
+        if proc.poll() is not None:
+            break
+        now = time.monotonic()
+        if now - last_activity[0] > stall:
+            kill_reason = "stalled: no output for %.0fs (MAC_TEST_STALL_TIMEOUT)" % stall
+        elif now - started > hard:
+            kill_reason = "exceeded hard ceiling of %.0fs (MAC_WORKER_REPOSITORY_TEST_TIMEOUT)" % hard
+        if kill_reason:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (AttributeError, ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+            break
+        time.sleep(min(1.0, stall / 10.0))
+    proc.wait()
+    for r in readers:
+        r.join(timeout=10.0)
+    out = b"".join(chunks["out"]).decode("utf-8", errors="replace")
+    err = b"".join(chunks["err"]).decode("utf-8", errors="replace")
+    if kill_reason:
+        err = (err + "\n" if err else "") + "run_with_stall_watchdog: killed — %s" % kill_reason
+        return subprocess.CompletedProcess(argv, 124, out, err)
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
 def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str, Any]):
     command_id = command_audit_id()
     agent_id = local_agent_id()
@@ -1393,10 +1480,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
     tests = None
     if test_cmd:
-        tr = subprocess.run(
-            ["bash", "-lc", test_cmd], cwd=str(worktree_path), capture_output=True, text=True, check=False,
-            timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
-        )
+        # Progress-based: kills on output stall, not on a total-runtime guess
+        # that goes stale every time legitimate work grows.
+        tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], worktree_path)
         tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
         import re as _re
 
@@ -1685,10 +1771,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         if ck.returncode == 0 and checked_out_head == exec_head:
             bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
             test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
-            tr = subprocess.run(
-                ["bash", "-lc", test_cmd], cwd=str(review_worktree_path), capture_output=True, text=True, check=False,
-                timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
-            )
+            tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], review_worktree_path)
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
             codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
             integration = _cooperative_integration_check(task, review_worktree_path)
