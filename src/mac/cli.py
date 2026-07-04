@@ -1184,7 +1184,7 @@ def cmd_task_create(args: argparse.Namespace) -> None:
 def cmd_task_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
-    tasks = [task.to_dict() for task in cp.list_tasks(args.state)]
+    tasks = [task.to_dict() for task in cp.list_tasks(args.state, view="summary")]
     if project is not None:
         tasks = [t for t in tasks if t.get("project") == project]
     _print(tasks)

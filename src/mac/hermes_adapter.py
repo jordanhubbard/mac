@@ -252,8 +252,9 @@ class HermesMacAdapter:
         *,
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        view: Optional[str] = None,
     ) -> Any:
-        query = _query((("state", state), ("tenant_id", tenant_id)))
+        query = _query(((("state", state), ("tenant_id", tenant_id), ("view", view))))
         return self.client.get("/tasks%s" % (("?%s" % query) if query else ""))
 
     def task_detail(self, task_id: str) -> JsonDict:

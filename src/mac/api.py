@@ -3949,12 +3949,36 @@ def create_app(
         actor = data.pop("actor", "human")
         return cp.onboard_repository(actor=actor, **data).to_dict()
 
+    # Fields returned by the summary projection (view=summary).
+    # Omits description, metadata, and other large blobs so that
+    # list views download only a few KB instead of the full ledger.
+    _TASK_LIST_SUMMARY_FIELDS = frozenset(
+        {
+            "id",
+            "title",
+            "project",
+            "priority",
+            "state",
+            "owner_agent_id",
+            "created_at",
+            "updated_at",
+            "last_updated_at",
+        }
+    )
+
     @app.get("/tasks")
     def list_tasks(
         state: Optional[str] = Query(default=None),
         tenant_id: Optional[str] = Query(default=None),
+        view: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        return [task.to_dict() for task in cp.list_tasks(state, tenant_id)]
+        tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id)]
+        if view == "summary":
+            tasks = [
+                {k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS}
+                for t in tasks
+            ]
+        return tasks
 
     # parity-ready-http-01: serve ready/search/stats so the CLI works in hub
     # mode (not just --db). Registered before /tasks/{task_id} so these static
