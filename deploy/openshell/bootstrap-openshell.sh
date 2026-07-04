@@ -13,7 +13,7 @@
 # --fail-closed (MAC_ALLOW_UNSANDBOXED_YOLO=0).
 #
 # Knobs (env):
-#   OPENSHELL_VERSION   default 0.0.62        — CLI + gateway version (must match)
+#   OPENSHELL_VERSION   default 0.0.72        — CLI + gateway version (must match)
 #   GH_VERSION          default 2.95.0        — GitHub CLI version in runtime image
 #   CODEGRAPH_VERSION   default v1.1.6        — CodeGraph version in runtime image
 #   MAC_HOME            default $HOME/.mac
@@ -26,7 +26,7 @@
 # Flags: --enable  --fail-closed  --skip-image
 set -euo pipefail
 
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.62}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.72}"
 GH_VERSION="${GH_VERSION:-2.95.0}"
 CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.1.6}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"

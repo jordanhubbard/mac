@@ -4277,7 +4277,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     osh_reconcile.add_argument("--actor", default="human")
     osh_reconcile.add_argument("--runtime", default="docker-engine-moby")
-    osh_reconcile.add_argument("--openshell-version", default="0.0.62")
+    osh_reconcile.add_argument("--openshell-version", default="0.0.72")
     osh_reconcile.add_argument("--gateway-driver", default="docker")
     osh_reconcile.add_argument("--image", default="localhost/mac-hermes:net")
     osh_reconcile.add_argument("--sandbox-id")

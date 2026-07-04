@@ -68,13 +68,14 @@ Landlock). On non-Linux developer machines, run a Linux VM/container with OSS
 Docker Engine/Moby and validate there; the production architecture does not
 depend on Docker Desktop licensing or behavior.
 
-OpenShell 0.0.62 has a runtime-driver mismatch on some Linux hosts: the gateway
-can be configured with only `[openshell.drivers.docker]` while still logging
+OpenShell 0.0.62 had a runtime-driver mismatch on some Linux hosts: the gateway
+could be configured with only `[openshell.drivers.docker]` while still logging
 `openshell_driver_podman` and reading the sandbox image from the user's Podman
-image store. `bootstrap-openshell.sh` handles this outside the agents by
-mirroring the Docker-built image into the runtime-visible store, then running an
-`openshell sandbox create` smoke test that verifies `gh`, `codex`, and
-`codegraph` are visible before the node is considered ready.
+image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
+pin). `bootstrap-openshell.sh` retains the `mirror_image_for_openshell_runtime`
+step as belt-and-suspenders, and still runs an `openshell sandbox create` smoke
+test that verifies `gh`, `codex`, and `codegraph` are visible before the node
+is considered ready.
 
 ```bash
 deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
@@ -251,24 +252,39 @@ usernames, hostnames, tokens, Slack team names, or local fleet identities.
   writable state. The sandboxed gateway may write its runtime cache/log paths,
   but repository publication remains the deterministic MAC finalizer's job.
 
-### OpenShell 0.0.72 compatibility issues
+### OpenShell 0.0.72 compatibility — validated 2026-07-04
 
-- NemoClaw's OpenShell 0.0.72 pin is not assumed to be a drop-in replacement
-  for MAC's validated 0.0.62 path. MAC bootstrap, reconcile, smoke tests, and
-  policy documentation currently target 0.0.62 behavior.
-- Before any 0.0.72 rollout, revalidate CLI flags, gateway driver config,
-  Docker-image visibility, Landlock handling, OCSF/event log shape, and the
-  `gh`/`codex`/`codegraph` in-sandbox smoke test. Do not mix OpenShell minor
-  versions on one host unless the supervisor, gateway, and policy artifacts are
-  all pinned and reported together.
-- A 0.0.72-specific failure is a deployment compatibility issue, not a reason
-  to bypass OpenShell. The pilot remains fail-closed until a confined path is
-  proven.
+OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
+(executor sandbox create, hub-verify tar-upload verify, gateway confinement).
+The fleet pin was advanced from 0.0.62 to 0.0.72 in bootstrap-openshell.sh,
+openshell_reconcile.py, and cli.py. The existing mac-hermes-policy.yaml
+template is fully forward-compatible; no policy adjustments are needed.
+
+Key behavior changes in 0.0.72 relative to 0.0.62:
+- Native messaging credential rewrite (opt-in via `credential_rewrite` policy
+  key; MAC policy has no such key — behavior unchanged).
+- WebSocket text-frame and REST body L7 enforcement (tightens `access: read-only`
+  endpoints to also block upload POST bodies; MAC's python_packages and
+  node_packages blocks now enforce this correctly).
+- MCP/JSON-RPC enforcement (opt-in per endpoint; MAC policy uses `protocol: rest`
+  throughout — no change).
+- `policy get --base` CLI subcommand (informational; MAC uses per-sandbox
+  `--policy` injection, not base-policy inheritance — no change).
+
+See docs/security/openshell-0.0.72-compatibility-review.mdx for the full
+pass/fail surface results, behavior-change table, and recommendation narrative.
+
+The 0.0.62 podman-driver mismatch workaround (`mirror_image_for_openshell_runtime`)
+is retained in bootstrap-openshell.sh as belt-and-suspenders; the upstream
+mismatch is resolved in 0.0.72 but the mirror step is harmless when Podman
+is absent.
 
 ### Fallback decision
 
 If NemoClaw's OpenShell pin is disruptive, fall back to raw `openclaw` confined
-by a MAC-authored OpenShell policy on OpenShell 0.0.62:
+by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
+(currently 0.0.72; roll back to 0.0.62 only if a 0.0.72-specific failure is
+confirmed):
 
 1. Build or upload a sandbox image containing raw `openclaw`, the required MAC
    baseline tools (`git`, `gh`, `codegraph`), and only the runtime dependencies
@@ -294,7 +310,7 @@ by a MAC-authored OpenShell policy on OpenShell 0.0.62:
 - Define ownership for Slack app isolation, policy review, event-log retention,
   and rollback. The rollback condition should be simple: loss of sandbox
   enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
-  egress returns the host to the last validated MAC/OpenShell 0.0.62 path.
+  egress returns the host to the last validated MAC/OpenShell 0.0.72 path.
 - Add a short pilot checklist that records only secret-free facts: credential
   source names, placeholder route identifiers, policy revision, image digest,
   smoke-test outcome, and finalizer evidence status.

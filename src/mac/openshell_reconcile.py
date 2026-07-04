@@ -15,7 +15,7 @@ DEFAULT_POLICY_NAME = "mac-docker-engine-moby"
 DEFAULT_RUNTIME = "docker-engine-moby"
 DEFAULT_GATEWAY_DRIVER = "docker"
 DEFAULT_IMAGE = "localhost/mac-hermes:net"
-DEFAULT_OPENSHELL_VERSION = "0.0.62"
+DEFAULT_OPENSHELL_VERSION = "0.0.72"
 VALID_STATUSES = {"active", "starting", "inactive", "degraded", "failed", "unknown"}
 
 
