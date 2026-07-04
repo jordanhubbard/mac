@@ -1376,6 +1376,89 @@ def test_repo_snapshot_falls_back_to_origin_remote_when_no_canonical() -> None:
     assert _repository_context_repo_snapshot(context)["remote_url"] == "https://github.com/org/repo.git"
 
 
+def test_manifest_enrichment_replaces_redacted_display_remote_with_canonical() -> None:
+    from mac.worker import _enrich_verification_manifest_from_repository_context
+
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "repo": {
+            "remote_url": "https://x-access-token:<redacted>@github.com/org/repo.git",
+        },
+    }
+    context = {
+        "repository_canonical_remote_url": "git@github.com:org/repo.git",
+        "repository_origin_remote": "https://x-access-token:<redacted>@github.com/org/repo.git",
+    }
+
+    enriched = _enrich_verification_manifest_from_repository_context(manifest, context)
+
+    assert enriched["repo"]["remote_url"] == "git@github.com:org/repo.git"
+    assert "<redacted>" not in enriched["repo"]["remote_url"]
+
+
+def test_review_clone_prefers_task_contract_over_redacted_executor_remote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical_remote = "file:///tmp/canonical.git"
+    redacted_remote = "https://x-access-token:<redacted>@github.com/org/repo.git"
+    head_sha = "ab" * 20
+    task_detail = {
+        "task": {
+            "id": "task-contract-remote",
+            "project": "demo",
+            "metadata": {
+                "execution_contract": {
+                    "repository_contract": {
+                        "canonical_remote_url": canonical_remote,
+                    }
+                }
+            },
+        },
+        "evidence": [
+            {
+                "id": "ev-contract-remote",
+                "metadata": {
+                    "verification": {
+                        "repo": {
+                            "head_sha": head_sha,
+                            "base_sha": "cd" * 20,
+                            "remote_ref": "refs/heads/mac/contract-remote",
+                            "remote_url": redacted_remote,
+                        }
+                    }
+                },
+            }
+        ],
+    }
+    commands: list[list[str]] = []
+
+    def successful_git(argv, *args, **kwargs):
+        command = list(argv)
+        commands.append(command)
+        if command[:3] == ["git", "clone", "--no-checkout"]:
+            Path(command[-1]).mkdir(parents=True)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("mac.worker.subprocess.run", successful_git)
+    worker = _make_worker(tmp_path)
+    task_dir = tmp_path / "review-contract-remote"
+    task_dir.mkdir()
+
+    context = worker._prepare_review_repository_worktree(
+        task_dir,
+        task_detail,
+        "ev-contract-remote",
+        "review-contract-remote",
+    )
+
+    clone = next(command for command in commands if command[:3] == ["git", "clone", "--no-checkout"])
+    assert clone[4] == canonical_remote
+    assert redacted_remote not in clone
+    assert context is not None
+    assert context["repository_origin_remote"] == canonical_remote
+
+
 def test_local_worktree_same_lease_debris_is_reclaimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

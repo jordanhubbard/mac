@@ -65,6 +65,7 @@ from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
     guarded_push,
     resolve_canonical_publication_target,
+    strip_git_remote_auth,
     sync_worktree_with_canonical,
     validate_git_ref,
     validate_git_remote_url,
@@ -2947,12 +2948,20 @@ class MacWorker:
         if base_sha and not GIT_SHA_RE.match(base_sha):
             base_sha = ""
         remote_ref = str(repo.get("remote_ref") or "").strip()
-        remote_url = str(
-            repo.get("remote_url")
-            or repo.get("origin_url")
-            or repo.get("clone_url")
-            or ""
-        ).strip()
+        # The task contract is the authoritative credential-free repository
+        # identity.  Executor evidence can legitimately contain a display URL
+        # with literal ``<redacted>`` userinfo, especially when it was produced
+        # by an older fleet worker.  Prefer the contract and strip any HTTP
+        # userinfo before validation so the reviewer injects its own credential
+        # instead of attempting to clone a display-only value.
+        remote_url = _task_detail_canonical_remote_url(task_detail)
+        if not remote_url:
+            remote_url = str(
+                repo.get("remote_url")
+                or repo.get("origin_url")
+                or repo.get("clone_url")
+                or ""
+            ).strip()
         if not remote_url:
             repo_path_raw = str(repo.get("path") or "").strip()
             repo_path = Path(repo_path_raw).expanduser() if repo_path_raw else None
@@ -2962,6 +2971,7 @@ class MacWorker:
                     remote_url = remote.stdout.strip()
         if not remote_url:
             return None
+        remote_url = strip_git_remote_auth(remote_url)
 
         # mac-raud: reject hostile remote_url before it reaches git argv.
         try:
@@ -4847,6 +4857,32 @@ def _task_detail_evidence(task_detail: JsonDict, evidence_id: str) -> JsonDict:
     return {}
 
 
+def _task_detail_canonical_remote_url(task_detail: JsonDict) -> str:
+    task = ensure_json_object(task_detail.get("task"))
+    metadata = ensure_json_object(task.get("metadata"))
+    candidates = (
+        ensure_json_object(
+            ensure_json_object(metadata.get("execution_contract")).get(
+                "repository_contract"
+            )
+        ),
+        ensure_json_object(
+            ensure_json_object(metadata.get("origin")).get("repository_contract")
+        ),
+        ensure_json_object(metadata.get("repository_contract")),
+        ensure_json_object(metadata.get("origin")),
+    )
+    for candidate in candidates:
+        remote_url = str(
+            candidate.get("canonical_remote_url")
+            or candidate.get("repository_url")
+            or ""
+        ).strip()
+        if remote_url:
+            return remote_url
+    return ""
+
+
 def _repository_context_env(context: JsonDict) -> Dict[str, str]:
     mapping = {
         "MAC_TASK_REPO_WORKTREE": context.get("repository_worktree"),
@@ -4878,7 +4914,10 @@ def _enrich_verification_manifest_from_repository_context(
             remote_ref = "refs/heads/%s" % remote_ref
         defaults = {
             "path": context.get("repository_worktree"),
-            "remote_url": context.get("repository_origin_remote"),
+            "remote_url": (
+                context.get("repository_canonical_remote_url")
+                or context.get("repository_origin_remote")
+            ),
             "branch": reviewed_ref or branch,
             "base_sha": context.get("repository_base_sha"),
             "remote_ref": remote_ref,
@@ -4907,7 +4946,10 @@ def _enrich_verification_manifest_from_repository_context(
 
     defaults = {
         "path": context.get("repository_worktree"),
-        "remote_url": context.get("repository_origin_remote"),
+        "remote_url": (
+            context.get("repository_canonical_remote_url")
+            or context.get("repository_origin_remote")
+        ),
         "branch": context.get("repository_branch"),
         "base_sha": context.get("repository_base_sha"),
     }
