@@ -65,6 +65,7 @@ from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
     guarded_push,
     resolve_canonical_publication_target,
+    sync_worktree_with_canonical,
     validate_git_ref,
     validate_git_remote_url,
 )
@@ -3377,6 +3378,16 @@ class MacWorker:
         branch = str(context.get("repository_branch") or "").strip()
         problems: List[str] = []
         self._commit_dirty_repository_worktree(task_id, task, worktree, problems)
+        # Rebase onto the advanced canonical tip BEFORE the contract test runs,
+        # so the suite validates the projected published tree (fleet agents
+        # race each other to one canonical branch; without this a slow task
+        # dies at the freshness gate after all its work passed). Clean rebases
+        # only — conflicts abort and the freshness gate reports precisely.
+        canonical_sync = sync_worktree_with_canonical(
+            worktree,
+            _repository_publication_remote(task, context),
+            str(context.get("repository_canonical_branch") or "").strip(),
+        )
         files_changed = _repository_context_changed_files(worktree, context)
 
         test_command = _repository_contract_test_command(task)
@@ -3387,6 +3398,7 @@ class MacWorker:
         repo["dirty"] = _repository_worktree_is_dirty(worktree)
         repo["files_changed"] = files_changed
         repo["pushed"] = False
+        repo["canonical_sync"] = canonical_sync
         if branch:
             repo["remote_ref"] = "refs/heads/%s" % branch
         canonical_remote = _repository_publication_remote(task, context)

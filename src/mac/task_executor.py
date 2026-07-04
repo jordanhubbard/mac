@@ -85,6 +85,7 @@ from mac.gitops import (
     check_canonical_freshness,
     guarded_push,
     resolve_canonical_publication_target,
+    sync_worktree_with_canonical,
 )
 from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
@@ -1366,6 +1367,19 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         )
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    # Rebase onto the advanced canonical tip BEFORE the contract test runs, so
+    # the suite validates the projected published tree. Fleet agents race each
+    # other to one canonical branch; a task that took an hour almost always
+    # finds main moved, and without this it dies at the publication freshness
+    # gate after all its work passed. Clean rebases only — a conflict aborts
+    # and the existing gate reports its precise error.
+    canonical_sync = sync_worktree_with_canonical(
+        worktree_path,
+        _repository_publication_remote(task),
+        _repository_contract_canonical_branch(task),
+    )
+    if canonical_sync.get("status") == "rebased":
+        head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     # Purge synced build artifacts before the host build. The agent built in the
     # task SANDBOX (e.g. Linux); those object files / binaries sync back into this
     # worktree, but this finalizer runs on the EXECUTOR HOST, which may be a
@@ -1513,6 +1527,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "dirty": bool(final_status),
             "files_changed": files_changed,
             "freshness": (publication or freshness).evidence(),
+            "canonical_sync": canonical_sync,
         },
         "codegraph": codegraph,
         # mac-wjy3: verification.tests is the CANONICAL list of test-result

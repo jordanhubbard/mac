@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import quote as _quote, urlparse, urlsplit, urlunsplit
 
 
@@ -543,6 +543,57 @@ def _canonical_freshness_locked(
         push_stderr=redact_git_remote_auth_in_text(pushed.stderr or ""),
         remote_verified=True,
     )
+
+
+def sync_worktree_with_canonical(
+    worktree: Path, canonical_remote: str, canonical_branch: str
+) -> Dict[str, str]:
+    """Rebase the task worktree onto the advanced canonical tip BEFORE the
+    contract test runs, so the suite validates the projected published tree.
+
+    Fleet agents race each other to one canonical branch; without this, every
+    task slower than its peers dies at the publication freshness gate
+    ("canonical tip … is not an ancestor of task HEAD") after an hour of good
+    work. A CLEAN rebase only: conflicts abort (`git rebase --abort`), the work
+    stays intact, and the existing freshness gate then reports its precise
+    error for a human/agent to resolve. Callers must have committed all local
+    changes first (both finalizers auto-commit before verification) and must
+    re-read HEAD when status == "rebased".
+    """
+    remote = str(canonical_remote or "").strip()
+    branch = str(canonical_branch or "").strip() or "main"
+    if not remote:
+        return {"status": "skipped", "reason": "no canonical remote"}
+    authed = inject_git_remote_auth(remote)
+    fetch = _run_git(worktree, ["fetch", "--no-tags", authed, branch])
+    if fetch.returncode != 0:
+        return {
+            "status": "fetch_failed",
+            "reason": redact_git_remote_auth_in_text(
+                _git_failure(fetch, "non-zero exit")
+            )[:500],
+        }
+    tip_res = _run_git(worktree, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+    tip = tip_res.stdout.strip()
+    if tip_res.returncode != 0 or not _GIT_SHA_RE.fullmatch(tip):
+        return {"status": "fetch_failed", "reason": "FETCH_HEAD did not resolve to a commit"}
+    if _run_git(worktree, ["merge-base", "--is-ancestor", tip, "HEAD"]).returncode == 0:
+        return {"status": "fresh", "canonical_tip": tip}
+    rebase = _run_git(
+        worktree,
+        ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet",
+         "rebase", tip],
+    )
+    if rebase.returncode != 0:
+        _run_git(worktree, ["rebase", "--abort"])
+        return {
+            "status": "conflict",
+            "canonical_tip": tip,
+            "reason": redact_git_remote_auth_in_text(
+                ((rebase.stderr or rebase.stdout) or "rebase failed").strip()
+            )[:500],
+        }
+    return {"status": "rebased", "canonical_tip": tip}
 
 
 def check_canonical_freshness(

@@ -1239,11 +1239,12 @@ def test_git_finalizer_blocks_when_canonical_fetch_fails(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
 
 
-def test_git_finalizer_blocks_unrebased_task_head(tmp_path, monkeypatch):
-    """A task branch that diverges from canonical (omits new canonical commits) is blocked."""
+def test_git_finalizer_auto_rebases_clean_canonical_advance(tmp_path, monkeypatch):
+    """Canonical advanced cleanly under the task -> the finalizer rebases BEFORE
+    the contract test and publishes (previously this blocked with "canonical tip
+    is not an ancestor", killing every task slower than its fleet peers)."""
     origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
-    # Advance canonical with a new commit AFTER the task branch was created.
-    # Push a new commit directly to canonical that the task branch does NOT have.
+    # Advance canonical with a NON-conflicting commit AFTER the task branch was created.
     advance_dir = tmp_path / "advance"
     _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
     _git(advance_dir, "config", "user.email", "t@t")
@@ -1252,6 +1253,7 @@ def test_git_finalizer_blocks_unrebased_task_head(tmp_path, monkeypatch):
     _git(advance_dir, "add", "-A")
     _git(advance_dir, "commit", "-m", "advance canonical")
     _git(advance_dir, "push", "origin", "main")
+    new_canonical_sha = _git(advance_dir, "rev-parse", "HEAD").stdout.strip()
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1273,7 +1275,49 @@ def test_git_finalizer_blocks_unrebased_task_head(tmp_path, monkeypatch):
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert manifest["repo"]["pushed"] is False, "stale task HEAD must not be pushed"
+    assert manifest["repo"]["canonical_sync"]["status"] == "rebased"
+    assert manifest["repo"]["canonical_sync"]["canonical_tip"] == new_canonical_sha
+    assert manifest["repo"]["pushed"] is True, "cleanly rebased task HEAD must publish"
+    assert manifest["repo"]["base_sha"] == new_canonical_sha
+    assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
+
+
+def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatch):
+    """Canonical advanced with a CONFLICTING edit -> the sync aborts its rebase
+    and the freshness gate still fails closed (no auto-merge of conflicts)."""
+    origin, canonical, work, main_sha = _setup_two_repo_worktree(tmp_path)
+    advance_dir = tmp_path / "advance"
+    _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
+    _git(advance_dir, "config", "user.email", "t@t")
+    _git(advance_dir, "config", "user.name", "t")
+    # The task worktree also writes feature.py -> guaranteed rebase conflict.
+    (advance_dir / "feature.py").write_text("print('peer conflicting')\n", encoding="utf-8")
+    _git(advance_dir, "add", "-A")
+    _git(advance_dir, "commit", "-m", "conflicting canonical advance")
+    _git(advance_dir, "push", "origin", "main")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-conflict",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["canonical_sync"]["status"] == "conflict"
+    assert manifest["repo"]["pushed"] is False, "conflicting task HEAD must not be pushed"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "canonical freshness check failed"
     assert "freshness_error" in manifest
