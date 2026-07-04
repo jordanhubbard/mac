@@ -210,9 +210,9 @@ class LocalDispatch:
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
         *,
-        view: Optional[str] = None,  # accepted for interface parity; projection is server-side only
-        limit: Optional[int] = None,
         project: Optional[str] = None,
+        limit: Optional[int] = None,
+        view: Optional[str] = None,  # accepted for interface parity; projection is server-side only
     ) -> Any:
         return self._plane.list_tasks(state, tenant_id, limit=limit, project=project)
 
@@ -312,9 +312,9 @@ class RemoteDispatch:
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
         *,
-        view: Optional[str] = None,
-        limit: Optional[int] = None,
         project: Optional[str] = None,
+        limit: Optional[int] = None,
+        view: Optional[str] = None,
     ) -> List[_Dictish]:
         return _wrap_list(
             self._get("/tasks", state=state, tenant_id=tenant_id, view=view, project=project, limit=limit)

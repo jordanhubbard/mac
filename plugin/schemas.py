@@ -84,6 +84,8 @@ _SCHEMAS: dict[str, dict] = {
         "properties": {
             "state": dict(_TASK_STATE, description="Filter by task state."),
             "tenant_id": dict(_OPTIONAL_STRING, description="Scope to one tenant."),
+            "project": dict(_OPTIONAL_STRING, description="Scope to one project (server-side filter)."),
+            "limit": dict(_INTEGER, description="Cap the number of returned tasks (default: no limit)."),
         },
     },
     "mac_get_task": {

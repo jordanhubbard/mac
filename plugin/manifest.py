@@ -58,7 +58,9 @@ TOOLS: tuple[ToolSpec, ...] = (
             "List tasks in mac. Use when the user asks 'what's going on?', "
             "'show me my tasks', or wants a quick status of pending work. "
             "Optional `state` filter (open/claimed/running/needs_review/"
-            "reviewing/completed/failed/cancelled). Optional `tenant_id`."
+            "reviewing/completed/failed/cancelled). Optional `tenant_id`. "
+            "Optional `project` to scope to one project (server-side filter). "
+            "Optional `limit` integer to cap the result set."
         ),
     ),
     ToolSpec(

@@ -78,3 +78,37 @@ def test_stats_endpoint_counts_by_state_and_filters_project():
     assert allstats.get("open") == 3
     scoped = client.get("/tasks/stats", params={"project": "alpha"}).json()
     assert scoped == {"open": 2}
+
+
+def test_list_tasks_filter_by_project():
+    """GET /tasks?project=... returns only tasks from that project."""
+    client = _client()
+    _make(client, "alpha-1", project="alpha")
+    _make(client, "alpha-2", project="alpha")
+    _make(client, "beta-1", project="beta")
+    scoped = client.get("/tasks", params={"project": "alpha"}).json()
+    assert {t["project"] for t in scoped} == {"alpha"}
+    assert len(scoped) == 2
+    titles = {t["title"] for t in scoped}
+    assert titles == {"alpha-1", "alpha-2"}
+
+
+def test_list_tasks_limit():
+    """GET /tasks?limit=N returns at most N tasks."""
+    client = _client()
+    for i in range(5):
+        _make(client, f"task-{i}", project="mac")
+    limited = client.get("/tasks", params={"limit": 3}).json()
+    assert len(limited) <= 3
+
+
+def test_list_tasks_project_and_limit_combined():
+    """GET /tasks?project=mac&state=open&limit=20 honours both filters server-side."""
+    client = _client()
+    for i in range(5):
+        _make(client, f"mac-{i}", project="mac")
+    _make(client, "other-1", project="other")
+    result = client.get("/tasks", params={"project": "mac", "state": "open", "limit": 20}).json()
+    assert len(result) <= 20
+    assert all(t["project"] == "mac" for t in result)
+    assert len(result) == 5

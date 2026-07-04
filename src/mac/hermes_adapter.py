@@ -262,9 +262,9 @@ class HermesMacAdapter:
         *,
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        view: Optional[str] = None,
         project: Optional[str] = None,
         limit: Optional[int] = None,
+        view: Optional[str] = None,
     ) -> Any:
         query = _query(
             (

@@ -1592,9 +1592,16 @@ def cmd_task_create(args: argparse.Namespace) -> None:
 def cmd_task_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     project = _effective_read_project(args)
-    tasks = [task.to_dict() for task in cp.list_tasks(args.state, view="summary")]
-    if project is not None:
-        tasks = [t for t in tasks if t.get("project") == project]
+    limit = getattr(args, "limit", None) or None
+    tasks = [
+        task.to_dict()
+        for task in cp.list_tasks(
+            args.state,
+            project=project,
+            limit=limit,
+            view="summary",
+        )
+    ]
     # Short-id display is text-only. JSON always retains canonical full ids.
     _set_full_ids(bool(getattr(args, "full_ids", False)))
     try:
@@ -4674,6 +4681,12 @@ def build_parser() -> argparse.ArgumentParser:
     list_tasks.add_argument("--state")
     list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
     list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
+    list_tasks.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="cap the number of returned tasks (default: no limit)",
+    )
     list_tasks.add_argument(
         "--full-ids",
         dest="full_ids",

@@ -3913,8 +3913,8 @@ class ControlPlane:
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
         *,
-        limit: Optional[int] = None,
         project: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> List[Task]:
         # mac-5ayd: dispatch_once / claim_next used to pull EVERY open
         # task into Python and sort in memory on every tick. Pass an
@@ -3937,11 +3937,10 @@ class ControlPlane:
             params.append(project)
         where_clause = (" WHERE " + " AND ".join(where)) if where else ""
         sql = "SELECT * FROM tasks" + where_clause + " ORDER BY priority DESC, created_at"
-        limit_clause = ""
         if limit is not None:
-            limit_clause = " LIMIT ?"
+            sql += " LIMIT ?"
             params.append(int(max(1, limit)))
-        rows = self.store.query_all(sql + limit_clause, tuple(params))
+        rows = self.store.query_all(sql, tuple(params))
         tasks = [self._task_from_row(row) for row in rows]
         if tenant_id is not None:
             tasks = [task for task in tasks if self._task_tenant_id(task) == tenant_id]
