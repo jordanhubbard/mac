@@ -1,0 +1,70 @@
+{
+  "google": {
+    "name": "Google",
+    "models": {
+      "gemini-3-pro": {
+        "name": "Gemini 3 Pro",
+        "family": "gemini",
+        "tool_call": true,
+        "attachment": true,
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "limit": {
+          "context": 1048576,
+          "output": 65536
+        },
+        "cost": {
+          "input": 2.0,
+          "output": 12.0
+        }
+      },
+      "gemma-3-1b": {
+        "name": "Gemma 3 1B",
+        "tool_call": true,
+        "cost": {
+          "output": 0.1
+        }
+      },
+      "gemini-2.5-flash-preview-05-20": {
+        "name": "Gemini 2.5 Flash Preview",
+        "tool_call": true
+      }
+    }
+  },
+  "openai": {
+    "name": "OpenAI",
+    "models": {
+      "gpt-5-2": {
+        "name": "GPT-5.2",
+        "family": "gpt-5",
+        "reasoning": true,
+        "tool_call": true,
+        "structured_output": true,
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "limit": {
+          "context": 400000,
+          "output": 8192
+        },
+        "cost": {
+          "input": "1.25",
+          "output": "10.0",
+          "cache_read": 0.125
+        },
+        "release_date": "2026-06-01"
+      },
+      "gpt-5-chat": {
+        "name": "GPT-5 Chat",
+        "tool_call": false
+      },
+      "text-embedding-3-large": {
+        "name": "Text Embedding 3 Large",
+        "tool_call": true
+      }
+    }
+  }
+}

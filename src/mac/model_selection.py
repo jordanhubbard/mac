@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from mac import models_catalog
+
 # Recognition registry: canonical family -> regex matching how it's written on
 # the web AND (loosely) how its concrete model ids look. This only lets the
 # discovery step *see* a family; it does not decide the winner. Ordered newest-
@@ -159,13 +161,6 @@ def _models_dev_cost(model_id: str) -> Optional[float]:
     fallback across common providers. Returns None (=> name-tier ladder
     fallback) when unavailable.
     """
-    try:
-        from mac.hermes_vendor import ensure_on_path
-
-        ensure_on_path()
-        from mac._hermes.agent.models_dev import get_model_info  # type: ignore
-    except Exception:  # noqa: BLE001
-        return None
     mid = str(model_id)
     # Candidate (provider, model) splits: the leading segment as provider with
     # the rest as the model, plus a bare fallback across common providers.
@@ -185,7 +180,7 @@ def _models_dev_cost(model_id: str) -> Optional[float]:
     candidates = [c for c in candidates if not (c in seen_c or seen_c.add(c))]
     for provider, model in candidates:
         try:
-            info = get_model_info(provider, model)
+            info = models_catalog.get_model_info(provider, model)
         except Exception:  # noqa: BLE001
             info = None
         if info is not None:
@@ -361,23 +356,12 @@ def available_models_from_providers(providers: Iterable[Any]) -> List[str]:
             wildcard_providers.append(str(name))
 
     if wildcard_providers:
-        try:
-            # The vendored Hermes catalog is only importable after its path is
-            # set up; without this the import raises ModuleNotFoundError and the
-            # wildcard providers silently contribute nothing.
-            from mac.hermes_vendor import ensure_on_path
-
-            ensure_on_path()
-            from mac._hermes.agent.models_dev import list_agentic_models
-        except Exception:  # noqa: BLE001 - catalog optional; caller falls back.
-            list_agentic_models = None
-        if list_agentic_models is not None:
-            for p in wildcard_providers:
-                try:
-                    for mid in list_agentic_models(p):
-                        out.append(str(mid))  # native bare id, NOT prefixed
-                except Exception:  # noqa: BLE001
-                    continue
+        for p in wildcard_providers:
+            try:
+                for mid in models_catalog.list_agentic_models(p):
+                    out.append(str(mid))  # native bare id, NOT prefixed
+            except Exception:  # noqa: BLE001
+                continue
 
     seen: set = set()
     return [m for m in out if m.strip() and not (m in seen or seen.add(m))]

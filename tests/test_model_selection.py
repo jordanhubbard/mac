@@ -326,13 +326,11 @@ def test_available_models_wildcard_provider_enumerates_catalog(monkeypatch):
     from mac.provider_router import providers_from_env
     monkeypatch.setattr(ms, "available_models_from_providers",
                         ms.available_models_from_providers)  # ensure real impl
-    # Patch the lazy catalog import target.
-    import sys
-    import types
-    fake = types.ModuleType("mac._hermes.agent.models_dev")
-    fake.list_agentic_models = lambda p: ["gpt-5-2", "gpt-5-mini"] if p == "openai" else []
-    monkeypatch.setitem(sys.modules, "mac._hermes.agent.models_dev", fake)
-    monkeypatch.setattr("mac.hermes_vendor.ensure_on_path", lambda: None)
+    monkeypatch.setattr(
+        ms.models_catalog,
+        "list_agentic_models",
+        lambda p: ["gpt-5-2", "gpt-5-mini"] if p == "openai" else [],
+    )
     providers = providers_from_env({"MAC_ROUTER_PROVIDERS": "openai=https://x,0,models=*,key=K"})
     got = available_models_from_providers(providers)
     assert got == ["gpt-5-2", "gpt-5-mini"]
@@ -369,12 +367,7 @@ def test_models_dev_cost_nested_id_keeps_middle_segment(monkeypatch):
             return _Info()
         raise KeyError("not found")
 
-    import sys
-    import types
-    fake = types.ModuleType("mac._hermes.agent.models_dev")
-    fake.get_model_info = fake_get_model_info
-    monkeypatch.setitem(sys.modules, "mac._hermes.agent.models_dev", fake)
-    monkeypatch.setattr("mac.hermes_vendor.ensure_on_path", lambda: None)
+    monkeypatch.setattr(ms.models_catalog, "get_model_info", fake_get_model_info)
     assert ms._models_dev_cost("nvidia/meta/llama") == 4.2
     assert ("nvidia", "meta/llama") in seen   # full remainder tried
     assert ("meta", "llama") in seen          # deeper boundary tried
