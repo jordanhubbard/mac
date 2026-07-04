@@ -7704,6 +7704,18 @@ class ControlPlane:
                 (fleet_id, agent_id, now),
             )
 
+    def _agent_id_for_registration_identity(
+        self, name: str, capabilities: List[str]
+    ) -> Optional[str]:
+        rows = self.store.query_all(
+            "SELECT id, capabilities FROM agents WHERE name = ? ORDER BY created_at, id",
+            (name,),
+        )
+        for row in rows:
+            if coerce_list(json_loads(row["capabilities"], [])) == capabilities:
+                return row["id"]
+        return None
+
     def register_agent(
         self,
         machine_id: str,
@@ -7731,8 +7743,17 @@ class ControlPlane:
             capabilities_json = (
                 existing_caps["capabilities"] if existing_caps is not None else json_dumps([])
             )
+            capability_list = coerce_list(json_loads(capabilities_json, []))
         else:
-            capabilities_json = json_dumps(coerce_list(capabilities))
+            capability_list = coerce_list(capabilities)
+            capabilities_json = json_dumps(capability_list)
+        if existing_agent_row is None:
+            existing_identity_agent_id = self._agent_id_for_registration_identity(
+                name, capability_list
+            )
+            if existing_identity_agent_id is not None:
+                aid = existing_identity_agent_id
+                existing_agent_row = {"id": aid}
         resource_value = self._agent_resources_with_preserved_control_plane_fields(aid, resources)
         resources_json = json_dumps(resource_value)
         health_value = self._project_agent_health_for_resources(

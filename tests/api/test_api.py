@@ -464,6 +464,55 @@ def test_agent_reported_hardware_is_mirrored_to_machine_on_register_and_heartbea
     assert refreshed["hardware"] == heartbeat_hardware
 
 
+def test_agent_registration_reuses_existing_name_capabilities_identity():
+    client = TestClient(
+        create_app(control_plane=ControlPlane.in_memory(), auth_tokens={"admin": ["admin"]})
+    )
+    headers = {"Authorization": "Bearer admin"}
+    first_machine = client.post(
+        "/machines", headers=headers, json={"hostname": "review-host-1"}
+    ).json()
+    second_machine = client.post(
+        "/machines", headers=headers, json={"hostname": "review-host-2"}
+    ).json()
+
+    first = client.post(
+        "/agents",
+        headers=headers,
+        json={
+            "machine_id": first_machine["id"],
+            "name": "hub-reviewer",
+            "capabilities": ["review", "python"],
+        },
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["attestation_key"]
+
+    duplicate = client.post(
+        "/agents",
+        headers=headers,
+        json={
+            "machine_id": second_machine["id"],
+            "name": "hub-reviewer",
+            "capabilities": ["python", "review"],
+            "agent_id": "agent_hub-reviewer",
+        },
+    )
+    assert duplicate.status_code == 200
+    duplicate_body = duplicate.json()
+    assert duplicate_body["id"] == first_body["id"]
+    assert "attestation_key" not in duplicate_body
+
+    matching = [
+        agent
+        for agent in client.get("/agents", headers=headers).json()
+        if agent["name"] == "hub-reviewer"
+        and agent["capabilities"] == ["python", "review"]
+    ]
+    assert [agent["id"] for agent in matching] == [first_body["id"]]
+
+
 def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     hermes_home = tmp_path / "hermes-home"
     hermes_home.mkdir()
