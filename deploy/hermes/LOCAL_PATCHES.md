@@ -29,7 +29,9 @@ future drift — a hand edit or a re-vendor — fails loudly rather than silentl
 | `mac-provider-decision.patch` | (pre-existing) |
 | `mac-runtime-context-prompt.patch` | (pre-existing) |
 | `multi-slack-mvp.patch` | (pre-existing) |
-| `post-snapshot-mac-fixes.patch` | **reconstructed** — the 10 text-source edits that had been made directly to the vendored tree without a patch (X-MAC billing-attribution headers in `agent/agent_init.py`, the Slack thread-trigger fix, reconciliation edits, and other de-personalization/runtime edits across `agent/`, `gateway/`, `cron/scheduler.py`, `tools/{code_execution,todo}_tool.py`, `toolsets.py`). Sorts last so it applies after `multi-slack-mvp.patch` (both touch `gateway/platforms/slack.py`). |
+| `post-snapshot-mac-fixes.patch` | **reconstructed** — the 10 text-source edits that had been made directly to the vendored tree without a patch (X-MAC billing-attribution headers in `agent/agent_init.py`, the Slack thread-trigger fix, reconciliation edits, and other de-personalization/runtime edits across `agent/`, `gateway/`, `cron/scheduler.py`, `tools/{code_execution,todo}_tool.py`, `toolsets.py`). Applies after `multi-slack-mvp.patch` (both touch `gateway/platforms/slack.py`). |
+| `review-completion-exit-status.patch` | Makes quiet one-shot Hermes runs return nonzero when a turn is partial, failed, or incomplete (including max-turn exhaustion), so MAC cannot mistake a generated exhaustion summary for completed reviewer work. |
+| `sandbox-path-precedence.patch` | Reasserts MAC's task-toolchain-first, image-runtime-second PATH after Hermes login profiles run, so terminal snapshots and fallback commands cannot select host or profile-provided binaries ahead of sandbox contract tools. |
 
 ## Overlay files (`deploy/hermes/overlay/`)
 

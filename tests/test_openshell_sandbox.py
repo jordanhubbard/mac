@@ -275,6 +275,12 @@ def test_env_passthrough_only_set_vars(monkeypatch):
     assert values == {"FOO": "fooval"}
 
 
+def test_env_passthrough_rejects_host_path(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "MAC_HUB_URL,PATH")
+    with pytest.raises(ValueError, match="PATH may not be forwarded"):
+        te._openshell_environment()
+
+
 def test_env_passthrough_default_list_used(monkeypatch):
     monkeypatch.setenv("MAC_HUB_URL", "http://hub:8789")
     assert te._openshell_environment()["MAC_HUB_URL"] == "http://hub:8789"

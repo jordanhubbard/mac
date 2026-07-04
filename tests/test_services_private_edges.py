@@ -218,6 +218,18 @@ def _base_verdict(**extra):
         (_base_verdict(verdict="maybe"), None, "requires verdict"),
         (_base_verdict(worktree_digest="bad"), None, "worktree_digest"),
         (_base_verdict(tests=[]), None, "independent passing check"),
+        (_base_verdict(semantic_verdict="invalid"), None, "semantic verdict is invalid"),
+        (
+            _base_verdict(
+                semantic_verdict="approved",
+                review_experiment={
+                    "blind": True,
+                    "protocol": {"protocol_compliant": False},
+                },
+            ),
+            None,
+            "blind review protocol is noncompliant",
+        ),
     ],
 )
 def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, problem) -> None:

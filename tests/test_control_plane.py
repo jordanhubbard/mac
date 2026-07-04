@@ -1217,6 +1217,108 @@ def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     assert "workflow.default_review.exhausted" in names
 
 
+def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer_a = register_agent(cp, "reviewer-a", ["review"])
+    reviewer_b = register_agent(cp, "reviewer-b", ["review"])
+    task = cp.create_task("Protocol-aware selection", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    executor_evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    cp.advance_default_review_workflow(task.id)
+    pending = [
+        review
+        for review in cp.list_reviews(task.id)
+        if review.status == ReviewStatus.PENDING.value
+    ]
+    assert len(pending) == 1
+    assert pending[0].reviewer_agent_id == reviewer_a.id
+
+    cp.add_evidence(
+        task.id,
+        "review",
+        "file://review-failed",
+        "review harness exhausted its budget",
+        reviewer_a.id,
+        metadata={
+            "returncode": 65,
+            "review_id": pending[0].id,
+            "executor_evidence_id": executor_evidence.id,
+        },
+    )
+
+    failed = cp.advance_default_review_workflow(task.id)
+    assert failed["status"] == "reviewer_protocol_failed"
+    assert failed["reviewer_agent_id"] == reviewer_a.id
+    assert failed["reason"] == "review_executor_nonzero"
+
+    reassigned = cp.advance_default_review_workflow(task.id)
+    assert reassigned["status"] == "waiting_for_reviewer_verdict"
+    assert reassigned["reviewer_agent_id"] == reviewer_b.id
+    reviews = cp.list_reviews(task.id)
+    assert any(
+        review.reviewer_agent_id == reviewer_a.id
+        and review.status == ReviewStatus.RETRACTED.value
+        and review.reason == "reviewer_protocol_failure:review_executor_nonzero"
+        for review in reviews
+    )
+
+
+def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Pinned protocol failure",
+        required_capabilities=["python"],
+        metadata={"review": {"target_agent_id": reviewer.id}},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    executor_evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "file://repo",
+        "did the thing",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp.advance_default_review_workflow(task.id)
+    pending = next(
+        review
+        for review in cp.list_reviews(task.id)
+        if review.status == ReviewStatus.PENDING.value
+    )
+    cp.add_evidence(
+        task.id,
+        "review",
+        "file://review-failed",
+        "review harness exhausted its budget",
+        reviewer.id,
+        metadata={
+            "returncode": 65,
+            "review_id": pending.id,
+            "executor_evidence_id": executor_evidence.id,
+        },
+    )
+
+    failed = cp.advance_default_review_workflow(task.id)
+    assert failed["status"] == "reviewer_protocol_failed"
+    blocked = cp.advance_default_review_workflow(task.id)
+    assert blocked["status"] == "target_reviewer_protocol_failed"
+    assert blocked["reviewer_agent_id"] == reviewer.id
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+
+
 def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypatch):
     """mem-12 window fix: the reviewer's OWN review-attempt evidence must not
     reset the retraction window. Only genuine new executor work (the reviewed

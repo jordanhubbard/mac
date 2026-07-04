@@ -10487,15 +10487,63 @@ class ControlPlane:
                     "cap": retraction_cap,
                     "retracted_count": retracted_count,
                 }
+            protocol_failed_reviewer_ids = {
+                str(row["reviewer_agent_id"])
+                for row in self.store.query_all(
+                    """
+                    SELECT reviewer_agent_id FROM reviews
+                    WHERE task_id = ? AND status = ?
+                      AND created_at >= ?
+                      AND reason LIKE 'reviewer_protocol_failure:%'
+                    """,
+                    (task_id, ReviewStatus.RETRACTED.value, threshold_at),
+                )
+            }
             reviewer = self._select_default_reviewer(
                 task,
                 executor_agent_id=evidence.created_by,
+                excluded_agent_ids=protocol_failed_reviewer_ids,
             )
             if reviewer is None:
+                review_policy = self._default_review_policy(task)
+                target_reviewer_id = str(
+                    review_policy.get("target_agent_id")
+                    or review_policy.get("reviewer_agent_id")
+                    or ""
+                ).strip()
+                if target_reviewer_id in protocol_failed_reviewer_ids:
+                    detail = {
+                        "reason": "target_reviewer_protocol_failed",
+                        "manual_repair_required": True,
+                        "reviewer_agent_id": target_reviewer_id,
+                        "executor_evidence_id": evidence.id,
+                    }
+                    self._record_default_review_observation(
+                        task_id,
+                        "workflow.default_review.target_reviewer_protocol_failed",
+                        "error",
+                        detail,
+                        actor,
+                    )
+                    try:
+                        self.transition_task(
+                            task_id,
+                            TaskState.BLOCKED.value,
+                            actor,
+                            detail,
+                        )
+                    except TransitionError:
+                        pass
+                    return {
+                        "task_id": task_id,
+                        "status": "target_reviewer_protocol_failed",
+                        **detail,
+                    }
                 self._ensure_hub_review_verifier_agent(task, actor=actor)
                 reviewer = self._select_default_reviewer(
                     task,
                     executor_agent_id=evidence.created_by,
+                    excluded_agent_ids=protocol_failed_reviewer_ids,
                 )
             if reviewer is None:
                 self._record_default_review_observation(
@@ -10561,6 +10609,36 @@ class ControlPlane:
                     not_before=review.created_at,
                 )
             if verdict_evidence is None:
+                failed_attempt, failure_reason = self._review_attempt_protocol_failure(
+                    task_id,
+                    review,
+                    executor_evidence_id=evidence.id,
+                )
+                if failed_attempt is not None:
+                    retraction_reason = "reviewer_protocol_failure:%s" % failure_reason
+                    self._retract_default_review(review, actor, retraction_reason)
+                    self._record_default_review_observation(
+                        task_id,
+                        "workflow.default_review.reviewer_protocol_failed",
+                        "warning",
+                        {
+                            "review_id": review.id,
+                            "reviewer_agent_id": review.reviewer_agent_id,
+                            "executor_evidence_id": evidence.id,
+                            "review_attempt_evidence_id": failed_attempt.id,
+                            "reason": failure_reason,
+                            "problems": verdict_problems,
+                        },
+                        actor,
+                    )
+                    return {
+                        "task_id": task_id,
+                        "status": "reviewer_protocol_failed",
+                        "review_id": review.id,
+                        "reviewer_agent_id": review.reviewer_agent_id,
+                        "review_attempt_evidence_id": failed_attempt.id,
+                        "reason": failure_reason,
+                    }
                 # Bound the verdict-wait loop. mem-12 only caps RETRACTION;
                 # a reviewer that keeps producing review-attempt evidence but
                 # never a valid signed verdict would otherwise spin here
@@ -13316,6 +13394,32 @@ class ControlPlane:
                     for problem in llm_problems
                 )
                 continue
+            # Deterministic finalization can produce a signed, fail-closed
+            # rejection even when the reviewer agent never emitted a semantic
+            # verdict. That is useful evidence of a harness/protocol failure,
+            # but it is not a code-review decision and must never consume an
+            # executor attempt as though a reviewer rejected the patch.
+            if "semantic_verdict" in manifest:
+                semantic_verdict = str(
+                    manifest.get("semantic_verdict") or ""
+                ).strip().lower()
+                if semantic_verdict not in {"approved", "rejected"}:
+                    problems.append(
+                        "verdict %s semantic verdict is invalid" % evidence.id
+                    )
+                    continue
+            experiment = manifest.get("review_experiment")
+            if isinstance(experiment, dict) and experiment.get("blind"):
+                protocol = experiment.get("protocol")
+                if (
+                    not isinstance(protocol, dict)
+                    or protocol.get("protocol_compliant") is not True
+                ):
+                    problems.append(
+                        "verdict %s blind review protocol is noncompliant"
+                        % evidence.id
+                    )
+                    continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
                 if feedback_problems:
@@ -13403,6 +13507,56 @@ class ControlPlane:
                 continue
             return evidence, []
         return None, problems
+
+    def _review_attempt_protocol_failure(
+        self,
+        task_id: str,
+        review: Review,
+        *,
+        executor_evidence_id: str,
+    ) -> Tuple[Optional[Evidence], str]:
+        """Return the review-attempt evidence proving harness/protocol failure.
+
+        Review execution evidence carries the review and executor-evidence IDs
+        even when no valid verdict manifest was produced. Keep this separate
+        from semantic rejection so the workflow can retract the failed
+        reviewer assignment and let selection try a different eligible peer.
+        """
+        for evidence in reversed(self.list_evidence(task_id)):
+            if evidence.created_by != review.reviewer_agent_id:
+                continue
+            try:
+                if parse_time(evidence.created_at) < parse_time(review.created_at):
+                    continue
+            except ValueError:
+                continue
+            metadata = ensure_json_object(evidence.metadata)
+            if str(metadata.get("review_id") or "").strip() != review.id:
+                continue
+            if (
+                str(metadata.get("executor_evidence_id") or "").strip()
+                != executor_evidence_id
+            ):
+                continue
+            if self._evidence_returncode(evidence) != 0:
+                return evidence, "review_executor_nonzero"
+            manifest = ensure_json_object(metadata.get("verification"))
+            if (
+                str(manifest.get("evidence_type") or "").strip().lower()
+                != "review_verdict"
+            ):
+                continue
+            if str(manifest.get("semantic_verdict") or "").strip().lower() not in {
+                "approved",
+                "rejected",
+            }:
+                return evidence, "semantic_verdict_invalid"
+            experiment = ensure_json_object(manifest.get("review_experiment"))
+            if experiment.get("blind"):
+                protocol = ensure_json_object(experiment.get("protocol"))
+                if protocol.get("protocol_compliant") is not True:
+                    return evidence, "blind_protocol_noncompliant"
+        return None, ""
 
     def _cooperative_review_integration_problems(
         self, task: Task, verdict_manifest: JsonDict
@@ -13494,6 +13648,7 @@ class ControlPlane:
         task: Task,
         *,
         executor_agent_id: Optional[str] = None,
+        excluded_agent_ids: Optional[Iterable[str]] = None,
     ) -> Optional[Agent]:
         """Pick a default reviewer for ``task``.
 
@@ -13522,9 +13677,12 @@ class ControlPlane:
             review_policy,
         )
 
+        excluded = {str(value) for value in (excluded_agent_ids or []) if str(value)}
         candidates: List[Agent] = []
         access_states: Dict[str, str] = {}
         for agent in self.list_agents():
+            if agent.id in excluded:
+                continue
             if self._default_reviewer_unavailable_reason(
                 task,
                 agent,

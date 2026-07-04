@@ -197,6 +197,12 @@ def test_sandbox_toolchain_setup_exports_repository_contract_env(tmp_path):
 import json, os
 assert os.environ["MAC_REPO_TEST_COMMAND"] == "make test"
 assert os.environ["MAC_REPO_REQUIRED_COMMANDS"] == "git"
+expected_prefix = os.pathsep.join([
+    os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "bin"),
+    os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "node_modules", ".bin"),
+])
+assert os.environ["MAC_SANDBOX_PATH_PREFIX"] == expected_prefix
+assert os.environ["PATH"] == expected_prefix + os.pathsep + os.environ["MAC_SANDBOX_BASE_PATH"]
 delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
 with open(delta_path, encoding="utf-8") as handle:
     delta = json.load(handle)
@@ -424,6 +430,7 @@ PY''',
         env={
             **os.environ,
             "PATH": str(fake_bin),
+            "MAC_SANDBOX_BASE_PATH": str(fake_bin),
             "MAC_TASK_WORKSPACE": str(workspace),
             "MAC_TASK_FILE": str(task_file),
             "MAC_SANDBOX_PYTHON": sys.executable,
@@ -782,6 +789,22 @@ def test_agent_timeout_default_and_override(monkeypatch):
 def test_manifest_is_complete(tmp_path):
     assert te._manifest_is_complete(tmp_path) is False
     (tmp_path / "mac-evidence.json").write_text('{"status":"complete","evidence_type":"operator_result"}')
+    assert te._manifest_is_complete(tmp_path) is True
+    (tmp_path / "mac-evidence.json").write_text(
+        '{"status":"complete","evidence_type":"review_verdict",'
+        '"semantic_verdict":"invalid"}'
+    )
+    assert te._manifest_is_complete(tmp_path) is False
+    (tmp_path / "mac-evidence.json").write_text(
+        '{"status":"complete","evidence_type":"review_verdict",'
+        '"semantic_verdict":"approved","review_experiment":{"blind":true,'
+        '"protocol":{"protocol_compliant":false}}}'
+    )
+    assert te._manifest_is_complete(tmp_path) is False
+    (tmp_path / "mac-evidence.json").write_text(
+        '{"status":"complete","evidence_type":"review_verdict",'
+        '"semantic_verdict":"rejected"}'
+    )
     assert te._manifest_is_complete(tmp_path) is True
     (tmp_path / "mac-evidence.json").write_text('{"status":"running"}')  # partial
     assert te._manifest_is_complete(tmp_path) is False
@@ -1921,6 +1944,64 @@ def test_run_executor_physically_withholds_and_restores_evidence_for_blind_pass(
         (tmp_path / "review-protocol.json").read_text(encoding="utf-8")
     )
     assert protocol["protocol_compliant"] is True
+
+
+def test_run_executor_stops_after_noncompliant_blind_discovery(
+    tmp_path, monkeypatch
+):
+    import subprocess
+
+    task = {
+        "id": "review_1",
+        "metadata": {
+            "review_context": {
+                "task_id": "task_1",
+                "review_id": "review_1",
+                "executor_evidence_id": "evidence_1",
+            },
+            "review_experiment": {
+                "schema": "mac.review_experiment.v1",
+                "experiment_id": "exp-blind",
+                "arm": "blind",
+                "blind": True,
+            },
+        },
+    }
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}), encoding="utf-8")
+    (tmp_path / "executor-evidence.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    def fake_invoke(_runner, _prompt, _workspace, _audit_id, opts):
+        calls.append(opts["execution_kind"])
+        # The agent returns zero but omits review-independent-findings.json.
+        return subprocess.CompletedProcess(["agent"], 0, "stopped", "")
+
+    monkeypatch.setattr(te, "_invoke_agent", fake_invoke)
+    monkeypatch.setattr(
+        te,
+        "run_deterministic_review_verdict",
+        lambda *args: pytest.fail("invalid discovery must not reach adjudication"),
+    )
+    monkeypatch.setattr(te, "emit_telemetry", lambda *args, **kwargs: True)
+
+    rc = te._run_executor(
+        runner=lambda *args, **kwargs: None,
+        task=task,
+        task_file=task_file,
+        task_workspace=tmp_path,
+        task_id=task["id"],
+        review_context=task["metadata"]["review_context"],
+        is_review=True,
+    )
+
+    assert rc == 65
+    assert calls == ["review_discovery"]
+    assert not (tmp_path / "mac-evidence.json").exists()
+    protocol = json.loads(
+        (tmp_path / "review-protocol.json").read_text(encoding="utf-8")
+    )
+    assert protocol["protocol_compliant"] is False
 
 
 def test_review_finalizer_signs_experiment_protocol_and_independent_findings(

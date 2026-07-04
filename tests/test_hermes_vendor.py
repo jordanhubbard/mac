@@ -40,6 +40,33 @@ def test_vendored_snapshot_is_importable():
     assert hasattr(rp, "resolve_runtime_provider")
 
 
+@pytest.mark.skipif(not hermes_vendor.is_vendored(), reason="no vendored Hermes snapshot present")
+def test_quiet_single_query_exit_code_fails_on_incomplete_turn():
+    hermes_vendor.ensure_on_path()
+    import cli as hermes_cli
+
+    assert hermes_cli._quiet_result_exit_code({"completed": True, "failed": False}) == 0
+    assert hermes_cli._quiet_result_exit_code({"completed": False, "failed": False}) == 1
+    assert hermes_cli._quiet_result_exit_code({"completed": True, "partial": True}) == 1
+    assert hermes_cli._quiet_result_exit_code({"completed": True, "failed": True}) == 1
+
+
+@pytest.mark.skipif(not hermes_vendor.is_vendored(), reason="no vendored Hermes snapshot present")
+def test_terminal_login_shell_reasserts_sandbox_path(monkeypatch):
+    hermes_vendor.ensure_on_path()
+    from tools.environments.local import _prepend_sandbox_path
+
+    monkeypatch.setenv("MAC_SANDBOX_PATH_PREFIX", "/sandbox/task/.mac-toolchain/bin")
+    monkeypatch.setenv("MAC_SANDBOX_BASE_PATH", "/opt/mac-venv/bin:/usr/bin:/bin")
+
+    command = _prepend_sandbox_path("command -v python")
+
+    assert command.startswith(
+        "export PATH=/sandbox/task/.mac-toolchain/bin:/opt/mac-venv/bin:/usr/bin:/bin\n"
+    )
+    assert command.endswith("command -v python")
+
+
 def _gateway_extra_installed() -> bool:
     if not hermes_vendor.is_vendored():
         return False

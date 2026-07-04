@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -433,6 +434,26 @@ def _prepend_shell_init(cmd_string: str, files: list[str]) -> str:
     return prelude + cmd_string
 
 
+def _prepend_sandbox_path(cmd_string: str) -> str:
+    """Reassert MAC's sandbox-owned PATH after login profiles run.
+
+    The OpenShell executor supplies both values.  A login shell may replace
+    PATH while building Hermes' persistent terminal snapshot; placing this
+    export in the command body makes repository-contract tools win for the
+    snapshot and for the per-command login fallback.  Outside MAC sandboxes
+    the variables are absent and upstream behavior is unchanged.
+    """
+    prefix = os.environ.get("MAC_SANDBOX_PATH_PREFIX", "").strip()
+    base = os.environ.get("MAC_SANDBOX_BASE_PATH", "").strip()
+    if not prefix or not base:
+        return cmd_string
+    path = "%s:%s" % (prefix.rstrip(":"), base.lstrip(":"))
+    return "export PATH=%s\nhash -r 2>/dev/null || true\n%s" % (
+        shlex.quote(path),
+        cmd_string,
+    )
+
+
 class LocalEnvironment(BaseEnvironment):
     """Run commands directly on the host machine.
 
@@ -506,6 +527,10 @@ class LocalEnvironment(BaseEnvironment):
         # Non-login invocations are already sourcing the snapshot and
         # don't need this.
         if login:
+            # Apply this before prepending shell-init sources so the final
+            # command order is: profiles, then sandbox PATH, then work.  The
+            # sandbox export must win over any PATH mutation in ~/.profile.
+            cmd_string = _prepend_sandbox_path(cmd_string)
             init_files = _resolve_shell_init_files()
             if init_files:
                 cmd_string = _prepend_shell_init(cmd_string, init_files)

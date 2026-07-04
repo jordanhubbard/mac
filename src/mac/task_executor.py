@@ -2355,6 +2355,15 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     "ANTHROPIC_API_KEY,CURSOR_API_KEY"
 )
 
+# PATH is an image/runtime invariant, not configuration to import from the
+# worker host.  The OpenShell image owns this baseline; repository-contract
+# tools are prepended by ``mac_sandbox_toolchain_setup`` below.  Keeping the
+# value here as well as in the Containerfile makes custom env passthrough fail
+# closed instead of allowing a host virtualenv or package-manager shim to leak
+# into sandbox command resolution.
+_SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
+_FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH = frozenset({"PATH"})
+
 
 def _openshell_enabled() -> bool:
     return _truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
@@ -2395,6 +2404,12 @@ def _openshell_environment() -> Dict[str, str]:
         if not name or name in seen:
             continue
         seen.add(name)
+        if name in _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH:
+            raise ValueError(
+                "%s may not be forwarded from the host into OpenShell; "
+                "the sandbox image and repository toolchain own command resolution"
+                % name
+            )
         val = os.environ.get(name)
         if val is None:
             continue
@@ -2598,7 +2613,15 @@ mac_sandbox_toolchain_setup() {
   export MAC_TOOLCHAIN_ROOT="${MAC_TOOLCHAIN_ROOT:-${MAC_TASK_WORKSPACE:-$PWD}/.mac-toolchain}"
   export MAC_TOOLCHAIN_BIN="$MAC_TOOLCHAIN_ROOT/bin"
   mkdir -p "$MAC_TOOLCHAIN_BIN"
-  export PATH="$MAC_TOOLCHAIN_BIN:$MAC_TOOLCHAIN_ROOT/node_modules/.bin:${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"
+  export MAC_SANDBOX_BASE_PATH="${MAC_SANDBOX_BASE_PATH:-/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin}"
+  mac_refresh_sandbox_path() {
+    MAC_SANDBOX_PATH_PREFIX="$MAC_TOOLCHAIN_BIN:$MAC_TOOLCHAIN_ROOT/node_modules/.bin"
+    [ -n "${JAVA_HOME:-}" ] && MAC_SANDBOX_PATH_PREFIX="$MAC_SANDBOX_PATH_PREFIX:$JAVA_HOME/bin"
+    export MAC_SANDBOX_PATH_PREFIX
+    export PATH="$MAC_SANDBOX_PATH_PREFIX:$MAC_SANDBOX_BASE_PATH"
+    hash -r 2>/dev/null || true
+  }
+  mac_refresh_sandbox_path
   eval "$("$MAC_SANDBOX_PYTHON" - "$MAC_TASK_FILE" <<'PY'
 import json, shlex, sys
 try:
@@ -2659,7 +2682,7 @@ PY
     curl -fsSL "https://api.adoptium.net/v3/binary/latest/17/ga/linux/${arch}/jre/hotspot/normal/eclipse?project=jdk" -o "$MAC_TOOLCHAIN_ROOT/jre.tar.gz" || return 1
     tar -xzf "$MAC_TOOLCHAIN_ROOT/jre.tar.gz" -C "$MAC_TOOLCHAIN_ROOT/java" --strip-components=1 || return 1
     export JAVA_HOME="$MAC_TOOLCHAIN_ROOT/java"
-    export PATH="$JAVA_HOME/bin:$PATH"
+    mac_refresh_sandbox_path
   }
   mac_install_gh_local() {
     command -v curl >/dev/null 2>&1 || return 1
@@ -2692,7 +2715,7 @@ PYGH
     tar -xzf "$MAC_TOOLCHAIN_ROOT/gh.tar.gz" -C "$MAC_TOOLCHAIN_ROOT/gh" --strip-components=1 || return 1
     [ -x "$MAC_TOOLCHAIN_ROOT/gh/bin/gh" ] || return 1
     ln -sf "$MAC_TOOLCHAIN_ROOT/gh/bin/gh" "$MAC_TOOLCHAIN_BIN/gh"
-    export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+    mac_refresh_sandbox_path
   }
   mac_install_node_local() {
     command -v curl >/dev/null 2>&1 || return 1
@@ -2710,7 +2733,7 @@ PYGH
     for b in node npm npx corepack; do
       [ -x "$MAC_TOOLCHAIN_ROOT/node/bin/$b" ] && ln -sf "$MAC_TOOLCHAIN_ROOT/node/bin/$b" "$MAC_TOOLCHAIN_BIN/$b"
     done
-    export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+    mac_refresh_sandbox_path
     [ -x "$MAC_TOOLCHAIN_BIN/node" ] || return 1
   }
   mac_ensure_modern_node() {
@@ -2765,7 +2788,7 @@ PYGH
           npm install --no-fund --no-audit --prefix "$MAC_TOOLCHAIN_ROOT" "pnpm@${pnpm_ver}" >> "$mac_log" 2>&1
           if [ -x "$MAC_TOOLCHAIN_ROOT/node_modules/.bin/pnpm" ]; then
             ln -sf "$MAC_TOOLCHAIN_ROOT/node_modules/.bin/pnpm" "$MAC_TOOLCHAIN_BIN/pnpm"
-            export PATH="$MAC_TOOLCHAIN_BIN:$PATH"
+            mac_refresh_sandbox_path
             command -v pnpm >/dev/null 2>&1 && return 0
           fi
         fi
@@ -2890,7 +2913,7 @@ EOF
     # and discards the toolchain bin we prepended above. Re-assert the toolchain
     # PATH (and clear bash's command hash) INSIDE the login shell, after the
     # profile runs, so the pinned tools win.
-    ( cd "$worktree" && bash -lc 'export PATH="${MAC_TOOLCHAIN_BIN:+$MAC_TOOLCHAIN_BIN:}${MAC_TOOLCHAIN_ROOT:+$MAC_TOOLCHAIN_ROOT/node_modules/.bin:}${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
+    ( cd "$worktree" && bash -lc 'export PATH="$MAC_SANDBOX_PATH_PREFIX:$MAC_SANDBOX_BASE_PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
     bootstrap_returncode=$?
     # Restore the original pnpm-workspace.yaml so the worktree is not left dirty.
     if [ "$mac_ws_tuned" = "1" ]; then
@@ -2960,9 +2983,8 @@ bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
 # instead of the pinned toolchain one (pnpm@9). Re-assert the toolchain PATH (and
 # clear bash's command hash) INSIDE the login shell so the pinned tools win.
 _TC_PATH_PREFIX = (
-    'export PATH="${MAC_TOOLCHAIN_BIN:+$MAC_TOOLCHAIN_BIN:}'
-    '${MAC_TOOLCHAIN_ROOT:+$MAC_TOOLCHAIN_ROOT/node_modules/.bin:}'
-    '${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"; hash -r 2>/dev/null || true; '
+    'export PATH="$MAC_SANDBOX_PATH_PREFIX:$MAC_SANDBOX_BASE_PATH"; '
+    'hash -r 2>/dev/null || true; '
 )
 bootstrap_creates = [
     item.strip()
@@ -3180,6 +3202,11 @@ def _write_sandbox_runtime_files(
         # the private environment file rather than the process-visible
         # MAC_OPENSHELL_CREATE_ARGS argv.
         "HOME": _SANDBOX_HOME,
+        # Never inherit the worker host's executable search path.  The image
+        # runtime is the stable baseline and task-local contract tools are
+        # prepended when the toolchain setup file is sourced.
+        "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
+        "PATH": _SANDBOX_BASE_PATH,
     }
     env_file = _write_private_shell_env(
         workspace / ".mac-openshell-env.sh", env_values
@@ -4431,11 +4458,30 @@ def _manifest_is_complete(task_workspace: Path) -> bool:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return (
+    if not (
         isinstance(manifest, dict)
         and str(manifest.get("status") or "").lower() == "complete"
         and bool(manifest.get("evidence_type"))
-    )
+    ):
+        return False
+    if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
+        return True
+
+    # A deterministic review finalizer always writes a complete, signed
+    # manifest, including when the model never produced a semantic verdict.
+    # Do not let the generic timeout-salvage path turn that fail-closed record
+    # into a successful review execution.
+    if str(manifest.get("semantic_verdict") or "").strip().lower() not in {
+        "approved",
+        "rejected",
+    }:
+        return False
+    experiment = manifest.get("review_experiment")
+    if isinstance(experiment, dict) and experiment.get("blind"):
+        protocol = experiment.get("protocol")
+        if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
+            return False
+    return True
 
 
 def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
@@ -4497,6 +4543,7 @@ def _run_executor(
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     assignment = _review_experiment_assignment(task) if is_review else {}
+    blind_protocol_failed = False
     if assignment.get("blind"):
         executor_evidence = task_workspace / "executor-evidence.json"
         legacy_withheld_evidence = (
@@ -4562,14 +4609,43 @@ def _run_executor(
             findings=protocol["independent_findings_count"],
             duration_ms=discovery_duration_ms,
         )
+        blind_protocol_failed = not bool(protocol["protocol_compliant"])
 
-    result = _invoke_agent(
-        runner,
-        prompt,
-        task_workspace,
-        str(audit_task_id) if audit_task_id else None,
-        {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout(), "task": task},
-    )
+    if blind_protocol_failed:
+        # The blind treatment is already invalid. Running adjudication would
+        # spend a second model budget on a sample that can no longer be used,
+        # and historically allowed a missing discovery artifact to masquerade
+        # as a semantic code rejection. Preserve the discovery output and make
+        # the review attempt fail distinctly so reviewer selection can retry or
+        # choose another eligible reviewer without re-executing the patch.
+        result = subprocess.CompletedProcess(
+            getattr(discovery_result, "args", ["review_discovery"]),
+            65,
+            getattr(discovery_result, "stdout", "") or "",
+            "\n".join(
+                part
+                for part in (
+                    (getattr(discovery_result, "stderr", "") or "").strip(),
+                    "blind review discovery protocol was not completed",
+                )
+                if part
+            ),
+        )
+        emit_telemetry(
+            "review_protocol_failed",
+            task_id=task_id,
+            level="warning",
+            phase="discovery",
+            protocol_compliant=False,
+        )
+    else:
+        result = _invoke_agent(
+            runner,
+            prompt,
+            task_workspace,
+            str(audit_task_id) if audit_task_id else None,
+            {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout(), "task": task},
+        )
     emit_telemetry(
         "agent_completed",
         task_id=task_id,
@@ -4582,7 +4658,7 @@ def _run_executor(
             run_deterministic_git_finalizer(task_workspace, task)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
-    else:
+    elif not blind_protocol_failed:
         try:
             run_deterministic_review_verdict(task_workspace, task, review_context)
         except Exception as exc:  # noqa: BLE001
