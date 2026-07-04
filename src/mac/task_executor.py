@@ -2832,7 +2832,7 @@ def _sandbox_repository_verification_shell(
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
             r'''$MAC_SANDBOX_PYTHON - <<'PY'
-import json, os, signal, subprocess, time
+import json, os, signal, subprocess, tempfile, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
@@ -2880,26 +2880,52 @@ def clip(value, limit=4000):
     return text[:head] + marker + text[-tail:]
 
 def run_bounded_bash(command, timeout):
-    """Run a verifier command and terminate its whole process tree on timeout."""
-    proc = subprocess.Popen(
-        ["bash", "-lc", _TC_PATH_PREFIX + command],
-        cwd=worktree,
-        env=os.environ.copy(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-        return int(proc.returncode), stdout or "", stderr or "", False
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (AttributeError, ProcessLookupError, PermissionError, OSError):
-            proc.kill()
-        stdout, stderr = proc.communicate()
-        return 124, stdout or "", stderr or "", True
+    """Run a verifier command and terminate its whole process group.
+
+    Output goes to files rather than pipes. A background descendant can inherit
+    a pipe after the login shell exits, causing ``communicate()`` to wait until
+    the full repository timeout even though the declared command already
+    completed. Files let ``wait()`` observe the command process directly; any
+    descendants left in its process group are then killed as verifier debris.
+    """
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+            proc = subprocess.Popen(
+                ["bash", "-lc", _TC_PATH_PREFIX + command],
+                cwd=worktree,
+                env=os.environ.copy(),
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                start_new_session=True,
+            )
+            timed_out = False
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (AttributeError, ProcessLookupError, PermissionError, OSError):
+                    proc.kill()
+                proc.wait()
+            else:
+                # The command process exited. Do not allow background children
+                # from the verifier to leak into later sandbox steps.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (AttributeError, ProcessLookupError, PermissionError, OSError):
+                    pass
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout = stdout_file.read()
+            stderr = stderr_file.read()
+            return (
+                124 if timed_out else int(proc.returncode),
+                stdout or "",
+                stderr or "",
+                timed_out,
+            )
 
 bootstrap = None
 if bootstrap_command:
