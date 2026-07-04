@@ -332,3 +332,4 @@ def test_truncate_process_text_keeps_the_failure_tail() -> None:
     assert out.endswith("1 failed")
     # Short output passes through untouched.
     assert _truncate_process_text("all good", limit=4000) == "all good"
+

@@ -1374,3 +1374,40 @@ def test_repo_snapshot_falls_back_to_origin_remote_when_no_canonical() -> None:
         "repository_origin_remote": "https://github.com/org/repo.git",
     }
     assert _repository_context_repo_snapshot(context)["remote_url"] == "https://github.com/org/repo.git"
+
+
+def test_local_worktree_same_lease_debris_is_reclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worktree dir left by an interrupted prior run of the SAME lease is our
+    own debris (leases are exclusive) — preparation must reclaim it and
+    re-prepare, not raise. Hard-failing wedged tasks (worker_exception ->
+    blocked) after every mid-attempt worker restart, observed live on every
+    fleet deploy that restarted agents while they executed."""
+    monkeypatch.delenv("MAC_TASK_WORKTREE_SKIP_FETCH", raising=False)
+    _origin, _seed, work, sha = _make_local_git_fixture(tmp_path)
+
+    worker = _make_worker(tmp_path)
+    task = _repo_task_local(str(work))
+    lease = {"id": "lease-restart-test"}
+    task_dir = tmp_path / "tasks" / "task-restart"
+    task_dir.mkdir(parents=True)
+
+    first = worker._prepare_repository_worktree(task, lease, task_dir)
+    assert first is not None
+    stale_dir = Path(first["repository_worktree"])
+    assert stale_dir.exists()
+    # Leave debris behind (simulates the worker dying mid-attempt) and make it
+    # distinguishable from a fresh checkout.
+    (stale_dir / "half-done.txt").write_text("in progress\n", encoding="utf-8")
+
+    second = worker._prepare_repository_worktree(task, lease, task_dir)
+    assert second is not None, "same-lease debris must be reclaimed, not fatal"
+    fresh_dir = Path(second["repository_worktree"])
+    assert fresh_dir == stale_dir
+    assert not (fresh_dir / "half-done.txt").exists(), "reclaim must re-prepare cleanly"
+    head = _subprocess.run(
+        ["git", "-C", str(fresh_dir), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert head == sha

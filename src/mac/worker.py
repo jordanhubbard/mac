@@ -2669,10 +2669,25 @@ class MacWorker:
             branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
             worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
             if worktree_dir.exists():
+                # The directory is lease-scoped and leases are exclusive, so an
+                # existing dir here is OUR OWN debris from an interrupted prior
+                # run of this same assignment (worker restart mid-attempt) —
+                # not a foreign process to protect. Hard-failing here wedged
+                # tasks every time a worker restarted while executing
+                # (observed live: worker_exception -> blocked after each fleet
+                # deploy). The ledger is canonical and the worktree is
+                # attempt-local scratch: clean deterministically and re-prepare.
                 existing_head = _run_git(worktree_dir, ["rev-parse", "HEAD"])
                 if existing_head.returncode == 0 and existing_head.stdout.strip():
-                    raise RuntimeError(
-                        "repository task worktree already exists for this lease: %s" % worktree_dir
+                    self._observe_log(
+                        "worker.repository.stale_lease_worktree_reclaimed",
+                        subject_type="task",
+                        subject_id=str(task.get("id") or ""),
+                        detail={
+                            "worktree": str(worktree_dir),
+                            "stale_head": existing_head.stdout.strip(),
+                            "lease_id": str(lease.get("id") or ""),
+                        },
                     )
                 shutil.rmtree(worktree_dir)
             # mac-3qv6: prune any orphaned worktree registration in
@@ -2683,7 +2698,10 @@ class MacWorker:
 
             add = _run_git(
                 source_root,
-                ["worktree", "add", "-b", branch, str(worktree_dir), base_sha],
+                # -B (not -b): the branch may survive from a reclaimed
+                # interrupted run of this same lease; force-reset it to the
+                # fresh base rather than failing on "branch already exists".
+                ["worktree", "add", "-B", branch, str(worktree_dir), base_sha],
             )
             if add.returncode != 0:
                 raise RuntimeError(
