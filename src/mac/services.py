@@ -67,6 +67,7 @@ from mac.models import (
     MemoryRecord,
     MessageStatus,
     MessageType,
+    AmbiguousIdError,
     NotFoundError,
     NotifierChannel,
     ObservabilityEvent,
@@ -3687,10 +3688,67 @@ class ControlPlane:
         return self._repository_from_row(row) if row is not None else None
 
     def get_task(self, task_id: str) -> Task:
-        row = self.store.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        resolved = self._resolve_task_id(task_id)
+        row = self.store.query_one("SELECT * FROM tasks WHERE id = ?", (resolved,))
         if row is None:
-            raise NotFoundError("task not found: %s" % task_id)
+            raise NotFoundError("task not found: %s" % resolved)
         return self._task_from_row(row)
+
+    # Minimum number of hex characters (after the "task_" prefix) required for
+    # a prefix lookup.  Matches the requirement in the task description.
+    _TASK_PREFIX = "task_"
+    _TASK_FULL_HEX_LEN = 32  # uuid4().hex is always 32 hex digits
+    _TASK_MIN_PREFIX_HEX = 6  # require at least 6 hex chars after "task_"
+
+    def _resolve_task_id(self, task_id: str) -> str:
+        """Expand an unambiguous task-id prefix to its full id (git-style).
+
+        Rules
+        -----
+        * A *full* id (``task_`` + exactly 32 hex chars) is returned as-is
+          without a database round-trip.
+        * A *prefix* is ``task_`` followed by 6–31 lowercase hex chars.
+          Fewer than 6 hex chars is rejected immediately (too short to be
+          safe against accidental collisions).
+        * Exactly one match → returns the full id.
+        * Zero matches → raises :exc:`~mac.models.NotFoundError`.
+        * Two or more matches → raises :exc:`~mac.models.AmbiguousIdError`
+          with the list of candidate ids.
+        * Anything that does not look like a task id (no ``task_`` prefix, or
+          a non-hex suffix) is returned unchanged so that callers using
+          synthetic / fixture ids continue to work.
+        """
+        prefix = self._TASK_PREFIX
+        if not task_id.startswith(prefix):
+            return task_id
+        hex_part = task_id[len(prefix):]
+        # Full id — no lookup needed.
+        if len(hex_part) == self._TASK_FULL_HEX_LEN and hex_part.isalnum():
+            return task_id
+        # Validate that this looks like a hex prefix at all.
+        if not hex_part or not all(c in "0123456789abcdef" for c in hex_part.lower()):
+            return task_id
+        hex_part = hex_part.lower()
+        if len(hex_part) < self._TASK_MIN_PREFIX_HEX:
+            raise ValidationError(
+                "task-id prefix too short: need at least %d hex chars after '%s', got %d"
+                % (self._TASK_MIN_PREFIX_HEX, prefix, len(hex_part))
+            )
+        # Prefix lookup — use SQL LIKE for portability.
+        like_pattern = prefix + hex_part + "%"
+        rows = self.store.query_all(
+            "SELECT id FROM tasks WHERE id LIKE ? ESCAPE '\\'", (like_pattern,)
+        )
+        matched = [row["id"] for row in rows]
+        if not matched:
+            raise NotFoundError("task not found: %s" % task_id)
+        if len(matched) == 1:
+            return matched[0]
+        raise AmbiguousIdError(
+            "ambiguous task-id prefix '%s' matches %d tasks: %s"
+            % (task_id, len(matched), ", ".join(sorted(matched))),
+            candidates=sorted(matched),
+        )
 
     def list_tasks(
         self,

@@ -47,7 +47,7 @@ from mac.hermes_config_surface import (
     update_fleet_hermes_surface,
 )
 from mac.hermes_startup import build_hermes_startup_report
-from mac.models import AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
+from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
@@ -3032,6 +3032,11 @@ def create_app(
     async def handle_mac_error(request: Any, exc: MACError) -> JSONResponse:
         if isinstance(exc, NotFoundError):
             return JSONResponse(status_code=404, content={"detail": str(exc)})
+        if isinstance(exc, AmbiguousIdError):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": str(exc), "candidates": exc.candidates},
+            )
         if isinstance(exc, AuthorizationError):
             return JSONResponse(status_code=403, content={"detail": str(exc)})
         return JSONResponse(status_code=400, content={"detail": str(exc)})
