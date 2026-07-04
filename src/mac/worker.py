@@ -3611,9 +3611,14 @@ class MacWorker:
                 "stderr": "repository contract test.command is missing",
             }
         try:
-            timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
+            # 600s fit the bare suite (~7 min), but verification may now
+            # bootstrap the repo .venv first (pip install -e .[dev]) on hosts
+            # whose interpreter can't run the suite — bootstrap + suite blows
+            # a 600s budget and the kill landed mid-run with rc 124/1 and a
+            # truncated log, indistinguishable from a test failure.
+            timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800"))
         except ValueError:
-            timeout = 600.0
+            timeout = 1800.0
         try:
             proc = subprocess.run(
                 ["bash", "-lc", command],
@@ -5567,7 +5572,20 @@ def _run_git(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _truncate_process_text(value: str, limit: int = 4000) -> str:
-    return str(value or "")[:limit]
+    """Bound process output for evidence, keeping head AND tail.
+
+    The tail is where the diagnosis lives — pytest prints its failure summary
+    last — and the previous head-only cut made every long verification failure
+    undiagnosable from the ledger (observed live: a suite that died after the
+    4000-char mark left only passing '[ 12%]' progress lines in evidence,
+    everywhere, including the workspace copy)."""
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    head = max(0, limit // 4)
+    tail = limit - head
+    marker = "\n… [%d chars omitted] …\n" % (len(text) - head - tail)
+    return text[:head] + marker + text[-tail:]
 
 
 def _env_truthy(value: Optional[str]) -> bool:

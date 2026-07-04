@@ -33,6 +33,22 @@ git config --global user.name "mac contract tests" >/dev/null 2>&1 || true
 # throwaway hermetic HOME, so the wildcard is scoped to this run only.
 git config --global --add safe.directory '*' >/dev/null 2>&1 || true
 
+# The merge-gate suite (and the production merge queue) uses
+# `git merge-tree --write-tree`, added in git 2.38. On an older git the
+# git-publication/merge-queue tests fail with an opaque rc=129 — lead the log
+# with the actual cause so a fleet host running distro git (e.g. 2.34 on the
+# GKE pod image) is diagnosable from the first line of the failure output.
+_git_ver="$(git version 2>/dev/null | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')"
+if [ -n "${_git_ver}" ]; then
+    set -- ${_git_ver}
+    if [ "${1:-0}" -lt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -lt 38 ]; }; then
+        echo "run-contract-tests.sh: WARNING: $(git version) < 2.38 —" \
+             "merge-gate tests (and the production merge queue) WILL fail;" \
+             "upgrade git on this host" >&2
+    fi
+    set --
+fi
+
 # Resolve a usable interpreter instead of assuming a repo-local .venv. Local
 # dev / bare-metal hosts have .venv; the OpenShell task sandbox ships the mac
 # runtime at /opt/mac-venv and has no .venv (a missing .venv/bin/python is
