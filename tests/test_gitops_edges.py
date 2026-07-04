@@ -36,6 +36,12 @@ def _target(tmp_path: Path, **extra):
 
 
 def test_ref_host_token_auth_and_redaction_edges(monkeypatch) -> None:
+    # Hermetic under bare pytest too: a fleet host's real forge token changes
+    # inject_git_remote_auth() outcomes below (observed live — this single
+    # failure blocked every worker-host verification while the same suite
+    # passed on tokenless dev machines and hub sandboxes).
+    for var in ("GH_TOKEN", "GITHUB_TOKEN", "GITEA_TOKEN", "GIT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     with pytest.raises(ValueError, match="exceeds"):
         gitops.validate_git_ref("x" * 513)
     for ref in ("/bad", "bad/", "bad.", "bad..ref", "bad//ref", "bad.lock"):
