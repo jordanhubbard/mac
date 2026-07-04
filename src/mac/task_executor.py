@@ -964,7 +964,10 @@ Outcome: {outcome} (evidence_type={evidence_type})
 Signals: {signals}
 Failure hint: {error_signature}
 
-Write 1-3 lessons, ONE PER LINE, no bullets or numbering. Each lesson must be a single self-contained sentence under 250 characters stating a reusable, project-specific fact or pitfall (environment quirks, commands that worked/failed, gotchas). Ground every lesson in the outcome above - do not speculate. If nothing generalizes beyond this one task, output exactly: NOTHING
+The project already knows these lessons:
+{existing}
+
+Write 1-3 NEW lessons, ONE PER LINE, no bullets or numbering. Each lesson must be a single self-contained sentence under 250 characters stating a reusable, project-specific fact or pitfall (environment quirks, commands that worked/failed, gotchas). Ground every lesson in the outcome above - do not speculate. Do NOT restate or rephrase anything the project already knows; only add what is genuinely novel. If nothing NEW generalizes beyond this one task, output exactly: NOTHING
 """
 
 
@@ -1004,7 +1007,15 @@ def curate_lessons_from_outcome(
     try:
         from mac.eval_runner import router_model_caller
 
+        # Show the curator what the project already knows (v2 dedup): the first
+        # live batch re-derived the same pushed=false insight across three
+        # failures. Best-effort — recall failure just means an empty list.
+        try:
+            existing = recall_deployment_lessons(task, limit=8)
+        except Exception:  # noqa: BLE001
+            existing = []
         prompt = _LESSON_CURATION_PROMPT.format(
+            existing="\n".join("- " + l for l in existing) or "- (none yet)",
             title=str(task.get("title") or "")[:200],
             outcome=outcome.get("outcome"),
             evidence_type=outcome.get("evidence_type"),
