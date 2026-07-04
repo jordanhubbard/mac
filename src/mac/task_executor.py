@@ -88,6 +88,7 @@ from mac.gitops import (
     sync_worktree_with_canonical,
 )
 from mac.openshell_runtime import (
+    SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
 )
@@ -2358,10 +2359,9 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
 # PATH is an image/runtime invariant, not configuration to import from the
 # worker host.  The OpenShell image owns this baseline; repository-contract
 # tools are prepended by ``mac_sandbox_toolchain_setup`` below.  Keeping the
-# value here as well as in the Containerfile makes custom env passthrough fail
-# closed instead of allowing a host virtualenv or package-manager shim to leak
-# into sandbox command resolution.
-_SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
+# shared runtime value as well as the Containerfile makes custom env
+# passthrough fail closed instead of allowing a host virtualenv or
+# package-manager shim to leak into sandbox command resolution.
 _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH = frozenset({"PATH"})
 
 

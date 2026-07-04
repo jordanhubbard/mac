@@ -14,6 +14,11 @@ from typing import Any, Iterable, Mapping, MutableMapping, Optional
 # default matches nothing.
 DEFAULT_REQUIRED_AGENT_NAMES: frozenset[str] = frozenset()
 TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
+# OpenShell's supervisor does not preserve a container image's ENV PATH for
+# every create/exec surface. Production launchers therefore pass and reassert
+# this image-owned baseline explicitly; repository-contract tool directories
+# are prepended to it by the task executor.
+SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 def truthy(value: Any) -> bool:

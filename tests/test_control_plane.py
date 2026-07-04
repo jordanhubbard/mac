@@ -9890,11 +9890,20 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     assert rc == 0
     create = next(a for a in captured if "create" in a and "--upload" in a)
     inner = create[create.index("-c") + 1]
+    from mac.openshell_runtime import SANDBOX_BASE_PATH
+
+    env_values = [
+        create[index + 1]
+        for index, value in enumerate(create[:-1])
+        if value == "--env"
+    ]
+    assert "PATH=%s" % SANDBOX_BASE_PATH in env_values
+    assert inner.startswith("export PATH=%s; hash -r" % SANDBOX_BASE_PATH)
     # The repo travels as ONE tar file (OpenShell directory upload drops .git)
     # and is extracted inside the sandbox before anything else.
     upload = create[create.index("--upload") + 1]
     assert upload.endswith("repo.tgz:/sandbox")
-    assert inner.startswith("cd /sandbox && tar xzf repo.tgz && ")
+    assert "cd /sandbox && tar xzf repo.tgz && " in inner
     # Whitelist reaches every git subprocess the suite spawns (env form, not
     # --global), and it precedes the test command.
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner

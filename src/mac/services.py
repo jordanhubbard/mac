@@ -139,7 +139,7 @@ from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.observability_service import ObservabilityService
-from mac.openshell_runtime import openshell_required_for_identity
+from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.retention_service import RetentionService
@@ -12981,9 +12981,16 @@ class ControlPlane:
                 argv += ["--policy", policy]
             argv += [
                 "--name", name, "--from", image, "--env", "HOME=/tmp",
+                # OpenShell's supervisor resets PATH on fresh create/exec
+                # commands instead of preserving the image ENV. Pass the
+                # sandbox-owned runtime path explicitly; never inherit the
+                # control-plane host's PATH.
+                "--env", "PATH=%s" % SANDBOX_BASE_PATH,
                 "--upload", "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
                 "--", "bash", "-c",
+                "export PATH=%s; hash -r 2>/dev/null || true; "
                 "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s" % (
+                    SANDBOX_BASE_PATH,
                     _HUB_VERIFY_GIT_PREFLIGHT,
                     test_command or "scripts/run-contract-tests.sh",
                 ),

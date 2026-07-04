@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from mac.openshell_runtime import (
     DEFAULT_REQUIRED_AGENT_NAMES,
+    SANDBOX_BASE_PATH,
     apply_openshell_requirement,
     base_agent_name,
     openshell_required_for_identity,
@@ -25,6 +26,15 @@ def test_truthy_normalizes_common_env_values():
 def test_default_required_set_is_empty_no_hardcoded_fleet():
     # The fleet roster is no longer baked into source; required-ness is data-driven.
     assert DEFAULT_REQUIRED_AGENT_NAMES == frozenset()
+
+
+def test_sandbox_base_path_prefers_image_runtime():
+    assert SANDBOX_BASE_PATH.split(":") == [
+        "/opt/mac-venv/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
 
 
 def test_required_for_identity_explicit_and_resources_override():
