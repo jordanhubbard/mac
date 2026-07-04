@@ -436,9 +436,29 @@ def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
 DEFAULT_MAX_CHILD_TASKS_PER_PARENT = 10
 DEFAULT_MAX_DECOMPOSE_DEPTH = 2
 
+DEFAULT_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS = 10 * 60
+BLOCKED_ATTEMPT_NON_RETRYABLE_DIAGNOSES = (
+    "needs-operator",
+    "wrong-host self-release",
+    "dependency-on-external",
+)
 
 
-
+def _non_retryable_blocked_attempt_marker(value: Any) -> Optional[str]:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, (dict, list, tuple)):
+        text = json_dumps(value)
+    else:
+        text = str(value)
+    normalized = re.sub(r"\s+", " ", text.lower().replace("_", "-"))
+    compact = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+    for marker in BLOCKED_ATTEMPT_NON_RETRYABLE_DIAGNOSES:
+        marker_text = marker.lower().replace("_", "-")
+        marker_compact = re.sub(r"[^a-z0-9]+", "-", marker_text).strip("-")
+        if marker_text in normalized or (marker_compact and marker_compact in compact):
+            return marker
+    return None
 
 
 def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -9045,6 +9065,7 @@ class ControlPlane:
         if run_maintenance:
             self._expire_leases_sweep_page(limit=limit_value)
             self._unblock_ready_sweep_page(limit=limit_value)
+            self._auto_retry_blocked_attempts_sweep_page(limit=limit_value)
         skipped = set(skip_tenants or [])
         tasks = [
             task
@@ -9175,6 +9196,7 @@ class ControlPlane:
         """
         self._expire_leases_sweep_page(limit=100)
         self._unblock_ready_sweep_page(limit=100)
+        self._auto_retry_blocked_attempts_sweep_page(limit=100)
         agent = self.get_agent(agent_id)
         if not dry_run:
             assignment = self._active_assignment_for_agent(agent)
@@ -9362,6 +9384,9 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
         unblocked_page = self._unblock_ready_sweep_page(limit=limit_value)
+        auto_retry_page = self._auto_retry_blocked_attempts_sweep_page(
+            limit=limit_value
+        )
         review_workflows = self._advance_default_review_sweep_page(
             limit=limit_value,
             actor="default-review-workflow",
@@ -9382,6 +9407,12 @@ class ControlPlane:
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
+            "auto_reopened": [
+                task.to_dict() for task in auto_retry_page["tasks"]
+            ],
+            "auto_retry_exhausted": [
+                task.to_dict() for task in auto_retry_page.get("exhausted", [])
+            ],
             "assignments": assignments,
             "dead_letters": [
                 task.to_dict() for task in dead_letters_page["tasks"]
@@ -9389,6 +9420,8 @@ class ControlPlane:
             "maintenance": {
                 "expired_leases_has_more": expired_page["has_more"],
                 "blocked_tasks_has_more": unblocked_page["has_more"],
+                "blocked_attempt_retries_has_more": auto_retry_page["has_more"],
+                "blocked_attempt_retries_next_cursor": auto_retry_page["next_cursor"],
                 "dead_letters_has_more": dead_letters_page["has_more"],
                 "dead_letters_next_cursor": dead_letters_page["next_cursor"],
             },
@@ -12026,6 +12059,115 @@ class ControlPlane:
             }
         return False
 
+    def _blocked_attempt_retry_backoff_seconds(self, task: Task) -> int:
+        per_attempt = _int_env(
+            "MAC_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS",
+            DEFAULT_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS,
+        )
+        return per_attempt * max(1, int(task.attempt_count or 0))
+
+    def _blocked_attempt_retry_ready_at(
+        self,
+        task: Task,
+        *,
+        backoff_seconds: Optional[int] = None,
+    ) -> str:
+        backoff = (
+            int(backoff_seconds)
+            if backoff_seconds is not None
+            else self._blocked_attempt_retry_backoff_seconds(task)
+        )
+        return (
+            parse_time(task.updated_at) + timedelta(seconds=backoff)
+        ).isoformat(timespec="microseconds")
+
+    def _blocked_attempt_non_retryable_marker(self, task: Task) -> Optional[str]:
+        if task.state != TaskState.BLOCKED.value:
+            return None
+        for event in reversed(self.task_history(task.id, limit=20)):
+            if event.to_state != TaskState.BLOCKED.value:
+                continue
+            marker = _non_retryable_blocked_attempt_marker(event.detail)
+            if marker:
+                return marker
+            break
+        metadata = ensure_json_object(task.metadata)
+        activity = metadata.get("activity")
+        if isinstance(activity, list):
+            for entry in reversed(activity):
+                entry_dict = ensure_json_object(entry) if isinstance(entry, dict) else {}
+                phase = str(entry_dict.get("phase") or "").strip().lower()
+                if phase != "diagnosis":
+                    continue
+                return _non_retryable_blocked_attempt_marker(entry_dict)
+        for key in ("diagnosis", "failure_diagnosis", "diagnosis_code"):
+            marker = _non_retryable_blocked_attempt_marker(metadata.get(key))
+            if marker:
+                return marker
+        return None
+
+    def _auto_retry_blocked_attempt_task(
+        self,
+        task: Task,
+        *,
+        now: str,
+    ) -> Tuple[Optional[Task], Optional[Task]]:
+        if task.state != TaskState.BLOCKED.value:
+            return None, None
+        if int(task.attempt_count or 0) <= 0:
+            return None, None
+        if task.dependencies and not self._dependencies_satisfied(task):
+            return None, None
+        non_retryable = self._blocked_attempt_non_retryable_marker(task)
+        if non_retryable:
+            return None, None
+        backoff_seconds = self._blocked_attempt_retry_backoff_seconds(task)
+        ready_at = self._blocked_attempt_retry_ready_at(
+            task,
+            backoff_seconds=backoff_seconds,
+        )
+        if parse_time(now) < parse_time(ready_at):
+            return None, None
+        base_detail: JsonDict = {
+            "via": "auto_retry",
+            "attempt_count": task.attempt_count,
+            "max_attempts": task.max_attempts,
+            "backoff_seconds": backoff_seconds,
+            "blocked_since": task.updated_at,
+            "ready_at": ready_at,
+        }
+        if task.attempt_count >= task.max_attempts:
+            failed = self.transition_task(
+                task.id,
+                TaskState.FAILED.value,
+                "dispatcher.tick",
+                {
+                    **base_detail,
+                    "via": "auto_retry_exhausted",
+                    "reason": "max attempts",
+                },
+            )
+            return None, failed
+        detail = {
+            **base_detail,
+            "reason": "blocked attempt retry backoff elapsed",
+        }
+        reopened = self.transition_task(
+            task.id,
+            TaskState.OPEN.value,
+            "dispatcher.tick",
+            detail,
+        )
+        self._record_history(
+            task.id,
+            "task.auto_reopened",
+            "dispatcher.tick",
+            TaskState.BLOCKED.value,
+            TaskState.OPEN.value,
+            detail,
+        )
+        return reopened, None
+
     def _prepare_cooperative_integration_task(self, task: Task) -> Task:
         """Attach immutable child outputs before reopening an integration task."""
         metadata = ensure_json_object(task.metadata)
@@ -12183,6 +12325,93 @@ class ControlPlane:
             }
         try:
             result = self._unblock_ready_tasks(
+                limit=limit,
+                cursor=claim.cursor,
+            )
+        except Exception:
+            self.reconciliation.abandon(claim)
+            raise
+        self.reconciliation.complete(claim, cursor=result.get("next_cursor"))
+        return result
+
+    def _auto_retry_blocked_attempts(
+        self,
+        *,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> JsonDict:
+        limit_value = max(1, min(int(limit), 1000))
+        clauses = ["state = ?", "attempt_count > 0"]
+        params: List[Any] = [TaskState.BLOCKED.value]
+        decoded = self._decode_scan_cursor(cursor, "blocked-attempt-retries")
+        if decoded is not None:
+            updated_at, task_id = decoded
+            clauses.append("(updated_at > ? OR (updated_at = ? AND id > ?))")
+            params.extend([updated_at, updated_at, task_id])
+        params.append(limit_value + 1)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            tuple(params),
+        )
+        has_more = len(rows) > limit_value
+        rows = rows[:limit_value]
+        now = utcnow()
+        reopened: List[Task] = []
+        exhausted: List[Task] = []
+        for row in rows:
+            task = self._task_from_row(row)
+            try:
+                reopened_task, exhausted_task = self._auto_retry_blocked_attempt_task(
+                    task,
+                    now=now,
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate corrupt blocked rows.
+                try:
+                    self.record_log(
+                        "task.auto_retry.failed",
+                        layer="control_plane",
+                        source="dispatcher.tick",
+                        level="error",
+                        subject_type="task",
+                        subject_id=task.id,
+                        detail={"task_id": task.id, "error": str(exc)},
+                    )
+                except Exception:
+                    pass
+                continue
+            if reopened_task is not None:
+                reopened.append(reopened_task)
+            if exhausted_task is not None:
+                exhausted.append(exhausted_task)
+        next_cursor = (
+            self._encode_scan_cursor(
+                "blocked-attempt-retries",
+                str(rows[-1]["updated_at"]),
+                str(rows[-1]["id"]),
+            )
+            if has_more and rows
+            else None
+        )
+        return {
+            "tasks": reopened,
+            "exhausted": exhausted,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+
+    def _auto_retry_blocked_attempts_sweep_page(self, *, limit: int) -> JsonDict:
+        claim = self.reconciliation.claim("blocked-attempt-retry-sweep")
+        if claim is None:
+            return {
+                "tasks": [],
+                "exhausted": [],
+                "next_cursor": None,
+                "has_more": False,
+                "skipped": "lease_held",
+            }
+        try:
+            result = self._auto_retry_blocked_attempts(
                 limit=limit,
                 cursor=claim.cursor,
             )

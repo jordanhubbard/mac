@@ -6989,6 +6989,104 @@ def test_blocked_and_dead_letter_sweeps_are_bounded_and_cursor_driven(cp):
     assert page_three["has_more"] is False
 
 
+def test_tick_auto_reopens_blocked_attempt_after_backoff_and_records_audit(cp):
+    task = cp.create_task("retry blocked attempt", required_capabilities=["python"])
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, attempt_count = ?, updated_at = ? WHERE id = ?",
+        (TaskState.BLOCKED.value, 1, utcnow(), task.id),
+    )
+
+    first = cp.tick(limit=0)
+
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    assert first["auto_reopened"] == []
+
+    cp.store.execute(
+        "UPDATE tasks SET updated_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", task.id),
+    )
+    second = cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value
+    assert reopened.attempt_count == 1
+    assert [item["id"] for item in second["auto_reopened"]] == [task.id]
+    auto_history = [
+        event for event in cp.task_history(task.id)
+        if event.event_type == "task.auto_reopened"
+    ]
+    assert len(auto_history) == 1
+    assert auto_history[0].detail["backoff_seconds"] == 600
+    observations = cp.list_observability(
+        subject_type="task",
+        subject_id=task.id,
+        limit=50,
+    )
+    assert any(event.name == "task.auto_reopened" for event in observations)
+
+
+def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
+    task = cp.create_task(
+        "exhausted blocked attempt",
+        required_capabilities=["python"],
+        max_attempts=2,
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, attempt_count = ?, updated_at = ? WHERE id = ?",
+        (
+            TaskState.BLOCKED.value,
+            2,
+            "2000-01-01T00:00:00+00:00",
+            task.id,
+        ),
+    )
+
+    result = cp.tick(limit=0)
+
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+    assert result["auto_reopened"] == []
+    assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
+    assert task.id in {item["id"] for item in result["dead_letters"]}
+    assert not [
+        event for event in cp.task_history(task.id)
+        if event.event_type == "task.auto_reopened"
+    ]
+
+
+@pytest.mark.parametrize(
+    "diagnosis",
+    [
+        "needs-operator",
+        "wrong-host self-release",
+        "dependency-on-external",
+    ],
+)
+def test_tick_skips_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
+    task = cp.create_task(
+        "non retryable blocked attempt",
+        required_capabilities=["python"],
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": diagnosis},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    assert result["auto_reopened"] == []
+    assert not [
+        event for event in cp.task_history(task.id)
+        if event.event_type == "task.auto_reopened"
+    ]
+
+
 def test_workflow_tick_skips_active_reservations_and_incomplete_rows(cp, monkeypatch):
     _recovery_two_node_workflow(cp, "tick-nonactionable")
     run = cp.workflow_runtime.start_run("tick-nonactionable", started_by="ops")
