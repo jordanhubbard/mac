@@ -9746,13 +9746,17 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     assert rc == 0
     create = next(a for a in captured if "create" in a and "--upload" in a)
     inner = create[create.index("-c") + 1]
+    # The repo travels as ONE tar file (OpenShell directory upload drops .git)
+    # and is extracted inside the sandbox before anything else.
+    upload = create[create.index("--upload") + 1]
+    assert upload.endswith("repo.tgz:/sandbox")
+    assert inner.startswith("cd /sandbox && tar xzf repo.tgz && ")
     # Whitelist reaches every git subprocess the suite spawns (env form, not
     # --global), and it precedes the test command.
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner
     assert "GIT_CONFIG_VALUE_0='*'" in inner
     assert inner.index("safe.directory") < inner.index("cd /sandbox/repo")
-    # Lost-.git uploads fail fast with a distinguishable message, not 4
-    # confusing test failures.
+    # Lost-.git uploads still fail fast with a distinguishable message.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner
 

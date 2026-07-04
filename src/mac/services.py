@@ -12772,6 +12772,20 @@ class ControlPlane:
                 return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
                     (clone.stderr or clone.stdout or "").strip()
                 )[-800:]
+            # Upload ONE tar file and extract inside the sandbox. Uploading the
+            # directory tree loses .git in transit (OpenShell's upload drops
+            # it), which failed every git-at-checkout contract test — and, once
+            # the exit-97 probe landed, every verify outright with
+            # "/sandbox/repo is not a usable git repo after upload". A single
+            # archive survives any upload path verbatim, .git included.
+            tar = subprocess.run(
+                ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
+                capture_output=True, text=True, timeout=120, check=False,
+            )
+            if tar.returncode != 0:
+                return 1, "hub verify tar failed: %s" % (
+                    (tar.stderr or tar.stdout or "").strip()
+                )[-800:]
             subprocess.run([openshell, "sandbox", "delete", name],
                            capture_output=True, text=True, timeout=60, check=False)
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
@@ -12779,9 +12793,9 @@ class ControlPlane:
                 argv += ["--policy", policy]
             argv += [
                 "--name", name, "--from", image, "--env", "HOME=/tmp",
-                "--upload", "%s:%s" % (str(tmp / "repo"), "/sandbox"),
+                "--upload", "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
                 "--", "bash", "-c",
-                "%scd /sandbox/repo && %s" % (
+                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s" % (
                     _HUB_VERIFY_GIT_PREFLIGHT,
                     test_command or "scripts/run-contract-tests.sh",
                 ),
