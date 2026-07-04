@@ -1484,6 +1484,43 @@ def cmd_machine_register(args: argparse.Namespace) -> None:
     )
 
 
+def _machine_hw_summary(d: dict) -> str:
+    """Compact hardware string for a machine line, reusing _agent_hw_summary
+    style.  Machine records carry hardware in two places: the top-level
+    ``hardware`` column (mirrored from agent heartbeats) and inside
+    ``resources.hardware`` (set at registration time).  Prefer the top-level
+    ``hardware`` field when populated; fall back to ``resources.hardware`` so
+    machines registered with explicit hardware resources also show a summary."""
+    hw = d.get("hardware") or {}
+    if not hw:
+        res = d.get("resources") or {}
+        hw = (res.get("hardware") or {}) if isinstance(res, dict) else {}
+    return _agent_hw_summary({"resources": {"hardware": hw}})
+
+
+def cmd_machine_list(args: argparse.Namespace) -> None:
+    machines = _plane(args).list_machines()
+    if _OUTPUT_JSON:
+        _print([m.to_dict() if hasattr(m, "to_dict") else m for m in machines])
+        return
+    for m in machines:
+        d = m.to_dict() if hasattr(m, "to_dict") else m
+        trusted_flag = "trusted" if d.get("trusted") else "untrusted"
+        last_seen = str(d.get("last_seen_at") or "-")[:19]
+        hw = _machine_hw_summary(d)
+        print("%-36s  %-36s  %-9s  %-19s  %s" % (
+            d.get("id", ""),
+            d.get("hostname", ""),
+            trusted_flag,
+            last_seen,
+            hw,
+        ))
+
+
+def cmd_machine_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_machine(args.machine_id))
+
+
 def cmd_agent_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_agent(
@@ -4302,6 +4339,13 @@ def build_parser() -> argparse.ArgumentParser:
     machine_register.add_argument("--untrusted", action="store_true")
     machine_register.add_argument("--machine-id")
     _set(cmd_machine_register, machine_register)
+
+    machine_list = machine.add_parser("list", help="list all registered machines")
+    _set(cmd_machine_list, machine_list)
+
+    machine_show = machine.add_parser("show", help="show full record for one machine")
+    machine_show.add_argument("machine_id")
+    _set(cmd_machine_show, machine_show)
 
     agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(dest="agent_command", required=True)
     agent_register = agent.add_parser("register")

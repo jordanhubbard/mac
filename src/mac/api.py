@@ -4320,6 +4320,10 @@ def create_app(
     def list_machines() -> List[Dict[str, Any]]:
         return [machine.to_dict() for machine in cp.list_machines()]
 
+    @app.get("/machines/{machine_id}")
+    def get_machine(machine_id: str) -> Dict[str, Any]:
+        return cp.get_machine(machine_id).to_dict()
+
     @app.post("/agents")
     def register_agent(
         body: AgentRegister,

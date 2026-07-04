@@ -966,6 +966,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "artifact_id": ctx["evidence_artifact_id"],
         "key": "route-memory-key",
         "lease_id": ctx["lease_id"],
+        "machine_id": ctx["machine_id"],
         "name": ctx["secret_name"],
         "notification_id": ctx["notification_id"],
         "policy_id": ctx["openshell_policy_id"],

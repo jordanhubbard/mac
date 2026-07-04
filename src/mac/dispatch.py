@@ -791,6 +791,12 @@ class RemoteDispatch:
     def register_machine(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/machines", _drop_none(kw)))
 
+    def list_machines(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/machines"))
+
+    def get_machine(self, machine_id: str) -> _Dictish:
+        return _Dictish(self._get("/machines/%s" % quote(machine_id, safe="")))
+
     def register_agent(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agents", _drop_none(kw)))
 
