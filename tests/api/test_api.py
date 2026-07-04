@@ -171,6 +171,50 @@ def test_post_tasks_accepts_summary_alias_for_description():
     assert detail["description"] == "worker instructions"
 
 
+def test_review_experiment_api_persists_assignment_observation_and_outcome():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    task = client.post(
+        "/tasks", json={"title": "review experiment API task", "project": "demo"}
+    ).json()
+
+    assigned = client.post(
+        "/tasks/%s/review-experiment" % task["id"],
+        json={
+            "experiment_id": "api-review-exp",
+            "arms": {"blind": 1, "standard": 1},
+            "blind_arms": ["blind"],
+            "actor": "operator",
+        },
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["assignment_method"] == "deterministic_weighted"
+    assert assigned.json()["assignment_probability"] == 0.5
+
+    outcome = client.post(
+        "/tasks/%s/review-outcomes" % task["id"],
+        json={
+            "kind": "clean_window",
+            "status": "confirmed",
+            "severity_weight": 0,
+            "detail": {"window_days": 7},
+            "actor": "operator",
+        },
+    )
+    assert outcome.status_code == 200
+
+    observation = client.get(
+        "/tasks/%s/review-observation" % task["id"]
+    ).json()
+    assert observation["experiment"]["experiment_id"] == "api-review-exp"
+    assert observation["outcomes"][0]["kind"] == "clean_window"
+
+    report = client.get(
+        "/review-experiments/api-review-exp", params={"project": "demo"}
+    ).json()
+    assert report["task_count"] == 1
+    assert report["policy"]["status"] == "insufficient_evidence"
+
+
 def test_evidence_artifacts_are_retrievable_via_api():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     task = client.post("/tasks", json={"title": "artifact task"}).json()

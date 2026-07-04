@@ -604,6 +604,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
+- [Review-strategy experiments](docs/review-strategy-experiments.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/scaling-plan.md)

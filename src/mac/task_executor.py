@@ -1414,8 +1414,7 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
 
 
 def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_context: Dict[str, Any]) -> str:
-    return "\n\n".join(
-        [
+    parts = [
             "You are running as a MAC fleet reviewer. Review the executor's work independently.",
             "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",
             "Decide whether the executor evidence actually proves the task was completed and verified.",
@@ -1434,7 +1433,117 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
             "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
             "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
         ]
+    assignment = _review_experiment_assignment(task)
+    if assignment:
+        if assignment.get("blind"):
+            parts.insert(
+                -1,
+                "This task is the adjudication phase of blind review experiment %s "
+                "(arm %s). The host already ran a discovery pass while "
+                "executor-evidence.json was physically withheld. Read "
+                "review-independent-findings.json first, then read the executor "
+                "evidence. Preserve, refine, or explicitly rebut those findings "
+                "in the final findings/feedback; do not silently discard them."
+                % (assignment.get("experiment_id"), assignment.get("arm")),
+            )
+        else:
+            parts.insert(
+                -1,
+                "This review is assigned to experiment %s (arm %s, standard "
+                "evidence-aware protocol)."
+                % (assignment.get("experiment_id"), assignment.get("arm")),
+            )
+    return "\n\n".join(parts)
+
+
+def _review_experiment_assignment(task: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    assignment = metadata.get("review_experiment") if isinstance(metadata, dict) else {}
+    if not isinstance(assignment, dict):
+        return {}
+    if assignment.get("schema") != "mac.review_experiment.v1":
+        return {}
+    if not str(assignment.get("experiment_id") or "").strip():
+        return {}
+    if not str(assignment.get("arm") or "").strip():
+        return {}
+    return dict(assignment)
+
+
+def build_blind_review_discovery_prompt(
+    task: Dict[str, Any], task_workspace: Path, assignment: Dict[str, Any]
+) -> str:
+    """Prompt the pre-evidence pass whose treatment is enforced by the host."""
+    return "\n\n".join(
+        [
+            "You are running the discovery phase of a blind MAC fleet review.",
+            "The host has physically withheld executor-evidence.json for this phase. Do not look for it, infer its claims, or write a final approval/rejection verdict yet.",
+            "Read executor-task.json, inspect the prepared review checkout, its diff and relevant call paths, and run focused checks needed to identify defects or missing requirements independently of the executor's explanation.",
+            "Record the result in %s/review-independent-findings.json using schema mac.independent_review_findings.v1. Include experiment_id=%s, arm=%s, findings as a JSON list, and no_findings_reason as a non-empty string when findings is empty. Each finding should have a concise summary and, when applicable, severity, path, line, and supporting check."
+            % (str(task_workspace), assignment.get("experiment_id"), assignment.get("arm")),
+            "Do not create mac-evidence.json in this discovery phase. The host will restore executor evidence and run a separate adjudication phase after this pass.",
+            "Read the original task from %s/executor-task.json." % str(task_workspace),
+        ]
     )
+
+
+def _read_json_object(path: Path, *, max_bytes: int = 1024 * 1024) -> Dict[str, Any]:
+    try:
+        if not path.is_file() or path.stat().st_size > max_bytes:
+            return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _blind_review_protocol(
+    task_workspace: Path,
+    assignment: Dict[str, Any],
+    result: Any,
+    *,
+    duration_ms: float,
+    evidence_hidden: bool,
+) -> Dict[str, Any]:
+    findings_path = task_workspace / "review-independent-findings.json"
+    independent = _read_json_object(findings_path)
+    raw = (
+        findings_path.read_bytes()
+        if findings_path.is_file() and findings_path.stat().st_size <= 1024 * 1024
+        else b""
+    )
+    findings = independent.get("findings") if isinstance(independent.get("findings"), list) else []
+    no_findings_reason = str(independent.get("no_findings_reason") or "").strip()
+    valid_findings = (
+        independent.get("schema") == "mac.independent_review_findings.v1"
+        and str(independent.get("experiment_id") or "").strip()
+        == str(assignment.get("experiment_id") or "").strip()
+        and str(independent.get("arm") or "").strip()
+        == str(assignment.get("arm") or "").strip()
+        and (bool(findings) or bool(no_findings_reason))
+    )
+    return {
+        "schema": "mac.review_protocol.v1",
+        "experiment_id": assignment.get("experiment_id"),
+        "arm": assignment.get("arm"),
+        "mode": "blind_discovery_then_adjudication",
+        "executor_evidence_hidden": bool(evidence_hidden),
+        "discovery_returncode": int(getattr(result, "returncode", 1)),
+        "discovery_duration_ms": round(float(duration_ms), 3),
+        "discovery_stdout_sha256": sha256_text(getattr(result, "stdout", "") or ""),
+        "discovery_stderr_sha256": sha256_text(getattr(result, "stderr", "") or ""),
+        "independent_findings_valid": valid_findings,
+        "independent_findings_count": len(findings),
+        "independent_findings_sha256": (
+            "sha256:" + hashlib.sha256(raw).hexdigest() if raw else ""
+        ),
+        "protocol_compliant": bool(
+            evidence_hidden
+            and valid_findings
+            and int(getattr(result, "returncode", 1)) == 0
+        ),
+        "recorded_at": utcnow(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1889,6 +1998,36 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         manifest["codegraph"] = codegraph
     if integration is not None:
         manifest["integration"] = integration
+    assignment = _review_experiment_assignment(task)
+    if assignment:
+        protocol = _read_json_object(task_workspace / "review-protocol.json")
+        independent = _read_json_object(
+            task_workspace / "review-independent-findings.json"
+        )
+        experiment_record = dict(assignment)
+        if assignment.get("blind"):
+            experiment_record["protocol"] = protocol or {
+                "schema": "mac.review_protocol.v1",
+                "mode": "blind_discovery_then_adjudication",
+                "protocol_compliant": False,
+                "problem": "blind discovery protocol record is missing",
+            }
+        else:
+            experiment_record["protocol"] = {
+                "schema": "mac.review_protocol.v1",
+                "mode": "standard_evidence_aware",
+                "protocol_compliant": True,
+            }
+        manifest["review_experiment"] = experiment_record
+        if independent.get("schema") == "mac.independent_review_findings.v1":
+            manifest["independent_findings"] = (
+                independent.get("findings")
+                if isinstance(independent.get("findings"), list)
+                else []
+            )
+            manifest["independent_no_findings_reason"] = str(
+                independent.get("no_findings_reason") or ""
+            ).strip()
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -4198,6 +4337,73 @@ def _run_executor(
     )
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
+    assignment = _review_experiment_assignment(task) if is_review else {}
+    if assignment.get("blind"):
+        executor_evidence = task_workspace / "executor-evidence.json"
+        legacy_withheld_evidence = (
+            task_workspace / ".mac-withheld-executor-evidence.json"
+        )
+        independent_findings = task_workspace / "review-independent-findings.json"
+        evidence_hidden = False
+        evidence_payload: Optional[bytes] = None
+        discovery_started = time.monotonic()
+        if legacy_withheld_evidence.exists():
+            if not executor_evidence.exists():
+                legacy_withheld_evidence.replace(executor_evidence)
+            else:
+                legacy_withheld_evidence.unlink()
+        if independent_findings.exists():
+            independent_findings.replace(
+                task_workspace / "review-independent-findings.previous.json"
+            )
+        if executor_evidence.exists():
+            # Hold the bounded evidence payload in the host process rather than
+            # renaming it inside the workspace. A dotfile in the workspace is
+            # still visible to both direct and OpenShell agent invocations.
+            evidence_payload = executor_evidence.read_bytes()
+            executor_evidence.unlink()
+            evidence_hidden = True
+        try:
+            discovery_result = _invoke_agent(
+                runner,
+                build_blind_review_discovery_prompt(task, task_workspace, assignment),
+                task_workspace,
+                str(audit_task_id) if audit_task_id else None,
+                {
+                    "execution_kind": "review_discovery",
+                    "timeout": _agent_timeout(),
+                    "task": task,
+                },
+            )
+        finally:
+            if evidence_payload is not None:
+                executor_evidence.write_bytes(evidence_payload)
+        discovery_duration_ms = (time.monotonic() - discovery_started) * 1000.0
+        discovery_manifest = task_workspace / "mac-evidence.json"
+        if discovery_manifest.exists():
+            discovery_manifest.replace(
+                task_workspace / "review-independent-draft-evidence.json"
+            )
+        protocol = _blind_review_protocol(
+            task_workspace,
+            assignment,
+            discovery_result,
+            duration_ms=discovery_duration_ms,
+            evidence_hidden=evidence_hidden,
+        )
+        (task_workspace / "review-protocol.json").write_text(
+            json.dumps(protocol, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        emit_telemetry(
+            "review_discovery_completed",
+            task_id=task_id,
+            returncode=discovery_result.returncode,
+            protocol_compliant=protocol["protocol_compliant"],
+            findings=protocol["independent_findings_count"],
+            duration_ms=discovery_duration_ms,
+        )
+
     result = _invoke_agent(
         runner,
         prompt,

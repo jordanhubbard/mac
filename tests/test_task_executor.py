@@ -1726,6 +1726,214 @@ def test_review_finalizer_requires_exact_executor_head(tmp_path, monkeypatch):
     assert manifest["tests"] is None
 
 
+def test_blind_review_prompts_separate_discovery_from_adjudication(tmp_path):
+    assignment = {
+        "schema": "mac.review_experiment.v1",
+        "experiment_id": "exp-blind",
+        "arm": "blind",
+        "blind": True,
+    }
+    task = {"metadata": {"review_experiment": assignment}}
+
+    discovery = te.build_blind_review_discovery_prompt(task, tmp_path, assignment)
+    adjudication = te.build_review_prompt(
+        task,
+        tmp_path,
+        {"executor_evidence_id": "ev1", "review_id": "review1"},
+    )
+
+    assert "physically withheld" in discovery
+    assert "Do not create mac-evidence.json" in discovery
+    assert "review-independent-findings.json first" in adjudication
+    assert "then read the executor evidence" in adjudication
+
+
+def test_blind_review_protocol_requires_fresh_structured_findings(tmp_path):
+    import subprocess
+
+    assignment = {
+        "experiment_id": "exp-blind",
+        "arm": "blind",
+    }
+    (tmp_path / "review-independent-findings.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.independent_review_findings.v1",
+                "experiment_id": "exp-blind",
+                "arm": "blind",
+                "findings": [],
+                "no_findings_reason": "diff and focused checks found no defect",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.CompletedProcess(["review"], 0, "ok", "")
+
+    protocol = te._blind_review_protocol(
+        tmp_path,
+        assignment,
+        result,
+        duration_ms=12.5,
+        evidence_hidden=True,
+    )
+
+    assert protocol["protocol_compliant"] is True
+    assert protocol["executor_evidence_hidden"] is True
+    assert protocol["independent_findings_sha256"].startswith("sha256:")
+
+
+def test_run_executor_physically_withholds_and_restores_evidence_for_blind_pass(
+    tmp_path, monkeypatch
+):
+    import subprocess
+
+    task = {
+        "id": "review_1",
+        "metadata": {
+            "review_context": {
+                "task_id": "task_1",
+                "review_id": "review_1",
+                "executor_evidence_id": "evidence_1",
+            },
+            "review_experiment": {
+                "schema": "mac.review_experiment.v1",
+                "experiment_id": "exp-blind",
+                "arm": "blind",
+                "blind": True,
+            },
+        },
+    }
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}), encoding="utf-8")
+    (tmp_path / "executor-evidence.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    def fake_invoke(_runner, prompt, workspace, _audit_id, opts):
+        calls.append(opts["execution_kind"])
+        if opts["execution_kind"] == "review_discovery":
+            assert not (workspace / "executor-evidence.json").exists()
+            assert not any(
+                "executor-evidence" in path.name for path in workspace.iterdir()
+            )
+            (workspace / "review-independent-findings.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "mac.independent_review_findings.v1",
+                        "experiment_id": "exp-blind",
+                        "arm": "blind",
+                        "findings": [],
+                        "no_findings_reason": "independent inspection found none",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        else:
+            assert (workspace / "executor-evidence.json").exists()
+            (workspace / "mac-evidence.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "mac.worker_evidence.v1",
+                        "status": "complete",
+                        "evidence_type": "review_verdict",
+                        "verdict": "approved",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return subprocess.CompletedProcess(["agent"], 0, "ok", "")
+
+    monkeypatch.setattr(te, "_invoke_agent", fake_invoke)
+    monkeypatch.setattr(te, "run_deterministic_review_verdict", lambda *args: None)
+    monkeypatch.setattr(te, "emit_telemetry", lambda *args, **kwargs: True)
+
+    rc = te._run_executor(
+        runner=lambda *args, **kwargs: None,
+        task=task,
+        task_file=task_file,
+        task_workspace=tmp_path,
+        task_id=task["id"],
+        review_context=task["metadata"]["review_context"],
+        is_review=True,
+    )
+
+    assert rc == 0
+    assert calls == ["review_discovery", "review"]
+    assert (tmp_path / "executor-evidence.json").exists()
+    protocol = json.loads(
+        (tmp_path / "review-protocol.json").read_text(encoding="utf-8")
+    )
+    assert protocol["protocol_compliant"] is True
+
+
+def test_review_finalizer_signs_experiment_protocol_and_independent_findings(
+    tmp_path, monkeypatch
+):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "executor-evidence.json").write_text(
+        json.dumps({"metadata": {"verification": {"evidence_type": "operator_result"}}}),
+        encoding="utf-8",
+    )
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": "approved",
+                "summary": "semantic review passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ws / "review-independent-findings.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.independent_review_findings.v1",
+                "experiment_id": "exp-blind",
+                "arm": "blind",
+                "findings": [{"summary": "one independent concern"}],
+                "no_findings_reason": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ws / "review-protocol.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.review_protocol.v1",
+                "mode": "blind_discovery_then_adjudication",
+                "protocol_compliant": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret")
+    task = {
+        "owner_agent_id": "agent_review",
+        "metadata": {
+            "review_experiment": {
+                "schema": "mac.review_experiment.v1",
+                "experiment_id": "exp-blind",
+                "arm": "blind",
+                "blind": True,
+            }
+        },
+    }
+
+    te.run_deterministic_review_verdict(
+        ws, task, {"executor_evidence_id": "ev1", "review_id": "review1"}
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "approved"
+    assert manifest["review_experiment"]["protocol"]["protocol_compliant"] is True
+    assert manifest["independent_findings"] == [
+        {"summary": "one independent concern"}
+    ]
+    assert manifest["signature"]
+
+
 def test_cooperative_integration_check_requires_child_commit_ancestry(tmp_path):
     repo = tmp_path / "repo"
     _git(tmp_path, "init", str(repo))

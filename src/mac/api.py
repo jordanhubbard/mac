@@ -309,6 +309,29 @@ class TaskUpdate(BaseModel):
     actor: str = "human"
 
 
+class ReviewExperimentAssign(BaseModel):
+    experiment_id: str
+    arm: Optional[str] = None
+    arms: Optional[Dict[str, float]] = None
+    assignment_probability: Optional[float] = None
+    blind: bool = False
+    blind_arms: List[str] = Field(default_factory=list)
+    policy_version: str = "v1"
+    hypothesis: str = ""
+    stratum: str = ""
+    actor: str = "human"
+
+
+class ReviewOutcomeCreate(BaseModel):
+    kind: str
+    status: str
+    finding_id: str = ""
+    severity_weight: float = 1.0
+    source: str = "operator"
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "human"
+
+
 class TaskChildCreate(BaseModel):
     title: str
     description: str = ""
@@ -3968,6 +3991,41 @@ def create_app(
         if data.get("metadata") is not None:
             _ensure_payload_bounded(data["metadata"], "task.metadata")
         return cp.update_task(task_id, actor=actor, **data).to_dict()
+
+    @app.post("/tasks/{task_id}/review-experiment")
+    def assign_review_experiment(
+        task_id: str, body: ReviewExperimentAssign
+    ) -> Dict[str, Any]:
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        return cp.assign_review_experiment(task_id, actor=actor, **data)
+
+    @app.get("/tasks/{task_id}/review-observation")
+    def review_observation(task_id: str) -> Dict[str, Any]:
+        return cp.review_observation(task_id)
+
+    @app.post("/tasks/{task_id}/review-outcomes")
+    def record_review_outcome(
+        task_id: str, body: ReviewOutcomeCreate
+    ) -> Dict[str, Any]:
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        _ensure_payload_bounded(data.get("detail") or {}, "review_outcome.detail")
+        return cp.record_review_outcome(task_id, actor=actor, **data)
+
+    @app.get("/review-experiments/{experiment_id}")
+    def review_experiment_report(
+        experiment_id: str,
+        project: Optional[str] = Query(default=None),
+        min_tasks_per_arm: int = Query(default=5, ge=1, le=10000),
+        min_validated_outcomes_per_arm: int = Query(default=3, ge=0, le=10000),
+    ) -> Dict[str, Any]:
+        return cp.review_experiment_report(
+            experiment_id,
+            project=project,
+            min_tasks_per_arm=min_tasks_per_arm,
+            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
+        )
 
     @app.post("/tasks/{task_id}/children")
     def add_child_tasks(task_id: str, body: TaskChildrenCreate) -> Dict[str, Any]:

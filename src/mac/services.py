@@ -4582,6 +4582,162 @@ class ControlPlane:
             ],
         }
 
+    def assign_review_experiment(
+        self,
+        task_id: str,
+        *,
+        experiment_id: str,
+        arm: Optional[str] = None,
+        arms: Optional[Dict[str, Any]] = None,
+        assignment_probability: Optional[float] = None,
+        blind: bool = False,
+        blind_arms: Optional[Iterable[str]] = None,
+        policy_version: str = "v1",
+        hypothesis: str = "",
+        stratum: str = "",
+        actor: str = "human",
+    ) -> JsonDict:
+        """Persist a replayable review-strategy assignment on a task.
+
+        Weighted assignment is deterministic from experiment/task/policy ids,
+        so callers can reproduce the choice while the stored probability keeps
+        future off-policy analysis possible.
+        """
+        from mac.review_experiments import build_assignment, parse_assignment
+
+        task = self.get_task(task_id)
+        assignment = build_assignment(
+            task_id=task_id,
+            experiment_id=experiment_id,
+            arm=arm,
+            arms=arms,
+            assignment_probability=assignment_probability,
+            blind=blind,
+            blind_arms=blind_arms,
+            policy_version=policy_version,
+            hypothesis=hypothesis,
+            stratum=stratum,
+            assigned_by=actor,
+        )
+        existing = parse_assignment(task.metadata)
+        if existing is not None:
+            immutable_fields = (
+                "experiment_id",
+                "arm",
+                "assignment_method",
+                "assignment_probability",
+                "blind",
+                "blind_arms",
+                "policy_version",
+                "arm_distribution",
+                "hypothesis",
+                "stratum",
+            )
+            if all(existing.get(key) == assignment.get(key) for key in immutable_fields):
+                return existing
+            raise ValidationError("review experiment assignment is immutable")
+        if (
+            task.state != TaskState.OPEN.value
+            or task.owner_agent_id is not None
+            or task.lease_id is not None
+        ):
+            raise ValidationError(
+                "review experiment assignment must occur before a task is claimed"
+            )
+        metadata = ensure_json_object(task.metadata)
+        metadata["review_experiment"] = assignment
+        self.update_task(task_id, metadata=metadata, actor=actor)
+        self._record_history(
+            task_id,
+            "task.review_experiment_assigned",
+            actor,
+            task.state,
+            task.state,
+            {
+                "experiment_id": assignment["experiment_id"],
+                "arm": assignment["arm"],
+                "assignment_method": assignment["assignment_method"],
+                "assignment_probability": assignment["assignment_probability"],
+                "blind": assignment["blind"],
+                "policy_version": assignment["policy_version"],
+            },
+        )
+        return assignment
+
+    def record_review_outcome(
+        self,
+        task_id: str,
+        *,
+        kind: str,
+        status: str,
+        finding_id: str = "",
+        severity_weight: float = 1.0,
+        source: str = "operator",
+        detail: Optional[Dict[str, Any]] = None,
+        actor: str = "human",
+    ) -> JsonDict:
+        """Attach a validated or delayed outcome without mutating evidence."""
+        from mac.review_experiments import append_outcome, build_outcome
+
+        task = self.get_task(task_id)
+        outcome = build_outcome(
+            kind=kind,
+            status=status,
+            finding_id=finding_id,
+            severity_weight=severity_weight,
+            source=source,
+            detail=detail,
+            observed_by=actor,
+        )
+        metadata = append_outcome(task.metadata, outcome)
+        self.update_task(task_id, metadata=metadata, actor=actor)
+        self._record_history(
+            task_id,
+            "task.review_outcome_recorded",
+            actor,
+            task.state,
+            task.state,
+            {
+                "outcome_id": outcome["id"],
+                "kind": outcome["kind"],
+                "status": outcome["status"],
+                "finding_id": outcome["finding_id"],
+                "severity_weight": outcome["severity_weight"],
+                "source": outcome["source"],
+            },
+        )
+        return outcome
+
+    def review_observation(self, task_id: str) -> JsonDict:
+        from mac.review_experiments import build_observation
+
+        return build_observation(self.task_detail(task_id))
+
+    def review_experiment_report(
+        self,
+        experiment_id: str,
+        *,
+        project: Optional[str] = None,
+        min_tasks_per_arm: int = 5,
+        min_validated_outcomes_per_arm: int = 3,
+    ) -> JsonDict:
+        from mac.review_experiments import build_report, parse_assignment
+
+        observations = []
+        for task in self.list_tasks():
+            if project is not None and task.project != project:
+                continue
+            assignment = parse_assignment(task.metadata)
+            if assignment is None or assignment.get("experiment_id") != experiment_id:
+                continue
+            observations.append(self.review_observation(task.id))
+        return build_report(
+            experiment_id,
+            observations,
+            min_tasks_per_arm=min_tasks_per_arm,
+            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
+        )
+
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()
         evidence = [item.to_dict() for item in self.list_evidence(task_id)]

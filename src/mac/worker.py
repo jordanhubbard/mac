@@ -4607,6 +4607,9 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
         (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
         (task_dir / "executor-task.json", "executor-task.json", "review_context"),
+        (task_dir / "review-independent-findings.json", "review-independent-findings.json", "review_experiment"),
+        (task_dir / "review-protocol.json", "review-protocol.json", "review_experiment"),
+        (task_dir / "review-independent-draft-evidence.json", "review-independent-draft-evidence.json", "review_experiment"),
     ]
     artifacts: List[JsonDict] = []
     seen: set[str] = set()

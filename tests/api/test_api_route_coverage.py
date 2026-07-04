@@ -959,6 +959,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "draft_id": ctx["draft_id"],
         "env_id": ctx["env_id"],
         "evidence_id": ctx["runtime_evidence_id"],
+        "experiment_id": "route-review-experiment",
         "eval_set_id": ctx["eval_set_id"],
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
@@ -1084,6 +1085,19 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "title": "route base task updated",
             "priority": 5,
             "metadata": {"route_case": True},
+        },
+        ("POST", "/tasks/{task_id}/review-experiment"): {
+            "experiment_id": "route-review-experiment",
+            "arm": "standard",
+            "actor": "route-coverage",
+        },
+        ("POST", "/tasks/{task_id}/review-outcomes"): {
+            "kind": "clean_window",
+            "status": "confirmed",
+            "severity_weight": 0,
+            "source": "route-coverage",
+            "detail": {"window_days": 0},
+            "actor": "route-coverage",
         },
         ("POST", "/repositories/onboard"): {
             "repository_url": "https://github.com/example/route-coverage.git",

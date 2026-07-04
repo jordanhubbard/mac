@@ -330,6 +330,93 @@ class RemoteDispatch:
     def task_detail(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))
 
+    def assign_review_experiment(
+        self,
+        task_id: str,
+        *,
+        experiment_id: str,
+        arm: Optional[str] = None,
+        arms: Optional[Dict[str, Any]] = None,
+        assignment_probability: Optional[float] = None,
+        blind: bool = False,
+        blind_arms: Optional[List[str]] = None,
+        policy_version: str = "v1",
+        hypothesis: str = "",
+        stratum: str = "",
+        actor: str = "human",
+    ) -> _Dictish:
+        body = _drop_none(
+            {
+                "experiment_id": experiment_id,
+                "arm": arm,
+                "arms": arms,
+                "assignment_probability": assignment_probability,
+                "blind": blind,
+                "blind_arms": blind_arms or None,
+                "policy_version": policy_version,
+                "hypothesis": hypothesis,
+                "stratum": stratum,
+                "actor": actor,
+            }
+        )
+        return _Dictish(
+            self._post(
+                "/tasks/%s/review-experiment" % quote(task_id, safe=""),
+                body,
+            )
+        )
+
+    def review_observation(self, task_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/tasks/%s/review-observation" % quote(task_id, safe="")
+            )
+        )
+
+    def record_review_outcome(
+        self,
+        task_id: str,
+        *,
+        kind: str,
+        status: str,
+        finding_id: str = "",
+        severity_weight: float = 1.0,
+        source: str = "operator",
+        detail: Optional[Dict[str, Any]] = None,
+        actor: str = "human",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/review-outcomes" % quote(task_id, safe=""),
+                {
+                    "kind": kind,
+                    "status": status,
+                    "finding_id": finding_id,
+                    "severity_weight": severity_weight,
+                    "source": source,
+                    "detail": detail or {},
+                    "actor": actor,
+                },
+            )
+        )
+
+    def review_experiment_report(
+        self,
+        experiment_id: str,
+        *,
+        project: Optional[str] = None,
+        min_tasks_per_arm: int = 5,
+        min_validated_outcomes_per_arm: int = 3,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/review-experiments/%s" % quote(experiment_id, safe=""),
+                project=project,
+                min_tasks_per_arm=min_tasks_per_arm,
+                min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
+            )
+        )
+
     def claim_task(
         self,
         task_id: str,

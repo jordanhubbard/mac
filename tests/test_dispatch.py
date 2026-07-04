@@ -468,6 +468,44 @@ def test_remote_dispatch_read_endpoints_hit_correct_paths():
     assert all("tenant_id" not in u for u in gets)
 
 
+def test_remote_dispatch_review_experiment_surface_hits_hub_authority():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/tasks/task_1/review-experiment"): {"arm": "blind"},
+            ("GET", "/tasks/task_1/review-observation"): {"task_id": "task_1"},
+            ("POST", "/tasks/task_1/review-outcomes"): {"status": "confirmed"},
+            ("GET", "/review-experiments/exp_1"): {
+                "experiment_id": "exp_1"
+            },
+        }
+    )
+    dispatch = RemoteDispatch(
+        HubClient("http://hub:8789", token="tok", transport=fake)
+    )
+
+    assert dispatch.assign_review_experiment(
+        "task_1", experiment_id="exp_1", arm="blind", blind=True
+    ).to_dict() == {"arm": "blind"}
+    assert dispatch.review_observation("task_1").to_dict() == {"task_id": "task_1"}
+    assert dispatch.record_review_outcome(
+        "task_1", kind="clean_window", status="confirmed", severity_weight=0
+    ).to_dict() == {"status": "confirmed"}
+    assert dispatch.review_experiment_report(
+        "exp_1", project="demo"
+    ).to_dict() == {"experiment_id": "exp_1"}
+
+    method, url, body, token = fake.calls[0]
+    assert (method, url, token) == (
+        "POST",
+        "http://hub:8789/tasks/task_1/review-experiment",
+        "tok",
+    )
+    assert body["blind"] is True
+    assert "project=demo" in fake.calls[-1][1]
+
+
 def test_remote_dispatch_fleet_snapshot_reads_hub_authority():
     from mac.http_client import HubClient
 

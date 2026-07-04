@@ -34,6 +34,27 @@ def _csv(value: Optional[str]) -> Iterable[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _review_arm_weights(value: Optional[str]) -> Optional[Dict[str, float]]:
+    """Parse ``arm=weight,arm=weight`` without hiding invalid input."""
+    if value is None:
+        return None
+    weights: Dict[str, float] = {}
+    for item in _csv(value):
+        if "=" not in item:
+            raise MACError("--arms entries must use arm=weight")
+        name, raw_weight = item.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise MACError("--arms contains an empty arm name")
+        try:
+            weights[name] = float(raw_weight)
+        except ValueError as exc:
+            raise MACError("invalid weight for review arm %s" % name) from exc
+    if not weights:
+        raise MACError("--arms requires at least one arm=weight entry")
+    return weights
+
+
 def _read_text_arg(
     inline: Optional[str],
     file_path: Optional[str],
@@ -2502,6 +2523,67 @@ def cmd_review_decision(args: argparse.Namespace) -> None:
             reviewer_agent_id=args.reviewer_agent_id,
             reason=args.reason,
             evidence_id=args.evidence_id,
+        )
+    )
+
+
+def cmd_review_experiment_assign(args: argparse.Namespace) -> None:
+    hypothesis = _read_text_arg(
+        args.hypothesis,
+        args.hypothesis_file,
+        label="review experiment hypothesis",
+    ).strip()
+    _print(
+        _plane(args).assign_review_experiment(
+            args.task_id,
+            experiment_id=args.experiment_id,
+            arm=args.arm,
+            arms=_review_arm_weights(args.arms),
+            assignment_probability=args.probability,
+            blind=args.blind,
+            blind_arms=args.blind_arm,
+            policy_version=args.policy_version,
+            hypothesis=hypothesis,
+            stratum=args.stratum,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_review_experiment_observe(args: argparse.Namespace) -> None:
+    _print(_plane(args).review_observation(args.task_id))
+
+
+def cmd_review_experiment_outcome(args: argparse.Namespace) -> None:
+    detail = _read_json_arg(
+        args.detail,
+        args.detail_file,
+        label="review outcome detail",
+        default={},
+    )
+    if not isinstance(detail, dict):
+        raise MACError("review outcome detail must be a JSON object")
+    _print(
+        _plane(args).record_review_outcome(
+            args.task_id,
+            kind=args.kind,
+            status=args.status,
+            finding_id=args.finding_id,
+            severity_weight=args.severity_weight,
+            source=args.source,
+            detail=detail,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_review_experiment_report(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).review_experiment_report(
+            args.experiment_id,
+            project=args.project,
+            min_tasks_per_arm=args.min_tasks_per_arm,
+            min_validated_outcomes_per_arm=args.min_validated_outcomes_per_arm,
         )
     )
 
@@ -5032,6 +5114,77 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument("--reason")
     decision.add_argument("--evidence-id")
     _set(cmd_review_decision, decision)
+
+    experiment = review.add_parser(
+        "experiment",
+        help="assign and inspect replayable review-strategy experiments",
+    ).add_subparsers(dest="review_experiment_command", required=True)
+    experiment_assign = experiment.add_parser(
+        "assign",
+        help="persist an explicit or deterministic weighted arm assignment",
+    )
+    experiment_assign.add_argument("task_id")
+    experiment_assign.add_argument("experiment_id")
+    assignment = experiment_assign.add_mutually_exclusive_group(required=True)
+    assignment.add_argument("--arm", help="explicit arm name")
+    assignment.add_argument(
+        "--arms",
+        help="deterministic weighted assignment, e.g. blind=1,standard=1",
+    )
+    experiment_assign.add_argument(
+        "--probability",
+        type=float,
+        help="propensity for an explicit --arm (defaults to 1)",
+    )
+    experiment_assign.add_argument("--blind", action="store_true")
+    experiment_assign.add_argument(
+        "--blind-arm",
+        action="append",
+        default=[],
+        help="weighted arm that uses evidence-withheld discovery (repeatable)",
+    )
+    experiment_assign.add_argument("--policy-version", default="v1")
+    experiment_assign.add_argument("--hypothesis")
+    experiment_assign.add_argument("--hypothesis-file")
+    experiment_assign.add_argument("--stratum", default="")
+    experiment_assign.add_argument("--actor", default="human")
+    _set(cmd_review_experiment_assign, experiment_assign)
+
+    experiment_observe = experiment.add_parser(
+        "observe",
+        help="derive one task observation from ledger evidence",
+    )
+    experiment_observe.add_argument("task_id")
+    _set(cmd_review_experiment_observe, experiment_observe)
+
+    experiment_outcome = experiment.add_parser(
+        "outcome",
+        help="append an operator or delayed validation outcome",
+    )
+    experiment_outcome.add_argument("task_id")
+    experiment_outcome.add_argument("kind")
+    experiment_outcome.add_argument(
+        "status", choices=("confirmed", "refuted", "pending")
+    )
+    experiment_outcome.add_argument("--finding-id", default="")
+    experiment_outcome.add_argument("--severity-weight", type=float, default=1.0)
+    experiment_outcome.add_argument("--source", default="operator")
+    experiment_outcome.add_argument("--detail")
+    experiment_outcome.add_argument("--detail-file")
+    experiment_outcome.add_argument("--actor", default="human")
+    _set(cmd_review_experiment_outcome, experiment_outcome)
+
+    experiment_report = experiment.add_parser(
+        "report",
+        help="derive arm metrics and a fail-closed policy candidate",
+    )
+    experiment_report.add_argument("experiment_id")
+    experiment_report.add_argument("--project")
+    experiment_report.add_argument("--min-tasks-per-arm", type=int, default=5)
+    experiment_report.add_argument(
+        "--min-validated-outcomes-per-arm", type=int, default=3
+    )
+    _set(cmd_review_experiment_report, experiment_report)
 
     publish = sub.add_parser("publish")
     publish.add_argument("task_id")
