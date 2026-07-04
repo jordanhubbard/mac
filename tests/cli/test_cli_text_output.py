@@ -2,14 +2,57 @@
 JSON. These lock the text renderer (a pure function, independent of the global
 output-mode flag the rest of the suite forces to JSON)."""
 
+import pytest
 from mac import cli
+
+# A realistic 37-char task id (task_ + 32 hex chars).
+_FULL_ID = "task_d95bcaee1234567890abcdef12345678"
+_SHORT_ID = "task_d95bcaee"  # task_ + first 8 hex chars
+
+
+def test_short_task_id_truncates_long_id():
+    assert cli._short_task_id(_FULL_ID) == _SHORT_ID
+
+
+def test_short_task_id_preserves_short_fixtures():
+    # Test fixtures with < 8 hex chars are returned unchanged.
+    assert cli._short_task_id("task_abc123") == "task_abc123"
+
+
+def test_short_task_id_passthrough_non_task():
+    assert cli._short_task_id("agent_x") == "agent_x"
+
+
+def test_task_list_renders_short_id_by_default():
+    """task list shows short ids (task_ + 8 hex) in text mode by default."""
+    tasks = [
+        {"id": _FULL_ID, "state": "open", "project": "mac", "title": "Do a thing"},
+    ]
+    cli._set_full_ids(False)
+    out = cli._render_text(tasks)
+    assert out.startswith(_SHORT_ID)
+    assert _FULL_ID not in out
+    assert "open" in out and "mac" in out and "Do a thing" in out
+
+
+def test_task_list_renders_full_id_with_flag():
+    """--full-ids restores the 37-char canonical id in text mode."""
+    tasks = [
+        {"id": _FULL_ID, "state": "open", "project": "mac", "title": "Do a thing"},
+    ]
+    cli._set_full_ids(True)
+    out = cli._render_text(tasks)
+    cli._set_full_ids(False)
+    assert out.startswith(_FULL_ID)
 
 
 def test_task_list_renders_one_liner_per_task():
+    # Short fixture ids (< 8 hex) pass through unchanged; one line per task.
     tasks = [
         {"id": "task_abc123", "state": "open", "project": "mac", "title": "Do a thing"},
         {"id": "task_def456", "state": "completed", "project": "Aviation", "title": "Other"},
     ]
+    cli._set_full_ids(False)
     out = cli._render_text(tasks)
     lines = out.splitlines()
     assert len(lines) == 2  # exactly one line per task

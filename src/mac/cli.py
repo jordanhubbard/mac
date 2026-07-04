@@ -104,10 +104,19 @@ def _read_json_arg(
 # --json flag switches every command to JSON. Set from main().
 _OUTPUT_JSON = False
 
+# Short-id mode. When False (the default), task list lines show a short unique
+# prefix (task_ + 8 hex chars, git-style). --full-ids restores 37-char ids.
+_FULL_IDS = False
+
 
 def _set_output_json(enabled: bool) -> None:
     global _OUTPUT_JSON
     _OUTPUT_JSON = bool(enabled)
+
+
+def _set_full_ids(enabled: bool) -> None:
+    global _FULL_IDS
+    _FULL_IDS = bool(enabled)
 
 
 def _unwrap(value: Any) -> Any:
@@ -118,6 +127,25 @@ def _unwrap(value: Any) -> Any:
 def _trunc(text: Any, n: int = 72) -> str:
     s = "" if text is None else str(text).replace("\n", " ").strip()
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+_TASK_ID_PREFIX = "task_"
+_SHORT_HEX_LEN = 8  # git-style: 8 hex digits unique enough for human display
+
+
+def _short_task_id(task_id: str) -> str:
+    """Return a compact display id: ``task_`` + first 8 hex chars.
+
+    Falls back to the full id when it is already short (test fixtures / manual
+    ids that don't carry the full 32-char hex suffix). The full id is never
+    altered in JSON output or internal logic — only the text display column.
+    """
+    if not task_id.startswith(_TASK_ID_PREFIX):
+        return task_id
+    hex_part = task_id[len(_TASK_ID_PREFIX):]
+    if len(hex_part) <= _SHORT_HEX_LEN:
+        return task_id  # already short enough; preserve as-is
+    return _TASK_ID_PREFIX + hex_part[:_SHORT_HEX_LEN]
 
 
 def _agent_hw_summary(d: dict) -> str:
@@ -150,7 +178,12 @@ def _agent_hw_summary(d: dict) -> str:
 
 
 def _one_liner(value: Any) -> str:
-    """A single compact line for one record (task / agent / generic dict)."""
+    """A single compact line for one record (task / agent / generic dict).
+
+    Task lines show a short unique id prefix by default (git-style, 8 hex
+    chars: e.g. ``task_d95bcaee``). Pass ``--full-ids`` on ``task list`` or
+    set ``_FULL_IDS = True`` to restore the 37-char canonical id.
+    """
     d = _unwrap(value)
     if not isinstance(d, dict):
         return str(d)
@@ -159,12 +192,16 @@ def _one_liner(value: Any) -> str:
         "state" in d and "status" not in d
     )
     if is_task:
-        return "%-36s %-12s %-10s %s" % (
-            ident,
+        raw_id = str(ident)
+        display_id = raw_id if _FULL_IDS else _short_task_id(raw_id)
+        id_width = 36 if _FULL_IDS else 13
+        return ("%-*s %-12s %-10s %s" % (
+            id_width,
+            display_id,
             d.get("state", "?"),
             (d.get("project") or "-"),
             _trunc(d.get("title", "")),
-        )
+        ))
     if "status" in d and ("name" in d or "current_task_id" in d or "capabilities" in d):
         cur = d.get("current_task_id")
         return "%-16s %-9s %-28s %s" % (
@@ -1187,7 +1224,11 @@ def cmd_task_list(args: argparse.Namespace) -> None:
     tasks = [task.to_dict() for task in cp.list_tasks(args.state, view="summary")]
     if project is not None:
         tasks = [t for t in tasks if t.get("project") == project]
+    # Short-id display: set module flag so _one_liner picks it up.
+    # --json bypasses _one_liner entirely so full ids are always in JSON output.
+    _set_full_ids(bool(getattr(args, "full_ids", False)))
     _print(tasks)
+    _set_full_ids(False)  # reset to default after this command
 
 
 def cmd_task_show(args: argparse.Namespace) -> None:
@@ -3886,10 +3927,20 @@ def build_parser() -> argparse.ArgumentParser:
                              "this task into child tasks")
     _set(cmd_task_create, create)
 
-    list_tasks = task.add_parser("list")
+    list_tasks = task.add_parser(
+        "list",
+        help="list tasks (default: short ids; use --full-ids for scripts)",
+    )
     list_tasks.add_argument("--state")
     list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
     list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
+    list_tasks.add_argument(
+        "--full-ids",
+        dest="full_ids",
+        action="store_true",
+        default=False,
+        help="show full 37-char task ids instead of the default short prefix (ignored by --json)",
+    )
     _set(cmd_task_list, list_tasks)
 
     show = task.add_parser("show")
