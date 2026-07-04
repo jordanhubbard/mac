@@ -316,3 +316,19 @@ def test_required_changed_file_collection_and_problems() -> None:
         task, {"repo": {"files_changed": ["src/a.py"]}}
     )
     assert "README.md" in problems[0]
+
+
+def test_truncate_process_text_keeps_the_failure_tail() -> None:
+    # pytest prints its failure summary LAST; a head-only cut made every long
+    # verification failure undiagnosable from the ledger (observed live).
+    from mac.worker import _truncate_process_text
+
+    text = ("x" * 10000) + "\nFAILED tests/test_thing.py::test_case - boom\n1 failed"
+    out = _truncate_process_text(text, limit=4000)
+    assert len(out) < 4200  # bounded (marker adds a few chars)
+    assert out.startswith("x")                      # head kept for context
+    assert "chars omitted" in out                   # explicit gap marker
+    assert "FAILED tests/test_thing.py" in out      # the diagnosis survives
+    assert out.endswith("1 failed")
+    # Short output passes through untouched.
+    assert _truncate_process_text("all good", limit=4000) == "all good"

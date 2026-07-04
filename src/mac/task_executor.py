@@ -1179,11 +1179,11 @@ def _repository_bootstrap_timeout() -> float:
     raw = (
         os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
         or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
-        or "600"
+        or "1800"
     )
     try:
         value = float(raw)
-        return value if value > 0 else 600.0
+        return value if value > 0 else 1800.0
     except ValueError:
         return 600.0
 
@@ -1394,7 +1394,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     tests = None
     if test_cmd:
         tr = subprocess.run(
-            ["bash", "-lc", test_cmd], cwd=str(worktree_path), capture_output=True, text=True, check=False, timeout=600
+            ["bash", "-lc", test_cmd], cwd=str(worktree_path), capture_output=True, text=True, check=False,
+            timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
         )
         tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
         import re as _re
@@ -1685,7 +1686,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
             test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
             tr = subprocess.run(
-                ["bash", "-lc", test_cmd], cwd=str(review_worktree_path), capture_output=True, text=True, check=False, timeout=600
+                ["bash", "-lc", test_cmd], cwd=str(review_worktree_path), capture_output=True, text=True, check=False,
+                timeout=float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
             )
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
             codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
@@ -2686,10 +2688,10 @@ if bootstrap_command:
             timeout = float(
                 os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
                 or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
-                or "600"
+                or "1800"
             )
         except ValueError:
-            timeout = 600.0
+            timeout = 1800.0
         returncode, stdout, stderr, timed_out = run_bounded_bash(bootstrap_command, timeout)
         bootstrap = {
             "command": bootstrap_command,
@@ -2735,9 +2737,9 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
 else:
     started = time.time()
     try:
-        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600") or "600")
+        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
     except ValueError:
-        timeout = 600.0
+        timeout = 1800.0
     returncode, stdout, stderr, timed_out = run_bounded_bash(command, timeout)
     payload = {
         "schema": "mac.sandbox_verification.v1",
@@ -3074,9 +3076,9 @@ def _sandbox_run_repository_verification(
         sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
         return False
     try:
-        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "600"))
+        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800"))
     except ValueError:
-        timeout = 600.0
+        timeout = 1800.0
     ok, msg = _sandbox_step(
         [
             "exec",
