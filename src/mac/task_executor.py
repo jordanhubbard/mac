@@ -543,6 +543,21 @@ def _run_captured(argv: List[str], cwd: Path, timeout: Optional[float]):
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
+
+def clip_process_text(value: str, limit: int = 4000) -> str:
+    """Bound process output keeping head AND tail — the tail carries the
+    diagnosis (pytest failure summaries, pip errors print last). Mirrors
+    worker._truncate_process_text; the head-only cuts this replaces made
+    long failures undiagnosable from evidence."""
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    head = max(0, limit // 4)
+    tail = limit - head
+    marker = "\n… [%d chars omitted] …\n" % (len(text) - head - tail)
+    return text[:head] + marker + text[-tail:]
+
+
 def run_with_stall_watchdog(
     argv: List[str],
     cwd: Path,
@@ -1313,8 +1328,8 @@ def _run_repository_bootstrap_if_needed(
             "missing_before": missing,
             "returncode": int(completed.returncode),
             "status": "pass" if completed.returncode == 0 else "fail",
-            "stdout": (completed.stdout or "")[:4000],
-            "stderr": (completed.stderr or "")[:4000],
+            "stdout": clip_process_text(completed.stdout or ""),
+            "stderr": clip_process_text(completed.stderr or ""),
             "duration_ms": int((time.time() - started) * 1000),
         }
     except subprocess.TimeoutExpired as exc:
@@ -1324,8 +1339,8 @@ def _run_repository_bootstrap_if_needed(
             "missing_before": missing,
             "returncode": 124,
             "status": "fail",
-            "stdout": (exc.stdout or "")[:4000] if isinstance(exc.stdout, str) else "",
-            "stderr": (exc.stderr or "")[:4000] if isinstance(exc.stderr, str) else "",
+            "stdout": clip_process_text(exc.stdout) if isinstance(exc.stdout, str) else "",
+            "stderr": clip_process_text(exc.stderr) if isinstance(exc.stderr, str) else "",
             "duration_ms": int((time.time() - started) * 1000),
             "error": "bootstrap command timed out",
         }
@@ -1567,7 +1582,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "remote": push_remote_display,
             "returncode": int(publication.push_returncode or (0 if pushed else 1)),
             "status": "pass" if pushed else "fail",
-            "stderr": (publication.push_stderr or publication.error)[:4000],
+            "stderr": clip_process_text(publication.push_stderr or publication.error),
         }
     elif not clean:
         push_evidence = {
@@ -2714,6 +2729,17 @@ def missing_bootstrap_outputs():
         if not os.path.exists(os.path.join(worktree, path))
     ]
 
+def clip(value, limit=4000):
+    # Keep head AND tail — pytest/pip print the diagnosis LAST; a head-only
+    # cut hid every long failure from evidence (observed live, repeatedly).
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    head = limit // 4
+    tail = limit - head
+    marker = "\n… [%d chars omitted] …\n" % (len(text) - head - tail)
+    return text[:head] + marker + text[-tail:]
+
 def run_bounded_bash(command, timeout):
     """Run a verifier command and terminate its whole process tree on timeout."""
     proc = subprocess.Popen(
@@ -2782,8 +2808,8 @@ if bootstrap_command:
             "missing_before": missing_before,
             "returncode": returncode,
             "status": "pass" if returncode == 0 else "fail",
-            "stdout": stdout[:4000],
-            "stderr": stderr[:4000],
+            "stdout": clip(stdout),
+            "stderr": clip(stderr),
             "duration_ms": int((time.time() - started) * 1000),
         }
         if timed_out:
@@ -2829,8 +2855,8 @@ else:
         "status": "pass" if returncode == 0 else "fail",
         "command": command,
         "returncode": returncode,
-        "stdout": stdout[:4000],
-        "stderr": stderr[:4000],
+        "stdout": clip(stdout),
+        "stderr": clip(stderr),
         "duration_ms": int((time.time() - started) * 1000),
         "worktree": worktree,
         "environment_delta": delta,

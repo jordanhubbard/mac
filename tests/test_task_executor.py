@@ -2420,3 +2420,28 @@ def test_stall_watchdog_hard_ceiling_stops_chatty_loops(tmp_path):
     )
     assert r.returncode == 124
     assert "hard ceiling" in r.stderr
+
+
+def test_clip_process_text_keeps_failure_tail():
+    # Same contract as worker._truncate_process_text: the tail carries the
+    # diagnosis. Applies to executor bootstrap/test/sandbox evidence items.
+    text = ("y" * 9000) + "\nFAILED tests/x.py::t - kaboom\n2 failed"
+    out = te.clip_process_text(text, limit=4000)
+    assert len(out) < 4200
+    assert "chars omitted" in out
+    assert out.endswith("2 failed")
+    assert te.clip_process_text("short", limit=4000) == "short"
+
+
+def test_sandbox_verifier_script_clips_head_and_tail():
+    # The in-sandbox verification heredoc is self-contained; its payload
+    # builders must use the tail-preserving clip, not a bare [:4000] head cut
+    # (the site #204 missed — it ate natasha's failure tail on 2026-07-04).
+    import inspect
+    src = inspect.getsource(te)
+    i = src.find("mac.sandbox_verification.v1")
+    assert i > 0
+    heredoc_region = src[max(0, i - 6000): i + 3000]
+    assert "def clip(value" in heredoc_region
+    assert 'clip(stdout)' in heredoc_region
+    assert "stdout[:4000]" not in heredoc_region
