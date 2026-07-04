@@ -2311,6 +2311,8 @@ def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatc
 def test_agent_argv_sandboxed_repo_task_falls_back_when_not_verified(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
+    # Explicitly disable fail-closed so we can test the opt-out fallback path.
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "0")
     choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
@@ -2322,11 +2324,48 @@ def test_agent_argv_sandboxed_repo_task_falls_back_when_not_verified(tmp_path, m
 def test_agent_argv_sandboxed_repo_task_falls_back_when_no_coding_agent(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
+    # Explicitly disable fail-closed so we can test the opt-out fallback path.
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "0")
     choice = ca.CodingAgentChoice(agent="", available=False, rationale=["no coding agent"])
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     task = {"metadata": {"execution_contract": {"type": "repository"}}}
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
+    """MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1 is the fleet-wide default.
+
+    With no env override the executor must fire 'coding-agent-required' and
+    NOT degrade to the hermes-gateway fallback when no coding agent is available.
+    """
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", raising=False)
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    choice = ca.CodingAgentChoice(agent="", available=False, rationale=["no coding agent"])
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    joined = " ".join(argv)
+    assert "hermes_cli.main" not in joined
+    assert "no host coding agent is available/authenticated" in joined
+
+
+def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verified(tmp_path, monkeypatch):
+    """Default fail-closed also fires when the coding agent is present but not verified in the sandbox."""
+    from mac import coding_agent as ca
+
+    monkeypatch.delenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", raising=False)
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
+    task = {"metadata": {"execution_contract": {"type": "repository"}}}
+    argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
+    joined = " ".join(argv)
+    assert "hermes_cli.main" not in joined
+    assert "require a verified in-sandbox coding agent" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_not_verified(tmp_path, monkeypatch):

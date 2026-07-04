@@ -3923,15 +3923,16 @@ def _record_runner_choice(
 def _repo_requires_verified_coding_agent(task: Any) -> bool:
     """Whether repo work must fail closed without a verified coding CLI.
 
-    Default false: Hermes also runs inside the OpenShell sandbox against the
-    uploaded worktree, and the deterministic finalizer rejects patch-text-only
-    runs because they leave no changed files/tests/evidence. Requiring a coding
-    CLI by default made the fleet depend on copied Codex OAuth files, whose
-    refresh tokens rotate inside throwaway sandboxes and then break later tasks.
+    Default true (fail-closed): fleet-wide since the hermes retirement sequence
+    set MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1 as the build_mac_env default
+    and bootstrap-openshell.sh writes it unconditionally on every host.  Hermes
+    chat fallback is no longer acceptable for repository tasks in the OpenShell
+    executor path.
 
-    Operators can restore the old strict behavior with
-    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1`` after provisioning a durable
-    in-sandbox coding-agent auth mechanism.
+    Operators who have provisioned a durable in-sandbox coding-agent auth
+    mechanism and want to re-enable the Hermes fallback may set
+    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=0`` in mac.env; the setdefault
+    in build_mac_env will not clobber an explicit override.
     """
     if not (isinstance(task, dict) and task_is_repo_coupled(task)):
         return False
@@ -4125,13 +4126,14 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     When OpenShell confinement is in effect (``confined`` — per-task wrap or the
     production supervisor) enablement is gated on :func:`_coding_agent_sandbox_ok`
     (a real in-sandbox preflight by default), because a host-side ``which``/cred
-    check does NOT prove the agent works inside the confined sandbox. When the
-    agent is unavailable, or confined but not verified, work falls back to
-    ``_hermes_argv`` unchanged. Repository work is still run inside OpenShell
-    against the uploaded worktree; the deterministic finalizer rejects runs that
-    do not produce real changed files/tests/evidence. Operators may opt back
-    into the older fail-closed coding-CLI requirement with
-    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1``.
+    check does NOT prove the agent works inside the confined sandbox.
+
+    Fail-closed is now the fleet-wide default: ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT``
+    defaults to ``1`` via build_mac_env and bootstrap-openshell.sh, so when no
+    verified coding CLI is present the executor fails with the
+    ``coding-agent-required`` path instead of degrading to the Hermes chat
+    fallback.  Operators may opt out by setting
+    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=0`` in mac.env.
     """
     from . import coding_agent as _ca
 

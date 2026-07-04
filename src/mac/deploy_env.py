@@ -834,6 +834,11 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-hermes-task-executor"))
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
+    # Fail-closed default: repo tasks under OpenShell require a verified coding
+    # CLI (Claude Code, Codex, Cursor).  setdefault so an operator who has
+    # provisioned a durable in-sandbox auth mechanism can override to "0" in
+    # mac.env without it being clobbered on the next deploy/write-mac-env run.
+    values.setdefault("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     # NeMo Relay observability on by default for new nodes (nemo-relay ships via
     # the deploy's `relay` extra + the worker runtime-deps reconcile). setdefault
     # so an operator's explicit MAC_RELAY_OBSERVABILITY=0 is preserved across
