@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from mac import fleet_deploy
 from mac.fleet_setup import build_setup_plan, public_plan
 
 
@@ -71,6 +72,48 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
     redacted = public_plan(plan)
     assert redacted["env_values"]["NVIDIA_API_KEY"] == "<set>"
     assert redacted["env_values"]["MAC_API_TOKEN"] == "<set>"
+
+
+def test_declarative_setup_canonicalizes_local_target_and_implicit_hub_url(
+    tmp_path, monkeypatch
+):
+    spec = _spec()
+    spec["fleet"].pop("hub_url")
+    spec["agents"] = [
+        {
+            "name": "horde-hub",
+            "target": "ubuntu@horde-hub.local:2201",
+            "os": "linux",
+            "model": "nvidia/test-model",
+        }
+    ]
+    spec["network"] = {"provider": "tailscale"}
+    monkeypatch.setattr(
+        fleet_deploy,
+        "_tailscale_status",
+        lambda: {
+            "BackendState": "Running",
+            "Self": {},
+            "Peer": {
+                "node": {
+                    "HostName": "horde-hub",
+                    "DNSName": "horde-hub.example.ts.net.",
+                    "TailscaleIPs": ["100.80.0.10"],
+                }
+            },
+        },
+    )
+
+    plan = build_setup_plan(
+        spec,
+        root=ROOT,
+        fleets_config=tmp_path / "fleets.yaml",
+        env={"NVIDIA_API_KEY": "nv-secret"},
+    )
+
+    assert plan["status"] == "pass"
+    assert plan["fleet_config"]["agents"][0]["target"] == "ubuntu@100.80.0.10:2201"
+    assert plan["fleet_config"]["hub_url"] == "http://100.80.0.10:8789"
 
 
 def test_declarative_webdav_requires_dns_name_and_derives_https_url(tmp_path):

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
+import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Mapping, Optional
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,115 @@ def normalize_ssh_target(value: str, *, port: Optional[int] = None) -> str:
         if target.port is not None
         else target.user_host
     )
+
+
+def canonicalize_mesh_ssh_target(
+    value: str,
+    *,
+    provider: str,
+    port: Optional[int] = None,
+    status: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Replace an mDNS-only SSH hostname with its durable mesh IPv4 address.
+
+    ``*.local`` names are only meaningful on the current multicast-DNS link.
+    Tailscale and Headscale both expose their peer inventory through
+    ``tailscale status --json``; use that inventory to persist the peer's
+    stable mesh address instead.  Ordinary DNS names and literal addresses are
+    deliberately left unchanged.
+
+    Resolution fails closed.  Persisting the original ``*.local`` name would
+    create a registry entry that becomes invalid as soon as the operator moves
+    to another network.
+    """
+
+    normalized = normalize_ssh_target(value, port=port)
+    parsed = parse_ssh_target(normalized)
+    user, separator, host = parsed.user_host.rpartition("@")
+    host = host if separator else parsed.user_host
+    mdns_host = host.rstrip(".")
+    if not mdns_host.casefold().endswith(".local"):
+        return normalized
+
+    mesh_provider = (provider or "none").strip().casefold()
+    if mesh_provider not in {"tailscale", "headscale"}:
+        raise ValueError(
+            "SSH target %r uses link-local mDNS; configure tailscale/headscale "
+            "or provide a durable IP/DNS name" % host
+        )
+
+    mesh_status = dict(status) if status is not None else _tailscale_status()
+    mesh_ip = _mesh_ipv4_for_mdns_host(mdns_host, mesh_status)
+    user_host = "%s@%s" % (user, mesh_ip) if separator else mesh_ip
+    return "%s:%d" % (user_host, parsed.port) if parsed.port is not None else user_host
+
+
+def _tailscale_status() -> Mapping[str, Any]:
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            "cannot resolve .local target through the active mesh: "
+            "tailscale status is unavailable"
+        ) from exc
+    if result.returncode != 0:
+        raise ValueError(
+            "cannot resolve .local target through the active mesh: "
+            "tailscale status failed"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("tailscale status returned invalid JSON") from exc
+    if not isinstance(payload, dict) or payload.get("BackendState") != "Running":
+        raise ValueError("tailscale/headscale client is not running")
+    return payload
+
+
+def _mesh_ipv4_for_mdns_host(host: str, status: Mapping[str, Any]) -> str:
+    short_name = host.rstrip(".")[:-6].rstrip(".").casefold()
+    if not short_name:
+        raise ValueError("invalid .local SSH hostname: %r" % host)
+
+    nodes: List[Mapping[str, Any]] = []
+    self_node = status.get("Self")
+    if isinstance(self_node, Mapping):
+        nodes.append(self_node)
+    peers = status.get("Peer")
+    if isinstance(peers, Mapping):
+        nodes.extend(node for node in peers.values() if isinstance(node, Mapping))
+
+    matches: List[str] = []
+    for node in nodes:
+        hostname = str(node.get("HostName") or "").rstrip(".").casefold()
+        dns_name = str(node.get("DNSName") or "").rstrip(".").casefold()
+        names = {hostname, dns_name, dns_name.split(".", 1)[0]}
+        if short_name not in names:
+            continue
+        for candidate in node.get("TailscaleIPs") or []:
+            try:
+                address = ipaddress.ip_address(str(candidate))
+            except ValueError:
+                continue
+            if address.version == 4:
+                matches.append(str(address))
+                break
+
+    unique = sorted(set(matches))
+    if not unique:
+        raise ValueError(
+            "no tailscale/headscale peer matches %r; provide its mesh IP or a durable DNS name"
+            % host
+        )
+    if len(unique) > 1:
+        raise ValueError("multiple mesh peers match %r; provide the mesh IP explicitly" % host)
+    return unique[0]
 
 
 def cleanup_retention_plan(home: Path, mac_home: Path) -> List[CleanupPath]:

@@ -21,7 +21,10 @@ except Exception:  # noqa: BLE001 - deploy will surface PyYAML requirement too.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from mac.fleet_deploy import normalize_ssh_target, parse_ssh_target  # noqa: E402
+from mac.fleet_deploy import (  # noqa: E402
+    canonicalize_mesh_ssh_target,
+    parse_ssh_target,
+)
 from mac.deploy_env import DEFAULT_WORKER_CAPABILITIES, build_router_provider_spec  # noqa: E402
 from mac.fleet_setup import (  # noqa: E402
     DEFAULT_GATEWAY_MODEL,
@@ -501,6 +504,22 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             ):
                 qdrant_url = "http://%s.mac.internal:%d" % (hs_host, qdrant_port)
 
+    try:
+        original_hub_target = hub_target
+        hub_target = canonicalize_mesh_ssh_target(
+            hub_target,
+            provider=network_provider,
+        )
+    except ValueError as exc:
+        print("Invalid hub SSH target: %s" % exc, file=sys.stderr)
+        return 2
+    if not running_locally and hub_url == default_hub_url and hub_target != original_hub_target:
+        old_hub_url = hub_url
+        hub_url = "http://%s:%d" % (host_from_target(hub_target), control_port)
+        firecrawl_url = qdrant_url_from_hub(hub_url, firecrawl_port)
+        if qdrant_url == qdrant_url_from_hub(old_hub_url, qdrant_port):
+            qdrant_url = qdrant_url_from_hub(hub_url, qdrant_port)
+
     agents = [
         build_agent(
             name=hub_name,
@@ -516,6 +535,11 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     while prompt_bool("Add another agent?", default=False):
         name = prompt("Agent name", required=True)
         target = prompt("Agent SSH target", required=True)
+        try:
+            target = canonicalize_mesh_ssh_target(target, provider=network_provider)
+        except ValueError as exc:
+            print("Invalid agent SSH target: %s" % exc, file=sys.stderr)
+            return 2
         os_kind = prompt("Agent OS", default="linux", choices=["linux", "darwin"])
         model = prompt("Agent Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
         agent_supervisor = prompt("Agent supervisor", default=supervisor, choices=["auto", "systemd", "launchd", "supervisord"])
@@ -754,6 +778,19 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         print("  Worker SSH target: 127.0.0.1 (running locally)")
     else:
         agent_target = prompt("Worker SSH target (user@host or host)", required=True)
+
+    network_provider = str(
+        ((defaults.get("network") or {}) if isinstance(defaults, dict) else {}).get("provider")
+        or "none"
+    )
+    try:
+        agent_target = canonicalize_mesh_ssh_target(
+            agent_target,
+            provider=network_provider,
+        )
+    except ValueError as exc:
+        print("Invalid worker SSH target: %s" % exc, file=sys.stderr)
+        return 2
 
     agent_os = prompt("Worker OS", default="linux", choices=["linux", "darwin"])
     agent_supervisor = prompt(
@@ -1013,7 +1050,15 @@ def main(argv: List[str]) -> int:
         if not hub_name:
             print("--new-hub requires a non-empty hub name", file=sys.stderr)
             return 2
-        hub_target = normalize_ssh_target(args.target, port=args.ssh_port)
+        try:
+            hub_target = canonicalize_mesh_ssh_target(
+                args.target,
+                provider=args.network_provider,
+                port=args.ssh_port,
+            )
+        except ValueError as exc:
+            print("Invalid hub SSH target: %s" % exc, file=sys.stderr)
+            return 2
         host = host_from_target(hub_target)
         hub_url = args.hub_url.strip() or "http://%s:%d" % (host, args.control_port)
         qdrant_port = 6333

@@ -1520,7 +1520,7 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     import yaml
 
     from mac import agent_migrate as am
-    from mac.fleet_deploy import parse_ssh_target
+    from mac.fleet_deploy import canonicalize_mesh_ssh_target, parse_ssh_target
     from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
     from mac.hermes_config_surface import registry_path
 
@@ -1552,6 +1552,8 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     )
     hub = is_hub_agent if args.hub is None else args.hub
     src_os = args.src_os or (cur.get("os") or "linux")
+    network = (fleet_cfg.get("defaults") or {}).get("network") or {}
+    network_provider = str(network.get("provider") or "none")
 
     try:
         src_route = resolve_fleet_ssh(registry, fleet, args.name)
@@ -1559,7 +1561,12 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
         src_route = replace(
             src_route, target=parsed_src.user_host, port=parsed_src.port
         )
-        parsed_dst = parse_ssh_target(args.to_target, port=args.to_ssh_port)
+        dst_target = canonicalize_mesh_ssh_target(
+            args.to_target,
+            provider=network_provider,
+            port=args.to_ssh_port,
+        )
+        parsed_dst = parse_ssh_target(dst_target)
         dst_route = replace(
             src_route,
             target=parsed_dst.user_host,
@@ -1590,7 +1597,7 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     steps = am.migration_plan(
         args.name,
         src_target=src,
-        dst_target=args.to_target,
+        dst_target=dst_target,
         fleet=fleet,
         fleet_name=(fleet_cfg.get("fleet_name") or fleet),
         to_os=args.to_os,
@@ -1609,9 +1616,9 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     # --execute: retarget fleets.yaml (backup first), then run the playbook.
     backup = "%s.bak.%d" % (reg_path, int(time.time()))
     shutil.copy2(reg_path, backup)
-    am.retarget_fleet_agent(registry, fleet, args.name, target=args.to_target, os=args.to_os)
+    am.retarget_fleet_agent(registry, fleet, args.name, target=dst_target, os=args.to_os)
     reg_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
-    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, args.to_target, reg_path, backup))
+    print("retargeted %s -> %s in %s (backup: %s)" % (args.name, dst_target, reg_path, backup))
     _print(am.execute_migration(args.name, steps))
 
 

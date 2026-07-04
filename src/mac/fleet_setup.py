@@ -16,7 +16,7 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from mac.fleet_deploy import normalize_ssh_target
+from mac.fleet_deploy import canonicalize_mesh_ssh_target, normalize_ssh_target
 from mac.fleet_env import parse_env_file
 from mac.providers import ROUTER_PROVIDERS, router_secret_name
 
@@ -121,6 +121,7 @@ def build_setup_plan(
         DEFAULT_CONTROL_PORT,
     )
     hub_url = _str(spec.get("hub_url") or fleet_block.get("hub_url") or hub_block.get("url"))
+    hub_url_explicit = bool(hub_url)
     if not hub_url and hub_name:
         hub_target = _str(hub_block.get("target"))
         host = _host_from_target(hub_target) if hub_target else hub_name
@@ -184,9 +185,6 @@ def build_setup_plan(
     )
 
     network = _network_config(spec, defaults_block, errors)
-    qdrant = _qdrant_config(spec, defaults_block, hub_url)
-    firecrawl = _firecrawl_config(spec, defaults_block, hub_url)
-    webdav = _webdav_config(spec, defaults_block, hub_block, errors)
     hermes_defaults = _mapping(defaults_block.get("hermes"))
     worker_defaults = _mapping(defaults_block.get("worker"))
 
@@ -194,12 +192,22 @@ def build_setup_plan(
         spec,
         hub_name=hub_name,
         supervisor=supervisor,
+        network_provider=network["provider"],
         errors=errors,
         hermes_defaults=hermes_defaults,
         worker_defaults=worker_defaults,
     )
     if hub_name and not any(agent.get("name") == hub_name for agent in agents):
         errors.append("agents must include the hub agent %r" % hub_name)
+    hub_agent = next((agent for agent in agents if agent.get("name") == hub_name), None)
+    if not hub_url_explicit and hub_agent:
+        hub_url = "http://%s:%d" % (_host_from_target(_str(hub_agent.get("target"))), control_port)
+    service_hub = dict(hub_block)
+    if hub_agent:
+        service_hub["target"] = _str(hub_agent.get("target"))
+    qdrant = _qdrant_config(spec, defaults_block, hub_url)
+    firecrawl = _firecrawl_config(spec, defaults_block, hub_url)
+    webdav = _webdav_config(spec, defaults_block, service_hub, errors)
 
     router, router_env, required_env, router_warnings = _router_env(spec, env_map)
     warnings.extend(router_warnings)
@@ -411,6 +419,7 @@ def _agent_configs(
     errors: List[str],
     hermes_defaults: Mapping[str, Any],
     worker_defaults: Mapping[str, Any],
+    network_provider: str = "none",
 ) -> List[Dict[str, Any]]:
     raw_agents = list(spec.get("agents") or [])
     hub_block = _mapping(spec.get("hub"))
@@ -437,6 +446,10 @@ def _agent_configs(
         else:
             try:
                 target = normalize_ssh_target(target, port=_optional_int(item.get("ssh_port")))
+                target = canonicalize_mesh_ssh_target(
+                    target,
+                    provider=network_provider,
+                )
             except ValueError as exc:
                 errors.append("agent %s target invalid: %s" % (name, exc))
         os_kind = _str(item.get("os") or item.get("os_kind")) or "linux"
