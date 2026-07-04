@@ -112,6 +112,108 @@ def test_executor_verification_manifest_shapes(tmp_path) -> None:
     }
 
 
+def test_prepare_review_workspace_hides_executor_treatment_from_blind_pass(
+    monkeypatch, tmp_path
+) -> None:
+    instance = object.__new__(worker.MacWorker)
+    instance.workspace = tmp_path
+    monkeypatch.setattr(
+        instance,
+        "_prepare_review_repository_worktree",
+        lambda *_args: {
+            "schema": "mac.review_repository_worktree.v1",
+            "repository_worktree": "/review/repo",
+            "repository_base_sha": "a" * 40,
+            "repository_reviewed_head_sha": "b" * 40,
+        },
+    )
+    task_detail = {
+        "task": {
+            "id": "task_1",
+            "title": "Review safely",
+            "description": "Preserve the original acceptance criteria.",
+            "state": "reviewing",
+            "owner_agent_id": "executor-agent",
+            "metadata": {
+                "custom_acceptance": {"must_preserve": True},
+                "model": "executor/model",
+                "review_model": "reviewer/model",
+                "activity": [{"summary": "executor changed secret.py"}],
+                "latest_review_claim": {"tests": [{"status": "pass"}]},
+                "review_claims": {"review_1": {"repository_files_changed": ["secret.py"]}},
+                "runtime": {"repository_head_sha": "b" * 40},
+                "target_agent_id": "executor-agent",
+            },
+        },
+        "evidence": [{"id": "ev_1", "metadata": {"verification": {"status": "complete"}}}],
+    }
+    claim = {
+        "claim": {
+            "schema": "mac.review_claim.detail.v1",
+            "task_id": "task_1",
+            "review_id": "review_1",
+            "reviewer_agent_id": "reviewer-agent",
+            "executor_evidence_id": "ev_1",
+            "checks": [{"name": "tests", "status": "pass"}],
+            "repository_files_changed": ["secret.py"],
+            "work_summary": "executor explanation",
+        }
+    }
+
+    task_dir = instance._prepare_review_workspace(
+        "task_1", "review_1", "ev_1", task_detail, {"id": "msg_1"}, claim
+    )
+
+    original = json.loads((task_dir / "executor-task.json").read_text())
+    review_task = json.loads((task_dir / "task.json").read_text())["task"]
+    serialized = json.dumps({"original": original, "review": review_task})
+    assert original["metadata"]["custom_acceptance"] == {"must_preserve": True}
+    assert review_task["metadata"]["review_model"] == "reviewer/model"
+    assert review_task["metadata"]["review_context"]["review_claim"] == {
+        "executor_evidence_id": "ev_1",
+        "review_id": "review_1",
+        "reviewer_agent_id": "reviewer-agent",
+        "schema": "mac.review_claim.detail.v1",
+        "task_id": "task_1",
+    }
+    assert "executor/model" not in serialized
+    assert "secret.py" not in serialized
+    assert "executor explanation" not in serialized
+    assert "latest_review_claim" not in serialized
+
+
+def test_task_iteration_override_separates_executor_and_reviewer_budgets() -> None:
+    metadata = {"max_iterations": 30, "review_max_iterations": "12"}
+
+    assert worker._task_iteration_override({"metadata": metadata}) == 30
+    assert worker._task_iteration_override(
+        {"metadata": {**metadata, "review_context": {"review_id": "review_1"}}}
+    ) == 12
+    assert worker._task_iteration_override(
+        {"metadata": {"max_iterations": 0}}
+    ) is None
+    assert worker._task_iteration_override(
+        {"metadata": {"max_iterations": 501}}
+    ) is None
+
+
+def test_subprocess_executor_exports_task_iteration_budget(monkeypatch, tmp_path) -> None:
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+    execution = worker.SubprocessExecutor(["executor"])(
+        {"id": "task_1", "metadata": {"max_iterations": 12}}, tmp_path
+    )
+
+    assert execution.returncode == 0
+    assert captured["env"]["MAC_TASK_MAX_ITERATIONS"] == "12"
+
+
 def test_review_verdict_compares_executor_changed_files(monkeypatch, tmp_path) -> None:
     assert worker._worker_review_verdict_executor_repo_problems(tmp_path, {}) == []
     (tmp_path / "executor-evidence.json").write_text(

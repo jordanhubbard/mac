@@ -27,6 +27,11 @@ claimed.
 For controlled cross-model trials, set task metadata `model` for the executor
 and `review_model` for the reviewer. Review payloads never inherit the executor
 pin; when `review_model` is absent they use the review worker's fleet default.
+Set `max_iterations` and `review_max_iterations` in task metadata to bound the
+Hermes tool-calling budget per executor pass and per reviewer pass. Blind review
+runs discovery and adjudication separately, so its worst-case reviewer call
+count is twice `review_max_iterations`. These are task-local controls and do not
+change the fleet default or substitute a smaller, unvalidated model.
 The observation joins task-attributed `llm.route` records and reports the
 resolved models, token counts, and latency actually used.
 
@@ -117,12 +122,21 @@ mac review experiment outcome TASK_ID escaped_defect confirmed \
   --severity-weight=4 \
   --source=incident \
   --detail-file=incident.json
+
+mac review experiment outcome TASK_ID protocol_invalid confirmed \
+  --finding-id=operator:blind-treatment-leak \
+  --severity-weight=0 \
+  --source=payload-audit \
+  --detail-file=protocol-invalid.json
 ```
 
 The accepted outcome states are `pending`, `confirmed`, and `refuted`.
 `finding_validation`, `clean_window`, and `escaped_defect` are the outcome
 kinds counted by the policy gate; other kinds remain visible but do not satisfy
-the minimum validation threshold.
+the minimum validation threshold. A confirmed `protocol_invalid` outcome is a
+special fail-closed signal: observations remain replayable, but the sample is
+marked invalid and every associated review pass is counted non-compliant so it
+cannot support a policy promotion.
 
 Derive an experiment report:
 

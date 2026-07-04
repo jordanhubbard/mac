@@ -8,6 +8,7 @@ changes; there is no second telemetry database to drift away from the ledger.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -467,6 +468,12 @@ def build_observation(
         if _text(item.get("evidence_id"))
     }
     outcome_items = _outcomes(metadata)
+    protocol_invalidations = [
+        item
+        for item in outcome_items
+        if _text(item.get("kind")) == "protocol_invalid"
+        and _text(item.get("status")) == "confirmed"
+    ]
     outcomes_by_finding: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for outcome in outcome_items:
         finding_id = _text(outcome.get("finding_id"))
@@ -527,6 +534,27 @@ def build_observation(
         manifest_usage = _usage(manifest)
         if not any(manifest_usage.values()):
             manifest_usage = _object(reviewer_route.get("usage"))
+        experiment_protocol = copy.deepcopy(
+            _object(manifest.get("review_experiment"))
+        )
+        if protocol_invalidations:
+            protocol = _object(experiment_protocol.get("protocol"))
+            protocol.update(
+                {
+                    "protocol_compliant": False,
+                    "operator_invalidated": True,
+                    "invalidations": [
+                        {
+                            "id": _text(item.get("id")),
+                            "finding_id": _text(item.get("finding_id")),
+                            "source": _text(item.get("source")),
+                            "detail": _object(item.get("detail")),
+                        }
+                        for item in protocol_invalidations
+                    ],
+                }
+            )
+            experiment_protocol["protocol"] = protocol
         review_passes.append(
             {
                 "review_id": _text(manifest.get("review_id") or review_record.get("id")),
@@ -538,7 +566,7 @@ def build_observation(
                 "executor_model": executor_model,
                 "reviewer_model": reviewer_model,
                 "actual_strategy": _strategy(executor_model, reviewer_model),
-                "experiment_protocol": _object(manifest.get("review_experiment")),
+                "experiment_protocol": experiment_protocol,
                 "independent_findings": _list(manifest.get("independent_findings")),
                 "findings": findings,
                 "usage": manifest_usage,
@@ -573,6 +601,8 @@ def build_observation(
         "project": _text(task.get("project")),
         "task_state": _text(task.get("state")),
         "terminal": _text(task.get("state")) in _FINAL_TASK_STATES,
+        "sample_valid": not protocol_invalidations,
+        "protocol_invalidations": protocol_invalidations,
         "created_at": _text(task.get("created_at")),
         "completed_at": _text(task.get("completed_at")),
         "experiment": assignment,
@@ -595,6 +625,7 @@ def build_observation(
                 if _text(item.get("kind")) == "escaped_defect"
                 and _text(item.get("status")) == "confirmed"
             ),
+            "protocol_invalidations": len(protocol_invalidations),
         },
     }
 
@@ -627,6 +658,7 @@ def _empty_arm(arm: str) -> Dict[str, Any]:
         "discovery_duration_ms": 0.0,
         "protocol_compliant_passes": 0,
         "protocol_noncompliant_passes": 0,
+        "protocol_invalid_tasks": 0,
         "actual_strategies": {},
     }
 
@@ -678,6 +710,8 @@ def build_report(
             "escaped_defects",
         ):
             arm[key] += int(totals.get(key) or 0)
+        if observation.get("sample_valid") is False:
+            arm["protocol_invalid_tasks"] += 1
         for review_pass in _list(observation.get("review_passes")):
             review_value = _object(review_pass)
             verdict = _text(review_value.get("verdict"))

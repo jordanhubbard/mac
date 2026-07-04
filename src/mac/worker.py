@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import fcntl
 import fnmatch
 import hashlib
@@ -205,6 +206,9 @@ class SubprocessExecutor:
         model_override = _task_model_override(task, hub_client=getattr(self, "client", None))
         if model_override:
             env["MAC_TASK_MODEL"] = model_override
+        iteration_override = _task_iteration_override(task)
+        if iteration_override is not None:
+            env["MAC_TASK_MAX_ITERATIONS"] = str(iteration_override)
         if repository_context:
             env.update(_repository_context_env(repository_context))
         command_id = _command_audit_id()
@@ -2884,8 +2888,14 @@ class MacWorker:
             json.dumps(executor_evidence, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        original_task = (
+            task_detail.get("task")
+            if isinstance(task_detail.get("task"), dict)
+            else {}
+        )
+        review_input_task = _review_input_task(original_task)
         (task_dir / "executor-task.json").write_text(
-            json.dumps(task_detail.get("task", {}), indent=2, sort_keys=True),
+            json.dumps(review_input_task, indent=2, sort_keys=True),
             encoding="utf-8",
         )
         review_context: JsonDict = {
@@ -2893,7 +2903,7 @@ class MacWorker:
             "review_id": review_id,
             "executor_evidence_id": executor_evidence_id,
             "nudge_message_id": message.get("id"),
-            "review_claim": (
+            "review_claim": _review_claim_identity(
                 claim.get("claim")
                 if isinstance(claim.get("claim"), dict)
                 else {}
@@ -2901,12 +2911,11 @@ class MacWorker:
         }
         if review_repository_context is not None:
             review_context["review_repository_worktree"] = review_repository_context
-        original_task = (
-            task_detail.get("task")
-            if isinstance(task_detail.get("task"), dict)
-            else {}
-        )
-        review_metadata = ensure_json_object(original_task.get("metadata"))
+        review_metadata = ensure_json_object(review_input_task.get("metadata"))
+        original_metadata = ensure_json_object(original_task.get("metadata"))
+        for key in ("review_model", "review_model_strength"):
+            if original_metadata.get(key) not in (None, ""):
+                review_metadata[key] = original_metadata[key]
         review_metadata["review_context"] = review_context
         task = {
             "id": "review_%s" % review_id,
@@ -4771,6 +4780,74 @@ def _load_repository_context(task_dir: Path) -> JsonDict:
     return loaded if isinstance(loaded, dict) else {}
 
 
+_BLIND_REVIEW_HIDDEN_METADATA_KEYS = frozenset(
+    {
+        "activity",
+        "latest_review_claim",
+        "model",
+        "model_strength",
+        "repository_ref_lifecycle",
+        "review_claims",
+        "review_context",
+        "review_model",
+        "review_model_strength",
+        "runtime",
+        "target_agent_id",
+    }
+)
+
+_REVIEW_CLAIM_IDENTITY_KEYS = frozenset(
+    {
+        "actor",
+        "claimed_at",
+        "executor_evidence_id",
+        "review_id",
+        "reviewer_agent_id",
+        "schema",
+        "task_id",
+    }
+)
+
+
+def _review_input_task(task: JsonDict) -> JsonDict:
+    """Return the pre-execution task contract visible to semantic reviewers.
+
+    Review claims, activity summaries, runtime publication anchors, and the
+    executor model are post-execution treatment data. They must not be copied
+    into ``executor-task.json`` or the review task metadata because the blind
+    discovery pass can read both files while ``executor-evidence.json`` is
+    withheld. Unknown task-authored metadata remains available so custom
+    acceptance criteria are not lost.
+    """
+    safe = copy.deepcopy(task) if isinstance(task, dict) else {}
+    metadata = safe.get("metadata")
+    if isinstance(metadata, dict):
+        for key in _BLIND_REVIEW_HIDDEN_METADATA_KEYS:
+            metadata.pop(key, None)
+    for key in (
+        "attempt_count",
+        "completed_at",
+        "last_updated_at",
+        "lease_id",
+        "leased_until",
+        "owner_agent_id",
+        "started_at",
+        "state",
+        "updated_at",
+    ):
+        safe.pop(key, None)
+    return safe
+
+
+def _review_claim_identity(claim: JsonDict) -> JsonDict:
+    """Keep claim identity needed by finalization without leaking evidence."""
+    return {
+        key: copy.deepcopy(value)
+        for key, value in claim.items()
+        if key in _REVIEW_CLAIM_IDENTITY_KEYS
+    }
+
+
 def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     """Per-task LLM model override from task metadata.
 
@@ -4816,6 +4893,29 @@ def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
     if isinstance(runtime, dict):
         return str(runtime.get(model_key) or "").strip()[:256]
     return ""
+
+
+def _task_iteration_override(task: JsonDict) -> Optional[int]:
+    """Resolve a bounded Hermes iteration budget from immutable task metadata.
+
+    Review payloads use ``review_max_iterations`` so an experiment can bound
+    each discovery/adjudication pass independently of the executor budget.
+    Values outside 1..500 are ignored instead of producing an unsafe or
+    effectively unbounded child process.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    is_review = isinstance(metadata.get("review_context"), dict)
+    key = "review_max_iterations" if is_review else "max_iterations"
+    value = metadata.get(key)
+    if value is None and isinstance(metadata.get("runtime"), dict):
+        value = metadata["runtime"].get(key)
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return None
+    return resolved if 1 <= resolved <= 500 else None
 
 
 def _resolve_strength_local_or_hub(scale: int, hub_client: Any = None) -> str:

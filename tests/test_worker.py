@@ -609,9 +609,11 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
         context = task_payload["metadata"]["review_context"]
         runtime = task_payload["metadata"]["runtime"]
-        assert context["review_claim"]["project"] == "repo-beads-mac"
-        assert context["review_claim"]["repository_worktree"] == str(repo)
-        assert context["review_claim"]["repository_files_changed"] == ["README.md"]
+        assert context["review_claim"]["reviewer_agent_id"] == reviewer.id
+        assert context["review_claim"]["executor_evidence_id"] == evidence.id
+        assert "project" not in context["review_claim"]
+        assert "repository_worktree" not in context["review_claim"]
+        assert "repository_files_changed" not in context["review_claim"]
         review_worktree = Path(runtime["repository_worktree"])
         assert review_worktree.is_dir()
         assert _git(review_worktree, "rev-parse", "HEAD") == reviewed_head

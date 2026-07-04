@@ -2197,6 +2197,11 @@ def _hermes_argv(prompt: str) -> List[str]:
     task_model = (os.environ.get("MAC_TASK_MODEL") or "").strip()
     if task_model:
         argv += ["--model", task_model]
+    task_max_iterations = (
+        os.environ.get("MAC_TASK_MAX_ITERATIONS") or ""
+    ).strip()
+    if task_max_iterations.isdigit() and 1 <= int(task_max_iterations) <= 500:
+        argv += ["--max-turns", task_max_iterations]
     return argv
 
 
@@ -3852,7 +3857,9 @@ def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
     )
 
 
-def _record_runner_choice(target: str, rationale: List[str]) -> None:
+def _record_runner_choice(
+    target: str, rationale: List[str], *, task_id: str = ""
+) -> None:
     """Make the coding-agent-vs-gateway routing decision legible (best-effort).
 
     Mirrors :func:`mac.agent_provider.record_provider_decision`: a secret-free
@@ -3865,6 +3872,7 @@ def _record_runner_choice(target: str, rationale: List[str]) -> None:
     try:
         emit_telemetry(
             "runner_selected",
+            task_id=task_id or None,
             level="info",
             schema="mac.coding_agent.routing.v1",
             runner=target,
@@ -4090,24 +4098,29 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     from . import coding_agent as _ca
 
     repo_requires_agent = confined and _repo_requires_verified_coding_agent(task)
+    task_id = str(task.get("id") or "").strip() if isinstance(task, dict) else ""
     choice = _ca.resolve_coding_agent()
     rationale = list(choice.rationale)
     if not choice.available:
         if repo_requires_agent:
             reason = "no host coding agent is available/authenticated"
             rationale.append(reason)
-            _record_runner_choice("coding-agent-required", rationale)
+            _record_runner_choice(
+                "coding-agent-required", rationale, task_id=task_id
+            )
             return _coding_agent_required_failure_argv(reason)
-        _record_runner_choice("hermes-gateway", rationale)
+        _record_runner_choice("hermes-gateway", rationale, task_id=task_id)
         return _hermes_argv(prompt)
     if confined and not _coding_agent_sandbox_ok(choice):
         reason = "%s not verified inside the OpenShell sandbox" % choice.agent
         if repo_requires_agent:
             rationale.append(reason)
-            _record_runner_choice("coding-agent-required", rationale)
+            _record_runner_choice(
+                "coding-agent-required", rationale, task_id=task_id
+            )
             return _coding_agent_required_failure_argv(reason)
         rationale.append("%s; using gateway" % reason)
-        _record_runner_choice("hermes-gateway", rationale)
+        _record_runner_choice("hermes-gateway", rationale, task_id=task_id)
         return _hermes_argv(prompt)
 
     # MCP wiring is unconfined-only: the host config path + host MCP-server
@@ -4117,7 +4130,7 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     mcp_path = None if confined else _coding_agent_mcp_config_path(workspace, choice)
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
-    _record_runner_choice(choice.agent, rationale)
+    _record_runner_choice(choice.agent, rationale, task_id=task_id)
     return _ca.coding_agent_argv(choice, prompt, mcp_config_path=mcp_path)
 
 

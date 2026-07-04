@@ -77,6 +77,15 @@ def test_agent_bundle_materializes_owner_only_versioned_policy(tmp_path):
         bundle.cleanup()
 
 
+def test_hermes_argv_honors_bounded_task_iteration_budget(monkeypatch):
+    monkeypatch.setenv("MAC_TASK_MAX_ITERATIONS", "12")
+    argv = te._hermes_argv("prompt")
+    assert argv[argv.index("--max-turns") + 1] == "12"
+
+    monkeypatch.setenv("MAC_TASK_MAX_ITERATIONS", "501")
+    assert "--max-turns" not in te._hermes_argv("prompt")
+
+
 def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     task = {
         "id": "t1",
@@ -2181,6 +2190,41 @@ def test_agent_argv_sandboxed_falls_back_when_not_verified(tmp_path, monkeypatch
     argv = te._agent_argv("do it", tmp_path, confined=True)
     # Non-repository work can still fall back to the confined Hermes gateway.
     assert "--query" in argv and "hermes_cli.main" in argv
+
+
+def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatch):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(
+        agent="", available=False, rationale=["no coding agent"]
+    )
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    emitted = []
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: emitted.append((event, detail)) or True,
+    )
+
+    te._agent_argv(
+        "do it",
+        tmp_path,
+        confined=True,
+        task={"id": "review_review_1", "metadata": {"review_context": {}}},
+    )
+
+    assert emitted == [
+        (
+            "runner_selected",
+            {
+                "task_id": "review_review_1",
+                "level": "info",
+                "schema": "mac.coding_agent.routing.v1",
+                "runner": "hermes-gateway",
+                "rationale": ["no coding agent"],
+            },
+        )
+    ]
 
 
 def test_agent_argv_sandboxed_repo_task_falls_back_when_not_verified(tmp_path, monkeypatch):

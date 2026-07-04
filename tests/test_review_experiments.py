@@ -231,6 +231,41 @@ def test_observation_joins_task_routes_and_id_keyed_findings():
     assert observation["totals"]["findings"] == 1
 
 
+def test_protocol_invalid_outcome_overrides_signed_compliance():
+    detail = _detail("blind", "confirmed")
+    invalidation = build_outcome(
+        kind="protocol_invalid",
+        status="confirmed",
+        finding_id="operator:blind-leak",
+        source="payload-audit",
+        observed_by="operator",
+        detail={"summary": "executor evidence leaked into discovery metadata"},
+    )
+    detail["task"]["metadata"] = append_outcome(
+        detail["task"]["metadata"], invalidation
+    )
+
+    observation = build_observation(detail)
+    review_pass = observation["review_passes"][0]
+
+    assert observation["sample_valid"] is False
+    assert observation["totals"]["protocol_invalidations"] == 1
+    protocol = review_pass["experiment_protocol"]["protocol"]
+    assert protocol["protocol_compliant"] is False
+    assert protocol["operator_invalidated"] is True
+    assert protocol["invalidations"][0]["finding_id"] == "operator:blind-leak"
+
+    report = build_report(
+        "exp-review",
+        [observation],
+        min_tasks_per_arm=1,
+        min_validated_outcomes_per_arm=0,
+    )
+    arm = report["arms"][0]
+    assert arm["protocol_invalid_tasks"] == 1
+    assert arm["protocol_noncompliant_passes"] == 1
+
+
 def test_report_requires_completed_compliant_lifecycles_and_positive_separation():
     blind = build_observation(_detail("blind", "confirmed"))
     standard = build_observation(_detail("standard", "refuted"))
@@ -261,7 +296,7 @@ def test_report_requires_completed_compliant_lifecycles_and_positive_separation(
     assert invalid_report["policy"]["status"] == "insufficient_evidence"
 
 
-def test_control_plane_persists_immutable_assignment_and_delayed_outcome():
+def test_control_plane_persists_immutable_assignment_and_delayed_outcome(monkeypatch):
     cp = ControlPlane.in_memory()
     task = cp.create_task("Experiment task", project="demo")
 
@@ -293,9 +328,19 @@ def test_control_plane_persists_immutable_assignment_and_delayed_outcome():
         detail={"window_days": 7},
         actor="operator",
     )
+    detail = cp.task_detail(task.id)
+    detail["reviews"] = [{"id": "review_1"}]
+    observed_subject_ids = []
+    monkeypatch.setattr(cp, "task_detail", lambda _task_id: detail)
+    monkeypatch.setattr(
+        cp,
+        "list_observability",
+        lambda **kwargs: observed_subject_ids.append(kwargs["subject_id"]) or [],
+    )
     observation = cp.review_observation(task.id)
     assert observation["experiment"]["experiment_id"] == "exp-control"
     assert observation["outcomes"][0]["id"] == outcome["id"]
+    assert observed_subject_ids == [task.id, "review_review_1"]
     assert any(
         item["event_type"] == "task.review_experiment_assigned"
         for item in cp.task_detail(task.id)["history"]
