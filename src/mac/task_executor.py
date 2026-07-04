@@ -3578,7 +3578,15 @@ class _SandboxProgressMonitor:
         self.stop_event.set()
         if self.thread is not None:
             self.thread.join(timeout=min(2.0, self.interval + 0.5))
-        if not self.mutated:
+        if not self.ready:
+            emit_telemetry(
+                "sandbox_observation_unavailable",
+                task_id=self.task_id,
+                level="warning",
+                sandbox=self.name,
+                state="unknown",
+            )
+        elif not self.mutated:
             emit_telemetry(
                 "sandbox_no_effect",
                 task_id=self.task_id,

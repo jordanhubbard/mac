@@ -156,6 +156,28 @@ def test_progress_monitor_start_and_clean_stop(monkeypatch, tmp_path) -> None:
     assert "sandbox_no_effect" in telemetry
 
 
+def test_progress_monitor_does_not_claim_clean_when_snapshot_is_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(te, "_sandbox_progress_snapshot", lambda *_a: None)
+    telemetry = []
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **kwargs: telemetry.append((event, kwargs)),
+    )
+    monitor = te._SandboxProgressMonitor("name", "work", tmp_path, "task")
+    monitor.interval = 1
+
+    monitor.stop()
+
+    assert [event for event, _detail in telemetry] == [
+        "sandbox_observation_unavailable"
+    ]
+    assert telemetry[0][1]["state"] == "unknown"
+    assert monitor.evidence()["ready_observed"] is False
+
+
 def test_coding_agent_mcp_config_success_disabled_and_error(monkeypatch, tmp_path) -> None:
     from mac import coding_agent
 
