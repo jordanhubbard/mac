@@ -1278,6 +1278,25 @@ class ControlPlane:
             merged["openshell_required"] = existing["openshell_required"]
         return merged
 
+    def _mirror_agent_reported_hardware_to_machine(
+        self,
+        conn: Any,
+        machine_id: str,
+        resources: Mapping[str, Any],
+        now: str,
+    ) -> None:
+        hardware = resources.get("hardware")
+        if not isinstance(hardware, Mapping):
+            return
+        conn.execute(
+            """
+            UPDATE machines
+            SET hardware = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (json_dumps(ensure_json_object(hardware)), now, machine_id),
+        )
+
     @staticmethod
     def _startup_self_test_degrades_health(resources: Dict[str, Any]) -> bool:
         startup = resources.get("startup_self_test")
@@ -7767,6 +7786,9 @@ class ControlPlane:
                 },
                 now,
             )
+            self._mirror_agent_reported_hardware_to_machine(
+                conn, machine_id, resource_value, now
+            )
         agent = self.get_agent(aid)
         self._ensure_agent_nap_schedule(agent.id, actor=actor)
         agent = self.get_agent(aid)
@@ -8165,6 +8187,10 @@ class ControlPlane:
         meaningful_changes = [f for f in changed_fields if f != "resources"]
         with self.store.transaction() as conn:
             conn.execute("UPDATE agents SET %s WHERE id = ?" % ", ".join(updates), tuple(params))
+            if resources is not None:
+                self._mirror_agent_reported_hardware_to_machine(
+                    conn, agent_before.machine_id, resource_value, now
+                )
             if meaningful_changes:
                 self._record_agent_lifecycle_event(
                     conn,

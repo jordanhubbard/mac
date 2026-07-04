@@ -398,6 +398,72 @@ def test_fastapi_exposes_core_workflow_and_redacts_secrets():
     assert revealed["value"] == "never-return-this"
 
 
+def test_agent_reported_hardware_is_mirrored_to_machine_on_register_and_heartbeat():
+    client = TestClient(
+        create_app(control_plane=ControlPlane.in_memory(), auth_tokens={"admin": ["admin"]})
+    )
+    headers = {"Authorization": "Bearer admin"}
+
+    machine = client.post(
+        "/machines",
+        headers=headers,
+        json={"hostname": "hardware-host"},
+    ).json()
+    assert machine["hardware"] == {}
+
+    registered_hardware = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "cpu_count": 16,
+        "memory_mb": 32768,
+        "gpu": {"name": "RTX 4090", "vram_mb": 24576},
+        "accelerator": "cuda",
+    }
+    agent_response = client.post(
+        "/agents",
+        headers=headers,
+        json={
+            "machine_id": machine["id"],
+            "name": "hardware-worker",
+            "capabilities": ["python"],
+            "resources": {"hardware": registered_hardware, "load": {"one": 0.25}},
+        },
+    )
+    assert agent_response.status_code == 200
+    agent = agent_response.json()
+
+    mirrored = next(
+        item
+        for item in client.get("/machines", headers=headers).json()
+        if item["id"] == machine["id"]
+    )
+    assert mirrored["hardware"] == registered_hardware
+
+    heartbeat_hardware = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "cpu_count": 32,
+        "memory_mb": 65536,
+        "gpu": {"name": "RTX 6000", "vram_mb": 49152},
+        "accelerator": "cuda",
+    }
+    heartbeat_response = client.post(
+        "/agents/%s/heartbeat" % agent["id"],
+        headers=headers,
+        json={"resources": {"hardware": heartbeat_hardware, "load": {"one": 0.5}}},
+    )
+    assert heartbeat_response.status_code == 200
+
+    refreshed = next(
+        item
+        for item in client.get("/machines", headers=headers).json()
+        if item["id"] == machine["id"]
+    )
+    assert refreshed["hardware"] == heartbeat_hardware
+
+
 def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     hermes_home = tmp_path / "hermes-home"
     hermes_home.mkdir()
