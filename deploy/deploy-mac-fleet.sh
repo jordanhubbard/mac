@@ -2314,7 +2314,22 @@ import os
 
 from mac.hermes_runtime import stable_id
 from mac.models import NotFoundError
-from mac.services import ControlPlane
+from mac.services import (
+    ControlPlane,
+    DEFAULT_HUB_REVIEWER_AGENT_ID,
+    DEFAULT_HUB_REVIEWER_AGENT_NAME,
+    DEFAULT_HUB_REVIEWER_MACHINE_ID,
+    HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
+)
+
+
+def truthy(raw, default=""):
+    return str(raw if raw is not None else default).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 agent = os.environ["AGENT"]
 fleet = os.environ.get("FLEET_NAME") or "mac"
@@ -2354,12 +2369,57 @@ cp.register_hermes_instance(
 if agent == shared_services_manager:
     fleet_metadata = {"source": "mac-deploy", "fleet": fleet, "hub_agent": agent}
     registered_configured_agent_ids = []
+    if truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY")) and truthy(
+        os.environ.get("MAC_HUB_REVIEWER_AUTO_REGISTER"),
+        "1",
+    ):
+        reviewer_name = (
+            os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME")
+            or DEFAULT_HUB_REVIEWER_AGENT_NAME
+        )
+        reviewer_agent_id = (
+            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID")
+            or DEFAULT_HUB_REVIEWER_AGENT_ID
+        )
+        reviewer_machine_id = (
+            os.environ.get("MAC_HUB_REVIEWER_MACHINE_ID")
+            or DEFAULT_HUB_REVIEWER_MACHINE_ID
+        )
+        reviewer_machine = cp.register_machine(
+            "operator-review",
+            labels={
+                "source": "mac-deploy",
+                "fleet": fleet,
+                "role": "hub-reviewer",
+                "virtual": True,
+            },
+            resources={"virtual": True, "review": {"mode": "hub_verify"}},
+            trusted=True,
+            machine_id=reviewer_machine_id,
+        )
+        reviewer = cp.register_agent(
+            reviewer_machine.id,
+            reviewer_name,
+            capabilities=["review"],
+            resources={
+                "virtual": True,
+                "hub_review_verifier": {
+                    "schema": HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
+                    "enabled": True,
+                    "mode": "hub_verify",
+                },
+            },
+            agent_id=reviewer_agent_id,
+            actor="mac-deploy",
+        )
+        registered_configured_agent_ids.append(reviewer.id)
     for configured_agent_id in configured_agent_ids:
         try:
             cp.get_agent(configured_agent_id)
         except NotFoundError:
             continue
-        registered_configured_agent_ids.append(configured_agent_id)
+        if configured_agent_id not in registered_configured_agent_ids:
+            registered_configured_agent_ids.append(configured_agent_id)
     # Idempotent get-or-create. create_fleet derives the id via
     # stable_id("fleet", fleet), which lowercases the name — so a prior deploy of
     # the same fleet under different case (e.g. "jordanh-GKE" vs "jordanh-gke")

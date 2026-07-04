@@ -359,6 +359,11 @@ def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
     assert values["MAC_FLEET_TENANT_ID"] == "tenant_test-fleet"
     assert "if agent == shared_services_manager:" in script
     assert "cp.create_fleet(" in script
+    assert "DEFAULT_HUB_REVIEWER_AGENT_NAME" in script
+    assert "cp.register_machine(" in script
+    assert "cp.register_agent(" in script
+    assert "HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA" in script
+    assert "registered_configured_agent_ids.append(reviewer.id)" in script
     # Idempotent get-or-create: the id is derived once via stable_id (which
     # lowercases the name) and the fleet is looked up by both name and that id,
     # so a re-deploy under different name case reconciles instead of colliding.
@@ -1103,6 +1108,10 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     assert hub.get("MAC_EVIDENCE_BLOB_DIR", "").endswith("evidence-blobs")
     # Option C: hub-side review verification is enabled on the hub only.
     assert hub.get("MAC_REVIEW_HUB_VERIFY") == "1"
+    assert hub.get("MAC_HUB_REVIEWER_AUTO_REGISTER") == "1"
+    assert hub.get("MAC_HUB_REVIEWER_AGENT_NAME") == "hub-reviewer"
+    assert hub.get("MAC_HUB_REVIEWER_AGENT_ID") == "agent_hub-reviewer"
+    assert hub.get("MAC_HUB_REVIEWER_MACHINE_ID") == "machine_operator_review"
     spoke = _run_env_writer(
         tmp_path, agent="natasha", hub_agent="rocky",
         hub_url="http://hub.example:8789", hub_token="HUBTOK",
@@ -1110,6 +1119,8 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     )
     assert "MAC_EVIDENCE_BLOB_DIR" not in spoke
     assert "MAC_REVIEW_HUB_VERIFY" not in spoke
+    assert "MAC_HUB_REVIEWER_AUTO_REGISTER" not in spoke
+    assert "MAC_HUB_REVIEWER_AGENT_NAME" not in spoke
 
 
 def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):

@@ -846,6 +846,10 @@ def build_mac_env(
         # of dispatching to a reviewer agent (whose per-node host+sandbox
         # environment was the fragility that stalled the autonomous loop).
         values.setdefault("MAC_REVIEW_HUB_VERIFY", "1")
+        values.setdefault("MAC_HUB_REVIEWER_AUTO_REGISTER", "1")
+        values.setdefault("MAC_HUB_REVIEWER_AGENT_NAME", "hub-reviewer")
+        values.setdefault("MAC_HUB_REVIEWER_AGENT_ID", "agent_hub-reviewer")
+        values.setdefault("MAC_HUB_REVIEWER_MACHINE_ID", "machine_operator_review")
         # mac-ghingest: run the GitHub-issue work generator on the hub. It is a
         # no-op for every project that has not opted in via
         # metadata["github_issue_ingest"], so enabling it by default is safe;

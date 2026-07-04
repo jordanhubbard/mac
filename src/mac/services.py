@@ -965,6 +965,12 @@ def _hub_review_verify_enabled(environ: Optional[Mapping[str, str]] = None) -> b
     return str(env.get("MAC_REVIEW_HUB_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
+DEFAULT_HUB_REVIEWER_AGENT_NAME = "hub-reviewer"
+DEFAULT_HUB_REVIEWER_AGENT_ID = "agent_hub-reviewer"
+DEFAULT_HUB_REVIEWER_MACHINE_ID = "machine_operator_review"
+
+
 def sign_verification_manifest(key: str, manifest: Dict[str, Any]) -> str:
     """Sign ``manifest`` with the agent's attestation key. Returns the
     base64url HMAC tag. Exposed for the worker (writes signatures) and
@@ -10486,6 +10492,12 @@ class ControlPlane:
                 executor_agent_id=evidence.created_by,
             )
             if reviewer is None:
+                self._ensure_hub_review_verifier_agent(task, actor=actor)
+                reviewer = self._select_default_reviewer(
+                    task,
+                    executor_agent_id=evidence.created_by,
+                )
+            if reviewer is None:
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.waiting",
@@ -13540,6 +13552,78 @@ class ControlPlane:
         )
         return candidates[0]
 
+    def _ensure_hub_review_verifier_agent(
+        self, task: Task, *, actor: str
+    ) -> Optional[Agent]:
+        if not _hub_review_verify_enabled():
+            return None
+        if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
+            return None
+        assignment = ensure_json_object(
+            ensure_json_object(task.metadata).get("review_experiment")
+        )
+        if assignment.get("schema") == "mac.review_experiment.v1":
+            return None
+        name = (
+            os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
+            or DEFAULT_HUB_REVIEWER_AGENT_NAME
+        )
+        agent_id = (
+            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID", "").strip()
+            or DEFAULT_HUB_REVIEWER_AGENT_ID
+        )
+        machine_id = (
+            os.environ.get("MAC_HUB_REVIEWER_MACHINE_ID", "").strip()
+            or DEFAULT_HUB_REVIEWER_MACHINE_ID
+        )
+        try:
+            machine = self.register_machine(
+                "operator-review",
+                labels={
+                    "source": "mac-hub-review-verifier",
+                    "role": "hub-reviewer",
+                    "virtual": True,
+                },
+                resources={"virtual": True, "review": {"mode": "hub_verify"}},
+                trusted=True,
+                machine_id=machine_id,
+            )
+            return self.register_agent(
+                machine.id,
+                name,
+                capabilities=["review"],
+                resources={
+                    "virtual": True,
+                    "hub_review_verifier": {
+                        "schema": HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
+                        "enabled": True,
+                        "mode": "hub_verify",
+                    },
+                },
+                agent_id=agent_id,
+                actor=actor,
+            )
+        except Exception as exc:  # noqa: BLE001 - verifier setup must not break review sweeps.
+            self.observability.record_log(
+                "workflow.default_review.hub_reviewer_register_failed",
+                level="warning",
+                layer="control_plane",
+                source="default-review-workflow",
+                subject_type="agent",
+                subject_id=agent_id,
+                detail={"actor": actor, "error": str(exc)[:300]},
+            )
+            return None
+
+    def _agent_is_hub_review_verifier(self, agent: Agent) -> bool:
+        marker = ensure_json_object(
+            ensure_json_object(agent.resources).get("hub_review_verifier")
+        )
+        return (
+            marker.get("schema") == HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA
+            and marker.get("enabled") is not False
+        )
+
     def _default_reviewer_unavailable_reason_for_id(
         self,
         task: Task,
@@ -13575,7 +13659,14 @@ class ControlPlane:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        if not self._agent_seen_recently(agent, self._default_reviewer_stale_after_seconds()):
+        hub_review_verifier = (
+            _hub_review_verify_enabled()
+            and self._agent_is_hub_review_verifier(agent)
+        )
+        if (
+            not hub_review_verifier
+            and not self._agent_seen_recently(agent, self._default_reviewer_stale_after_seconds())
+        ):
             return "reviewer_stale"
         if self.reviews.agent_has_owned_task(task.id, agent.id):
             return "reviewer_previously_owned_task"
@@ -13636,6 +13727,8 @@ class ControlPlane:
             and agent_persona_slug == executor_persona_slug
         ):
             return "reviewer_same_persona"
+        if hub_review_verifier:
+            return None
         access_state, learning = self._reviewer_repository_access_state(task, agent.id)
         if access_state == "failure":
             host = str((learning or {}).get("repository_host") or "unknown")

@@ -1599,6 +1599,48 @@ def test_default_review_workflow_waits_without_non_owner_reviewer(cp):
     assert cp.list_reviews(task.id) == []
 
 
+def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker = register_agent(cp, "worker", ["python", "review"])
+    task = cp.create_task("Implement thing", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert result["reviewer_agent_id"] == services.DEFAULT_HUB_REVIEWER_AGENT_ID
+    reviewer = cp.get_agent(services.DEFAULT_HUB_REVIEWER_AGENT_ID)
+    assert reviewer.name == services.DEFAULT_HUB_REVIEWER_AGENT_NAME
+    assert reviewer.capabilities == ["review"]
+    assert reviewer.resources["hub_review_verifier"]["schema"] == (
+        services.HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA
+    )
+    review = cp.list_reviews(task.id)[0]
+    assert review.reviewer_agent_id == reviewer.id
+
+    cp.store.execute(
+        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
+        ("2020-01-01T00:00:00+00:00", reviewer.id),
+    )
+    waiting = cp.advance_default_review_workflow(task.id)
+
+    assert waiting["status"] == "waiting_for_reviewer_verdict"
+    assert waiting["reviewer_agent_id"] == reviewer.id
+    assert cp.list_reviews(task.id)[0].status == ReviewStatus.PENDING.value
+    assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
+    assert cp.list_reviews(task.id)[0].task_id == evidence.task_id
+
+
 def test_default_review_tick_processes_backlog(cp):
     from tests.conftest import submit_review_verdict
 
