@@ -9578,7 +9578,7 @@ def test_rollout_deploy_environment_id_round_trips(cp):
     assert fetched.deploy_environment_id == env.id
 
 
-def _setup_hubverify_task(cp, runner):
+def _setup_hubverify_task(cp, runner, *, experiment=False):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     # Canonical remote lives on the task contract (the hub verifier resolves
@@ -9592,6 +9592,13 @@ def _setup_hubverify_task(cp, runner):
             "origin": {"repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}},
         },
     )
+    if experiment:
+        cp.assign_review_experiment(
+            task.id,
+            experiment_id="exp-semantic-review",
+            arm="standard",
+            actor="test",
+        )
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
@@ -9601,6 +9608,20 @@ def _setup_hubverify_task(cp, runner):
     cp.submit_for_review(task.id, worker.id)
     cp._hub_verify_runner = runner
     return worker, reviewer, task, evidence
+
+
+def test_hub_verify_prefers_canonical_contract_remote_over_redacted_evidence(cp):
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda *args: (0, "ok")
+    )
+    evidence.metadata["verification"]["repo"]["remote_url"] = (
+        "https://x-access-token:<redacted>@github.com/wrong/repo.git"
+    )
+
+    info = cp._hub_verify_repo_info(task, evidence)
+
+    assert info is not None
+    assert info["remote_url"] == "git@github.com:org/repo.git"
 
 
 def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
@@ -9657,6 +9678,34 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
     # Hub verify off: no hub run, workflow waits for an agent verdict as before.
     assert not called
     assert result["status"] == "waiting_for_reviewer_verdict"
+
+
+def test_review_experiment_requires_semantic_reviewer_even_when_hub_verify_enabled(
+    cp, monkeypatch
+):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    called = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp,
+        lambda *args: called.append(args) or (0, "ok"),
+        experiment=True,
+    )
+
+    cp.advance_default_review_workflow(task.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert called == []
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    observations = cp.list_observability(
+        subject_type="task", subject_id=task.id, limit=100
+    )
+    skipped = [
+        item
+        for item in observations
+        if item.name == "workflow.default_review.hub_verify_skipped"
+    ]
+    assert skipped
+    assert skipped[-1].detail["reason"] == "experiment_requires_semantic_reviewer"
 
 
 def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):

@@ -234,3 +234,15 @@ def test_inject_git_remote_auth_leaves_ssh_when_no_token(
         inject_git_remote_auth("git@github.com:x/y.git")
         == "git@github.com:x/y.git"
     )
+
+
+def test_strip_git_remote_auth_removes_redacted_or_live_userinfo() -> None:
+    from mac.gitops import strip_git_remote_auth
+
+    assert strip_git_remote_auth(
+        "https://x-access-token:<redacted>@github.com/org/repo.git"
+    ) == "https://github.com/org/repo.git"
+    assert strip_git_remote_auth(
+        "https://user:secret@forge.example:8443/org/repo.git?x=1"
+    ) == "https://forge.example:8443/org/repo.git?x=1"
+    assert strip_git_remote_auth("git@github.com:org/repo.git") == "git@github.com:org/repo.git"

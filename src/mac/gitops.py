@@ -220,6 +220,27 @@ def inject_git_remote_auth(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def strip_git_remote_auth(url: str) -> str:
+    """Remove embedded HTTP credentials without leaving a redaction token.
+
+    Evidence manifests intentionally redact push credentials.  A redacted URL
+    is safe to display but is not a usable clone source: treating
+    ``<redacted>`` as the password causes deterministic hub verification to
+    reject valid work.  Strip all userinfo so the verifier can inject its own
+    environment-backed credential, or clone a public repository anonymously.
+    """
+
+    if not url or not url.startswith(("https://", "http://")):
+        return url
+    parts = urlsplit(url)
+    if not parts.hostname or not parts.username:
+        return url
+    netloc = parts.hostname
+    if parts.port:
+        netloc = "%s:%d" % (netloc, parts.port)
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def redact_git_remote_auth(url: str) -> str:
     """Return a display-safe git remote URL with embedded passwords hidden."""
     if not url or not url.startswith(("https://", "http://")):

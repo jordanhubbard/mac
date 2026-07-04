@@ -12693,24 +12693,32 @@ class ControlPlane:
         remote (evidence repo.remote_url, else the task's canonical contract
         remote), the branch, and head_sha. Returns None when the evidence is
         not a pushed repo change (nothing to independently verify)."""
+        from . import gitops as _gitops
+
         meta = ensure_json_object(executor_evidence.metadata)
         verification = ensure_json_object(meta.get("verification"))
         repo = ensure_json_object(verification.get("repo"))
-        remote_url = str(repo.get("remote_url") or "").strip()
+        # The task contract is the canonical, credential-free source of truth.
+        # Executor evidence may contain a display-redacted push URL such as
+        # ``https://x-access-token:<redacted>@github.com/...``; cloning that
+        # literal string fails authentication even for a public repository.
+        remote_url = ""
+        md = ensure_json_object(task.metadata)
+        for path in (
+            ("execution_contract", "repository_contract"),
+            ("origin", "repository_contract"),
+            ("repository_contract",),
+            ("origin",),
+        ):
+            node = _nested_json_object(md, *path)
+            remote_url = str(
+                node.get("canonical_remote_url") or node.get("repository_url") or ""
+            ).strip()
+            if remote_url:
+                break
         if not remote_url:
-            md = ensure_json_object(task.metadata)
-            for path in (
-                ("execution_contract", "repository_contract"),
-                ("origin", "repository_contract"),
-                ("repository_contract",),
-                ("origin",),
-            ):
-                node = _nested_json_object(md, *path)
-                remote_url = str(
-                    node.get("canonical_remote_url") or node.get("repository_url") or ""
-                ).strip()
-                if remote_url:
-                    break
+            remote_url = str(repo.get("remote_url") or "").strip()
+        remote_url = _gitops.strip_git_remote_auth(remote_url)
         head_sha = str(repo.get("head_sha") or "").strip()
         remote_ref = str(repo.get("remote_ref") or "").strip()
         branch = remote_ref[len("refs/heads/"):] if remote_ref.startswith("refs/heads/") else remote_ref
@@ -12794,6 +12802,26 @@ class ControlPlane:
         hub (Option C), on behalf of the selected reviewer. No-op returning None
         when the evidence isn't a pushed repo change or the reviewer has no key
         (the workflow then falls back to the agent-nudge path)."""
+        assignment = ensure_json_object(
+            ensure_json_object(task.metadata).get("review_experiment")
+        )
+        if assignment.get("schema") == "mac.review_experiment.v1":
+            # A hub contract-test verdict is useful as a deterministic gate but
+            # it is not a semantic second-model review.  Let the normal reviewer
+            # nudge path run so experiment observations measure an actual model
+            # pass instead of attributing the hub's test result to that agent.
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_skipped",
+                "info",
+                {
+                    "reason": "experiment_requires_semantic_reviewer",
+                    "review_id": review.id,
+                    "experiment_id": str(assignment.get("experiment_id") or ""),
+                },
+                actor,
+            )
+            return None
         info = self._hub_verify_repo_info(task, executor_evidence)
         if info is None:
             return None
