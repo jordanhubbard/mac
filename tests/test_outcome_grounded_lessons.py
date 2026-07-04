@@ -108,3 +108,26 @@ def test_record_curated_lessons_posts_learning_records(monkeypatch):
     assert contents[0]["error_signature"] == "use the ppa git"
     assert all(c["signals"]["curated"] is True for c in contents)
     assert all(c["schema"] == "mac.deployment_learning.v1" for c in contents)
+
+
+def test_curation_prompt_includes_existing_lessons_for_dedup(monkeypatch):
+    # v2: the curator sees what the project already knows and is told to add
+    # only novel lessons (first live batch re-derived one insight three times).
+    monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
+    monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
+    monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
+    monkeypatch.setattr(te, "recall_deployment_lessons",
+                        lambda task, limit=8: ["pushed=false means the delivery step failed"])
+    captured = {}
+
+    def factory(url, token=""):
+        def call(model, question, context):
+            captured["q"] = question
+            return ("NOTHING", [], 1.0)
+        return call
+
+    import mac.eval_runner as er
+    monkeypatch.setattr(er, "router_model_caller", factory)
+    te.curate_lessons_from_outcome({"title": "t", "metadata": {}}, {"outcome": "failure"})
+    assert "pushed=false means the delivery step failed" in captured["q"]
+    assert "genuinely novel" in captured["q"]
