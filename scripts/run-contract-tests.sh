@@ -30,6 +30,12 @@ export HOME="$_MAC_TEST_HOME"
 export XDG_CONFIG_HOME="$_MAC_TEST_HOME/.config"
 git config --global user.email "mac-contract-tests@example.invalid" >/dev/null 2>&1 || true
 git config --global user.name "mac contract tests" >/dev/null 2>&1 || true
+# Stock git defaults new repos to `master`; most dev machines set
+# init.defaultBranch=main in their user gitconfig, which this hermetic HOME
+# deliberately hides. Pin it so tests that build repos behave identically on
+# dev machines and fleet sandboxes (a bare-canonical clone checked out nothing
+# on stock git and failed two publication tests only on fleet hosts).
+git config --global init.defaultBranch main >/dev/null 2>&1 || true
 # The suite has tests that shell out to git (git ls-files, etc.). When the repo
 # is a clone owned by a different uid than the test runner — e.g. the hub
 # verifier uploads a clone into an OpenShell sandbox run as the `sandbox` user —

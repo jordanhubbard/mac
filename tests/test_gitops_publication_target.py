@@ -221,7 +221,12 @@ def test_target_is_immutable_unique_and_secret_free(
 def _advance_canonical(tmp_path: Path, canonical: Path, filename: str, content: str) -> str:
     """Land a new commit on the canonical branch (simulates a peer publishing)."""
     other = tmp_path / ("peer-" + filename.replace("/", "-"))
-    _git(tmp_path, "clone", canonical.as_uri(), str(other))
+    # --branch main: the bare canonical's HEAD symref still points at the
+    # host git's init.defaultBranch (master on stock git), so a default clone
+    # checks out nothing and the peer's commit lands on the wrong branch —
+    # failed only on fleet sandboxes, passed on dev machines whose gitconfig
+    # sets init.defaultBranch=main.
+    _git(tmp_path, "clone", "--branch", "main", canonical.as_uri(), str(other))
     _git(other, "config", "user.email", "peer@example.invalid")
     _git(other, "config", "user.name", "peer")
     (other / filename).write_text(content, encoding="utf-8")
