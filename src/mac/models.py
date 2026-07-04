@@ -19,6 +19,17 @@ class NotFoundError(MACError):
     """Raised when a requested durable object does not exist."""
 
 
+class AmbiguousIdError(MACError):
+    """Raised when a task-id prefix matches more than one task.
+
+    ``candidates`` is a list of full task ids that share the prefix.
+    """
+
+    def __init__(self, message: str, candidates: List[str]) -> None:
+        super().__init__(message)
+        self.candidates = candidates
+
+
 class ValidationError(MACError):
     """Raised when user or agent input violates a contract."""
 
