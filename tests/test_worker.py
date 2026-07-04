@@ -1503,10 +1503,14 @@ def test_mac_worker_finalizes_missing_repository_manifest(tmp_path: Path):
     )
 
 
-def test_mac_worker_blocks_publication_when_canonical_advances_after_preparation(
+def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
     tmp_path: Path,
     monkeypatch,
 ):
+    """Canonical advanced (non-conflicting) while the task worked -> the
+    finalizer rebases BEFORE the contract test and publishes. Previously this
+    blocked with "canonical tip is not an ancestor", killing every task slower
+    than its fleet peers."""
     monkeypatch.setattr(
         "mac.worker.run_codegraph_audit",
         lambda _worktree, files: _codegraph_fixture(list(files)),
@@ -1537,8 +1541,57 @@ def test_mac_worker_blocks_publication_when_canonical_advances_after_preparation
 
     result = worker.run_once()
 
+    assert result.status == "submitted_for_review"
+    manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+    assert manifest["repo"]["canonical_sync"]["status"] == "rebased"
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["freshness"]["ok"] is True
+    # The rebased HEAD contains the canonical advance and the task's work.
+    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(
+        seed, "rev-parse", "HEAD"
+    )
+
+
+def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A CONFLICTING canonical advance must still fail closed: the sync aborts
+    its rebase (work intact) and the freshness gate reports precisely."""
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    seed, repo = _git_fixture(tmp_path)
+    task = cp.create_task(
+        "Repository task conflicting with canonical advance",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        # Both sides edit README.md -> guaranteed rebase conflict.
+        (worktree / "README.md").write_text("task edit\n", encoding="utf-8")
+        _commit_fixture_update(seed, "canonical advanced\n")
+        return WorkerExecution(0, "conflicting repo change", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
     assert result.status == "blocked"
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+    assert manifest["repo"]["canonical_sync"]["status"] == "conflict"
     assert manifest["repo"]["pushed"] is False
     assert manifest["repo"]["freshness"]["ok"] is False
     assert "not an ancestor" in manifest["repo"]["freshness"]["error"]

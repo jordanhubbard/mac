@@ -211,3 +211,75 @@ def test_target_is_immutable_unique_and_secret_free(
     )
     with pytest.raises(FrozenInstanceError):
         first.canonical_branch = "other"  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------- #
+# sync_worktree_with_canonical: pre-test rebase onto the advanced canonical tip
+# --------------------------------------------------------------------------- #
+
+
+def _advance_canonical(tmp_path: Path, canonical: Path, filename: str, content: str) -> str:
+    """Land a new commit on the canonical branch (simulates a peer publishing)."""
+    other = tmp_path / ("peer-" + filename.replace("/", "-"))
+    _git(tmp_path, "clone", canonical.as_uri(), str(other))
+    _git(other, "config", "user.email", "peer@example.invalid")
+    _git(other, "config", "user.name", "peer")
+    (other / filename).write_text(content, encoding="utf-8")
+    _git(other, "add", filename)
+    _git(other, "commit", "-m", "peer change: %s" % filename)
+    _git(other, "push", "origin", "main")
+    return _git(other, "rev-parse", "HEAD").stdout.strip()
+
+
+def test_sync_worktree_rebases_onto_advanced_canonical(tmp_path: Path) -> None:
+    # A peer published to canonical while the task worked. Without the sync the
+    # freshness gate rejects ("canonical tip is not an ancestor of task HEAD");
+    # with it the worktree rebases cleanly and publication proceeds.
+    origin, canonical, work, base = _fixture(tmp_path)
+    tip = _advance_canonical(tmp_path, canonical, "peer.txt", "peer\n")
+
+    result = gitops.sync_worktree_with_canonical(work, canonical.as_uri(), "main")
+    assert result["status"] == "rebased"
+    assert result["canonical_tip"] == tip
+    # The canonical tip is now an ancestor of HEAD and the task's work survives.
+    _git(work, "merge-base", "--is-ancestor", tip, "HEAD")
+    assert (work / "feature.py").exists() and (work / "peer.txt").exists()
+
+    target = resolve_canonical_publication_target(
+        worktree=work,
+        canonical_remote=canonical.as_uri(),
+        canonical_branch="main",
+        destination_branch="task/change",
+        prepared_base_sha=base,
+        isolation_key="task-1-lease-1",
+    )
+    assert check_canonical_freshness(target).ok
+
+
+def test_sync_worktree_fresh_when_canonical_unmoved(tmp_path: Path) -> None:
+    origin, canonical, work, base = _fixture(tmp_path)
+    result = gitops.sync_worktree_with_canonical(work, canonical.as_uri(), "main")
+    assert result["status"] == "fresh"
+    head_before = _git(work, "rev-parse", "HEAD").stdout.strip()
+    assert head_before  # HEAD untouched by a fresh sync
+
+
+def test_sync_worktree_conflict_aborts_and_preserves_work(tmp_path: Path) -> None:
+    # The peer landed a CONFLICTING edit. The sync must not leave a rebase in
+    # progress or lose the task's commits — abort, report, let the freshness
+    # gate fail with its precise error.
+    origin, canonical, work, base = _fixture(tmp_path)
+    _advance_canonical(tmp_path, canonical, "feature.py", "print('peer conflicting')\n")
+    head_before = _git(work, "rev-parse", "HEAD").stdout.strip()
+
+    result = gitops.sync_worktree_with_canonical(work, canonical.as_uri(), "main")
+    assert result["status"] == "conflict"
+    assert _git(work, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert not (work / ".git" / "rebase-merge").exists()
+    assert not (work / ".git" / "rebase-apply").exists()
+    assert _git(work, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_sync_worktree_no_remote_is_skipped(tmp_path: Path) -> None:
+    origin, canonical, work, base = _fixture(tmp_path)
+    assert gitops.sync_worktree_with_canonical(work, "", "main")["status"] == "skipped"
