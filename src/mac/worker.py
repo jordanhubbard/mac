@@ -39,6 +39,10 @@ from mac.agentbus_control import (
     HERMES_CONFIG_APPLY_RESULT_TOPIC,
     HERMES_CONFIG_APPLY_SCHEMA,
     HERMES_CONFIG_APPLY_TOPIC,
+    REFLECT_REQUEST_CONTENT_TYPE,
+    REFLECT_REQUEST_TOPIC,
+    REFLECT_RESULT_CONTENT_TYPE,
+    REFLECT_RESULT_TOPIC,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_RESULT_CONTENT_TYPE,
     REPO_UPDATE_RESULT_SCHEMA,
@@ -46,6 +50,7 @@ from mac.agentbus_control import (
     REPO_UPDATE_SCHEMA,
     REPO_UPDATE_TOPIC,
     debug_terminal_output_payload,
+    reflect_result_payload,
 )
 from mac.env_config import resolve_hub_agent
 from mac.codegraph_audit import (
@@ -1413,6 +1418,11 @@ class MacWorker:
                     detail=result,
                 )
                 continue
+            if topic == REFLECT_REQUEST_TOPIC and content_type == REFLECT_REQUEST_CONTENT_TYPE:
+                result = self._handle_reflect_request_stream(stream)
+                processed.append(stream_id)
+                self._save_agentbus_control_state(processed)
+                continue
             continue
         return None
 
@@ -1955,6 +1965,163 @@ class MacWorker:
         except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
             self._observe_log(
                 "worker.agentbus.hermes_config_apply_result_failed",
+                level="warning",
+                detail={"stream_id": stream.get("id"), "error": str(exc)},
+            )
+
+    # ------------------------------------------------------------------
+    # Reflect-request handler
+    # ------------------------------------------------------------------
+
+    def _handle_reflect_request_stream(self, stream: JsonDict) -> JsonDict:
+        """Dispatch a reflect request to this agent's own Hermes runtime.
+
+        The request payload may include a *query* field.  A bounded subprocess
+        call is made so a slow LLM response cannot block the poll loop.  The
+        result (truncated to 300 words) is published back to the sender as a
+        REFLECT_RESULT_CONTENT_TYPE chunk on the agentbus.
+        """
+        stream_id = str(stream.get("id") or "")
+        chunks = self.client.get(
+            "/agentbus/streams/%s/chunks?%s"
+            % (
+                quote(stream_id, safe=""),
+                urlencode({"agent_id": self.agent_id, "after_sequence": 0, "limit": 10}),
+            )
+        )
+        payload: Any = None
+        if isinstance(chunks, list) and chunks:
+            payload = chunks[-1].get("payload") if isinstance(chunks[-1], dict) else None
+
+        request: JsonDict = payload if isinstance(payload, dict) else {}
+        request_id = str(request.get("request_id") or "")
+        sender = str(stream.get("sender_agent_id") or request.get("sender_agent_id") or "")
+
+        # --- MAC_REFLECT_ENABLED guard ---
+        reflect_enabled = _env_bool("MAC_REFLECT_ENABLED", True)
+        if not reflect_enabled:
+            error_result = reflect_result_payload(
+                request_id=request_id,
+                agent_id=self.agent_id,
+                response="reflect is disabled on this agent (MAC_REFLECT_ENABLED=false)",
+                word_count=0,
+            )
+            self._observe_log(
+                "worker.agentbus.reflect.error",
+                level="warning",
+                detail={"stream_id": stream_id, "reason": "disabled"},
+            )
+            self._publish_reflect_result(stream, error_result)
+            return {"status": "error", "summary": "reflect disabled", "stream_id": stream_id}
+
+        default_query = (
+            "Describe your current runtime identity, active task, capabilities, and status."
+        )
+        query = str(request.get("query") or default_query).strip() or default_query
+
+        response_text = self._run_reflect_query(query, stream_id=stream_id)
+
+        # Truncate to 300 words
+        words = response_text.split()
+        if len(words) > 300:
+            words = words[:300]
+            response_text = " ".join(words)
+
+        result = reflect_result_payload(
+            request_id=request_id,
+            agent_id=self.agent_id,
+            response=response_text,
+            word_count=len(words),
+        )
+        self._observe_log(
+            "worker.agentbus.reflect.completed",
+            level="info",
+            detail={
+                "stream_id": stream_id,
+                "sender": sender,
+                "query_len": len(query),
+                "word_count": len(words),
+            },
+        )
+        self._publish_reflect_result(stream, result)
+        return {"status": "completed", "summary": "reflect completed", "stream_id": stream_id}
+
+    def _run_reflect_query(self, query: str, *, stream_id: str = "") -> str:
+        """Run *query* through this agent's own Hermes runtime via a bounded subprocess.
+
+        Reads HERMES_HOME from the environment so the subprocess loads this
+        agent's own soul/memory/host context.  Times out after 120 s so a slow
+        LLM call cannot block the poll loop.
+        """
+        hermes_home = (
+            os.environ.get("HERMES_HOME")
+            or os.environ.get("MAC_HERMES_HOME")
+            or str(Path.home() / ".hermes")
+        )
+        # Prefer the vendored mac-hermes binary from the active venv; fall back
+        # to PATH so a system-wide install is also accepted.
+        import shutil as _shutil
+
+        hermes_bin = (
+            os.environ.get("MAC_HERMES_BIN")
+            or _shutil.which("mac-hermes")
+            or "mac-hermes"
+        )
+        timeout_s = float(os.environ.get("MAC_REFLECT_TIMEOUT") or "120")
+        try:
+            env = os.environ.copy()
+            env["HERMES_HOME"] = hermes_home
+            result = subprocess.run(
+                [hermes_bin, "oneshot", "--query", query],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                env=env,
+                check=False,
+            )
+            output = (result.stdout or "").strip()
+            if result.returncode != 0 or not output:
+                # Fall back to stderr summary so something useful is returned.
+                stderr_summary = (result.stderr or "").strip()[:500]
+                return (
+                    "reflect query completed with returncode %d. %s"
+                    % (result.returncode, stderr_summary)
+                ).strip()
+            return output
+        except subprocess.TimeoutExpired:
+            self._observe_log(
+                "worker.agentbus.reflect.error",
+                level="warning",
+                detail={"stream_id": stream_id, "reason": "timeout", "timeout_s": timeout_s},
+            )
+            return "reflect query timed out after %d seconds." % int(timeout_s)
+        except Exception as exc:  # noqa: BLE001 - reflect must not crash the poll loop
+            self._observe_log(
+                "worker.agentbus.reflect.error",
+                level="warning",
+                detail={"stream_id": stream_id, "reason": "subprocess_error", "error": str(exc)},
+            )
+            return "reflect query failed: %s" % exc
+
+    def _publish_reflect_result(self, stream: JsonDict, result: JsonDict) -> None:
+        """Publish a reflect result chunk back to the sender."""
+        sender = str(stream.get("sender_agent_id") or "")
+        if not sender:
+            return
+        try:
+            self.client.post(
+                "/agentbus",
+                {
+                    "sender_agent_id": self.agent_id,
+                    "recipient_agent_id": sender,
+                    "content_type": REFLECT_RESULT_CONTENT_TYPE,
+                    "topic": REFLECT_RESULT_TOPIC,
+                    "payload": result,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - result publishing is best-effort.
+            self._observe_log(
+                "worker.agentbus.reflect.publish_failed",
                 level="warning",
                 detail={"stream_id": stream.get("id"), "error": str(exc)},
             )
