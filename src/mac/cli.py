@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac.migration import import_jsonl, migrate_acc_sqlite
 from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind
@@ -131,6 +132,175 @@ def _trunc(text: Any, n: int = 72) -> str:
 
 _TASK_ID_PREFIX = "task_"
 _SHORT_HEX_LEN = 8  # git-style: 8 hex digits unique enough for human display
+
+# Human task-list presentation.  The icon remains useful when color is
+# disabled (redirected output, NO_COLOR, TERM=dumb), while the ANSI style makes
+# state changes scannable in an interactive terminal.
+_TASK_STATE_STYLES = {
+    "running": ("●", "1;36"),
+    "claimed": ("◐", "36"),
+    "reviewing": ("◆", "1;35"),
+    "needs_review": ("◇", "35"),
+    "blocked": ("!", "1;33"),
+    "failed": ("×", "1;31"),
+    "open": ("○", "1;34"),
+    "completed": ("✓", "32"),
+    "cancelled": ("–", "2"),
+}
+_TASK_STATE_ORDER = {
+    state: index
+    for index, state in enumerate(
+        (
+            "running",
+            "claimed",
+            "reviewing",
+            "needs_review",
+            "blocked",
+            "failed",
+            "open",
+            "completed",
+            "cancelled",
+        )
+    )
+}
+
+
+def _terminal_color_enabled(
+    stream: Any = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether human CLI output should contain ANSI color.
+
+    Color is automatic for a TTY, disabled for pipes and ``TERM=dumb``, and
+    honors the de-facto ``NO_COLOR`` contract. ``FORCE_COLOR`` and
+    ``CLICOLOR_FORCE`` are useful for snapshots and terminal wrappers; an
+    explicit ``0`` disables color.
+    """
+    env = os.environ if environ is None else environ
+    if "NO_COLOR" in env:
+        return False
+    force = str(env.get("FORCE_COLOR") or env.get("CLICOLOR_FORCE") or "").strip()
+    if force:
+        return force != "0"
+    target = sys.stdout if stream is None else stream
+    isatty = getattr(target, "isatty", None)
+    return bool(callable(isatty) and isatty() and env.get("TERM", "") != "dumb")
+
+
+def _ansi(text: str, code: str, *, enabled: bool) -> str:
+    return "\033[%sm%s\033[0m" % (code, text) if enabled else text
+
+
+def _task_state_cell(state: Any, width: int, *, color: bool) -> str:
+    value = str(state or "?")
+    icon, code = _TASK_STATE_STYLES.get(value, ("·", "37"))
+    return _ansi(("%s %s" % (icon, value)).ljust(width), code, enabled=color)
+
+
+def _task_state_group(state: str) -> int:
+    if state in {"running", "claimed", "reviewing", "needs_review"}:
+        return 0
+    if state in {"blocked", "failed"}:
+        return 1
+    if state == "open":
+        return 2
+    return 3
+
+
+def _render_task_table(
+    tasks: Iterable[Any],
+    *,
+    show_project: bool,
+    color: Optional[bool] = None,
+    width: Optional[int] = None,
+) -> str:
+    """Render the human ``task list`` view as an adaptive state-sorted table."""
+    records = [_unwrap(task) for task in tasks]
+    records = [task for task in records if isinstance(task, dict)]
+    if not records:
+        return "(none)"
+
+    use_color = _terminal_color_enabled() if color is None else bool(color)
+    terminal_width = width or shutil.get_terminal_size((120, 24)).columns
+    terminal_width = max(60, int(terminal_width))
+    display_ids = [
+        str(task.get("id") or "")
+        if _FULL_IDS
+        else _short_task_id(str(task.get("id") or ""))
+        for task in records
+    ]
+    id_width = max(len("TASK"), max(len(task_id) for task_id in display_ids))
+    state_width = max(
+        len("STATE"),
+        max(len(str(task.get("state") or "?")) + 2 for task in records),
+    )
+    project_width = 0
+    if show_project:
+        project_width = max(
+            len("PROJECT"),
+            min(18, max(len(str(task.get("project") or "-")) for task in records)),
+        )
+    fixed_width = id_width + 2 + state_width + 2
+    if show_project:
+        fixed_width += project_width + 2
+    title_width = max(8, terminal_width - fixed_width)
+
+    indexed = list(enumerate(records))
+    indexed.sort(
+        key=lambda item: (
+            _task_state_group(str(item[1].get("state") or "")),
+            _TASK_STATE_ORDER.get(str(item[1].get("state") or ""), 999),
+            item[0],
+        )
+    )
+
+    header_parts = ["TASK".ljust(id_width), "STATE".ljust(state_width)]
+    rule_parts = ["─" * id_width, "─" * state_width]
+    if show_project:
+        header_parts.append("PROJECT".ljust(project_width))
+        rule_parts.append("─" * project_width)
+    header_parts.append("TITLE")
+    rule_parts.append("─" * title_width)
+    lines = [
+        _ansi("  ".join(header_parts), "1", enabled=use_color),
+        _ansi("  ".join(rule_parts), "2", enabled=use_color),
+    ]
+
+    previous_group: Optional[int] = None
+    counts: Dict[str, int] = {}
+    for _original_index, task in indexed:
+        state = str(task.get("state") or "?")
+        group = _task_state_group(state)
+        if previous_group is not None and group != previous_group:
+            lines.append("")
+        previous_group = group
+        counts[state] = counts.get(state, 0) + 1
+
+        raw_id = str(task.get("id") or "")
+        display_id = raw_id if _FULL_IDS else _short_task_id(raw_id)
+        row = [
+            _ansi(display_id.ljust(id_width), "2", enabled=use_color),
+            _task_state_cell(state, state_width, color=use_color),
+        ]
+        if show_project:
+            project = _trunc(task.get("project") or "-", project_width)
+            row.append(_ansi(project.ljust(project_width), "36", enabled=use_color))
+        row.append(_trunc(task.get("title", ""), title_width))
+        lines.append("  ".join(row))
+
+    count_label = "%d task%s" % (len(records), "" if len(records) == 1 else "s")
+    summary = [_ansi(count_label, "1", enabled=use_color)]
+    ordered_states = sorted(
+        counts,
+        key=lambda state: (_TASK_STATE_ORDER.get(state, 999), state),
+    )
+    for state in ordered_states:
+        icon, code = _TASK_STATE_STYLES.get(state, ("·", "37"))
+        summary.append(
+            _ansi("%s %d %s" % (icon, counts[state], state), code, enabled=use_color)
+        )
+    lines.extend(("", "  ".join(summary)))
+    return "\n".join(lines)
 
 
 def _short_task_id(task_id: str) -> str:
@@ -1224,11 +1394,15 @@ def cmd_task_list(args: argparse.Namespace) -> None:
     tasks = [task.to_dict() for task in cp.list_tasks(args.state, view="summary")]
     if project is not None:
         tasks = [t for t in tasks if t.get("project") == project]
-    # Short-id display: set module flag so _one_liner picks it up.
-    # --json bypasses _one_liner entirely so full ids are always in JSON output.
+    # Short-id display is text-only. JSON always retains canonical full ids.
     _set_full_ids(bool(getattr(args, "full_ids", False)))
-    _print(tasks)
-    _set_full_ids(False)  # reset to default after this command
+    try:
+        if _OUTPUT_JSON:
+            _print(tasks)
+        else:
+            print(_render_task_table(tasks, show_project=project is None))
+    finally:
+        _set_full_ids(False)  # reset to default after this command
 
 
 def cmd_task_show(args: argparse.Namespace) -> None:

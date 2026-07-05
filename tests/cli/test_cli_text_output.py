@@ -61,6 +61,108 @@ def test_task_list_renders_one_liner_per_task():
     assert lines[1].startswith("task_def456")
 
 
+def test_task_table_prioritizes_active_and_attention_states():
+    tasks = [
+        {"id": "task_done", "state": "completed", "project": "mac", "title": "Done"},
+        {"id": "task_open", "state": "open", "project": "mac", "title": "Queued"},
+        {"id": "task_blocked", "state": "blocked", "project": "mac", "title": "Needs help"},
+        {"id": "task_running", "state": "running", "project": "mac", "title": "In progress"},
+    ]
+
+    out = cli._render_task_table(tasks, show_project=False, color=False, width=100)
+
+    assert out.index("task_running") < out.index("task_blocked")
+    assert out.index("task_blocked") < out.index("task_open")
+    assert out.index("task_open") < out.index("task_done")
+    assert "TASK" in out.splitlines()[0]
+    assert "STATE" in out.splitlines()[0]
+    assert "PROJECT" not in out.splitlines()[0]
+    assert "4 tasks" in out
+    assert "● 1 running" in out
+    assert "! 1 blocked" in out
+    assert "○ 1 open" in out
+    assert "✓ 1 completed" in out
+
+
+def test_task_table_shows_project_for_all_project_view():
+    tasks = [
+        {"id": "task_a", "state": "open", "project": "mac", "title": "One"},
+        {"id": "task_b", "state": "open", "project": "nanolang", "title": "Two"},
+    ]
+
+    out = cli._render_task_table(tasks, show_project=True, color=False, width=100)
+
+    assert "PROJECT" in out.splitlines()[0]
+    assert "mac" in out
+    assert "nanolang" in out
+
+
+def test_task_table_uses_color_only_when_enabled():
+    tasks = [
+        {"id": "task_run", "state": "running", "project": "mac", "title": "Run"},
+        {"id": "task_fail", "state": "failed", "project": "mac", "title": "Fail"},
+        {"id": "task_done", "state": "completed", "project": "mac", "title": "Done"},
+    ]
+
+    plain = cli._render_task_table(tasks, show_project=False, color=False, width=100)
+    colored = cli._render_task_table(tasks, show_project=False, color=True, width=100)
+
+    assert "\033[" not in plain
+    assert "\033[1;36m" in colored  # running
+    assert "\033[1;31m" in colored  # failed
+    assert "\033[32m" in colored  # completed
+
+
+def test_task_table_truncates_title_to_terminal_width():
+    tasks = [
+        {
+            "id": _FULL_ID,
+            "state": "needs_review",
+            "project": "mac",
+            "title": "A deliberately long title that cannot fit in a narrow terminal",
+        }
+    ]
+
+    out = cli._render_task_table(tasks, show_project=False, color=False, width=60)
+    task_line = next(line for line in out.splitlines() if line.startswith(_SHORT_ID))
+
+    assert len(task_line) <= 60
+    assert task_line.endswith("…")
+
+
+def test_task_table_full_ids_align_header_rule_and_row():
+    tasks = [
+        {"id": _FULL_ID, "state": "open", "project": "mac", "title": "One"}
+    ]
+    cli._set_full_ids(True)
+    try:
+        out = cli._render_task_table(tasks, show_project=False, color=False, width=100)
+    finally:
+        cli._set_full_ids(False)
+
+    header, rule, row = out.splitlines()[:3]
+    assert header.index("STATE") == rule.index("  ") + 2 == row.index("○ open")
+
+
+class _TTY:
+    def __init__(self, value=True):
+        self.value = value
+
+    def isatty(self):
+        return self.value
+
+
+def test_terminal_color_detection_honors_tty_force_and_no_color():
+    assert cli._terminal_color_enabled(_TTY(True), {"TERM": "xterm-256color"}) is True
+    assert cli._terminal_color_enabled(_TTY(False), {"TERM": "xterm-256color"}) is False
+    assert cli._terminal_color_enabled(_TTY(True), {"TERM": "dumb"}) is False
+    assert cli._terminal_color_enabled(_TTY(False), {"FORCE_COLOR": "1"}) is True
+    assert cli._terminal_color_enabled(_TTY(True), {"FORCE_COLOR": "0"}) is False
+    assert cli._terminal_color_enabled(
+        _TTY(True), {"TERM": "xterm-256color", "NO_COLOR": ""}
+    ) is False
+
+
 def test_empty_list_is_none():
     assert cli._render_text([]) == "(none)"
 
