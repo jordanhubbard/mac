@@ -383,6 +383,33 @@ network_policies:
         )
     )
     ctx["openshell_policy_id"] = openshell_policy["id"]
+    # Scientific optimizer fixtures (route coverage for /optimizer/*): a
+    # control+treatment policy pair and one experiment, so GET-by-id routes
+    # resolve and action routes act on real rows.
+    sci_control = _ok(client.post("/optimizer/policies", json={
+        "name": "route-sci-control", "project": ctx["project_name"],
+        "parameters": {"plan_first": True}, "created_by": "route-coverage"}))
+    sci_treatment = _ok(client.post("/optimizer/policies", json={
+        "name": "route-sci-treatment", "project": ctx["project_name"],
+        "parameters": {"plan_first": False}, "created_by": "route-coverage"}))
+    ctx["sci_policy_id"] = sci_control["id"]
+    ctx["sci_policy2_id"] = sci_treatment["id"]
+    sci_exp = _ok(client.post("/optimizer/experiments", json={
+        "name": "route-sci-experiment", "project": ctx["project_name"],
+        "hypothesis": "treatment beats control on route coverage",
+        "control_policy_id": sci_control["id"],
+        "treatment_policy_id": sci_treatment["id"],
+        "primary_metric": "accepted_success", "created_by": "route-coverage"}))
+    ctx["sci_experiment_id"] = sci_exp["id"]
+    sci_exp2 = _ok(client.post("/optimizer/experiments", json={
+        "name": "route-sci-experiment-promote", "project": ctx["project_name"],
+        "hypothesis": "promote-path route coverage",
+        "control_policy_id": sci_control["id"],
+        "treatment_policy_id": sci_treatment["id"],
+        "primary_metric": "accepted_success", "created_by": "route-coverage"}))
+    _ok(client.post("/optimizer/experiments/%s/start" % sci_exp2["id"],
+                    json={"actor": "route-coverage"}))
+    ctx["sci_experiment2_id"] = sci_exp2["id"]
     _ok(
         client.post(
             "/openshell/policies/%s/assignments" % openshell_policy["id"],
@@ -949,6 +976,16 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/rollouts/{rollout_id}/rescue"): {"rollout_id": "rescue_rollout_id"},
         ("DELETE", "/notifier/channels/{channel_id_or_name}"): {"channel_id_or_name": "delete_channel_id"},
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
+        ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
+        ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
+        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {"policy_id": "sci_policy_id"},
+        ("GET", "/optimizer/experiments/{experiment_id}"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/start"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {"experiment_id": "sci_experiment2_id"},
+        ("GET", "/optimizer/experiments/{experiment_id}/evidence"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {"experiment_id": "sci_experiment_id"},
     }
     values = {
         "service_id": "qdrant",
@@ -970,6 +1007,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "name": ctx["secret_name"],
         "notification_id": ctx["notification_id"],
         "policy_id": ctx["openshell_policy_id"],
+        "sci_policy_id": ctx["sci_policy_id"],
+        "sci_experiment_id": ctx["sci_experiment_id"],
+        "sci_experiment2_id": ctx["sci_experiment2_id"],
         "project": ctx["project_name"],
         "request_id": ctx["request_id"],
         "review_id": ctx["review_id"],
@@ -998,6 +1038,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
     kwargs: Dict[str, Any] = {}
     expected = (200,)
 
+    if method == "POST" and path_template.startswith("/optimizer/experiments/{experiment_id}/"):
+        # Realistic guard responses count as coverage for lifecycle routes:
+        # start (400: one active experiment per project — exp2 is running),
+        # pause of a non-active exp (400), promote without min validated
+        # samples (400), observe of an unassigned task (404). The happy paths
+        # for create/start are exercised by the ctx fixtures themselves.
+        expected = (200, 400, 404)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1639,6 +1686,24 @@ edges:
             "actor": "operator",
         },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
+        ("POST", "/optimizer/policies"): {
+            "name": "route-sci-extra", "project": ctx["project_name"],
+            "parameters": {"plan_first": True}, "created_by": "route-coverage"},
+        ("POST", "/optimizer/policies/{policy_id}/promote"): {
+            "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
+            "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/optimizer/experiments"): {
+            "name": "route-sci-exp-2", "project": ctx["project_name"],
+            "hypothesis": "route coverage hypothesis",
+            "control_policy_id": ctx["sci_policy_id"],
+            "treatment_policy_id": ctx["sci_policy2_id"],
+            "primary_metric": "accepted_success", "created_by": "route-coverage"},
+        ("POST", "/optimizer/experiments/{experiment_id}/start"): {"actor": "route-coverage"},
+        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {
+            "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
+            "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/tasks/{task_id}/activity"): {
             "phase": "worker",
             "actor": "operator",
@@ -1654,6 +1719,9 @@ edges:
             "params": {"agent_id": ctx["submit_agent_id"]}
         },
         ("POST", "/workflows/runs/tick"): {},
+        ("POST", "/optimizer/tick"): {},
+        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {},
+        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {},
         ("POST", "/reviews/default/tick"): {"params": {"limit": 1}},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {},
         ("POST", "/agents/{agent_id}/disable"): {},
