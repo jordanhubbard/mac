@@ -1172,6 +1172,118 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_eval_set_events_set
                     ON eval_set_events (eval_set_id, created_at);
 
+                CREATE TABLE IF NOT EXISTS scientific_policies (
+                    id TEXT PRIMARY KEY,
+                    schema_version TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    parameters TEXT NOT NULL DEFAULT '{}',
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(project, name, version)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_scientific_policies_one_active
+                    ON scientific_policies(project) WHERE status = 'active';
+                CREATE INDEX IF NOT EXISTS idx_scientific_policies_project_status
+                    ON scientific_policies(project, status, updated_at);
+
+                CREATE TABLE IF NOT EXISTS scientific_experiments (
+                    id TEXT PRIMARY KEY,
+                    schema_version TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    hypothesis TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    running_slot TEXT UNIQUE,
+                    control_policy_id TEXT NOT NULL,
+                    treatment_policy_id TEXT NOT NULL,
+                    primary_metric TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    min_effect REAL NOT NULL DEFAULT 0,
+                    quality_margin REAL NOT NULL DEFAULT 0.05,
+                    min_samples_per_arm INTEGER NOT NULL,
+                    max_samples_per_arm INTEGER NOT NULL,
+                    exploration_fraction REAL NOT NULL,
+                    outcome_horizon_seconds REAL NOT NULL,
+                    guardrails TEXT NOT NULL DEFAULT '{}',
+                    auto_promote INTEGER NOT NULL DEFAULT 0,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(control_policy_id) REFERENCES scientific_policies(id),
+                    FOREIGN KEY(treatment_policy_id) REFERENCES scientific_policies(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_scientific_experiments_project_state
+                    ON scientific_experiments(project, state, created_at);
+
+                CREATE TABLE IF NOT EXISTS scientific_assignments (
+                    experiment_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL UNIQUE,
+                    arm TEXT NOT NULL,
+                    policy_id TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    propensity REAL NOT NULL,
+                    stratum TEXT NOT NULL DEFAULT '',
+                    assignment TEXT NOT NULL,
+                    assigned_at TEXT NOT NULL,
+                    PRIMARY KEY(experiment_id, task_id),
+                    FOREIGN KEY(experiment_id) REFERENCES scientific_experiments(id) ON DELETE CASCADE,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY(policy_id) REFERENCES scientific_policies(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_scientific_assignments_experiment_arm
+                    ON scientific_assignments(experiment_id, phase, arm, assigned_at);
+
+                CREATE TABLE IF NOT EXISTS scientific_observations (
+                    experiment_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    arm TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    terminal INTEGER NOT NULL DEFAULT 0,
+                    quality_validated INTEGER NOT NULL DEFAULT 0,
+                    metrics TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    PRIMARY KEY(experiment_id, task_id),
+                    FOREIGN KEY(experiment_id) REFERENCES scientific_experiments(id) ON DELETE CASCADE,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS scientific_decisions (
+                    id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(experiment_id) REFERENCES scientific_experiments(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_scientific_decisions_experiment
+                    ON scientific_decisions(experiment_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS scientific_optimizer_events (
+                    id TEXT PRIMARY KEY,
+                    subject_type TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_scientific_optimizer_events_subject
+                    ON scientific_optimizer_events(subject_type, subject_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS scientific_optimizer_locks (
+                    name TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    lease_expires_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS agent_roles (
                     id TEXT PRIMARY KEY,
                     slug TEXT NOT NULL,

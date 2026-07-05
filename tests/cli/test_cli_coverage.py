@@ -25,8 +25,6 @@ import io
 import json
 import sys
 
-import pytest
-
 from mac.cli import main
 
 
@@ -667,7 +665,7 @@ def test_cli_subcommand_coverage_gate():
         "project", "openshell", "fleet", "mood", "nap",
         "dispatch", "memory", "secret", "runtime", "rollout",
         "eval", "events", "agentbus", "client", "login", "logout",
-        "repo",
+        "repo", "optimizer",
         # extended coverage added in test_cli_extended.py:
         "diagnostics", "artifact", "env", "notifier",
         "action-events", "command-audit", "observability",

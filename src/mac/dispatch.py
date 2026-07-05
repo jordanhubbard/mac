@@ -619,6 +619,155 @@ class RemoteDispatch:
     def model_selection_refresh(self) -> _Dictish:
         return _Dictish(self._post("/model-selection/refresh", {}))
 
+    # -- Autonomous scientific optimizer ---------------------------------
+
+    def optimizer_status(self) -> _Dictish:
+        return _Dictish(self._get("/optimizer/status"))
+
+    def optimizer_tick(self) -> _Dictish:
+        return _Dictish(self._post("/optimizer/tick", {}))
+
+    def create_scientific_policy(
+        self,
+        name: str,
+        project: str,
+        parameters: Dict[str, Any],
+        **kw: Any,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/policies",
+                _drop_none(
+                    {
+                        "name": name,
+                        "project": project,
+                        "parameters": parameters,
+                        **kw,
+                    }
+                ),
+            )
+        )
+
+    def list_scientific_policies(
+        self,
+        *,
+        project: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/optimizer/policies", project=project, status=status)
+        )
+
+    def get_scientific_policy(self, policy_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/optimizer/policies/%s" % quote(policy_id, safe=""))
+        )
+
+    def promote_scientific_policy(self, policy_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/policies/%s/promote" % quote(policy_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def rollback_scientific_policy(
+        self, project: str, policy_id: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/projects/%s/rollback/%s"
+                % (quote(project, safe=""), quote(policy_id, safe="")),
+                _drop_none(kw),
+            )
+        )
+
+    def create_scientific_experiment(self, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/optimizer/experiments", _drop_none(kw))
+        )
+
+    def list_scientific_experiments(
+        self,
+        *,
+        project: Optional[str] = None,
+        state: Optional[str] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/optimizer/experiments", project=project, state=state)
+        )
+
+    def get_scientific_experiment(self, experiment_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/optimizer/experiments/%s" % quote(experiment_id, safe="")
+            )
+        )
+
+    def scientific_experiment_evidence(
+        self, experiment_id: str, *, limit: int = 500
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/optimizer/experiments/%s/evidence"
+                % quote(experiment_id, safe=""),
+                limit=limit,
+            )
+        )
+
+    def start_scientific_experiment(
+        self, experiment_id: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/experiments/%s/start"
+                % quote(experiment_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def pause_scientific_experiment(
+        self, experiment_id: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/experiments/%s/pause"
+                % quote(experiment_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def promote_scientific_experiment(
+        self, experiment_id: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/experiments/%s/promote"
+                % quote(experiment_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def observe_scientific_task(
+        self, experiment_id: str, task_id: str
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/experiments/%s/observe/%s"
+                % (quote(experiment_id, safe=""), quote(task_id, safe="")),
+                {},
+            )
+        )
+
+    def analyze_scientific_experiment(self, experiment_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/optimizer/experiments/%s/analyze"
+                % quote(experiment_id, safe=""),
+                {},
+            )
+        )
+
     def model_selection_promote(self) -> _Dictish:
         return _Dictish(self._post("/model-selection/promote", {}))
 

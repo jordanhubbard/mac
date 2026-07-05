@@ -1021,6 +1021,17 @@ Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
 pins by capability (resolved via the strength ladder; **hub agent only** until
 ladder distribution lands).
 
+## Autonomous scientific optimization
+
+The hub can continuously test bounded execution-policy changes against task
+quality, rework, latency, tokens, and cost. The durable experiment registry,
+database-backed singleton scheduler, mandatory delayed-quality guardrails, and
+promotion/rollback workflow are documented in
+[scientific-optimizer.md](scientific-optimizer.md). New systemd deployments
+enable the scheduler in `mac.env.example`; set
+`MAC_SCIENTIFIC_OPTIMIZER_ENABLED=0` during a staged rollout if the hub should
+collect no new experiment assignments.
+
 ## Known limitations
 
 - Dynamic model selection is opt-in and does not override the explicit router

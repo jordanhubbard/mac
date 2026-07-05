@@ -1216,6 +1216,7 @@ class ControlPlane:
             get_task=self.get_task,
             task_detail=self.task_detail,
             list_observability=self.list_observability,
+            create_task=self.create_task,
             config=ScientificOptimizerConfig.from_env(),
         )
         # Event-driven review advancement (opt-in; enabled by the hub's tick
@@ -5014,6 +5015,11 @@ class ControlPlane:
     def analyze_scientific_experiment(self, experiment_id: str) -> JsonDict:
         self.optimizer.refresh_experiment(experiment_id)
         return self.optimizer.analyze_experiment(experiment_id, actor="operator")
+
+    def scientific_experiment_evidence(
+        self, experiment_id: str, *, limit: int = 500
+    ) -> JsonDict:
+        return self.optimizer.experiment_evidence(experiment_id, limit=limit)
 
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()

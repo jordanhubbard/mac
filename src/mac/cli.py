@@ -852,6 +852,188 @@ def cmd_fleet_model_selection_promote(args: argparse.Namespace) -> None:
     _print(out.to_dict() if hasattr(out, "to_dict") else out)
 
 
+def cmd_optimizer_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).optimizer_status())
+
+
+def cmd_optimizer_tick(args: argparse.Namespace) -> None:
+    _print(_plane(args).optimizer_tick())
+
+
+def cmd_optimizer_policy_create(args: argparse.Namespace) -> None:
+    parameters = _read_json_arg(
+        args.parameters,
+        args.parameters_file,
+        label="scientific policy parameters",
+        default={},
+    )
+    if not isinstance(parameters, dict):
+        raise MACError("scientific policy parameters must be a JSON object")
+    description = _read_text_arg(
+        args.description,
+        args.description_file,
+        label="scientific policy description",
+    )
+    _print(
+        _plane(args).create_scientific_policy(
+            args.name,
+            args.project,
+            parameters,
+            description=description,
+            created_by=args.actor,
+        )
+    )
+
+
+def cmd_optimizer_policy_list(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).list_scientific_policies(
+            project=args.project,
+            status=args.status,
+        )
+    )
+
+
+def cmd_optimizer_policy_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_scientific_policy(args.policy_id))
+
+
+def _optimizer_action_reason(args: argparse.Namespace) -> str:
+    return _read_text_arg(
+        args.reason,
+        args.reason_file,
+        label="scientific optimizer action reason",
+    ).strip()
+
+
+def cmd_optimizer_policy_promote(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).promote_scientific_policy(
+            args.policy_id,
+            actor=args.actor,
+            reason=_optimizer_action_reason(args),
+        )
+    )
+
+
+def cmd_optimizer_policy_rollback(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).rollback_scientific_policy(
+            args.project,
+            args.policy_id,
+            actor=args.actor,
+            reason=_optimizer_action_reason(args),
+        )
+    )
+
+
+def cmd_optimizer_experiment_create(args: argparse.Namespace) -> None:
+    hypothesis = _read_text_arg(
+        args.hypothesis,
+        args.hypothesis_file,
+        label="scientific experiment hypothesis",
+    ).strip()
+    guardrails = _read_json_arg(
+        args.guardrails,
+        args.guardrails_file,
+        label="scientific experiment guardrails",
+        default={},
+    )
+    metadata = _read_json_arg(
+        args.metadata,
+        args.metadata_file,
+        label="scientific experiment metadata",
+        default={},
+    )
+    if not isinstance(guardrails, dict) or not isinstance(metadata, dict):
+        raise MACError("scientific experiment guardrails and metadata must be JSON objects")
+    _print(
+        _plane(args).create_scientific_experiment(
+            name=args.name,
+            project=args.project,
+            hypothesis=hypothesis,
+            control_policy_id=args.control_policy_id,
+            treatment_policy_id=args.treatment_policy_id,
+            primary_metric=args.primary_metric,
+            direction=args.direction,
+            min_effect=args.min_effect,
+            quality_margin=args.quality_margin,
+            min_samples_per_arm=args.min_samples_per_arm,
+            max_samples_per_arm=args.max_samples_per_arm,
+            exploration_fraction=args.exploration_fraction,
+            outcome_horizon_seconds=args.outcome_horizon_seconds,
+            guardrails=guardrails,
+            auto_promote=args.auto_promote,
+            metadata=metadata,
+            created_by=args.actor,
+        )
+    )
+
+
+def cmd_optimizer_experiment_list(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).list_scientific_experiments(
+            project=args.project,
+            state=args.state,
+        )
+    )
+
+
+def cmd_optimizer_experiment_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_scientific_experiment(args.experiment_id))
+
+
+def cmd_optimizer_experiment_evidence(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).scientific_experiment_evidence(
+            args.experiment_id,
+            limit=args.limit,
+        )
+    )
+
+
+def cmd_optimizer_experiment_start(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).start_scientific_experiment(
+            args.experiment_id,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_optimizer_experiment_pause(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).pause_scientific_experiment(
+            args.experiment_id,
+            actor=args.actor,
+            reason=_optimizer_action_reason(args),
+        )
+    )
+
+
+def cmd_optimizer_experiment_promote(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).promote_scientific_experiment(
+            args.experiment_id,
+            actor=args.actor,
+            reason=_optimizer_action_reason(args),
+        )
+    )
+
+
+def cmd_optimizer_experiment_observe(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).observe_scientific_task(
+            args.experiment_id,
+            args.task_id,
+        )
+    )
+
+
+def cmd_optimizer_experiment_analyze(args: argparse.Namespace) -> None:
+    _print(_plane(args).analyze_scientific_experiment(args.experiment_id))
+
+
 def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     """Per-agent coding-CLI auth status from the agents' heartbeat reports.
 
@@ -5145,6 +5327,166 @@ def build_parser() -> argparse.ArgumentParser:
         help="actually mutate fleets.yaml + run the redeploy (default: dry-run plan only)",
     )
     _set(cmd_fleet_move_agent, fleet_move)
+
+    optimizer = sub.add_parser(
+        "optimizer",
+        help="autonomous scientific policy optimization",
+        description=(
+            "Create allowlisted execution policies, run controlled task experiments, "
+            "and promote only statistically superior, quality-noninferior treatments."
+        ),
+    ).add_subparsers(dest="optimizer_command", required=True)
+    _set(cmd_optimizer_status, optimizer.add_parser("status", help="show scheduler and active experiments"))
+    _set(cmd_optimizer_tick, optimizer.add_parser("tick", help="run one observation, decision, and hypothesis pass now"))
+
+    optimizer_policy = optimizer.add_parser(
+        "policy", help="versioned execution-policy lifecycle"
+    ).add_subparsers(dest="optimizer_policy_command", required=True)
+    optimizer_policy_create = optimizer_policy.add_parser(
+        "create", help="create a candidate allowlisted policy"
+    )
+    optimizer_policy_create.add_argument("name")
+    optimizer_policy_create.add_argument("project")
+    optimizer_policy_create.add_argument("--parameters")
+    optimizer_policy_create.add_argument("--parameters-file")
+    optimizer_policy_create.add_argument("--description")
+    optimizer_policy_create.add_argument("--description-file")
+    optimizer_policy_create.add_argument("--actor", default="human")
+    _set(cmd_optimizer_policy_create, optimizer_policy_create)
+    optimizer_policy_list = optimizer_policy.add_parser("list", help="list policies")
+    optimizer_policy_list.add_argument("--project")
+    optimizer_policy_list.add_argument(
+        "--status", choices=("candidate", "active", "retired")
+    )
+    _set(cmd_optimizer_policy_list, optimizer_policy_list)
+    optimizer_policy_show = optimizer_policy.add_parser("show", help="show one policy")
+    optimizer_policy_show.add_argument("policy_id")
+    _set(cmd_optimizer_policy_show, optimizer_policy_show)
+    optimizer_policy_promote = optimizer_policy.add_parser(
+        "promote", help="make a policy active"
+    )
+    optimizer_policy_promote.add_argument("policy_id")
+    optimizer_policy_promote.add_argument("--actor", default="operator")
+    optimizer_policy_promote.add_argument("--reason")
+    optimizer_policy_promote.add_argument("--reason-file")
+    _set(cmd_optimizer_policy_promote, optimizer_policy_promote)
+    optimizer_policy_rollback = optimizer_policy.add_parser(
+        "rollback", help="restore a prior policy as active"
+    )
+    optimizer_policy_rollback.add_argument("project")
+    optimizer_policy_rollback.add_argument("policy_id")
+    optimizer_policy_rollback.add_argument("--actor", default="operator")
+    optimizer_policy_rollback.add_argument("--reason")
+    optimizer_policy_rollback.add_argument("--reason-file")
+    _set(cmd_optimizer_policy_rollback, optimizer_policy_rollback)
+
+    optimizer_experiment = optimizer.add_parser(
+        "experiment", help="controlled experiment lifecycle"
+    ).add_subparsers(dest="optimizer_experiment_command", required=True)
+    optimizer_experiment_create = optimizer_experiment.add_parser(
+        "create", help="register a hypothesis and A/B protocol"
+    )
+    optimizer_experiment_create.add_argument("name")
+    optimizer_experiment_create.add_argument("project")
+    optimizer_experiment_create.add_argument("control_policy_id")
+    optimizer_experiment_create.add_argument("treatment_policy_id")
+    optimizer_experiment_create.add_argument("--hypothesis")
+    optimizer_experiment_create.add_argument("--hypothesis-file")
+    optimizer_experiment_create.add_argument(
+        "--primary-metric",
+        required=True,
+        choices=(
+            "accepted_success",
+            "delayed_quality_success",
+            "cycles_to_accept",
+            "executor_attempts",
+            "review_attempts",
+            "lead_time_ms",
+            "model_latency_ms",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cost_usd",
+            "escaped_defect_severity",
+        ),
+    )
+    optimizer_experiment_create.add_argument(
+        "--direction", choices=("maximize", "minimize")
+    )
+    optimizer_experiment_create.add_argument("--min-effect", type=float, default=0.0)
+    optimizer_experiment_create.add_argument("--quality-margin", type=float, default=0.05)
+    optimizer_experiment_create.add_argument("--min-samples-per-arm", type=int)
+    optimizer_experiment_create.add_argument("--max-samples-per-arm", type=int)
+    optimizer_experiment_create.add_argument("--exploration-fraction", type=float)
+    optimizer_experiment_create.add_argument("--outcome-horizon-seconds", type=float)
+    optimizer_experiment_create.add_argument("--guardrails")
+    optimizer_experiment_create.add_argument("--guardrails-file")
+    optimizer_experiment_create.add_argument("--metadata")
+    optimizer_experiment_create.add_argument("--metadata-file")
+    optimizer_experiment_create.add_argument(
+        "--auto-promote",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="automatically promote an evidence-backed winner (default: service config)",
+    )
+    optimizer_experiment_create.add_argument("--actor", default="human")
+    _set(cmd_optimizer_experiment_create, optimizer_experiment_create)
+    optimizer_experiment_list = optimizer_experiment.add_parser(
+        "list", help="list experiments"
+    )
+    optimizer_experiment_list.add_argument("--project")
+    optimizer_experiment_list.add_argument(
+        "--state",
+        choices=(
+            "draft",
+            "running",
+            "candidate",
+            "monitoring",
+            "paused",
+            "completed",
+            "rejected",
+            "rolled_back",
+        ),
+    )
+    _set(cmd_optimizer_experiment_list, optimizer_experiment_list)
+    optimizer_experiment_show = optimizer_experiment.add_parser(
+        "show", help="show one experiment"
+    )
+    optimizer_experiment_show.add_argument("experiment_id")
+    _set(cmd_optimizer_experiment_show, optimizer_experiment_show)
+    optimizer_experiment_evidence = optimizer_experiment.add_parser(
+        "evidence", help="show assignments, KPI observations, decisions, and events"
+    )
+    optimizer_experiment_evidence.add_argument("experiment_id")
+    optimizer_experiment_evidence.add_argument("--limit", type=int, default=500)
+    _set(cmd_optimizer_experiment_evidence, optimizer_experiment_evidence)
+    optimizer_experiment_start = optimizer_experiment.add_parser(
+        "start", help="start task assignment"
+    )
+    optimizer_experiment_start.add_argument("experiment_id")
+    optimizer_experiment_start.add_argument("--actor", default="operator")
+    _set(cmd_optimizer_experiment_start, optimizer_experiment_start)
+    for action, handler, help_text in (
+        ("pause", cmd_optimizer_experiment_pause, "pause assignment and release the project slot"),
+        ("promote", cmd_optimizer_experiment_promote, "promote an evidence-backed candidate"),
+    ):
+        action_parser = optimizer_experiment.add_parser(action, help=help_text)
+        action_parser.add_argument("experiment_id")
+        action_parser.add_argument("--actor", default="operator")
+        action_parser.add_argument("--reason")
+        action_parser.add_argument("--reason-file")
+        _set(handler, action_parser)
+    optimizer_experiment_observe = optimizer_experiment.add_parser(
+        "observe", help="refresh one assigned task's KPI projection"
+    )
+    optimizer_experiment_observe.add_argument("experiment_id")
+    optimizer_experiment_observe.add_argument("task_id")
+    _set(cmd_optimizer_experiment_observe, optimizer_experiment_observe)
+    optimizer_experiment_analyze = optimizer_experiment.add_parser(
+        "analyze", help="refresh all assigned tasks and evaluate the protocol"
+    )
+    optimizer_experiment_analyze.add_argument("experiment_id")
+    _set(cmd_optimizer_experiment_analyze, optimizer_experiment_analyze)
 
     mood = sub.add_parser(
         "mood",
