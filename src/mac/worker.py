@@ -2062,17 +2062,21 @@ class MacWorker:
         # to PATH so a system-wide install is also accepted.
         import shutil as _shutil
 
-        hermes_bin = (
-            os.environ.get("MAC_HERMES_BIN")
-            or _shutil.which("mac-hermes")
-            or "mac-hermes"
-        )
+        # `mac-hermes` is the ADAPTER CLI (task/agent ops) and has no oneshot
+        # mode — the original invocation always failed with a usage error and
+        # the reflection fell back to a stub. Use the executor's PROVEN agent
+        # invocation instead: the vendored Hermes runtime via hermes_cli.main
+        # chat, which loads this agent's soul/memory from HERMES_HOME.
+        from mac.task_executor import _hermes_python
+
+        _ = _shutil  # retained import; binary discovery no longer needed
         timeout_s = float(os.environ.get("MAC_REFLECT_TIMEOUT") or "120")
         try:
             env = os.environ.copy()
             env["HERMES_HOME"] = hermes_home
             result = subprocess.run(
-                [hermes_bin, "oneshot", "--query", query],
+                [_hermes_python(), "-m", "hermes_cli.main", "chat",
+                 "--query", query, "--quiet", "--accept-hooks", "--yolo"],
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,

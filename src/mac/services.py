@@ -28,6 +28,9 @@ from mac.agentbus_control import (
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_TOPIC,
     agent_reflection_payload,
+    REFLECT_REQUEST_CONTENT_TYPE,
+    REFLECT_REQUEST_SCHEMA,
+    REFLECT_REQUEST_TOPIC,
     repo_update_payload,
 )
 from mac.models import (
@@ -153,6 +156,7 @@ from mac.review_service import ReviewService, cross_llm_review_problems
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
+from mac.scientific_optimizer import ScientificOptimizerConfig, ScientificOptimizerService
 from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.workflow_runtime import WorkflowRuntime
@@ -1205,6 +1209,14 @@ class ControlPlane:
             get_artifact_by_digest=self.deploy.get_artifact,
             get_environment=self.deploy.get_environment,
             current_deployment=self.deploy.current_deployment,
+        )
+        self.optimizer = ScientificOptimizerService(
+            self.store,
+            self.observability,
+            get_task=self.get_task,
+            task_detail=self.task_detail,
+            list_observability=self.list_observability,
+            config=ScientificOptimizerConfig.from_env(),
         )
         # Event-driven review advancement (opt-in; enabled by the hub's tick
         # wiring). Review-stage transitions used to wait for the next periodic
@@ -3324,6 +3336,11 @@ class ControlPlane:
             task_capabilities,
             normalized_metadata,
         )
+        normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
+            task_id,
+            project,
+            normalized_metadata,
+        )
         created = False
         with self.store.transaction() as conn:
             existing = conn.execute(
@@ -3408,6 +3425,8 @@ class ControlPlane:
                         },
                         conn=conn,
                     )
+                    if optimizer_assignment is not None:
+                        self.optimizer.insert_assignment(conn, optimizer_assignment)
                     created = True
         if (
             created
@@ -4935,6 +4954,66 @@ class ControlPlane:
             min_tasks_per_arm=min_tasks_per_arm,
             min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
         )
+
+    # Scientific optimizer -------------------------------------------------
+
+    def optimizer_status(self) -> JsonDict:
+        return self.optimizer.status()
+
+    def optimizer_tick(self) -> JsonDict:
+        return self.optimizer.tick(trigger="operator")
+
+    def create_scientific_policy(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.optimizer.create_policy(*args, **kwargs)
+
+    def list_scientific_policies(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
+        return self.optimizer.list_policies(*args, **kwargs)
+
+    def get_scientific_policy(self, policy_id: str) -> JsonDict:
+        return self.optimizer.get_policy(policy_id)
+
+    def promote_scientific_policy(self, policy_id: str, **kwargs: Any) -> JsonDict:
+        return self.optimizer.promote_policy(policy_id, **kwargs)
+
+    def rollback_scientific_policy(
+        self, project: str, policy_id: str, **kwargs: Any
+    ) -> JsonDict:
+        return self.optimizer.rollback_policy(project, policy_id, **kwargs)
+
+    def create_scientific_experiment(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.optimizer.create_experiment(*args, **kwargs)
+
+    def list_scientific_experiments(
+        self, *args: Any, **kwargs: Any
+    ) -> List[JsonDict]:
+        return self.optimizer.list_experiments(*args, **kwargs)
+
+    def get_scientific_experiment(self, experiment_id: str) -> JsonDict:
+        return self.optimizer.get_experiment(experiment_id)
+
+    def start_scientific_experiment(
+        self, experiment_id: str, **kwargs: Any
+    ) -> JsonDict:
+        return self.optimizer.start_experiment(experiment_id, **kwargs)
+
+    def pause_scientific_experiment(
+        self, experiment_id: str, **kwargs: Any
+    ) -> JsonDict:
+        return self.optimizer.pause_experiment(experiment_id, **kwargs)
+
+    def promote_scientific_experiment(
+        self, experiment_id: str, **kwargs: Any
+    ) -> JsonDict:
+        return self.optimizer.promote_experiment(experiment_id, **kwargs)
+
+    def observe_scientific_task(
+        self, experiment_id: str, task_id: str
+    ) -> JsonDict:
+        return self.optimizer.observe_task(experiment_id, task_id)
+
+    def analyze_scientific_experiment(self, experiment_id: str) -> JsonDict:
+        self.optimizer.refresh_experiment(experiment_id)
+        return self.optimizer.analyze_experiment(experiment_id, actor="operator")
 
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()
@@ -9816,8 +9895,34 @@ class ControlPlane:
             topic=AGENT_REFLECTION_TOPIC,
             payload=payload,
         )
+        # The inventory above is hub-side bookkeeping — the AGENT's runtime was
+        # never consulted, which made "reflection" a misnomer (the live test
+        # returned a template that failed the ground-truth check). Also forward
+        # a deep reflect request TO the target agent: its worker runs the query
+        # through its own runtime (soul/memory loaded) and publishes the
+        # narrative back to the requester as a second stream.
+        deep_query = (
+            "Reflection request: in under 250 words describe (1) who you are "
+            "per your soul/memory, (2) custom scripts, cron jobs, or local "
+            "automation on YOUR host (~/.hermes and beyond) an operator should "
+            "preserve, (3) anything in your memory worth migrating before the "
+            "hermes runtime is retired. Be specific and factual; name files."
+        )
+        deep = self.publish_agentbus_content(
+            sender_agent_id=recipient_id,
+            recipient_agent_id=agent.id,
+            content_type=REFLECT_REQUEST_CONTENT_TYPE,
+            topic=REFLECT_REQUEST_TOPIC,
+            payload={
+                "schema": REFLECT_REQUEST_SCHEMA,
+                "request_id": request_id or "",
+                "sender_agent_id": recipient_id,
+                "query": deep_query,
+            },
+        )
         return {
             "schema": "mac.agentbus.agent_reflection_publish.v1",
+            "deep_request_stream": deep["stream"],
             "agent_id": agent.id,
             "recipient_agent_id": recipient_id,
             "count": 1,
