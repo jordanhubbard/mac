@@ -4,19 +4,40 @@ import io
 import json
 import sys
 
+import pytest
+
 from mac.cli import main
 
 
-def _run(tmp_path, *args):
+def _run_raw(tmp_path, *args):
     out = io.StringIO()
-    old = sys.stdout
-    sys.stdout = out
+    err = io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
     try:
         rc = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
     finally:
-        sys.stdout = old
+        sys.stdout, sys.stderr = old_out, old_err
     raw = out.getvalue().strip()
-    return rc, json.loads(raw) if raw else None
+    return rc, json.loads(raw) if raw else None, err.getvalue()
+
+
+def _run(tmp_path, *args):
+    rc, payload, _ = _run_raw(tmp_path, *args)
+    return rc, payload
+
+
+def _usage_error(tmp_path, *args):
+    out = io.StringIO()
+    err = io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    try:
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+    return exc.value.code, err.getvalue()
 
 
 def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
@@ -111,3 +132,67 @@ def test_optimizer_cli_status_and_tick(tmp_path):
     rc, report = _run(tmp_path, "optimizer", "tick")
     assert rc == 0
     assert report["status"] == "ok"
+
+
+def test_optimizer_cli_status_rejects_unexpected_arguments(tmp_path):
+    code, err = _usage_error(tmp_path, "optimizer", "status", "extra")
+
+    assert code == 2
+    assert "unrecognized arguments: extra" in err
+
+
+def test_optimizer_cli_tick_rejects_unknown_options(tmp_path):
+    code, err = _usage_error(tmp_path, "optimizer", "tick", "--unknown")
+
+    assert code == 2
+    assert "unrecognized arguments: --unknown" in err
+
+
+def test_optimizer_cli_policy_reports_invalid_parameters(tmp_path):
+    rc, payload, err = _run_raw(
+        tmp_path,
+        "optimizer",
+        "policy",
+        "create",
+        "bad-params",
+        "demo",
+        "--parameters",
+        "[]",
+    )
+
+    assert rc == 1
+    assert payload is None
+    assert "scientific policy parameters must be a JSON object" in err
+
+
+def test_optimizer_cli_experiment_requires_distinct_policies(tmp_path):
+    rc, policy = _run(
+        tmp_path,
+        "optimizer",
+        "policy",
+        "create",
+        "baseline",
+        "demo",
+        "--parameters",
+        "{}",
+    )
+    assert rc == 0
+
+    rc, payload, err = _run_raw(
+        tmp_path,
+        "optimizer",
+        "experiment",
+        "create",
+        "bad-experiment",
+        "demo",
+        policy["id"],
+        policy["id"],
+        "--hypothesis",
+        "A policy cannot be both control and treatment",
+        "--primary-metric",
+        "cycles_to_accept",
+    )
+
+    assert rc == 1
+    assert payload is None
+    assert "control and treatment policies must differ" in err
