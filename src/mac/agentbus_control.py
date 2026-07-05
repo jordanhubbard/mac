@@ -102,14 +102,53 @@ def artifact_publish_payload(
     return payload
 
 
+_REFLECTION_MAX_WORDS = 500
+
+
+def _normalize_narrative(value: Optional[str]) -> Optional[str]:
+    """Return a word-count-bounded narrative string, or None when empty/absent.
+
+    - None or empty/whitespace-only input -> None (field omitted)
+    - Non-empty strings are stripped; if the word count exceeds
+      _REFLECTION_MAX_WORDS the text is truncated at the word boundary and a
+      truncation marker is appended.
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    words = text.split()
+    if len(words) > _REFLECTION_MAX_WORDS:
+        text = " ".join(words[:_REFLECTION_MAX_WORDS]) + " [...]"
+    return text
+
+
 def agent_reflection_payload(
     *,
     agent: JsonDict,
+    narrative: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build an agent-reflection bus payload.
+
+    Parameters
+    ----------
+    agent:
+        Raw agent record dict (inventory fields).
+    narrative:
+        Optional free-text runtime narrative produced by the agent's soul /
+        memory query.  When provided and non-empty the payload gains a
+        top-level ``reflection`` key containing the bounded text (up to
+        _REFLECTION_MAX_WORDS words).  Empty or whitespace-only values are
+        silently dropped so callers may pass an empty string without changing
+        the wire shape.
+    request_id:
+        Optional correlation identifier; included verbatim when truthy.
+    """
     capabilities = list(agent.get("capabilities") or [])
     resources = agent.get("resources") if isinstance(agent.get("resources"), dict) else {}
-    reflection: JsonDict = {
+    agent_inventory: JsonDict = {
         "id": agent.get("id"),
         "name": agent.get("name"),
         "capabilities": capabilities,
@@ -127,7 +166,7 @@ def agent_reflection_payload(
     payload: JsonDict = {
         "schema": AGENT_REFLECTION_SCHEMA,
         "agent_id": agent.get("id"),
-        "agent": reflection,
+        "agent": agent_inventory,
         "summary": "agent %s (%s) is %s/%s; capabilities: %s"
         % (
             agent.get("name") or "",
@@ -137,6 +176,9 @@ def agent_reflection_payload(
             ", ".join(str(item) for item in capabilities) or "none",
         ),
     }
+    normalized = _normalize_narrative(narrative)
+    if normalized is not None:
+        payload["reflection"] = normalized
     if request_id:
         payload["request_id"] = request_id
     return payload

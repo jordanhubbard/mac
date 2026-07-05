@@ -2,39 +2,37 @@
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
   "evidence_type": "repo_change",
-  "task_id": "task_41b9ead80a494905821c21c512f7e698",
+  "task_id": "task_7865ddea55394418850388f5b6f641cc",
   "repo": {
-    "head_sha": "90872554b8ecd1a2c8c87d5cec005a123086a9b3",
-    "base_sha": "3588b0a4d552dfacb91fd887af32fc6116d1e954",
-    "branch": "mac/agent_rocky/task_41b9ead80a494905821c21c512f7e698-lease_f6e784bcfa31403b9f",
-    "dirty": false,
+    "head_sha": "d495c7131dab500b79c8815016713306a37ad053",
+    "base_sha": "a45ba18bb361c64c87063ce1138b8390639e4f01",
+    "branch": "mac/agent_rocky/task_7865ddea55394418850388f5b6f641cc-lease_d384f39502c5409bbf",
+    "dirty": true,
     "pushed": false,
-    "remote_ref": "refs/heads/mac/agent_rocky/task_41b9ead80a494905821c21c512f7e698-lease_f6e784bcfa31403b9f",
-    "remote_url": "git@github.com:jordanhubbard/mac.git",
     "files_changed": [
-      "src/mac/worker.py",
-      "tests/test_deploy_agent_configs.py"
+      "src/mac/agentbus_control.py",
+      "tests/test_agentbus_control.py"
     ]
   },
   "tests": [
     {
-      "name": "contract tests",
-      "command": "scripts/run-contract-tests.sh",
+      "name": "test_agentbus_control (targeted)",
+      "command": ".venv/bin/pytest tests/test_agentbus_control.py -v",
       "returncode": 0,
       "status": "pass",
-      "summary": "all contract tests passed (including new test_hub_env_includes_all_option_c_env_vars)"
+      "summary": "24/24 tests passed — covers inventory-only, narrative-included, empty/whitespace normalization, word-count truncation, backward-compatible summary/request_id, and all wire constants"
     }
   ],
   "checks": [
     {
       "name": "codegraph_audit",
-      "command": "codegraph init && codegraph affected src/mac/worker.py tests/test_deploy_agent_configs.py",
+      "command": "codegraph init && codegraph affected src/mac/agentbus_control.py tests/test_agentbus_control.py",
       "returncode": 0,
       "status": "pass",
       "reason": "affected_computed",
       "relevant_files": [
-        "src/mac/worker.py",
-        "tests/test_deploy_agent_configs.py"
+        "src/mac/agentbus_control.py",
+        "tests/test_agentbus_control.py"
       ]
     }
   ],
@@ -43,23 +41,23 @@
     "status": "pass",
     "reason": "affected_computed",
     "relevant_files": [
-      "src/mac/worker.py",
-      "tests/test_deploy_agent_configs.py"
+      "src/mac/agentbus_control.py",
+      "tests/test_agentbus_control.py"
     ],
     "commands": [
       {
         "argv": ["codegraph", "init"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "Indexed 1,141 files; 36,883 nodes, 121,132 edges in 10.2s"
+        "stdout": "37,314 nodes, 122,586 edges in 10.5s"
       },
       {
-        "argv": ["codegraph", "affected", "src/mac/worker.py", "tests/test_deploy_agent_configs.py"],
+        "argv": ["codegraph", "affected", "src/mac/agentbus_control.py", "tests/test_agentbus_control.py"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "Affected test files (4): src/mac/_hermes/skills/creative/comfyui/tests/"
+        "stdout": "Affected test files (7): src/mac/_hermes/skills/creative/comfyui/tests/ tests/e2e/test_openshell_nemo_relay.py"
       }
     ]
   },
-  "summary": "Verified the full Option C path end-to-end. (1) Confirmed deploy_env.py already sets MAC_REVIEW_HUB_VERIFY=1, MAC_HUB_REVIEWER_AUTO_REGISTER=1, MAC_HUB_REVIEWER_AGENT_NAME=hub-reviewer, MAC_HUB_REVIEWER_AGENT_ID=agent_hub-reviewer for hub nodes via setdefault in the is_hub block. (2) Added dedicated test test_hub_env_includes_all_option_c_env_vars in tests/test_deploy_agent_configs.py that asserts all four Option C env vars are present on hub nodes and absent on spoke nodes. (3) Added a 27-line Option A vs Option C decision comment block in src/mac/worker.py above _repository_finalizer_prepush_problems explaining why Option C was chosen over Option A and documenting all four env vars and the deferred path. (4) All contract tests pass."
+  "summary": "Extended agent_reflection_payload in src/mac/agentbus_control.py to accept an optional narrative parameter. Added _normalize_narrative() helper that returns None for empty/whitespace input and truncates at 500 words (word boundary) with a '[...]' marker. When narrative is non-empty after normalization, payload gains a top-level 'reflection' key; existing 'agent' inventory, 'summary', and 'request_id' fields are fully preserved (backward-compatible). Expanded tests/test_agentbus_control.py from 6 to 24 tests covering: reflect wire-constants, reflect_request/result payloads, _normalize_narrative edge cases (None/empty/whitespace/truncation/exact-cap), inventory-only shape (no reflection key), narrative-included shape, empty/whitespace narrative normalization, overlong-narrative truncation, and whitespace-stripping. All 24 tests pass."
 }
