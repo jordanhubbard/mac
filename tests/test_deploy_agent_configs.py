@@ -2052,6 +2052,49 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert "add_remote_env MAC_DEPLOY_GH_TOKEN" in script
 
 
+def test_hub_env_includes_all_option_c_env_vars(tmp_path):
+    """Option C end-to-end: the hub env must carry all four vars needed for the
+    hub-side review-verification path (MAC_REVIEW_HUB_VERIFY=1 tells the worker
+    to defer the contract test; the other three wire up the auto-registered
+    hub-reviewer agent that runs the test in the hub's own OpenShell sandbox).
+    Spokes must NOT receive any of these vars — they do not run the hub reviewer
+    and must not pretend to."""
+    hub = build_mac_env(
+        {},
+        deploy_env_config(tmp_path, agent="rocky", hub_agent="rocky"),
+        environ={},
+    )
+    # All four required Option C env vars must be present on the hub.
+    assert hub.get("MAC_REVIEW_HUB_VERIFY") == "1", (
+        "MAC_REVIEW_HUB_VERIFY must be '1' on hub nodes (Option C deferred path)"
+    )
+    assert hub.get("MAC_HUB_REVIEWER_AUTO_REGISTER") == "1", (
+        "MAC_HUB_REVIEWER_AUTO_REGISTER must be '1' on hub (auto-registers hub-reviewer agent)"
+    )
+    assert hub.get("MAC_HUB_REVIEWER_AGENT_NAME") == "hub-reviewer", (
+        "MAC_HUB_REVIEWER_AGENT_NAME must be 'hub-reviewer' (stable reviewer agent name)"
+    )
+    assert hub.get("MAC_HUB_REVIEWER_AGENT_ID") == "agent_hub-reviewer", (
+        "MAC_HUB_REVIEWER_AGENT_ID must be 'agent_hub-reviewer' (stable reviewer agent id)"
+    )
+
+    spoke = build_mac_env(
+        {},
+        deploy_env_config(tmp_path, agent="natasha", hub_agent="rocky"),
+        environ={},
+    )
+    # Option C vars must NOT be set on spoke nodes.
+    for var in (
+        "MAC_REVIEW_HUB_VERIFY",
+        "MAC_HUB_REVIEWER_AUTO_REGISTER",
+        "MAC_HUB_REVIEWER_AGENT_NAME",
+        "MAC_HUB_REVIEWER_AGENT_ID",
+    ):
+        assert var not in spoke, (
+            "%s must not be set on spoke nodes (Option C is hub-only)" % var
+        )
+
+
 def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 

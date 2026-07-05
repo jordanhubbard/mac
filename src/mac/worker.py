@@ -5417,6 +5417,31 @@ def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str
     return authed, _redact_git_remote_auth(authed)
 
 
+# --- Option A vs Option C decision ---
+#
+# Option A (original): the worker runs the repository contract test
+# (scripts/run-contract-tests.sh) inside the agent's own OpenShell sandbox
+# before pushing the branch.  The sandbox is per-node and requires a working
+# coding-agent CLI (Claude Code, Codex, Cursor) provisioned on every fleet
+# member.  This turned out to be fragile: per-host sandbox setup variability
+# and CLI auth state caused test runs to fail non-deterministically, stalling
+# the autonomous dispatch→review→merge loop.
+#
+# Option C (current): the worker defers the contract test and pushes the
+# branch immediately.  The hub then runs the test once in its own controlled
+# OpenShell sandbox (the auto-registered hub-reviewer agent) and records the
+# signed verdict.  This concentrates the test-execution environment on a
+# single, operator-managed node (the hub) instead of requiring a clean CLI
+# auth on every spoke, eliminating the per-node variability that caused
+# Option A to stall.  The four env vars that activate this path are:
+#   MAC_REVIEW_HUB_VERIFY=1          — enables deferred mode in the worker
+#   MAC_HUB_REVIEWER_AUTO_REGISTER=1 — hub auto-registers the reviewer agent
+#   MAC_HUB_REVIEWER_AGENT_NAME      — stable name for the hub reviewer
+#   MAC_HUB_REVIEWER_AGENT_ID        — stable id for the hub reviewer
+# All four are set by deploy_env.py for hub nodes only (is_hub=True).
+# The deferred path is detected in _sandbox_repository_verification_item via
+# _hub_verify_deferred_test_item / _is_hub_verify_deferred_item below.
+# ---
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
