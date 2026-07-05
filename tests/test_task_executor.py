@@ -2712,7 +2712,7 @@ def test_maybe_auto_decompose_posts_children_when_hub_present(tmp_path, monkeypa
 def test_maybe_auto_decompose_preserves_symbolic_dependency_graph(tmp_path, monkeypatch):
     manifest = {
         "plan_steps": [
-            {"node_id": "worker", "title": "Change worker"},
+            {"key": "worker", "title": "Change worker"},
             {
                 "node_id": "tests",
                 "title": "Add tests",

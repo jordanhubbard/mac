@@ -831,7 +831,17 @@ class TestParentGatesOnChildren:
     def test_atomic_children_reject_invalid_symbolic_dependencies(self):
         cp = ControlPlane.in_memory()
         parent = cp.create_task(title="Bad plan", description="x")
+        external = cp.create_task(title="Existing prerequisite", description="x")
 
+        with pytest.raises(ValidationError, match="at least one child"):
+            cp.add_child_tasks(parent.id, [])
+        with pytest.raises(ValidationError, match="max_attempts must be >= 1"):
+            cp.add_child_tasks(
+                parent.id,
+                [{"node_id": "bad_attempts", "title": "One", "max_attempts": 0}],
+            )
+        with pytest.raises(ValidationError, match="node_id cannot be blank"):
+            cp.add_child_tasks(parent.id, [{"node_id": " ", "title": "One"}])
         with pytest.raises(ValidationError, match="duplicated"):
             cp.add_child_tasks(
                 parent.id,
@@ -846,6 +856,31 @@ class TestParentGatesOnChildren:
                 [
                     {"node_id": "first", "title": "One", "depends_on": ["later"]},
                     {"node_id": "later", "title": "Two"},
+                ],
+            )
+        with pytest.raises(ValidationError, match="title is required"):
+            cp.add_child_tasks(parent.id, [{"node_id": "untitled", "title": " "}])
+        with pytest.raises(ValidationError, match="conflicting"):
+            cp.add_child_tasks(
+                parent.id,
+                [
+                    {
+                        "node_id": "conflict",
+                        "title": "Conflicting dependency fields",
+                        "dependencies": [external.id],
+                        "depends_on": [],
+                    }
+                ],
+            )
+        with pytest.raises(ValidationError, match="cannot depend on its parent"):
+            cp.add_child_tasks(
+                parent.id,
+                [
+                    {
+                        "node_id": "parent_dep",
+                        "title": "Invalid parent dependency",
+                        "depends_on": [parent.id],
+                    }
                 ],
             )
 
