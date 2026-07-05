@@ -7193,6 +7193,96 @@ def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
     ]
 
 
+def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
+    task = cp.create_task(
+        "exhausted blocked attempt with salvage",
+        required_capabilities=["python"],
+        max_attempts=2,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {
+            "reason": "heartbeat_offline",
+            "branch": "mac/agent/task",
+            "recorded_lessons": ["memory-1"],
+        },
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (2, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert failed.metadata["failure_class"] == "environment"
+    assert failed.metadata["salvage"]["pushed_branch"] == "mac/agent/task"
+    assert failed.metadata["salvage"]["recorded_lessons"] == ["memory-1"]
+    assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
+
+
+def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):
+    task = cp.create_task(
+        "superseded blocked attempt",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "superseded"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    cancelled = cp.get_task(task.id)
+    assert cancelled.state == TaskState.CANCELLED.value
+    assert cancelled.metadata["failure_class"] == "superseded"
+    assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
+    assert task.id not in {item["id"] for item in result["dead_letters"]}
+    transition = [
+        event
+        for event in cp.task_history(task.id)
+        if event.event_type == "task.transitioned"
+    ][-1]
+    assert transition.to_state == TaskState.CANCELLED.value
+    assert transition.detail["reason"] == "superseded"
+
+
+def test_claim_exhausted_attempt_records_failure_class(cp):
+    agent = register_agent(cp, capabilities=["python"])
+    task = cp.create_task(
+        "claim exhausted attempt",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "verification_contract_failed"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, attempt_count = ?, updated_at = ? WHERE id = ?",
+        (TaskState.OPEN.value, 1, utcnow(), task.id),
+    )
+
+    with pytest.raises(TransitionError):
+        cp.claim_task(task.id, agent.id)
+
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert failed.metadata["failure_class"] == "work"
+
+
 @pytest.mark.parametrize(
     "diagnosis",
     [

@@ -33,6 +33,7 @@ from mac.agentbus_control import (
     REFLECT_REQUEST_TOPIC,
     repo_update_payload,
 )
+from mac.attempt_failure_classifier import classify_attempt_failure
 from mac.models import (
     Agent,
     AgentProvisioningRequest,
@@ -6512,7 +6513,11 @@ class ControlPlane:
         if not self._agent_available_for(agent, task):
             raise ValidationError("agent %s cannot claim task %s" % (agent_id, task_id))
         if task.attempt_count >= task.max_attempts:
-            self.transition_task(task_id, TaskState.FAILED.value, "dispatcher", {"reason": "max attempts"})
+            target_state, detail = self._exhausted_attempt_terminal_transition(
+                task,
+                {"reason": "max attempts"},
+            )
+            self.transition_task(task_id, target_state, "dispatcher", detail)
             raise TransitionError("task %s exhausted max_attempts" % task_id)
         now = utcnow()
         expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat(timespec="microseconds")
@@ -12525,6 +12530,57 @@ class ControlPlane:
             }
         return False
 
+    def _merge_attempt_failure_salvage_metadata(
+        self,
+        existing: Any,
+        derived: Mapping[str, Any],
+    ) -> JsonDict:
+        merged = dict(existing) if isinstance(existing, Mapping) else {}
+        for key, value in derived.items():
+            if value in (None, "", [], {}):
+                continue
+            if key in {"recorded_lessons", "published_children"}:
+                current = _metadata_string_list(merged.get(key))
+                for item in _metadata_string_list(value):
+                    if item not in current:
+                        current.append(item)
+                if current:
+                    merged[key] = current
+                continue
+            merged.setdefault(key, value)
+        return merged
+
+    def _record_attempt_failure_classification(self, task: Task) -> Tuple[str, JsonDict]:
+        history = [event.to_dict() for event in self.task_history(task.id, limit=100)]
+        classification = classify_attempt_failure(history)
+        metadata = ensure_json_object(task.metadata)
+        metadata["failure_class"] = classification.failure_class
+        if classification.salvage:
+            metadata["salvage"] = self._merge_attempt_failure_salvage_metadata(
+                metadata.get("salvage"),
+                classification.salvage,
+            )
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), task.id),
+        )
+        return classification.failure_class, dict(classification.salvage)
+
+    def _exhausted_attempt_terminal_transition(
+        self,
+        task: Task,
+        detail: Mapping[str, Any],
+    ) -> Tuple[str, JsonDict]:
+        failure_class, salvage = self._record_attempt_failure_classification(task)
+        transition_detail = dict(detail)
+        transition_detail["failure_class"] = failure_class
+        if salvage:
+            transition_detail["salvage"] = salvage
+        if failure_class == "superseded":
+            transition_detail["reason"] = "superseded"
+            return TaskState.CANCELLED.value, transition_detail
+        return TaskState.FAILED.value, transition_detail
+
     def _blocked_attempt_retry_backoff_seconds(self, task: Task) -> int:
         per_attempt = _int_env(
             "MAC_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS",
@@ -12637,17 +12693,21 @@ class ControlPlane:
             "ready_at": ready_at,
         }
         if task.attempt_count >= task.max_attempts:
-            failed = self.transition_task(
-                task.id,
-                TaskState.FAILED.value,
-                "dispatcher.tick",
+            target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
+                task,
                 {
                     **base_detail,
                     "via": "auto_retry_exhausted",
                     "reason": "max attempts",
                 },
             )
-            return None, failed
+            exhausted = self.transition_task(
+                task.id,
+                target_state,
+                "dispatcher.tick",
+                exhausted_detail,
+            )
+            return None, exhausted
         detail = {
             **base_detail,
             "reason": "blocked attempt retry backoff elapsed",
