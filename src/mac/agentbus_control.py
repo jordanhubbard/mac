@@ -36,6 +36,14 @@ DEBUG_TERMINAL_OUTPUT_SCHEMA = "mac.agentbus.debug_terminal_output.v1"
 DEBUG_TERMINAL_OUTPUT_TOPIC = "mac.debug.terminal.output.v1"
 DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE = "application/vnd.mac.debug-terminal-output+json"
 
+REFLECT_REQUEST_SCHEMA = "mac.agentbus.reflect_request.v1"
+REFLECT_REQUEST_TOPIC = "mac.reflect.request.v1"
+REFLECT_REQUEST_CONTENT_TYPE = "application/vnd.mac.reflect-request+json"
+
+REFLECT_RESULT_SCHEMA = "mac.agentbus.reflect_result.v1"
+REFLECT_RESULT_TOPIC = "mac.reflect.result.v1"
+REFLECT_RESULT_CONTENT_TYPE = "application/vnd.mac.reflect-result+json"
+
 
 def repo_update_payload(
     *,
@@ -111,6 +119,38 @@ def hermes_config_apply_payload(
     if request_id:
         message["request_id"] = request_id
     return message
+
+
+def reflect_request_payload(
+    *,
+    sender_agent_id: str,
+    query: str,
+    request_id: Optional[str] = None,
+) -> JsonDict:
+    payload: JsonDict = {
+        "schema": REFLECT_REQUEST_SCHEMA,
+        "sender_agent_id": sender_agent_id,
+        "query": query,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
+def reflect_result_payload(
+    *,
+    request_id: str,
+    agent_id: str,
+    response: str,
+    word_count: int,
+) -> JsonDict:
+    return {
+        "schema": REFLECT_RESULT_SCHEMA,
+        "request_id": request_id,
+        "agent_id": agent_id,
+        "response": response,
+        "word_count": int(word_count),
+    }
 
 
 def debug_terminal_open_payload(
