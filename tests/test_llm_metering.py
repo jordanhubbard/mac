@@ -99,6 +99,119 @@ def test_non_stream_observation_unchanged():
     assert observed[0]["usage"]["total_tokens"] == 3
 
 
+# ---------------------------------------------------------------------------
+# Contract: llm.route event token fields (input_tokens / output_tokens /
+# total_tokens) — the basis for real cost accounting and runaway-task detection.
+# ---------------------------------------------------------------------------
+
+
+def test_non_stream_proxied_completion_stamps_token_fields():
+    """Proxied (non-streaming) completion with a usage block must produce an
+    llm.route event with input_tokens, output_tokens, total_tokens set at the
+    top level, not only buried under the nested usage dict."""
+    observed = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 200, {
+            "model": "m",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125},
+        }
+
+    proxy = ProviderProxy(_router(), fwd, default_model="m", route_observer=observed.append)
+    status, _ = proxy.complete("/chat/completions", {"model": "*"})
+    assert status == 200
+    assert len(observed) == 1
+    ev = observed[0]
+    # Top-level canonical token fields must be present and correct.
+    assert ev.get("input_tokens") == 100, "input_tokens missing from llm.route event"
+    assert ev.get("output_tokens") == 25, "output_tokens missing from llm.route event"
+    assert ev.get("total_tokens") == 125, "total_tokens missing from llm.route event"
+    # Nested usage dict is still preserved for back-compat.
+    assert ev["usage"]["prompt_tokens"] == 100
+
+
+def test_streamed_proxied_completion_stamps_token_fields():
+    """Streaming proxied completion whose terminal usage frame carries token
+    counts must produce an llm.route event with input_tokens, output_tokens,
+    total_tokens populated at the top level."""
+    observed = []
+    usage_frame = (
+        b'data: {"choices":[],"usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60}}\n\n'
+    )
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 200, iter([b"data: {}\n\n", usage_frame, b"data: [DONE]\n\n"])
+
+    proxy = ProviderProxy(
+        _router(),
+        fwd,
+        stream_forward_fn=fwd,
+        default_model="m",
+        route_observer=observed.append,
+    )
+    status, stream = proxy.stream_complete("/chat/completions", {"model": "*", "stream": True})
+    assert status == 200
+    b"".join(stream)  # consume stream to trigger observation
+    assert len(observed) == 1
+    ev = observed[0]
+    assert ev.get("input_tokens") == 50, "input_tokens missing from streamed llm.route event"
+    assert ev.get("output_tokens") == 10, "output_tokens missing from streamed llm.route event"
+    assert ev.get("total_tokens") == 60, "total_tokens missing from streamed llm.route event"
+    # stream_no_usage must NOT be set when usage was available.
+    assert not ev.get("stream_no_usage")
+
+
+def test_streamed_proxied_completion_records_null_when_no_usage_frame():
+    """Streaming proxied completion whose upstream does not send a usage frame
+    must record null token fields (not omit them) so consumers can distinguish
+    'no usage metered' from 'zero tokens used'."""
+    observed = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 200, iter([b"data: {}\n\n", b"data: [DONE]\n\n"])
+
+    proxy = ProviderProxy(
+        _router(),
+        fwd,
+        stream_forward_fn=fwd,
+        default_model="m",
+        route_observer=observed.append,
+    )
+    status, stream = proxy.stream_complete("/chat/completions", {"model": "*", "stream": True})
+    assert status == 200
+    b"".join(stream)
+    assert len(observed) == 1
+    ev = observed[0]
+    # Fields must be present (not missing) but null.
+    assert "input_tokens" in ev, "input_tokens key must be present even when null"
+    assert "output_tokens" in ev, "output_tokens key must be present even when null"
+    assert "total_tokens" in ev, "total_tokens key must be present even when null"
+    assert ev["input_tokens"] is None
+    assert ev["output_tokens"] is None
+    assert ev["total_tokens"] is None
+    assert ev.get("stream_no_usage") is True
+
+
+def test_anthropic_style_usage_keys_mapped_correctly():
+    """Some upstreams (Anthropic native) return input_tokens/output_tokens
+    directly instead of the OpenAI prompt_tokens/completion_tokens convention.
+    The router must map both to the canonical top-level fields."""
+    observed = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        return 200, {
+            "model": "claude",
+            "usage": {"input_tokens": 30, "output_tokens": 7, "total_tokens": 37},
+        }
+
+    proxy = ProviderProxy(_router(), fwd, default_model="claude", route_observer=observed.append)
+    proxy.complete("/chat/completions", {"model": "*"})
+    ev = observed[0]
+    assert ev.get("input_tokens") == 30
+    assert ev.get("output_tokens") == 7
+    assert ev.get("total_tokens") == 37
+
+
 # --- client-side attribution (vendored hermes) ------------------------------
 
 

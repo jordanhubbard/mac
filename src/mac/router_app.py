@@ -660,13 +660,16 @@ class ProviderProxy:
             # usage and the real duration (previously duration_ms measured
             # stream START, and streamed usage was never captured at all).
             def _emit(usage: Optional[Dict[str, Any]]) -> None:
+                # Always pass a body dict so _emit_route_observation can stamp
+                # token fields even when the stream provided no usage frame
+                # (usage=None → fields recorded as null, "stream_no_usage" set).
                 self._emit_route_observation(
                     path=path,
                     payload=payload,
                     resolved_model=resolved_model,
                     provider=provider,
                     status=int(status),
-                    body={"usage": usage} if usage else None,
+                    body={"usage": usage, "_stream": True},
                     started=started,
                     route_context=route_context,
                     attempts=attempts,
@@ -734,12 +737,35 @@ class ProviderProxy:
             if response_model:
                 detail["response_model"] = str(response_model)
             usage = body.get("usage")
+            is_stream = body.get("_stream", False)
             if isinstance(usage, dict):
-                detail["usage"] = {
+                filtered_usage = {
                     str(k): v
                     for k, v in usage.items()
                     if isinstance(v, (int, float)) and not isinstance(v, bool)
                 }
+                detail["usage"] = filtered_usage
+                # Stamp canonical token fields at the top level so downstream
+                # consumers (cost accounting, runaway-task detection) can read
+                # them without knowing the upstream's exact usage key names.
+                # OpenAI convention: prompt_tokens / completion_tokens;
+                # Anthropic convention: input_tokens / output_tokens.
+                detail["input_tokens"] = filtered_usage.get(
+                    "input_tokens",
+                    filtered_usage.get("prompt_tokens"),
+                )
+                detail["output_tokens"] = filtered_usage.get(
+                    "output_tokens",
+                    filtered_usage.get("completion_tokens"),
+                )
+                detail["total_tokens"] = filtered_usage.get("total_tokens")
+            elif is_stream:
+                # Streaming response with no terminal usage frame — record null
+                # so consumers can distinguish "metered at zero" from "not metered".
+                detail["input_tokens"] = None
+                detail["output_tokens"] = None
+                detail["total_tokens"] = None
+                detail["stream_no_usage"] = True
         try:
             self._route_observer(detail)
         except Exception:  # noqa: BLE001 - observability must not break inference
