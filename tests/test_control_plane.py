@@ -10462,3 +10462,192 @@ def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
     assert not any(
         event.name == "task.timeout_requeued_as_plan" for event in observations
     ), "timeout_requeued_as_plan must not be re-emitted when plan_first was already set"
+
+
+# ---------------------------------------------------------------------------
+# Deferred executor evidence → hub verify: approved and rejected paths
+# ---------------------------------------------------------------------------
+
+
+def _deferred_repo_metadata(cp, agent_id):
+    """Build signed executor evidence where the test item is the deferred
+    hub-verify sentinel (status='deferred', execution_environment='hub_verify_pending').
+    This mirrors what the worker emits when MAC_REVIEW_HUB_VERIFY=1 and no
+    mac-sandbox-verification.json is present."""
+    relevant_files = codegraph_relevant_files(["src/feature.py"])
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {
+            "head_sha": "b" * 40,
+            "pushed": True,
+            "remote_ref": "refs/heads/task/deferred-hub",
+            "dirty": False,
+            "files_changed": ["src/feature.py"],
+        },
+        "tests": [
+            {
+                "name": "repository contract test",
+                "command": "scripts/run-contract-tests.sh",
+                "returncode": None,
+                "status": "deferred",
+                "execution_environment": "hub_verify_pending",
+                "stdout": "",
+                "stderr": "",
+            }
+        ],
+    }
+    if relevant_files:
+        manifest["codegraph"] = {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "test_fixture",
+            "relevant_files": relevant_files,
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        }
+    manifest = _sign(cp, agent_id, manifest)
+    return {"returncode": 0, "verification": manifest}
+
+
+def _setup_deferred_hubverify_task(cp, runner):
+    """Like _setup_hubverify_task but the executor evidence carries a deferred
+    test item, exercising the path where the hub runs the contract test on behalf
+    of the executor after the branch is already pushed."""
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Implement with deferred hub verify",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://publish",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "git@github.com:org/repo.git"
+                }
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://worker-result", "tests deferred to hub", worker.id,
+        metadata=_deferred_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp._hub_verify_runner = runner
+    return worker, reviewer, task, evidence
+
+
+def test_hub_verify_deferred_executor_evidence_approves_and_publishes(cp, monkeypatch):
+    """Approved path: when the executor evidence carries a deferred test item
+    (status='deferred', hub_verify_pending), hub verify must still run the
+    contract test and, on success, approve and publish the task.
+
+    This exercises the full end-to-end pipeline:
+      executor pushes with deferred evidence → hub verify detects deferred item
+      → hub runs contract test → approved verdict → publication."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    seen = []
+    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
+        cp,
+        lambda remote, branch, head, cmd: (seen.append((remote, branch)) or (0, "all passed")),
+    )
+
+    # The deferred evidence must be accepted by the assessment layer.
+    assessment = cp._assess_default_review_evidence(task, evidence)
+    assert assessment["valid"] is True, (
+        "Deferred test evidence must be accepted when MAC_REVIEW_HUB_VERIFY=1; "
+        "problems: %s" % assessment.get("problems")
+    )
+    assert assessment.get("hub_verify_deferred") is True
+
+    # Advance the review workflow: hub verify should run and approve.
+    statuses = [
+        cp.advance_default_review_workflow(task.id)["status"],
+        cp.advance_default_review_workflow(task.id)["status"],
+    ]
+    assert "published" in statuses, (
+        "Hub verify on deferred evidence must eventually publish; got: %s" % statuses
+    )
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    reviews = cp.list_reviews(task.id)
+    assert reviews[0].status == ReviewStatus.APPROVED.value
+
+    # Hub ran the contract test against the pushed branch.
+    assert seen, "hub verify runner must have been called"
+    assert seen[0][0] == "git@github.com:org/repo.git"
+
+    obs_names = {ev.name for ev in cp.list_observability(limit=80)}
+    assert "workflow.default_review.hub_verified" in obs_names
+    assert "workflow.default_review.published" in obs_names
+
+
+def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monkeypatch):
+    """Rejected path: when the executor evidence carries a deferred test item
+    but the hub contract test fails (non-zero returncode), the workflow must
+    reject the review — nothing is published."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
+        cp,
+        lambda remote, branch, head, cmd: (1, "4 failed, 1 passed"),
+    )
+
+    cp.advance_default_review_workflow(task.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    # A failing contract test on deferred evidence yields a rejected verdict.
+    assert result["status"] not in {"published"}, (
+        "Hub verify must reject when the contract test fails; got status: %s" % result["status"]
+    )
+    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
+    reviews = cp.list_reviews(task.id)
+    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert not cp.list_publications(task.id)
+
+
+def test_hub_verify_deferred_merge_blocked_while_pending_unblocks_on_approved(cp, monkeypatch):
+    """Regression gate: when hub verify is running (no verdict yet in this tick),
+    the workflow MUST return waiting_for_hub_verify — merge is gated.
+    Once the hub produces an approved verdict, a subsequent advance call
+    transitions to published.
+
+    This confirms that the deferred-sentinel path does not bypass the blocking
+    guard that prevents premature publication."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+
+    # Phase 1: runner raises to simulate hub verify in-flight (not done yet).
+    def always_raises(*args):
+        raise RuntimeError("hub verify sandbox not ready")
+
+    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(cp, always_raises)
+
+    # First advance: review is assigned, hub verify raises, blocking guard fires.
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "waiting_for_hub_verify", (
+        "Merge must be blocked while hub verify is pending; got: %s" % result["status"]
+    )
+    # Review must still be pending — no spurious approval or retraction.
+    pending = cp.list_reviews(task.id)
+    assert pending and pending[0].status == ReviewStatus.PENDING.value
+
+    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
+    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
+
+    # Phase 2: swap in a successful runner (hub verify completes).
+    cp._hub_verify_runner = lambda remote, branch, head, cmd: (0, "all passed")
+
+    # Subsequent advance must approve and publish.
+    statuses = [
+        cp.advance_default_review_workflow(task.id)["status"],
+        cp.advance_default_review_workflow(task.id)["status"],
+    ]
+    assert "published" in statuses, (
+        "After hub verify approves, advance must publish; got: %s" % statuses
+    )
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    final_reviews = cp.list_reviews(task.id)
+    assert final_reviews[0].status == ReviewStatus.APPROVED.value

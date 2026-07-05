@@ -368,3 +368,89 @@ def test_run_git_timeout_fallbacks(monkeypatch, tmp_path) -> None:
     worker._run_git_in(tmp_path, ["clone", "x"])
     assert calls[0][1]["timeout"] == 120.0
     assert calls[1][1]["timeout"] == 120.0
+
+
+# ---------------------------------------------------------------------------
+# hub-verify deferred mode: _repository_finalizer_prepush_problems
+# ---------------------------------------------------------------------------
+
+
+def _valid_repo(sha: str = "a" * 40) -> dict:
+    """Minimal repo snapshot that passes all structural prepush checks."""
+    return {
+        "head_sha": sha,
+        "dirty": False,
+        "files_changed": ["src/feature.py"],
+    }
+
+
+def test_finalizer_prepush_no_problems_when_hub_verify_and_deferred_item() -> None:
+    """When MAC_REVIEW_HUB_VERIFY=1 and the test item is the deferred sentinel,
+    _repository_finalizer_prepush_problems must return NO test-failure problems.
+    The hub finalizer will run the contract test after the branch is pushed; the
+    worker must not block on a missing local test result."""
+    deferred_item = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
+    assert worker._is_hub_verify_deferred_item(deferred_item)
+
+    problems = worker._repository_finalizer_prepush_problems(
+        {},
+        _valid_repo(),
+        deferred_item,
+        hub_verify=True,
+    )
+    test_gate_problems = [p for p in problems if "passing test" in p]
+    assert not test_gate_problems, (
+        "hub-verify deferred mode must skip the passing-test gate; "
+        "got unexpected problems: %s" % test_gate_problems
+    )
+
+
+def test_finalizer_prepush_blocks_when_hub_verify_off_and_no_sandbox_result(tmp_path) -> None:
+    """Option A (MAC_REVIEW_HUB_VERIFY unset): when no mac-sandbox-verification.json
+    is present, the sandbox helper returns None → caller falls back to running the
+    contract test locally.  If the local run also fails, the prepush gate must block
+    with a test-failure problem."""
+    # Simulate a failing/missing local test by building a fail-status item directly.
+    fail_item = {
+        "name": "repository contract test",
+        "command": "scripts/run-contract-tests.sh",
+        "returncode": 1,
+        "status": "fail",
+        "stdout": "",
+        "stderr": "3 failed",
+    }
+    problems = worker._repository_finalizer_prepush_problems(
+        {},
+        _valid_repo(),
+        fail_item,
+        hub_verify=False,
+    )
+    assert any("passing test" in p for p in problems), (
+        "Option A: a failing test item must produce a blocking problem when hub_verify=False; "
+        "got problems: %s" % problems
+    )
+
+
+def test_sandbox_repository_verification_item_returns_deferred_when_hub_verify_and_no_file(
+    tmp_path,
+) -> None:
+    """_sandbox_repository_verification_item must return the deferred sentinel when
+    hub_verify=True and mac-sandbox-verification.json is absent — not None."""
+    command = "scripts/run-contract-tests.sh"
+    item = worker._sandbox_repository_verification_item(tmp_path, command, hub_verify=True)
+    assert item is not None, "expected deferred sentinel, got None"
+    assert worker._is_hub_verify_deferred_item(item), (
+        "expected deferred sentinel, got: %s" % item
+    )
+    assert item["command"] == command
+
+
+def test_sandbox_repository_verification_item_returns_none_when_hub_verify_off_and_no_file(
+    tmp_path,
+) -> None:
+    """Option A: with hub_verify=False and no sandbox file, the helper returns None
+    so the worker falls back to running the contract test locally."""
+    item = worker._sandbox_repository_verification_item(
+        tmp_path, "scripts/run-contract-tests.sh", hub_verify=False
+    )
+    assert item is None, "Option A: expected None when no sandbox file and hub_verify=False"

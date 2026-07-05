@@ -83,6 +83,7 @@ def worker_main(monkeypatch):
     monkeypatch.delenv("MAC_TOKEN", raising=False)
     monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_AGENT_ID", raising=False)
     return clients
 
 
