@@ -14,11 +14,15 @@ registration. The snapshot shape::
     {"os": "linux", "arch": "aarch64", "cpu_count": 20, "memory_mb": 122000,
      "accelerator": "cuda",                       # cuda | metal | none
      "gpu": {"accelerator": "cuda", "name": "NVIDIA GB10", "vram_mb": 122000,
-             "shared": True, "count": 1}}
+             "shared": True, "count": 1},
+     "gpus": [{"index": 0, "accelerator": "cuda", "name": "NVIDIA GB10",
+               "shared": True,
+               "memory": {"type": "unified", "shared_mb": 122000}}]}
 
 Unified-memory GPUs (GB10, Apple Silicon) share system memory; they are
-reported with ``shared=True`` and ``vram_mb`` set to the total system memory so
-the hub can still reason about available memory capacity.
+reported with ``shared=True`` and a structured ``memory.type`` of ``unified``.
+When system memory is measurable, the compatibility ``vram_mb`` field is set to
+that capacity so existing route filters can still reason about usable memory.
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ SCHEMA = "mac.hardware.v1"
 # GPU names that indicate unified / shared memory (no dedicated VRAM).
 # These parts report [N/A] for memory.total in nvidia-smi.
 _UNIFIED_MEMORY_SUBSTRINGS = ("GB10",)
+_NVIDIA_UNAVAILABLE_MEMORY_VALUES = ("", "N/A", "[N/A]")
 
 
 def _run(cmd: list, timeout: float = 5.0) -> Optional[str]:
@@ -69,60 +74,109 @@ def _is_unified_memory_gpu(name: str) -> bool:
     return any(s.upper() in name_upper for s in _UNIFIED_MEMORY_SUBSTRINGS)
 
 
+def _parse_nvidia_vram_mb(value: str) -> Optional[int]:
+    """Parse nvidia-smi memory.total output in MiB, or None when unavailable."""
+    cleaned = value.strip()
+    if cleaned.upper() in _NVIDIA_UNAVAILABLE_MEMORY_VALUES:
+        return None
+    if cleaned.lower().endswith("mib"):
+        cleaned = cleaned[:-3].strip()
+    try:
+        return int(float(cleaned))
+    except ValueError:
+        return None
+
+
+def _unified_memory(shared_memory_mb: int) -> Dict[str, Any]:
+    memory: Dict[str, Any] = {"type": "unified"}
+    if shared_memory_mb:
+        memory["shared_mb"] = shared_memory_mb
+    return memory
+
+
+def _dedicated_memory(vram_mb: int) -> Dict[str, Any]:
+    return {"type": "dedicated", "vram_mb": vram_mb}
+
+
+def _gpu_capacity_mb(gpu: Dict[str, Any]) -> int:
+    memory = gpu.get("memory") if isinstance(gpu.get("memory"), dict) else {}
+    if memory.get("type") == "unified":
+        return int(memory.get("shared_mb") or gpu.get("vram_mb") or 0)
+    return int(memory.get("vram_mb") or gpu.get("vram_mb") or 0)
+
+
+def _legacy_gpu_summary(gpus: list[Dict[str, Any]]) -> Dict[str, Any]:
+    first = dict(gpus[0])
+    first["count"] = len(gpus)
+    capacity_mb = _gpu_capacity_mb(first)
+    if capacity_mb:
+        first["vram_mb"] = capacity_mb
+    return first
+
+
+def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, Any]]:
+    # Current probe shape is index,memory.total,name. Keep memory,total fallback
+    # parsing so older fixtures and manually captured output remain readable.
+    fields = [field.strip() for field in row.split(",", 2)]
+    if len(fields) == 3:
+        index_field, memory_field, name = fields
+    elif len(fields) == 2:
+        index_field, memory_field, name = str(fallback_index), fields[0], fields[1]
+    else:
+        return None
+
+    try:
+        index = int(index_field)
+    except ValueError:
+        index = fallback_index
+
+    name = name or "NVIDIA GPU"
+    memory_unavailable = memory_field.strip().upper() in _NVIDIA_UNAVAILABLE_MEMORY_VALUES
+    vram_mb = _parse_nvidia_vram_mb(memory_field)
+    unified = _is_unified_memory_gpu(name) or memory_unavailable
+    gpu: Dict[str, Any] = {"index": index, "accelerator": "cuda", "name": name}
+    if unified:
+        shared_memory_mb = _memory_mb()
+        gpu["shared"] = True
+        gpu["memory"] = _unified_memory(shared_memory_mb)
+        if shared_memory_mb:
+            gpu["vram_mb"] = shared_memory_mb
+    elif vram_mb:
+        gpu["vram_mb"] = vram_mb
+        gpu["memory"] = _dedicated_memory(vram_mb)
+    else:
+        gpu["memory"] = {"type": "unknown"}
+    return gpu
+
+
 def detect_nvidia() -> Optional[Dict[str, Any]]:
     """CUDA GPU via nvidia-smi.  Queries all GPUs in one call.
 
-    Uses ``--query-gpu=memory.total,name`` (memory first so the name field may
-    contain commas without ambiguity).  Each CSV row represents one physical GPU.
+    Uses ``--query-gpu=index,memory.total,name`` (name last so it may contain
+    commas without ambiguity).  Each CSV row represents one physical GPU.
 
     Unified-memory parts (e.g. GB10) report ``[N/A]`` for ``memory.total``; we
-    mark them with ``shared=True`` and use system memory for ``vram_mb`` so the
-    hub has a meaningful capacity figure.
+    mark them with ``shared=True`` and structured unified-memory metadata.
     """
     out = _run([
         "nvidia-smi",
-        "--query-gpu=memory.total,name",
+        "--query-gpu=index,memory.total,name",
         "--format=csv,noheader,nounits",
     ])
     rows = [r.strip() for r in (out or "").splitlines() if r.strip()]
     if not rows:
         return None
 
-    # Parse first row to determine GPU type; all rows should be the same GPU
-    # family for a homogeneous host, but count is always total rows.
-    first = rows[0]
-    # memory.total is the first field; name is everything after the first comma
-    comma_idx = first.find(",")
-    if comma_idx == -1:
+    gpus = [
+        gpu
+        for idx, row in enumerate(rows)
+        for gpu in [_parse_nvidia_gpu_row(row, idx)]
+        if gpu is not None
+    ]
+    if not gpus:
         return None
-    mem_field = first[:comma_idx].strip()
-    name = first[comma_idx + 1:].strip()
-
-    if not name:
-        name = "NVIDIA GPU"
-
-    # Determine VRAM.  Unified-memory GPUs report "[N/A]" for memory.total.
-    unified = _is_unified_memory_gpu(name)
-    vram_mb: int
-    if unified or mem_field.upper() in ("[N/A]", "N/A", ""):
-        # Shared unified memory: report system RAM as vram_mb and flag shared.
-        vram_mb = _memory_mb()
-        shared = True
-    else:
-        try:
-            vram_mb = int(float(mem_field))
-        except ValueError:
-            vram_mb = 0
-        shared = False
-
-    result: Dict[str, Any] = {
-        "accelerator": "cuda",
-        "name": name,
-        "vram_mb": vram_mb,
-        "count": len(rows),
-    }
-    if shared:
-        result["shared"] = True
+    result = _legacy_gpu_summary(gpus)
+    result["gpus"] = gpus
     return result
 
 
@@ -131,7 +185,19 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         return None
     chip = _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "Apple Silicon"
-    return {"accelerator": "metal", "name": chip, "vram_mb": 0, "count": 1}
+    memory_mb = _memory_mb()
+    gpu: Dict[str, Any] = {
+        "index": 0,
+        "accelerator": "metal",
+        "name": chip,
+        "shared": True,
+        "memory": _unified_memory(memory_mb),
+    }
+    if memory_mb:
+        gpu["vram_mb"] = memory_mb
+    result = _legacy_gpu_summary([gpu])
+    result["gpus"] = [gpu]
+    return result
 
 
 def detect_hardware() -> Dict[str, Any]:
@@ -150,6 +216,8 @@ def detect_hardware() -> Dict[str, Any]:
         gpu = None
     if gpu:
         info["gpu"] = gpu
+        if isinstance(gpu.get("gpus"), list):
+            info["gpus"] = gpu["gpus"]
         info["accelerator"] = gpu.get("accelerator", "none")
     return info
 
@@ -162,7 +230,7 @@ def summarize(hardware: Optional[Dict[str, Any]]) -> str:
     gpu = hardware.get("gpu") if isinstance(hardware.get("gpu"), dict) else None
     parts = []
     if gpu:
-        vram = gpu.get("vram_mb") or 0
+        vram = _gpu_capacity_mb(gpu)
         count = gpu.get("count") or 1
         shared = gpu.get("shared", False)
         label = "%s x%d" % (gpu.get("name", "GPU"), count) if count > 1 else str(gpu.get("name", "GPU"))
