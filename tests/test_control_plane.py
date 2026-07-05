@@ -9965,6 +9965,38 @@ def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
     assert calls == []
 
 
+def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    calls = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda *a: calls.append(a) or (0, "ok"),
+    )
+    review = cp.request_review(task.id, reviewer.id)
+
+    first = cp._run_hub_review_verification(task, review, evidence, "test")
+    assert first is not None
+    second = cp._run_hub_review_verification(task, review, evidence, "test")
+
+    assert second is not None and second.id == first.id
+    cp.submit_review(
+        review.id,
+        ReviewStatus.APPROVED.value,
+        reviewer.id,
+        evidence_id=first.id,
+    )
+    cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=evidence.id)
+    after_completion = cp._run_hub_review_verification(
+        task, review, evidence, "test"
+    )
+
+    assert after_completion is not None and after_completion.id == first.id
+    assert len(calls) == 1
+    hub_verified = [
+        item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")
+    ]
+    assert [item.id for item in hub_verified] == [first.id]
+
+
 def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):
     """The tar-uploaded repo can be owned by a different uid than the sandbox
     user, and HOME=/tmp means no safe.directory whitelist exists — without the
@@ -10168,4 +10200,3 @@ def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
     assert not any(
         event.name == "task.timeout_requeued_as_plan" for event in observations
     ), "timeout_requeued_as_plan must not be re-emitted when plan_first was already set"
-

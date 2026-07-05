@@ -13470,6 +13470,20 @@ class ControlPlane:
         hub (Option C), on behalf of the selected reviewer. No-op returning None
         when the evidence isn't a pushed repo change or the reviewer has no key
         (the workflow then falls back to the agent-nudge path)."""
+        try:
+            current_task = self.get_task(task.id)
+            current_review = self.get_review(review.id)
+        except NotFoundError:
+            return None
+        if current_review.status != ReviewStatus.PENDING.value:
+            if current_review.evidence_id:
+                try:
+                    return self.get_evidence(current_review.evidence_id)
+                except NotFoundError:
+                    return None
+            return None
+        if current_task.state == TaskState.COMPLETED.value:
+            return None
         assignment = ensure_json_object(
             ensure_json_object(task.metadata).get("review_experiment")
         )
@@ -13496,6 +13510,25 @@ class ControlPlane:
         key = self._agent_attestation_key(review.reviewer_agent_id)
         if not key:
             return None
+        existing = self._existing_hub_review_verification_evidence(
+            task.id,
+            current_review,
+            executor_evidence.id,
+            info["head_sha"],
+        )
+        if existing is not None:
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_idempotent",
+                "info",
+                {
+                    "review_id": review.id,
+                    "verdict_evidence_id": existing.id,
+                    "reason": "existing_hub_verdict",
+                },
+                actor,
+            )
+            return existing
         # In-flight guard: the review sweep re-ticks (~30s) while a verify runs
         # for minutes; without this, each tick would launch another concurrent
         # sandbox for the same review. One verify per review at a time.
@@ -13511,6 +13544,84 @@ class ControlPlane:
             )
         finally:
             inflight.discard(review.id)
+
+    def _hub_review_verification_uri(self, review_id: str, head_sha: str) -> str:
+        return "hub-verify://%s/%s" % (review_id, head_sha[:12])
+
+    def _matches_hub_review_verification_evidence(
+        self,
+        evidence: Evidence,
+        *,
+        task_id: str,
+        reviewer_agent_id: str,
+        executor_evidence_id: str,
+        review_id: str,
+        head_sha: str,
+    ) -> bool:
+        if evidence.task_id != task_id or evidence.kind != "review":
+            return False
+        if evidence.created_by != reviewer_agent_id:
+            return False
+        if evidence.uri != self._hub_review_verification_uri(review_id, head_sha):
+            return False
+        metadata = ensure_json_object(evidence.metadata)
+        if metadata.get("hub_verified") is not True:
+            return False
+        manifest = metadata.get("verification")
+        if not isinstance(manifest, dict):
+            return False
+        if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
+            return False
+        if str(manifest.get("reviewed_evidence_id") or "").strip() != executor_evidence_id:
+            return False
+        if str(manifest.get("verified_by") or "").strip() != "hub_review_verifier_v1":
+            return False
+        manifest_review_id = str(manifest.get("review_id") or "").strip()
+        if manifest_review_id and manifest_review_id != review_id:
+            return False
+        repo = manifest.get("repo")
+        if not isinstance(repo, dict):
+            return False
+        return str(repo.get("head_sha") or "").strip() == head_sha
+
+    def _existing_hub_review_verification_evidence(
+        self,
+        task_id: str,
+        review: Review,
+        executor_evidence_id: str,
+        head_sha: str,
+    ) -> Optional[Evidence]:
+        candidates: List[Evidence] = []
+        if review.evidence_id:
+            try:
+                candidates.append(self.get_evidence(review.evidence_id))
+            except NotFoundError:
+                pass
+        candidates.extend(reversed(self.list_evidence(task_id)))
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate.id in seen:
+                continue
+            seen.add(candidate.id)
+            if not self._matches_hub_review_verification_evidence(
+                candidate,
+                task_id=task_id,
+                reviewer_agent_id=review.reviewer_agent_id,
+                executor_evidence_id=executor_evidence_id,
+                review_id=review.id,
+                head_sha=head_sha,
+            ):
+                continue
+            verdict, _problems = self._find_review_verdict_evidence(
+                task_id,
+                review.reviewer_agent_id,
+                executor_evidence_id=executor_evidence_id,
+                verdict_evidence_id=candidate.id,
+                not_before=review.created_at,
+            )
+            if verdict is not None:
+                return verdict
+        return None
 
     def _run_hub_review_verification_locked(
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
@@ -13528,11 +13639,48 @@ class ControlPlane:
             )
             return None
         verdict = "approved" if returncode == 0 else "rejected"
+        current_review = self.get_review(review.id)
+        existing = self._existing_hub_review_verification_evidence(
+            task.id,
+            current_review,
+            executor_evidence.id,
+            info["head_sha"],
+        )
+        if existing is not None:
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_idempotent",
+                "info",
+                {
+                    "review_id": review.id,
+                    "verdict_evidence_id": existing.id,
+                    "reason": "existing_hub_verdict_after_run",
+                },
+                actor,
+            )
+            return existing
+        if (
+            current_review.status != ReviewStatus.PENDING.value
+            or self.get_task(task.id).state == TaskState.COMPLETED.value
+        ):
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_idempotent",
+                "info",
+                {
+                    "review_id": review.id,
+                    "review_status": current_review.status,
+                    "reason": "review_no_longer_pending",
+                },
+                actor,
+            )
+            return None
         manifest: Dict[str, Any] = {
             "schema": VERIFICATION_SCHEMA,
             "status": "complete",
             "evidence_type": "review_verdict",
             "verdict": verdict,
+            "review_id": review.id,
             "reviewed_evidence_id": executor_evidence.id,
             "worktree_digest": "sha256:%s" % hashlib.sha256(info["head_sha"].encode()).hexdigest(),
             "verified_by": "hub_review_verifier_v1",
@@ -13573,7 +13721,7 @@ class ControlPlane:
         evidence = self.add_evidence(
             task.id,
             "review",
-            "hub-verify://%s/%s" % (review.id, info["head_sha"][:12]),
+            self._hub_review_verification_uri(review.id, info["head_sha"]),
             "hub review verification: %s (rc=%d)" % (verdict, returncode),
             review.reviewer_agent_id,
             metadata={"returncode": 0, "verification": manifest, "hub_verified": True},
