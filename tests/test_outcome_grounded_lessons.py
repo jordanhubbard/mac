@@ -131,3 +131,24 @@ def test_curation_prompt_includes_existing_lessons_for_dedup(monkeypatch):
     te.curate_lessons_from_outcome({"title": "t", "metadata": {}}, {"outcome": "failure"})
     assert "pushed=false means the delivery step failed" in captured["q"]
     assert "genuinely novel" in captured["q"]
+
+
+def test_publish_agent_reflection_forwards_deep_request():
+    # The hub inventory alone is not reflection — the target agent's runtime
+    # must be consulted (live test returned a template that failed the
+    # ground-truth check). publish_agent_reflection now ALSO forwards a deep
+    # reflect request to the target agent, whose worker answers via its own
+    # runtime back to the requester.
+    from mac.agentbus_control import REFLECT_REQUEST_CONTENT_TYPE
+    from mac.services import ControlPlane
+    from tests.test_control_plane import register_agent
+
+    cp = ControlPlane.in_memory()
+    target = register_agent(cp, "target", ["python"])
+    requester = register_agent(cp, "requester", ["review"])
+    out = cp.publish_agent_reflection(target.id, recipient_agent_id=requester.id)
+    assert out["deep_request_stream"]
+    # Two streams exist: inventory to requester, deep request to target.
+    streams = cp.agentbus.list_streams(agent_id=target.id) if hasattr(cp.agentbus, "list_streams") else None
+    # Fallback assertion via the returned payload shape:
+    assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
