@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { TaskDetail } from "../api/mac";
 
 const TASK_LANES = [
@@ -12,6 +12,7 @@ const TASK_LANES = [
   ["failed", "Failed"],
   ["cancelled", "Cancelled"],
 ] as const;
+const INITIAL_CARDS_PER_LANE = 30;
 
 function display(value: unknown, fallback = "—"): string {
   if (value === null || value === undefined || value === "") return fallback;
@@ -29,6 +30,7 @@ export function TaskKanban({
   onSelectTask: (taskId: string) => void;
   onInspectTask: (taskId: string) => void;
 }) {
+  const [laneLimits, setLaneLimits] = useState<Record<string, number>>({});
   const lanes = useMemo(() => {
     const grouped = new Map<string, TaskDetail[]>();
     for (const detail of tasks) {
@@ -46,7 +48,11 @@ export function TaskKanban({
 
   return (
     <div aria-label="Task Kanban" className="task-kanban" role="region">
-      {lanes.map((lane) => (
+      {lanes.map((lane) => {
+        const limit = laneLimits[lane.state] || INITIAL_CARDS_PER_LANE;
+        const visibleTasks = lane.tasks.slice(0, limit);
+        const remaining = lane.tasks.length - visibleTasks.length;
+        return (
         <section
           aria-labelledby={`kanban-lane-${lane.state}`}
           className={`kanban-lane state-${lane.state}`}
@@ -58,7 +64,7 @@ export function TaskKanban({
             <strong aria-label={`${lane.tasks.length} tasks`}>{lane.tasks.length}</strong>
           </header>
           <div className="kanban-lane-body">
-            {lane.tasks.length ? lane.tasks.map(({ task }) => {
+            {lane.tasks.length ? visibleTasks.map(({ task }) => {
               const selected = task.id === selectedTaskId;
               return (
                 <article
@@ -88,9 +94,23 @@ export function TaskKanban({
                 </article>
               );
             }) : <span className="kanban-empty">No tasks</span>}
+            {remaining > 0 ? (
+              <button
+                className="kanban-show-more"
+                onClick={() => setLaneLimits((current) => ({
+                  ...current,
+                  [lane.state]: limit + INITIAL_CARDS_PER_LANE,
+                }))}
+                type="button"
+              >
+                Show {Math.min(INITIAL_CARDS_PER_LANE, remaining)} more
+                <small>{remaining} remaining</small>
+              </button>
+            ) : null}
           </div>
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }

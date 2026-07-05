@@ -6,9 +6,9 @@ assertion below.  If the client adds, removes, or renames a method you MUST
 update this file to match.
 
 Client-to-route mapping (as of current ide/src/api/mac.ts):
-  dashboardState -> GET  /dashboard/state
+  dashboardState -> GET  /dashboard/state?view=ide
   listTasks   -> GET  /tasks               (optional ?state= filter)
-  getTask     -> GET  /tasks/{id}          (TaskDetail: task + evidence + history + reviews)
+  getTask     -> GET  /tasks/{id}?view=compact (bounded TaskDetail)
   listAgents  -> GET  /agents
   createTask  -> POST /tasks               (Fleet IDE payload shape)
   updateTask  -> PUT  /tasks/{id}          (operator guidance persisted on task)
@@ -25,11 +25,12 @@ Client-to-route mapping (as of current ide/src/api/mac.ts):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Dict
 
 from fastapi.testclient import TestClient
 
-from mac.api import create_app
+from mac.api import _dashboard_stream_observation_relevant, create_app
 from mac.models import TaskState
 from mac.services import ControlPlane
 
@@ -41,7 +42,7 @@ from mac.services import ControlPlane
 # ---------------------------------------------------------------------------
 
 # A fixed synthetic bearer token used only in this test module.
-_TEST_TOKEN = 'fleet-ide-test-tok'
+_TEST_TOKEN = "fleet-ide-test-tok"
 _AUTH_HEADERS: Dict[str, str] = {"Authorization": "Bearer " + _TEST_TOKEN}
 # auth_tokens maps token -> scopes.  "admin" grants every scope (read + write).
 _AUTH_TOKENS: Dict[str, Any] = {_TEST_TOKEN: ["admin"]}
@@ -286,7 +287,9 @@ def test_create_task_invalid_payload_returns_422():
     client = _make_client(cp)
 
     # title is required by TaskCreate; omitting it must fail schema validation
-    resp = client.post("/tasks", json={"description": "no title"}, headers=_AUTH_HEADERS)
+    resp = client.post(
+        "/tasks", json={"description": "no title"}, headers=_AUTH_HEADERS
+    )
 
     assert resp.status_code == 422
 
@@ -308,7 +311,9 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
 
     state_response = client.get("/dashboard/state", headers=_AUTH_HEADERS)
     assert state_response.status_code == 200
-    detail = next(item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id)
+    detail = next(
+        item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id
+    )
     blocked_event = detail["history"][-1]
     assert blocked_event["to_state"] == TaskState.BLOCKED.value
     assert blocked_event["detail"]["reason"] == "missing_target_region"
@@ -325,13 +330,18 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
         headers=_AUTH_HEADERS,
         json={
             "actor": "human",
-            "description": task["description"] + "\n\nOperator direction:\n" + direction,
+            "description": task["description"]
+            + "\n\nOperator direction:\n"
+            + direction,
             "metadata": metadata,
         },
     )
     assert update_response.status_code == 200
     assert direction in update_response.json()["description"]
-    assert update_response.json()["metadata"]["operator_guidance"][-1]["direction"] == direction
+    assert (
+        update_response.json()["metadata"]["operator_guidance"][-1]["direction"]
+        == direction
+    )
 
     reopen_response = client.post(
         "/tasks/%s/reopen" % task_id,
@@ -375,6 +385,99 @@ def test_workbench_dashboard_state_has_cockpit_collections():
     assert isinstance(body["agents"], list)
     assert isinstance(body["workflow_runs"], dict)
     assert isinstance(body["service_links"], list)
+
+
+def test_workbench_ide_state_is_bounded_and_does_not_load_secret_audits(monkeypatch):
+    cp = ControlPlane.in_memory()
+    dependency = cp.create_task(title="dependency", project="mac")
+    for index in range(100):
+        cp.create_task(
+            title="bounded task %d" % index,
+            description="description-" + ("x" * 5_000),
+            project="mac",
+            dependencies=[dependency.id] if index == 0 else [],
+            required_capabilities=["python"] if index == 0 else [],
+            metadata={"large": "y" * 10_000},
+        )
+
+    def fail_secret_audits():
+        raise AssertionError("Fleet IDE projection must not load secret audits")
+
+    monkeypatch.setattr(cp, "list_secret_audits", fail_secret_audits)
+    client = _make_client(cp)
+
+    resp = client.get("/dashboard/state?view=ide", headers=_AUTH_HEADERS)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema"] == "mac.dashboard_ide.v1"
+    assert body["secret_audits"] == []
+    assert len(body["tasks"]) == 101
+    projected = next(
+        item for item in body["tasks"] if item["task"]["title"] == "bounded task 0"
+    )
+    assert projected["detail_loaded"] is False
+    assert projected["task"]["dependencies"] == [dependency.id]
+    assert projected["task"]["required_capabilities"] == ["python"]
+    assert "description" not in projected["task"]
+    assert "metadata" not in projected["task"]
+    assert "history" not in projected
+    assert "evidence" not in projected
+    assert len(resp.content) < 250_000
+
+
+def test_workbench_compact_task_detail_is_explicitly_limited():
+    cp = ControlPlane.in_memory()
+    task_id = _seed_task(cp, title="compact detail")
+    client = _make_client(cp)
+
+    resp = client.get(
+        "/tasks/%s?view=compact" % task_id,
+        headers=_AUTH_HEADERS,
+    )
+
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["task"]["id"] == task_id
+    assert detail["history_limited_to"] == 50
+    assert detail["evidence_limited_to"] == 25
+    assert detail["reviews_limited_to"] == 25
+    assert detail["publications_limited_to"] == 10
+
+
+def test_dashboard_reads_do_not_observe_themselves_or_trigger_stream_updates():
+    cp = ControlPlane.in_memory()
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens=_AUTH_TOKENS,
+            record_http_observations=True,
+        )
+    )
+
+    assert (
+        client.get("/dashboard/state?view=ide", headers=_AUTH_HEADERS).status_code
+        == 200
+    )
+    assert client.get("/.well-known/agent-card.json").status_code == 200
+    assert (
+        client.get(
+            "/dashboard/stream?timeout_seconds=0",
+            headers=_AUTH_HEADERS,
+        ).status_code
+        == 200
+    )
+
+    api_paths = [
+        item.detail.get("path")
+        for item in cp.list_observability(limit=20)
+        if item.layer == "api"
+    ]
+    assert "/dashboard/state" not in api_paths
+    assert "/dashboard/stream" not in api_paths
+    assert "/.well-known/agent-card.json" not in api_paths
+    assert not _dashboard_stream_observation_relevant(SimpleNamespace(layer="api"))
+    assert _dashboard_stream_observation_relevant(SimpleNamespace(layer="task"))
 
 
 def test_workbench_agent_card_is_public_and_declares_a2a():

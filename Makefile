@@ -221,8 +221,9 @@ test-api: codegraph-sync ## Run API-marked tests.
 test-cli: codegraph-sync ## Run CLI-marked tests.
 	uv run --extra dev pytest -q -m cli tests/
 
-test-ui: codegraph-sync ## Run UI-marked tests.
+test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts and Fleet IDE browser tests.
 	uv run --extra dev pytest -q -m ui tests/
+	cd $(IDE_DIR) && $(NPM) run test:ui
 
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py

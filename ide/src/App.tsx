@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Allotment } from "allotment";
 import {
   api,
@@ -12,6 +12,7 @@ import {
   streamDashboard,
   type AgentCard,
   type DashboardState,
+  type TaskDetail,
 } from "./api/mac";
 import { ActivityRail, type WorkbenchView } from "./components/ActivityRail";
 import { AgentMesh } from "./components/AgentMesh";
@@ -22,6 +23,8 @@ import { selectedTask, WorkbenchViewContent } from "./components/WorkbenchViews"
 const VIEWS = new Set<WorkbenchView>([
   "cockpit", "work", "workflows", "agents", "runtime", "observability", "connections",
 ]);
+const DASHBOARD_REFRESH_MIN_MS = 5_000;
+const TASK_DETAIL_CACHE_LIMIT = 20;
 
 const EMPTY_STATE: DashboardState = {
   overview: { counts: {}, task_states: {}, agent_statuses: {} },
@@ -60,7 +63,33 @@ export function App() {
   const [targetInput, setTargetInput] = useState(getApiBaseUrl);
   const [tokenError, setTokenError] = useState("");
   const [commandQuery, setCommandQuery] = useState("");
-  const detail = useMemo(() => selectedTask(data, selectedTaskId), [data, selectedTaskId]);
+  const [selectedDetail, setSelectedDetail] = useState<TaskDetail | null>(null);
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
+  const refreshCompletedAtRef = useRef(0);
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const cardRequestRef = useRef<Promise<AgentCard | null> | null>(null);
+  const detailCacheRef = useRef(new Map<string, TaskDetail>());
+  const detailRequestsRef = useRef(new Map<string, Promise<TaskDetail>>());
+  const selectedTaskIdRef = useRef(selectedTaskId);
+  selectedTaskIdRef.current = selectedTaskId;
+
+  const viewData = useMemo(() => {
+    if (!selectedDetail || selectedDetail.task.id !== selectedTaskId) return data;
+    return {
+      ...data,
+      tasks: data.tasks.map((summary) => summary.task.id === selectedDetail.task.id ? {
+        ...selectedDetail,
+        detail_loaded: true,
+        task: { ...selectedDetail.task, ...summary.task },
+      } : summary),
+    };
+  }, [data, selectedDetail, selectedTaskId]);
+  const detail = useMemo(
+    () => selectedTask(viewData, selectedTaskId),
+    [selectedTaskId, viewData],
+  );
   const commandResults = useMemo(() => {
     const needle = commandQuery.trim().toLowerCase();
     if (!needle) return [];
@@ -76,14 +105,39 @@ export function App() {
     return [...taskResults, ...agentResults];
   }, [commandQuery, data.agents, data.tasks]);
 
-  const refresh = useCallback(async () => {
+  const fetchTaskDetail = useCallback((taskId: string, force = false): Promise<TaskDetail> => {
+    if (!force) {
+      const cached = detailCacheRef.current.get(taskId);
+      if (cached) return Promise.resolve(cached);
+      const active = detailRequestsRef.current.get(taskId);
+      if (active) return active;
+    }
+    const request = api.getTask(taskId).then((next) => {
+      const detail = { ...next, detail_loaded: true };
+      const cache = detailCacheRef.current;
+      cache.delete(taskId);
+      cache.set(taskId, detail);
+      while (cache.size > TASK_DETAIL_CACHE_LIMIT) {
+        const oldest = cache.keys().next().value as string | undefined;
+        if (!oldest) break;
+        cache.delete(oldest);
+      }
+      return detail;
+    });
+    detailRequestsRef.current.set(taskId, request);
+    const clearRequest = () => {
+      if (detailRequestsRef.current.get(taskId) === request) {
+        detailRequestsRef.current.delete(taskId);
+      }
+    };
+    void request.then(clearRequest, clearRequest);
+    return request;
+  }, []);
+
+  const performRefresh = useCallback(async () => {
     try {
-      const [next, nextCard] = await Promise.all([
-        api.dashboardState(),
-        api.agentCard().catch(() => null),
-      ]);
+      const next = await api.dashboardState();
       setData(next);
-      setCard(nextCard);
       setError("");
       setLoading(false);
     } catch (caught) {
@@ -102,12 +156,72 @@ export function App() {
     }
   }, [managedAuth]);
 
+  const scheduleRefresh = useCallback(() => {
+    refreshQueuedRef.current = true;
+    if (refreshInFlightRef.current || refreshTimerRef.current !== null) return;
+    const elapsed = Date.now() - refreshCompletedAtRef.current;
+    const delay = Math.max(0, DASHBOARD_REFRESH_MIN_MS - elapsed);
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      refreshQueuedRef.current = false;
+      void refreshRef.current();
+    }, delay);
+  }, []);
+
+  const refresh = useCallback((): Promise<void> => {
+    const active = refreshInFlightRef.current;
+    if (active) return active;
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+      refreshQueuedRef.current = false;
+    }
+    const request = performRefresh();
+    refreshInFlightRef.current = request;
+    void request.finally(() => {
+      if (refreshInFlightRef.current !== request) return;
+      refreshInFlightRef.current = null;
+      refreshCompletedAtRef.current = Date.now();
+      if (refreshQueuedRef.current) scheduleRefresh();
+    });
+    return request;
+  }, [performRefresh, scheduleRefresh]);
+  refreshRef.current = refresh;
+
+  const refreshLatest = useCallback(async () => {
+    if (refreshInFlightRef.current) scheduleRefresh();
+    await refresh();
+    const taskId = selectedTaskIdRef.current;
+    if (!taskId) return;
+    try {
+      const next = await fetchTaskDetail(taskId, true);
+      if (selectedTaskIdRef.current === taskId) setSelectedDetail(next);
+    } catch {
+      // The dashboard summary remains usable when optional task detail fails.
+    }
+  }, [fetchTaskDetail, refresh, scheduleRefresh]);
+
   useEffect(() => {
     if (needToken) return;
     void refresh();
-    const interval = window.setInterval(() => void refresh(), 30_000);
+    const interval = window.setInterval(scheduleRefresh, 30_000);
     return () => window.clearInterval(interval);
-  }, [needToken, refresh]);
+  }, [needToken, refresh, scheduleRefresh]);
+
+  useEffect(() => {
+    if (needToken) return;
+    let active = true;
+    if (!cardRequestRef.current) {
+      cardRequestRef.current = api.agentCard().catch(() => null);
+    }
+    const request = cardRequestRef.current;
+    void request.then((next) => {
+      if (active) setCard(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [needToken]);
 
   useEffect(() => {
     if (needToken) return;
@@ -122,7 +236,7 @@ export function App() {
           await streamDashboard((signal) => {
             setStreamStatus("connected");
             retryMs = 750;
-            if (signal.event === "updated") void refresh();
+            if (signal.event === "updated") scheduleRefresh();
           }, controller.signal);
         } catch (caught) {
           if (stopped || controller.signal.aborted) break;
@@ -139,7 +253,34 @@ export function App() {
       stopped = true;
       controller?.abort();
     };
-  }, [needToken, refresh]);
+  }, [needToken, scheduleRefresh]);
+
+  useEffect(() => {
+    if (!selectedTaskId || needToken) {
+      setSelectedDetail(null);
+      return;
+    }
+    let active = true;
+    const cached = detailCacheRef.current.get(selectedTaskId) || null;
+    setSelectedDetail(cached);
+    void fetchTaskDetail(selectedTaskId).then((next) => {
+      if (active && selectedTaskIdRef.current === selectedTaskId) {
+        setSelectedDetail(next);
+      }
+    }).catch(() => {
+      // A summary-only task remains selectable if detail hydration is unavailable.
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchTaskDetail, needToken, selectedTaskId]);
+
+  useEffect(() => () => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedTaskId && data.tasks.length) {
@@ -165,6 +306,11 @@ export function App() {
       setTokenError("Enter a bearer token to connect.");
       return;
     }
+    cardRequestRef.current = null;
+    detailCacheRef.current.clear();
+    detailRequestsRef.current.clear();
+    setCard(null);
+    setSelectedDetail(null);
     setTokenError("");
     setNeedToken(false);
     setLoading(true);
@@ -172,6 +318,11 @@ export function App() {
 
   function disconnect() {
     clearToken();
+    cardRequestRef.current = null;
+    detailCacheRef.current.clear();
+    detailRequestsRef.current.clear();
+    setCard(null);
+    setSelectedDetail(null);
     setTokenInput("");
     setTokenError("");
     setNeedToken(true);
@@ -200,7 +351,7 @@ export function App() {
     );
   }
 
-  const agents = data.agents.map((item) => item.agent);
+  const agents = viewData.agents.map((item) => item.agent);
   const busy = agents.filter((agent) => agent.current_task_id).length;
   return (
     <div className="workbench-shell">
@@ -245,7 +396,7 @@ export function App() {
         </div>
         <div className="connection-summary">
           <span className={`presence ${error ? "offline" : "online"}`} />
-          <span>{error ? "Hub degraded" : "Hub online"}</span>
+          <span>{error ? "Hub degraded" : loading ? "Hub loading" : "Hub online"}</span>
           <span className="separator">·</span>
           <span>{agents.length} agents</span>
         </div>
@@ -259,7 +410,7 @@ export function App() {
               <Allotment.Pane minSize={210} preferredSize={270}>
                 <WorkbenchExplorer
                   activeView={view}
-                  data={data}
+                  data={viewData}
                   onSelectAgent={setSelectedAgentId}
                   onSelectTask={setSelectedTaskId}
                   selectedAgentId={selectedAgentId}
@@ -278,8 +429,8 @@ export function App() {
                     {loading ? <div className="loading-state"><i className="codicon codicon-loading codicon-modifier-spin" /> Loading fleet state…</div> : (
                       <WorkbenchViewContent
                         card={card}
-                        data={data}
-                        onRefresh={refresh}
+                        data={viewData}
+                        onRefresh={refreshLatest}
                         onSelectAgent={setSelectedAgentId}
                         onSelectTask={setSelectedTaskId}
                         selectedAgentId={selectedAgentId}
@@ -290,7 +441,7 @@ export function App() {
                   </div>
                 </Allotment.Pane>
                 <Allotment.Pane minSize={130} preferredSize="30%">
-                  <BottomPanel data={data} detail={detail} />
+                  <BottomPanel data={viewData} detail={detail} />
                 </Allotment.Pane>
               </Allotment>
             </Allotment.Pane>
@@ -298,8 +449,8 @@ export function App() {
               <Allotment.Pane minSize={300} preferredSize={365}>
                 <AgentMesh
                   card={card}
-                  data={data}
-                  onRefresh={refresh}
+                  data={viewData}
+                  onRefresh={refreshLatest}
                   onSelectAgent={setSelectedAgentId}
                   selectedAgentId={selectedAgentId}
                   selectedTask={detail}

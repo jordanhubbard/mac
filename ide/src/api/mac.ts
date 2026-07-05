@@ -34,6 +34,7 @@ export interface Task {
 
 export interface TaskDetail {
   task: Task;
+  detail_loaded?: boolean;
   evidence?: Array<Record<string, unknown>>;
   history?: Array<Record<string, unknown>>;
   reviews?: Array<Record<string, unknown>>;
@@ -74,6 +75,7 @@ export interface ProjectSummary {
 }
 
 export interface DashboardState {
+  schema?: string;
   overview: {
     counts: Record<string, number>;
     task_states: Record<string, number>;
@@ -272,10 +274,10 @@ async function a2aCall<T>(method: string, params: Record<string, unknown>): Prom
 }
 
 export const api = {
-  dashboardState: () => req<DashboardState>("GET", "/dashboard/state"),
+  dashboardState: () => req<DashboardState>("GET", "/dashboard/state?view=ide"),
   listTasks: (state?: string) =>
     req<Task[]>("GET", `/tasks${state ? `?state=${encodeURIComponent(state)}` : ""}`),
-  getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}`),
+  getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}?view=compact`),
   listAgents: () => req<Agent[]>("GET", "/agents"),
   createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
   updateTask: (taskId: string, payload: TaskUpdatePayload) =>

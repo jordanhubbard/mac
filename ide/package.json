@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "package": "npm run build && mkdir -p ../dist && tar -czf ../dist/mac-ide-web.tar.gz -C dist .",
     "preview": "vite preview",
+    "test:ui": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

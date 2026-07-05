@@ -200,6 +200,9 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .kanban-card-description { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .kanban-card-meta { display: flex; flex-wrap: wrap; gap: 4px; color: var(--muted); font-size: 9px; }
 .kanban-card-meta span { padding: 2px 5px; border: 1px solid var(--border); background: var(--bg-2); }
+.kanban-show-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; border: 1px dashed var(--border-bright); background: transparent; color: var(--cyan); font-size: 10px; text-align: left; }
+.kanban-show-more:hover { border-color: var(--cyan-dim); background: var(--cyan-soft); }
+.kanban-show-more small { color: var(--faint); font-size: 9px; }
 .kanban-inspect { width: 100%; min-height: 28px; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--cyan); font-size: 10px; text-align: left; padding: 0 10px; }
 .kanban-inspect:hover { background: var(--bg-2); }
 .task-inspector-backdrop { position: fixed; z-index: 80; inset: 0; display: flex; justify-content: flex-end; background: rgb(0 0 0 / 58%); }

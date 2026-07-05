@@ -248,6 +248,22 @@ DASHBOARD_TASK_EVIDENCE_LIMIT = 25
 DASHBOARD_TASK_REVIEW_LIMIT = 25
 DASHBOARD_TASK_PUBLICATION_LIMIT = 10
 DASHBOARD_MESSAGE_LIMIT = 200
+_TASK_LIST_SUMMARY_FIELDS = frozenset(
+    {
+        "id",
+        "title",
+        "project",
+        "priority",
+        "state",
+        "owner_agent_id",
+        "created_at",
+        "updated_at",
+        "last_updated_at",
+    }
+)
+_DASHBOARD_IDE_TASK_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
+    {"dependencies", "required_capabilities"}
+)
 
 
 def _agentbus_clamp_timeout(value: float) -> float:
@@ -1505,9 +1521,27 @@ def _authorize_acp_websocket(
 def _should_record_http_observation(path: str) -> bool:
     return not (
         path == "/health"
+        or path in {
+            "/dashboard/state",
+            "/dashboard/stream",
+            "/.well-known/agent-card.json",
+            "/.well-known/agent.json",
+        }
         or path.startswith("/ui/assets")
         or path.startswith("/observability")
     )
+
+
+def _dashboard_stream_observation_relevant(observation: Any) -> bool:
+    """Return whether an observation can represent dashboard state change.
+
+    HTTP request metrics describe reads of control-plane state. Treating those
+    reads as writes creates a feedback loop: the Fleet IDE reads the dashboard,
+    the read emits a metric, the stream sees the metric, and the IDE reads the
+    dashboard again. Domain/task/worker observations remain refresh signals.
+    """
+
+    return str(getattr(observation, "layer", "") or "").lower() != "api"
 
 
 def _safe_observation_source(value: Any, fallback: str = "router") -> str:
@@ -2269,6 +2303,192 @@ def _firecrawl_navigate_url() -> str:
     return firecrawl_url
 
 
+def _dashboard_ide_task_dict(task_dict: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "task": {
+            key: value
+            for key, value in task_dict.items()
+            if key in _DASHBOARD_IDE_TASK_FIELDS
+        },
+        "detail_loaded": False,
+    }
+
+
+def _dashboard_ide_resource_facts(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value[key]
+        for key in ("hardware", "coding_clis")
+        if key in value
+    }
+
+
+def _dashboard_ide_agent(
+    cp: ControlPlane,
+    agent: Any,
+    tasks: List[Any],
+    machines_by_id: Dict[str, Any],
+) -> Dict[str, Any]:
+    base = _dashboard_agent_base(cp, agent, tasks, machines_by_id)
+    agent_dict = base["agent"]
+    machine_dict = base.get("machine")
+    projected_agent = {
+        key: agent_dict[key]
+        for key in (
+            "id",
+            "name",
+            "status",
+            "health_status",
+            "current_task_id",
+            "capabilities",
+            "role_id",
+            "last_seen_at",
+            "machine_id",
+        )
+        if key in agent_dict
+    }
+    projected_agent["resources"] = _dashboard_ide_resource_facts(
+        agent_dict.get("resources")
+    )
+
+    projected_machine = None
+    if isinstance(machine_dict, dict):
+        projected_machine = {
+            key: machine_dict[key]
+            for key in ("id", "hostname", "trusted", "hardware")
+            if key in machine_dict
+        }
+        projected_machine["resources"] = _dashboard_ide_resource_facts(
+            machine_dict.get("resources")
+        )
+
+    return {
+        "agent": projected_agent,
+        "machine": projected_machine,
+        "active_tasks": [
+            detail["task"]
+            for detail in (
+                _dashboard_ide_task_dict(task_dict)
+                for task_dict in base["active_tasks"]
+            )
+        ],
+        "active_projects": base["active_projects"],
+        "capacity": base["capacity"],
+        "active_lease_count": base["active_lease_count"],
+        "availability": base["availability"],
+    }
+
+
+def _dashboard_ide_state(
+    cp: ControlPlane,
+    hermes_startup: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the bounded, list-oriented state required by the Fleet IDE.
+
+    The legacy dashboard state is intentionally comprehensive. The Fleet IDE
+    needs summaries for navigation and loads one selected task's capped detail
+    separately, so returning every secret audit, task evidence blob, history,
+    runtime proof, and dispatch explanation makes cold start both slower and
+    less reliable without adding anything to the rendered first screen.
+    """
+
+    machines = cp.list_machines()
+    machines_by_id = {machine.id: machine for machine in machines}
+    agents = cp.list_agents()
+    tasks = cp.list_tasks()
+    task_dicts = [task.to_dict() for task in tasks]
+    projects = cp.list_projects()
+    workflows = [workflow.to_dict() for workflow in cp.list_workflows()][-120:]
+    workflow_runs = cp.workflow_runs_summary()
+    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
+    terminal_sessions = _dashboard_terminal_sessions_from_streams(streams)
+    messages = [
+        message.to_dict()
+        for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
+    ]
+    notifications = [
+        notification.to_dict()
+        for notification in cp.list_notifications(limit=120)
+    ]
+    findings = [
+        finding.to_dict()
+        for finding in cp.list_integration_findings(limit=120)
+    ]
+    secrets = [secret.to_dict() for secret in cp.list_secrets()][-200:]
+    runtime_deltas = [
+        delta.to_dict()
+        for delta in cp.list_runtime_deltas(limit=120)
+    ]
+    runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()][-120:]
+    rollouts = [rollout.to_dict() for rollout in cp.list_rollouts()][-120:]
+    fleets = [fleet.to_dict() for fleet in cp.list_fleets()][-120:]
+
+    return {
+        "schema": "mac.dashboard_ide.v1",
+        "overview": {
+            "counts": {
+                "machines": len(machines),
+                "agents": len(agents),
+                "fleets": len(fleets),
+                "healthy_agents": sum(
+                    1 for agent in agents if agent.health_status == "healthy"
+                ),
+                "busy_agents": sum(
+                    1 for agent in agents if agent.status == "busy"
+                ),
+                "active_tasks": sum(
+                    1
+                    for task in tasks
+                    if task.state not in TERMINAL_DASHBOARD_STATES
+                ),
+                "projects": len(projects),
+                "workflows": len(workflows),
+                "workflow_runs": workflow_runs.get("total", 0),
+                "terminal_sessions": len(terminal_sessions),
+                "secrets": len(secrets),
+                "integration_findings": len(findings),
+                "open_integration_findings": sum(
+                    1 for finding in findings if finding["status"] == "open"
+                ),
+            },
+            "task_states": _state_counts(task_dicts, "state"),
+            "agent_statuses": _state_counts(
+                [agent.to_dict() for agent in agents], "status"
+            ),
+        },
+        "project_summaries": projects,
+        "agents": [
+            _dashboard_ide_agent(cp, agent, tasks, machines_by_id)
+            for agent in agents
+        ],
+        "tasks": [
+            _dashboard_ide_task_dict(task_dict)
+            for task_dict in task_dicts
+        ],
+        "fleets": fleets,
+        "workflows": workflows,
+        "workflow_drafts": [],
+        "workflow_runs": workflow_runs,
+        "events": cp.list_events(limit=240),
+        "messages": messages,
+        "notifications": notifications,
+        "observability": {},
+        "action_events": [],
+        "command_audit": [],
+        "runtimes": [],
+        "runtime_deltas": runtime_deltas,
+        "runtime_runs": runtime_runs,
+        "rollouts": rollouts,
+        "secrets": secrets,
+        "secret_audits": [],
+        "service_links": _dashboard_service_links(hermes_startup),
+        "integration_findings": findings,
+        "artifacts": [],
+        "terminal_sessions": terminal_sessions,
+    }
+
+
 def _dashboard_state(
     cp: ControlPlane,
     hermes_startup: Optional[Dict[str, Any]] = None,
@@ -2474,8 +2694,14 @@ def _dashboard_response(
     cp: ControlPlane,
     principal: TokenPrincipal,
     hermes_startup: Optional[Dict[str, Any]],
+    *,
+    view: Optional[str] = None,
 ) -> Dict[str, Any]:
-    model = _dashboard_state(cp, hermes_startup)
+    model = (
+        _dashboard_ide_state(cp, hermes_startup)
+        if view == "ide"
+        else _dashboard_state(cp, hermes_startup)
+    )
     now = utcnow()
     model["server_time"] = now
     model["updated_at"] = now
@@ -3335,10 +3561,17 @@ def create_app(
 
     @app.get("/dashboard/state")
     def dashboard_state(
+        view: Optional[str] = Query(default=None),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        app.state.hermes_startup = build_hermes_startup_report()
-        return _dashboard_response(cp, principal, app.state.hermes_startup)
+        if view != "ide":
+            app.state.hermes_startup = build_hermes_startup_report()
+        return _dashboard_response(
+            cp,
+            principal,
+            app.state.hermes_startup,
+            view=view,
+        )
 
     @app.get("/dashboard/stream")
     async def dashboard_stream(
@@ -3371,7 +3604,11 @@ def create_app(
                 observations = cp.list_observability(after_sequence=cursor, limit=100)
                 if observations:
                     cursor = observations[-1].sequence
-                    yield stream_event("updated", cursor)
+                    if any(
+                        _dashboard_stream_observation_relevant(observation)
+                        for observation in observations
+                    ):
+                        yield stream_event("updated", cursor)
                     if time.monotonic() >= deadline:
                         break
                     await asyncio.sleep(0)
@@ -3961,23 +4198,6 @@ def create_app(
         actor = data.pop("actor", "human")
         return cp.onboard_repository(actor=actor, **data).to_dict()
 
-    # Fields returned by the summary projection (view=summary).
-    # Omits description, metadata, and other large blobs so that
-    # list views download only a few KB instead of the full ledger.
-    _TASK_LIST_SUMMARY_FIELDS = frozenset(
-        {
-            "id",
-            "title",
-            "project",
-            "priority",
-            "state",
-            "owner_agent_id",
-            "created_at",
-            "updated_at",
-            "last_updated_at",
-        }
-    )
-
     @app.get("/tasks")
     def list_tasks(
         state: Optional[str] = Query(default=None),
@@ -4020,7 +4240,12 @@ def create_app(
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
     @app.get("/tasks/{task_id}")
-    def get_task(task_id: str) -> Dict[str, Any]:
+    def get_task(
+        task_id: str,
+        view: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        if view == "compact":
+            return _dashboard_task(cp, task_id, compact=True)
         return cp.task_detail(task_id)
 
     @app.put("/tasks/{task_id}")

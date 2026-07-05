@@ -79,6 +79,19 @@ npm run package
 `npm run package` and `make ide-package` create a static web bundle, not a
 native Electron app. The Electron wrapper is still tracked as follow-up work.
 
+## Verify
+
+```bash
+npm run typecheck
+npm run test:ui
+```
+
+The Playwright regression test runs the workbench against a large projected
+ledger, verifies that React StrictMode and repeated stream invalidations do not
+create overlapping refreshes, and checks that Kanban lanes render in bounded
+batches. The IDE cold-loads `/dashboard/state?view=ide`; full task history and
+evidence are fetched only for the selected task with `?view=compact`.
+
 ## Status
 
 The workbench foundation is implemented: cockpit telemetry, live task DAG,
