@@ -2340,6 +2340,56 @@ def _git(args, cwd):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
 
 
+def _load_harness_recovery_log(task_workspace: Path) -> List[Dict[str, Any]]:
+    """Read harness-recovery-log.json from task_workspace if present.
+
+    Returns a list of recovery step records [{step, choice, result}, ...].
+    Returns an empty list when the file is absent, empty, or unparseable.
+    """
+    log_path = task_workspace / "harness-recovery-log.json"
+    if not log_path.exists():
+        return []
+    try:
+        raw = json.loads(log_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    if isinstance(raw, list):
+        return [r for r in raw if isinstance(r, dict)]
+    return []
+
+
+def _record_recovery_learnings(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    outcome: Dict[str, Any],
+) -> None:
+    """Feed each harness recovery choice+outcome into the deployment-learning loop.
+
+    Reads harness-recovery-log.json and posts one learning record per entry so
+    the fleet's selection algorithm can improve future recovery choices.
+    Best-effort: silently returns on any error.
+    """
+    recovery_log = _load_harness_recovery_log(task_workspace)
+    if not recovery_log:
+        return
+    for entry in recovery_log:
+        if not isinstance(entry, dict):
+            continue
+        recovery_outcome = {
+            "evidence_type": outcome.get("evidence_type", "recovery"),
+            "outcome": outcome.get("outcome", "unknown"),
+            "signals": dict(outcome.get("signals") or {}),
+            "error_signature": outcome.get("error_signature") or "",
+            "recovery_step": entry.get("step"),
+            "recovery_choice": entry.get("choice"),
+            "recovery_result": entry.get("result"),
+        }
+        try:
+            record_deployment_learning(task, recovery_outcome)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) -> None:
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
@@ -2547,6 +2597,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         manifest["freshness_error"] = freshness_error
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
+    recovery_log = _load_harness_recovery_log(task_workspace)
+    if recovery_log:
+        manifest["recovery"] = recovery_log
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -2857,6 +2910,9 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
         "result": result_text[-20000:],
         "task": {"id": task.get("id"), "title": task.get("title"), "project": task.get("project")},
     }
+    recovery_log = _load_harness_recovery_log(task_workspace)
+    if recovery_log:
+        manifest["recovery"] = recovery_log
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -5453,6 +5509,13 @@ def _run_executor(
         )
         record_deployment_learning(task, outcome)
         record_curated_lessons(task, outcome)
+        # recovery-learn-01: if mid-flight recoveries occurred, feed each
+        # choice+outcome into the deployment-learning loop so selection
+        # quality improves over time (task spec rule 5).
+        try:
+            _record_recovery_learnings(task_workspace, task, outcome)
+        except Exception:  # noqa: BLE001
+            pass
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
