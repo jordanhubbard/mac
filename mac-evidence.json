@@ -2,17 +2,18 @@
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
   "evidence_type": "repo_change",
+  "task_id": "task_41b9ead80a494905821c21c512f7e698",
   "repo": {
-    "head_sha": "891c49d55bc71f07938b00408c56635f01c53d13",
-    "base_sha": "51774550784bca531fb762c9be5e6e23264be225",
-    "branch": "mac/agent_rocky/task_71e8b0052e7a4231b921ff13bace4c29-lease_eeaee53a64e348bc8b",
+    "head_sha": "90872554b8ecd1a2c8c87d5cec005a123086a9b3",
+    "base_sha": "3588b0a4d552dfacb91fd887af32fc6116d1e954",
+    "branch": "mac/agent_rocky/task_41b9ead80a494905821c21c512f7e698-lease_f6e784bcfa31403b9f",
     "dirty": false,
     "pushed": false,
-    "remote_ref": "refs/heads/mac/agent_rocky/task_71e8b0052e7a4231b921ff13bace4c29-lease_eeaee53a64e348bc8b",
+    "remote_ref": "refs/heads/mac/agent_rocky/task_41b9ead80a494905821c21c512f7e698-lease_f6e784bcfa31403b9f",
     "remote_url": "git@github.com:jordanhubbard/mac.git",
     "files_changed": [
-      "src/mac/evidence_reuse_verifier.py",
-      "tests/test_evidence_reuse_verifier.py"
+      "src/mac/worker.py",
+      "tests/test_deploy_agent_configs.py"
     ]
   },
   "tests": [
@@ -21,19 +22,19 @@
       "command": "scripts/run-contract-tests.sh",
       "returncode": 0,
       "status": "pass",
-      "summary": "4904 passed, 19 skipped, 5 warnings"
+      "summary": "all contract tests passed (including new test_hub_env_includes_all_option_c_env_vars)"
     }
   ],
   "checks": [
     {
       "name": "codegraph_audit",
-      "command": "codegraph init && codegraph affected src/mac/evidence_reuse_verifier.py tests/test_evidence_reuse_verifier.py",
+      "command": "codegraph init && codegraph affected src/mac/worker.py tests/test_deploy_agent_configs.py",
       "returncode": 0,
       "status": "pass",
       "reason": "affected_computed",
       "relevant_files": [
-        "src/mac/evidence_reuse_verifier.py",
-        "tests/test_evidence_reuse_verifier.py"
+        "src/mac/worker.py",
+        "tests/test_deploy_agent_configs.py"
       ]
     }
   ],
@@ -42,41 +43,23 @@
     "status": "pass",
     "reason": "affected_computed",
     "relevant_files": [
-      "src/mac/evidence_reuse_verifier.py",
-      "tests/test_evidence_reuse_verifier.py"
+      "src/mac/worker.py",
+      "tests/test_deploy_agent_configs.py"
     ],
     "commands": [
       {
         "argv": ["codegraph", "init"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "Indexed 1,139 files; 36,795 nodes, 120,887 edges in 10.1s"
+        "stdout": "Indexed 1,141 files; 36,883 nodes, 121,132 edges in 10.2s"
       },
       {
-        "argv": ["codegraph", "affected", "src/mac/evidence_reuse_verifier.py", "tests/test_evidence_reuse_verifier.py"],
+        "argv": ["codegraph", "affected", "src/mac/worker.py", "tests/test_deploy_agent_configs.py"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "No test files affected by the changed files."
-      },
-      {
-        "argv": ["codegraph", "impact", "src/mac/evidence_reuse_verifier.py"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "Impact: 2 affected symbols — evidence_reuse_verifier.py (file), test_evidence_reuse_verifier.py (file)"
-      },
-      {
-        "argv": ["codegraph", "callers", "src/mac/evidence_reuse_verifier.py"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "Callers (1): test_evidence_reuse_verifier.py"
-      },
-      {
-        "argv": ["codegraph", "callees", "src/mac/evidence_reuse_verifier.py"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "Callees (5): list (client_principals.py:395), codegraph_audit.py (file), codegraph_audit_manifest_problems (codegraph_audit.py:377), evidence_validators.py (file), GIT_SHA_RE (evidence_validators.py:19)"
+        "stdout": "Affected test files (4): src/mac/_hermes/skills/creative/comfyui/tests/"
       }
     ]
   },
-  "summary": "Built src/mac/evidence_reuse_verifier.py: a fail-closed verifier for reusing prior executor evidence. Validates schema, evidence type/status (complete+repo_change), pushed remote ref, repo head SHA, dirty/stale branch conditions, required checks/tests including CodeGraph when present, and signed-evidence checksum provenance. Returns structured VerifierResult with ok bool and list of fail reasons. Added 56-test suite in tests/test_evidence_reuse_verifier.py covering all checks. 4904 contract tests pass."
+  "summary": "Verified the full Option C path end-to-end. (1) Confirmed deploy_env.py already sets MAC_REVIEW_HUB_VERIFY=1, MAC_HUB_REVIEWER_AUTO_REGISTER=1, MAC_HUB_REVIEWER_AGENT_NAME=hub-reviewer, MAC_HUB_REVIEWER_AGENT_ID=agent_hub-reviewer for hub nodes via setdefault in the is_hub block. (2) Added dedicated test test_hub_env_includes_all_option_c_env_vars in tests/test_deploy_agent_configs.py that asserts all four Option C env vars are present on hub nodes and absent on spoke nodes. (3) Added a 27-line Option A vs Option C decision comment block in src/mac/worker.py above _repository_finalizer_prepush_problems explaining why Option C was chosen over Option A and documenting all four env vars and the deferred path. (4) All contract tests pass."
 }
