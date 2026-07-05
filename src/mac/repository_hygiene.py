@@ -45,6 +45,13 @@ ACTIVE_TASK_STATES = frozenset(
     {"open", "claimed", "running", "needs_review", "reviewing"}
 )
 
+TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cancelled"})
+DISPATCHABLE_TASK_STATES = frozenset(
+    {"open", "claimed", "running", "needs_review", "reviewing"}
+)
+
+_REPLACEMENT_CHAIN_DEPTH_LIMIT = 10
+
 
 class RepositoryHygieneError(MACError):
     """Raised when repository-ref inspection or cleanup cannot proceed safely."""
@@ -898,3 +905,263 @@ def prune_repository_refs(
         "deleted": deleted,
         "count": len(deleted),
     }
+
+
+# ---------------------------------------------------------------------------
+# Replacement-liveness chain walker
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReplacementLivenessResult:
+    """Result of walking a replacement_task_id chain.
+
+    status values
+    -------------
+    satisfied         -- terminal task completed (work is done)
+    live              -- a non-terminal dispatchable/active task exists in chain
+    stranded          -- chain ends in a cancelled or failed task with no onward pointer
+    held              -- chain ends in a task with metadata.no_dispatch=True
+    cycle             -- a cycle was detected in the chain
+    missing           -- replacement_task_id pointer is absent or unreadable
+    blocked_by_terminal -- at least one dependency of a chain task is terminal (failed/cancelled)
+    """
+
+    status: str
+    chain: List[str]
+    remediation: str
+
+
+def walk_replacement_chain(
+    task_id: str,
+    get_task_fn: Callable[[str], Any],
+    get_task_deps_fn: Optional[Callable[[str], Any]] = None,
+) -> ReplacementLivenessResult:
+    """Traverse the replacement_task_id chain starting from *task_id*.
+
+    Parameters
+    ----------
+    task_id:
+        The ID of the root task whose replacement chain should be walked.
+    get_task_fn:
+        Callable that accepts a task-ID string and returns the task detail
+        mapping (or raises / returns None when the task is unavailable).
+    get_task_deps_fn:
+        Optional callable that accepts a task-ID string and returns an
+        iterable of dependency task detail mappings.  When provided, each
+        chain member is checked for terminal dependencies which produce a
+        ``blocked_by_terminal`` classification.
+    """
+
+    chain: List[str] = []
+    seen: set = set()
+    current_id: Optional[str] = task_id
+
+    while current_id is not None:
+        # Cycle detection
+        if current_id in seen:
+            chain.append(current_id)
+            return ReplacementLivenessResult(
+                status="cycle",
+                chain=chain,
+                remediation=(
+                    "A replacement_task_id cycle was detected at %s. "
+                    "Break the cycle by updating one task's replacement_task_id." % current_id
+                ),
+            )
+
+        # Depth cap
+        if len(chain) >= _REPLACEMENT_CHAIN_DEPTH_LIMIT:
+            chain.append(current_id)
+            return ReplacementLivenessResult(
+                status="cycle",
+                chain=chain,
+                remediation=(
+                    "Replacement chain exceeded the depth limit of %d. "
+                    "Verify that no cycle exists and that the chain is not "
+                    "unreasonably long." % _REPLACEMENT_CHAIN_DEPTH_LIMIT
+                ),
+            )
+
+        seen.add(current_id)
+        chain.append(current_id)
+
+        # Load the task
+        try:
+            raw = get_task_fn(current_id)
+        except Exception:  # noqa: BLE001
+            raw = None
+
+        task, _ = _task_parts(raw)
+        if not task:
+            return ReplacementLivenessResult(
+                status="missing",
+                chain=chain,
+                remediation=(
+                    "Task %s could not be loaded. "
+                    "Verify that the task exists and is accessible." % current_id
+                ),
+            )
+
+        state = str(task.get("state") or "").strip().lower()
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        no_dispatch = bool(metadata.get("no_dispatch"))
+
+        # Check for held status (no_dispatch) first — applies regardless of state
+        if no_dispatch:
+            return ReplacementLivenessResult(
+                status="held",
+                chain=chain,
+                remediation=(
+                    "Task %s has no_dispatch=True (held). "
+                    "Release it with 'mac task release %s' before it can be "
+                    "dispatched." % (current_id, current_id)
+                ),
+            )
+
+        # Check for terminal dependencies
+        if get_task_deps_fn is not None:
+            try:
+                deps = get_task_deps_fn(current_id) or []
+            except Exception:  # noqa: BLE001
+                deps = []
+            for dep_raw in deps:
+                dep_task, _ = _task_parts(dep_raw)
+                dep_state = str(dep_task.get("state") or "").strip().lower()
+                if dep_state in {"failed", "cancelled"}:
+                    return ReplacementLivenessResult(
+                        status="blocked_by_terminal",
+                        chain=chain,
+                        remediation=(
+                            "Task %s has a dependency in terminal state '%s'. "
+                            "The blocked task cannot make progress until that "
+                            "dependency is resolved or the task is "
+                            "re-queued." % (current_id, dep_state)
+                        ),
+                    )
+
+        # Classify by state
+        if state == "completed":
+            return ReplacementLivenessResult(
+                status="satisfied",
+                chain=chain,
+                remediation="",
+            )
+
+        if state in DISPATCHABLE_TASK_STATES:
+            return ReplacementLivenessResult(
+                status="live",
+                chain=chain,
+                remediation="",
+            )
+
+        if state in {"cancelled", "failed"}:
+            # Look for an onward replacement pointer
+            lifecycle = (
+                metadata.get("repository_ref_lifecycle")
+                if isinstance(metadata.get("repository_ref_lifecycle"), dict)
+                else {}
+            )
+            next_id: Optional[str] = str(
+                lifecycle.get("replacement_task_id") or ""
+            ).strip() or None
+            if next_id and _TASK_ID_RE.fullmatch(next_id):
+                current_id = next_id
+                continue
+            return ReplacementLivenessResult(
+                status="stranded",
+                chain=chain,
+                remediation=(
+                    "Task %s is in terminal state '%s' with no onward "
+                    "replacement_task_id. Create a successor task and link it "
+                    "via a cancellation with disposition=superseded or "
+                    "duplicate." % (current_id, state)
+                ),
+            )
+
+        # Unknown / blocked / other state — treat as live to avoid false-positive stranding
+        return ReplacementLivenessResult(
+            status="live",
+            chain=chain,
+            remediation="",
+        )
+
+    # Should not be reachable (current_id starts non-None and the loop always
+    # returns inside), but satisfy the type checker.
+    return ReplacementLivenessResult(
+        status="missing",
+        chain=chain,
+        remediation="Replacement chain terminated unexpectedly.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Write guard: validate replacement target before writing
+# ---------------------------------------------------------------------------
+
+
+def validate_replacement_target(
+    replacement_task_id: str,
+    get_task_fn: Callable[[str], Any],
+    *,
+    archival_override: bool = False,
+) -> None:
+    """Raise ValidationError when the pointed-at task is already terminal or held.
+
+    This guard prevents a superseded/duplicate cancellation from pointing at a
+    task that cannot serve as a live replacement.  Pass *archival_override=True*
+    only for explicit archival operations where the caller has confirmed the
+    target state is intentional.
+
+    Parameters
+    ----------
+    replacement_task_id:
+        The task ID that will be written as the replacement pointer.
+    get_task_fn:
+        Callable that accepts a task-ID string and returns the task detail.
+    archival_override:
+        When True the guard is bypassed (for intentional archival).  Callers
+        must record this flag in lifecycle metadata for audit.
+
+    Raises
+    ------
+    ValidationError
+        When the target is already terminal (cancelled/failed) or held
+        (no_dispatch) and *archival_override* is not set.
+    """
+
+    if archival_override:
+        return
+
+    if not replacement_task_id or not _TASK_ID_RE.fullmatch(str(replacement_task_id)):
+        raise ValidationError(
+            "replacement_task_id must be a task_<32 hex> identifier"
+        )
+
+    try:
+        raw = get_task_fn(replacement_task_id)
+    except Exception:  # noqa: BLE001
+        raw = None
+
+    task, _ = _task_parts(raw)
+    if not task:
+        # Cannot confirm the target is terminal or held — fail open and allow
+        # the write.  The chain walker can detect missing targets later.
+        return
+
+    state = str(task.get("state") or "").strip().lower()
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    no_dispatch = bool(metadata.get("no_dispatch"))
+
+    if state in {"cancelled", "failed"}:
+        raise ValidationError(
+            "replacement_task_id %s is already terminal (state=%s); "
+            "use archival_override=True only when this is intentional" % (replacement_task_id, state)
+        )
+
+    if no_dispatch:
+        raise ValidationError(
+            "replacement_task_id %s is held (no_dispatch=True); "
+            "release it first or use archival_override=True if intentional" % replacement_task_id
+        )
+

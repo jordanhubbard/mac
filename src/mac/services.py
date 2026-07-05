@@ -112,6 +112,7 @@ from mac.models import (
 from mac.repository_hygiene import (
     normalize_cancellation_detail,
     repository_ref_lifecycle_for_transition,
+    validate_replacement_target,
 )
 from mac.env_config import resolve_hub_agent
 from mac.reconciliation import ReconciliationCoordinator
@@ -6067,6 +6068,22 @@ class ControlPlane:
         transition_detail = dict(detail or {})
         if target == TaskState.CANCELLED.value:
             transition_detail = normalize_cancellation_detail(transition_detail)
+            # Write guard: reject cancellations that point at a terminal or held
+            # replacement task unless the caller has explicitly set archival_override.
+            disposition = str(transition_detail.get("disposition") or "").strip().lower()
+            if disposition in {"superseded", "duplicate"}:
+                replacement_id = str(
+                    transition_detail.get("replacement_task_id") or ""
+                ).strip()
+                archival_override = bool(transition_detail.get("archival_override", False))
+                validate_replacement_target(
+                    replacement_id,
+                    self.get_task,
+                    archival_override=archival_override,
+                )
+                if archival_override:
+                    # Record archival_override in lifecycle metadata for audit.
+                    transition_detail["archival_override_recorded"] = True
         detail = transition_detail
         if task.state == target:
             # A terminal cancellation may be re-submitted solely to backfill or
