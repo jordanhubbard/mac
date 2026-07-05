@@ -8925,10 +8925,14 @@ class ControlPlane:
                 "skip_reason": str(exc),
                 "consolidation": {},
                 "consolidation_error": None,
+                "repair_tasks": {},
+                "repair_task_error": None,
                 "complete_error": None,
             }
         consolidation_report: JsonDict = {}
         consolidation_error: Optional[str] = None
+        repair_task_report: JsonDict = {}
+        repair_task_error: Optional[str] = None
         complete_error: Optional[str] = None
         completed = run
         try:
@@ -8943,6 +8947,14 @@ class ControlPlane:
                 )
             except Exception as exc:  # noqa: BLE001
                 consolidation_error = str(exc)
+            if consolidation_error is None and emit_dream_artifacts:
+                try:
+                    repair_task_report = self._file_low_confidence_dream_repair_tasks(
+                        consolidation_report.get("dream_memory_ids") or [],
+                        actor=actor or "nap-cycle:%s" % agent_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    repair_task_error = str(exc)
         finally:
             # Always attempt to complete the nap so the agent returns to
             # IDLE, even when consolidation threw. A completion failure
@@ -8956,6 +8968,8 @@ class ControlPlane:
                     detail={
                         "consolidation": consolidation_report,
                         "consolidation_error": consolidation_error,
+                        "repair_tasks": repair_task_report,
+                        "repair_task_error": repair_task_error,
                     },
                     actor=actor,
                 )
@@ -8972,8 +8986,45 @@ class ControlPlane:
             "skipped": False,
             "consolidation": consolidation_report,
             "consolidation_error": consolidation_error,
+            "repair_tasks": repair_task_report,
+            "repair_task_error": repair_task_error,
             "complete_error": complete_error,
         }
+
+    def _file_low_confidence_dream_repair_tasks(
+        self,
+        dream_memory_ids: Iterable[str],
+        *,
+        actor: str,
+    ) -> JsonDict:
+        from mac.dream_repair_tasks import file_low_confidence_repair_tasks
+
+        candidates: List[JsonDict] = []
+        load_errors: List[JsonDict] = []
+        for memory_id in dream_memory_ids:
+            try:
+                memory = self.get_memory(str(memory_id))
+                payload = json_loads(memory.content)
+                if not isinstance(payload, dict):
+                    raise ValidationError("dream memory content is not an object")
+                payload = dict(payload)
+                payload["_dream_memory_id"] = memory.id
+                candidates.append(payload)
+            except Exception as exc:  # noqa: BLE001 - one malformed dream must not stop the cycle.
+                load_errors.append(
+                    {
+                        "memory_id": str(memory_id),
+                        "error": str(exc)[:500],
+                    }
+                )
+        report = file_low_confidence_repair_tasks(self, candidates, actor=actor)
+        if load_errors:
+            report["status"] = "error"
+            report["load_errors"] = load_errors
+            report.setdefault("errors", []).extend(
+                {"phase": "load_dream_memory", **item} for item in load_errors
+            )
+        return report
 
     def _safe_get_nap_run(self, run_id: str, fallback: NapRun) -> NapRun:
         """Refetch a nap_run for reporting in an error path, falling
