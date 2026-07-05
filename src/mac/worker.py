@@ -3433,7 +3433,8 @@ class MacWorker:
         files_changed = _repository_context_changed_files(worktree, context)
 
         test_command = _repository_contract_test_command(task)
-        test_item = self._run_repository_contract_test(worktree, test_command, task_dir=task_dir)
+        hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
+        test_item = self._run_repository_contract_test(worktree, test_command, task_dir=task_dir, hub_verify=hub_verify)
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
         repo["head_sha"] = _git_stdout(worktree, ["rev-parse", "HEAD"]) or repo.get("head_sha", "")
@@ -3484,13 +3485,14 @@ class MacWorker:
             repo,
             test_item,
             codegraph=codegraph,
+            hub_verify=hub_verify,
         )
         if problems:
             problems.append("repository finalizer had local errors; refusing to push")
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
-        elif test_item.get("returncode") == 0:
+        elif test_item.get("returncode") == 0 or (hub_verify and _is_hub_verify_deferred_item(test_item)):
             if publication_target is not None:
                 publication = guarded_push(publication_target)
                 display = (
@@ -3640,8 +3642,9 @@ class MacWorker:
         command: str,
         *,
         task_dir: Optional[Path] = None,
+        hub_verify: bool = False,
     ) -> JsonDict:
-        sandbox_item = _sandbox_repository_verification_item(task_dir, command)
+        sandbox_item = _sandbox_repository_verification_item(task_dir, command, hub_verify=hub_verify)
         if sandbox_item is not None:
             return sandbox_item
         if not command:
@@ -5253,6 +5256,7 @@ def _repository_finalizer_prepush_problems(
     test_item: JsonDict,
     *,
     codegraph: Optional[JsonDict] = None,
+    hub_verify: bool = False,
 ) -> List[str]:
     problems: List[str] = []
     head_sha = str(repo.get("head_sha") or "").strip()
@@ -5263,7 +5267,13 @@ def _repository_finalizer_prepush_problems(
     files_changed = _manifest_list(repo.get("files_changed"))
     if not files_changed and not _worker_allows_empty_repo_change_evidence(task, "repo_change"):
         problems.append("repo evidence requires changed files")
-    if _worker_verification_item_passed(test_item) is not True:
+    # When hub-verify mode is active and the test item is the deferred sentinel,
+    # skip the passing-test gate — the hub finalizer will run the contract test
+    # after the branch is pushed.  All other prepush checks (head_sha, dirty,
+    # files_changed, codegraph) are still enforced.
+    if hub_verify and _is_hub_verify_deferred_item(test_item):
+        pass  # test gate intentionally skipped in hub-verify deferred mode
+    elif _worker_verification_item_passed(test_item) is not True:
         problems.append("repo code evidence requires at least one passing test/check")
     if codegraph is not None:
         problems.extend(codegraph_audit_manifest_problems({"repo": repo, "codegraph": codegraph}))
@@ -5271,15 +5281,52 @@ def _repository_finalizer_prepush_problems(
     return problems
 
 
-def _sandbox_repository_verification_item(task_dir: Optional[Path], command: str) -> Optional[JsonDict]:
+def _hub_verify_deferred_test_item(command: str) -> JsonDict:
+    """Return the deferred sentinel emitted when MAC_REVIEW_HUB_VERIFY=1 and no
+    sandbox result is available.  The hub finalizer will run the contract test
+    after the branch is pushed; the worker must not block on it."""
+    return {
+        "name": "repository contract test",
+        "command": command,
+        "returncode": None,
+        "status": "deferred",
+        "execution_environment": "hub_verify_pending",
+        "stdout": "",
+        "stderr": "",
+    }
+
+
+def _is_hub_verify_deferred_item(item: Any) -> bool:
+    """True iff *item* is the deferred sentinel produced by hub-verify mode."""
+    if not isinstance(item, dict):
+        return False
+    return (
+        str(item.get("status") or "").strip().lower() == "deferred"
+        and str(item.get("execution_environment") or "").strip().lower()
+        == "hub_verify_pending"
+    )
+
+
+def _sandbox_repository_verification_item(
+    task_dir: Optional[Path],
+    command: str,
+    *,
+    hub_verify: bool = False,
+) -> Optional[JsonDict]:
     if task_dir is None:
+        if hub_verify:
+            return _hub_verify_deferred_test_item(command)
         return None
     path = task_dir / "mac-sandbox-verification.json"
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
+        if hub_verify:
+            return _hub_verify_deferred_test_item(command)
         return None
     if not isinstance(loaded, dict):
+        if hub_verify:
+            return _hub_verify_deferred_test_item(command)
         return None
     try:
         returncode = int(loaded.get("returncode"))

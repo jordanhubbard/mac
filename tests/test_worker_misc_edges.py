@@ -333,3 +333,151 @@ def test_truncate_process_text_keeps_the_failure_tail() -> None:
     # Short output passes through untouched.
     assert _truncate_process_text("all good", limit=4000) == "all good"
 
+
+# ---------------------------------------------------------------------------
+# Tests for hub-verify deferred mode
+# ---------------------------------------------------------------------------
+
+
+def test_hub_verify_deferred_item_sentinel() -> None:
+    """_hub_verify_deferred_test_item returns the expected sentinel shape."""
+    item = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
+    assert item["status"] == "deferred"
+    assert item["execution_environment"] == "hub_verify_pending"
+    assert item["returncode"] is None
+    assert item["name"] == "repository contract test"
+    assert item["command"] == "scripts/run-contract-tests.sh"
+
+
+def test_is_hub_verify_deferred_item_recognizes_sentinel() -> None:
+    sentinel = worker._hub_verify_deferred_test_item("cmd")
+    assert worker._is_hub_verify_deferred_item(sentinel) is True
+
+
+def test_is_hub_verify_deferred_item_rejects_non_deferred() -> None:
+    passing = {"name": "t", "returncode": 0, "status": "pass"}
+    failing = {"name": "t", "returncode": 1, "status": "fail"}
+    assert worker._is_hub_verify_deferred_item(passing) is False
+    assert worker._is_hub_verify_deferred_item(failing) is False
+    assert worker._is_hub_verify_deferred_item(None) is False  # type: ignore[arg-type]
+    assert worker._is_hub_verify_deferred_item("not a dict") is False  # type: ignore[arg-type]
+
+
+def test_sandbox_verification_item_returns_deferred_when_hub_verify_no_task_dir() -> None:
+    """When task_dir=None and hub_verify=True, return the deferred sentinel."""
+    item = worker._sandbox_repository_verification_item(None, "cmd", hub_verify=True)
+    assert item is not None
+    assert worker._is_hub_verify_deferred_item(item)
+
+
+def test_sandbox_verification_item_returns_none_without_hub_verify_no_task_dir() -> None:
+    """Option A fallback: hub_verify=False keeps original None-return behaviour."""
+    item = worker._sandbox_repository_verification_item(None, "cmd", hub_verify=False)
+    assert item is None
+
+
+def test_sandbox_verification_item_returns_deferred_when_hub_verify_missing_file(tmp_path) -> None:
+    """No mac-sandbox-verification.json + hub_verify=True -> deferred sentinel."""
+    item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
+    assert item is not None
+    assert worker._is_hub_verify_deferred_item(item)
+
+
+def test_sandbox_verification_item_returns_none_when_no_hub_verify_missing_file(tmp_path) -> None:
+    """No mac-sandbox-verification.json + hub_verify=False -> None (original behaviour)."""
+    item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=False)
+    assert item is None
+
+
+def test_sandbox_verification_item_returns_real_result_when_file_present_hub_verify(tmp_path) -> None:
+    """A present sandbox-verification file takes precedence over deferred mode."""
+    path = tmp_path / "mac-sandbox-verification.json"
+    path.write_text(json.dumps({"returncode": 0, "command": "make test", "stdout": "ok", "stderr": ""}))
+    item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
+    assert item is not None
+    assert item["status"] == "pass"
+    assert item["returncode"] == 0
+    assert item["execution_environment"] == "openshell_sandbox"
+
+
+def test_prepush_problems_skips_test_gate_for_deferred_item() -> None:
+    """hub_verify=True + deferred test_item: test gate is skipped."""
+    task: dict = {}
+    repo = {
+        "head_sha": "a" * 40,
+        "dirty": False,
+        "files_changed": ["src/mac/worker.py"],
+    }
+    deferred = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
+    problems = worker._repository_finalizer_prepush_problems(
+        task, repo, deferred, hub_verify=True
+    )
+    assert problems == []
+
+
+def test_prepush_problems_enforces_other_checks_in_deferred_mode() -> None:
+    """hub_verify deferred mode: non-test checks (dirty, head_sha) are still enforced."""
+    task: dict = {}
+    repo = {
+        "head_sha": "not-a-sha",
+        "dirty": True,
+        "files_changed": [],
+    }
+    deferred = worker._hub_verify_deferred_test_item("cmd")
+    problems = worker._repository_finalizer_prepush_problems(
+        task, repo, deferred, hub_verify=True
+    )
+    assert any("head_sha" in p for p in problems)
+    assert any("dirty" in p for p in problems)
+    assert any("changed files" in p for p in problems)
+    # test-gate problem must NOT be present
+    assert not any("passing test" in p for p in problems)
+
+
+def test_prepush_problems_fallback_option_a_fails_without_passing_test() -> None:
+    """Option A (hub_verify=False): missing passing test still blocks push."""
+    task: dict = {}
+    repo = {
+        "head_sha": "b" * 40,
+        "dirty": False,
+        "files_changed": ["src/mac/worker.py"],
+    }
+    failing = {"name": "t", "returncode": 1, "status": "fail"}
+    problems = worker._repository_finalizer_prepush_problems(
+        task, repo, failing, hub_verify=False
+    )
+    assert any("passing test" in p for p in problems)
+
+
+def test_prepush_problems_fallback_option_a_passes_with_passing_test() -> None:
+    """Option A (hub_verify=False): a passing test_item produces no problems."""
+    task: dict = {}
+    repo = {
+        "head_sha": "c" * 40,
+        "dirty": False,
+        "files_changed": ["src/mac/worker.py"],
+    }
+    passing = {"name": "t", "returncode": 0, "status": "pass"}
+    problems = worker._repository_finalizer_prepush_problems(
+        task, repo, passing, hub_verify=False
+    )
+    assert problems == []
+
+
+def test_sandbox_verification_item_hub_verify_invalid_json_returns_deferred(tmp_path) -> None:
+    """Invalid JSON in sandbox file + hub_verify=True -> deferred sentinel."""
+    path = tmp_path / "mac-sandbox-verification.json"
+    path.write_text("not-json")
+    item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
+    assert item is not None
+    assert worker._is_hub_verify_deferred_item(item)
+
+
+def test_sandbox_verification_item_hub_verify_non_dict_json_returns_deferred(tmp_path) -> None:
+    """Non-dict JSON (list) in sandbox file + hub_verify=True -> deferred sentinel."""
+    path = tmp_path / "mac-sandbox-verification.json"
+    path.write_text("[]")
+    item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
+    assert item is not None
+    assert worker._is_hub_verify_deferred_item(item)
+
