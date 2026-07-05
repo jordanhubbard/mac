@@ -43,6 +43,23 @@ def test_store_and_read_blob_roundtrip(tmp_path):
     assert evidence_blobs.read_blob(tmp_path, uri) == content
 
 
+def test_store_blob_sets_mode_0600(tmp_path):
+    """store_blob must leave the blob file at mode 0600 (owner-read/write only).
+
+    This asserts the documented security guarantee: evidence payloads are not
+    readable by other local users on the hub host.
+    """
+    content = b"sensitive evidence payload"
+    uri = evidence_blobs.store_blob(tmp_path, content)
+    digest = hashlib.sha256(content).hexdigest()
+    path = evidence_blobs.blob_path(tmp_path, digest)
+    actual_mode = path.stat().st_mode & 0o777
+    assert actual_mode == 0o600, (
+        "Expected blob file mode 0600, got %04o. "
+        "evidence_blobs.store_blob must call chmod(0o600) after writing." % actual_mode
+    )
+
+
 def test_read_blob_fails_closed_on_corruption(tmp_path):
     content = b"payload"
     uri = evidence_blobs.store_blob(tmp_path, content)

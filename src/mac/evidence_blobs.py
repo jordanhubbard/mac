@@ -26,6 +26,10 @@ Design constraints:
   deduplicated across rows so deletion needs refcounting the ledger does not
   carry. Operators reclaim space with an age-based sweep of the blob root
   (files are never rewritten, so mtime is trustworthy).
+- **File permissions.** Every blob file is stored with mode 0600
+  (owner-read/write only) to prevent other local users from reading
+  evidence payloads. ``store_blob`` calls ``chmod(0o600)`` on the final
+  path immediately after the atomic rename.
 """
 from __future__ import annotations
 
