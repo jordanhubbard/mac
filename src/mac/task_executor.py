@@ -611,6 +611,173 @@ def maybe_preflight_scope_estimate(task: Dict[str, Any]) -> Optional[Dict[str, A
     return estimate
 
 
+# ---------------------------------------------------------------------------
+# Planning-phase execution mode (plan-01)
+# ---------------------------------------------------------------------------
+
+
+def is_planning_phase(task: Dict[str, Any]) -> bool:
+    """Return True when this task run should PLAN rather than execute.
+
+    A task enters planning-phase execution on its FIRST run when:
+    - ``metadata.plan_first=True`` (operator-declared intent), OR
+    - ``metadata.scope_estimate.size == "large"`` (computed by scope-01 preflight).
+
+    Child tasks and handoff tasks are excluded so they always execute.
+    Tasks already decomposed (have children) are also excluded.
+
+    This is a *pure* function — it never touches the network.
+    """
+    if not isinstance(task, dict):
+        return False
+
+    # Only fire on the first attempt.
+    raw_attempt = task.get("attempt_count")
+    try:
+        attempt_count = int(raw_attempt or 0)
+    except (TypeError, ValueError):
+        attempt_count = 0
+    if attempt_count != 1:
+        return False
+
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    # Never plan child tasks, handoff tasks, or no_decompose tasks.
+    if metadata.get("no_decompose"):
+        return False
+    relationships = metadata.get("relationships")
+    if isinstance(relationships, dict):
+        if relationships.get("parent_task_id") or relationships.get("child_task_ids"):
+            return False
+
+    # Explicit operator override wins.
+    if metadata.get("plan_first"):
+        return True
+
+    # Scope-01 estimate: already recorded as metadata.scope_estimate.
+    scope_estimate = metadata.get("scope_estimate")
+    if isinstance(scope_estimate, dict) and scope_estimate.get("size") == "large":
+        return True
+
+    return False
+
+
+def build_planning_prompt(
+    task: Dict[str, Any],
+    task_file: "Path",
+    lessons: Optional[List[str]] = None,
+) -> str:
+    """Build the agent prompt for a planning-phase run.
+
+    The agent is instructed to analyse the task scope, consult the
+    topology primitive (``mac plan order``) to derive a dependency
+    ordering, and post N sized child tasks via POST /tasks/{id}/children
+    — one child per independent work item.  It must NOT implement any
+    code in this run.
+
+    A plan-evidence manifest (evidence_type=plan_decomposed) with a
+    ``children`` list and an ``ordering_rationale`` field is written to
+    mac-evidence.json so the deterministic host can verify coverage.
+    """
+    task_id = str(task.get("id") or "")
+    mac_url = (
+        os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or ""
+    ).rstrip("/")
+    children_endpoint = (
+        "%s/tasks/%s/children" % (mac_url, task_id)
+        if mac_url and task_id
+        else "/tasks/{task_id}/children"
+    )
+
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    scope_estimate = (metadata.get("scope_estimate") or {}) if isinstance(metadata, dict) else {}
+    size = scope_estimate.get("size", "unknown")
+    signals = scope_estimate.get("signals") or []
+    plan_first = bool(metadata.get("plan_first")) if isinstance(metadata, dict) else False
+
+    trigger_reason = (
+        "metadata.plan_first=true"
+        if plan_first
+        else "scope_estimate.size=%s (signals: %s)" % (size, ", ".join(signals) or "none")
+    )
+
+    parts = [
+        "You are running as a MAC fleet worker in PLANNING MODE. "
+        "Your job is to PLAN this task, NOT to implement it.",
+        "You are AUTONOMOUS: never ask the operator for confirmation or permission. "
+        "Make a reasonable assumption, proceed, and record it when necessary.",
+        "First read the versioned execution policy at "
+        "$MAC_TASK_WORKSPACE/.mac-executor-policy.txt, then read task.json as the "
+        "source of truth.",
+        "PLANNING MODE TRIGGER: %s" % trigger_reason,
+        "\n".join([
+            "PLANNING PHASE INSTRUCTIONS:",
+            "  1. Analyse the task description to identify ALL independent deliverables and phases.",
+            "  2. Use the topology primitive to derive ordering:",
+            "     Run: mac plan order <changed-files or key-modules> --repo $MAC_TASK_REPO_WORKTREE",
+            "     (or call mac.planning.order_layers() directly). Use the layer ordering to set",
+            "     dependencies[] on child tasks so leaves run before cores.",
+            "     If topology information is unavailable, use logical dependency ordering.",
+            "  3. Create 2-10 child tasks. Each child MUST:",
+            "     a. Be completable and verifiable by ONE agent in a single run.",
+            "     b. Have a clear title and description.",
+            "     c. Include dependencies=[<sibling-task-ids>] for tasks that must run after others.",
+            "        IMPORTANT: at creation time sibling IDs are not yet known; post children in",
+            "        topological order and use the returned IDs to set dependencies on later tasks,",
+            "        OR post all children in one request with relative ordering implied by list order.",
+            "  4. POST the children to: %s" % children_endpoint,
+            "     Body: {\"children\": [{\"title\": \"...\", \"description\": \"...\", "
+            "\"dependencies\": []}, ...]}",
+            "     The MAC token is in MAC_TOKEN / MAC_WORKER_TOKEN environment variable.",
+            "  5. Write mac-evidence.json with:",
+            "     {",
+            "       \"schema\": \"mac.worker_evidence.v1\",",
+            "       \"status\": \"complete\",",
+            "       \"evidence_type\": \"plan_decomposed\",",
+            "       \"summary\": \"<one-sentence description of the plan>\",",
+            "       \"children\": [{\"title\": \"...\", \"description\": \"...\"}, ...],",
+            "       \"ordering_rationale\": \"<why this order>\",",
+            "       \"coverage_claim\": \"<how the children together cover the full parent scope>\"",
+            "     }",
+            "  6. Exit — the parent task will automatically block on its children.",
+            "DO NOT write any code, DO NOT make any code changes, DO NOT run tests.",
+            "DO NOT write evidence_type=repo_change — only plan_decomposed is valid here.",
+        ]),
+    ]
+
+    lessons_section = _lessons_section(lessons or [])
+    if lessons_section:
+        parts.append(lessons_section)
+    parts.append("Read the full task from: %s" % str(task_file))
+    parts.append(
+        "Finally, for the per-task activity log, print a short plain-language recap "
+        "of what you did and how you verified it (1-3 sentences, no code or diff), "
+        "wrapped EXACTLY in these two marker lines:\n%s\n<your recap here>\n%s"
+        % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END)
+    )
+    return "\n\n".join(parts)
+
+
+def is_plan_decomposed_evidence(task_workspace: "Path") -> bool:
+    """Return True when mac-evidence.json declares evidence_type=plan_decomposed.
+
+    Used by the git finalizer path: a planning-phase run does not produce
+    a repo change, so we must skip the dirty-worktree check and the push step.
+    """
+    manifest_path = task_workspace / "mac-evidence.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    return manifest.get("evidence_type") == "plan_decomposed"
+
+
 def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
     """Read the agent's mac-evidence.json for a ``plan_steps`` key; if found,
     auto-post those steps as child tasks via the MAC API.
@@ -4704,6 +4871,8 @@ def _run_executor(
 ) -> int:
     """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
+    # Planning-phase flag — determined after the scope estimate below.
+    _is_planning = False
     if is_review:
         prompt = build_review_prompt(task, task_workspace, review_context)
         lessons: List[str] = []
@@ -4711,7 +4880,8 @@ def _run_executor(
         # Memory feed (in): recall prior deployment lessons so the agent works
         # with the fleet's hindsight. Best-effort — never blocks the run.
         lessons = recall_deployment_lessons(task)
-        prompt = build_task_prompt(task, task_file, lessons)
+        # Prompt is built after planning-phase decision below.
+        prompt = ""
     emit_telemetry(
         "started",
         task_id=task_id,
@@ -4734,8 +4904,31 @@ def _run_executor(
                     estimated_units=estimate.get("estimated_units"),
                     signals=estimate.get("signals", []),
                 )
+                # Merge the just-computed estimate into the local task dict so
+                # is_planning_phase() can read it without another hub round-trip.
+                metadata_local = task.get("metadata")
+                if not isinstance(metadata_local, dict):
+                    metadata_local = {}
+                    task["metadata"] = metadata_local  # type: ignore[index]
+                metadata_local.setdefault("scope_estimate", estimate)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
+
+    # Planning-phase execution (plan-01): when scope_estimate=large or
+    # metadata.plan_first=true, the first run PLANS instead of executing.
+    if not is_review:
+        try:
+            _is_planning = is_planning_phase(task)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("planning phase check failed: %s\n" % exc)
+            _is_planning = False
+
+    if not is_review:
+        if _is_planning:
+            prompt = build_planning_prompt(task, task_file, lessons)
+            emit_telemetry("planning_phase_started", task_id=task_id, level="info")
+        else:
+            prompt = build_task_prompt(task, task_file, lessons)
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     assignment = _review_experiment_assignment(task) if is_review else {}
@@ -4851,7 +5044,14 @@ def _run_executor(
 
     if not is_review:
         try:
-            run_deterministic_git_finalizer(task_workspace, task)
+            # Planning-phase runs produce evidence_type=plan_decomposed, not a
+            # repo change.  Skip the git finalizer so a clean worktree is not
+            # treated as a failure.  The agent is responsible for posting the
+            # children and writing the plan manifest.
+            if _is_planning and is_plan_decomposed_evidence(task_workspace):
+                emit_telemetry("planning_phase_completed", task_id=task_id, level="info")
+            else:
+                run_deterministic_git_finalizer(task_workspace, task)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
     elif not blind_protocol_failed:
