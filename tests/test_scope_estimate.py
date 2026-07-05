@@ -423,3 +423,288 @@ def test_run_executor_skips_scope_estimate_for_reviews(monkeypatch, tmp_path):
     )
 
     assert scope_calls == [], "scope estimate must not run for reviews"
+
+
+# ---------------------------------------------------------------------------
+# _compute_scope_signals — pure inner function
+# ---------------------------------------------------------------------------
+
+
+def _make_plan_learning_record(task_id: str = "task_prior_001") -> Dict[str, Any]:
+    """Build a minimal raw hub record dict containing a mac.plan_learning.v1 blob."""
+    content = {
+        "schema": "mac.plan_learning.v1",
+        "task_id": task_id,
+        "task_title": "Prior decomposed task",
+        "project": "mac",
+        "evidence_type": "plan_decomposed",
+        "children_count": 3,
+        "children_titles": ["Step 1", "Step 2", "Step 3"],
+        "ordering_rationale": "leaves before cores",
+        "coverage_claim": "full",
+        "wall_clock_ms": 30000,
+        "at": "2026-01-01T00:00:00Z",
+    }
+    return {"content": json.dumps(content), "record_type": "deployment_learning:mac"}
+
+
+def test_compute_scope_signals_no_prior_lessons():
+    """With no prior lessons, signals match the pure-textual path."""
+    result = te._compute_scope_signals("Fix a bug", "Short fix.", {}, [])
+    assert isinstance(result, list)
+    # no memory signal
+    assert not any("memory" in s for s in result)
+
+
+def test_compute_scope_signals_memory_signal_appended():
+    """One plan_learning.v1 record → one memory:prior_decomposition signal."""
+    record = _make_plan_learning_record("task_prior_abc")
+    signals = te._compute_scope_signals("Fix a bug", "Short fix.", {}, [record])
+    memory_signals = [s for s in signals if s.startswith("memory:prior_decomposition:")]
+    assert len(memory_signals) == 1
+    assert "task_prior_abc" in memory_signals[0]
+
+
+def test_compute_scope_signals_memory_signal_is_auditable():
+    """The memory signal encodes the prior task_id for auditability."""
+    task_id = "task_auditable_001"
+    record = _make_plan_learning_record(task_id)
+    signals = te._compute_scope_signals("x", "y", {}, [record])
+    assert any(task_id in s for s in signals)
+
+
+def test_compute_scope_signals_multiple_records_multiple_signals():
+    """Two plan_learning records → two separate memory signals."""
+    records = [
+        _make_plan_learning_record("task_a"),
+        _make_plan_learning_record("task_b"),
+    ]
+    signals = te._compute_scope_signals("x", "y", {}, records)
+    memory_signals = [s for s in signals if s.startswith("memory:prior_decomposition:")]
+    assert len(memory_signals) == 2
+    assert any("task_a" in s for s in memory_signals)
+    assert any("task_b" in s for s in memory_signals)
+
+
+def test_compute_scope_signals_non_plan_record_ignored():
+    """Records with wrong schema are not converted to memory signals."""
+    content = json.dumps({"schema": "mac.deployment_learning.v1", "outcome": "success"})
+    record = {"content": content}
+    signals = te._compute_scope_signals("x", "y", {}, [record])
+    assert not any("memory" in s for s in signals)
+
+
+def test_compute_scope_signals_invalid_json_record_skipped():
+    """Records with invalid JSON content are silently skipped."""
+    record = {"content": "not-valid-json"}
+    signals = te._compute_scope_signals("x", "y", {}, [record])
+    assert not any("memory" in s for s in signals)
+
+
+def test_compute_scope_signals_non_dict_record_skipped():
+    """Non-dict entries in prior_lessons list are silently skipped."""
+    signals = te._compute_scope_signals("x", "y", {}, ["bad", None, 42])
+    assert not any("memory" in s for s in signals)
+
+
+def test_compute_scope_signals_preserves_d1_to_d5():
+    """D1-D5 signals still appear when prior_lessons is empty."""
+    long_desc = " ".join(["word"] * 250)  # D1 trigger
+    signals = te._compute_scope_signals("x", long_desc, {}, [])
+    assert any("desc_words" in s for s in signals)
+
+
+# ---------------------------------------------------------------------------
+# recall_scope_lessons — hub seam
+# ---------------------------------------------------------------------------
+
+
+def test_recall_scope_lessons_returns_empty_no_hub(monkeypatch):
+    """No hub env → returns empty list, never raises."""
+    monkeypatch.delenv("MAC_HUB_URL", raising=False)
+    monkeypatch.delenv("MAC_URL", raising=False)
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+    task = _task(title="Migrate schema")
+    result = te.recall_scope_lessons(task)
+    assert result == []
+
+
+def test_recall_scope_lessons_returns_empty_hub_unreachable(monkeypatch):
+    """Hub returns None (unreachable) → empty list."""
+    monkeypatch.setattr(te, "_hub_get", lambda path: None)
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert result == []
+
+
+def test_recall_scope_lessons_returns_empty_no_records(monkeypatch):
+    """Hub returns empty list → empty list."""
+    monkeypatch.setattr(te, "_hub_get", lambda path: [])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert result == []
+
+
+def test_recall_scope_lessons_filters_non_plan_records(monkeypatch):
+    """Non-plan records in hub response are filtered out."""
+    bad_content = json.dumps({"schema": "mac.deployment_learning.v1"})
+    monkeypatch.setattr(te, "_hub_get", lambda path: [{"content": bad_content}])
+    result = te.recall_scope_lessons(_task())
+    assert result == []
+
+
+def test_recall_scope_lessons_returns_plan_records(monkeypatch):
+    """Valid plan_learning.v1 records are returned."""
+    record = _make_plan_learning_record("task_plan_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert len(result) == 1
+    data = json.loads(result[0]["content"])
+    assert data["schema"] == "mac.plan_learning.v1"
+
+
+def test_recall_scope_lessons_deduplicates_by_task_id(monkeypatch):
+    """Records with identical task_id are deduplicated."""
+    record = _make_plan_learning_record("task_dup")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record, record])
+    result = te.recall_scope_lessons(_task())
+    assert len(result) == 1
+
+
+def test_recall_scope_lessons_respects_limit(monkeypatch):
+    """limit= parameter caps the number of returned records."""
+    records = [_make_plan_learning_record("task_%d" % i) for i in range(10)]
+    monkeypatch.setattr(te, "_hub_get", lambda path: records)
+    result = te.recall_scope_lessons(_task(), limit=3)
+    assert len(result) <= 3
+
+
+# ---------------------------------------------------------------------------
+# compute_scope_estimate — two-layer integration (new contracts)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_scope_estimate_no_regression_hub_unreachable(monkeypatch):
+    """Hub unreachable → output identical to pure-textual estimate."""
+    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [])
+    task = _task(description=" ".join(["word"] * 250))
+    result = te.compute_scope_estimate(task)
+    assert result["schema"] == "mac.scope_estimate.v1"
+    assert "desc_words" in " ".join(result["signals"])
+    assert not any("memory" in s for s in result["signals"])
+
+
+def test_compute_scope_estimate_no_regression_raises(monkeypatch):
+    """recall_scope_lessons raising → silently falls back to textual-only."""
+    def boom(task, **kw):
+        raise RuntimeError("hub exploded")
+    monkeypatch.setattr(te, "recall_scope_lessons", boom)
+    task = _task(title="Fix a small bug", description="Short fix.")
+    result = te.compute_scope_estimate(task)
+    assert result["schema"] == "mac.scope_estimate.v1"
+    assert result["size"] in {"small", "large"}
+
+
+def test_compute_scope_estimate_memory_signal_appears(monkeypatch):
+    """One prior decomposition lesson → memory:prior_decomposition in signals."""
+    record = _make_plan_learning_record("task_prior_42")
+    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [record])
+    task = _task(title="Fix a small bug", description="Short fix.")
+    result = te.compute_scope_estimate(task)
+    assert any("memory:prior_decomposition" in s for s in result["signals"])
+    assert any("task_prior_42" in s for s in result["signals"])
+
+
+def test_compute_scope_estimate_memory_signal_flips_size(monkeypatch):
+    """One textual large-signal + one memory hit → size='large'."""
+    record = _make_plan_learning_record("task_flip")
+    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [record])
+    # _repo_task gives one textual large-signal (repo_required_cmds)
+    task = _repo_task()
+    result = te.compute_scope_estimate(task)
+    assert result["size"] == "large", (
+        "One textual signal + one memory hit must produce size='large'; got: %r" % result
+    )
+    assert result["estimated_units"] == 2
+
+
+def test_compute_scope_estimate_calls_recall_scope_lessons(monkeypatch):
+    """compute_scope_estimate must call recall_scope_lessons with the task."""
+    calls: List[Dict] = []
+
+    def fake_recall(task, **kw):
+        calls.append(task)
+        return []
+
+    monkeypatch.setattr(te, "recall_scope_lessons", fake_recall)
+    task = _task()
+    te.compute_scope_estimate(task)
+    assert len(calls) == 1
+    assert calls[0] is task
+
+
+def test_compute_scope_estimate_public_signature_unchanged():
+    """Public signature: (task: Dict) -> Dict — unchanged after refactor."""
+    import inspect
+    sig = inspect.signature(te.compute_scope_estimate)
+    params = list(sig.parameters.keys())
+    assert params == ["task"], "Public signature must remain (task,); got: %r" % params
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage for _compute_scope_signals edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_compute_scope_signals_json_decoded_non_dict_skipped():
+    """Content that decodes to a non-dict (e.g. JSON list) is silently skipped."""
+    record = {"content": json.dumps(["list", "not", "dict"])}
+    signals = te._compute_scope_signals("x", "y", {}, [record])
+    assert not any("memory" in s for s in signals)
+
+
+def test_compute_scope_signals_json_decoded_string_skipped():
+    """Content that decodes to a string (not a dict) is silently skipped."""
+    record = {"content": json.dumps("just a string")}
+    signals = te._compute_scope_signals("x", "y", {}, [record])
+    assert not any("memory" in s for s in signals)
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage for recall_scope_lessons edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_recall_scope_lessons_non_dict_hub_record_skipped(monkeypatch):
+    """Non-dict entries in the hub response list are silently skipped."""
+    monkeypatch.setattr(te, "_hub_get", lambda path: ["not-a-dict", 42, None])
+    result = te.recall_scope_lessons(_task())
+    assert result == []
+
+
+def test_recall_scope_lessons_invalid_json_in_hub_record_skipped(monkeypatch):
+    """Records whose content field is invalid JSON are silently skipped."""
+    monkeypatch.setattr(te, "_hub_get", lambda path: [{"content": "bad-json!!"}])
+    result = te.recall_scope_lessons(_task())
+    assert result == []
+
+
+def test_recall_scope_lessons_break_on_limit_across_terms(monkeypatch):
+    """When limit is reached mid-search across multiple family terms, search stops."""
+    call_count = [0]
+
+    def fake_hub_get(path):
+        call_count[0] += 1
+        # Return two distinct plan records each time
+        return [
+            _make_plan_learning_record("task_x%d" % call_count[0]),
+            _make_plan_learning_record("task_y%d" % call_count[0]),
+        ]
+
+    monkeypatch.setattr(te, "_hub_get", fake_hub_get)
+    # Use a task with multiple family terms so the loop would iterate multiple times
+    task = _task(title="schema migrate deploy pipeline workflow")
+    result = te.recall_scope_lessons(task, limit=2)
+    # Must stop at limit
+    assert len(result) <= 2
+

@@ -444,33 +444,37 @@ _SCOPE_LARGE_DESC_CHARS = 800  # description char count → large signal
 _SCOPE_LARGE_REPO_CMDS = 3     # number of required_commands → large signal
 
 
-def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
-    """Estimate task scope using deterministic text signals.
+def _compute_scope_signals(
+    title: str,
+    description: str,
+    metadata: Dict[str, Any],
+    prior_lessons: List[Dict[str, Any]],
+) -> List[str]:
+    """Pure inner function: compute all large-scope signals for a task.
 
-    Examines description length, title length, repository contract breadth,
-    and plan-detection signals to produce a ``{size, rationale,
-    estimated_units}`` dict suitable for storing as
-    ``metadata.scope_estimate``.
+    Contains all existing signal logic (D1-D5) plus the new memory signal:
+    if *prior_lessons* is non-empty and contains any ``mac.plan_learning.v1``
+    records, one ``memory:prior_decomposition:<task_id>`` signal is appended
+    per matching record (auditable via the task_id from the record).
 
-    This is a *pure* function — it never touches the network.  The result is
-    intentionally conservative: any two large-signal hits → "large".
+    Parameters
+    ----------
+    title:
+        Task title string.
+    description:
+        Task description string.
+    metadata:
+        Task metadata dict (may be empty).
+    prior_lessons:
+        List of raw memory record dicts (from ``recall_scope_lessons``).
+        Each dict may contain a ``content`` field with a JSON-encoded
+        ``mac.plan_learning.v1`` blob.  Empty list → no memory signals.
 
-    Schema (``mac.scope_estimate.v1``)::
-
-        {
-            "schema": "mac.scope_estimate.v1",
-            "size": "small" | "large",
-            "rationale": "<human-readable explanation>",
-            "estimated_units": 1 | 2,   # story points
-            "signals": ["desc_words:350", ...],
-        }
+    Returns
+    -------
+    List[str]
+        All detected signals, including memory signals.
     """
-    title = str(task.get("title") or "")
-    description = str(task.get("description") or "")
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-
     signals: List[str] = []
 
     # --- deterministic signals ---
@@ -506,6 +510,130 @@ def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
     # D5: long title (over-specified tasks tend to be large)
     if len(title) > 100:
         signals.append("long_title:%d" % len(title))
+
+    # --- memory signal: prior decomposition lessons ---
+    # Each mac.plan_learning.v1 record found in prior_lessons contributes one
+    # auditable large signal so a task with one textual large-signal + one
+    # memory hit becomes "large".
+    for record in (prior_lessons or []):
+        if not isinstance(record, dict):
+            continue
+        content_raw = record.get("content") or ""
+        try:
+            data = json.loads(content_raw) if isinstance(content_raw, str) else content_raw
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("schema") != "mac.plan_learning.v1":
+            continue
+        # Append an auditable signal using the task_id from the stored record.
+        prior_task_id = str(data.get("task_id") or "unknown")
+        signals.append("memory:prior_decomposition:%s" % prior_task_id)
+
+    return signals
+
+
+def recall_scope_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[Dict[str, Any]]:
+    """Recall prior ``mac.plan_learning.v1`` memory records for *task*.
+
+    Queries the hub for deployment-learning records whose content matches the
+    task's family terms.  Returns a list of raw record dicts (each has a
+    ``content`` field with a JSON-encoded ``mac.plan_learning.v1`` blob).
+
+    Best-effort: returns an empty list when the hub is unreachable, env is
+    absent, or no matching records exist.  Never raises.
+
+    Note: ``_task_project``, ``_plan_family_terms``, and
+    ``DEPLOYMENT_LEARNING_PREFIX`` are all defined later in this module; they
+    are resolved at call time (not import time) so forward references are safe.
+    """
+    from urllib.parse import urlencode
+
+    project = _task_project(task)
+    family_terms = _plan_family_terms(task)
+
+    records: List[Dict[str, Any]] = []
+    seen_task_ids: set = set()
+
+    for term in (family_terms or [""]):
+        params: Dict[str, Any] = {
+            "subject_type": "project",
+            "subject_id": project,
+            "record_type": "%s:%s" % (DEPLOYMENT_LEARNING_PREFIX, project),
+            "limit": 20,
+        }
+        if term:
+            params["content_contains"] = term
+        raw = _hub_get("/memory?%s" % urlencode(params))
+        if not isinstance(raw, list):
+            continue
+        for rec in raw:
+            if not isinstance(rec, dict):
+                continue
+            content_raw = rec.get("content") or ""
+            try:
+                data = json.loads(content_raw) if isinstance(content_raw, str) else {}
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(data, dict) or data.get("schema") != "mac.plan_learning.v1":
+                continue
+            # Deduplicate by task_id in the stored record.
+            prior_task_id = str(data.get("task_id") or "")
+            if prior_task_id in seen_task_ids:
+                continue
+            seen_task_ids.add(prior_task_id)
+            records.append(rec)
+            if len(records) >= limit:
+                return records
+
+    return records
+
+
+def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Estimate task scope using deterministic text signals plus memory recall.
+
+    Examines description length, title length, repository contract breadth,
+    plan-detection signals, and prior ``mac.plan_learning.v1`` decomposition
+    records recalled from the hub to produce a ``{size, rationale,
+    estimated_units}`` dict suitable for storing as
+    ``metadata.scope_estimate``.
+
+    The public signature is unchanged.  Internally this delegates to
+    :func:`_compute_scope_signals` (the pure inner layer) after a best-effort
+    call to :func:`recall_scope_lessons`.
+
+    Contracts:
+
+    * Hub unreachable or no prior lessons → output identical to the
+      pure-textual estimate (no regression).
+    * One prior decomposition lesson match → ``memory:prior_decomposition``
+      appears in signals; if combined with one textual signal, size flips to
+      ``"large"``.
+
+    Schema (``mac.scope_estimate.v1``)::
+
+        {
+            "schema": "mac.scope_estimate.v1",
+            "size": "small" | "large",
+            "rationale": "<human-readable explanation>",
+            "estimated_units": 1 | 2,   # story points
+            "signals": ["desc_words:350", "memory:prior_decomposition:task_abc", ...],
+        }
+    """
+    title = str(task.get("title") or "") if isinstance(task, dict) else ""
+    description = str(task.get("description") or "") if isinstance(task, dict) else ""
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    # Best-effort recall of prior decomposition records (memory signal).
+    try:
+        prior_lessons = recall_scope_lessons(task)
+    except Exception:  # noqa: BLE001
+        prior_lessons = []
+
+    signals = _compute_scope_signals(title, description, metadata, prior_lessons)
 
     # --- decision (any 2+ large-signals → large) ---
     large_signal_count = sum(
