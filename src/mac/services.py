@@ -10902,6 +10902,46 @@ class ControlPlane:
                     executor_evidence_id=evidence.id,
                     not_before=review.created_at,
                 )
+                # Blocking guard (Option C): hub verify is the authoritative
+                # review gate.  If no verdict was produced in this tick (e.g.
+                # the sandbox is still running, the reviewer key is not yet
+                # available, or a concurrent in-flight guard fired), we MUST
+                # NOT fall through to the agent-nudge path — that would allow
+                # an unverified task to advance toward merge.  Return a
+                # waiting status so the sweep retries on the next tick.
+                #
+                # Exception: experiment tasks need a human-model reviewer for
+                # measurement validity; they skip hub verify and keep the
+                # agent-nudge path (see hub_verify_skipped observation recorded
+                # inside _run_hub_review_verification).
+                if verdict_evidence is None:
+                    task_meta = ensure_json_object(task.metadata)
+                    experiment_assignment = ensure_json_object(
+                        task_meta.get("review_experiment")
+                    )
+                    is_experiment = (
+                        experiment_assignment.get("schema") == "mac.review_experiment.v1"
+                    )
+                    if not is_experiment:
+                        self._record_default_review_observation(
+                            task_id,
+                            "workflow.default_review.waiting_for_hub_verify",
+                            "warning",
+                            {
+                                "review_id": review.id,
+                                "reviewer_agent_id": review.reviewer_agent_id,
+                                "executor_evidence_id": evidence.id,
+                                "reason": "hub_verify_in_progress_or_pending",
+                            },
+                            actor,
+                        )
+                        return {
+                            "task_id": task_id,
+                            "status": "waiting_for_hub_verify",
+                            "review_id": review.id,
+                            "reviewer_agent_id": review.reviewer_agent_id,
+                            "executor_evidence_id": evidence.id,
+                        }
             if verdict_evidence is None:
                 failed_attempt, failure_reason = self._review_attempt_protocol_failure(
                     task_id,
@@ -13200,6 +13240,34 @@ class ControlPlane:
             }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
+            # Option C — deferred test gate: when hub verify is enabled and the
+            # executor declared its tests as deferred to the hub (at least one
+            # test item carries status="deferred" and no item already passed),
+            # accept the evidence so the hub verify path is triggered.  Hub
+            # verify will run the full contract test and record an authoritative
+            # signed verdict.  The sole expected failure at this point is the
+            # absence of a passing test; any other problem (missing repo anchor,
+            # dirty worktree, codegraph failure) is a real defect that must
+            # still be rejected.
+            #
+            # Option A (MAC_REVIEW_HUB_VERIFY unset) is completely unchanged —
+            # the executor must always supply its own passing tests.
+            if (
+                _hub_review_verify_enabled()
+                and self._evidence_tests_are_hub_verify_deferred(evidence)
+                and all(
+                    "passing test" in p or "passing check" in p
+                    for p in type_problems
+                )
+            ):
+                return {
+                    "valid": True,
+                    "reason": "verification_contract_satisfied_pending_hub_verify",
+                    "evidence_type": evidence_type,
+                    "signed_by": signed_by,
+                    "verified_by": "default-review-evidence-v1",
+                    "hub_verify_deferred": True,
+                }
             return {
                 "valid": False,
                 "reason": "verification_contract_failed",
@@ -13417,13 +13485,56 @@ class ControlPlane:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _evidence_tests_are_hub_verify_deferred(evidence: "Evidence") -> bool:
+        """Return True when the executor evidence declares its tests as deferred
+        to hub verify — i.e. at least one test item carries status='deferred'
+        and no test item is already passing.  This signals that the executor
+        intentionally skipped the local contract test and expects hub verify
+        (Option C) to supply the authoritative result.
+
+        Only repo_change evidence participates: other evidence types do not
+        have a hub-verify path and must always supply their own passing tests.
+        """
+        meta = ensure_json_object(evidence.metadata)
+        verification = ensure_json_object(meta.get("verification"))
+        evidence_type = str(verification.get("evidence_type") or "").strip().lower()
+        if evidence_type not in {"repo_change", "documentation", "test"}:
+            return False
+        tests = verification.get("tests")
+        if not isinstance(tests, list) or not tests:
+            return False
+        has_deferred = any(
+            isinstance(item, dict)
+            and str(item.get("status") or "").strip().lower() == "deferred"
+            for item in tests
+        )
+        if not has_deferred:
+            return False
+        # If any test already passed, hub verify is not needed — the executor
+        # already completed the test and the deferred item is stale/incidental.
+        has_passing = any(
+            isinstance(item, dict)
+            and str(item.get("status") or "").strip().lower() in {
+                "pass", "passed", "success", "successful", "succeeded", "ok",
+            }
+            for item in tests
+        )
+        return not has_passing
+
     def _hub_verify_repo_info(
         self, task: Task, executor_evidence: Evidence
     ) -> Optional[Dict[str, str]]:
         """Extract the pushed-branch coordinates the hub verifier needs: the
         remote (evidence repo.remote_url, else the task's canonical contract
         remote), the branch, and head_sha. Returns None when the evidence is
-        not a pushed repo change (nothing to independently verify)."""
+        not a pushed repo change (nothing to independently verify).
+
+        Deferred test items: evidence that carries a test item with
+        status="deferred" (the executor deferred test execution to hub verify)
+        is accepted here provided repo.pushed is True and the branch/sha are
+        present.  The caller will run the contract test and record the verdict.
+        """
         from . import gitops as _gitops
 
         meta = ensure_json_object(executor_evidence.metadata)
@@ -13711,6 +13822,18 @@ class ControlPlane:
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
         info: Dict[str, str], key: str,
     ) -> Optional[Evidence]:
+        # Test-command selection decision (Option C, hub verify):
+        # Hub verify always uses the FULL contract test command, never an
+        # affected-tests subset derived from files_changed.
+        #
+        # Rationale: hub verify is the authoritative trust anchor for the
+        # review->merge gate.  An affected-tests subset optimises for speed
+        # at the cost of coverage — a regression in a file not flagged by
+        # codegraph-affected could slip through undetected.  The hub runs
+        # the test exactly once in a controlled sandbox (cost is bounded);
+        # correctness outweighs runtime here.  If files_changed is small the
+        # full suite still finishes quickly; if it is large the full suite is
+        # exactly what's needed to catch cross-cutting regressions.
         test_command = _repository_contract_test_command_for_task(task)
         try:
             returncode, output = self._hub_verify_run_contract_test(

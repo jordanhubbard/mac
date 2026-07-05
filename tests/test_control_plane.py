@@ -1724,7 +1724,13 @@ def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch)
 
     result = cp.advance_default_review_workflow(task.id)
 
-    assert result["status"] == "waiting_for_reviewer_verdict"
+    # With the blocking guard (Option C): when hub verify is enabled but the
+    # live verifier runner is not available (no _hub_verify_runner mock here),
+    # the hub verify attempt fails/returns None and the workflow blocks with
+    # waiting_for_hub_verify rather than falling through to the agent-nudge
+    # path.  The hub reviewer is still auto-registered and the review is still
+    # assigned to it — the reviewer_agent_id assertion verifies that.
+    assert result["status"] in {"waiting_for_hub_verify", "waiting_for_reviewer_verdict"}
     assert result["reviewer_agent_id"] == services.DEFAULT_HUB_REVIEWER_AGENT_ID
     reviewer = cp.get_agent(services.DEFAULT_HUB_REVIEWER_AGENT_ID)
     assert reviewer.name == services.DEFAULT_HUB_REVIEWER_AGENT_NAME
@@ -1741,7 +1747,7 @@ def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch)
     )
     waiting = cp.advance_default_review_workflow(task.id)
 
-    assert waiting["status"] == "waiting_for_reviewer_verdict"
+    assert waiting["status"] in {"waiting_for_hub_verify", "waiting_for_reviewer_verdict"}
     assert waiting["reviewer_agent_id"] == reviewer.id
     assert cp.list_reviews(task.id)[0].status == ReviewStatus.PENDING.value
     assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
@@ -10090,6 +10096,214 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     # Lost-.git uploads still fail fast with a distinguishable message.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner
+
+
+def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypatch):
+    """Blocking guard (Option C): when hub verify is enabled and the verifier
+    cannot produce a verdict in this tick (e.g. runner raises, key absent, or
+    in-flight guard fires), the workflow MUST block with waiting_for_hub_verify
+    rather than falling through to the agent-nudge path.  Merge is gated until
+    the hub verdict is recorded."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+
+    def always_raises(*args):
+        raise RuntimeError("sandbox unavailable")
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, always_raises,
+    )
+    # First tick: review assigned, hub verify throws, blocking guard fires.
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "waiting_for_hub_verify", (
+        "hub verify blocking guard must return waiting_for_hub_verify, "
+        "not fall through to agent nudge path; got: %s" % result["status"]
+    )
+    assert result["review_id"] == cp.list_reviews(task.id)[0].id
+    # The review must still be pending — no spurious retraction or approval.
+    assert cp.list_reviews(task.id)[0].status == ReviewStatus.PENDING.value
+    # An observation is recorded so operators can see what's happening.
+    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
+    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
+
+
+def test_hub_verify_blocking_guard_does_not_fire_for_experiments(cp, monkeypatch):
+    """Experiment tasks need a human-model reviewer for measurement validity;
+    they skip hub verify (hub_verify_skipped is recorded) and keep the
+    agent-nudge path even when hub verify is globally enabled."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+
+    def always_raises(*args):
+        raise RuntimeError("should not be called")
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, always_raises, experiment=True,
+    )
+    result = cp.advance_default_review_workflow(task.id)
+    # Experiments fall through to the agent-nudge path unchanged.
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
+    assert "workflow.default_review.hub_verify_skipped" in obs_names
+
+
+def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):
+    """_evidence_tests_are_hub_verify_deferred returns True only when all test
+    items carry status='deferred' and none has already passed."""
+    from mac.services import ControlPlane as _CP
+
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("task", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+
+    def _make_evidence(tests):
+        manifest = {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "repo": {
+                "head_sha": "a" * 40,
+                "pushed": True,
+                "remote_ref": "refs/heads/task/x",
+                "dirty": False,
+                "files_changed": ["src/x.py"],
+            },
+            "tests": tests,
+        }
+        return cp.add_evidence(
+            task.id, "log", "artifact://test", "t", worker.id,
+            metadata={"returncode": 0, "verification": manifest},
+        )
+
+    # All deferred, none passing → True.
+    ev = _make_evidence([{"status": "deferred", "command": "cmd"}])
+    assert _CP._evidence_tests_are_hub_verify_deferred(ev) is True
+
+    # One passing alongside deferred → False (executor already ran tests).
+    ev2 = _make_evidence([
+        {"status": "deferred", "command": "cmd"},
+        {"status": "pass", "command": "cmd"},
+    ])
+    assert _CP._evidence_tests_are_hub_verify_deferred(ev2) is False
+
+    # No deferred items → False.
+    ev3 = _make_evidence([{"returncode": 0, "command": "cmd"}])
+    assert _CP._evidence_tests_are_hub_verify_deferred(ev3) is False
+
+    # Empty tests list → False.
+    ev4 = _make_evidence([])
+    assert _CP._evidence_tests_are_hub_verify_deferred(ev4) is False
+
+
+def test_hub_verify_repo_info_accepts_deferred_test_evidence(cp):
+    """_hub_verify_repo_info must return the branch coordinates when the
+    executor evidence carries a deferred test item and repo.pushed=True,
+    so hub verify can run the contract test on behalf of the executor."""
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "task",
+        required_capabilities=["python"],
+        metadata={
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "git@github.com:org/repo.git"
+                }
+            }
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {
+            "head_sha": "b" * 40,
+            "pushed": True,
+            "remote_ref": "refs/heads/task/deferred-branch",
+            "dirty": False,
+            "files_changed": ["src/y.py"],
+        },
+        "tests": [{"status": "deferred", "command": "scripts/run-contract-tests.sh"}],
+    }
+    manifest = _sign(cp, worker.id, manifest)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://result", "deferred", worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    info = cp._hub_verify_repo_info(task, evidence)
+    assert info is not None, (
+        "_hub_verify_repo_info must accept evidence with deferred test items "
+        "when repo.pushed=True"
+    )
+    assert info["branch"] == "task/deferred-branch"
+    assert info["head_sha"] == "b" * 40
+
+
+def test_assess_evidence_accepts_deferred_test_with_hub_verify_enabled(cp, monkeypatch):
+    """_assess_default_review_evidence must accept executor evidence that
+    carries only deferred test items when hub verify is enabled (Option C).
+    Under Option A (MAC_REVIEW_HUB_VERIFY unset), the same evidence is
+    rejected — the executor must always supply its own passing tests."""
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "task",
+        required_capabilities=["python"],
+        metadata={
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": "git@github.com:org/repo.git",
+                    "evidence": {"required": ["tests"]},
+                }
+            }
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {
+            "head_sha": "c" * 40,
+            "pushed": True,
+            "remote_ref": "refs/heads/task/deferred",
+            "dirty": False,
+            "files_changed": ["src/z.py"],
+        },
+        "codegraph": {
+            "schema": CODEGRAPH_AUDIT_SCHEMA,
+            "status": "pass",
+            "reason": "test_fixture",
+            "relevant_files": ["src/z.py"],
+            "commands": [
+                {"argv": ["codegraph", "sync"], "returncode": 0},
+                {"argv": ["codegraph", "affected"], "returncode": 0},
+            ],
+        },
+        "tests": [{"status": "deferred", "command": "scripts/run-contract-tests.sh"}],
+    }
+    manifest = _sign(cp, worker.id, manifest)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://result", "deferred", worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+
+    # Option C: hub verify enabled → deferred test evidence is accepted.
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    result_c = cp._assess_default_review_evidence(task, evidence)
+    assert result_c["valid"] is True, (
+        "Option C: deferred test evidence must be accepted when hub verify is enabled; "
+        "got problems: %s" % result_c.get("problems")
+    )
+    assert result_c.get("hub_verify_deferred") is True
+
+    # Option A: hub verify disabled → same evidence is rejected.
+    monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
+    result_a = cp._assess_default_review_evidence(task, evidence)
+    assert result_a["valid"] is False, (
+        "Option A: deferred test evidence must be rejected when hub verify is disabled"
+    )
 
 
 def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):

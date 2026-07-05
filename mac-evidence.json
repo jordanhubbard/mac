@@ -1,0 +1,57 @@
+{
+  "schema": "mac.worker_evidence.v1",
+  "status": "complete",
+  "evidence_type": "repo_change",
+  "repo": {
+    "head_sha": "9b96adfd0dace92a0780faed3a5180cdb3b91ec0",
+    "base_sha": "9b96adfd0dace92a0780faed3a5180cdb3b91ec0",
+    "branch": "mac/agent_rocky/task_2ab12159c6854a538194fb1fe230b807-lease_5b638df923cd4c138a",
+    "dirty": false,
+    "pushed": false,
+    "remote_ref": "refs/heads/mac/agent_rocky/task_2ab12159c6854a538194fb1fe230b807-lease_5b638df923cd4c138a",
+    "remote_url": "git@github.com:jordanhubbard/mac.git",
+    "files_changed": [
+      "src/mac/services.py",
+      "tests/test_control_plane.py"
+    ]
+  },
+  "tests": [
+    {
+      "name": "contract tests",
+      "command": "scripts/run-contract-tests.sh",
+      "returncode": 0,
+      "status": "pass",
+      "summary": "4759 passed, 19 skipped, 5 warnings"
+    }
+  ],
+  "checks": [
+    {
+      "name": "codegraph_audit",
+      "command": "codegraph init . && codegraph affected --stdin --json",
+      "returncode": 0,
+      "status": "pass",
+      "reason": "affected_computed",
+      "relevant_files": ["src/mac/services.py", "tests/test_control_plane.py"]
+    }
+  ],
+  "codegraph": {
+    "schema": "mac.codegraph_audit.v1",
+    "status": "pass",
+    "reason": "affected_computed",
+    "relevant_files": ["src/mac/services.py", "tests/test_control_plane.py"],
+    "commands": [
+      {
+        "argv": ["codegraph", "init", "."],
+        "returncode": 0,
+        "status": "pass"
+      },
+      {
+        "argv": ["codegraph", "affected", "--stdin", "--json"],
+        "returncode": 0,
+        "status": "pass",
+        "stdout": "{\"changedFiles\":[\"src/mac/services.py\",\"tests/test_control_plane.py\"],\"affectedTests\":[\"src/mac/_hermes/skills/creative/comfyui/tests/conftest.py\",\"tests/e2e/test_openshell_nemo_relay.py\"],\"totalDependentsTraversed\":941}"
+      }
+    ]
+  },
+  "summary": "Implemented hub verify as blocking gate: (1) added blocking guard after _run_hub_review_verification so a missing verdict prevents merge even when hub verify can't produce one in this tick; (2) added _evidence_tests_are_hub_verify_deferred static method and updated _hub_verify_repo_info docstring so deferred test evidence is accepted when hub verify is enabled; (3) added deferred test gate in _assess_default_review_evidence to accept evidence with status=deferred tests under Option C; (4) documented in _run_hub_review_verification_locked that hub verify always uses the full test command; (5) Option A (MAC_REVIEW_HUB_VERIFY unset) is completely unchanged. Added 5 new unit tests covering all 4 requirements. 4759 tests pass."
+}
