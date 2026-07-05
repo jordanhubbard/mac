@@ -192,11 +192,14 @@ class SubprocessExecutor:
                 "MAC_TASK_WORKSPACE": str(task_dir),
             }
         )
-        # Lease id rides into the child env so LLM completions carry full
-        # route-context attribution (agent/task/lease) to the fleet router.
+        # Lease id and agent id ride into the child env so LLM completions carry
+        # full route-context attribution (agent/task/lease) to the fleet router.
         lease_id = str(self.audit_context.get("lease_id") or "").strip()
         if lease_id:
             env["MAC_LEASE_ID"] = lease_id
+        agent_id_ctx = str(self.audit_context.get("agent_id") or "").strip()
+        if agent_id_ctx:
+            env["MAC_AGENT_ID"] = agent_id_ctx
         # Per-task model override (metadata.model / metadata.runtime.model):
         # the vendored Hermes runtime reads MAC_TASK_MODEL at argv build time
         # and the coding-CLI argv builders pass it as --model/-m, so a task
@@ -930,6 +933,7 @@ class MacWorker:
                 task,
                 task_dir,
                 {
+                    "agent_id": self.agent_id,
                     "task_id": task["id"],
                     "lease_id": lease["id"],
                     "metadata": {"execution_kind": "task"},
@@ -1238,6 +1242,7 @@ class MacWorker:
                     self._review_task_payload(task_dir),
                     task_dir,
                     {
+                        "agent_id": self.agent_id,
                         "task_id": task_id,
                         "metadata": {
                             "execution_kind": "review",
