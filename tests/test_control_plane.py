@@ -10044,3 +10044,128 @@ def test_nudge_is_noop_when_advancer_disabled(cp):
     assert cp._advance_queue is None
     cp._nudge_review_workflow("task_whatever")  # must not raise or spawn
     assert cp._advance_queue is None
+
+
+# ---------------------------------------------------------------------------
+# Timeout-diagnosis → plan_first injection (Decomposition 4/5 contract)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "timeout_reason",
+    [
+        "timed out",
+        "timeout",
+        "rc=124",
+        "returncode 124",
+        "Agent run timed out — the task is likely too large for one run.",
+    ],
+)
+def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
+    """When a task is blocked with an agent-run-timeout reason the auto-retry
+    re-dispatches it with ``metadata.plan_first=True`` so the next executor run
+    decomposes the work instead of attempting it monolithically again."""
+    task = cp.create_task("timed-out task", required_capabilities=["python"])
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": timeout_reason},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value, (
+        "task should be reopened after timeout backoff"
+    )
+    assert [item["id"] for item in result["auto_reopened"]] == [task.id]
+    from mac.models import ensure_json_object
+    meta = ensure_json_object(reopened.metadata)
+    assert meta.get("plan_first") is True, (
+        "metadata.plan_first must be True after a timeout-triggered retry"
+    )
+    # Observability event must be present
+    observations = cp.list_observability(
+        subject_type="task",
+        subject_id=task.id,
+        limit=50,
+    )
+    assert any(
+        event.name == "task.timeout_requeued_as_plan" for event in observations
+    ), "task.timeout_requeued_as_plan observability event not emitted"
+    # Regular auto_reopened event must also be present
+    assert any(event.name == "task.auto_reopened" for event in observations)
+
+
+def test_tick_does_not_inject_plan_first_for_non_timeout_blocked_attempt(cp):
+    """Non-timeout block reasons (executor_failed, etc.) must NOT set plan_first —
+    only agent-run-timeout failures trigger the decomposition redirect."""
+    task = cp.create_task("executor-failed task", required_capabilities=["python"])
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "executor_failed"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value
+    from mac.models import ensure_json_object
+    meta = ensure_json_object(reopened.metadata)
+    assert not meta.get("plan_first"), (
+        "plan_first must NOT be set for non-timeout block reasons"
+    )
+    observations = cp.list_observability(
+        subject_type="task",
+        subject_id=task.id,
+        limit=50,
+    )
+    assert not any(
+        event.name == "task.timeout_requeued_as_plan" for event in observations
+    ), "timeout_requeued_as_plan must not be emitted for non-timeout failures"
+
+
+def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
+    """If plan_first is already True on a blocked task (operator set it or a
+    prior retry already set it), the retry should not emit the observability
+    event again — idempotent."""
+    task = cp.create_task(
+        "already-plan-first task",
+        metadata={"plan_first": True},
+        required_capabilities=["python"],
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "timed out"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value
+    observations = cp.list_observability(
+        subject_type="task",
+        subject_id=task.id,
+        limit=50,
+    )
+    assert not any(
+        event.name == "task.timeout_requeued_as_plan" for event in observations
+    ), "timeout_requeued_as_plan must not be re-emitted when plan_first was already set"
+

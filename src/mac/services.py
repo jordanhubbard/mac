@@ -445,6 +445,15 @@ BLOCKED_ATTEMPT_NON_RETRYABLE_DIAGNOSES = (
 )
 
 
+_TIMEOUT_BLOB_MARKERS = ("timed out", "timeout", "rc=124", "returncode 124", "code: 124")
+
+
+def _is_timeout_blob(text: str) -> bool:
+    """Return True when *text* contains a recognisable agent-run-timeout signal."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in _TIMEOUT_BLOB_MARKERS)
+
+
 def _non_retryable_blocked_attempt_marker(value: Any) -> Optional[str]:
     if value in (None, "", [], {}):
         return None
@@ -12170,6 +12179,40 @@ class ControlPlane:
                 return marker
         return None
 
+    def _is_timeout_blocked_attempt(self, task: Task) -> bool:
+        """Return True when the most recent block on *task* looks like an agent-run timeout.
+
+        Checks (in order, stopping at the first conclusive signal):
+        1. The last BLOCKED history event's detail (reason/error/problems fields).
+        2. The most recent ``diagnosis`` entry in ``metadata.activity``.
+
+        Mirrors the ``_blocked_attempt_non_retryable_marker`` inspection pattern so
+        both helpers stay consistent about how they read block evidence.
+        """
+        if task.state != TaskState.BLOCKED.value:
+            return False
+        for event in reversed(self.task_history(task.id, limit=20)):
+            if event.to_state != TaskState.BLOCKED.value:
+                continue
+            detail = ensure_json_object(event.detail)
+            blob = " ".join(
+                str(detail.get(k) or "") for k in ("reason", "error", "problems")
+            )
+            if blob.strip():
+                return _is_timeout_blob(blob)
+            break
+        metadata = ensure_json_object(task.metadata)
+        activity = metadata.get("activity")
+        if isinstance(activity, list):
+            for entry in reversed(activity):
+                entry_dict = ensure_json_object(entry) if isinstance(entry, dict) else {}
+                phase = str(entry_dict.get("phase") or "").strip().lower()
+                if phase != "diagnosis":
+                    continue
+                summary = str(entry_dict.get("summary") or "")
+                return _is_timeout_blob(summary)
+        return False
+
     def _auto_retry_blocked_attempt_task(
         self,
         task: Task,
@@ -12216,6 +12259,25 @@ class ControlPlane:
             **base_detail,
             "reason": "blocked attempt retry backoff elapsed",
         }
+        is_timeout = self._is_timeout_blocked_attempt(task)
+        if is_timeout and not ensure_json_object(task.metadata).get("plan_first"):
+            # mac-timeout-plan: a timed-out task is likely too large for a
+            # monolithic run. Instead of retrying blindly, inject plan_first=True
+            # so the next executor run decomposes the work instead of repeating it.
+            patched_meta = ensure_json_object(task.metadata)
+            patched_meta["plan_first"] = True
+            self.store.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(patched_meta), now, task.id),
+            )
+            self._record_history(
+                task.id,
+                "task.timeout_requeued_as_plan",
+                "dispatcher.tick",
+                TaskState.BLOCKED.value,
+                TaskState.BLOCKED.value,
+                {**detail, "injected": "plan_first"},
+            )
         reopened = self.transition_task(
             task.id,
             TaskState.OPEN.value,
