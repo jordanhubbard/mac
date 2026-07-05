@@ -1755,6 +1755,16 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
     _print([agent.to_dict() for agent in _plane(args).list_agents()])
 
 
+def cmd_agent_reflect(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).publish_agent_reflection(
+            args.agent_id,
+            recipient_agent_id=args.recipient_agent_id,
+            request_id=args.request_id,
+        )
+    )
+
+
 def cmd_agent_delete(args: argparse.Namespace) -> None:
     """Hard-delete an agent record (mood/nap/events/messages); task history is
     task-keyed and preserved. Refused while the agent holds an active lease."""
@@ -4605,6 +4615,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_list = agent.add_parser("list")
     _set(cmd_agent_list, agent_list)
+
+    agent_reflect = agent.add_parser(
+        "reflect",
+        help="publish an agent's runtime self-description over AgentBus",
+    )
+    agent_reflect.add_argument("agent_id")
+    agent_reflect.add_argument("--recipient-agent-id")
+    agent_reflect.add_argument("--request-id")
+    _set(cmd_agent_reflect, agent_reflect)
 
     agent_hardware = agent.add_parser(
         "hardware", help="fleet hardware inventory from self-reported resources.hardware"

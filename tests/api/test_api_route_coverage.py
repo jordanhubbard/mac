@@ -1339,6 +1339,10 @@ edges:
             "health_status": "healthy",
             "resources": {"cpu": 8},
         },
+        ("POST", "/agents/{agent_id}/reflect"): {
+            "recipient_agent_id": ctx["reviewer_agent_id"],
+            "request_id": "route-reflect",
+        },
         ("POST", "/agents/{agent_id}/claim-next"): {"lease_seconds": 60, "capabilities": ["python"]},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {
             "willing_ops": ["image.generate"],

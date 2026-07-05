@@ -826,6 +826,25 @@ class RemoteDispatch:
             self._post("/agents/%s/heartbeat" % quote(agent_id, safe=""), _drop_none(kw))
         )
 
+    def publish_agent_reflection(
+        self,
+        agent_id: str,
+        *,
+        recipient_agent_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/reflect" % quote(agent_id, safe=""),
+                _drop_none(
+                    {
+                        "recipient_agent_id": recipient_agent_id,
+                        "request_id": request_id,
+                    }
+                ),
+            )
+        )
+
     def fleet_build_distribution(self) -> _Dictish:
         return _Dictish(self._get("/fleet/build-distribution"))
 

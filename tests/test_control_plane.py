@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 
 import mac.services as services
+from mac.agentbus_control import (
+    AGENT_REFLECTION_CONTENT_TYPE,
+    AGENT_REFLECTION_SCHEMA,
+    AGENT_REFLECTION_TOPIC,
+)
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.fleet_learning import (
     build_repository_access_learning,
@@ -8675,6 +8680,49 @@ def test_agentbus_streams_typed_content_without_weakening_control_messages(cp):
         cp.read_agentbus_chunks(outsider.id, stream.id)
     with pytest.raises(ValidationError):
         cp.append_agentbus_chunk(stream.id, sender.id, payload={"late": True})
+
+
+def test_agent_reflection_publishes_runtime_description_over_agentbus(cp):
+    sender = register_agent(
+        cp,
+        "reflector",
+        ["python", "review"],
+        resources={"hardware": {"accelerator": "cpu"}, "runtime": {"worker": "codex"}},
+    )
+    recipient = register_agent(cp, "operator", ["review"])
+    runtime = create_runtime(cp, "reflect-runtime")
+    cp.heartbeat_agent(
+        sender.id,
+        status=AgentStatus.BUSY.value,
+        health_status=HealthStatus.DEGRADED.value,
+        running_digest=runtime.digest,
+    )
+
+    published = cp.publish_agent_reflection(
+        sender.id,
+        recipient_agent_id=recipient.id,
+        request_id="rid-42",
+    )
+
+    assert published["schema"] == "mac.agentbus.agent_reflection_publish.v1"
+    assert published["agent_id"] == sender.id
+    assert published["recipient_agent_id"] == recipient.id
+    assert published["count"] == 1
+    assert published["payload"]["request_id"] == "rid-42"
+    stream = published["streams"][0]
+    assert stream["topic"] == AGENT_REFLECTION_TOPIC
+    assert stream["content_type"] == AGENT_REFLECTION_CONTENT_TYPE
+    chunks = cp.read_agentbus_chunks(recipient.id, stream["id"])
+    payload = chunks[0].payload
+    assert payload.get("request_id") == "rid-42"
+    assert payload["schema"] == AGENT_REFLECTION_SCHEMA
+    assert payload["agent_id"] == sender.id
+    assert payload["agent"]["name"] == "reflector"
+    assert payload["agent"]["capabilities"] == ["python", "review"]
+    assert payload["agent"]["resources"]["runtime"]["worker"] == "codex"
+    assert payload["agent"]["status"] == AgentStatus.BUSY.value
+    assert payload["agent"]["health_status"] == HealthStatus.DEGRADED.value
+    assert payload["agent"]["running_digest"] == runtime.digest
 
 
 def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):

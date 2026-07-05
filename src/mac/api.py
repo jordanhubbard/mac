@@ -737,6 +737,11 @@ class HeartbeatRequest(BaseModel):
     actor: Optional[str] = None
 
 
+class AgentReflectRequest(BaseModel):
+    recipient_agent_id: Optional[str] = None
+    request_id: Optional[str] = None
+
+
 class LeaseRenewRequest(BaseModel):
     agent_id: str
     lease_seconds: int = 900
@@ -4917,6 +4922,19 @@ def create_app(
         # as a peer. Bind to principal.
         principal.assert_actor(agent_id)
         return cp.heartbeat_agent(agent_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/reflect")
+    def reflect_agent(
+        agent_id: str,
+        body: AgentReflectRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)
+        return cp.publish_agent_reflection(
+            agent_id,
+            recipient_agent_id=body.recipient_agent_id,
+            request_id=body.request_id,
+        )
 
     @app.post("/agents/{agent_id}/claim-next")
     def claim_next_for_agent(
