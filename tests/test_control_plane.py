@@ -11491,3 +11491,268 @@ def test_hub_verify_deferred_merge_blocked_while_pending_unblocks_on_approved(cp
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     final_reviews = cp.list_reviews(task.id)
     assert final_reviews[0].status == ReviewStatus.APPROVED.value
+# ---------------------------------------------------------------------------
+# Hardware persistence and mirroring tests
+# ---------------------------------------------------------------------------
+
+
+def test_register_machine_populates_hardware_from_resources_hardware():
+    """register_machine must populate machine.hardware from resources['hardware']
+    when the explicit hardware kwarg is absent.  The worker posts detect_hardware()
+    inside resources, so the machine record must carry the full snapshot even if
+    the caller does not pass a separate hardware= argument."""
+    cp = ControlPlane.in_memory()
+    hw_snapshot = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "aarch64",
+        "cpu_count": 20,
+        "memory_mb": 131072,
+        "accelerator": "cuda",
+        "gpu": {
+            "accelerator": "cuda",
+            "name": "NVIDIA GB10",
+            "vram_mb": 131072,
+            "shared": True,
+            "count": 1,
+            "memory": {"type": "unified", "shared_mb": 131072},
+        },
+        "gpus": [
+            {
+                "index": 0,
+                "accelerator": "cuda",
+                "name": "NVIDIA GB10",
+                "shared": True,
+                "vram_mb": 131072,
+                "memory": {"type": "unified", "shared_mb": 131072},
+            }
+        ],
+    }
+    machine = cp.register_machine(
+        "gpu-host",
+        resources={"cpu": 20, "hardware": hw_snapshot},
+        # no explicit hardware= kwarg — should fall through to resources["hardware"]
+    )
+
+    assert machine.hardware["accelerator"] == "cuda"
+    assert machine.hardware["gpu"]["name"] == "NVIDIA GB10"
+    assert machine.hardware["gpus"][0]["index"] == 0
+    assert machine.hardware["gpus"][0]["memory"] == {"type": "unified", "shared_mb": 131072}
+
+
+def test_register_machine_explicit_hardware_kwarg_wins_over_resources():
+    """When both hardware= and resources['hardware'] are provided, the explicit
+    kwarg must take precedence (it is the authoritative caller intent)."""
+    cp = ControlPlane.in_memory()
+    explicit_hw = {"accelerator": "metal", "os": "darwin", "arch": "arm64"}
+    resources_hw = {"accelerator": "cuda", "os": "linux", "arch": "x86_64"}
+    machine = cp.register_machine(
+        "mac-host",
+        resources={"hardware": resources_hw},
+        hardware=explicit_hw,
+    )
+
+    assert machine.hardware["accelerator"] == "metal"
+
+
+def test_register_machine_no_hardware_stores_empty():
+    """When neither hardware= nor resources['hardware'] is provided, machine.hardware
+    defaults to {} (no fabricated zeros or fake accelerators)."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("plain-host", resources={"cpu": 4})
+
+    assert machine.hardware == {}
+
+
+def test_register_agent_mirrors_multi_gpu_hardware_to_machine():
+    """Agent registration must mirror the full GPU inventory — including the
+    'gpus' list with per-GPU structured memory — into machine.hardware.  A
+    multi-GPU agent must not drop any GPU from the mirrored record."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("dual-gpu-host")
+    two_gpu_hw = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "cpu_count": 32,
+        "memory_mb": 65536,
+        "accelerator": "cuda",
+        "gpu": {
+            "accelerator": "cuda",
+            "name": "NVIDIA RTX PRO 6000 Blackwell",
+            "vram_mb": 98304,
+            "count": 2,
+            "memory": {"type": "dedicated", "vram_mb": 98304},
+        },
+        "gpus": [
+            {
+                "index": 0,
+                "accelerator": "cuda",
+                "name": "NVIDIA RTX PRO 6000 Blackwell",
+                "vram_mb": 98304,
+                "memory": {"type": "dedicated", "vram_mb": 98304},
+            },
+            {
+                "index": 1,
+                "accelerator": "cuda",
+                "name": "NVIDIA RTX PRO 6000 Blackwell",
+                "vram_mb": 98304,
+                "memory": {"type": "dedicated", "vram_mb": 98304},
+            },
+        ],
+    }
+
+    cp.register_agent(
+        machine.id,
+        "dual-gpu-worker",
+        resources={"hardware": two_gpu_hw},
+    )
+
+    refreshed_machine = cp.get_machine(machine.id)
+    assert refreshed_machine.hardware["accelerator"] == "cuda"
+    assert refreshed_machine.hardware["gpu"]["count"] == 2
+    assert len(refreshed_machine.hardware["gpus"]) == 2
+    assert refreshed_machine.hardware["gpus"][0]["index"] == 0
+    assert refreshed_machine.hardware["gpus"][1]["index"] == 1
+    assert refreshed_machine.hardware["gpus"][0]["memory"] == {
+        "type": "dedicated",
+        "vram_mb": 98304,
+    }
+    assert refreshed_machine.hardware["gpus"][1]["memory"] == {
+        "type": "dedicated",
+        "vram_mb": 98304,
+    }
+
+
+def test_heartbeat_mirrors_multi_gpu_hardware_to_machine():
+    """A heartbeat that includes resources with a multi-GPU hardware snapshot must
+    update machine.hardware with the full 'gpus' list, preserving per-GPU
+    structured memory for all GPUs."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("hb-host")
+    agent = cp.register_agent(machine.id, "hb-worker")
+
+    two_gpu_hw = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "accelerator": "cuda",
+        "gpu": {
+            "accelerator": "cuda",
+            "name": "NVIDIA GeForce RTX 5090",
+            "vram_mb": 32576,
+            "count": 2,
+            "memory": {"type": "dedicated", "vram_mb": 32576},
+        },
+        "gpus": [
+            {
+                "index": 0,
+                "accelerator": "cuda",
+                "name": "NVIDIA GeForce RTX 5090",
+                "vram_mb": 32576,
+                "memory": {"type": "dedicated", "vram_mb": 32576},
+            },
+            {
+                "index": 1,
+                "accelerator": "cuda",
+                "name": "NVIDIA GeForce RTX 5090",
+                "vram_mb": 32576,
+                "memory": {"type": "dedicated", "vram_mb": 32576},
+            },
+        ],
+    }
+
+    cp.heartbeat_agent(agent.id, resources={"hardware": two_gpu_hw})
+
+    refreshed_machine = cp.get_machine(machine.id)
+    assert refreshed_machine.hardware["accelerator"] == "cuda"
+    assert len(refreshed_machine.hardware["gpus"]) == 2
+    assert refreshed_machine.hardware["gpus"][1]["vram_mb"] == 32576
+
+
+def test_register_agent_no_accelerator_is_explicit_not_zero():
+    """When an agent's hardware probe finds no GPU (accelerator='none'), the
+    mirrored machine.hardware must carry the explicit 'accelerator': 'none'
+    state rather than an empty dict or fabricated zeros."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("cpu-only-host")
+    no_gpu_hw = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "cpu_count": 8,
+        "memory_mb": 16384,
+        "accelerator": "none",
+    }
+
+    cp.register_agent(
+        machine.id,
+        "cpu-worker",
+        resources={"hardware": no_gpu_hw},
+    )
+
+    refreshed_machine = cp.get_machine(machine.id)
+    assert refreshed_machine.hardware["accelerator"] == "none"
+    assert "gpu" not in refreshed_machine.hardware
+    assert "gpus" not in refreshed_machine.hardware
+
+
+def test_heartbeat_unknown_probe_state_preserved_in_machine_hardware():
+    """A heartbeat from an agent whose GPU VRAM probe returned an unavailable
+    result (memory.type='unknown') must propagate that explicit unknown state
+    into machine.hardware — the hub must not replace it with zeros or silence it."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("probe-fail-host")
+    agent = cp.register_agent(machine.id, "probe-fail-worker")
+
+    unknown_probe_hw = {
+        "schema": "mac.hardware.v1",
+        "os": "linux",
+        "arch": "x86_64",
+        "accelerator": "cuda",
+        "gpu": {
+            "index": 0,
+            "accelerator": "cuda",
+            "name": "NVIDIA RTX A6000",
+            "memory": {"type": "unknown"},
+        },
+        "gpus": [
+            {
+                "index": 0,
+                "accelerator": "cuda",
+                "name": "NVIDIA RTX A6000",
+                "memory": {"type": "unknown"},
+            }
+        ],
+    }
+
+    cp.heartbeat_agent(agent.id, resources={"hardware": unknown_probe_hw})
+
+    refreshed_machine = cp.get_machine(machine.id)
+    assert refreshed_machine.hardware["accelerator"] == "cuda"
+    assert refreshed_machine.hardware["gpus"][0]["memory"] == {"type": "unknown"}
+    assert "vram_mb" not in refreshed_machine.hardware["gpus"][0]
+
+
+def test_register_machine_hardware_not_erased_on_re_register_without_resources_hardware():
+    """Re-registering a machine that does not include resources['hardware'] must
+    not erase a previously-stored machine.hardware record."""
+    cp = ControlPlane.in_memory()
+    hw_snapshot = {
+        "schema": "mac.hardware.v1",
+        "accelerator": "cuda",
+        "gpu": {"name": "NVIDIA GeForce RTX 5090", "count": 1},
+    }
+    machine_id = "machine_test_preserve"
+    cp.register_machine(
+        "preserve-host",
+        machine_id=machine_id,
+        resources={"hardware": hw_snapshot},
+    )
+
+    # Re-register without hardware in resources
+    cp.register_machine("preserve-host", machine_id=machine_id, resources={"cpu": 4})
+
+    refreshed = cp.get_machine(machine_id)
+    # hardware column must be preserved from the prior registration
+    assert refreshed.hardware["accelerator"] == "cuda"

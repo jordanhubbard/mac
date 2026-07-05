@@ -131,9 +131,12 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
         index = fallback_index
 
     name = name or "NVIDIA GPU"
-    memory_unavailable = memory_field.strip().upper() in _NVIDIA_UNAVAILABLE_MEMORY_VALUES
     vram_mb = _parse_nvidia_vram_mb(memory_field)
-    unified = _is_unified_memory_gpu(name) or memory_unavailable
+    # Only treat as unified when the GPU is a known unified-memory part (e.g. GB10).
+    # A non-unified GPU that reports [N/A] or an empty/unparseable value has an
+    # *unknown* memory configuration — fabricating a shared_mb from system RAM would
+    # be incorrect and misleading.
+    unified = _is_unified_memory_gpu(name)
     gpu: Dict[str, Any] = {"index": index, "accelerator": "cuda", "name": name}
     if unified:
         shared_memory_mb = _memory_mb()
@@ -145,6 +148,9 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
         gpu["vram_mb"] = vram_mb
         gpu["memory"] = _dedicated_memory(vram_mb)
     else:
+        # Probe returned [N/A], empty, or an unrecognised value for a non-unified
+        # GPU.  Record the state explicitly so callers can distinguish "probe not
+        # available" from "no GPU" rather than inferring a fabricated zero.
         gpu["memory"] = {"type": "unknown"}
     return gpu
 

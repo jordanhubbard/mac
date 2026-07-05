@@ -8612,7 +8612,17 @@ class ControlPlane:
         mid = machine_id or new_id("machine")
         labels_json = self._resolved_json_column("machines", "labels", mid, labels)
         resources_json = self._resolved_json_column("machines", "resources", mid, resources)
-        hardware_json = self._resolved_json_column("machines", "hardware", mid, hardware)
+        # When the caller does not pass an explicit hardware snapshot, fall back to
+        # resources["hardware"] (the field the worker places its detect_hardware()
+        # result into).  This keeps machine.hardware in sync for callers that embed
+        # the detected hardware inside the resources bag rather than as a top-level
+        # parameter, without requiring a separate agent-registration step.
+        resolved_hardware = hardware
+        if resolved_hardware is None and isinstance(resources, dict):
+            candidate = resources.get("hardware")
+            if isinstance(candidate, dict):
+                resolved_hardware = candidate
+        hardware_json = self._resolved_json_column("machines", "hardware", mid, resolved_hardware)
         self.store.execute(
             """
             INSERT INTO machines (id, hostname, labels, resources, trusted, created_at, updated_at, last_seen_at, hardware)

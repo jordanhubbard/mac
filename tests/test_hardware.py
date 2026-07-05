@@ -141,6 +141,42 @@ def test_detect_nvidia_invalid_memory_is_unknown_not_shared(monkeypatch):
     assert gpu.get("shared") is not True
 
 
+def test_detect_nvidia_unavailable_probe_on_non_unified_gpu_is_unknown_not_shared(monkeypatch):
+    """A discrete GPU that reports [N/A] for memory.total (e.g. when nvidia-smi
+    cannot query VRAM on this host) must be tagged as memory.type=unknown, not
+    fabricated as unified/shared by borrowing system RAM.  The GB10 unified-memory
+    heuristic must not apply to unrelated parts (e.g. RTX A6000) just because
+    their probe returned [N/A]."""
+    # Simulate a discrete GPU (e.g. RTX A6000) where nvidia-smi returns [N/A].
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: "0, [N/A], NVIDIA RTX A6000")
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 131072)  # system RAM must NOT appear
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["name"] == "NVIDIA RTX A6000"
+    assert gpu["accelerator"] == "cuda"
+    assert gpu["memory"] == {"type": "unknown"}
+    assert "vram_mb" not in gpu
+    assert gpu.get("shared") is not True
+
+
+def test_detect_nvidia_unavailable_probe_on_unified_gpu_stays_shared(monkeypatch):
+    """A known unified-memory GPU (GB10) that reports [N/A] is still correctly
+    classified as shared/unified — unified is a property of the *part*, not just
+    the probe output."""
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: "0, [N/A], NVIDIA GB10")
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 131072)
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["name"] == "NVIDIA GB10"
+    assert gpu["shared"] is True
+    assert gpu["memory"] == {"type": "unified", "shared_mb": 131072}
+    assert gpu["vram_mb"] == 131072
+
+
 def test_detect_apple_metal_reports_unified_memory(monkeypatch):
     monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(hw.platform, "machine", lambda: "arm64")
