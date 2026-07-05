@@ -434,6 +434,183 @@ def _hub_post_child_tasks(task_id: str, children: List[Dict[str, Any]]) -> Optio
         return None
 
 
+# ---------------------------------------------------------------------------
+# Scope estimation (scope-01)
+# ---------------------------------------------------------------------------
+
+#: Signal thresholds for the deterministic component of scope estimation.
+_SCOPE_LARGE_DESC_WORDS = 200  # description word count → large signal
+_SCOPE_LARGE_DESC_CHARS = 800  # description char count → large signal
+_SCOPE_LARGE_REPO_CMDS = 3     # number of required_commands → large signal
+
+
+def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Estimate task scope using deterministic text signals.
+
+    Examines description length, title length, repository contract breadth,
+    and plan-detection signals to produce a ``{size, rationale,
+    estimated_units}`` dict suitable for storing as
+    ``metadata.scope_estimate``.
+
+    This is a *pure* function — it never touches the network.  The result is
+    intentionally conservative: any two large-signal hits → "large".
+
+    Schema (``mac.scope_estimate.v1``)::
+
+        {
+            "schema": "mac.scope_estimate.v1",
+            "size": "small" | "large",
+            "rationale": "<human-readable explanation>",
+            "estimated_units": 1 | 2,   # story points
+            "signals": ["desc_words:350", ...],
+        }
+    """
+    title = str(task.get("title") or "")
+    description = str(task.get("description") or "")
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    signals: List[str] = []
+
+    # --- deterministic signals ---
+
+    # D1: description word count
+    word_count = len(description.split())
+    if word_count >= _SCOPE_LARGE_DESC_WORDS:
+        signals.append("desc_words:%d" % word_count)
+
+    # D2: description char count (catches dense/technical descriptions)
+    if len(description) >= _SCOPE_LARGE_DESC_CHARS:
+        signals.append("desc_chars:%d" % len(description))
+
+    # D3: repository contract breadth (number of required_commands)
+    rc = (
+        _nested_dict(metadata, "execution_contract", "repository_contract")
+        or _nested_dict(metadata, "origin", "repository_contract")
+        or {}
+    )
+    toolchain = rc.get("toolchain") if isinstance(rc, dict) else {}
+    if isinstance(toolchain, dict):
+        required_cmds = toolchain.get("required_commands") or []
+        if isinstance(required_cmds, list) and len(required_cmds) >= _SCOPE_LARGE_REPO_CMDS:
+            signals.append("repo_required_cmds:%d" % len(required_cmds))
+
+    # D4: plan-detection signals (reuse existing logic)
+    is_plan, plan_signals = detect_plan_signals(title, description)
+    if is_plan:
+        signals.append("plan_detected")
+    for ps in plan_signals[:3]:  # cap to avoid oversized rationale
+        signals.append("plan_signal:%s" % ps)
+
+    # D5: long title (over-specified tasks tend to be large)
+    if len(title) > 100:
+        signals.append("long_title:%d" % len(title))
+
+    # --- decision (any 2+ large-signals → large) ---
+    large_signal_count = sum(
+        1 for s in signals
+        if not s.startswith("plan_signal:")  # plan sub-signals don't double-count
+    )
+    size = "large" if large_signal_count >= 2 else "small"
+    estimated_units = 2 if size == "large" else 1
+
+    if signals:
+        rationale = "size=%s based on: %s" % (size, "; ".join(signals[:5]))
+    else:
+        rationale = "no large-scope signals detected; classified as small"
+
+    return {
+        "schema": "mac.scope_estimate.v1",
+        "size": size,
+        "rationale": rationale,
+        "estimated_units": estimated_units,
+        "signals": signals,
+    }
+
+
+def needs_scope_estimate(task: Dict[str, Any]) -> bool:
+    """Return True when the task should receive a scope estimate.
+
+    Fires only on the FIRST execution attempt (``attempt_count == 1``) and
+    only when ``metadata.scope_estimate`` has not already been recorded.
+    Handles ``None`` metadata gracefully.
+    """
+    if not isinstance(task, dict):
+        return False
+    raw_attempt = task.get("attempt_count")
+    try:
+        attempt_count = int(raw_attempt or 0)
+    except (TypeError, ValueError):
+        attempt_count = 0
+    if attempt_count != 1:
+        return False
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return True  # no metadata at all → never been estimated
+    return "scope_estimate" not in metadata
+
+
+def _hub_put(path: str, payload: Dict[str, Any], *, timeout: float = 10.0) -> bool:
+    """PUT JSON to the hub.  Best-effort: returns False (never raises) when hub
+    env is absent or the call fails."""
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return False
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + path,
+        data=data,
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        urllib.request.urlopen(request, timeout=timeout).read()  # noqa: S310
+        return True
+    except Exception:
+        return False
+
+
+def record_scope_estimate(
+    task_id: str,
+    estimate: Dict[str, Any],
+    existing_metadata: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Persist ``estimate`` as ``metadata.scope_estimate`` on the task hub record.
+
+    Merges the estimate into the task's existing metadata and PUTs the full
+    metadata dict to ``PUT /tasks/{task_id}``.  Best-effort — never raises.
+
+    Returns True when the hub accepted the update.
+    """
+    if not task_id:
+        return False
+    merged: Dict[str, Any] = dict(existing_metadata or {})
+    merged["scope_estimate"] = estimate
+    return _hub_put(
+        "/tasks/%s" % task_id,
+        {"metadata": merged},
+    )
+
+
+def maybe_preflight_scope_estimate(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Compute and record a scope estimate when this is the first attempt.
+
+    Returns the estimate dict when one was computed and attempted to record,
+    or None when the task already has an estimate or this is not the first
+    attempt.  Best-effort: recording failure is silent (the estimate is still
+    returned so the caller can emit telemetry).
+    """
+    if not needs_scope_estimate(task):
+        return None
+    task_id = str(task.get("id") or "")
+    estimate = compute_scope_estimate(task)
+    metadata = task.get("metadata")
+    existing: Optional[Dict[str, Any]] = metadata if isinstance(metadata, dict) else None
+    record_scope_estimate(task_id, estimate, existing)
+    return estimate
+
+
 def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
     """Read the agent's mac-evidence.json for a ``plan_steps`` key; if found,
     auto-post those steps as child tasks via the MAC API.
@@ -4542,6 +4719,23 @@ def _run_executor(
         recalled_lessons=len(lessons),
         sandboxed=_openshell_enabled(),
     )
+
+    # Scope-estimate preflight (scope-01): on the FIRST attempt of a non-review
+    # task, compute a deterministic scope estimate and record it as
+    # metadata.scope_estimate on the hub.  Best-effort — never blocks the run.
+    if not is_review:
+        try:
+            estimate = maybe_preflight_scope_estimate(task)
+            if estimate is not None:
+                emit_telemetry(
+                    "scope_estimated",
+                    task_id=task_id,
+                    size=estimate.get("size"),
+                    estimated_units=estimate.get("estimated_units"),
+                    signals=estimate.get("signals", []),
+                )
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     assignment = _review_experiment_assignment(task) if is_review else {}
