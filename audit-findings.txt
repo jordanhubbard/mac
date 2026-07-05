@@ -1,0 +1,38 @@
+Audit: NemoClaw priority-1 dispatch starvation
+
+Scope
+
+I read the dispatch/claim path in src/mac/services.py and checked the live hub state for the NemoClaw task family using the worker token, with output limited to task ids, state, priority, coordination metadata, and agent command-inventory booleans.
+
+Findings
+
+1. Priority ordering is not the root cause. _dispatch_ordered_tasks() loads open tasks, buckets them by tenant, sorts each tenant bucket by (-priority, created_at, id), then round-robins tenants. In a single-tenant fleet this collapses to strict priority-descending order, with created_at and id as tie breakers. _dispatch_batch_impl() and _claim_next_for_agent_impl() both consume this ordered list. The priority=1 NemoClaw tasks were therefore considered before priority=0 work; they were not skipped because priority was sorted in the wrong direction.
+
+2. The repository-command gate is not the current live root cause for the NemoClaw tasks. The live ready NemoClaw tasks task_dae5ccbd2986447898e231f0f8e0011d ("Validate NemoClaw/OpenShell compatibility for MAC pilot") and task_5154ff7daf1542b78260947fa0ffc375 ("Execute NemoClaw pilot on one eligible non-gke host") both carry repository required_commands ["python3", "git", "gh"]. _agent_has_repository_commands() would reject a non-OpenShell agent that lacks those commands in resources.commands or resources.command_inventory, and that rejection is silent at task-history level. However the six live healthy idle/busy agents I checked all advertise python3, git, and gh, and all are OpenShell-required, so the OpenShell path would only require host git. This gate can cause the same symptom in general, but it does not explain the current NemoClaw starvation.
+
+3. The actual live root cause is coordination exclusion by durable lease history. The two open NemoClaw children have coordination.require_distinct_agent=true and parent_task_id task_68ea2b5766d0406a97376480b575449c. _coordination_excluded_agent_ids() expands that to the parent plus all child_task_ids and selects DISTINCT agent_id from leases for the whole related family. It does not filter by active lease status, terminal task state, success/failure, or whether the lease belongs to the same child that is now open again. In the live family, lease/claim history spans all six healthy active agents:
+
+- task_68ea2b5766d0406a97376480b575449c parent: agent_bullwinkle, agent_natasha, agent_jordanh-gke
+- task_4a7f26d0b448424ead711eb671a78243 completed child: agent_rocky
+- task_202b7fe02cb04b3e8866c2753fc21071 completed child: agent_jordanh-worker1
+- task_5154ff7daf1542b78260947fa0ffc375 reopened child: agent_jordanh-worker2
+
+The active healthy fleet was exactly agent_bullwinkle, agent_jordanh-gke, agent_jordanh-worker1, agent_jordanh-worker2, agent_natasha, and agent_rocky. Because every active agent appears in the related-family lease set, _agent_available_for() rejects every agent at the coordination check before it reaches machine trust, capacity, tenant, resources, repository commands, role, or capability checks. task_dae5... has never been claimed itself, but it inherits the full exclusion set from its parent/siblings. task_5154... also excludes its previous executor after auto-reopen.
+
+Code paths that omit skip reasons
+
+- _agent_available_for() is a boolean-only matcher. Its coordination, target-agent, runtime digest, trust, capacity, tenant, resource, repository-command, role, hardware, soul-role, and capability gates all return False without a reason object.
+- _dispatch_batch_impl() loops task x agent, calls _agent_available_for(), and simply continues on False. If no agent matches a task, it appends the task to unmatched and later calls _emit_dispatch_provisioning_signal(task). No task_history event is written for "agent skipped" or "all agents ineligible"; only an agent_provisioning_requests row / provisioning observability signal is emitted with reason dispatch.no_eligible_agent and coarse task requirements.
+- _claim_next_for_agent_impl() records aggregate worker.routing.no_candidate observability with rejected_policy counts and a rejected_dispatch integer, but it still does not record per-task/per-agent dispatch skip reasons. The task history for task_dae5... shows only task.created and task.updated, which matches this omission.
+
+Ready display versus actual claim order
+
+mac task ready calls ControlPlane.ready_tasks(), which selects open, unowned, unleased tasks ordered by priority DESC, created_at, then applies dependency/hold/project filters. For the current single-tenant project this matches the dispatch claim order in practice: priority=1 ready tasks are displayed before priority=0 work. The implementation differs in two edge cases: ready_tasks() does not apply tenant round-robin, and its SQL lacks the final id tie-breaker that _dispatch_ordered_tasks() adds after grouping. Those are not the NemoClaw cause.
+
+Current starvation protection status
+
+There is priority ordering and tenant fairness, and repeated no-agent matches emit an idempotent provisioning signal. There is not yet starvation protection for a task that remains open but is permanently ineligible for all live agents. In this case the coordination distinct-agent rule consumed the entire active fleet via historical leases, so dispatch could keep considering the priority=1 NemoClaw children indefinitely, skip every agent silently, emit/prolong provisioning demand, and still allow later eligible tasks to be claimed.
+
+Conclusion
+
+The priority=1 NemoClaw tasks were passed over because the cooperative distinct-agent lease-history exclusion eliminated every currently healthy active agent, not because priority sorting was reversed and not because the current live agents lacked python3/git/gh command inventory. The main observability gap is that the dispatch matcher is boolean-only and records no per-agent skip reason in task history when coordination or repository-command gates reject a ready task.
