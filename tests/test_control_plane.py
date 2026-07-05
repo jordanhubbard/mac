@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -3571,6 +3572,134 @@ def test_claim_next_capabilities_filter_empty_is_noop(cp):
     claimed = cp.claim_next_for_agent(worker.id, capabilities=[])
     assert claimed is not None and claimed["task"]["id"] == task.id
 
+
+def test_claim_next_prefers_high_priority_over_older_default_ready_task(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    older_default = cp.create_task(
+        "older-default",
+        priority=0,
+        required_capabilities=["python"],
+    )
+    high_priority = cp.create_task(
+        "high-priority",
+        priority=1,
+        required_capabilities=["python"],
+    )
+    created_at = (
+        services.parse_time(services.utcnow()) - timedelta(hours=6)
+    ).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE tasks SET created_at = ? WHERE id = ?",
+        (created_at, older_default.id),
+    )
+
+    assert [task.id for task in cp.ready_tasks(limit=2)] == [
+        high_priority.id,
+        older_default.id,
+    ]
+    claimed = cp.claim_next_for_agent(worker.id)
+
+    assert claimed is not None
+    assert claimed["task"]["id"] == high_priority.id
+
+
+def test_dispatch_priority_aging_prevents_low_priority_starvation(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    old_default = cp.create_task(
+        "old-default",
+        priority=0,
+        required_capabilities=["python"],
+    )
+    new_high = cp.create_task(
+        "new-high",
+        priority=1,
+        required_capabilities=["python"],
+    )
+    created_at = (
+        services.parse_time(services.utcnow()) - timedelta(days=2)
+    ).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE tasks SET created_at = ? WHERE id = ?",
+        (created_at, old_default.id),
+    )
+
+    assert [task.id for task in cp.ready_tasks(limit=2)] == [
+        old_default.id,
+        new_high.id,
+    ]
+    claimed = cp.claim_next_for_agent(worker.id)
+
+    assert claimed is not None
+    assert claimed["task"]["id"] == old_default.id
+
+
+def test_claim_next_records_per_task_agent_skip_reason(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    skipped = cp.create_task(
+        "needs-review-capability",
+        priority=10,
+        required_capabilities=["review"],
+    )
+    claimed_task = cp.create_task(
+        "python-work",
+        priority=0,
+        required_capabilities=["python"],
+    )
+
+    claimed = cp.claim_next_for_agent(worker.id)
+
+    assert claimed is not None
+    assert claimed["task"]["id"] == claimed_task.id
+    observations = cp.list_observability(
+        name="worker.routing.task_skipped",
+        subject_type="task",
+        subject_id=skipped.id,
+        limit=10,
+    )
+    assert observations
+    assert observations[0].detail["agent_id"] == worker.id
+    assert observations[0].detail["reason"] == "capabilities_missing"
+    assert observations[0].detail["reason_class"] == "agent_availability"
+
+
+def test_dispatch_records_cooperative_skip_reason_per_agent(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    child = cp.create_task("child", required_capabilities=["python"])
+    finish_task(cp, child, worker, reviewer)
+    integration = cp.create_task(
+        "integration",
+        priority=10,
+        required_capabilities=["python"],
+        metadata={
+            "coordination": {
+                "require_distinct_agent": True,
+                "child_task_ids": [child.id],
+            },
+            "relationships": {"child_task_ids": [child.id]},
+        },
+    )
+    fallback = cp.create_task(
+        "fallback",
+        priority=0,
+        required_capabilities=["python"],
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == fallback.id
+    observations = cp.list_observability(
+        name="dispatcher.routing.task_skipped",
+        subject_type="task",
+        subject_id=integration.id,
+        limit=20,
+    )
+    assert any(
+        event.detail["agent_id"] == worker.id
+        and event.detail["reason"] == "cooperative_distinct_agent_excluded"
+        for event in observations
+    )
 
 
 
