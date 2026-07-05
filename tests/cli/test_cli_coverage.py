@@ -671,6 +671,8 @@ def test_cli_subcommand_coverage_gate():
         # extended coverage added in test_cli_extended.py:
         "diagnostics", "artifact", "env", "notifier",
         "action-events", "command-audit", "observability",
+        # planning topology ordering (test_cli_plan.py):
+        "plan",
     }
     # Build the set of registered top-level subcommands from cli.py at import time.
     from mac.cli import build_parser
