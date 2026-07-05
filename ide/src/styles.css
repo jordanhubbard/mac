@@ -149,7 +149,9 @@ button.explorer-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .live-indicator > span { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .work-graph { position: relative; width: 100%; height: calc(100% - 43px); flex: none; min-height: 0; background: #081219; }
 .graph-stage-labels { position: absolute; z-index: 2; top: 11px; left: 0; right: 0; display: grid; grid-template-columns: repeat(4, 1fr); pointer-events: none; }
-.graph-stage-labels span { color: var(--muted); text-align: center; font: 10px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.graph-stage-labels span { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); text-align: center; font: 10px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.graph-stage-labels span.stage-blocked { color: var(--amber); }
+.graph-stage-labels strong { min-width: 18px; padding: 1px 4px; border: 1px solid currentColor; border-radius: 999px; font-size: 8px; letter-spacing: 0; }
 .react-flow__node-task { width: 220px; }
 .work-node { position: relative; width: 220px; min-height: 74px; padding: 11px 12px 9px; border: 1px solid var(--border-strong); background: #0c171e; box-shadow: 0 5px 15px rgb(0 0 0 / 20%); }
 .work-node:hover, .work-node.is-selected { border-color: var(--cyan); }
@@ -160,6 +162,8 @@ button.explorer-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .work-node-meta .state-label { margin-left: auto; color: var(--muted); }
 .work-node-meta .state-label.state-blocked { color: var(--amber); }
 .work-node-meta .state-label.state-running, .work-node-meta .state-label.state-reviewing { color: var(--cyan); }
+.work-node-action { margin-top: 6px; padding: 0; border: 0; background: transparent; color: var(--amber); font-size: 9px; text-align: left; }
+.work-node-action:hover { color: var(--text-strong); text-decoration: underline; }
 .work-handle { width: 6px !important; height: 6px !important; border-color: var(--cyan) !important; background: var(--bg-0) !important; }
 .react-flow__edge-path { stroke: #607582; stroke-width: 1.5; }
 .react-flow__edge.animated path { stroke: var(--cyan); }
@@ -244,11 +248,18 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .record-state { color: var(--muted); font-size: 10px; text-transform: lowercase; }
 .three-column-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 16px; }
 .agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; padding: 16px; }
-.agent-tile { min-height: 160px; padding: 14px; border: 1px solid var(--border); background: var(--bg-1); color: var(--text); text-align: left; }
+.agent-tile { min-height: 205px; padding: 14px; border: 1px solid var(--border); background: var(--bg-1); color: var(--text); text-align: left; }
 .agent-tile:hover, .agent-tile.selected { border-color: var(--cyan-dim); background: var(--bg-2); }
 .agent-tile-head { display: flex; align-items: center; gap: 10px; }
 .agent-tile-head > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .agent-tile-head small { color: var(--faint); font: 9px var(--mono); }
+.agent-observed-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 14px; background: var(--border); }
+.agent-observed-facts > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 7px 8px; background: var(--bg-2); }
+.agent-observed-facts > span:last-child { grid-column: 1 / -1; }
+.agent-observed-facts small, .agent-tooling small { color: var(--faint); font-size: 8px; letter-spacing: .07em; text-transform: uppercase; }
+.agent-observed-facts strong { overflow: hidden; color: var(--text); font-size: 10px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.agent-no-report { margin-top: 14px; padding: 12px; border: 1px dashed var(--border); color: var(--faint); font-size: 10px; }
+.agent-tooling { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 10px; }
 .capability-list, .protocol-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .capability-list { margin-top: 14px; }
 .capability-list span, .protocol-list span { padding: 2px 6px; border: 1px solid var(--border-strong); background: var(--bg-2); color: var(--muted); font-size: 10px; }

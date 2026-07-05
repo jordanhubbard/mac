@@ -128,6 +128,7 @@ def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
         token="profile-token",
         source="client-profile:default",
         profile="default",
+        hub_port=8789,
     )
     prompts: list[str] = []
 
@@ -135,15 +136,19 @@ def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
         connection,
         {},
         interactive=True,
-        input_fn=lambda prompt: prompts.append(prompt) or "https://192.0.2.10:8789/",
+        input_fn=lambda prompt: prompts.append(prompt) or "192.0.2.10",
     )
 
-    assert prompts == ["Target hub URL [http://127.0.0.1:48789]: "]
+    assert prompts == [
+        "Target hub host or IP "
+        "[Enter keeps http://127.0.0.1:48789; direct port 8789]: "
+    ]
     assert selected == ide_launcher.IdeConnection(
-        api_url="https://192.0.2.10:8789",
+        api_url="http://192.0.2.10:8789",
         token="profile-token",
         source="client-profile:default",
         profile="default",
+        hub_port=8789,
     )
 
 
@@ -151,7 +156,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
     capsys,
 ) -> None:
     connection = ide_launcher.IdeConnection(api_url=ide_launcher.DEFAULT_API_URL)
-    answers = iter(["hub.example:8789", "http://hub.example:8789"])
+    answers = iter(["hub.example/path", "hub.example"])
 
     selected = ide_launcher.prompt_for_ide_connection(
         connection,
@@ -161,7 +166,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
     )
 
     assert selected.api_url == "http://hub.example:8789"
-    assert "must include http:// or https://" in capsys.readouterr().err
+    assert "must not contain a path" in capsys.readouterr().err
     assert (
         ide_launcher.prompt_for_ide_connection(
             connection,
@@ -184,6 +189,25 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
         )
         is connection
     )
+
+
+@pytest.mark.parametrize(
+    ("entered", "expected"),
+    [
+        ("hub.example:9443", "http://hub.example:9443"),
+        ("https://hub.example", "https://hub.example"),
+        ("[fd00::10]", "http://[fd00::10]:8789"),
+    ],
+)
+def test_hub_prompt_accepts_explicit_ports_and_urls(entered, expected) -> None:
+    selected = ide_launcher.prompt_for_ide_connection(
+        ide_launcher.IdeConnection(api_url=ide_launcher.DEFAULT_API_URL),
+        {},
+        interactive=True,
+        input_fn=lambda _prompt: entered,
+    )
+
+    assert selected.api_url == expected
 
 
 def test_run_starts_vite_without_token_in_command(tmp_path, monkeypatch) -> None:

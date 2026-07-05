@@ -15,15 +15,17 @@ type TaskNodeData = {
   task: Task;
   agent?: Agent;
   selected: boolean;
+  onInspect: (taskId: string) => void;
 };
 
-const STAGES = ["Intake", "Build", "Review", "Publish"] as const;
+const STAGES = ["Intake", "Build", "Review", "Blocked"] as const;
+const MAX_VISIBLE_NODES = 25;
+const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
 
 function stageIndex(state?: string): number {
   switch ((state || "").toLowerCase()) {
     case "open":
     case "ready":
-    case "blocked":
       return 0;
     case "claimed":
     case "running":
@@ -33,12 +35,45 @@ function stageIndex(state?: string): number {
     case "reviewing":
     case "in_review":
       return 2;
-    case "completed":
-    case "published":
+    case "blocked":
       return 3;
     default:
       return 1;
   }
+}
+
+function visibleTasksByStage(tasks: TaskDetail[], selectedTaskId: string | null): Task[] {
+  const selected = tasks.find(({ task }) => task.id === selectedTaskId)?.task;
+  const relatedIds = new Set<string>(selected ? [selected.id, ...(selected.dependencies || [])] : []);
+  if (selected) {
+    for (const { task } of tasks) {
+      if ((task.dependencies || []).includes(selected.id)) relatedIds.add(task.id);
+    }
+  }
+  const buckets = STAGES.map(() => [] as Task[]);
+  for (const { task } of tasks) {
+    if (TERMINAL_STATES.has(String(task.state))) continue;
+    buckets[stageIndex(task.state)].push(task);
+  }
+  for (const bucket of buckets) {
+    bucket.sort((left, right) => Number(relatedIds.has(right.id)) - Number(relatedIds.has(left.id)));
+  }
+
+  // Take one task from every stage before taking a second. A straight slice of
+  // the ledger made later stages disappear whenever Intake/Build was busy.
+  const visible: Task[] = [];
+  for (let row = 0; visible.length < MAX_VISIBLE_NODES; row += 1) {
+    let found = false;
+    for (const bucket of buckets) {
+      const task = bucket[row];
+      if (!task) continue;
+      found = true;
+      visible.push(task);
+      if (visible.length === MAX_VISIBLE_NODES) break;
+    }
+    if (!found) break;
+  }
+  return visible;
 }
 
 function initials(value: string): string {
@@ -52,7 +87,7 @@ function initials(value: string): string {
 }
 
 const TaskNode = memo(function TaskNode({ data }: NodeProps<Node<TaskNodeData>>) {
-  const { task, agent, selected } = data;
+  const { task, agent, selected, onInspect } = data;
   const state = String(task.state || "open");
   const agentName = agent?.name || agent?.id?.replace(/^agent_/, "") || "Unassigned";
   return (
@@ -64,6 +99,18 @@ const TaskNode = memo(function TaskNode({ data }: NodeProps<Node<TaskNodeData>>)
         <span>{agentName}</span>
         <span className={`state-label state-${state}`}>{state.replaceAll("_", " ")}</span>
       </div>
+      {state === "blocked" ? (
+        <button
+          className="work-node-action nodrag nopan"
+          onClick={(event) => {
+            event.stopPropagation();
+            onInspect(task.id);
+          }}
+          type="button"
+        >
+          Inspect block reason
+        </button>
+      ) : null}
       <Handle className="work-handle" position={Position.Right} type="source" />
     </div>
   );
@@ -76,11 +123,13 @@ export function WorkGraph({
   agents,
   selectedTaskId,
   onSelectTask,
+  onInspectTask,
 }: {
   tasks: TaskDetail[];
   agents: Agent[];
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onInspectTask: (taskId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasSize, setHasSize] = useState(false);
@@ -93,13 +142,15 @@ export function WorkGraph({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const { nodes, edges } = useMemo(() => {
-    const visible = tasks
-      .map((detail) => detail.task)
-      .filter((task) => !["cancelled", "failed"].includes(String(task.state)))
-      .slice(0, 18);
+  const { nodes, edges, stageCounts } = useMemo(() => {
+    const visible = visibleTasksByStage(tasks, selectedTaskId);
     const visibleIds = new Set(visible.map((task) => task.id));
-    const rows = [0, 0, 0, 0];
+    const rows = STAGES.map(() => 0);
+    const counts = STAGES.map(() => 0);
+    for (const { task } of tasks) {
+      if (TERMINAL_STATES.has(String(task.state))) continue;
+      counts[stageIndex(task.state)] += 1;
+    }
     const graphNodes: Array<Node<TaskNodeData>> = visible.map((task) => {
       const stage = stageIndex(task.state);
       const row = rows[stage]++;
@@ -110,7 +161,7 @@ export function WorkGraph({
         id: task.id,
         type: "task",
         position: { x: stage * 285, y: row * 118 + 44 },
-        data: { task, agent, selected: task.id === selectedTaskId },
+        data: { task, agent, selected: task.id === selectedTaskId, onInspect: onInspectTask },
       };
     });
     const graphEdges: Edge[] = visible.flatMap((task) =>
@@ -124,13 +175,17 @@ export function WorkGraph({
           className: "work-edge",
         })),
     );
-    return { nodes: graphNodes, edges: graphEdges };
-  }, [agents, selectedTaskId, tasks]);
+    return { nodes: graphNodes, edges: graphEdges, stageCounts: counts };
+  }, [agents, onInspectTask, selectedTaskId, tasks]);
 
   return (
     <div className="work-graph" aria-label="Live work graph" ref={containerRef}>
-      <div className="graph-stage-labels" aria-hidden="true">
-        {STAGES.map((stage) => <span key={stage}>{stage}</span>)}
+      <div className="graph-stage-labels">
+        {STAGES.map((stage, index) => (
+          <span className={stage === "Blocked" ? "stage-blocked" : ""} key={stage}>
+            {stage}<strong>{stageCounts[index]}</strong>
+          </span>
+        ))}
       </div>
       {nodes.length && hasSize ? (
         <ReactFlow
@@ -143,6 +198,7 @@ export function WorkGraph({
           nodesConnectable={false}
           nodesDraggable={false}
           onNodeClick={(_, node) => onSelectTask(node.id)}
+          onNodeDoubleClick={(_, node) => onInspectTask(node.id)}
           proOptions={{ hideAttribution: false }}
         >
           <Background color="var(--graph-grid)" gap={24} size={1} />

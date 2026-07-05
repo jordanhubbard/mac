@@ -26,6 +26,7 @@ from mac.client_profiles import (
 
 
 DEFAULT_API_URL = "http://127.0.0.1:8789"
+DEFAULT_HUB_PORT = 8789
 _AUTH_MODES = {"auto", "profile", "manual"}
 
 
@@ -39,6 +40,7 @@ class IdeConnection:
     token: str = ""
     source: str = "manual"
     profile: Optional[str] = None
+    hub_port: int = DEFAULT_HUB_PORT
 
     @property
     def managed(self) -> bool:
@@ -112,6 +114,16 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
         credential = dict(profile.get("credential") or {})
         api_url = explicit_api_url or str(connection.get("api_url") or "").strip()
         token = str(credential.get("token") or "").strip()
+        try:
+            hub_port = int(connection.get("remote_port") or DEFAULT_HUB_PORT)
+        except (TypeError, ValueError) as exc:
+            raise IdeLauncherError(
+                "MAC login profile %r has an invalid remote hub port" % selected_profile
+            ) from exc
+        if not 1 <= hub_port <= 65535:
+            raise IdeLauncherError(
+                "MAC login profile %r has an invalid remote hub port" % selected_profile
+            )
         if not api_url:
             raise IdeLauncherError(
                 "MAC login profile %r has no API URL" % selected_profile
@@ -125,6 +137,7 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
             token=token,
             source="client-profile:%s" % selected_profile,
             profile=selected_profile,
+            hub_port=hub_port,
         )
 
     if requested_profile or auth_mode == "profile":
@@ -151,7 +164,43 @@ def _validated_api_url(raw: str) -> str:
         raise IdeLauncherError("hub URL must not contain credentials")
     if parsed.query or parsed.fragment:
         raise IdeLauncherError("hub URL must not contain a query string or fragment")
+    if parsed.path not in {"", "/"}:
+        raise IdeLauncherError("hub URL must not contain a path")
     return value
+
+
+def _api_url_for_hub_target(raw: str, *, default_port: int) -> str:
+    """Resolve an operator-entered host/IP without leaking tunnel port details.
+
+    A login profile's API URL normally points at an ephemeral loopback SSH
+    tunnel.  That local port is meaningful only on localhost.  Bare hostnames
+    and IPs therefore use the profile's recorded remote hub port instead.
+    Advanced operators can still enter a complete URL or an explicit port.
+    """
+
+    value = raw.strip().rstrip("/")
+    if "://" in value:
+        return _validated_api_url(value)
+
+    parsed = urlsplit("//" + value)
+    if not parsed.hostname:
+        raise IdeLauncherError("enter a hub hostname or IP address")
+    if parsed.username or parsed.password:
+        raise IdeLauncherError("hub target must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise IdeLauncherError("hub target must not contain a query string or fragment")
+    if parsed.path not in {"", "/"}:
+        raise IdeLauncherError("hub target must not contain a path")
+    try:
+        port = parsed.port or default_port
+    except ValueError as exc:
+        raise IdeLauncherError("hub target has an invalid port") from exc
+    if not 1 <= port <= 65535:
+        raise IdeLauncherError("hub target has an invalid port")
+    host = parsed.hostname
+    if ":" in host:
+        host = "[%s]" % host
+    return "http://%s:%d" % (host, port)
 
 
 def prompt_for_ide_connection(
@@ -161,11 +210,12 @@ def prompt_for_ide_connection(
     input_fn: Optional[Callable[[str], str]] = None,
     interactive: Optional[bool] = None,
 ) -> IdeConnection:
-    """Let an interactive operator override the hub before Vite starts.
+    """Let an interactive operator select the hub before Vite starts.
 
     Explicit ``IDE_API_URL`` values and non-interactive launches remain
-    prompt-free.  The selected URL still flows through Vite's local proxy, so
-    a managed profile token never needs to enter browser storage.
+    prompt-free. Bare hosts use the hub's remote API port rather than the
+    profile's ephemeral local tunnel port. The selected URL still flows through
+    Vite's local proxy, so a managed profile token never enters browser storage.
     """
 
     values = os.environ if env is None else env
@@ -178,15 +228,22 @@ def prompt_for_ide_connection(
     read = input if input_fn is None else input_fn
     while True:
         try:
-            entered = read("Target hub URL [%s]: " % connection.api_url).strip()
+            entered = read(
+                "Target hub host or IP "
+                "[Enter keeps %s; direct port %d]: "
+                % (connection.api_url, connection.hub_port)
+            ).strip()
         except EOFError:
             return connection
         if not entered:
             return connection
         try:
-            api_url = _validated_api_url(entered)
+            api_url = _api_url_for_hub_target(
+                entered,
+                default_port=connection.hub_port,
+            )
         except IdeLauncherError as exc:
-            print("Invalid hub URL: %s" % exc, file=sys.stderr)
+            print("Invalid hub target: %s" % exc, file=sys.stderr)
             continue
         return replace(connection, api_url=api_url)
 

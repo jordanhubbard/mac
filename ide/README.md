@@ -26,11 +26,15 @@ make run-gui
 ```
 
 `make run-gui` reuses the active scoped client profile created by `mac login`,
-ensures its SSH tunnel is running, and prompts for the target hub URL before it
-starts Vite. Press Enter to accept the profile endpoint, or enter another
-`http://` or `https://` host. The credential stays inside the local Vite proxy;
-it is not printed, placed in the URL, or exposed to browser storage. Set
-`IDE_PROFILE=<name>` to select a non-active profile.
+ensures its SSH tunnel is running, and prompts for the target hub host or IP
+before it starts Vite. Press Enter to keep the profile's local SSH tunnel, or
+enter a hostname/IP for a direct connection. Direct connections automatically
+use the remote hub API port recorded by `mac login` (normally `8789`); the
+tunnel's ephemeral loopback port is never reused on the remote host. An
+explicit `host:port` or complete `http://`/`https://` URL remains supported.
+The credential stays inside the local Vite proxy; it is not printed, placed in
+the URL, or exposed to browser storage. Set `IDE_PROFILE=<name>` to select a
+non-active profile.
 
 If no client profile exists, the launcher falls back to the existing
 fleet-scoped environment token lookup and finally to the browser's manual

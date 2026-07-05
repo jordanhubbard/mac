@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { api, type Agent, type AgentCard, type DashboardState, type TaskDetail } from "../api/mac";
+import { api, type Agent, type AgentCard, type DashboardAgent, type DashboardState, type TaskDetail } from "../api/mac";
 import type { WorkbenchView } from "./ActivityRail";
+import { agentHardware, availabilityLabel, availableCodingClis, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
 import { TaskInspector } from "./TaskInspector";
 import { TaskKanban } from "./TaskKanban";
 import { WorkGraph } from "./WorkGraph";
@@ -51,7 +52,7 @@ export function WorkbenchViewContent({
     case "workflows":
       return <WorkflowView data={data} onRefresh={onRefresh} />;
     case "agents":
-      return <AgentsView agents={agents} onSelectAgent={onSelectAgent} selectedAgentId={selectedAgentId} />;
+      return <AgentsView agents={data.agents} onSelectAgent={onSelectAgent} selectedAgentId={selectedAgentId} />;
     case "runtime":
       return <RuntimeView data={data} />;
     case "observability":
@@ -63,6 +64,7 @@ export function WorkbenchViewContent({
         <CockpitView
           agents={agents}
           data={data}
+          onRefresh={onRefresh}
           onSelectTask={onSelectTask}
           selectedTaskId={selectedTaskId}
         />
@@ -98,18 +100,29 @@ function CockpitView({
   agents,
   selectedTaskId,
   onSelectTask,
+  onRefresh,
 }: {
   data: DashboardState;
   agents: Agent[];
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onRefresh: () => void | Promise<void>;
 }) {
+  const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const counts = data.overview.counts;
   const states = data.overview.task_states;
   const health = agents.length
     ? Math.round((Number(counts.healthy_agents || 0) / agents.length) * 100)
     : 100;
   const active = data.tasks.filter((detail) => !TERMINAL_STATES.has(String(detail.task.state))).length;
+  const inspectedTask = inspectedTaskId
+    ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
+    : null;
+  const canWrite = data.session?.can_write !== false;
+  function inspectTask(taskId: string) {
+    onSelectTask(taskId);
+    setInspectedTaskId(taskId);
+  }
   return (
     <main className="workbench-view cockpit-view">
       <ViewHeader
@@ -127,18 +140,28 @@ function CockpitView({
       <section className="primary-surface graph-surface">
         <div className="surface-heading">
           <div>
-            <span className="surface-kicker">Live work graph</span>
-            <span className="surface-note">Ledger dependencies and current execution stages</span>
+            <span className="surface-kicker">Active work graph</span>
+            <span className="surface-note">Up to 25 active tasks · arrows are unresolved dependencies</span>
           </div>
           <span className="live-indicator"><span /> stream connected</span>
         </div>
         <WorkGraph
           agents={agents}
+          onInspectTask={inspectTask}
           onSelectTask={onSelectTask}
           selectedTaskId={selectedTaskId}
           tasks={data.tasks}
         />
       </section>
+      {inspectedTask ? (
+        <TaskInspector
+          canWrite={canWrite}
+          detail={inspectedTask}
+          key={inspectedTask.task.id}
+          onClose={() => setInspectedTaskId(null)}
+          onRefresh={onRefresh}
+        />
+      ) : null}
     </main>
   );
 }
@@ -313,7 +336,7 @@ function AgentsView({
   selectedAgentId,
   onSelectAgent,
 }: {
-  agents: Agent[];
+  agents: DashboardAgent[];
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string) => void;
 }) {
@@ -321,7 +344,12 @@ function AgentsView({
     <main className="workbench-view">
       <ViewHeader description="Capabilities, health, workload, and interoperability at a glance." eyebrow="A2A + ACP" title="Agent mesh" />
       <div className="agent-grid">
-        {agents.map((agent) => (
+        {agents.map((item) => {
+          const { agent } = item;
+          const hardware = agentHardware(item);
+          const gpu = gpuName(item);
+          const codingClis = availableCodingClis(item);
+          return (
           <button
             className={`agent-tile ${agent.id === selectedAgentId ? "selected" : ""}`}
             key={agent.id}
@@ -330,15 +358,27 @@ function AgentsView({
           >
             <div className="agent-tile-head">
               <span className="agent-avatar">{(agent.name || agent.id)[0]?.toUpperCase()}</span>
-              <span><strong>{agent.name || agent.id.replace(/^agent_/, "")}</strong><small>{agent.id}</small></span>
-              <span className={`presence ${agent.health_status === "healthy" ? "online" : "offline"}`} />
+              <span><strong>{agent.name || agent.id.replace(/^agent_/, "")}</strong><small>{platformLabel(item)}</small></span>
+              <span className={`presence ${isAgentOnline(item) ? "online" : "offline"}`} />
             </div>
-            <div className="capability-list">
-              {(agent.capabilities || []).slice(0, 6).map((capability) => <span key={capability}>{capability}</span>)}
+            {Object.keys(hardware).length ? (
+              <div className="agent-observed-facts">
+                <span><small>CPU</small><strong>{cpuLabel(item)}</strong></span>
+                <span><small>Memory</small><strong>{memoryLabel(item)}</strong></span>
+                <span><small>GPU</small><strong>{gpu || "None reported"}</strong></span>
+              </div>
+            ) : <div className="agent-no-report">No observed hardware report</div>}
+            <div className="agent-tooling">
+              <small>Available coding CLIs</small>
+              <span>{codingClis.length ? codingClis.join(" · ") : "none reported"}</span>
             </div>
-            <div className="agent-tile-foot"><span>{agent.current_task_id ? "active" : "idle"}</span><span>A2A routable · ACP</span></div>
+            <div className="agent-tile-foot">
+              <span>{agent.status || (agent.current_task_id ? "busy" : "idle")}</span>
+              <span title={(item.availability?.reasons || []).join("; ")}>{availabilityLabel(item)}</span>
+            </div>
           </button>
-        ))}
+          );
+        })}
       </div>
     </main>
   );

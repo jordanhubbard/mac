@@ -4,14 +4,20 @@ import { api, type ActivityEntry, type TaskDetail } from "../api/mac";
 type BlockedContext = {
   actor: string;
   at: string;
+  blockingTasks: string[];
   detail: Record<string, unknown>;
   error: string;
+  problems: string[];
   question: string;
   reason: string;
 };
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value);
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(stringValue).filter(Boolean) : [];
 }
 
 export function latestBlockedContext(detail: TaskDetail): BlockedContext | null {
@@ -25,8 +31,10 @@ export function latestBlockedContext(detail: TaskDetail): BlockedContext | null 
     return {
       actor: stringValue(entry.actor),
       at: stringValue(entry.created_at),
+      blockingTasks: stringList(context.blocked_by_task_ids || context.dependencies),
       detail: context,
       error: stringValue(context.error),
+      problems: stringList(context.problems),
       question: stringValue(context.question || context.prompt),
       reason: stringValue(context.reason || context.summary || context.message),
     };
@@ -130,9 +138,11 @@ export function TaskInspector({
                 {context.reason ? <p><strong>Reason:</strong> {context.reason}</p> : null}
                 {context.question ? <p><strong>Question:</strong> {context.question}</p> : null}
                 {context.error ? <p><strong>Error:</strong> {context.error}</p> : null}
+                {context.blockingTasks.length ? <p><strong>Blocking tasks:</strong> {context.blockingTasks.join(", ")}</p> : null}
+                {context.problems.map((problem) => <p key={problem}><strong>Problem:</strong> {problem}</p>)}
                 <small>Recorded by {context.actor || "unknown"}{context.at ? ` at ${context.at}` : ""}</small>
-                {!context.reason && !context.question && !context.error ? (
-                  <details><summary>Recorded block context</summary><pre>{JSON.stringify(context.detail, null, 2)}</pre></details>
+                {!context.reason && !context.question && !context.error && !context.blockingTasks.length && !context.problems.length ? (
+                  <details open><summary>Recorded block context</summary><pre>{JSON.stringify(context.detail, null, 2)}</pre></details>
                 ) : null}
               </>
             ) : <p>No structured block reason was recorded.</p>}

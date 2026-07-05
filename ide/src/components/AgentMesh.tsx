@@ -1,5 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { api, type Agent, type AgentCard, type DashboardState, type TaskDetail } from "../api/mac";
+import { api, type Agent, type AgentCard, type DashboardAgent, type DashboardState, type TaskDetail } from "../api/mac";
+import { availabilityLabel, availableCodingClis, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
 
 type MeshTab = "agents" | "a2a";
 
@@ -32,7 +33,8 @@ export function AgentMesh({
   onRefresh: () => void;
 }) {
   const agents = data.agents.map((item) => item.agent);
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || agents[0] || null;
+  const selectedAgentRecord = data.agents.find((item) => item.agent.id === selectedAgentId) || data.agents[0] || null;
+  const selectedAgent = selectedAgentRecord?.agent || null;
   const [tab, setTab] = useState<MeshTab>("agents");
   const [composeOpen, setComposeOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -119,11 +121,11 @@ export function AgentMesh({
                 type="button"
               >
                 <span className="agent-avatar">{initials(agent)}</span>
-                <span className={`presence ${agent.health_status === "healthy" ? "online" : "offline"}`} />
+                <span className={`presence ${isAgentOnline(data.agents.find((item) => item.agent.id === agent.id) || { agent }) ? "online" : "offline"}`} />
               </button>
             ))}
           </div>
-          {selectedAgent ? <AgentInspector agent={selectedAgent} selectedTask={selectedTask} /> : <MeshEmpty />}
+          {selectedAgentRecord ? <AgentInspector item={selectedAgentRecord} selectedTask={selectedTask} /> : <MeshEmpty />}
         </>
       ) : (
         <A2AInspector card={card} />
@@ -166,17 +168,22 @@ export function AgentMesh({
   );
 }
 
-function AgentInspector({ agent, selectedTask }: { agent: Agent; selectedTask: TaskDetail | null }) {
+function AgentInspector({ item, selectedTask }: { item: DashboardAgent; selectedTask: TaskDetail | null }) {
+  const { agent } = item;
   const currentTask = agent.current_task_id || (selectedTask?.task.owner_agent_id === agent.id ? selectedTask.task.id : null);
+  const codingClis = availableCodingClis(item);
   return (
     <section className="agent-inspector">
       <div className="selected-agent-head">
         <span className="agent-avatar large">{initials(agent)}</span>
-        <span><strong>{title(agent)}</strong><small>{agent.role_id || (currentTask ? "active agent" : "available agent")}</small></span>
-        <span className={`health-label ${agent.health_status === "healthy" ? "online" : "offline"}`}>{agent.health_status || agent.status}</span>
+        <span><strong>{title(agent)}</strong><small>{platformLabel(item)}</small></span>
+        <span className={`health-label ${isAgentOnline(item) ? "online" : "offline"}`}>{agent.status || agent.health_status}</span>
       </div>
       <Definition label="Current task" value={currentTask || "idle"} mono />
-      <Definition label="Status" value={agent.status || "unknown"} />
+      <Definition label="Dispatch" value={availabilityLabel(item)} />
+      <Definition label="CPU / memory" value={`${cpuLabel(item)} · ${memoryLabel(item)}`} />
+      <Definition label="GPU" value={gpuName(item) || "none reported"} />
+      <Definition label="Coding CLIs" value={codingClis.join(", ") || "none reported"} />
       <div className="inspector-section"><span>Declared capabilities</span><div className="capability-list">{(agent.capabilities || []).map((item) => <span key={item}>{item}</span>)}</div></div>
       <div className="inspector-section"><span>Protocols</span><div className="protocol-list"><span>A2A routable</span><span>ACP</span></div></div>
     </section>
