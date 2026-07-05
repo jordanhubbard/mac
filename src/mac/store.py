@@ -1448,6 +1448,138 @@ class SQLiteStore:
                         ),
                         created_at
                     FROM vector_refs;
+
+                -- ----------------------------------------------------------------
+                -- Source release registry (mac.source_release.v1)
+                -- Immutable record of a reviewed/published commit. Uniqueness on
+                -- (repository_id, commit_sha) is enforced by a UNIQUE index.
+                -- ----------------------------------------------------------------
+                CREATE TABLE IF NOT EXISTS source_releases (
+                    id TEXT PRIMARY KEY,
+                    repository_id TEXT NOT NULL,
+                    repository_name TEXT NOT NULL,
+                    canonical_remote_url TEXT NOT NULL,
+                    -- Immutable 40-char hex SHA. A CHECK + trigger pair ensures the
+                    -- column is never updated after creation.
+                    commit_sha TEXT NOT NULL,
+                    canonical_ref TEXT NOT NULL,
+                    tree_digest TEXT NOT NULL,
+                    artifact_digest TEXT,
+                    image_digest TEXT,
+                    -- Creation provenance
+                    created_by TEXT NOT NULL,
+                    created_by_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+                    -- Evidence cross-references
+                    review_evidence_id TEXT REFERENCES evidence(id) ON DELETE SET NULL,
+                    publication_evidence_id TEXT REFERENCES evidence(id) ON DELETE SET NULL,
+                    -- Status lifecycle: draft | reviewed | published | retracted
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    -- One canonical release per (repository, sha)
+                    UNIQUE(repository_id, commit_sha),
+                    -- Enforce 40-char hex SHA format
+                    CHECK(length(commit_sha) = 40 AND commit_sha GLOB '[0-9a-f]*'),
+                    -- Reject branch refs
+                    CHECK(canonical_ref NOT LIKE 'refs/heads/%')
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_releases_repo_status
+                    ON source_releases (repository_id, status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_source_releases_status_created
+                    ON source_releases (status, created_at);
+                -- Immutability trigger: once a row exists, commit_sha may never change.
+                CREATE TRIGGER IF NOT EXISTS trg_source_releases_sha_immutable
+                BEFORE UPDATE OF commit_sha ON source_releases
+                FOR EACH ROW
+                WHEN NEW.commit_sha != OLD.commit_sha
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_releases.commit_sha is immutable');
+                END;
+
+                -- ----------------------------------------------------------------
+                -- Fleet desired-source state (mac.fleet_desired_source.v1)
+                -- Current desired release for a fleet/environment scope.
+                -- One active row per scope; generation is monotonically increasing.
+                -- ----------------------------------------------------------------
+                CREATE TABLE IF NOT EXISTS fleet_desired_source_states (
+                    id TEXT PRIMARY KEY,
+                    -- Scope: exactly one of fleet_id / environment_id must be non-NULL
+                    fleet_id TEXT REFERENCES fleets(id) ON DELETE CASCADE,
+                    environment_id TEXT REFERENCES environments(id) ON DELETE CASCADE,
+                    -- Monotonic generation (>= 1)
+                    generation INTEGER NOT NULL,
+                    release_id TEXT NOT NULL REFERENCES source_releases(id),
+                    rollout_policy TEXT NOT NULL DEFAULT 'immediate',
+                    actor TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    prior_generation INTEGER,
+                    paused INTEGER NOT NULL DEFAULT 0,
+                    request_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    -- Generation must be positive
+                    CHECK(generation >= 1),
+                    -- Scope exclusivity: at least one scope column must be set
+                    CHECK(fleet_id IS NOT NULL OR environment_id IS NOT NULL)
+                );
+                -- Partial unique indexes: one desired-source row per fleet/env scope.
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_desired_source_fleet
+                    ON fleet_desired_source_states (fleet_id) WHERE fleet_id IS NOT NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_desired_source_env
+                    ON fleet_desired_source_states (environment_id) WHERE environment_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_fleet
+                    ON fleet_desired_source_states (fleet_id, generation);
+                CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_env
+                    ON fleet_desired_source_states (environment_id, generation);
+                -- Monotonicity trigger: generation may only increase.
+                CREATE TRIGGER IF NOT EXISTS trg_fleet_desired_source_gen_monotonic
+                BEFORE UPDATE OF generation ON fleet_desired_source_states
+                FOR EACH ROW
+                WHEN NEW.generation <= OLD.generation
+                BEGIN
+                    SELECT RAISE(ABORT, 'fleet_desired_source_states.generation must increase monotonically');
+                END;
+
+                -- ----------------------------------------------------------------
+                -- Desired-source transition history (append-only audit log)
+                -- ----------------------------------------------------------------
+                CREATE TABLE IF NOT EXISTS fleet_desired_source_transitions (
+                    id TEXT PRIMARY KEY,
+                    desired_source_state_id TEXT NOT NULL
+                        REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                    from_generation INTEGER,
+                    to_generation INTEGER NOT NULL,
+                    release_id TEXT NOT NULL REFERENCES source_releases(id),
+                    rollout_policy TEXT NOT NULL DEFAULT 'immediate',
+                    actor TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    request_id TEXT,
+                    created_at TEXT NOT NULL,
+                    CHECK(to_generation >= 1)
+                );
+                CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_transitions_state
+                    ON fleet_desired_source_transitions (desired_source_state_id, to_generation);
+                CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_transitions_release
+                    ON fleet_desired_source_transitions (release_id, created_at);
+
+                -- ----------------------------------------------------------------
+                -- Desired-source idempotency records
+                -- Prevents double-application of the same request_id per scope.
+                -- ----------------------------------------------------------------
+                CREATE TABLE IF NOT EXISTS fleet_desired_source_idempotency (
+                    id TEXT PRIMARY KEY,
+                    -- Denormalised scope key for fast lookup (fleet:<id> | env:<id>)
+                    scope_key TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    desired_source_state_id TEXT NOT NULL
+                        REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                    generation INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(scope_key, request_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
+                    ON fleet_desired_source_idempotency (scope_key, request_id);
                 """
             )
             self._migrate()
@@ -1518,6 +1650,113 @@ class SQLiteStore:
         # (mac.evidence_blobs); the row keeps digest + URI, content_base64 "".
         self._ensure_column(
             "evidence_artifacts", "content_uri", "content_uri TEXT NOT NULL DEFAULT ''"
+        )
+        # mac-src1: source release and desired-source tables may be absent on
+        # databases created before this migration. CREATE TABLE IF NOT EXISTS is
+        # safe on both fresh and pre-existing databases; the triggers/indexes
+        # use IF NOT EXISTS too.  We run the same DDL blocks used in
+        # _initialize so older DBs get the full schema on first open.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS source_releases (
+                id TEXT PRIMARY KEY,
+                repository_id TEXT NOT NULL,
+                repository_name TEXT NOT NULL,
+                canonical_remote_url TEXT NOT NULL,
+                commit_sha TEXT NOT NULL,
+                canonical_ref TEXT NOT NULL,
+                tree_digest TEXT NOT NULL,
+                artifact_digest TEXT,
+                image_digest TEXT,
+                created_by TEXT NOT NULL,
+                created_by_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+                review_evidence_id TEXT REFERENCES evidence(id) ON DELETE SET NULL,
+                publication_evidence_id TEXT REFERENCES evidence(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(repository_id, commit_sha),
+                CHECK(length(commit_sha) = 40 AND commit_sha GLOB '[0-9a-f]*'),
+                CHECK(canonical_ref NOT LIKE 'refs/heads/%')
+            );
+            CREATE INDEX IF NOT EXISTS idx_source_releases_repo_status
+                ON source_releases (repository_id, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_source_releases_status_created
+                ON source_releases (status, created_at);
+            CREATE TRIGGER IF NOT EXISTS trg_source_releases_sha_immutable
+            BEFORE UPDATE OF commit_sha ON source_releases
+            FOR EACH ROW
+            WHEN NEW.commit_sha != OLD.commit_sha
+            BEGIN
+                SELECT RAISE(ABORT, 'source_releases.commit_sha is immutable');
+            END;
+
+            CREATE TABLE IF NOT EXISTS fleet_desired_source_states (
+                id TEXT PRIMARY KEY,
+                fleet_id TEXT REFERENCES fleets(id) ON DELETE CASCADE,
+                environment_id TEXT REFERENCES environments(id) ON DELETE CASCADE,
+                generation INTEGER NOT NULL,
+                release_id TEXT NOT NULL REFERENCES source_releases(id),
+                rollout_policy TEXT NOT NULL DEFAULT 'immediate',
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                prior_generation INTEGER,
+                paused INTEGER NOT NULL DEFAULT 0,
+                request_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK(generation >= 1),
+                CHECK(fleet_id IS NOT NULL OR environment_id IS NOT NULL)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_desired_source_fleet
+                ON fleet_desired_source_states (fleet_id) WHERE fleet_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_desired_source_env
+                ON fleet_desired_source_states (environment_id) WHERE environment_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_fleet
+                ON fleet_desired_source_states (fleet_id, generation);
+            CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_env
+                ON fleet_desired_source_states (environment_id, generation);
+            CREATE TRIGGER IF NOT EXISTS trg_fleet_desired_source_gen_monotonic
+            BEFORE UPDATE OF generation ON fleet_desired_source_states
+            FOR EACH ROW
+            WHEN NEW.generation <= OLD.generation
+            BEGIN
+                SELECT RAISE(ABORT, 'fleet_desired_source_states.generation must increase monotonically');
+            END;
+
+            CREATE TABLE IF NOT EXISTS fleet_desired_source_transitions (
+                id TEXT PRIMARY KEY,
+                desired_source_state_id TEXT NOT NULL
+                    REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                from_generation INTEGER,
+                to_generation INTEGER NOT NULL,
+                release_id TEXT NOT NULL REFERENCES source_releases(id),
+                rollout_policy TEXT NOT NULL DEFAULT 'immediate',
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                request_id TEXT,
+                created_at TEXT NOT NULL,
+                CHECK(to_generation >= 1)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_transitions_state
+                ON fleet_desired_source_transitions (desired_source_state_id, to_generation);
+            CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_transitions_release
+                ON fleet_desired_source_transitions (release_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS fleet_desired_source_idempotency (
+                id TEXT PRIMARY KEY,
+                scope_key TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                desired_source_state_id TEXT NOT NULL
+                    REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                generation INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(scope_key, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
+                ON fleet_desired_source_idempotency (scope_key, request_id);
+            """
         )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:

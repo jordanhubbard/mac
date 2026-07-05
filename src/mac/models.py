@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -1682,6 +1683,171 @@ def validate_transition(current: str, target: str) -> None:
     allowed = TASK_TRANSITIONS.get(current, set())
     if target not in allowed:
         raise TransitionError("cannot transition task from %s to %s" % (current, target))
+
+
+# ---------------------------------------------------------------------------
+# Source release and fleet desired-source models (mac.source_release.v1 and
+# mac.fleet_desired_source.v1). These underpin the source-convergence system:
+# SourceRelease records an immutable, reviewed, published commit; FleetDesired
+# SourceState records which release a fleet/environment should run next.
+# ---------------------------------------------------------------------------
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_BRANCH_NAME_RE = re.compile(r"^refs/heads/")
+
+
+def _validate_commit_sha(sha: str) -> None:
+    """Reject anything that is not a 40-hex character SHA."""
+    if not _SHA_RE.match(sha):
+        raise ValidationError(
+            "commit_sha must be a 40-character lowercase hex string; got %r" % sha
+        )
+
+
+def _reject_branch_ref(canonical_ref: str) -> None:
+    """Reject refs/heads/* branch names – only tags and full SHAs are allowed."""
+    if _BRANCH_NAME_RE.match(canonical_ref):
+        raise ValidationError(
+            "canonical_ref must not be a branch name (refs/heads/*); "
+            "use a tag ref (refs/tags/*) or the bare SHA. Got %r" % canonical_ref
+        )
+
+
+@dataclass
+class SourceRelease:
+    """Immutable record of a reviewed and published source commit.
+
+    Schema: mac.source_release.v1
+    """
+
+    id: str
+    # Repository identity
+    repository_id: str
+    repository_name: str
+    # Secret-free canonical remote (no embedded credentials)
+    canonical_remote_url: str
+    # Immutable 40-char commit SHA – enforced at construction
+    commit_sha: str
+    # Canonical ref (tag or bare SHA; never a branch)
+    canonical_ref: str
+    # Content digest of the source tree (e.g. sha256:<hex>)
+    tree_digest: str
+    # Optional build artifact and OCI image digests
+    artifact_digest: Optional[str]
+    image_digest: Optional[str]
+    # Creation provenance
+    created_by: str          # actor (agent_id or human principal)
+    created_by_task_id: Optional[str]  # task that produced this release
+    # Review and publication evidence references
+    review_evidence_id: Optional[str]
+    publication_evidence_id: Optional[str]
+    # Status: draft | reviewed | published | retracted
+    status: str
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        _validate_commit_sha(self.commit_sha)
+        _reject_branch_ref(self.canonical_ref)
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+class DesiredSourcePolicy(StrEnum):
+    """Rollout policy for fleet desired-source transitions."""
+    IMMEDIATE = "immediate"
+    CANARY = "canary"
+    MANUAL = "manual"
+
+
+@dataclass
+class FleetDesiredSourceState:
+    """Desired-source state for a fleet or environment scope.
+
+    Schema: mac.fleet_desired_source.v1
+
+    Generation is monotonically increasing; each accepted update produces a
+    new generation. Prior generation is recorded for optimistic-concurrency
+    guards at the application layer.
+    """
+
+    id: str
+    # Scope: fleet_id XOR environment_id (one must be non-None)
+    fleet_id: Optional[str]
+    environment_id: Optional[str]
+    # Monotonic generation counter (starts at 1)
+    generation: int
+    # The release this scope should run
+    release_id: str
+    # Rollout policy applied for this transition
+    rollout_policy: str
+    # Actor and reason for this desired state
+    actor: str
+    reason: str
+    # Prior generation for optimistic-concurrency validation
+    prior_generation: Optional[int]
+    # Pause flag: when True the rollout controller must not act on this state
+    paused: bool
+    # Idempotency key: caller-supplied request_id so double-submits are safe
+    request_id: Optional[str]
+    created_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        if self.generation < 1:
+            raise ValidationError(
+                "generation must be >= 1; got %d" % self.generation
+            )
+        if self.fleet_id is None and self.environment_id is None:
+            raise ValidationError(
+                "FleetDesiredSourceState requires fleet_id or environment_id"
+            )
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class DesiredSourceTransition:
+    """Append-only history record for a desired-source state change.
+
+    Schema: mac.fleet_desired_source_transition.v1
+    """
+
+    id: str
+    desired_source_state_id: str
+    from_generation: Optional[int]
+    to_generation: int
+    release_id: str
+    rollout_policy: str
+    actor: str
+    reason: str
+    request_id: Optional[str]
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class DesiredSourceIdempotencyRecord:
+    """Idempotency record for desired-source state requests.
+
+    Prevents double-application of the same request_id within a scope.
+    Schema: mac.fleet_desired_source_idempotency.v1
+    """
+
+    id: str
+    scope_key: str          # e.g. "fleet:<fleet_id>" or "env:<environment_id>"
+    request_id: str         # caller-supplied idempotency key
+    desired_source_state_id: str
+    generation: int
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
 
 
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
