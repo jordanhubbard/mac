@@ -4131,16 +4131,71 @@ class ControlPlane:
                 % (parent.id, len(existing_children), len(specs), projected, max_children)
             )
 
+        # Allocate every child id before validating dependencies so one atomic
+        # request can express a real sibling DAG.  ``node_id`` is a request-local
+        # symbolic key; ``depends_on`` may reference earlier keys and is resolved
+        # here to the durable task ids stored in ``dependencies``.  Previously
+        # the planner prompt claimed list order implied dependencies, but this
+        # method never implemented that claim, so every child arrived runnable.
+        allocated_child_ids = [new_id("task") for _ in specs]
+        node_index_by_id: Dict[str, int] = {}
+        node_ids: List[Optional[str]] = []
+        for index, spec in enumerate(specs, start=1):
+            raw_node_id = spec.get("node_id")
+            if raw_node_id is None:
+                node_ids.append(None)
+                continue
+            node_id = str(raw_node_id).strip()
+            if not node_id:
+                raise ValidationError("child task %d node_id cannot be blank" % index)
+            if node_id in node_index_by_id:
+                raise ValidationError("child task node_id %r is duplicated" % node_id)
+            node_index_by_id[node_id] = index - 1
+            node_ids.append(node_id)
+
         prepared: List[JsonDict] = []
         for index, spec in enumerate(specs, start=1):
             title = str(spec.get("title") or "").strip()
             if not title:
                 raise ValidationError("child task %d title is required" % index)
-            child_dependencies = coerce_list(spec.get("dependencies"))
-            if parent.id in child_dependencies:
-                raise ValidationError("child task cannot depend on its parent")
-            for dep_id in child_dependencies:
-                self.get_task(dep_id)
+            legacy_dependencies = _unique_ordered(
+                _metadata_string_list(spec.get("dependencies"))
+            )
+            symbolic_dependencies = (
+                _unique_ordered(_metadata_string_list(spec.get("depends_on")))
+                if spec.get("depends_on") is not None
+                else None
+            )
+            if (
+                symbolic_dependencies is not None
+                and legacy_dependencies
+                and symbolic_dependencies != legacy_dependencies
+            ):
+                raise ValidationError(
+                    "child task %d supplies conflicting dependencies and depends_on" % index
+                )
+            dependency_refs = (
+                symbolic_dependencies
+                if symbolic_dependencies is not None
+                else legacy_dependencies
+            )
+            child_dependencies: List[str] = []
+            for dependency_ref in dependency_refs:
+                if dependency_ref == parent.id:
+                    raise ValidationError("child task cannot depend on its parent")
+                sibling_index = node_index_by_id.get(dependency_ref)
+                if sibling_index is not None:
+                    if sibling_index >= index - 1:
+                        raise ValidationError(
+                            "child task %d depends_on %r, which must reference an earlier "
+                            "sibling node_id" % (index, dependency_ref)
+                        )
+                    dependency_id = allocated_child_ids[sibling_index]
+                else:
+                    self.get_task(dependency_ref)
+                    dependency_id = dependency_ref
+                child_dependencies.append(dependency_id)
+            child_dependencies = _unique_ordered(child_dependencies)
             child_project = (
                 str(spec.get("project")).strip()
                 if spec.get("project") is not None
@@ -4170,6 +4225,9 @@ class ControlPlane:
                     "require_distinct_agent": True,
                 }
             )
+            if node_ids[index - 1] is not None:
+                coordination["plan_node_id"] = node_ids[index - 1]
+                coordination["depends_on_nodes"] = list(dependency_refs)
             child_metadata["coordination"] = coordination
             normalized_metadata = self._normalize_task_execution_contract(
                 child_metadata,
@@ -4178,7 +4236,7 @@ class ControlPlane:
             )
             prepared.append(
                 {
-                    "id": new_id("task"),
+                    "id": allocated_child_ids[index - 1],
                     "title": title,
                     "description": str(spec.get("description") or ""),
                     "project": child_project,
@@ -4298,6 +4356,14 @@ class ControlPlane:
                 "child_task_ids": child_ids,
                 "blocked_by_task_ids": parent_dependencies,
                 "released_lease_id": release_lease_id,
+                "dependency_graph": [
+                    {
+                        "node_id": node_ids[index],
+                        "task_id": child["id"],
+                        "dependencies": child["dependencies"],
+                    }
+                    for index, child in enumerate(prepared)
+                ],
             }
             self._record_history(
                 parent.id,

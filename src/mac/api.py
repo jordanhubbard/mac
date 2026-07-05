@@ -333,12 +333,14 @@ class ReviewOutcomeCreate(BaseModel):
 
 
 class TaskChildCreate(BaseModel):
+    node_id: Optional[str] = None
     title: str
     description: str = ""
     project: Optional[str] = None
     priority: Optional[int] = None
     required_capabilities: Optional[List[str]] = None
     dependencies: List[str] = Field(default_factory=list)
+    depends_on: Optional[List[str]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     max_attempts: Optional[int] = None
 

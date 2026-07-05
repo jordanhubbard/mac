@@ -875,13 +875,15 @@ def build_planning_prompt(
             "  3. Create 2-10 child tasks. Each child MUST:",
             "     a. Be completable and verifiable by ONE agent in a single run.",
             "     b. Have a clear title and description.",
-            "     c. Include dependencies=[<sibling-task-ids>] for tasks that must run after others.",
-            "        IMPORTANT: at creation time sibling IDs are not yet known; post children in",
-            "        topological order and use the returned IDs to set dependencies on later tasks,",
-            "        OR post all children in one request with relative ordering implied by list order.",
+            "     c. Have a unique short node_id and include depends_on=[<earlier-node_id>] for",
+            "        every prerequisite sibling. List order alone NEVER implies a dependency.",
+            "        Put prerequisites earlier in the children list. The hub atomically resolves",
+            "        those request-local node_id values to the new sibling task IDs.",
             "  4. POST the children to: %s" % children_endpoint,
-            "     Body: {\"children\": [{\"title\": \"...\", \"description\": \"...\", "
-            "\"dependencies\": []}, ...]}",
+            "     Body: {\"children\": [{\"node_id\": \"implementation\", \"title\": \"...\", "
+            "\"description\": \"...\", \"depends_on\": []}, "
+            "{\"node_id\": \"tests\", \"title\": \"...\", \"description\": \"...\", "
+            "\"depends_on\": [\"implementation\"]}]}",
             "     The MAC token is in MAC_TOKEN / MAC_WORKER_TOKEN environment variable.",
             "  5. Write mac-evidence.json with:",
             "     {",
@@ -889,7 +891,8 @@ def build_planning_prompt(
             "       \"status\": \"complete\",",
             "       \"evidence_type\": \"plan_decomposed\",",
             "       \"summary\": \"<one-sentence description of the plan>\",",
-            "       \"children\": [{\"title\": \"...\", \"description\": \"...\"}, ...],",
+            "       \"children\": [{\"node_id\": \"...\", \"title\": \"...\", "
+            "\"description\": \"...\", \"depends_on\": [\"earlier_node_id\"]}, ...],",
             "       \"ordering_rationale\": \"<why this order>\",",
             "       \"coverage_claim\": \"<how the children together cover the full parent scope>\"",
             "     }",
@@ -942,8 +945,9 @@ def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
 
         {
             "plan_steps": [
-                {"title": "Step A", "description": "..."},
-                {"title": "Step B", "description": "..."},
+                {"node_id": "step_a", "title": "Step A", "description": "..."},
+                {"node_id": "step_b", "title": "Step B", "description": "...",
+                 "depends_on": ["step_a"]},
                 ...
             ]
         }
@@ -984,9 +988,14 @@ def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
     for step in plan_steps:
         if isinstance(step, dict) and str(step.get("title") or "").strip():
             child: Dict[str, Any] = {"title": str(step["title"]).strip()}
+            node_id = step.get("node_id") or step.get("key")
+            if node_id:
+                child["node_id"] = str(node_id).strip()
             if step.get("description"):
                 child["description"] = str(step["description"]).strip()
-            if step.get("dependencies"):
+            if step.get("depends_on") is not None:
+                child["depends_on"] = step["depends_on"]
+            elif step.get("dependencies"):
                 child["dependencies"] = step["dependencies"]
             if step.get("required_capabilities"):
                 child["required_capabilities"] = step["required_capabilities"]

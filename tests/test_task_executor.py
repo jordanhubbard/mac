@@ -2709,6 +2709,32 @@ def test_maybe_auto_decompose_posts_children_when_hub_present(tmp_path, monkeypa
     assert step_a.get("description") == "Build the source connector."
 
 
+def test_maybe_auto_decompose_preserves_symbolic_dependency_graph(tmp_path, monkeypatch):
+    manifest = {
+        "plan_steps": [
+            {"node_id": "worker", "title": "Change worker"},
+            {
+                "node_id": "tests",
+                "title": "Add tests",
+                "depends_on": ["worker"],
+            },
+        ]
+    }
+    (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
+    captured = {}
+    monkeypatch.setattr(
+        te,
+        "_hub_post_child_tasks",
+        lambda task_id, children: captured.update(children=children) or {"ok": True},
+    )
+
+    assert te.maybe_auto_decompose(tmp_path, {"id": "task_plan"}) is True
+    assert captured["children"] == [
+        {"title": "Change worker", "node_id": "worker"},
+        {"title": "Add tests", "node_id": "tests", "depends_on": ["worker"]},
+    ]
+
+
 def test_maybe_auto_decompose_skips_steps_without_title(tmp_path, monkeypatch):
     """Steps without a title are silently dropped; only titled steps are posted."""
     manifest = {

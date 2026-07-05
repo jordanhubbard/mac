@@ -22,7 +22,7 @@ import pytest
 
 from mac import task_executor as te
 from mac.services import ControlPlane
-from mac.models import TaskState
+from mac.models import TaskState, ValidationError
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +207,9 @@ class TestBuildPlanningPrompt:
     def test_contains_children_schema_fields(self, tmp_path: Path):
         task = _large_task()
         prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        assert '"node_id"' in prompt
+        assert '"depends_on"' in prompt
+        assert "List order alone NEVER implies a dependency" in prompt
         assert "ordering_rationale" in prompt
         assert "coverage_claim" in prompt
 
@@ -759,6 +762,92 @@ class TestParentGatesOnChildren:
         assert len(result["children"]) == 3
         assert all("id" in c for c in result["children"])
         assert all("title" in c for c in result["children"])
+
+    def test_atomic_children_resolve_symbolic_dependency_graph(self):
+        """A single planner POST maps node_ids to real sibling task IDs."""
+        cp = ControlPlane.in_memory()
+        parent = cp.create_task(
+            title="Large ordered task", description="x", project="mac"
+        )
+        result = cp.add_child_tasks(
+            parent.id,
+            [
+                {"node_id": "analysis", "title": "Analyze"},
+                {
+                    "node_id": "worker",
+                    "title": "Change worker",
+                    "depends_on": ["analysis"],
+                },
+                {
+                    "node_id": "services",
+                    "title": "Change services",
+                    "depends_on": ["analysis"],
+                },
+                {
+                    "node_id": "tests",
+                    "title": "Add tests",
+                    "depends_on": ["worker", "services"],
+                },
+                {
+                    "node_id": "integration",
+                    "title": "Integrate",
+                    "depends_on": ["analysis", "worker", "services", "tests"],
+                },
+            ],
+        )
+        children = result["children"]
+        ids = {
+            child["metadata"]["coordination"]["plan_node_id"]: child["id"]
+            for child in children
+        }
+
+        assert children[0]["dependencies"] == []
+        assert children[1]["dependencies"] == [ids["analysis"]]
+        assert children[2]["dependencies"] == [ids["analysis"]]
+        assert children[3]["dependencies"] == [ids["worker"], ids["services"]]
+        assert children[4]["dependencies"] == [
+            ids["analysis"], ids["worker"], ids["services"], ids["tests"]
+        ]
+        assert children[0]["state"] == TaskState.OPEN.value
+        assert all(child["state"] == TaskState.BLOCKED.value for child in children[1:])
+
+        history = cp.task_history(parent.id)
+        graph = next(
+            event.detail["dependency_graph"]
+            for event in history
+            if event.event_type == "task.children_added"
+        )
+        assert graph[-1] == {
+            "node_id": "integration",
+            "task_id": ids["integration"],
+            "dependencies": [
+                ids["analysis"],
+                ids["worker"],
+                ids["services"],
+                ids["tests"],
+            ],
+        }
+
+    def test_atomic_children_reject_invalid_symbolic_dependencies(self):
+        cp = ControlPlane.in_memory()
+        parent = cp.create_task(title="Bad plan", description="x")
+
+        with pytest.raises(ValidationError, match="duplicated"):
+            cp.add_child_tasks(
+                parent.id,
+                [
+                    {"node_id": "same", "title": "One"},
+                    {"node_id": "same", "title": "Two"},
+                ],
+            )
+        with pytest.raises(ValidationError, match="earlier sibling"):
+            cp.add_child_tasks(
+                parent.id,
+                [
+                    {"node_id": "first", "title": "One", "depends_on": ["later"]},
+                    {"node_id": "later", "title": "Two"},
+                ],
+            )
 
     def test_ordered_children_with_explicit_dependencies(self):
         """Children can declare explicit dependencies on sibling children,

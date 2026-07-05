@@ -2112,12 +2112,15 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
             "actor": agent["id"],
             "children": [
                 {
+                    "node_id": "parser",
                     "title": "Implement parser child",
                     "description": "Smaller scoped parser work",
                 },
                 {
+                    "node_id": "tests",
                     "title": "Test parser child",
                     "required_capabilities": ["python", "test"],
+                    "depends_on": ["parser"],
                 },
             ],
         },
@@ -2137,6 +2140,11 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     assert first_child["required_capabilities"] == ["python"]
     assert first_child["metadata"]["relationships"]["parent_task_id"] == parent["id"]
     assert first_child["metadata"]["relationships"]["blocks"] == [parent["id"]]
+    assert first_child["metadata"]["coordination"]["plan_node_id"] == "parser"
+    second_child = split["children"][1]
+    assert second_child["dependencies"] == [first_child["id"]]
+    assert second_child["state"] == "blocked"
+    assert second_child["metadata"]["coordination"]["depends_on_nodes"] == ["parser"]
 
     detail = client.get("/tasks/%s" % parent["id"]).json()
     assert detail["task"]["last_updated_at"] == detail["task"]["updated_at"]
