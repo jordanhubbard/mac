@@ -708,3 +708,69 @@ def test_recall_scope_lessons_break_on_limit_across_terms(monkeypatch):
     # Must stop at limit
     assert len(result) <= 2
 
+
+# ---------------------------------------------------------------------------
+# recall_scope_lessons — id and rendered return shape (task spec)
+# ---------------------------------------------------------------------------
+
+
+def test_recall_scope_lessons_returns_id_field(monkeypatch):
+    """Each returned dict has an 'id' field equal to the task_id from content."""
+    record = _make_plan_learning_record("task_id_check_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert len(result) == 1
+    assert result[0]["id"] == "task_id_check_001"
+
+
+def test_recall_scope_lessons_returns_rendered_field(monkeypatch):
+    """Each returned dict has a non-empty 'rendered' string field."""
+    record = _make_plan_learning_record("task_rendered_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert len(result) == 1
+    assert isinstance(result[0]["rendered"], str)
+    assert result[0]["rendered"]  # non-empty
+
+
+def test_recall_scope_lessons_rendered_contains_plan_info(monkeypatch):
+    """The 'rendered' field summarises the plan_learning record content."""
+    record = _make_plan_learning_record("task_rendered_info_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert len(result) == 1
+    # _format_plan_learning_content produces '[plan] ...' prefix
+    assert result[0]["rendered"].startswith("[plan]")
+
+
+def test_recall_scope_lessons_preserves_content_field(monkeypatch):
+    """The original 'content' field is preserved alongside 'id' and 'rendered'."""
+    record = _make_plan_learning_record("task_content_compat_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert len(result) == 1
+    # Backward compat: callers that read 'content' still work
+    data = json.loads(result[0]["content"])
+    assert data["schema"] == "mac.plan_learning.v1"
+
+
+def test_recall_scope_lessons_id_empty_when_task_id_absent(monkeypatch):
+    """'id' is '' when the content record has no task_id key."""
+    content = json.dumps({"schema": "mac.plan_learning.v1"})
+    record = {"content": content, "record_type": "deployment_learning:mac"}
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    result = te.recall_scope_lessons(_task())
+    # task_id is None/missing → id should be ''
+    assert len(result) == 1
+    assert result[0]["id"] == ""
+
+
+def test_recall_scope_lessons_no_side_effects_no_scope_estimate_call(monkeypatch):
+    """recall_scope_lessons must not call compute_scope_estimate."""
+    calls: List = []
+    monkeypatch.setattr(te, "compute_scope_estimate", lambda t: calls.append(t) or {})
+    record = _make_plan_learning_record("task_side_effect_001")
+    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    te.recall_scope_lessons(_task(title="Migrate schema"))
+    assert calls == [], "recall_scope_lessons must not call compute_scope_estimate"
+

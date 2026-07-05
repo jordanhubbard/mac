@@ -537,16 +537,32 @@ def _compute_scope_signals(
 def recall_scope_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[Dict[str, Any]]:
     """Recall prior ``mac.plan_learning.v1`` memory records for *task*.
 
-    Queries the hub for deployment-learning records whose content matches the
-    task's family terms.  Returns a list of raw record dicts (each has a
-    ``content`` field with a JSON-encoded ``mac.plan_learning.v1`` blob).
+    Queries the hub ``/memory`` endpoint for ``deployment_learning:<project>``
+    records whose content matches the task's family terms (extracted via
+    :func:`_plan_family_terms`).  Filters to only ``mac.plan_learning.v1``
+    records so only prior plan-decomposed outcomes are surfaced.
 
-    Best-effort: returns an empty list when the hub is unreachable, env is
-    absent, or no matching records exist.  Never raises.
+    Each returned dict contains at least:
 
-    Note: ``_task_project``, ``_plan_family_terms``, and
-    ``DEPLOYMENT_LEARNING_PREFIX`` are all defined later in this module; they
-    are resolved at call time (not import time) so forward references are safe.
+    * ``'id'`` — the ``task_id`` from the stored ``mac.plan_learning.v1``
+      content (or ``''`` when absent), identifying which memory records
+      influenced the estimate so callers can record provenance.
+    * ``'rendered'`` — a short human-readable summary of the lesson (via
+      :func:`_format_plan_learning_content`), suitable for logging or prompt
+      injection.
+    * ``'content'`` — the raw JSON-encoded ``mac.plan_learning.v1`` blob from
+      the hub record, preserved for callers that need the full payload.
+
+    Best-effort: returns ``[]`` immediately when the hub is unreachable, the
+    env is absent, or no matching records exist.  Never raises.
+
+    Has **no** side effects and does **not** call
+    :func:`compute_scope_estimate`.
+
+    Note: ``_task_project``, ``_plan_family_terms``,
+    ``DEPLOYMENT_LEARNING_PREFIX``, and ``_format_plan_learning_content`` are
+    all defined later in this module; they are resolved at call time (not
+    import time) so forward references are safe.
     """
     from urllib.parse import urlencode
 
@@ -583,7 +599,15 @@ def recall_scope_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[Dict[s
             if prior_task_id in seen_task_ids:
                 continue
             seen_task_ids.add(prior_task_id)
-            records.append(rec)
+            # Build an enriched result dict so callers can record provenance
+            # ('id') and display a formatted lesson ('rendered') without having
+            # to parse the raw content themselves.  The original hub fields are
+            # preserved alongside the new keys for backward compatibility.
+            rendered = _format_plan_learning_content(content_raw)
+            enriched = dict(rec)
+            enriched["id"] = prior_task_id
+            enriched["rendered"] = rendered
+            records.append(enriched)
             if len(records) >= limit:
                 return records
 
