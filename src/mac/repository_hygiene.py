@@ -117,8 +117,9 @@ def normalize_cancellation_detail(
     """Validate and normalize the durable cancellation contract.
 
     Older callers that do not know about dispositions fail closed into
-    ``preserve``. A duplicate or superseding task must identify its replacement
-    before the ref can ever become eligible for automatic cleanup.
+    ``preserve``. Every cancellation requires an audit reason, and a duplicate
+    or superseding task must identify its replacement before the ref can ever
+    become eligible for automatic cleanup.
     """
 
     normalized = dict(detail or {})
@@ -137,8 +138,8 @@ def normalize_cancellation_detail(
             )
     elif replacement and not _TASK_ID_RE.fullmatch(replacement):
         raise ValidationError("replacement_task_id must be a task_<32 hex> identifier")
-    if disposition in AUTO_CLEANUP_DISPOSITIONS and not reason:
-        raise ValidationError("%s cancellation requires a reason" % disposition)
+    if not reason:
+        raise ValidationError("task cancellation requires a reason (non-empty)")
 
     raw_grace = normalized.get(
         "cleanup_grace_seconds", DEFAULT_CLEANUP_GRACE_SECONDS

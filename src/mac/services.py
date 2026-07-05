@@ -4664,24 +4664,25 @@ class ControlPlane:
         publication_limit: Optional[int] = None,
     ) -> JsonDict:
         task = self.get_task(task_id)
+        resolved_task_id = task.id
         return {
             "task": task.to_dict(),
             "history": [
                 event.to_dict()
-                for event in self.task_history(task_id, limit=history_limit)
+                for event in self.task_history(resolved_task_id, limit=history_limit)
             ],
             "evidence": [
                 item.to_dict()
-                for item in self.list_evidence(task_id, limit=evidence_limit)
+                for item in self.list_evidence(resolved_task_id, limit=evidence_limit)
             ],
             "reviews": [
                 item.to_dict()
-                for item in self.list_reviews(task_id, limit=review_limit)
+                for item in self.list_reviews(resolved_task_id, limit=review_limit)
             ],
             "publications": [
                 item.to_dict()
                 for item in self.list_publications(
-                    task_id, limit=publication_limit
+                    resolved_task_id, limit=publication_limit
                 )
             ],
         }
@@ -4869,12 +4870,13 @@ class ControlPlane:
 
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()
-        evidence = [item.to_dict() for item in self.list_evidence(task_id)]
-        reviews = [item.to_dict() for item in self.list_reviews(task_id)]
+        resolved_task_id = str(task["id"])
+        evidence = [item.to_dict() for item in self.list_evidence(resolved_task_id)]
+        reviews = [item.to_dict() for item in self.list_reviews(resolved_task_id)]
         approved_reviews = [review for review in reviews if review["status"] == ReviewStatus.APPROVED.value]
         publications = [
             pub.to_dict()
-            for pub in self.reviews.list_publications(task_id)
+            for pub in self.reviews.list_publications(resolved_task_id)
             if pub.status == PublicationStatus.PUBLISHED.value
         ]
         parts = ["%s is %s" % (task["title"], task["state"])]
@@ -4887,7 +4889,7 @@ class ControlPlane:
         if publications:
             parts.append("published to %s" % publications[-1]["target"])
         return {
-            "task_id": task_id,
+            "task_id": resolved_task_id,
             "title": task["title"],
             "state": task["state"],
             "owner_agent_id": task["owner_agent_id"],
@@ -4905,14 +4907,14 @@ class ControlPlane:
         task_id: str,
         limit: Optional[int] = None,
     ) -> List[HistoryEvent]:
-        self.get_task(task_id)
+        resolved_task_id = self.get_task(task_id).id
         limit_value = None if limit is None else max(0, int(limit))
         if limit_value == 0:
             return []
         if limit_value is None:
             rows = self.store.query_all(
                 "SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at, id",
-                (task_id,),
+                (resolved_task_id,),
             )
         else:
             rows = list(
@@ -4924,7 +4926,7 @@ class ControlPlane:
                         ORDER BY created_at DESC, id DESC
                         LIMIT ?
                         """,
-                        (task_id, limit_value),
+                        (resolved_task_id, limit_value),
                     )
                 )
             )
@@ -7031,13 +7033,14 @@ class ControlPlane:
         task_id: str,
         limit: Optional[int] = None,
     ) -> List[Evidence]:
+        resolved_task_id = self._resolve_task_id(task_id)
         limit_value = None if limit is None else max(0, int(limit))
         if limit_value == 0:
             return []
         if limit_value is None:
             rows = self.store.query_all(
                 "SELECT * FROM evidence WHERE task_id = ? ORDER BY created_at, id",
-                (task_id,),
+                (resolved_task_id,),
             )
         else:
             rows = list(
@@ -7049,7 +7052,7 @@ class ControlPlane:
                         ORDER BY created_at DESC, id DESC
                         LIMIT ?
                         """,
-                        (task_id, limit_value),
+                        (resolved_task_id, limit_value),
                     )
                 )
             )
@@ -9901,7 +9904,10 @@ class ControlPlane:
         task_id: str,
         limit: Optional[int] = None,
     ) -> List[Review]:
-        return self.reviews.list_reviews(task_id, limit=limit)
+        return self.reviews.list_reviews(
+            self._resolve_task_id(task_id),
+            limit=limit,
+        )
 
     def publish_task(self, *args: Any, **kwargs: Any) -> Publication:
         task_id = kwargs.get("task_id") if "task_id" in kwargs else (args[0] if args else None)

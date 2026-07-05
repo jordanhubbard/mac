@@ -78,6 +78,21 @@ def test_invalid_cancellation_contract_is_rejected(detail):
     assert cp.get_task(task.id).state == TaskState.OPEN.value
 
 
+def test_preserved_cancellation_requires_reason():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task("missing cancellation reason")
+
+    with pytest.raises(ValidationError, match="requires a reason"):
+        cp.transition_task(
+            task.id,
+            TaskState.CANCELLED.value,
+            "operator",
+            {"disposition": "preserve"},
+        )
+
+    assert cp.get_task(task.id).state == TaskState.OPEN.value
+
+
 def test_reopening_cancelled_task_invalidates_cleanup_schedule():
     cp = ControlPlane.in_memory()
     task = cp.create_task("retry later")

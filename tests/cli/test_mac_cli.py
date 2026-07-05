@@ -558,7 +558,15 @@ def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
     assert rc == 0
     rc, child = _run(tmp_path, "task", "create", "Child")
     assert rc == 0
-    rc, cancelled_parent = _run(tmp_path, "task", "close", parent["id"], "--cancelled")
+    rc, cancelled_parent = _run(
+        tmp_path,
+        "task",
+        "close",
+        parent["id"],
+        "--cancelled",
+        "--reason",
+        "dependency cancellation fixture",
+    )
     assert rc == 0
     assert cancelled_parent["state"] == "cancelled"
 

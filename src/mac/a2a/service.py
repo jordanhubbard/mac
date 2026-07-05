@@ -224,7 +224,10 @@ class A2AService:
                 task_id,
                 MacTaskState.CANCELLED.value,
                 actor=self.ACTOR,
-                detail={"source": "a2a.tasks/cancel"},
+                detail={
+                    "source": "a2a.tasks/cancel",
+                    "reason": "A2A client requested cancellation",
+                },
             )
         except TransitionError as exc:
             # e.g. completed/failed tasks are not cancelable.

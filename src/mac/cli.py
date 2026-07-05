@@ -1458,8 +1458,10 @@ def cmd_task_claim(args: argparse.Namespace) -> None:
 
 def cmd_task_close(args: argparse.Namespace) -> None:
     cp = _plane(args)
-    from mac.models import TaskState
+    from mac.models import TaskState, ValidationError
 
+    if not args.success and not str(args.reason or "").strip():
+        raise ValidationError("--reason is required with --cancelled")
     detail = {"reason": args.reason} if args.reason else {}
     target = TaskState.COMPLETED.value if args.success else TaskState.CANCELLED.value
     if not args.success:
@@ -4152,9 +4154,16 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("agent_id")
     _set(cmd_task_claim, claim)
 
-    close = task.add_parser("close", help="transition a task to completed/cancelled with an optional reason")
+    close = task.add_parser(
+        "close",
+        help="transition a task to completed/cancelled; cancellation requires a reason",
+    )
     close.add_argument("task_id")
-    close.add_argument("--reason", default="")
+    close.add_argument(
+        "--reason",
+        default="",
+        help="audit reason (required with --cancelled)",
+    )
     close.add_argument("--actor", default="human")
     close.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                        help="don't update the .tickets/<id>.md mirror on close")

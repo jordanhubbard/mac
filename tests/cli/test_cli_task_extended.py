@@ -21,8 +21,6 @@ import io
 import json
 import sys
 
-import pytest
-
 from mac.cli import main
 
 
@@ -114,7 +112,15 @@ def test_task_stats_counts_cancelled_task(tmp_path):
     so we close with --cancelled.
     """
     task = _create_task(tmp_path)
-    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+    _run(
+        tmp_path,
+        "task",
+        "close",
+        task["id"],
+        "--cancelled",
+        "--reason",
+        "stats cancellation fixture",
+    )
 
     rc, stats = _run(tmp_path, "task", "stats")
     assert rc == 0
@@ -230,7 +236,7 @@ def test_task_start_keeps_owner_agent(tmp_path):
 def test_task_reopen_returns_open_state(tmp_path):
     """task reopen transitions a cancelled task back to open."""
     task = _create_task(tmp_path)
-    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+    _run(tmp_path, "task", "close", task["id"], "--cancelled", "--reason", "reopen fixture")
 
     rc, reopened = _run(tmp_path, "task", "reopen", task["id"])
     assert rc == 0
@@ -240,7 +246,7 @@ def test_task_reopen_returns_open_state(tmp_path):
 def test_task_reopen_with_reason(tmp_path):
     """task reopen --reason is stored in the task history (audit trail)."""
     task = _create_task(tmp_path)
-    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+    _run(tmp_path, "task", "close", task["id"], "--cancelled", "--reason", "reopen fixture")
 
     rc, reopened = _run(
         tmp_path, "task", "reopen", task["id"],
@@ -254,7 +260,7 @@ def test_task_reopen_with_reason(tmp_path):
 def test_task_reopen_resets_attempt_count(tmp_path):
     """task reopen clears the attempt count so the task doesn't immediately exhaust retries."""
     task = _create_task(tmp_path)
-    _run(tmp_path, "task", "close", task["id"], "--cancelled")
+    _run(tmp_path, "task", "close", task["id"], "--cancelled", "--reason", "reopen fixture")
 
     rc, reopened = _run(tmp_path, "task", "reopen", task["id"])
     assert rc == 0

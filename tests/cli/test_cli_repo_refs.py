@@ -81,6 +81,23 @@ def test_task_close_cli_records_structured_cancellation(tmp_path):
     assert lifecycle["eligible_after"] == lifecycle["terminal_at"]
 
 
+def test_task_close_cli_requires_cancellation_reason(tmp_path):
+    rc, task, _error = _run(tmp_path, "task", "create", "reason required")
+    assert rc == 0
+
+    rc, result, error = _run(
+        tmp_path,
+        "task",
+        "close",
+        task["id"],
+        "--cancelled",
+    )
+
+    assert rc == 1
+    assert result is None
+    assert "--reason is required with --cancelled" in error
+
+
 def test_task_close_cli_refuses_unlinked_duplicate(tmp_path):
     rc, task, _error = _run(tmp_path, "task", "create", "duplicate work")
     assert rc == 0

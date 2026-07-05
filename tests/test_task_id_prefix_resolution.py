@@ -76,7 +76,6 @@ class TestGetTaskPrefixResolution:
         """Create a real task whose id starts with task_<prefix_hex>."""
         # We cannot control the random part of new_id, so we use the
         # internal store to insert a row directly.
-        import json
         from mac.models import utcnow, TaskState
 
         full_id = "task_" + prefix_hex + "0" * (32 - len(prefix_hex))
@@ -148,11 +147,49 @@ class TestGetTaskPrefixResolution:
         task = cp.get_task(full_id)
         assert task.id == full_id
 
-    def test_task_detail_inherits_prefix_resolution(self, cp):
-        """task_detail uses get_task, so it inherits prefix resolution."""
+    def test_task_detail_uses_resolved_id_for_related_records(self, cp):
+        """Prefix detail lookup returns records stored under the canonical id."""
         full_id = self._make_task_with_prefix(cp, "12345678abcdef01", "detail test")
+        cp.add_evidence(
+            full_id,
+            "test",
+            "artifact://prefix-proof",
+            "prefix evidence",
+            "operator",
+        )
+        cp.transition_task(
+            full_id,
+            "cancelled",
+            "operator",
+            {"reason": "prefix detail regression proof"},
+        )
+
         detail = cp.task_detail("task_12345678")
+
         assert detail["task"]["id"] == full_id
+        assert [item["summary"] for item in detail["evidence"]] == [
+            "prefix evidence"
+        ]
+        assert any(
+            item["to_state"] == "cancelled" and item["detail"]["reason"]
+            == "prefix detail regression proof"
+            for item in detail["history"]
+        )
+
+    def test_task_summary_returns_canonical_id_for_prefix(self, cp):
+        full_id = self._make_task_with_prefix(cp, "87654321abcdef01", "summary test")
+        cp.add_evidence(
+            full_id,
+            "test",
+            "artifact://summary-prefix-proof",
+            "summary evidence",
+            "operator",
+        )
+
+        summary = cp.task_summary("task_87654321")
+
+        assert summary["task_id"] == full_id
+        assert summary["evidence_count"] == 1
 
     def test_prefix_resolution_case_insensitive(self, cp):
         """Uppercase hex prefix is normalised and resolved."""

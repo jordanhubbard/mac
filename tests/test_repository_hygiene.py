@@ -113,15 +113,27 @@ def test_auto_cleanup_disposition_requires_reason_and_valid_values():
         normalize_cancellation_detail({"disposition": "delete_everything"})
     with pytest.raises(ValidationError, match="between"):
         normalize_cancellation_detail(
-            {"disposition": "preserve", "cleanup_grace_seconds": -1}
+            {
+                "disposition": "preserve",
+                "reason": "invalid grace fixture",
+                "cleanup_grace_seconds": -1,
+            }
         )
     with pytest.raises(ValidationError, match="integer"):
         normalize_cancellation_detail(
-            {"disposition": "preserve", "cleanup_grace_seconds": "later"}
+            {
+                "disposition": "preserve",
+                "reason": "invalid grace fixture",
+                "cleanup_grace_seconds": "later",
+            }
         )
     with pytest.raises(ValidationError, match="task_<32 hex>"):
         normalize_cancellation_detail(
-            {"disposition": "preserve", "replacement_task_id": "bad"}
+            {
+                "disposition": "preserve",
+                "reason": "invalid replacement fixture",
+                "replacement_task_id": "bad",
+            }
         )
 
 
@@ -143,7 +155,9 @@ def test_cancelled_lifecycle_schedules_only_explicit_supersession():
     )
 
     preserved = repository_ref_lifecycle_for_transition(
-        "cancelled", {}, now=NOW.isoformat()
+        "cancelled",
+        {"reason": "operator stopped the task"},
+        now=NOW.isoformat(),
     )
     assert preserved["status"] == "preserved"
     assert preserved["eligible_after"] is None
@@ -166,7 +180,7 @@ def test_transition_lifecycle_covers_completed_failed_and_reopened():
 
     cancelled_failure = repository_ref_lifecycle_for_transition(
         "cancelled",
-        {"disposition": "failed_attempt"},
+        {"disposition": "failed_attempt", "reason": "execution failed"},
         now=NOW.isoformat(),
     )
     assert cancelled_failure["status"] == "quarantined"
