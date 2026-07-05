@@ -595,6 +595,38 @@ def build_observation(
     findings = [finding for item in review_passes for finding in item["findings"]]
     confirmed = sum(1 for item in findings if item["validation_status"] == "confirmed")
     refuted = sum(1 for item in findings if item["validation_status"] == "refuted")
+
+    # executor_attempt_count: number of distinct executor evidence items (evidence
+    # whose verification.evidence_type is not review_verdict or publication).
+    # Each represents one run of the executor patch.  When the task struct carries
+    # attempt_count directly (the common case from hub API responses), prefer that
+    # authoritative counter; fall back to counting evidence rows so the function
+    # works correctly when only a partial task_detail is supplied.
+    raw_attempt_count = task.get("attempt_count")
+    if raw_attempt_count is not None:
+        try:
+            executor_attempt_count = int(raw_attempt_count)
+        except (TypeError, ValueError):
+            executor_attempt_count = None
+    else:
+        executor_attempt_count = None
+    if executor_attempt_count is None:
+        _executor_evidence_types = {"repo_change", "operator_result", "plan_decomposed"}
+        executor_attempt_count = sum(
+            1
+            for item in evidence
+            if _text(_verification(item).get("evidence_type")).lower()
+            in _executor_evidence_types
+        )
+
+    # review_attempt_count: total number of review records (approved, rejected,
+    # retracted, pending).  Retracted reviews caused by protocol failure count
+    # because they represent real reviewer execution budget spent, even though they
+    # did NOT consume an executor attempt.  This counter is distinct from
+    # review_passes (which counts only successful verdict evidence rows) and makes
+    # it possible to audit how many reviewer invocations occurred vs executor runs.
+    review_attempt_count = len(reviews)
+
     return {
         "schema": OBSERVATION_SCHEMA,
         "task_id": task_id,
@@ -626,6 +658,8 @@ def build_observation(
                 and _text(item.get("status")) == "confirmed"
             ),
             "protocol_invalidations": len(protocol_invalidations),
+            "executor_attempt_count": executor_attempt_count,
+            "review_attempt_count": review_attempt_count,
         },
     }
 
@@ -660,6 +694,8 @@ def _empty_arm(arm: str) -> Dict[str, Any]:
         "protocol_noncompliant_passes": 0,
         "protocol_invalid_tasks": 0,
         "actual_strategies": {},
+        "executor_attempt_count": 0,
+        "review_attempt_count": 0,
     }
 
 
@@ -708,6 +744,8 @@ def build_report(
             "refuted_findings",
             "unresolved_findings",
             "escaped_defects",
+            "executor_attempt_count",
+            "review_attempt_count",
         ):
             arm[key] += int(totals.get(key) or 0)
         if observation.get("sample_valid") is False:
