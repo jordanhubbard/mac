@@ -1302,6 +1302,184 @@ def record_deployment_learning(task: Dict[str, Any], outcome: Dict[str, Any]) ->
     return _hub_post("/memory", build_learning_record(task, outcome))
 
 
+# ---------------------------------------------------------------------------
+# Plan-outcome learning (plan-learn-01): planning runs feed the learning loop
+# ---------------------------------------------------------------------------
+
+_PLAN_LEARNING_SCHEMA = "mac.plan_learning.v1"
+
+
+def build_plan_learning_record(
+    task: Dict[str, Any],
+    plan_manifest: Dict[str, Any],
+    wall_clock_ms: float,
+) -> Dict[str, Any]:
+    """Pure: build the ``/memory`` payload for a completed planning run.
+
+    Records plan-specific shape facts (children count, ordering rationale,
+    child titles) in a ``mac.plan_learning.v1`` blob so a future planning
+    run on a similar task can start from the same decomposition shape.
+    """
+    project = _task_project(task)
+    children = plan_manifest.get("children") or []
+    children_count = len(children) if isinstance(children, list) else 0
+    children_titles = [
+        str(c.get("title") or "")
+        for c in (children if isinstance(children, list) else [])
+        if isinstance(c, dict) and c.get("title")
+    ]
+    content = {
+        "schema": _PLAN_LEARNING_SCHEMA,
+        "task_id": task.get("id"),
+        "task_title": task.get("title"),
+        "project": project,
+        "evidence_type": "plan_decomposed",
+        "children_count": children_count,
+        "children_titles": children_titles,
+        "ordering_rationale": str(plan_manifest.get("ordering_rationale") or ""),
+        "coverage_claim": str(plan_manifest.get("coverage_claim") or ""),
+        "wall_clock_ms": int(wall_clock_ms),
+        "at": utcnow(),
+    }
+    return {
+        "subject_type": "project",
+        "subject_id": project,
+        "record_type": "%s:%s" % (DEPLOYMENT_LEARNING_PREFIX, project),
+        "content": json.dumps(content, sort_keys=True, separators=(",", ":")),
+        "task_id": task.get("id"),
+        "created_by": "mac-hermes-task-executor",
+    }
+
+
+def record_plan_outcome(
+    task: Dict[str, Any],
+    task_workspace: "Path",
+    wall_clock_ms: float,
+) -> bool:
+    """Read the plan manifest from task_workspace and record the plan outcome
+    as a deployment_learning record.  Best-effort: returns False on any error.
+
+    Called after a successful planning-phase run (evidence_type=plan_decomposed)
+    so the next big migration on this project can recall the shape of the first.
+    """
+    manifest_path = task_workspace / "mac-evidence.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    if manifest.get("evidence_type") != "plan_decomposed":
+        return False
+    try:
+        payload = build_plan_learning_record(task, manifest, wall_clock_ms)
+        return _hub_post("/memory", payload)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _plan_family_terms(task: Dict[str, Any]) -> List[str]:
+    """Extract 2-4 distinctive lowercase words from the task title/description
+    to use as content_contains search terms for prior plan lessons.
+
+    Prefers the nouns / objects in the title, skipping common stop-words and
+    single-character tokens.  Returns an empty list when nothing meaningful
+    can be extracted (fallback: caller skips content_contains search).
+    """
+    stop = {
+        "a", "an", "the", "and", "or", "for", "of", "to", "in", "on",
+        "at", "by", "as", "is", "be", "do", "it", "its", "with",
+        "add", "fix", "build", "make", "run", "get", "set", "use",
+        "task", "tasks", "from", "into", "this", "that", "each",
+        "all", "new", "old", "can", "not", "has", "have", "are",
+    }
+    title = str(task.get("title") or "")
+    desc = str(task.get("description") or "")[:300]
+    raw = _re.findall(r"[a-z][a-z0-9_-]{2,}", (title + " " + desc).lower())
+    seen: List[str] = []
+    for tok in raw:
+        if tok not in stop and tok not in seen:
+            seen.append(tok)
+        if len(seen) >= 4:
+            break
+    return seen
+
+
+def _format_plan_learning_content(raw: str) -> str:
+    """Render a stored ``mac.plan_learning.v1`` blob as a one-line lesson."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw.strip()[:300]
+    if not isinstance(data, dict) or data.get("schema") != _PLAN_LEARNING_SCHEMA:
+        return ""
+    title = str(data.get("task_title") or data.get("task_id") or "task")
+    children_count = data.get("children_count", 0)
+    children_titles = data.get("children_titles") or []
+    ordering = str(data.get("ordering_rationale") or "").strip()
+    parts = ["[plan] %s -> %d children" % (title, children_count)]
+    if children_titles:
+        parts.append("titles: %s" % "; ".join(children_titles[:5]))
+    if ordering:
+        parts.append("ordering: %s" % ordering[:120])
+    return ". ".join(parts)[:400]
+
+
+def recall_plan_lessons(task: Dict[str, Any], *, limit: int = 3) -> List[str]:
+    """Recall prior decompositions for tasks similar to *task* (best-effort).
+
+    Searches ``deployment_learning:<project>`` records whose content contains
+    the task's family terms (the nouns / key objects from the title) so the
+    second big migration on a project starts from the first one's shape.
+
+    Returns short lesson strings; empty when the hub isn't reachable or no
+    prior plan records exist.
+    """
+    from urllib.parse import urlencode
+
+    project = _task_project(task)
+    family_terms = _plan_family_terms(task)
+
+    lessons: List[str] = []
+
+    for term in (family_terms or [""]):
+        params: Dict[str, Any] = {
+            "subject_type": "project",
+            "subject_id": project,
+            "record_type": "%s:%s" % (DEPLOYMENT_LEARNING_PREFIX, project),
+            "limit": 20,
+        }
+        if term:
+            params["content_contains"] = term
+        records = _hub_get("/memory?%s" % urlencode(params))
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            content = str(record.get("content") or "")
+            # Only surface plan_learning records
+            try:
+                data = json.loads(content)
+                if not isinstance(data, dict) or data.get("schema") != _PLAN_LEARNING_SCHEMA:
+                    continue
+            except Exception:
+                continue
+            rendered = _format_plan_learning_content(content)
+            if not rendered or rendered in lessons:
+                continue
+            if not _append_lesson_with_budget(lessons, rendered):
+                break
+            if len(lessons) >= limit:
+                return lessons[:limit]
+        if len(lessons) >= limit:
+            break
+
+    return lessons[:limit]
+
+
 _LESSON_CURATION_PROMPT = """You are the fleet's lesson curator. A task just finished; distill what the NEXT agent working on this project should know.
 
 Task: {title}
@@ -4925,7 +5103,15 @@ def _run_executor(
 
     if not is_review:
         if _is_planning:
-            prompt = build_planning_prompt(task, task_file, lessons)
+            # plan-learn-01: enrich the planning prompt with prior decomposition
+            # shapes for similar tasks so the second big migration starts from
+            # the first one's shape.  Best-effort — never blocks the run.
+            try:
+                plan_lessons = recall_plan_lessons(task)
+            except Exception:  # noqa: BLE001
+                plan_lessons = []
+            combined_lessons = (lessons or []) + (plan_lessons or [])
+            prompt = build_planning_prompt(task, task_file, combined_lessons)
             emit_telemetry("planning_phase_started", task_id=task_id, level="info")
         else:
             prompt = build_task_prompt(task, task_file, lessons)
@@ -5050,6 +5236,16 @@ def _run_executor(
             # children and writing the plan manifest.
             if _is_planning and is_plan_decomposed_evidence(task_workspace):
                 emit_telemetry("planning_phase_completed", task_id=task_id, level="info")
+                # plan-learn-01: record this plan outcome so future planning
+                # runs on similar tasks can recall the decomposition shape.
+                try:
+                    record_plan_outcome(
+                        task,
+                        task_workspace,
+                        wall_clock_ms=(time.monotonic() - started) * 1000.0,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             else:
                 run_deterministic_git_finalizer(task_workspace, task)
         except Exception as exc:  # noqa: BLE001

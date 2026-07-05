@@ -317,6 +317,7 @@ def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
         return _FakeResult(0)
 
     monkeypatch.setattr(te, "recall_deployment_lessons", lambda task: [])
+    monkeypatch.setattr(te, "recall_plan_lessons", lambda task, limit=3: [])
     monkeypatch.setattr(te, "emit_telemetry", lambda event, **kw: state["telemetry"].append(event) or True)
     monkeypatch.setattr(te, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(te, "_openshell_required_for_local_agent", lambda: False)
@@ -327,6 +328,7 @@ def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
     monkeypatch.setattr(te, "classify_outcome", lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []})
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
+    monkeypatch.setattr(te, "record_plan_outcome", lambda *a, **kw: True)
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda task: None)
     monkeypatch.setattr(te, "_manifest_is_complete", lambda *a, **kw: True)
     monkeypatch.setattr(te, "_review_experiment_assignment", lambda t: {})
