@@ -2404,6 +2404,50 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     worktree_path = Path(worktree).expanduser() if worktree else None
     if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
         return
+    # ROOT-CAUSE NOTE (task_5b8931a38d1a4213adf2e7106a36d54a): untracked-file
+    # guard gap — the blind git add -A path.
+    #
+    # Execution sequence that produced the 2026-07-05 hub outage:
+    #
+    # (1) SANDBOX HARVEST: _run_sandboxed() (task_executor.py ~line 4482) runs
+    #     the agent inside an OpenShell container, then in its finally-block calls
+    #     _sandbox_download() (~line 4550), which calls
+    #     _merge_sandbox_download_tree() (~line 4274 / 4111).
+    #     _merge_sandbox_download_tree copies every file from the downloaded
+    #     sandbox archive into the host task-worktree.  The only exclusions are:
+    #       * paths under ".git" or ".git.bak*" (git metadata)
+    #       * runtime dependency roots (.venv/, venv/, node_modules/) beneath
+    #         known repository roots
+    #     New source modules created by the sandbox agent are NOT excluded, so they
+    #     land in the host worktree as untracked files (shown as "??" lines by
+    #     `git status --porcelain`).
+    #
+    # (2) UNCONDITIONAL git add -A: immediately below, `git status --porcelain`
+    #     is used only as a boolean gate — if the output is non-empty (any tracked
+    #     or untracked change), `git add -A` is run with NO filtering.  git add -A
+    #     stages EVERYTHING: modified tracked files AND all untracked files,
+    #     including the newly harvested source modules that arrived from the sandbox
+    #     but were never reviewed or intentionally authored by the host task.
+    #
+    # (3) git clean -Xdf DOES NOT help: at ~line 2438 git clean -Xdf runs after
+    #     the commit to purge cross-OS build artifacts.  The -X flag removes only
+    #     gitignored files.  The newly committed source modules are now tracked,
+    #     not ignored, so git clean does not touch them.  They persist in the
+    #     working tree and in the commit.
+    #
+    # (4) CLEAN FINAL STATUS: by the time `git status --porcelain` is checked
+    #     again at ~line 2504 (the `clean` guard before guarded_push), the worktree
+    #     is clean because the untracked files were already staged and committed in
+    #     step (2).  The guard passes, and guarded_push proceeds to publish the
+    #     branch — including the unintended modules — to the canonical remote.
+    #
+    # FIX DIRECTION (to be implemented in the next child task): before git add -A,
+    # inspect the porcelain output and reject (or at minimum warn loudly on) any
+    # "??" (untracked) lines that correspond to source files that were not present
+    # in the repository at HEAD.  Only legitimately intentional new files — those
+    # the task explicitly created — should be staged.  One safe pattern is to
+    # restrict staging to the files reported by the agent's evidence manifest
+    # (repo.files_changed) rather than blindly staging the entire worktree.
     status = _git(["status", "--porcelain"], worktree_path)
     if status.stdout.strip():
         _git(["add", "-A"], worktree_path)
