@@ -486,6 +486,31 @@ def test_agentbus_publish_event(tmp_path):
     assert rc == 0
 
 
+def test_agent_reflect_publishes_self_description(tmp_path):
+    """agent reflect publishes the agent's registered runtime state over AgentBus."""
+    agent = _make_agent(
+        tmp_path,
+        "reflect-agent",
+        agent_id="agent_reflect",
+    )
+    rc, result = _run(
+        tmp_path,
+        "agent", "reflect",
+        agent["id"],
+        "--request-id", "rid-42",
+    )
+
+    assert rc == 0
+    assert result["schema"] == "mac.agentbus.agent_reflection_publish.v1"
+    assert result["agent_id"] == agent["id"]
+    assert result["recipient_agent_id"] == agent["id"]
+    assert result["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
+    assert result["payload"].get("request_id") == "rid-42"
+    assert result["payload"]["agent"]["name"] == "reflect-agent"
+    assert result["streams"][0]["topic"] == "mac.agent.reflect.v1"
+    assert result["streams"][0]["content_type"] == "application/vnd.mac.agent-reflection+json"
+
+
 def test_agentbus_repo_update(tmp_path):
     """agentbus repo-update sends a repository-update event to agents."""
     agent = _make_agent(tmp_path, "repo-agent", agent_id="agent_repo")

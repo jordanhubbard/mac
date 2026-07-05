@@ -785,6 +785,39 @@ def test_remote_dispatch_repo_update_hits_hub_endpoint():
     }
 
 
+def test_remote_dispatch_agent_reflect_hits_hub_endpoint():
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("POST", "/agents/agent_reflect/reflect"): {
+                "schema": "mac.agentbus.agent_reflection_publish.v1",
+                "count": 1,
+            }
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+
+    result = disp.publish_agent_reflection(
+        "agent_reflect",
+        recipient_agent_id="agent_operator",
+        request_id="rid-42",
+    )
+
+    assert result.to_dict() == {
+        "schema": "mac.agentbus.agent_reflection_publish.v1",
+        "count": 1,
+    }
+    method, url, payload, token = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://hub:8789/agents/agent_reflect/reflect"
+    assert token == "tok"
+    assert payload == {
+        "recipient_agent_id": "agent_operator",
+        "request_id": "rid-42",
+    }
+
+
 def test_remote_dispatch_create_task_via_cli(monkeypatch):
     """End-to-end: `mac --hub-url ... task create` posts to /tasks."""
     import io

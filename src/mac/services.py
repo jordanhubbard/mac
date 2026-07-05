@@ -23,8 +23,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from mac.agentbus_control import (
+    AGENT_REFLECTION_CONTENT_TYPE,
+    AGENT_REFLECTION_TOPIC,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_TOPIC,
+    agent_reflection_payload,
     repo_update_payload,
 )
 from mac.models import (
@@ -9715,6 +9718,36 @@ class ControlPlane:
             "schema": "mac.agentbus.repo_update_publish.v1",
             "count": len(published),
             "streams": [item["stream"] for item in published],
+        }
+
+    def publish_agent_reflection(
+        self,
+        agent_id: str,
+        *,
+        recipient_agent_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> JsonDict:
+        agent = self.get_agent(agent_id)
+        recipient_id = recipient_agent_id or agent.id
+        self.get_agent(recipient_id)
+        payload = agent_reflection_payload(
+            agent=agent.to_dict(),
+            request_id=request_id,
+        )
+        published = self.publish_agentbus_content(
+            sender_agent_id=agent.id,
+            recipient_agent_id=recipient_id,
+            content_type=AGENT_REFLECTION_CONTENT_TYPE,
+            topic=AGENT_REFLECTION_TOPIC,
+            payload=payload,
+        )
+        return {
+            "schema": "mac.agentbus.agent_reflection_publish.v1",
+            "agent_id": agent.id,
+            "recipient_agent_id": recipient_id,
+            "count": 1,
+            "streams": [published["stream"]],
+            "payload": payload,
         }
 
     def publish_agentbus_artifact(

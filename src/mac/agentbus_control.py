@@ -16,6 +16,10 @@ ARTIFACT_PUBLISH_SCHEMA = "mac.agentbus.artifact_publish.v1"
 ARTIFACT_PUBLISH_TOPIC = "mac.artifact.publish.v1"
 ARTIFACT_PUBLISH_CONTENT_TYPE = "application/vnd.mac.artifact-publish+json"
 
+AGENT_REFLECTION_SCHEMA = "mac.agentbus.agent_reflection.v1"
+AGENT_REFLECTION_TOPIC = "mac.agent.reflect.v1"
+AGENT_REFLECTION_CONTENT_TYPE = "application/vnd.mac.agent-reflection+json"
+
 HERMES_CONFIG_APPLY_SCHEMA = "mac.agentbus.hermes_config_apply.v1"
 HERMES_CONFIG_APPLY_TOPIC = "mac.hermes.config.apply.v1"
 HERMES_CONFIG_APPLY_CONTENT_TYPE = "application/vnd.mac.hermes-config-apply+json"
@@ -93,6 +97,46 @@ def artifact_publish_payload(
         payload["public_url"] = public_url
     if path:
         payload["path"] = path
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
+def agent_reflection_payload(
+    *,
+    agent: JsonDict,
+    request_id: Optional[str] = None,
+) -> JsonDict:
+    capabilities = list(agent.get("capabilities") or [])
+    resources = agent.get("resources") if isinstance(agent.get("resources"), dict) else {}
+    reflection: JsonDict = {
+        "id": agent.get("id"),
+        "name": agent.get("name"),
+        "capabilities": capabilities,
+        "resources": resources,
+        "status": agent.get("status"),
+        "health_status": agent.get("health_status"),
+        "current_task_id": agent.get("current_task_id"),
+        "running_digest": agent.get("running_digest"),
+        "role_id": agent.get("role_id"),
+        "hermes_instance_id": agent.get("hermes_instance_id"),
+        "installed_packages": agent.get("installed_packages") or {},
+        "last_seen_at": agent.get("last_seen_at"),
+        "updated_at": agent.get("updated_at"),
+    }
+    payload: JsonDict = {
+        "schema": AGENT_REFLECTION_SCHEMA,
+        "agent_id": agent.get("id"),
+        "agent": reflection,
+        "summary": "agent %s (%s) is %s/%s; capabilities: %s"
+        % (
+            agent.get("name") or "",
+            agent.get("id") or "",
+            agent.get("status") or "unknown",
+            agent.get("health_status") or "unknown",
+            ", ".join(str(item) for item in capabilities) or "none",
+        ),
+    }
     if request_id:
         payload["request_id"] = request_id
     return payload

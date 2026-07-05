@@ -7,6 +7,9 @@ import yaml
 from fastapi.testclient import TestClient
 
 from mac.agentbus_control import (
+    AGENT_REFLECTION_CONTENT_TYPE,
+    AGENT_REFLECTION_SCHEMA,
+    AGENT_REFLECTION_TOPIC,
     DEBUG_TERMINAL_OUTPUT_SCHEMA,
     HERMES_CONFIG_APPLY_CONTENT_TYPE,
     HERMES_CONFIG_APPLY_TOPIC,
@@ -3049,6 +3052,50 @@ def test_fastapi_publishes_agentbus_repo_update_to_all_agents():
     ).json()
     assert chunks[0]["payload"]["schema"] == "mac.agentbus.repo_update.v1"
     assert chunks[0]["payload"]["request_id"] == "req-api"
+
+
+def test_fastapi_agent_reflect_publishes_runtime_description():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory(), auth_tokens={}))
+    machine = client.post("/machines", json={"hostname": "reflect-host"}).json()
+    sender = client.post(
+        "/agents",
+        json={
+            "machine_id": machine["id"],
+            "name": "reflector",
+            "capabilities": ["python"],
+            "resources": {"runtime": {"kind": "worker"}},
+        },
+    ).json()
+    recipient = client.post(
+        "/agents",
+        json={"machine_id": machine["id"], "name": "operator"},
+    ).json()
+
+    published = client.post(
+        "/agents/%s/reflect" % sender["id"],
+        json={
+            "recipient_agent_id": recipient["id"],
+            "request_id": "rid-42",
+        },
+    ).json()
+
+    assert published["schema"] == "mac.agentbus.agent_reflection_publish.v1"
+    assert published["agent_id"] == sender["id"]
+    assert published["recipient_agent_id"] == recipient["id"]
+    assert published["payload"]["request_id"] == "rid-42"
+    stream = published["streams"][0]
+    assert stream["topic"] == AGENT_REFLECTION_TOPIC
+    assert stream["content_type"] == AGENT_REFLECTION_CONTENT_TYPE
+    chunks = client.get(
+        "/agentbus/streams/%s/chunks" % stream["id"],
+        params={"agent_id": recipient["id"]},
+    ).json()
+    payload = chunks[0]["payload"]
+    assert payload.get("request_id") == "rid-42"
+    assert payload["schema"] == AGENT_REFLECTION_SCHEMA
+    assert payload["agent_id"] == sender["id"]
+    assert payload["agent"]["name"] == "reflector"
+    assert payload["agent"]["resources"]["runtime"]["kind"] == "worker"
 
 
 def test_fastapi_agentbus_artifact_publish_crud(monkeypatch):
