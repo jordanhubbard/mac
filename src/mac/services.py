@@ -3803,19 +3803,8 @@ class ControlPlane:
         The dispatcher's readiness semantics (parity with ``bd ready``), served
         so the CLI works in hub mode (parity-ready-http-01).
         """
-        where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
-        params: list = [TaskState.OPEN.value]
-        if project is not None:
-            where.append("project = ?")
-            params.append(project)
-        rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at"
-            % " AND ".join(where),
-            tuple(params),
-        )
         out: List[Task] = []
-        for row in rows:
-            task = self._task_from_row(row)
+        for task in self._dispatch_ordered_tasks(project=project):
             if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
                 continue
             if self._task_dispatch_held(task):
@@ -9282,24 +9271,72 @@ class ControlPlane:
         agents = self._available_agents()
         unmatched: List[Task] = []
         assignments: List[JsonDict] = []
-        for task in tasks:
+        skip_logs = 0
+        for candidate_rank, task in enumerate(tasks, start=1):
             # Autonomous-dispatch gates: a per-task no_dispatch hold or a
             # project-level pause must keep the push dispatcher from auto-
             # claiming, exactly as they keep tasks out of ready_tasks() and the
             # worker-pull claim policy. claim_task() deliberately does NOT
             # enforce these (operators may still claim/start a staged task
             # explicitly), so the gate has to live on every autonomous path.
-            if self._task_dispatch_held(task) or self._project_dispatch_paused(task.project):
+            if self._task_dispatch_held(task):
+                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                    self._record_routing_skip(
+                        name="dispatcher.routing.task_skipped",
+                        agent_id=None,
+                        task=task,
+                        reason="dispatch_held",
+                        route="dispatch_once",
+                        candidate_rank=candidate_rank,
+                        reason_class="policy",
+                    )
+                    skip_logs += 1
+                continue
+            if self._project_dispatch_paused(task.project):
+                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                    self._record_routing_skip(
+                        name="dispatcher.routing.task_skipped",
+                        agent_id=None,
+                        task=task,
+                        reason="project_dispatch_paused",
+                        route="dispatch_once",
+                        candidate_rank=candidate_rank,
+                        reason_class="policy",
+                    )
+                    skip_logs += 1
                 continue
             matched = False
             for agent in agents:
-                if not self._agent_available_for(agent, task):
+                available, reason = self._agent_availability_for_task(agent, task)
+                if not available:
+                    if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                        self._record_routing_skip(
+                            name="dispatcher.routing.task_skipped",
+                            agent_id=agent.id,
+                            task=task,
+                            reason=reason,
+                            route="dispatch_once",
+                            candidate_rank=candidate_rank,
+                            reason_class="agent_availability",
+                        )
+                        skip_logs += 1
                     continue
                 try:
                     claimed, lease = self.claim_task(task.id, agent.id, lease_seconds=lease_seconds)
-                except (TransitionError, ValidationError):
+                except (TransitionError, ValidationError) as exc:
                     # task was already claimed, exhausted attempts, or otherwise
                     # ineligible — try the next (task, agent) pair.
+                    if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                        self._record_routing_skip(
+                            name="dispatcher.routing.task_skipped",
+                            agent_id=agent.id,
+                            task=task,
+                            reason=exc.__class__.__name__,
+                            route="dispatch_once",
+                            candidate_rank=candidate_rank,
+                            reason_class="claim_failed",
+                        )
+                        skip_logs += 1
                     continue
                 self.send_message(
                     "dispatcher",
@@ -9434,14 +9471,40 @@ class ControlPlane:
         rejected_policy: Dict[str, int] = {}
         rejected_dispatch = 0
         considered = 0
+        skip_logs = 0
         for task in self._dispatch_ordered_tasks():
             considered += 1
             allowed, reason = self._task_matches_worker_claim_policy(task, policy)
             if not allowed:
                 rejected_policy[reason] = rejected_policy.get(reason, 0) + 1
+                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                    self._record_routing_skip(
+                        name="worker.routing.task_skipped",
+                        agent_id=agent.id,
+                        task=task,
+                        reason=reason,
+                        route="claim_next",
+                        candidate_rank=considered,
+                        reason_class="policy",
+                        dry_run=dry_run,
+                    )
+                    skip_logs += 1
                 continue
-            if not self._agent_available_for(agent, task):
+            available, reason = self._agent_availability_for_task(agent, task)
+            if not available:
                 rejected_dispatch += 1
+                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                    self._record_routing_skip(
+                        name="worker.routing.task_skipped",
+                        agent_id=agent.id,
+                        task=task,
+                        reason=reason,
+                        route="claim_next",
+                        candidate_rank=considered,
+                        reason_class="agent_availability",
+                        dry_run=dry_run,
+                    )
+                    skip_logs += 1
                 continue
             detail = {
                 "agent_id": agent.id,
@@ -9475,7 +9538,19 @@ class ControlPlane:
                     lease_seconds=lease_seconds,
                     sync_beads=sync_beads,
                 )
-            except (TransitionError, ValidationError):
+            except (TransitionError, ValidationError) as exc:
+                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                    self._record_routing_skip(
+                        name="worker.routing.task_skipped",
+                        agent_id=agent.id,
+                        task=task,
+                        reason=exc.__class__.__name__,
+                        route="claim_next",
+                        candidate_rank=considered,
+                        reason_class="claim_failed",
+                        dry_run=dry_run,
+                    )
+                    skip_logs += 1
                 continue
             self.record_log(
                 "worker.routing.claimed",
@@ -12759,18 +12834,24 @@ class ControlPlane:
     # with backlog. 500 is above the largest supported tick batch while
     # remaining below the point where the Python sort cost is noticeable.
     _DISPATCH_TASK_WINDOW = 500
+    _DISPATCH_PRIORITY_AGING_SECONDS = 24 * 60 * 60
+    _DISPATCH_SKIP_LOG_LIMIT = 25
 
 
-    def _dispatch_ordered_tasks(self) -> List[Task]:
+    def _dispatch_ordered_tasks(self, *, project: Optional[str] = None) -> List[Task]:
         groups: Dict[str, List[Task]] = {}
-        for task in self.list_tasks(TaskState.OPEN.value, limit=self._DISPATCH_TASK_WINDOW):
+        now = utcnow()
+        for task in self._dispatch_candidate_tasks(project=project):
             tenant_key = self._task_tenant_id(task) or ""
             groups.setdefault(tenant_key, []).append(task)
         for tenant_tasks in groups.values():
-            tenant_tasks.sort(key=lambda item: (-item.priority, item.created_at, item.id))
+            tenant_tasks.sort(key=lambda item: self._dispatch_task_sort_key(item, now))
         tenant_order = sorted(
             groups,
-            key=lambda tenant_id: (-groups[tenant_id][0].priority, tenant_id),
+            key=lambda tenant_id: (
+                *self._dispatch_task_sort_key(groups[tenant_id][0], now),
+                tenant_id,
+            ),
         )
         ordered: List[Task] = []
         while any(groups.values()):
@@ -12778,6 +12859,58 @@ class ControlPlane:
                 if groups[tenant_id]:
                     ordered.append(groups[tenant_id].pop(0))
         return ordered
+
+    def _dispatch_candidate_tasks(self, *, project: Optional[str] = None) -> List[Task]:
+        """Bound dispatch's SQL read while keeping starvation protection visible.
+
+        The priority window preserves the hot path: newly-high-priority tasks
+        are seen first. The oldest window is de-duplicated into the same Python
+        scoring pass so an ancient low-priority task can age into dispatch even
+        when the priority window is saturated.
+        """
+        where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
+        params: List[Any] = [TaskState.OPEN.value]
+        if project is not None:
+            where.append("project = ?")
+            params.append(project)
+        where_sql = " AND ".join(where)
+        limit_params = tuple(params + [self._DISPATCH_TASK_WINDOW])
+        priority_rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY priority DESC, created_at, id LIMIT ?" % where_sql,
+            limit_params,
+        )
+        oldest_rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "ORDER BY created_at, id LIMIT ?" % where_sql,
+            limit_params,
+        )
+        tasks_by_id: Dict[str, Task] = {}
+        for row in list(priority_rows) + list(oldest_rows):
+            task = self._task_from_row(row)
+            tasks_by_id.setdefault(task.id, task)
+        return list(tasks_by_id.values())
+
+    def _dispatch_task_sort_key(
+        self,
+        task: Task,
+        now: Optional[str] = None,
+    ) -> Tuple[int, str, str]:
+        age_bonus = self._dispatch_priority_age_bonus(task, now or utcnow())
+        effective_priority = int(task.priority or 0) + age_bonus
+        return (-effective_priority, task.created_at, task.id)
+
+    def _dispatch_priority_age_bonus(self, task: Task, now: str) -> int:
+        step_seconds = _int_env(
+            "MAC_DISPATCH_PRIORITY_AGING_SECONDS",
+            self._DISPATCH_PRIORITY_AGING_SECONDS,
+            minimum=60,
+        )
+        try:
+            age_seconds = (parse_time(now) - parse_time(task.created_at)).total_seconds()
+        except Exception:  # noqa: BLE001 - corrupt timestamps should not block dispatch.
+            return 0
+        return max(0, int(age_seconds // step_seconds))
 
     def _worker_claim_policy(
         self,
@@ -12938,44 +13071,52 @@ class ControlPlane:
         return {str(row["agent_id"]) for row in rows if row["agent_id"]}
 
     def _agent_available_for(self, agent: Agent, task: Task) -> bool:
+        available, _reason = self._agent_availability_for_task(agent, task)
+        return available
+
+    def _agent_availability_for_task(self, agent: Agent, task: Task) -> Tuple[bool, str]:
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
-            return False
+            return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
-            return False
+            return False, "agent_health_unavailable"
         if agent.id in self._coordination_excluded_agent_ids(task):
-            return False
+            return False, "cooperative_distinct_agent_excluded"
         target_agent_id = (
             task.metadata.get("target_agent_id")
             if isinstance(task.metadata, dict)
             else None
         )
         if target_agent_id and agent.id != str(target_agent_id):
-            return False
+            return False, "target_agent_id_mismatch"
         target_agent_name = (
             task.metadata.get("target_agent_name")
             if isinstance(task.metadata, dict)
             else None
         )
         if target_agent_name and agent.name != str(target_agent_name):
-            return False
+            return False, "target_agent_name_mismatch"
         required_runtime_digest = self._task_required_runtime_digest(task)
         if required_runtime_digest and agent.running_digest != required_runtime_digest:
-            return False
+            return False, "runtime_digest_mismatch"
         machine = self.get_machine(agent.machine_id)
         if not machine.trusted:
-            return False
+            return False, "machine_untrusted"
         if self._agent_active_lease_count(agent.id) >= self._agent_capacity(agent):
-            return False
+            return False, "agent_capacity_full"
         if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
-            return False
+            return False, "machine_tenant_not_allowed"
         if not self._agent_resources_satisfy(agent, machine, task):
-            return False
+            return False, "agent_resources_insufficient"
         if not self._agent_has_repository_commands(agent, task):
-            return False
+            return False, "repository_commands_missing"
         # Role + hardware gates. Both no-op when neither the agent nor the
         # task carry role/hardware metadata, so the legacy capability path
         # below stays the dominant matcher for un-roled fleets.
-        required_role = task.metadata.get("required_role") if isinstance(task.metadata, dict) else None
+        required_role = (
+            task.metadata.get("required_role")
+            if isinstance(task.metadata, dict)
+            else None
+        )
         if required_role:
             # Look up the target role first. An unknown role can never be
             # served, regardless of whether the agent is role-bound or a
@@ -12983,7 +13124,7 @@ class ControlPlane:
             try:
                 target_role = self.roles.get_role(str(required_role))
             except NotFoundError:
-                return False
+                return False, "required_role_unknown"
             if agent.role_id is not None:
                 # Role-bound agent: keep the strict slug match so a tenant
                 # using role-specific agents still gets the original
@@ -12991,9 +13132,9 @@ class ControlPlane:
                 try:
                     bound_role = self.roles.get_role(agent.role_id)
                 except NotFoundError:
-                    return False
+                    return False, "agent_role_unknown"
                 if bound_role.slug != required_role:
-                    return False
+                    return False, "required_role_mismatch"
             else:
                 # Dispatcher case (job-per-task roles spec §6.1 Option B):
                 # the runner agent has no role_id but carries the union of
@@ -13006,7 +13147,7 @@ class ControlPlane:
                 if not set(target_role.required_capabilities).issubset(
                     set(agent.capabilities)
                 ):
-                    return False
+                    return False, "required_role_capabilities_missing"
         role_required_caps: set = set()
         if agent.role_id is not None:
             try:
@@ -13016,17 +13157,49 @@ class ControlPlane:
             if role is not None:
                 ok, _reasons = self.roles.validate_hardware(role, machine)
                 if not ok:
-                    return False
+                    return False, "role_hardware_insufficient"
                 # Soul-role compatibility is re-checked at dispatch time
                 # rather than only at assignment time, so a persona edit
                 # that narrows the allowed role list immediately stops
                 # affected agents from being eligible.
                 if not self.roles.soul_accepts_role(agent, role):
-                    return False
+                    return False, "role_not_accepted_by_soul"
                 role_required_caps = set(role.required_capabilities)
         capabilities = set(agent.capabilities)
         required = set(task.required_capabilities) | role_required_caps
-        return required.issubset(capabilities)
+        if not required.issubset(capabilities):
+            return False, "capabilities_missing"
+        return True, "matched"
+
+    def _record_routing_skip(
+        self,
+        *,
+        name: str,
+        agent_id: Optional[str],
+        task: Task,
+        reason: str,
+        route: str,
+        candidate_rank: int,
+        reason_class: str,
+        dry_run: bool = False,
+    ) -> None:
+        self.record_log(
+            name,
+            level="debug",
+            layer="control_plane",
+            source=agent_id or route,
+            subject_type="task",
+            subject_id=task.id,
+            detail={
+                "agent_id": agent_id,
+                "task_id": task.id,
+                "reason": reason,
+                "reason_class": reason_class,
+                "route": route,
+                "candidate_rank": candidate_rank,
+                "dry_run": dry_run,
+            },
+        )
 
     def _agent_has_repository_commands(self, agent: Agent, task: Task) -> bool:
         metadata = ensure_json_object(task.metadata)
