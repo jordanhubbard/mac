@@ -1614,7 +1614,7 @@ def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claim
     assert "workflow.default_review.nudge_capped" in names
 
 
-def test_default_review_rejects_prior_owner_for_newer_retry_evidence(cp):
+def test_default_review_prefers_prior_owner_over_current_executor_fallback(cp):
     from tests.conftest import submit_review_verdict
 
     alpha = register_agent(cp, "alpha", ["python", "review"])
@@ -1661,12 +1661,21 @@ def test_default_review_rejects_prior_owner_for_newer_retry_evidence(cp):
     cp.submit_for_review(task.id, beta.id)
 
     retry_review = cp.advance_default_review_workflow(task.id)
-    assert retry_review["status"] == "waiting_for_reviewer"
-    assert not retry_review.get("reviewer_agent_id")
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert retry_review["status"] == "waiting_for_reviewer_verdict"
+    assert retry_review["reviewer_agent_id"] == alpha.id
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    history = cp.store.query_one(
+        "SELECT detail FROM task_history WHERE task_id = ? "
+        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
+        (task.id,),
+    )
+    detail = json.loads(history["detail"])
+    assert detail["reviewer_independence"] == "fallback"
+    assert detail["reviewer_independence_reason"] == "reviewer_previously_owned_task"
 
 
-def test_request_review_refuses_latest_evidence_author(cp):
+def test_request_review_allows_latest_evidence_author_only_without_peer(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     worker = register_agent(cp, "worker", ["python", "review"])
     task = cp.create_task("self-review", required_capabilities=["python"])
     cp.claim_task(task.id, worker.id)
@@ -1681,11 +1690,21 @@ def test_request_review_refuses_latest_evidence_author(cp):
     )
     cp.submit_for_review(task.id, worker.id)
 
-    with pytest.raises(AuthorizationError):
-        cp.request_review(task.id, worker.id)
+    review = cp.request_review(task.id, worker.id)
+
+    assert review.reviewer_agent_id == worker.id
+    detail = json.loads(
+        cp.store.query_one(
+            "SELECT detail FROM task_history WHERE task_id = ? "
+            "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
+            (task.id,),
+        )["detail"]
+    )
+    assert detail["reviewer_independence"] == "fallback"
 
 
-def test_default_review_workflow_waits_without_non_owner_reviewer(cp):
+def test_default_review_workflow_uses_owner_when_no_peer_exists(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     worker = register_agent(cp, "worker", ["python", "review"])
     task = cp.create_task("Implement thing", required_capabilities=["python"])
     cp.claim_task(task.id, worker.id)
@@ -1702,9 +1721,11 @@ def test_default_review_workflow_waits_without_non_owner_reviewer(cp):
 
     result = cp.advance_default_review_workflow(task.id)
 
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
-    assert cp.list_reviews(task.id) == []
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+    reviews = cp.list_reviews(task.id)
+    assert len(reviews) == 1
+    assert reviews[0].reviewer_agent_id == worker.id
 
 
 def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch):
@@ -3101,10 +3122,9 @@ def test_default_review_waits_when_only_reviewer_is_stale(cp):
     assert cp.list_reviews(task.id) == []
 
 
-def test_default_reviewer_refuses_same_persona_as_executor(cp):
-    """mac-v2i: two agents souled to the same persona can't approve
-    each other. The second-eyes role only matters if the eyes are
-    different."""
+def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, monkeypatch):
+    """A different persona is preferred, but its absence cannot deadlock review."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     machine = cp.register_machine("h-collusion")
     from tests.conftest import bind_soul
 
@@ -3158,12 +3178,170 @@ def test_default_reviewer_refuses_same_persona_as_executor(cp):
     cp.submit_for_review(task.id, executor.id)
 
     result = cp.advance_default_review_workflow(task.id)
-    # Peer has the right capability AND the right tenant but the SAME
-    # persona — the workflow must refuse to draft them.
+    # The peer is preferable to self-review because it did not execute the
+    # task, even though both agents share a persona. The relaxation is audited.
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    reviews = cp.list_reviews(task.id)
+    assert len(reviews) == 1
+    assert reviews[0].reviewer_agent_id == peer.id
+    history = cp.store.query_one(
+        "SELECT detail FROM task_history WHERE task_id = ? "
+        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
+        (task.id,),
+    )
+    detail = json.loads(history["detail"])
+    assert detail["reviewer_independence"] == "fallback"
+    assert detail["reviewer_independence_reason"] == "reviewer_same_persona"
+
+
+def test_default_review_prefers_independent_peer_over_executor_fallback(
+    cp, monkeypatch
+):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(cp, "fallback-executor", ["python", "review"])
+    peer = register_agent(cp, "independent-reviewer", ["review"])
+    task = cp.create_task(
+        "prefer independent review",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://independent"},
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://independent",
+        "tests passed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    review = cp.list_reviews(task.id)[0]
+    assert review.reviewer_agent_id == peer.id
+    history = cp.store.query_one(
+        "SELECT detail FROM task_history WHERE task_id = ? "
+        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
+        (task.id,),
+    )
+    assert json.loads(history["detail"])["reviewer_independence"] == "independent"
+
+
+def test_default_review_falls_back_to_executor_when_no_peer_exists(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(cp, "only-reviewer", ["python", "review"])
+    task = cp.create_task(
+        "single-node review",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://single-node"},
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://single-node",
+        "tests passed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    review = cp.list_reviews(task.id)[0]
+    assert review.reviewer_agent_id == executor.id
+    history = cp.store.query_one(
+        "SELECT detail FROM task_history WHERE task_id = ? "
+        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
+        (task.id,),
+    )
+    detail = json.loads(history["detail"])
+    assert detail["reviewer_independence"] == "fallback"
+    assert detail["reviewer_independence_reason"] in {
+        "reviewer_previously_owned_task",
+        "reviewer_created_executor_evidence",
+    }
+    submitted = cp.submit_review(
+        review.id,
+        ReviewStatus.REJECTED.value,
+        executor.id,
+        reason="fallback reviewer found a problem",
+    )
+    assert submitted.status == ReviewStatus.REJECTED.value
+
+
+def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
+    cp, monkeypatch
+):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(cp, "dynamic-executor", ["python", "review"])
+    task = cp.create_task(
+        "dynamic reviewer availability",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://dynamic"},
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://dynamic",
+        "tests passed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+    first = cp.advance_default_review_workflow(task.id)
+    assert first["reviewer_agent_id"] == executor.id
+
+    peer = register_agent(cp, "late-independent-reviewer", ["review"])
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert second["status"] == "waiting_for_reviewer_verdict"
+    assert second["reviewer_agent_id"] == peer.id
+    reviews = cp.list_reviews(task.id)
+    pending = [review for review in reviews if review.status == ReviewStatus.PENDING.value]
+    retracted = [
+        review for review in reviews if review.status == ReviewStatus.RETRACTED.value
+    ]
+    assert [review.reviewer_agent_id for review in pending] == [peer.id]
+    assert [review.reviewer_agent_id for review in retracted] == [executor.id]
+
+
+def test_task_can_require_strictly_independent_reviewer(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(cp, "strict-executor", ["python", "review"])
+    task = cp.create_task(
+        "strict independent review",
+        required_capabilities=["python"],
+        metadata={
+            "publication_target": "test://strict",
+            "review": {"require_independent_reviewer": True},
+        },
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://strict",
+        "tests passed",
+        executor.id,
+        metadata=verified_repo_metadata(cp, executor.id),
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
     assert result["status"] == "waiting_for_reviewer"
     assert cp.list_reviews(task.id) == []
-    with pytest.raises(AuthorizationError, match="same persona"):
-        cp.request_review(task.id, peer.id, actor="manual")
+    with pytest.raises(AuthorizationError, match="owned"):
+        cp.request_review(task.id, executor.id, actor="manual")
 
 
 def test_default_review_refuses_reviewer_from_different_tenant(cp):

@@ -384,9 +384,13 @@ For repository-backed work, the production path is:
    same health, freshness, capability, target-policy, repository-access, tenant,
    persona, ownership, and cooperative-family checks. The policy is checked again
    when the reviewer submits a verdict so an assignment cannot outlive revoked
-   eligibility. The default workflow picks a reviewer-capable agent that has never
-   owned the task or another task in the same cooperative work family. For remote
-   repositories it consults shared
+   eligibility. The default workflow first picks an eligible reviewer-capable
+   agent that has not owned the task or participated in its cooperative work
+   family. If none exists, it progressively relaxes only those independence
+   preferences and records the fallback; health, capability, tenant,
+   repository-access, signed-verdict, and cross-model gates remain mandatory.
+   Set `review.require_independent_reviewer: true` in task metadata when a task
+   must wait rather than use this fallback. For remote repositories it consults shared
    `fleet_learning:repository_access` memory: a recent successful clone is
    preferred, while a newer authentication or authorization failure makes that
    agent temporarily ineligible for the same project, host, and operation.

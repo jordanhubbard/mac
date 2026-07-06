@@ -1008,6 +1008,14 @@ HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
 DEFAULT_HUB_REVIEWER_AGENT_NAME = "hub-reviewer"
 DEFAULT_HUB_REVIEWER_AGENT_ID = "agent_hub-reviewer"
 DEFAULT_HUB_REVIEWER_MACHINE_ID = "machine_operator_review"
+REVIEWER_INDEPENDENCE_REASONS = frozenset(
+    {
+        "reviewer_cooperative_family_participant",
+        "reviewer_previously_owned_task",
+        "reviewer_created_executor_evidence",
+        "reviewer_same_persona",
+    }
+)
 
 
 def sign_verification_manifest(key: str, manifest: Dict[str, Any]) -> str:
@@ -1180,6 +1188,7 @@ class ControlPlane:
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
             reviewer_eligibility_check=self._reviewer_assignment_problem,
+            reviewer_fallback_check=self._reviewer_independence_fallback_reason,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
         self.agent_state = AgentStateService(
@@ -10931,6 +10940,7 @@ class ControlPlane:
                 task,
                 review.reviewer_agent_id,
                 executor_agent_id=evidence.created_by,
+                allow_conditional_independence_fallback=True,
             )
             if reviewer_issue is not None:
                 self._retract_default_review(
@@ -11088,6 +11098,13 @@ class ControlPlane:
                     excluded_agent_ids=protocol_failed_reviewer_ids,
                 )
             if reviewer is None:
+                reviewer = self._select_default_reviewer(
+                    task,
+                    executor_agent_id=evidence.created_by,
+                    excluded_agent_ids=protocol_failed_reviewer_ids,
+                    allow_independence_fallback=True,
+                )
+            if reviewer is None:
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.waiting",
@@ -11109,12 +11126,27 @@ class ControlPlane:
                     },
                 )
                 return {"task_id": task_id, "status": "waiting_for_reviewer"}
+            fallback_reason = self._reviewer_independence_fallback_reason(
+                task,
+                reviewer,
+                executor_agent_id=evidence.created_by,
+                excluded_agent_ids=protocol_failed_reviewer_ids,
+            )
             review = self.request_review(task_id, reviewer.id, actor=actor)
+            assignment_detail = {
+                "review_id": review.id,
+                "reviewer_agent_id": reviewer.id,
+                "reviewer_independence": (
+                    "fallback" if fallback_reason else "independent"
+                ),
+            }
+            if fallback_reason:
+                assignment_detail["reviewer_independence_reason"] = fallback_reason
             self._record_default_review_observation(
                 task_id,
                 "workflow.default_review.assigned",
                 "info",
-                {"review_id": review.id, "reviewer_agent_id": reviewer.id},
+                assignment_detail,
                 actor,
             )
 
@@ -14871,6 +14903,7 @@ class ControlPlane:
         *,
         executor_agent_id: Optional[str] = None,
         excluded_agent_ids: Optional[Iterable[str]] = None,
+        allow_independence_fallback: bool = False,
     ) -> Optional[Agent]:
         """Pick a default reviewer for ``task``.
 
@@ -14902,10 +14935,11 @@ class ControlPlane:
         excluded = {str(value) for value in (excluded_agent_ids or []) if str(value)}
         candidates: List[Agent] = []
         access_states: Dict[str, str] = {}
+        independence_penalties: Dict[str, int] = {}
         for agent in self.list_agents():
             if agent.id in excluded:
                 continue
-            if self._default_reviewer_unavailable_reason(
+            reason = self._default_reviewer_unavailable_reason(
                 task,
                 agent,
                 task_tenant=task_tenant,
@@ -14913,17 +14947,38 @@ class ControlPlane:
                 executor_agent_id=executor_agent_id,
                 review_policy=review_policy,
                 review_required_capabilities=review_required_capabilities,
-            ) is not None:
+            )
+            if (
+                reason is not None
+                and allow_independence_fallback
+                and reason in REVIEWER_INDEPENDENCE_REASONS
+                and self._reviewer_independence_fallback_enabled(task)
+            ):
+                reason = self._default_reviewer_unavailable_reason(
+                    task,
+                    agent,
+                    task_tenant=task_tenant,
+                    executor_persona_slug=executor_persona_slug,
+                    executor_agent_id=executor_agent_id,
+                    review_policy=review_policy,
+                    review_required_capabilities=review_required_capabilities,
+                    allow_independence_fallback=True,
+                )
+            if reason is not None:
                 continue
             candidates.append(agent)
             access_states[agent.id] = self._reviewer_repository_access_state(
                 task,
                 agent.id,
             )[0]
+            independence_penalties[agent.id] = self._reviewer_independence_penalty(
+                task, agent, executor_agent_id
+            )
         if not candidates:
             return None
         candidates.sort(
             key=lambda agent: (
+                independence_penalties.get(agent.id, 0),
                 0 if access_states.get(agent.id) == "success" else 1,
                 0 if agent.status == AgentStatus.IDLE.value else 1,
                 agent.name,
@@ -15010,17 +15065,27 @@ class ControlPlane:
         reviewer_agent_id: str,
         *,
         executor_agent_id: Optional[str] = None,
+        allow_conditional_independence_fallback: bool = False,
     ) -> Optional[str]:
         try:
             agent = self.get_agent(reviewer_agent_id)
         except NotFoundError:
             return "reviewer_missing"
-        return self._default_reviewer_unavailable_reason(
+        reason = self._default_reviewer_unavailable_reason(
             task,
             agent,
             executor_agent_id=executor_agent_id,
             review_policy=self._default_review_policy(task),
         )
+        if (
+            allow_conditional_independence_fallback
+            and reason in REVIEWER_INDEPENDENCE_REASONS
+            and self._reviewer_independence_fallback_reason(
+                task, agent, executor_agent_id=executor_agent_id
+            )
+        ):
+            return None
+        return reason
 
     def _default_reviewer_unavailable_reason(
         self,
@@ -15032,8 +15097,12 @@ class ControlPlane:
         executor_agent_id: Optional[str] = None,
         review_policy: Optional[JsonDict] = None,
         review_required_capabilities: Optional[Iterable[str]] = None,
+        allow_independence_fallback: bool = False,
     ) -> Optional[str]:
-        if agent.id in self._coordination_excluded_agent_ids(task):
+        if (
+            agent.id in self._coordination_excluded_agent_ids(task)
+            and not allow_independence_fallback
+        ):
             return "reviewer_cooperative_family_participant"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "reviewer_unhealthy"
@@ -15048,9 +15117,16 @@ class ControlPlane:
             and not self._agent_seen_recently(agent, self._default_reviewer_stale_after_seconds())
         ):
             return "reviewer_stale"
-        if self.reviews.agent_has_owned_task(task.id, agent.id):
+        if (
+            self.reviews.agent_has_owned_task(task.id, agent.id)
+            and not allow_independence_fallback
+        ):
             return "reviewer_previously_owned_task"
-        if executor_agent_id is not None and agent.id == executor_agent_id:
+        if (
+            executor_agent_id is not None
+            and agent.id == executor_agent_id
+            and not allow_independence_fallback
+        ):
             return "reviewer_created_executor_evidence"
         if "review" not in set(agent.capabilities):
             return "reviewer_missing_capability"
@@ -15105,6 +15181,7 @@ class ControlPlane:
             executor_persona_slug is not None
             and agent_persona_slug is not None
             and agent_persona_slug == executor_persona_slug
+            and not allow_independence_fallback
         ):
             return "reviewer_same_persona"
         if hub_review_verifier:
@@ -15117,6 +15194,99 @@ class ControlPlane:
             )
             return "reviewer_repository_access_%s:%s" % (failure_class, host)
         return None
+
+    def _reviewer_independence_fallback_enabled(self, task: Task) -> bool:
+        policy = self._default_review_policy(task)
+        return not (
+            policy.get("require_independent_reviewer") is True
+            or policy.get("allow_independence_fallback") is False
+        )
+
+    def _reviewer_independence_penalty(
+        self,
+        task: Task,
+        agent: Agent,
+        executor_agent_id: Optional[str],
+    ) -> int:
+        penalty = 0
+        if agent.id in self._coordination_excluded_agent_ids(task):
+            penalty += 1
+        executor_persona = self._task_executor_persona_slug(task)
+        _tenant, reviewer_persona = self._agent_tenant_and_persona(agent)
+        if (
+            executor_persona is not None
+            and reviewer_persona is not None
+            and executor_persona == reviewer_persona
+        ):
+            penalty += 1
+        if self.reviews.agent_has_owned_task(task.id, agent.id):
+            penalty += 4
+        if executor_agent_id is not None and agent.id == executor_agent_id:
+            penalty += 4
+        return penalty
+
+    def _reviewer_independence_fallback_reason(
+        self,
+        task: Task,
+        reviewer: Agent,
+        *,
+        executor_agent_id: Optional[str] = None,
+        excluded_agent_ids: Optional[Iterable[str]] = None,
+    ) -> Optional[str]:
+        """Authorize independence relaxation only when no strict peer exists."""
+        if not self._reviewer_independence_fallback_enabled(task):
+            return None
+        effective_excluded = {
+            str(agent_id)
+            for agent_id in (excluded_agent_ids or [])
+            if str(agent_id)
+        }
+        evidence, _assessment = self._bound_review_evidence(task)
+        if evidence is not None:
+            effective_excluded.update(
+                str(row["reviewer_agent_id"])
+                for row in self.store.query_all(
+                    "SELECT reviewer_agent_id FROM reviews "
+                    "WHERE task_id = ? AND status = ? AND created_at >= ? "
+                    "AND reason LIKE 'reviewer_protocol_failure:%'",
+                    (
+                        task.id,
+                        ReviewStatus.RETRACTED.value,
+                        evidence.created_at or "",
+                    ),
+                )
+            )
+        if reviewer.id in effective_excluded:
+            return None
+        resolved_executor = (
+            executor_agent_id
+            if executor_agent_id is not None
+            else self.reviews.latest_executor_evidence_author(task.id)
+        )
+        strict_reason = self._default_reviewer_unavailable_reason(
+            task,
+            reviewer,
+            executor_agent_id=resolved_executor,
+            review_policy=self._default_review_policy(task),
+        )
+        if strict_reason not in REVIEWER_INDEPENDENCE_REASONS:
+            return None
+        relaxed_reason = self._default_reviewer_unavailable_reason(
+            task,
+            reviewer,
+            executor_agent_id=resolved_executor,
+            review_policy=self._default_review_policy(task),
+            allow_independence_fallback=True,
+        )
+        if relaxed_reason is not None:
+            return None
+        if self._select_default_reviewer(
+            task,
+            executor_agent_id=resolved_executor,
+            excluded_agent_ids=effective_excluded,
+        ) is not None:
+            return None
+        return strict_reason
 
     def _reviewer_repository_access_state(
         self,
@@ -15224,6 +15394,13 @@ class ControlPlane:
             executor_agent_id=executor_agent_id,
             review_policy=self._default_review_policy(task),
         )
+        if (
+            reason in REVIEWER_INDEPENDENCE_REASONS
+            and self._reviewer_independence_fallback_reason(
+                task, reviewer, executor_agent_id=executor_agent_id
+            )
+        ):
+            return None
         if reason is None:
             return None
         readable = {

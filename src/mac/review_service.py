@@ -1,10 +1,12 @@
 """Review + Publication domain service.
 
 A task transitions ``RUNNING → NEEDS_REVIEW → REVIEWING → COMPLETED`` via
-this service. A review must be filed by an agent that has never owned the
-task (no self-approval); approving requires evidence that belongs to the
-reviewed task; completion requires an approved review pointing at task
-evidence.
+this service. Reviewer independence is preferred and can be required by task
+policy, but the control plane may authorize a recorded fallback when no
+independent reviewer is available. Approving still requires signed verdict
+evidence that belongs to the reviewed task and, for agent-generated work, a
+different reviewer LLM. Completion requires an approved review pointing at
+task evidence.
 
 ``publish_task`` is the only path that legitimately moves a task to
 COMPLETED — it runs as a single transaction that flips the task row,
@@ -123,6 +125,7 @@ class ReviewService:
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
         reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
+        reviewer_fallback_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
         drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.store = store
@@ -140,6 +143,7 @@ class ReviewService:
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
         self._reviewer_eligibility_check = reviewer_eligibility_check
+        self._reviewer_fallback_check = reviewer_fallback_check
         self._drain_task_transition_outbox = drain_task_transition_outbox
         # Compatibility alias for integrations that temporarily disabled the
         # older independence-only hook.  It now points at the complete shared
@@ -153,7 +157,9 @@ class ReviewService:
     ) -> Review:
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
-        self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
+        fallback_reason = self._ensure_reviewer_eligible(
+            task, reviewer, reviewer_agent_id
+        )
         if task.state not in {
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
@@ -178,12 +184,20 @@ class ReviewService:
                     raise TransitionError(
                         "transactional task transition is unavailable"
                     )
+                transition_detail = {"reviewer_agent_id": reviewer_agent_id}
+                if fallback_reason:
+                    transition_detail.update(
+                        {
+                            "reviewer_independence": "fallback",
+                            "reviewer_independence_reason": fallback_reason,
+                        }
+                    )
                 self._transition_task_in_transaction(
                     conn,
                     task_id,
                     TaskState.REVIEWING.value,
                     actor,
-                    {"reviewer_agent_id": reviewer_agent_id},
+                    transition_detail,
                 )
             elif current_state != TaskState.REVIEWING.value:
                 raise TransitionError("task must need review before requesting review")
@@ -207,13 +221,22 @@ class ReviewService:
                     """,
                     (review_id, task_id, reviewer_agent_id, ReviewStatus.PENDING.value, now),
                 )
+                history_detail = {
+                    "review_id": review_id,
+                    "reviewer_agent_id": reviewer_agent_id,
+                    "reviewer_independence": (
+                        "fallback" if fallback_reason else "independent"
+                    ),
+                }
+                if fallback_reason:
+                    history_detail["reviewer_independence_reason"] = fallback_reason
                 self._record_history(
                     task_id,
                     "task.review_requested",
                     actor,
                     None,
                     None,
-                    {"review_id": review_id},
+                    history_detail,
                     conn=conn,
                 )
                 created = True
@@ -229,7 +252,13 @@ class ReviewService:
             "dispatcher",
             reviewer_agent_id,
             MessageType.REVIEW_REQUEST.value,
-            {"task_id": task_id, "review_id": review_id},
+            {
+                "task_id": task_id,
+                "review_id": review_id,
+                "reviewer_independence": (
+                    "fallback" if fallback_reason else "independent"
+                ),
+            },
             task_id=task_id,
         )
         return self.get_review(review_id)
@@ -239,7 +268,7 @@ class ReviewService:
         task: Task,
         reviewer: Agent,
         reviewer_agent_id: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[str]:
         reviewer_id = str(
             getattr(reviewer, "id", None) or reviewer_agent_id or ""
         ).strip()
@@ -247,17 +276,26 @@ class ReviewService:
             raise AuthorizationError("reviewer agent identity is required")
         if "review" not in set(reviewer.capabilities):
             raise AuthorizationError("reviewer agent requires the review capability")
-        if self.agent_has_owned_task(task.id, reviewer_id):
+        fallback_reason = (
+            self._reviewer_fallback_check(task, reviewer)
+            if self._reviewer_fallback_check is not None
+            else None
+        )
+        if self.agent_has_owned_task(task.id, reviewer_id) and not fallback_reason:
             raise AuthorizationError(
                 "reviewer cannot review a task it currently or previously owned"
             )
-        if self.latest_executor_evidence_author(task.id) == reviewer_id:
+        if (
+            self.latest_executor_evidence_author(task.id) == reviewer_id
+            and not fallback_reason
+        ):
             raise AuthorizationError("reviewer cannot review its own latest evidence")
         eligibility_check = self._reviewer_independence_check
         if eligibility_check is not None:
             problem = eligibility_check(task, reviewer)
             if problem:
                 raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
+        return fallback_reason
 
     def submit_review(
         self,

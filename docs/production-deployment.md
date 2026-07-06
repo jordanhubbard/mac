@@ -569,10 +569,17 @@ Use `--heartbeat-only` during deploy validation when you want fleet visibility
 without claiming migrated ACC work. Start the `--loop` form only after the
 executor command is the intended production worker. Successful executions write
 log evidence, move tasks to `needs_review`, and ask the control plane to run
-the default review workflow. The default workflow assigns a healthy agent that
-has never owned the task as reviewer, then waits for a separate signed
-`review_verdict` evidence row from that reviewer. It publishes/completes the
-task only when both executor evidence and reviewer verdict are verifiable.
+the default review workflow. The default workflow prefers a healthy reviewer
+that has never owned the task. If no independent reviewer is currently
+eligible, it may assign the least-conflicted healthy review-capable agent and
+records `reviewer_independence=fallback` plus the reason in task history and
+observability. A newly available independent reviewer supersedes a pending
+fallback review. Set task metadata `review.require_independent_reviewer: true`
+(or `review.allow_independence_fallback: false`) for work that must wait instead.
+Every path still requires a separate signed `review_verdict`; agent-generated
+work still requires a reviewer LLM different from the executor LLM. The
+workflow publishes/completes the task only when executor evidence and reviewer
+verdict are verifiable.
 Failed executions fail the task with evidence attached.
 
 ### Repository credential learning and reviewer routing
@@ -603,7 +610,7 @@ The pushed-ref evidence check uses the same environment-backed resolver. An
 authentication, authorization, or network failure on the control-plane host is
 indeterminate: it does not prove that the pushed ref is absent. A successful
 lookup with no matching ref still rejects phantom-push evidence, and the
-independent reviewer must still verify the executor's work.
+review verdict must still verify the executor's work.
 
 Inspect the routing inputs and resulting review state:
 

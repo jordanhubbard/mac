@@ -66,6 +66,7 @@ def test_request_review_transition_and_existing_review_paths(monkeypatch) -> Non
     monkeypatch.setattr(service, "agent_has_owned_task", lambda *_a: False)
     monkeypatch.setattr(service, "latest_executor_evidence_author", lambda *_a: None)
     monkeypatch.setattr(service, "_reviewer_independence_check", None)
+    monkeypatch.setattr(service, "_reviewer_fallback_check", None)
     monkeypatch.setattr(service, "_get_task", lambda *_a: _task(state=TaskState.OPEN.value))
     with pytest.raises(TransitionError, match="must need review"):
         service.request_review("task", "reviewer")
