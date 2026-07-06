@@ -137,6 +137,8 @@ test("clicking a project label selects that project", async ({ page }) => {
   // The project row should show selected state
   const alphaRow = page.locator(".project-row", { hasText: "alpha" }).first();
   await expect(alphaRow).toHaveClass(/selected/);
+  await expect(page.getByTestId("rf__node-alpha-open-1")).toHaveCount(1);
+  await expect(page.getByTestId("rf__node-beta-open-1")).toHaveCount(0);
 });
 
 test("clicking All projects clears project selection", async ({ page }) => {
@@ -192,8 +194,9 @@ test("chevron button expands project children", async ({ page }) => {
   await page.getByRole("button", { name: "Expand alpha" }).click();
 
   // Task children should be visible
-  await expect(page.getByRole("button", { name: /Open alpha one/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Blocked alpha/ })).toBeVisible();
+  const children = page.locator(".project-children");
+  await expect(children.getByRole("button", { name: "Open alpha one", exact: true })).toBeVisible();
+  await expect(children.getByRole("button", { name: "Blocked alpha", exact: true })).toBeVisible();
 });
 
 test("chevron button collapses project children", async ({ page }) => {
@@ -203,10 +206,13 @@ test("chevron button collapses project children", async ({ page }) => {
 
   // Expand then collapse
   await page.getByRole("button", { name: "Expand alpha" }).click();
-  await expect(page.getByRole("button", { name: /Open alpha one/ })).toBeVisible();
+  const child = page
+    .locator(".project-children")
+    .getByRole("button", { name: "Open alpha one", exact: true });
+  await expect(child).toBeVisible();
 
   await page.getByRole("button", { name: "Collapse alpha" }).click();
-  await expect(page.getByRole("button", { name: /Open alpha one/ })).not.toBeVisible();
+  await expect(child).not.toBeVisible();
 });
 
 test("ArrowRight key expands project, ArrowLeft collapses it", async ({ page }) => {
@@ -220,12 +226,15 @@ test("ArrowRight key expands project, ArrowLeft collapses it", async ({ page }) 
   // Expand with ArrowRight
   await gammaItem.press("ArrowRight");
   await expect(gammaItem).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByRole("button", { name: /Open gamma one/ })).toBeVisible();
+  const child = page
+    .locator(".project-children")
+    .getByRole("button", { name: "Open gamma one", exact: true });
+  await expect(child).toBeVisible();
 
   // Collapse with ArrowLeft
   await gammaItem.press("ArrowLeft");
   await expect(gammaItem).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByRole("button", { name: /Open gamma one/ })).not.toBeVisible();
+  await expect(child).not.toBeVisible();
 });
 
 // ─── aria-expanded truthfulness ──────────────────────────────────────────────
@@ -258,6 +267,33 @@ test("expanding an empty project shows 'No tasks'", async ({ page }) => {
 
   await page.getByRole("button", { name: "Expand empty-project" }).click();
   await expect(page.locator(".empty-project")).toBeVisible();
+});
+
+test("the project tree does not silently truncate projects or expanded tasks", async ({ page }) => {
+  const projectSummaries = Array.from({ length: 13 }, (_, index) => ({
+    name: `project-${index + 1}`,
+    task_count: index === 12 ? 21 : 0,
+  }));
+  const extraTasks = Array.from({ length: 21 }, (_, index) =>
+    makeTask(
+      `project-13-task-${index + 1}`,
+      "open",
+      "project-13",
+      1,
+      `Project 13 task ${index + 1}`,
+    ),
+  );
+  await setupPage(page, { extraTasks, projectSummaries });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Fleet cockpit" })).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "project-13", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Expand project-13" }).click();
+  await expect(
+    page
+      .locator(".project-children")
+      .getByRole("button", { name: "Project 13 task 21", exact: true }),
+  ).toBeVisible();
 });
 
 // ─── URL restoration / navigation ────────────────────────────────────────────
@@ -313,7 +349,10 @@ test("clicking a task child in the expanded tree selects that task", async ({ pa
 
   // Expand alpha and click a child task
   await page.getByRole("button", { name: "Expand alpha" }).click();
-  await page.getByRole("button", { name: /Open alpha one/ }).click();
+  await page
+    .locator(".project-children")
+    .getByRole("button", { name: "Open alpha one", exact: true })
+    .click();
 
   // Task should be selected (visible as selected in the explorer task list or kanban)
   const taskRow = page.locator(".task-row.child-row.selected");
@@ -334,7 +373,7 @@ test("text filter in explorer applies within selected project scope", async ({ p
   await page.getByRole("textbox", { name: "Filter tasks" }).fill("blocked");
 
   // Only alpha+blocked tasks should show in "Active work"
-  await expect(page.getByText("Blocked alpha")).toBeVisible();
+  await expect(page.locator(".explorer-task-list").getByText("Blocked alpha")).toBeVisible();
   // Beta tasks should not appear in the explorer task list
   await expect(page.locator(".explorer-task-list").getByText("Open beta one")).not.toBeVisible();
 });

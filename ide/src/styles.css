@@ -95,6 +95,17 @@ button.explorer-row:hover, button.explorer-row.selected { background: var(--bg-3
 button.explorer-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .explorer-row .truncate { flex: 1; }
 .explorer-row .dim { color: var(--faint); }
+.project-tree { min-width: 0; }
+.project-row { gap: 0; padding-left: 5px; }
+.project-row:hover, .project-row.selected { background: var(--bg-3); }
+.project-row.selected { box-shadow: inset 2px 0 var(--cyan); }
+.project-row:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
+.all-projects { gap: 7px; padding-left: 15px; }
+.chevron-button { display: grid; place-items: center; width: 27px; height: 27px; flex: none; padding: 0; border: 0; background: transparent; color: var(--faint); }
+.chevron-button:hover { color: var(--text); }
+.project-label-button { display: flex; align-items: center; min-width: 0; height: 29px; gap: 7px; flex: 1; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.project-children .child-row { padding-left: 42px; }
+.empty-project { color: var(--faint); font-size: 11px; }
 .row-count { color: var(--faint); font: 10px var(--mono); }
 .section-toolbar { padding: 0 12px 5px; }
 .section-toolbar select { width: 100%; height: 27px; padding: 0 7px; border: 1px solid var(--border); background: var(--bg-2); color: var(--muted); font-size: 11px; }

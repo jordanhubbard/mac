@@ -47,17 +47,41 @@ export function WorkbenchExplorer({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
-  const projectRecords = data.project_summaries.length
-    ? data.project_summaries
-    : Array.from(new Set(data.tasks.map((detail) => detail.task.project || "unassigned"))).map(
-        (name) => ({ name }),
-      );
+  const projectRecords = useMemo(
+    () =>
+      data.project_summaries.length
+        ? data.project_summaries
+        : Array.from(
+            new Set(data.tasks.map((detail) => detail.task.project || "unassigned")),
+          ).map((name) => ({ name })),
+    [data.project_summaries, data.tasks],
+  );
 
   // Build authoritative counts in one memoized pass
   const projectCounts = useMemo(
     () => buildProjectCounts(data.tasks, data.project_summaries),
     [data.tasks, data.project_summaries],
   );
+
+  // Index once instead of filtering the complete task list for every project
+  // on every render. Expanded projects then read their children in O(1).
+  const tasksByProject = useMemo(() => {
+    const grouped = new Map<string, TaskDetail[]>();
+    for (const detail of data.tasks) {
+      const name = detail.task.project || "unassigned";
+      const entries = grouped.get(name);
+      if (entries) entries.push(detail);
+      else grouped.set(name, [detail]);
+    }
+    for (const entries of grouped.values()) {
+      entries.sort(
+        (left, right) =>
+          (Number(right.task.priority || 0) - Number(left.task.priority || 0)) ||
+          taskLabel(left.task).localeCompare(taskLabel(right.task)),
+      );
+    }
+    return grouped;
+  }, [data.tasks]);
 
   // Tasks visible in the explorer list (filtered by state, query, and project)
   const tasks = useMemo(() => {
@@ -102,10 +126,7 @@ export function WorkbenchExplorer({
     });
   }
 
-  function handleProjectKeyDown(
-    event: React.KeyboardEvent,
-    name: string,
-  ) {
+  function handleProjectKeyDown(event: React.KeyboardEvent, name: string) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onSelectProject(selectedProjectId === name ? null : name);
@@ -158,18 +179,16 @@ export function WorkbenchExplorer({
           <span className="truncate">All projects</span>
         </button>
 
-        {projectRecords.slice(0, 12).map((project) => {
-          const name = projectName(project);
-          const count = projectCounts.get(name) ?? 0;
-          const isSelected = selectedProjectId === name;
-          const isExpanded = expandedProjects.has(name);
-          // Tasks belonging to this project (for the expanded child list)
-          const projectTasks = data.tasks
-            .filter((d) => (d.task.project || "unassigned") === name)
-            .slice(0, 20);
+        <div aria-label="Projects" className="project-tree" role="tree">
+          {projectRecords.map((project) => {
+            const name = projectName(project);
+            const count = projectCounts.get(name) ?? 0;
+            const isSelected = selectedProjectId === name;
+            const isExpanded = expandedProjects.has(name);
+            const projectTasks = tasksByProject.get(name) ?? [];
 
-          return (
-            <div key={name}>
+            return (
+              <div key={name} role="none">
               <div
                 aria-expanded={isExpanded}
                 aria-label={`${name} project`}
@@ -196,6 +215,7 @@ export function WorkbenchExplorer({
                 </button>
                 {/* Project label: selects the project */}
                 <button
+                  aria-label={name}
                   aria-pressed={isSelected}
                   className="project-label-button"
                   onClick={() => onSelectProject(isSelected ? null : name)}
@@ -231,9 +251,10 @@ export function WorkbenchExplorer({
                   )}
                 </div>
               )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
       </ExplorerSection>
 
       <ExplorerSection

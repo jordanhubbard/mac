@@ -83,6 +83,7 @@ export function WorkbenchViewContent({
           data={data}
           onRefresh={onRefresh}
           onSelectTask={onSelectTask}
+          selectedProjectId={selectedProjectId}
           selectedTaskId={selectedTaskId}
         />
       );
@@ -116,22 +117,43 @@ function CockpitView({
   data,
   agents,
   selectedTaskId,
+  selectedProjectId,
   onSelectTask,
   onRefresh,
 }: {
   data: DashboardState;
   agents: Agent[];
   selectedTaskId: string | null;
+  selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
   onRefresh: () => void | Promise<void>;
 }) {
   const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const counts = data.overview.counts;
-  const states = data.overview.task_states;
+  const scopedTasks = useMemo(
+    () =>
+      selectedProjectId
+        ? data.tasks.filter(
+            ({ task }) => (task.project || "unassigned") === selectedProjectId,
+          )
+        : data.tasks,
+    [data.tasks, selectedProjectId],
+  );
+  const states = useMemo(() => {
+    if (!selectedProjectId) return data.overview.task_states;
+    const totals: Record<string, number> = {};
+    for (const { task } of scopedTasks) {
+      const state = String(task.state || "open");
+      totals[state] = (totals[state] ?? 0) + 1;
+    }
+    return totals;
+  }, [data.overview.task_states, scopedTasks, selectedProjectId]);
   const health = agents.length
     ? Math.round((Number(counts.healthy_agents || 0) / agents.length) * 100)
     : 100;
-  const active = data.tasks.filter((detail) => !TERMINAL_STATES.has(String(detail.task.state))).length;
+  const active = scopedTasks.filter(
+    (detail) => !TERMINAL_STATES.has(String(detail.task.state)),
+  ).length;
   const inspectedTask = inspectedTaskId
     ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
     : null;
@@ -143,7 +165,7 @@ function CockpitView({
   return (
     <main className="workbench-view cockpit-view">
       <ViewHeader
-        description={`Live control plane · updated ${age(data.updated_at)}`}
+        description={`${selectedProjectId ? `Project ${selectedProjectId}` : "Live control plane"} · updated ${age(data.updated_at)}`}
         eyebrow="Operator workbench"
         title="Fleet cockpit"
       />
@@ -158,7 +180,10 @@ function CockpitView({
         <div className="surface-heading">
           <div>
             <span className="surface-kicker">Active work graph</span>
-            <span className="surface-note">Up to 25 active tasks · arrows are unresolved dependencies</span>
+            <span className="surface-note">
+              Up to 25 active tasks{selectedProjectId ? ` in ${selectedProjectId}` : ""} · arrows are
+              unresolved dependencies
+            </span>
           </div>
           <span className="live-indicator"><span /> stream connected</span>
         </div>
@@ -167,7 +192,7 @@ function CockpitView({
           onInspectTask={inspectTask}
           onSelectTask={onSelectTask}
           selectedTaskId={selectedTaskId}
-          tasks={data.tasks}
+          tasks={scopedTasks}
         />
       </section>
       {inspectedTask ? (
