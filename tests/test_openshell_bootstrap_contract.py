@@ -26,6 +26,14 @@ def test_openshell_bootstrap_is_docker_engine_only():
     )
     assert "podman load" in script
     assert "runtime image smoke: gh/codex/codegraph visible through OpenShell" in script
+    assert "run_live_confinement_probe" in script
+    assert "live-confinement-probe.sh" in script
+    assert "CONFINEMENT_PROBE_OK" in (
+        ROOT / "deploy" / "openshell" / "live-confinement-probe.sh"
+    ).read_text(encoding="utf-8")
+    assert "MAC_OPENSHELL_GC=1" in script
+    assert "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400" in script
+    assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
     assert script.count("import mac.agent_command") >= 2
     assert "-- bash -c" in script
     assert 'current_openshell_version" != "$OPENSHELL_VERSION"' in script

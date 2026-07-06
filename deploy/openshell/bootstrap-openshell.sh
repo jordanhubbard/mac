@@ -96,6 +96,39 @@ build_runtime_image() {
 
 trap cleanup_image_build_assets EXIT
 
+run_live_confinement_probe() {
+  local cli="$1" name="$2" output="$3"
+  local probe="$MAC_SRC/deploy/openshell/live-confinement-probe.sh"
+  [ -f "$probe" ] || { echo "ERROR: missing OpenShell confinement probe: $probe" >&2; return 1; }
+  rm -f "$output"
+  "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
+  if "$cli" sandbox create \
+      --no-auto-providers \
+      --policy "$MAC_HOME/openshell-policy.yaml" \
+      --name "$name" \
+      --label mac.owner=mac \
+      --label mac.kind=security-probe \
+      --label "mac.pid=$$" \
+      --label mac.keep=false \
+      --from "$OSH_IMAGE_TAG" \
+      --env HOME=/tmp \
+      --upload "$probe:/sandbox/live-confinement-probe.sh" \
+      -- bash /sandbox/live-confinement-probe.sh \
+      >"$output" 2>&1; then
+    "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
+    grep -q '^CONFINEMENT_PROBE_OK$' "$output" \
+      || { echo "ERROR: OpenShell confinement probe omitted success sentinel" >&2; return 1; }
+    log "live confinement probe: filesystem/network/privilege/syscall boundaries enforced"
+    return 0
+  else
+    rc=$?
+    "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
+    echo "ERROR: OpenShell live confinement probe failed; see $output" >&2
+    tail -80 "$output" >&2 || true
+    return "$rc"
+  fi
+}
+
 # --- macOS / Docker Desktop path --------------------------------------------
 # On macOS the OpenShell *gateway* (a Linux ELF) and the sandbox containers run
 # inside Docker (Desktop)'s Linux VM. The gateway runs as a socket-mounted
@@ -125,9 +158,17 @@ bootstrap_darwin() {
   if [ "$SKIP_IMAGE" = 0 ]; then
     build_runtime_image
   fi
-  # 3. gateway Linux binary (runs inside a container)
-  if [ ! -x "$OSH_DIR/openshell-gateway" ]; then
+  # 3. gateway Linux binary (runs inside a container). Check its actual version
+  # through the Linux image: an existing older binary must not silently survive
+  # a CLI upgrade on the macOS host.
+  current_gateway_version=""
+  if [ -x "$OSH_DIR/openshell-gateway" ]; then
+    current_gateway_version="$("$OSH_DOCKER_BIN" run --rm -v "$OSH_DIR:/osh" "$OSH_IMAGE_TAG" \
+      /osh/openshell-gateway --version 2>/dev/null | awk 'NR==1 {print $NF}' || true)"
+  fi
+  if [ "$current_gateway_version" != "$OPENSHELL_VERSION" ]; then
     url="https://github.com/NVIDIA/OpenShell/releases/download/v$OPENSHELL_VERSION/openshell-gateway-$gwarch-unknown-linux-gnu.tar.gz"
+    log "installing gateway $OPENSHELL_VERSION (current: ${current_gateway_version:-missing})"
     log "fetching gateway: $url"; tmp="$(mktemp -d)"; download -o "$tmp/gw.tgz" "$url"; tar -xzf "$tmp/gw.tgz" -C "$tmp"
     install -m755 "$(find "$tmp" -name openshell-gateway -type f | head -1)" "$OSH_DIR/openshell-gateway"; rm -rf "$tmp"
   fi
@@ -187,12 +228,14 @@ EOF
   [ -f "$HOME/.hermes/config.yaml" ] && { sed -E "s#(https?://)[^/@:]+(:${HUB_PORT}/)#\1${POLICY_HUB}\2#g" "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"; chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"; }
   # 8. env recipe (BSD sed -i '')
   cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-  sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
+  sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
   {
     echo ""
     echo "# OpenShell sandbox enforcement (macOS/Docker Desktop; gateway in container; LinuxKit has no host Landlock)"
     echo "MAC_OPENSHELL_SANDBOX=$DO_ENABLE"
     echo "MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1"
+    echo "MAC_OPENSHELL_GC=1"
+    echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
     echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
     echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
     echo "MAC_OPENSHELL_BIN=$OSH_CLI"
@@ -205,6 +248,7 @@ EOF
   if [ "$DO_ENABLE" = 1 ]; then
     sm="mac-runtime-smoke-$$"
     if "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
+        --label mac.owner=mac --label mac.kind=runtime-smoke --label "mac.pid=$$" --label mac.keep=false \
         --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
         -- bash -c 'set -eu; command -v gh; command -v codegraph; command -v python3; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
       "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
@@ -213,6 +257,8 @@ EOF
       "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
       echo "ERROR: OpenShell smoke failed; see $OSH_DIR/runtime-image-smoke.log" >&2; tail -40 "$OSH_DIR/runtime-image-smoke.log" >&2; exit 1
     fi
+    run_live_confinement_probe "$OSH_CLI" "mac-security-probe-$$" \
+      "$OSH_DIR/live-confinement-probe.log" || exit $?
   fi
   log "DONE (macOS). sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED; gateway=docker container 'openshell-gw'"
   log "restart the agent to apply: launchctl kickstart -k gui/\$(id -u)/com.<fleet_name>.agent (then validate a real task)"
@@ -316,6 +362,10 @@ validate_openshell_runtime_image() {
       --no-auto-providers \
       --policy "$MAC_HOME/openshell-policy.yaml" \
       --name "$smoke_name" \
+      --label mac.owner=mac \
+      --label mac.kind=runtime-smoke \
+      --label "mac.pid=$$" \
+      --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       "${gpu_flag[@]}" \
       --env HOME=/tmp \
@@ -330,6 +380,8 @@ validate_openshell_runtime_image() {
     tail -80 "$smoke_log" >&2 || true
     exit "$rc"
   fi
+  run_live_confinement_probe "$BIN/openshell" "mac-security-probe-$$" \
+    "$OSH_DIR/live-confinement-probe.log"
 }
 
 # --- 1. openshell CLI (uv tool, else pip venv) ------------------------------
@@ -581,11 +633,13 @@ else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
+sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
 {
   echo ""
   echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; Docker Engine/Moby driver, gpu=$OSH_GPU)"
   echo "MAC_OPENSHELL_SANDBOX=$DO_ENABLE"
+  echo "MAC_OPENSHELL_GC=1"
+  echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
   echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"

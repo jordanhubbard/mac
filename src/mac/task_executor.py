@@ -3239,6 +3239,9 @@ def _mcp_serve_argv() -> List[str]:
 #                                 (src/mac/openshell/default-policy.yaml).
 #   MAC_OPENSHELL_SANDBOX_NAME    fixed sandbox name (debug; default: ephemeral)
 #   MAC_OPENSHELL_KEEP            truthy -> --keep (debug; default one-shot teardown)
+#   MAC_OPENSHELL_GC              truthy -> delete old orphaned MAC sandboxes
+#                                 before creating a new task sandbox
+#   MAC_OPENSHELL_STALE_AFTER_SECONDS minimum age for automatic GC (default 86400)
 #   MAC_OPENSHELL_CREATE_ARGS     extra `sandbox create` args (shell-split), e.g.
 #                                 "--from my-image" or "--upload /src:/src" used to
 #                                 make the Hermes runtime + workspace available
@@ -3443,6 +3446,51 @@ def _sandbox_name() -> str:
     import uuid
 
     return "mac-task-" + uuid.uuid4().hex[:12]
+
+
+def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
+    return [
+        "--label",
+        "mac.owner=mac",
+        "--label",
+        "mac.kind=%s" % kind,
+        "--label",
+        "mac.pid=%d" % os.getpid(),
+        "--label",
+        "mac.keep=%s" % ("true" if keep else "false"),
+    ]
+
+
+def _sandbox_gc_best_effort() -> None:
+    if not _truthy(os.environ.get("MAC_OPENSHELL_GC")):
+        return
+    try:
+        stale_after = float(
+            os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
+        )
+    except ValueError:
+        stale_after = 86400.0
+    try:
+        from .openshell_sandbox_gc import reconcile_stale_sandboxes
+
+        report = reconcile_stale_sandboxes(
+            openshell_bin=_openshell_bin(),
+            stale_after_seconds=max(0.0, stale_after),
+            include_legacy=True,
+            apply=True,
+        )
+        if report["deleted"]:
+            sys.stderr.write(
+                "[executor] removed %d stale OpenShell sandbox(es)\n"
+                % len(report["deleted"])
+            )
+        if report["failures"]:
+            sys.stderr.write(
+                "[executor] WARNING: failed to remove %d stale OpenShell sandbox(es)\n"
+                % len(report["failures"])
+            )
+    except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
+        sys.stderr.write("[executor] WARNING: OpenShell sandbox GC failed: %s\n" % exc)
 
 
 def _workspace_basename(workspace: Path) -> str:
@@ -4155,6 +4203,9 @@ def _build_sandbox_create_argv(
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
+    argv += _sandbox_label_argv(
+        "task", keep=_truthy(os.environ.get("MAC_OPENSHELL_KEEP"))
+    )
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
         extra_argv = shlex.split(extra)
@@ -4666,6 +4717,7 @@ def _run_sandboxed(
     evidence manifest is not destroyed with the sandbox."""
     _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
     _ensure_landlock_or_fail()
+    _sandbox_gc_best_effort()
     name = _sandbox_name()
     basename = _workspace_basename(workspace)
     sandbox_workspace = "%s/%s" % (_SANDBOX_WORKDIR, basename)
@@ -4932,6 +4984,7 @@ def _build_sandbox_probe_argv(
         raise ValueError("sandbox probe must use the private-file command wrapper")
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
+    argv += _sandbox_label_argv("codingcap")
     extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
     if extra:
         extra_argv = shlex.split(extra)

@@ -36,6 +36,8 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_POLICY",
     "MAC_OPENSHELL_SANDBOX_NAME",
     "MAC_OPENSHELL_KEEP",
+    "MAC_OPENSHELL_GC",
+    "MAC_OPENSHELL_STALE_AFTER_SECONDS",
     "MAC_OPENSHELL_CREATE_ARGS",
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
@@ -182,6 +184,20 @@ def test_build_deployed_policy_preferred_over_bundled(tmp_path):
 def test_build_names_the_sandbox():
     out = _build()
     assert "--name" in out and out[out.index("--name") + 1] == "sb-test"
+
+
+def test_build_labels_sandbox_for_safe_orphan_collection():
+    out = _build()
+    labels = [out[index + 1] for index, token in enumerate(out) if token == "--label"]
+    assert "mac.owner=mac" in labels
+    assert "mac.kind=task" in labels
+    assert "mac.keep=false" in labels
+    assert any(label.startswith("mac.pid=") for label in labels)
+
+
+def test_build_marks_debug_kept_sandbox(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_KEEP", "1")
+    assert "mac.keep=true" in _build()
 
 
 def test_build_uploads_workspace_to_sandbox_root():

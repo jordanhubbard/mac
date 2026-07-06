@@ -2420,6 +2420,19 @@ def cmd_openshell_reconcile(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_openshell_sandbox_gc(args: argparse.Namespace) -> None:
+    from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
+
+    _print(
+        reconcile_stale_sandboxes(
+            openshell_bin=args.openshell_bin,
+            stale_after_seconds=max(0.0, args.stale_after_hours * 3600.0),
+            include_legacy=not args.no_legacy,
+            apply=args.apply,
+        )
+    )
+
+
 def _soul_snapshot_setup(args):
     """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
     import yaml as _yaml
@@ -4677,6 +4690,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="only reconcile required resources and policy assignment",
     )
     _set(cmd_openshell_reconcile, osh_reconcile)
+
+    osh_gc = openshell.add_parser(
+        "sandbox-gc",
+        help="list or delete old orphaned MAC-owned OpenShell sandboxes",
+    )
+    osh_gc.add_argument(
+        "--apply",
+        action="store_true",
+        help="delete eligible sandboxes; default is a dry-run",
+    )
+    osh_gc.add_argument(
+        "--stale-after-hours",
+        type=float,
+        default=24.0,
+        help="minimum sandbox age before deletion (default: 24)",
+    )
+    osh_gc.add_argument(
+        "--no-legacy",
+        action="store_true",
+        help="only consider labeled sandboxes, not legacy MAC name prefixes",
+    )
+    osh_gc.add_argument(
+        "--openshell-bin",
+        default=os.environ.get("MAC_OPENSHELL_BIN") or "openshell",
+    )
+    _set(cmd_openshell_sandbox_gc, osh_gc)
 
     osh_render = openshell.add_parser(
         "render-policy",

@@ -28,8 +28,7 @@ from __future__ import annotations
 import io
 import json
 import sys
-
-import pytest
+from types import SimpleNamespace
 
 from mac.cli import main
 
@@ -71,6 +70,38 @@ def _make_agent(tmp_path, name="worker-1", hostname="host-1", agent_id=None, tru
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], name, *extra)
     assert rc == 0
     return agent
+
+
+def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc.subprocess.run",
+        lambda _argv, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": "mac-task-old",
+                        "phase": "Ready",
+                        "created_at": "2020-01-01 00:00:00",
+                        "labels": {},
+                    }
+                ]
+            ),
+            stderr="",
+        ),
+    )
+
+    rc, report = _run(
+        tmp_path,
+        "openshell",
+        "sandbox-gc",
+        "--stale-after-hours",
+        "1",
+    )
+
+    assert rc == 0
+    assert report["dry_run"] is True
+    assert [row["name"] for row in report["candidates"]] == ["mac-task-old"]
 
 
 # ===========================================================================

@@ -74,8 +74,10 @@ could be configured with only `[openshell.drivers.docker]` while still logging
 image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
 pin). `bootstrap-openshell.sh` retains the `mirror_image_for_openshell_runtime`
 step as belt-and-suspenders, and still runs an `openshell sandbox create` smoke
-test that verifies `gh`, `codex`, and `codegraph` are visible before the node
-is considered ready.
+test that verifies `gh`, `codex`, and `codegraph` are visible. Bootstrap then
+runs `live-confinement-probe.sh` inside a second throwaway sandbox and fails
+closed unless the runtime proves the expected filesystem, egress, privilege,
+seccomp, user-namespace, and raw-socket boundaries.
 
 ```bash
 deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
@@ -126,6 +128,8 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 | `MAC_OPENSHELL_SANDBOX` | _(off)_ | deprecated compatibility: one-shot task executor wrapping |
 | `MAC_OPENSHELL_SANDBOX_NAME` | _(ephemeral)_ | fixed sandbox name (debug only) |
 | `MAC_OPENSHELL_KEEP` | _(off)_ | truthy → `--keep` (don't tear down; debug) |
+| `MAC_OPENSHELL_GC` | set to `1` by bootstrap | reconcile old orphaned MAC-owned sandboxes before new executor or hub-verification work |
+| `MAC_OPENSHELL_STALE_AFTER_SECONDS` | `86400` | minimum age for automatic sandbox garbage collection |
 | `MAC_OPENSHELL_CREATE_ARGS` | _(none)_ | extra `sandbox create` args (shell-split), e.g. `--from img`, `--upload /src:/src` |
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | hub+gateway vars | comma list of env names forwarded through the private sandbox environment file |
 
@@ -134,7 +138,19 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 1. `docker info` succeeds and `docker --version` is not a Podman compatibility
    shim.
 2. `openshell gateway list` shows the selected gateway.
-3. Dry-run the wrap without spawning:
+3. `~/.mac/openshell/live-confinement-probe.log` ends with
+   `CONFINEMENT_PROBE_OK`; bootstrap will not enable enforcement without it.
+4. Inspect orphan cleanup before applying it manually:
+   ```bash
+   mac openshell sandbox-gc
+   mac openshell sandbox-gc --apply
+   ```
+   The default 24-hour grace period protects recent work. New sandboxes are
+   labeled with their MAC owner, lifecycle kind, creator PID, and debug-keep
+   status; a live creator or `mac.keep=true` is never collected. Exact legacy
+   `mac-task-*` and `mac-hubverify-*` names remain eligible after the grace
+   period so pre-label leaks can be retired.
+5. Dry-run the wrap without spawning:
    ```python
    import os; os.environ["MAC_OPENSHELL_SANDBOX"]="1"
    os.environ["MAC_OPENSHELL_POLICY"]="/etc/mac/openshell-policy.yaml"
@@ -143,10 +159,10 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends
    with the Hermes argv.
-4. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
+6. Start `mac-openshell-supervisor` on hub, worker-1, and worker-2. Confirm
    the gateway, task executor, finalizers, and Hermes sessions inherit the same
    sandbox id.
-5. Trigger an off-policy filesystem or network attempt. Confirm the denial
+7. Trigger an off-policy filesystem or network attempt. Confirm the denial
    appears in OpenShell logs, `/action-events`, the dashboard Observability
    action feed, memory summary eligibility, and OTLP export.
 

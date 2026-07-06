@@ -14066,6 +14066,26 @@ class ControlPlane:
             timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "1200"))
         except ValueError:
             timeout = 1200.0
+        if _truthy_env("MAC_OPENSHELL_GC"):
+            try:
+                from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
+
+                try:
+                    stale_after = float(
+                        os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
+                    )
+                except ValueError:
+                    stale_after = 86400.0
+                reconcile_stale_sandboxes(
+                    openshell_bin=openshell,
+                    stale_after_seconds=max(0.0, stale_after),
+                    include_legacy=True,
+                    apply=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - verification remains guarded
+                logging.getLogger(__name__).warning(
+                    "OpenShell sandbox GC failed before hub verification: %s", exc
+                )
         import uuid as _uuid
 
         tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
@@ -14107,7 +14127,12 @@ class ControlPlane:
             if policy:
                 argv += ["--policy", policy]
             argv += [
-                "--name", name, "--from", image, "--env", "HOME=/tmp",
+                "--name", name,
+                "--label", "mac.owner=mac",
+                "--label", "mac.kind=hubverify",
+                "--label", "mac.pid=%d" % os.getpid(),
+                "--label", "mac.keep=false",
+                "--from", image, "--env", "HOME=/tmp",
                 # OpenShell's supervisor resets PATH on fresh create/exec
                 # commands instead of preserving the image ENV. Pass the
                 # sandbox-owned runtime path explicitly; never inherit the
