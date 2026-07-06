@@ -92,6 +92,10 @@ from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
 )
+from mac.review_failure_classifier import (
+    FinalizerRefusalKind,
+    classify_finalizer_refusal,
+)
 
 # ---------------------------------------------------------------------------
 # Small utilities (ported verbatim from the deploy heredoc)
@@ -1814,6 +1818,8 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     if new_file_refusal:
         signals["untracked_files"] = _string_list(repo.get("untracked_files"))
         signals["staged_new_files"] = _string_list(repo.get("staged_new_files"))
+        refusal_kind = classify_finalizer_refusal(manifest, repo or {}, checks or [])
+        signals["finalizer_refusal_kind"] = refusal_kind.value
     # Success: the run exited cleanly, evidence exists, and (where relevant)
     # it was pushed and tests/checks passed. Absent repo/checks don't fail it.
     success = (
@@ -1837,30 +1843,24 @@ def _is_truthy(value: Any) -> bool:
     return value is True or str(value).strip().lower() in {"1", "true", "yes"}
 
 
+# FinalizerRefusalKind and classify_finalizer_refusal are imported from
+# mac.review_failure_classifier (the lightweight, dependency-free module that
+# owns the canonical definitions).  They are re-usable here via the import at
+# the top of this module; no local redefinition is needed.
+
+
 def _is_untracked_new_files_refusal(
     manifest: Dict[str, Any],
     repo: Dict[str, Any],
     checks: List[Any],
 ) -> bool:
-    problem_values = manifest.get("problems") or []
-    if not isinstance(problem_values, list):
-        problem_values = [problem_values]
-    problem_blob = "\n".join(str(item).lower() for item in problem_values)
-    if (
-        "untracked files present at finalize time" in problem_blob
-        or "new files staged at finalize time" in problem_blob
-    ):
-        return True
-    if not _is_truthy(repo.get("dirty")):
-        return False
-    for check in checks:
-        if not isinstance(check, dict):
-            continue
-        if str(check.get("name") or "") != "git_finalizer":
-            continue
-        if str(check.get("returncode")) == "1":
-            return True
-    return False
+    """Return ``True`` when the finalizer refused due to untracked/staged-new files.
+
+    Delegates to :func:`classify_finalizer_refusal` so the two stay in sync.
+    The existing boolean contract is preserved: any non-``clean`` kind counts
+    as a refusal.
+    """
+    return classify_finalizer_refusal(manifest, repo, checks) is not FinalizerRefusalKind.clean
 
 
 def _error_signature(manifest: Dict[str, Any]) -> str:
@@ -2457,10 +2457,19 @@ def _write_git_finalizer_refusal_manifest(
 ) -> None:
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    # Determine the structured refusal kind from the paths provided so downstream
+    # services can read the reason without re-parsing problems[].
+    if untracked_paths:
+        refusal_kind_value = FinalizerRefusalKind.untracked_new_files.value
+    elif staged_new_paths:
+        refusal_kind_value = FinalizerRefusalKind.staged_new_files.value
+    else:
+        refusal_kind_value = FinalizerRefusalKind.untracked_new_files.value
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "fail",
         "evidence_type": "repo_change",
+        "finalizer_refusal_kind": refusal_kind_value,
         "summary": message,
         "problems": [message],
         "repo": {

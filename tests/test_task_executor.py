@@ -3255,3 +3255,223 @@ def test_record_recovery_learnings_tolerates_individual_errors(tmp_path, monkeyp
     # Should not raise; second entry still tried
     te._record_recovery_learnings(tmp_path, task, outcome)
     assert call_count[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# FinalizerRefusalKind / classify_finalizer_refusal
+# ---------------------------------------------------------------------------
+
+
+def test_classify_finalizer_refusal_untracked_from_problem_string():
+    """Problem string 'untracked files present at finalize time' → untracked_new_files."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    manifest = {
+        "problems": ["untracked files present at finalize time — agent must commit ALL new files before declaring done: foo.py"],
+        "repo": {"dirty": True, "untracked_files": ["foo.py"], "staged_new_files": []},
+    }
+    repo = manifest["repo"]
+    checks = [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+
+    kind = classify_finalizer_refusal(manifest, repo, checks)
+
+    assert kind is FinalizerRefusalKind.untracked_new_files
+    assert kind.value == "untracked_new_files"
+
+
+def test_classify_finalizer_refusal_staged_from_problem_string():
+    """Problem string 'new files staged at finalize time' → staged_new_files."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    manifest = {
+        "problems": ["new files staged at finalize time — agent must commit ALL new files before declaring done: tests/bar.py"],
+        "repo": {"dirty": True, "untracked_files": [], "staged_new_files": ["tests/bar.py"]},
+    }
+    repo = manifest["repo"]
+    checks = [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+
+    kind = classify_finalizer_refusal(manifest, repo, checks)
+
+    assert kind is FinalizerRefusalKind.staged_new_files
+    assert kind.value == "staged_new_files"
+
+
+def test_classify_finalizer_refusal_clean_when_no_refusal():
+    """No refusal signals → clean."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    manifest = {
+        "problems": [],
+        "repo": {"dirty": False, "untracked_files": [], "staged_new_files": []},
+    }
+    checks = [{"name": "tests", "returncode": 0, "status": "pass"}]
+
+    kind = classify_finalizer_refusal(manifest, manifest["repo"], checks)
+
+    assert kind is FinalizerRefusalKind.clean
+
+
+def test_classify_finalizer_refusal_structural_untracked_fallback():
+    """Structural fallback: dirty + git_finalizer rc=1 + untracked list → untracked_new_files."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    # No problem string — simulates an older manifest without the message
+    manifest = {
+        "repo": {"dirty": True, "untracked_files": ["leaked.py"], "staged_new_files": []},
+    }
+    repo = manifest["repo"]
+    checks = [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+
+    kind = classify_finalizer_refusal(manifest, repo, checks)
+
+    assert kind is FinalizerRefusalKind.untracked_new_files
+
+
+def test_classify_finalizer_refusal_structural_staged_fallback():
+    """Structural fallback: dirty + git_finalizer rc=1 + staged list (no untracked) → staged_new_files."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    manifest = {
+        "repo": {"dirty": True, "untracked_files": [], "staged_new_files": ["new_module.py"]},
+    }
+    repo = manifest["repo"]
+    checks = [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+
+    kind = classify_finalizer_refusal(manifest, repo, checks)
+
+    assert kind is FinalizerRefusalKind.staged_new_files
+
+
+def test_classify_finalizer_refusal_untracked_wins_when_both_present():
+    """When both untracked and staged lists are non-empty, untracked_new_files wins."""
+    from mac.review_failure_classifier import FinalizerRefusalKind, classify_finalizer_refusal
+
+    manifest = {
+        "repo": {"dirty": True, "untracked_files": ["a.py"], "staged_new_files": ["b.py"]},
+    }
+    repo = manifest["repo"]
+    checks = [{"name": "git_finalizer", "returncode": 1, "status": "fail"}]
+
+    kind = classify_finalizer_refusal(manifest, repo, checks)
+
+    assert kind is FinalizerRefusalKind.untracked_new_files
+
+
+def test_classify_finalizer_refusal_accessible_from_task_executor():
+    """FinalizerRefusalKind and classify_finalizer_refusal are importable via task_executor."""
+    from mac import task_executor as _te
+    from mac.review_failure_classifier import FinalizerRefusalKind
+
+    # Both should be the same object (imported, not a re-defined copy)
+    assert _te.FinalizerRefusalKind is FinalizerRefusalKind
+    assert callable(_te.classify_finalizer_refusal)
+
+
+def test_classify_outcome_annotates_finalizer_refusal_kind_untracked(tmp_path):
+    """classify_outcome sets finalizer_refusal_kind=untracked_new_files in signals."""
+    task = {"id": "t1", "title": "demo", "project": "demo"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "status": "fail",
+        "problems": ["untracked files present at finalize time — agent must commit ALL new files before declaring done: generated.txt"],
+        "repo": {
+            "pushed": False,
+            "dirty": True,
+            "files_changed": [],
+            "untracked_files": ["generated.txt"],
+            "staged_new_files": [],
+        },
+        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+    }))
+
+    out = te.classify_outcome(tmp_path, task, 0)
+
+    assert out["outcome"] == "failure"
+    assert out["error_signature"] == "untracked_new_files_at_finalize"
+    assert out["signals"]["finalizer_refusal_kind"] == "untracked_new_files"
+
+
+def test_classify_outcome_annotates_finalizer_refusal_kind_staged(tmp_path):
+    """classify_outcome sets finalizer_refusal_kind=staged_new_files in signals."""
+    task = {"id": "t1", "title": "demo", "project": "demo"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "status": "fail",
+        "problems": ["new files staged at finalize time — agent must commit ALL new files before declaring done: tests/new_test.py"],
+        "repo": {
+            "pushed": False,
+            "dirty": True,
+            "files_changed": [],
+            "untracked_files": [],
+            "staged_new_files": ["tests/new_test.py"],
+        },
+        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+    }))
+
+    out = te.classify_outcome(tmp_path, task, 0)
+
+    assert out["outcome"] == "failure"
+    assert out["error_signature"] == "untracked_new_files_at_finalize"
+    assert out["signals"]["finalizer_refusal_kind"] == "staged_new_files"
+
+
+def test_write_git_finalizer_refusal_manifest_includes_kind_untracked(tmp_path, monkeypatch):
+    """_write_git_finalizer_refusal_manifest writes finalizer_refusal_kind=untracked_new_files."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    task = {"id": "t-kind-untracked", "metadata": {}}
+
+    te._write_git_finalizer_refusal_manifest(
+        ws, task, work,
+        "untracked files present at finalize time — agent must commit ALL new files before declaring done: leaked.py",
+        status_stdout="?? leaked.py\n",
+        untracked_paths=["leaked.py"],
+        staged_new_paths=[],
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["finalizer_refusal_kind"] == "untracked_new_files"
+    assert manifest["repo"]["untracked_files"] == ["leaked.py"]
+    assert manifest["repo"]["staged_new_files"] == []
+
+
+def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, monkeypatch):
+    """_write_git_finalizer_refusal_manifest writes finalizer_refusal_kind=staged_new_files."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    task = {"id": "t-kind-staged", "metadata": {}}
+
+    te._write_git_finalizer_refusal_manifest(
+        ws, task, work,
+        "new files staged at finalize time — agent must commit ALL new files before declaring done: new_mod.py",
+        status_stdout="A  new_mod.py\n",
+        untracked_paths=[],
+        staged_new_paths=["new_mod.py"],
+    )
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["finalizer_refusal_kind"] == "staged_new_files"
+    assert manifest["repo"]["untracked_files"] == []
+    assert manifest["repo"]["staged_new_files"] == ["new_mod.py"]

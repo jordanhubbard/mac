@@ -45,12 +45,147 @@ signals, and returns a :class:`ReviewFailureCategory` tuple:
 The module is intentionally dependency-free (no imports from mac.services or
 mac.worker) so it can be loaded from the finalizer subprocess without
 triggering the full control-plane import tree.
+
+It also hosts the :class:`FinalizerRefusalKind` enum and
+:func:`classify_finalizer_refusal` so downstream services can distinguish
+*executor left new uncommitted files* from semantic/test failures and
+infrastructure errors, without re-parsing ``problems[]``.
 """
 
 from __future__ import annotations
 
+import enum
 import re
-from typing import NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
+
+
+# ---------------------------------------------------------------------------
+# Finalizer-refusal classification (executor layer)
+# ---------------------------------------------------------------------------
+
+
+class FinalizerRefusalKind(enum.Enum):
+    """Structured classification of a git-finalizer refusal.
+
+    Values
+    ------
+    untracked_new_files
+        The agent left one or more new files *untracked* (not even staged) in
+        the worktree.  The finalizer aborts publication so the files are not
+        silently dropped.
+    staged_new_files
+        The agent staged one or more new files (``git add``-ed) but did not
+        include them in a commit before declaring done.
+    clean
+        No new-file refusal condition was detected.  This is the happy-path
+        sentinel returned when the guard did not fire.
+    """
+
+    untracked_new_files = "untracked_new_files"
+    staged_new_files = "staged_new_files"
+    clean = "clean"
+
+
+def _is_truthy_rfc(value: Any) -> bool:
+    """Lightweight truthy check used by classify_finalizer_refusal.
+
+    Mirrors task_executor._is_truthy without importing it (this module must
+    stay dependency-free of mac.task_executor).
+    """
+    return value is True or str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _string_list_rfc(value: Any) -> List[str]:
+    """Coerce *value* to a list of strings (best-effort).
+
+    Mirrors task_executor._string_list without importing it.
+    """
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    if value is not None:
+        return [str(value)]
+    return []
+
+
+def classify_finalizer_refusal(
+    manifest: Dict[str, Any],
+    repo: Dict[str, Any],
+    checks: List[Any],
+) -> FinalizerRefusalKind:
+    """Classify the finalizer-refusal reason as a structured kind.
+
+    Inspects *manifest*, *repo*, and *checks* (all sourced from
+    ``mac-evidence.json``) and returns a :class:`FinalizerRefusalKind`
+    enum value:
+
+    * ``untracked_new_files`` — the refusal was triggered by untracked files.
+    * ``staged_new_files``    — the refusal was triggered by staged-but-not-
+                               committed new files.
+    * ``clean``               — no new-file refusal condition detected.
+
+    The fail-closed guard logic (when to refuse) is **unchanged** by this
+    function; it only adds classification metadata on top of the existing
+    boolean decision.
+
+    Parameters
+    ----------
+    manifest:
+        The parsed ``mac-evidence.json`` dict (or ``{}`` when absent).
+    repo:
+        The ``repo`` sub-dict from the manifest (or ``{}``).
+    checks:
+        The ``checks`` list from the manifest (or ``[]``).
+
+    Returns
+    -------
+    FinalizerRefusalKind
+    """
+    problem_values = manifest.get("problems") or []
+    if not isinstance(problem_values, list):
+        problem_values = [problem_values]
+    problem_blob = "\n".join(str(item).lower() for item in problem_values)
+
+    # Untracked files take priority — they appear first in the guard order
+    # and have a distinct problem message prefix.
+    if "untracked files present at finalize time" in problem_blob:
+        return FinalizerRefusalKind.untracked_new_files
+    if "new files staged at finalize time" in problem_blob:
+        return FinalizerRefusalKind.staged_new_files
+
+    # Also check the top-level finalizer_refusal_kind field written by the
+    # finalizer itself — fastest path when the manifest was written by an
+    # updated executor.
+    top_kind = str(manifest.get("finalizer_refusal_kind") or "").strip()
+    if top_kind == FinalizerRefusalKind.untracked_new_files.value:
+        return FinalizerRefusalKind.untracked_new_files
+    if top_kind == FinalizerRefusalKind.staged_new_files.value:
+        return FinalizerRefusalKind.staged_new_files
+
+    # Fall back to structural signals when the problem strings are absent
+    # (e.g. when the manifest was written without them for compat reasons).
+    if not _is_truthy_rfc(repo.get("dirty")):
+        return FinalizerRefusalKind.clean
+
+    # Distinguish by which file lists are populated.
+    untracked_files = _string_list_rfc(repo.get("untracked_files"))
+    staged_new_files = _string_list_rfc(repo.get("staged_new_files"))
+
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if str(check.get("name") or "") != "git_finalizer":
+            continue
+        if str(check.get("returncode")) == "1":
+            # Prefer the more specific kind; if both are present, untracked wins.
+            if untracked_files:
+                return FinalizerRefusalKind.untracked_new_files
+            if staged_new_files:
+                return FinalizerRefusalKind.staged_new_files
+            # git_finalizer fired but we cannot tell which kind — default to
+            # untracked_new_files (the original and more common trigger).
+            return FinalizerRefusalKind.untracked_new_files
+
+    return FinalizerRefusalKind.clean
 
 
 # ---------------------------------------------------------------------------
