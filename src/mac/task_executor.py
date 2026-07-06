@@ -863,6 +863,7 @@ def build_planning_prompt(
         "First read the versioned execution policy at "
         "$MAC_TASK_WORKSPACE/.mac-executor-policy.txt, then read task.json as the "
         "source of truth.",
+        NEW_FILE_COMMIT_RULE,
         "PLANNING MODE TRIGGER: %s" % trigger_reason,
         "\n".join([
             "PLANNING PHASE INSTRUCTIONS:",
@@ -2171,12 +2172,27 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
 MAC_TASK_SUMMARY_BEGIN = "=== MAC TASK SUMMARY ==="
 MAC_TASK_SUMMARY_END = "=== END MAC TASK SUMMARY ==="
 
+# Instruction injected into every task and planning prompt so agents know they
+# must commit their own new files before finishing. The deterministic finalizer
+# auto-commits modified tracked files but REFUSES publication when untracked or
+# staged-new files are present, causing verification_contract_failed
+# (dirty+unpushed).  This string is also the assertion target in the prompt
+# tests — do not change it without updating those tests.
+NEW_FILE_COMMIT_RULE = (
+    "IMPORTANT: If you create any new files as part of this task, you MUST "
+    "git add + git commit them yourself before finishing. "
+    "The deterministic finalizer auto-commits modified tracked files but "
+    "REFUSES publication when untracked or staged-new files are present at "
+    "finalize time, causing verification_contract_failed (dirty+unpushed)."
+)
+
 
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
         "You are AUTONOMOUS: never ask the operator for confirmation or permission. Make a reasonable assumption, proceed, and record it when necessary.",
         "First read the versioned execution policy at $MAC_TASK_WORKSPACE/.mac-executor-policy.txt, then read task.json as the source of truth.",
+        NEW_FILE_COMMIT_RULE,
         "Repository tasks default to evidence_type=repo_change; use operator_result only when no repository contract exists. Deterministic host code enforces tests, CodeGraph, cleanliness, and publication.",
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]

@@ -61,6 +61,63 @@ def test_build_task_prompt_demands_autonomy():
     assert "never ask the operator for confirmation" in prompt
 
 
+def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
+    """Both build_task_prompt and build_planning_prompt must include the new-file
+    commit rule for a repo-coupled task so agents always see it.
+
+    The deterministic finalizer refuses publication when untracked or
+    staged-new files are present; the instruction must appear early so it is
+    visible before the agent starts writing files.
+    """
+    task = {
+        "id": "t_newfile",
+        "title": "Add feature X",
+        "project": "mac",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "project": "mac",
+                    "toolchain": {"required_commands": ["python3", "git"]},
+                    "bootstrap": {"command": "python3 scripts/bootstrap-project.py"},
+                    "test": {"command": "scripts/run-contract-tests.sh"},
+                },
+            },
+            "origin": {
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "project": "mac",
+                    "toolchain": {"required_commands": ["python3", "git"]},
+                    "bootstrap": {"command": "python3 scripts/bootstrap-project.py"},
+                    "test": {"command": "scripts/run-contract-tests.sh"},
+                }
+            },
+        },
+    }
+
+    task_prompt = te.build_task_prompt(task, tmp_path / "task.json")
+    assert te.NEW_FILE_COMMIT_RULE in task_prompt, (
+        "build_task_prompt must include NEW_FILE_COMMIT_RULE for repo-coupled tasks"
+    )
+    # Verify it appears early — before the repo contract section
+    assert task_prompt.index(te.NEW_FILE_COMMIT_RULE) < task_prompt.index(
+        "Repository runtime contract:"
+    ), "NEW_FILE_COMMIT_RULE must appear before the repository contract section"
+
+    # build_planning_prompt requires scope_estimate=large or plan_first to enter
+    # planning mode; use plan_first to avoid scope-signal complexity.
+    task["metadata"]["plan_first"] = True
+    planning_prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+    assert te.NEW_FILE_COMMIT_RULE in planning_prompt, (
+        "build_planning_prompt must include NEW_FILE_COMMIT_RULE"
+    )
+    # Verify it appears early — before the planning instructions
+    assert planning_prompt.index(te.NEW_FILE_COMMIT_RULE) < planning_prompt.index(
+        "PLANNING PHASE INSTRUCTIONS:"
+    ), "NEW_FILE_COMMIT_RULE must appear before PLANNING PHASE INSTRUCTIONS"
+
+
 def test_agent_bundle_materializes_owner_only_versioned_policy(tmp_path):
     bundle = te._write_agent_command_bundle(
         tmp_path,
