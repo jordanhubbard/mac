@@ -1664,6 +1664,26 @@ def cmd_task_reopen(args: argparse.Namespace) -> None:
     _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
 
 
+def cmd_task_recover_finalizer(args: argparse.Namespace) -> None:
+    """Explicitly recover preserved work refused only for uncommitted new files."""
+
+    from mac.repository_recovery import (
+        RepositoryRecoveryError,
+        recover_finalizer_worktree,
+    )
+
+    try:
+        result = recover_finalizer_worktree(
+            args.workspace,
+            approved_new_files=args.approve_new_file or [],
+            original_evidence_id=args.evidence_id or "",
+            execute=bool(args.execute),
+        )
+    except RepositoryRecoveryError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
 def cmd_task_force_complete(args: argparse.Namespace) -> None:
     # Operator override: mark a task COMPLETED regardless of state/review, for
     # reconciling work done out-of-band or recovering a stranded terminal task.
@@ -4401,6 +4421,31 @@ def build_parser() -> argparse.ArgumentParser:
     reopen.add_argument("--reason", default="")
     reopen.add_argument("--actor", default="human")
     _set(cmd_task_reopen, reopen)
+
+    recover_finalizer = task.add_parser(
+        "recover-finalizer",
+        help="revalidate and publish preserved work refused for uncommitted new files",
+    )
+    recover_finalizer.add_argument(
+        "workspace",
+        help="preserved agent task workspace containing task.json and repository-worktree.json",
+    )
+    recover_finalizer.add_argument(
+        "--approve-new-file",
+        action="append",
+        default=[],
+        help="exact intended new path; repeat for every refused new file",
+    )
+    recover_finalizer.add_argument(
+        "--evidence-id",
+        help="original executor evidence id recorded in recovery provenance",
+    )
+    recover_finalizer.add_argument(
+        "--execute",
+        action="store_true",
+        help="commit, revalidate, and push; omit for a read-only recovery plan",
+    )
+    _set(cmd_task_recover_finalizer, recover_finalizer)
 
     force_complete = task.add_parser(
         "force-complete",

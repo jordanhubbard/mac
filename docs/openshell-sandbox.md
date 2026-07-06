@@ -192,6 +192,23 @@ fail-closed behavior with `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1` after
 they provision durable in-sandbox coding-agent credentials. The preflight
 verdict is cached per worker process.
 
+The unattended finalizer auto-commits modified tracked files but deliberately
+refuses untracked or staged-new files. A coding agent must commit its own new
+files before finishing. If an otherwise successful executor run is preserved
+with passing contract-test and CodeGraph evidence but is refused only at this
+boundary, inspect it without mutation first:
+
+```bash
+mac task recover-finalizer /path/to/task-workspace --json
+```
+
+Recovery is explicit and allow-listed. Repeat `--approve-new-file PATH` for
+every intended new path, provide the original executor `--evidence-id`, and add
+`--execute`. MAC validates the preserved HEAD and evidence, commits with
+provenance, rebases, reruns both gates, and uses the shared guarded push. It
+never invokes the executor/model again and does not weaken ordinary unattended
+finalization.
+
 For a coding agent to pass the preflight, the deployment must ensure, **inside
 the sandbox**:
 
