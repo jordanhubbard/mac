@@ -18,6 +18,70 @@ If you are new to the project, start with the
 [MAC Quickstart](docs/getting-started.md). It explains the idea, vocabulary, and
 first local commands before fleet deployment.
 
+## Acknowledgements and Lineage
+
+`mac`'s control-plane code is clean-room work, but the system is not built in a
+vacuum. It has learned from, interoperates with, or substantially relies on the
+following projects. The relationship is stated explicitly so that an
+integration or protocol influence is not mistaken for copied source:
+
+- **[Hermes Agent](https://github.com/NousResearch/hermes-agent) — vendored
+  runtime:** `src/mac/_hermes` is a pruned, MAC-modified snapshot of Hermes
+  Agent 0.15.1 at
+  [`b1a25404b`](https://github.com/NousResearch/hermes-agent/commit/b1a25404b638bfbd79ce4d08b49afc0ee1361528).
+  It supplies the agent loop, gateways, tools, plugins, and skills. See
+  [ADR 0001](docs/adr/0001-unify-hermes-runtime-into-mac.md) and the
+  [snapshot contract](deploy/hermes/SNAPSHOT.md).
+- **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) — execution
+  security foundation:** MAC's agent process trees, filesystem/network policy,
+  sandbox lifecycle, and normalized action-event collection integrate with
+  OpenShell rather than reimplementing its isolation layer.
+- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) — gateway stack:**
+  MAC's fleet gateway deployment and migration path use NemoClaw's hardened
+  OpenShell-based agent stack.
+- **[OpenClaw](https://github.com/openclaw/openclaw) — conversational gateway
+  runtime:** the NemoClaw path uses OpenClaw for always-on chat channels while
+  MAC remains the durable task and fleet control plane.
+- **[OpenAI Codex](https://github.com/openai/codex) — coding executor:** MAC
+  installs and invokes the Codex CLI for repository-editing workers inside its
+  evidence and sandbox gates.
+- **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
+  reviewer:** MAC's Kubernetes runner includes OpenCode build and independent
+  review paths, wrapped by MAC-owned test, evidence, and publication gates.
+- **[CodeGraph](https://github.com/colbymchenry/codegraph) — code intelligence
+  and evidence:** repository analysis, affected-test selection, and the
+  mandatory source-change audit use CodeGraph's local index and CLI.
+- **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
+  observability:** MAC maps request, task, tool, and model activity into Relay
+  scopes when the `relay` extra is enabled.
+- **[xterm.js](https://github.com/xtermjs/xterm.js) — vendored terminal UI:**
+  the legacy dashboard bundles xterm.js and its fit addon under
+  `src/mac/ui/vendor/xterm`; their MIT license texts are retained there.
+- **[Qdrant](https://github.com/qdrant/qdrant) — shared vector memory:** fleet
+  deployment uses Qdrant as the hub-managed level-2 semantic-memory service.
+- **[Firecrawl](https://github.com/firecrawl/firecrawl) — API compatibility
+  target:** `mac-firecrawl-gateway` implements the Firecrawl v2 request/response
+  surface expected by Hermes. It is a clean-room compatibility gateway, not a
+  vendored copy of Firecrawl.
+- **[Beads](https://github.com/gastownhall/beads) — task-ledger prior art and
+  migration source:** MAC learned from Beads' durable agent-task workflow and
+  retains one-way Beads import tooling. The independent `mac task` ledger is
+  now authoritative; MAC does not run Beads or Dolt.
+- **[Agent Client Protocol](https://github.com/agentclientprotocol/agent-client-protocol)
+  and [A2A](https://github.com/a2aproject/A2A) — interoperability standards:**
+  MAC implements these specifications for editor-to-agent and agent-to-agent
+  communication; these are protocol implementations, not vendored SDKs.
+- **[Superpowers](https://github.com/obra/superpowers) — engineering-method
+  influence:** plans and design specs under `docs/superpowers` were developed
+  with its agentic planning and execution workflow; it is not a runtime
+  dependency.
+
+This is a direct-lineage and architectural acknowledgement, not an exhaustive
+transitive dependency list. Python and Node dependencies remain documented in
+their manifests and lockfiles; additional skill- and plugin-level notices are
+kept with the vendored Hermes files that require them. Each upstream project
+remains subject to its own license.
+
 ## Core Contracts
 
 This project provides durable contracts for coordinating a fleet:
