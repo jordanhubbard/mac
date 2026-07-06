@@ -2,62 +2,150 @@
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
   "evidence_type": "repo_change",
-  "task_id": "task_7865ddea55394418850388f5b6f641cc",
+  "task_id": "task_e8e1995a56ab45eba3eaeab8424d6cb6",
   "repo": {
-    "head_sha": "d495c7131dab500b79c8815016713306a37ad053",
-    "base_sha": "a45ba18bb361c64c87063ce1138b8390639e4f01",
-    "branch": "mac/agent_rocky/task_7865ddea55394418850388f5b6f641cc-lease_d384f39502c5409bbf",
+    "head_sha": "6c94b1b66bc3cbf43c0eb66a7c18d3ff77376b84",
+    "base_sha": "0d1dde777b5e55bdfc324e41b40f21991fcf0595",
+    "branch": "mac/agent_rocky/task_e8e1995a56ab45eba3eaeab8424d6cb6-lease_e9a208ef621d40a6be",
     "dirty": true,
     "pushed": false,
     "files_changed": [
-      "src/mac/agentbus_control.py",
-      "tests/test_agentbus_control.py"
+      "docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md"
     ]
   },
   "tests": [
     {
-      "name": "test_agentbus_control (targeted)",
-      "command": ".venv/bin/pytest tests/test_agentbus_control.py -v",
+      "name": "contract tests (scripts/run-contract-tests.sh)",
+      "command": "scripts/run-contract-tests.sh",
       "returncode": 0,
       "status": "pass",
-      "summary": "24/24 tests passed — covers inventory-only, narrative-included, empty/whitespace normalization, word-count truncation, backward-compatible summary/request_id, and all wire constants"
+      "summary": "All contract tests passed (94.08% coverage); no code changes made — only a forensics report doc was added"
     }
   ],
   "checks": [
     {
       "name": "codegraph_audit",
-      "command": "codegraph init && codegraph affected src/mac/agentbus_control.py tests/test_agentbus_control.py",
+      "command": "codegraph init && codegraph affected docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md",
       "returncode": 0,
-      "status": "pass",
-      "reason": "affected_computed",
+      "status": "skipped",
+      "reason": "non_code_change",
       "relevant_files": [
-        "src/mac/agentbus_control.py",
-        "tests/test_agentbus_control.py"
+        "docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md"
       ]
     }
   ],
   "codegraph": {
     "schema": "mac.codegraph_audit.v1",
-    "status": "pass",
-    "reason": "affected_computed",
+    "status": "skipped",
+    "reason": "non_code_change",
     "relevant_files": [
-      "src/mac/agentbus_control.py",
-      "tests/test_agentbus_control.py"
+      "docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md"
     ],
     "commands": [
       {
         "argv": ["codegraph", "init"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "37,314 nodes, 122,586 edges in 10.5s"
+        "stdout": "37,372 nodes, 122,775 edges in 10.3s"
       },
       {
-        "argv": ["codegraph", "affected", "src/mac/agentbus_control.py", "tests/test_agentbus_control.py"],
+        "argv": ["codegraph", "affected", "docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "Affected test files (7): src/mac/_hermes/skills/creative/comfyui/tests/ tests/e2e/test_openshell_nemo_relay.py"
+        "stdout": "No test files affected by the changed files."
       }
     ]
   },
-  "summary": "Extended agent_reflection_payload in src/mac/agentbus_control.py to accept an optional narrative parameter. Added _normalize_narrative() helper that returns None for empty/whitespace input and truncates at 500 words (word boundary) with a '[...]' marker. When narrative is non-empty after normalization, payload gains a top-level 'reflection' key; existing 'agent' inventory, 'summary', and 'request_id' fields are fully preserved (backward-compatible). Expanded tests/test_agentbus_control.py from 6 to 24 tests covering: reflect wire-constants, reflect_request/result payloads, _normalize_narrative edge cases (None/empty/whitespace/truncation/exact-cap), inventory-only shape (no reflection key), narrative-included shape, empty/whitespace narrative normalization, overlong-narrative truncation, and whitespace-stripping. All 24 tests pass."
+  "forensics": {
+    "schema": "mac.forensics_report.v1",
+    "subject_task_id": "task_a32a35e90ab0434e8c7766057b268bc6",
+    "claiming_agent": "agent_jordanh-worker1",
+    "claiming_host": "jordanh-worker1",
+    "lease_id": "lease_49ed4a5300224f25aaa5813c1bf19991",
+    "earliest_failure": {
+      "event": "task.children_added",
+      "timestamp": "2026-07-06T08:49:47.677118+00:00",
+      "hist_id": "hist_ef48477740484fc1af960e7878442d15",
+      "actor": "human",
+      "detail": "hub add_children endpoint released lease lease_49ed4a53... and transitioned parent from running to blocked while executor was still inside _run_sandboxed(); worker._assignment_is_current() subsequently returned False"
+    },
+    "affected_startup_path": "MacWorker._work_one_task() -> _execute_with_lease_renewal() -> task_executor.run_task_executor() -> _run_sandboxed() [sandboxed codex agent posted children mid-execution] -> worker._assignment_is_current() -> False -> _stale_result()",
+    "root_cause": "services.py add_children endpoint atomically releases the parent task lease when children are posted (lines 4358-4383), but the executor outer loop had not yet returned from _run_sandboxed(); the post-execution _assignment_is_current() check found no active lease and discarded the planning run as stale_result",
+    "task_final_state": "blocked (correctly waiting on 6 children; plan succeeded; no retry needed)",
+    "sensitive_values_redacted": true,
+    "report_path": "docs/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md",
+    "task_history_events": [
+      {
+        "hist_id": "hist_5b0c41869f5341789c3dd70b1aaf2f4b",
+        "actor": "human",
+        "event_type": "task.created",
+        "from_state": null,
+        "to_state": "open",
+        "created_at": "2026-07-06T08:45:34.963174+00:00"
+      },
+      {
+        "hist_id": "hist_74be903785674806b82d5f739d9d1a13",
+        "actor": "agent_jordanh-worker1",
+        "event_type": "task.claimed",
+        "from_state": "open",
+        "to_state": "claimed",
+        "created_at": "2026-07-06T08:45:35.760748+00:00",
+        "detail": {"lease_id": "lease_49ed4a5300224f25aaa5813c1bf19991"}
+      },
+      {
+        "hist_id": "hist_ff9f8a8830cc40be8e9fc88a8ceb69c8",
+        "actor": "agent_jordanh-worker1",
+        "event_type": "task.transitioned",
+        "from_state": "claimed",
+        "to_state": "running",
+        "created_at": "2026-07-06T08:45:36.310465+00:00"
+      },
+      {
+        "hist_id": "hist_ef48477740484fc1af960e7878442d15",
+        "actor": "human",
+        "event_type": "task.children_added",
+        "from_state": "running",
+        "to_state": "blocked",
+        "created_at": "2026-07-06T08:49:47.677118+00:00",
+        "detail": {
+          "released_lease_id": "lease_49ed4a5300224f25aaa5813c1bf19991",
+          "child_task_ids": [
+            "task_f8eb128805b54435806545503a8104d3",
+            "task_bf66b801b89e4b96973dafa207f9d80a",
+            "task_ff739e45d0424387a2ce9558403a6157",
+            "task_774ae03125aa4fc98f81b16d44bce934",
+            "task_ee8d7906ef8540f0b7f7019134cdcd17",
+            "task_ee3c9c2634984f18b3502508c1f0eb5e"
+          ]
+        }
+      },
+      {
+        "hist_id": "hist_d57dbb9971184b93860444d648b9eb0f",
+        "actor": "mac-hermes-task-executor",
+        "event_type": "task.memory_recorded",
+        "from_state": null,
+        "to_state": null,
+        "created_at": "2026-07-06T08:50:36.719523+00:00"
+      },
+      {
+        "hist_id": "hist_2984df7c73d5418aabf055a18bedcf63",
+        "actor": "mac-hermes-task-executor",
+        "event_type": "task.memory_recorded",
+        "from_state": null,
+        "to_state": null,
+        "created_at": "2026-07-06T08:50:37.162732+00:00"
+      }
+    ],
+    "sanitized_stderr_tail": [
+      "[WARNING] executor.sandbox_observation_unavailable  sandbox=mac-task-5b1b0d607d54 state=unknown",
+      "[INFO]    executor.sandbox_agent_completed           sandbox=mac-task-5b1b0d607d54 returncode=0",
+      "[WARNING] executor.sandbox_verification_completed   sandbox=mac-task-5b1b0d607d54 passed=False",
+      "[INFO]    executor.sandbox_harvested                 harvested=True runner_completed=True",
+      "[INFO]    executor.sandbox_deleted",
+      "[INFO]    executor.agent_completed                   returncode=0 duration_ms=296494",
+      "[INFO]    executor.planning_phase_completed",
+      "[INFO]    executor.finalized                         evidence_type=plan_decomposed outcome=success signals={checks_pass:null, files_changed:null, pushed:null, tests:null}",
+      "[WARN]    worker.execution.stale_result              reason=assignment no longer current after executor completed"
+    ]
+  }
 }
