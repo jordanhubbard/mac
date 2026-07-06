@@ -254,10 +254,13 @@ def test_sandbox_toolchain_setup_exports_repository_contract_env(tmp_path):
 import json, os
 assert os.environ["MAC_REPO_TEST_COMMAND"] == "make test"
 assert os.environ["MAC_REPO_REQUIRED_COMMANDS"] == "git"
-expected_prefix = os.pathsep.join([
+expected_prefix_parts = [
     os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "bin"),
     os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "node_modules", ".bin"),
-])
+]
+if os.environ.get("JAVA_HOME"):
+    expected_prefix_parts.append(os.path.join(os.environ["JAVA_HOME"], "bin"))
+expected_prefix = os.pathsep.join(expected_prefix_parts)
 assert os.environ["MAC_SANDBOX_PATH_PREFIX"] == expected_prefix
 assert os.environ["PATH"] == expected_prefix + os.pathsep + os.environ["MAC_SANDBOX_BASE_PATH"]
 delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
