@@ -17,6 +17,7 @@ import {
 import { ActivityRail, type WorkbenchView } from "./components/ActivityRail";
 import { AgentMesh } from "./components/AgentMesh";
 import { BottomPanel } from "./components/BottomPanel";
+import { projectFromUrl, pushProjectToUrl, replaceProjectInUrl } from "./components/projectScope";
 import { WorkbenchExplorer } from "./components/WorkbenchExplorer";
 import { selectedTask, WorkbenchViewContent } from "./components/WorkbenchViews";
 
@@ -52,6 +53,7 @@ export function App() {
   const [view, setView] = useState<WorkbenchView>(initialView);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelection);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(projectFromUrl);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [streamStatus, setStreamStatus] = useState<"connecting" | "connected" | "degraded">("connecting");
@@ -298,6 +300,26 @@ export function App() {
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
   }, [selectedTaskId, view]);
 
+  const handleSelectProject = useCallback((projectId: string | null) => {
+    setSelectedProjectId(projectId);
+    pushProjectToUrl(projectId);
+  }, []);
+
+  // Restore project from URL on popstate (browser back/forward)
+  useEffect(() => {
+    function onPopState() {
+      setSelectedProjectId(projectFromUrl());
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  // Replace initial URL to include project param if restored from URL
+  useEffect(() => {
+    replaceProjectInUrl(selectedProjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = setToken(tokenInput);
@@ -412,8 +434,10 @@ export function App() {
                   activeView={view}
                   data={viewData}
                   onSelectAgent={setSelectedAgentId}
+                  onSelectProject={handleSelectProject}
                   onSelectTask={setSelectedTaskId}
                   selectedAgentId={selectedAgentId}
+                  selectedProjectId={selectedProjectId}
                   selectedTaskId={selectedTaskId}
                 />
               </Allotment.Pane>
@@ -434,6 +458,7 @@ export function App() {
                         onSelectAgent={setSelectedAgentId}
                         onSelectTask={setSelectedTaskId}
                         selectedAgentId={selectedAgentId}
+                        selectedProjectId={selectedProjectId}
                         selectedTaskId={selectedTaskId}
                         view={view}
                       />

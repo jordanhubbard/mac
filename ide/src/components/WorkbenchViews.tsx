@@ -32,6 +32,7 @@ export function WorkbenchViewContent({
   card,
   selectedTaskId,
   selectedAgentId,
+  selectedProjectId,
   onSelectTask,
   onSelectAgent,
   onRefresh,
@@ -41,6 +42,8 @@ export function WorkbenchViewContent({
   card: AgentCard | null;
   selectedTaskId: string | null;
   selectedAgentId: string | null;
+  /** null = "All projects" — no project filter */
+  selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void | Promise<void>;
@@ -48,11 +51,25 @@ export function WorkbenchViewContent({
   const agents = data.agents.map((item) => item.agent);
   switch (view) {
     case "work":
-      return <WorkView data={data} onRefresh={onRefresh} onSelectTask={onSelectTask} selectedTaskId={selectedTaskId} />;
+      return (
+        <WorkView
+          data={data}
+          onRefresh={onRefresh}
+          onSelectTask={onSelectTask}
+          selectedProjectId={selectedProjectId}
+          selectedTaskId={selectedTaskId}
+        />
+      );
     case "workflows":
       return <WorkflowView data={data} onRefresh={onRefresh} />;
     case "agents":
-      return <AgentsView agents={data.agents} onSelectAgent={onSelectAgent} selectedAgentId={selectedAgentId} />;
+      return (
+        <AgentsView
+          agents={data.agents}
+          onSelectAgent={onSelectAgent}
+          selectedAgentId={selectedAgentId}
+        />
+      );
     case "runtime":
       return <RuntimeView data={data} />;
     case "observability":
@@ -193,11 +210,14 @@ function Metric({
 function WorkView({
   data,
   selectedTaskId,
+  selectedProjectId,
   onSelectTask,
   onRefresh,
 }: {
   data: DashboardState;
   selectedTaskId: string | null;
+  /** null = all projects */
+  selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
   onRefresh: () => void | Promise<void>;
 }) {
@@ -205,9 +225,18 @@ function WorkView({
   const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return data.tasks.filter(({ task }) => !needle || [task.title, task.project, task.state, task.id]
-      .some((value) => String(value || "").toLowerCase().includes(needle)));
-  }, [data.tasks, query]);
+    return data.tasks.filter(({ task }) => {
+      if (selectedProjectId && (task.project || "unassigned") !== selectedProjectId) return false;
+      return (
+        !needle ||
+        [task.title, task.project, task.state, task.id].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(needle),
+        )
+      );
+    });
+  }, [data.tasks, query, selectedProjectId]);
   const inspectedTask = inspectedTaskId
     ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
     : null;
@@ -218,13 +247,25 @@ function WorkView({
   }
   return (
     <main className="workbench-view">
-      <ViewHeader description="Search, inspect, and steer every ledger task." eyebrow="Ledger" title="Work" />
+      <ViewHeader
+        description={
+          selectedProjectId
+            ? `Showing tasks for project: ${selectedProjectId}`
+            : "Search, inspect, and steer every ledger task."
+        }
+        eyebrow="Ledger"
+        title="Work"
+      />
       <div className="table-toolbar">
         <label className="command-input compact">
           <i className="codicon codicon-search" />
-          <input onChange={(event) => setQuery(event.target.value)} placeholder="Search task, project, or state" value={query} />
+          <input
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search task, project, or state"
+            value={query}
+          />
         </label>
-        <span>{visible.length} tasks</span>
+        <span>{visible.length} tasks{selectedProjectId ? ` in ${selectedProjectId}` : ""}</span>
       </div>
       <TaskKanban
         onInspectTask={inspectTask}
