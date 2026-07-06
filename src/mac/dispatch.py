@@ -970,6 +970,21 @@ class RemoteDispatch:
             )
         )
 
+    def set_agent_dispatch_hold(self, agent_id: str, reason: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/dispatch-hold" % quote(agent_id, safe=""),
+                {"reason": reason},
+            )
+        )
+
+    def clear_agent_dispatch_hold(self, agent_id: str) -> _Dictish:
+        return _Dictish(
+            self._delete(
+                "/agents/%s/dispatch-hold" % quote(agent_id, safe="")
+            )
+        )
+
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 

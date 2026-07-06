@@ -8365,6 +8365,9 @@ class ControlPlane:
 
         The hold is a pure DB update — the agent need not be reachable or online.
         """
+        reason = str(reason or "").strip()
+        if not reason:
+            raise ValidationError("dispatch hold reason is required")
         self.get_agent(agent_id)  # raises NotFoundError if absent
         now = utcnow()
         with self.store.transaction() as conn:

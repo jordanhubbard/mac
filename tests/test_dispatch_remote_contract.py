@@ -195,3 +195,20 @@ def test_update_agent_uses_hub_put_endpoint_and_preserves_actor() -> None:
             "actor": "openshell-reconcile",
         },
     )
+
+
+def test_dispatch_hold_uses_hub_endpoints_and_quotes_agent_id() -> None:
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.set_agent_dispatch_hold("agent/worker", "manual quarantine")
+    dispatch.clear_agent_dispatch_hold("agent/worker")
+
+    assert client.calls[-2:] == [
+        (
+            "POST",
+            "/agents/agent%2Fworker/dispatch-hold",
+            {"reason": "manual quarantine"},
+        ),
+        ("DELETE", "/agents/agent%2Fworker/dispatch-hold", None),
+    ]

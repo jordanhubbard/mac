@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from mac.models import NotFoundError
+from mac.models import NotFoundError, ValidationError
 from mac.services import ControlPlane
 
 
@@ -61,6 +61,14 @@ def test_set_dispatch_hold_raises_for_unknown_agent():
     cp = _make_cp()
     with pytest.raises(NotFoundError):
         cp.set_agent_dispatch_hold("agent_nonexistent_id", "test")
+
+
+def test_set_dispatch_hold_rejects_blank_reason():
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-blank-reason")
+
+    with pytest.raises(ValidationError, match="reason is required"):
+        cp.set_agent_dispatch_hold(agent.id, "   ")
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +120,7 @@ def test_clear_dispatch_hold_raises_for_unknown_agent():
 
 def test_held_agent_skipped_with_agent_dispatch_held_reason():
     cp = _make_cp()
-    from mac.models import AgentStatus, HealthStatus
+    from mac.models import AgentStatus
 
     machine = cp.register_machine("hold-host", resources={"cpu": 4, "memory_gb": 8})
     agent = cp.register_agent(machine.id, "hold-agent")
