@@ -219,6 +219,50 @@ class TestRunReflectQuery:
         response = inst._run_reflect_query("Who are you?")
         assert response == "I am ready."
 
+    def test_runtime_query_passed_to_hermes_with_agent_context(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        inst = _instance(tmp_path)
+        captured: Dict[str, Any] = {}
+        mac_hermes_home = tmp_path / "mac-hermes-home"
+
+        def _capture_run(argv, *, env, timeout, **kw):
+            captured["argv"] = argv
+            captured["env"] = env
+            captured["timeout"] = timeout
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="runtime answer", stderr=""
+            )
+
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        monkeypatch.setenv("MAC_HERMES_HOME", str(mac_hermes_home))
+        monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "12.5")
+        monkeypatch.setattr("mac.task_executor._hermes_python", lambda: "/hermes/python")
+        monkeypatch.setattr(worker.subprocess, "run", _capture_run)
+        monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
+
+        response = inst._run_reflect_query("What task are you running?")
+
+        assert response == "runtime answer"
+        argv = captured["argv"]
+        assert argv[:4] == ["/hermes/python", "-m", "hermes_cli.main", "chat"]
+        assert argv[4:6] == ["--query", argv[5]]
+        runtime_query = argv[5]
+        assert "Requester query:\nWhat task are you running?" in runtime_query
+        assert "SOUL.md" in runtime_query
+        assert "MEMORY.md" in runtime_query
+        assert "host or command inventory" in runtime_query
+        assert "300 words" in runtime_query
+        assert "--quiet" in argv
+        assert "--accept-hooks" in argv
+        assert "--yolo" in argv
+        env = captured["env"]
+        assert env["HERMES_HOME"] == str(mac_hermes_home)
+        assert env["MAC_HERMES_HOME"] == str(mac_hermes_home)
+        assert env["MAC_AGENT_ID"] == "agent_test"
+        assert env["MAC_WORKER_AGENT_ID"] == "agent_test"
+        assert captured["timeout"] == 12.5
+
     def test_nonzero_returncode_returns_error_text(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
         monkeypatch.setattr(
@@ -236,15 +280,19 @@ class TestRunReflectQuery:
     def test_timeout_returns_timeout_message(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
         observations = []
+        captured = {}
 
         def _timeout_run(*a, **kw):
+            captured.update(kw)
             raise subprocess.TimeoutExpired(cmd="mac-hermes", timeout=120)
 
+        monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "7")
         monkeypatch.setattr(worker.subprocess, "run", _timeout_run)
         monkeypatch.setattr(inst, "_observe_log", lambda name, **kw: observations.append(name))
 
         response = inst._run_reflect_query("Q?", stream_id="s1")
-        assert "timed out" in response
+        assert "timed out after 7 seconds" in response
+        assert captured["timeout"] == 7.0
         assert "worker.agentbus.reflect.error" in observations
 
     def test_subprocess_error_returns_error_message(self, tmp_path: Path, monkeypatch) -> None:
@@ -261,8 +309,10 @@ class TestRunReflectQuery:
         assert "reflect query failed" in response
         assert "worker.agentbus.reflect.error" in observations
 
-    def test_hermes_home_propagated_to_env(self, tmp_path: Path, monkeypatch) -> None:
-        """HERMES_HOME should be set in the subprocess environment."""
+    def test_hermes_home_and_mac_hermes_home_propagated_to_env(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """HERMES_HOME and MAC_HERMES_HOME should reach the runtime subprocess."""
         inst = _instance(tmp_path)
         captured_env = {}
 
@@ -273,11 +323,14 @@ class TestRunReflectQuery:
             )
 
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+        monkeypatch.setenv("MAC_HERMES_HOME", str(tmp_path / "mac-hermes"))
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
 
         inst._run_reflect_query("Q?")
         assert captured_env.get("HERMES_HOME") == str(tmp_path / "hermes")
+        assert captured_env.get("MAC_HERMES_HOME") == str(tmp_path / "mac-hermes")
+        assert captured_env.get("MAC_AGENT_ID") == "agent_test"
 
 
 # ---------------------------------------------------------------------------

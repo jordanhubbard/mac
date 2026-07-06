@@ -2015,7 +2015,8 @@ class MacWorker:
             return {"status": "error", "summary": "reflect disabled", "stream_id": stream_id}
 
         default_query = (
-            "Describe your current runtime identity, active task, capabilities, and status."
+            "Describe your current runtime identity, memory context, host inventory, "
+            "active task, capabilities, and status."
         )
         query = str(request.get("query") or default_query).strip() or default_query
 
@@ -2046,21 +2047,35 @@ class MacWorker:
         self._publish_reflect_result(stream, result)
         return {"status": "completed", "summary": "reflect completed", "stream_id": stream_id}
 
+    def _reflect_runtime_query(self, query: str) -> str:
+        """Build the bounded prompt sent into this agent's Hermes runtime."""
+        request = str(query or "").strip()
+        return "\n".join(
+            [
+                "You are answering a MAC reflect request from inside your own Hermes runtime.",
+                "Use the active HERMES_HOME/MAC_HERMES_HOME context, including SOUL.md, "
+                "MEMORY.md, MAC runtime context, and any visible host or command inventory.",
+                "Answer with concrete details about your runtime identity, memory context, "
+                "host inventory or capabilities, active task/status, and the requester query.",
+                "Keep the final answer at or below 300 words.",
+                "",
+                "Requester query:",
+                request or "Describe your current runtime identity and status.",
+            ]
+        )
+
     def _run_reflect_query(self, query: str, *, stream_id: str = "") -> str:
         """Run *query* through this agent's own Hermes runtime via a bounded subprocess.
 
-        Reads HERMES_HOME from the environment so the subprocess loads this
-        agent's own soul/memory/host context.  Times out after 120 s so a slow
-        LLM call cannot block the poll loop.
+        Reads HERMES_HOME/MAC_HERMES_HOME from the environment so the
+        subprocess loads this agent's own soul/memory/host context.  Times out
+        after 120 s by default so a slow LLM call cannot block the poll loop.
         """
         hermes_home = (
             os.environ.get("HERMES_HOME")
             or os.environ.get("MAC_HERMES_HOME")
             or str(Path.home() / ".hermes")
-        )
-        # Prefer the vendored mac-hermes binary from the active venv; fall back
-        # to PATH so a system-wide install is also accepted.
-        import shutil as _shutil
+        ).strip()
 
         # `mac-hermes` is the ADAPTER CLI (task/agent ops) and has no oneshot
         # mode — the original invocation always failed with a usage error and
@@ -2069,14 +2084,26 @@ class MacWorker:
         # chat, which loads this agent's soul/memory from HERMES_HOME.
         from mac.task_executor import _hermes_python
 
-        _ = _shutil  # retained import; binary discovery no longer needed
-        timeout_s = float(os.environ.get("MAC_REFLECT_TIMEOUT") or "120")
+        runtime_query = self._reflect_runtime_query(query)
+        timeout_s = _bounded_float(os.environ.get("MAC_REFLECT_TIMEOUT"), 1.0, 600.0, 120.0)
         try:
             env = os.environ.copy()
             env["HERMES_HOME"] = hermes_home
+            env.setdefault("MAC_HERMES_HOME", hermes_home)
+            env["MAC_AGENT_ID"] = self.agent_id
+            env["MAC_WORKER_AGENT_ID"] = self.agent_id
             result = subprocess.run(
-                [_hermes_python(), "-m", "hermes_cli.main", "chat",
-                 "--query", query, "--quiet", "--accept-hooks", "--yolo"],
+                [
+                    _hermes_python(),
+                    "-m",
+                    "hermes_cli.main",
+                    "chat",
+                    "--query",
+                    runtime_query,
+                    "--quiet",
+                    "--accept-hooks",
+                    "--yolo",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
