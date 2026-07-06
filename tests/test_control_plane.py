@@ -3512,6 +3512,64 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     )
 
 
+def test_claim_next_returns_assignment_when_claimed_log_fails(cp, monkeypatch):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("post-claim-log-failure", required_capabilities=["python"])
+    original_record_log = cp.record_log
+
+    def flaky_record_log(name, *args, **kwargs):
+        if name == "worker.routing.claimed":
+            raise RuntimeError("observability unavailable")
+        return original_record_log(name, *args, **kwargs)
+
+    monkeypatch.setattr(cp, "record_log", flaky_record_log)
+
+    claimed = cp.claim_next_for_agent(worker.id)
+
+    assert claimed is not None
+    assert claimed["task"]["id"] == task.id
+    assert claimed["lease"]["task_id"] == task.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
+def test_claim_next_returns_assignment_when_dispatcher_nudge_fails(cp, monkeypatch):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("post-claim-nudge-failure", required_capabilities=["python"])
+
+    def failing_send_message(*args, **kwargs):
+        raise RuntimeError("agentbus unavailable")
+
+    monkeypatch.setattr(cp, "send_message", failing_send_message)
+
+    claimed = cp.claim_next_for_agent(worker.id)
+
+    assert claimed is not None
+    assert claimed["task"]["id"] == task.id
+    assert claimed["lease"]["task_id"] == task.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
+def test_claim_next_resumes_assignment_when_resume_log_fails(cp, monkeypatch):
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task("resume-log-failure", required_capabilities=["python"])
+    dispatched = cp.dispatch_once()
+    assert dispatched is not None
+    original_record_log = cp.record_log
+
+    def flaky_record_log(name, *args, **kwargs):
+        if name == "worker.routing.resumed":
+            raise RuntimeError("observability unavailable")
+        return original_record_log(name, *args, **kwargs)
+
+    monkeypatch.setattr(cp, "record_log", flaky_record_log)
+
+    resumed = cp.claim_next_for_agent(worker.id)
+
+    assert resumed is not None
+    assert resumed["task"]["id"] == task.id
+    assert resumed["lease"]["id"] == dispatched["lease"]["id"]
+
+
 def test_claim_next_resumes_dispatcher_assigned_lease(cp):
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task("dispatcher-owned", required_capabilities=["python"])

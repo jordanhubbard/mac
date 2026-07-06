@@ -9560,12 +9560,10 @@ class ControlPlane:
             if assignment is not None:
                 task = assignment["task"]
                 lease = assignment["lease"]
-                self.record_log(
+                self._record_claim_next_log_best_effort(
                     "worker.routing.resumed",
-                    layer="control_plane",
-                    source=agent.id,
-                    subject_type="task",
-                    subject_id=task["id"],
+                    agent_id=agent.id,
+                    task_id=task["id"],
                     detail={
                         "agent_id": agent.id,
                         "task_id": task["id"],
@@ -9665,22 +9663,19 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
-            self.record_log(
+            assignment = {
+                "task": claimed.to_dict(),
+                "agent": agent.to_dict(),
+                "lease": lease.to_dict(),
+            }
+            self._record_claim_next_log_best_effort(
                 "worker.routing.claimed",
-                layer="control_plane",
-                source=agent.id,
-                subject_type="task",
-                subject_id=claimed.id,
+                agent_id=agent.id,
+                task_id=claimed.id,
                 detail={**detail, "lease_id": lease.id},
             )
-            self.send_message(
-                "dispatcher",
-                agent.id,
-                MessageType.NUDGE.value,
-                {"task_id": claimed.id, "lease_id": lease.id, "reason": "worker_claimed"},
-                task_id=claimed.id,
-            )
-            return {"task": claimed.to_dict(), "agent": agent.to_dict(), "lease": lease.to_dict()}
+            self._send_claim_next_nudge_best_effort(agent.id, claimed.id, lease.id)
+            return assignment
         self.record_log(
             "worker.routing.no_candidate",
             level="debug",
@@ -9696,6 +9691,45 @@ class ControlPlane:
             },
         )
         return None
+
+    def _record_claim_next_log_best_effort(
+        self,
+        name: str,
+        *,
+        agent_id: str,
+        task_id: str,
+        detail: JsonDict,
+    ) -> None:
+        """Keep post-claim telemetry from stranding an already leased task."""
+        try:
+            self.record_log(
+                name,
+                layer="control_plane",
+                source=agent_id,
+                subject_type="task",
+                subject_id=task_id,
+                detail=detail,
+            )
+        except Exception:
+            pass
+
+    def _send_claim_next_nudge_best_effort(
+        self,
+        agent_id: str,
+        task_id: str,
+        lease_id: str,
+    ) -> None:
+        """Dispatcher nudges are advisory; the claim response is authoritative."""
+        try:
+            self.send_message(
+                "dispatcher",
+                agent_id,
+                MessageType.NUDGE.value,
+                {"task_id": task_id, "lease_id": lease_id, "reason": "worker_claimed"},
+                task_id=task_id,
+            )
+        except Exception:
+            pass
 
     def _active_assignment_for_agent(self, agent: Agent) -> Optional[JsonDict]:
         """Return the authoritative assignment a loop worker must resume.
