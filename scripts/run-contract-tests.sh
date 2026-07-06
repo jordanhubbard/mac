@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+_MAC_TEST_PORTFOLIO_REQUESTED="${MAC_TEST_PORTFOLIO:-0}"
+
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
 unset "${!ACC_@}"
@@ -52,13 +54,13 @@ git config --global --add safe.directory '*' >/dev/null 2>&1 || true
 # GKE pod image) is diagnosable from the first line of the failure output.
 _git_ver="$(git version 2>/dev/null | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')"
 if [ -n "${_git_ver}" ]; then
-    set -- ${_git_ver}
-    if [ "${1:-0}" -lt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -lt 38 ]; }; then
+    _git_major="${_git_ver%% *}"
+    _git_minor="${_git_ver#* }"
+    if [ "${_git_major:-0}" -lt 2 ] || { [ "${_git_major:-0}" -eq 2 ] && [ "${_git_minor:-0}" -lt 38 ]; }; then
         echo "run-contract-tests.sh: WARNING: $(git version) < 2.38 —" \
              "merge-gate tests (and the production merge queue) WILL fail;" \
              "upgrade git on this host" >&2
     fi
-    set --
 fi
 
 # Resolve a usable interpreter instead of assuming a repo-local .venv. Local
@@ -109,9 +111,41 @@ fi
 export PATH="$(cd "$(dirname "$PY")" && pwd):${PATH}"
 
 if [ "$#" -eq 0 ]; then
+    portfolio_dir=""
+    if [ "$_MAC_TEST_PORTFOLIO_REQUESTED" = "1" ]; then
+        portfolio_dir="$(pwd)/.test-portfolio"
+        rm -rf "$portfolio_dir"
+        mkdir -p "$portfolio_dir"
+        export COVERAGE_FILE="$portfolio_dir/.coverage"
+        export MAC_TEST_PORTFOLIO_OUTPUT="$portfolio_dir/timings.json"
+    fi
     "$PY" -m coverage erase
-    "$PY" -m coverage run -m pytest
-    exec "$PY" -m coverage report
+    # `patch = ["subprocess"]` in pyproject.toml makes the parent and every
+    # Python child write parallel coverage data. Preserve pytest's real return
+    # code, but still combine and print diagnostics when a test fails.
+    pytest_status=0
+    "$PY" -m coverage run -m pytest || pytest_status=$?
+    "$PY" -m coverage combine
+    "$PY" -m coverage json -o coverage.json
+    report_status=0
+    "$PY" -m coverage report || report_status=$?
+    policy_status=0
+    "$PY" scripts/coverage-policy.py --coverage-json coverage.json || policy_status=$?
+    portfolio_status=0
+    if [ -n "$portfolio_dir" ]; then
+        "$PY" scripts/test-portfolio.py --output-dir "$portfolio_dir" --report-only \
+            || portfolio_status=$?
+    fi
+    if [ "$pytest_status" -ne 0 ]; then
+        exit "$pytest_status"
+    fi
+    if [ "$report_status" -ne 0 ]; then
+        exit "$report_status"
+    fi
+    if [ "$portfolio_status" -ne 0 ]; then
+        exit "$portfolio_status"
+    fi
+    exit "$policy_status"
 fi
 
-exec "$PY" -m pytest "$@"
+"$PY" -m pytest "$@"

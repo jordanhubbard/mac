@@ -168,10 +168,13 @@ mac login
 make run-gui
 ```
 
-`make test` runs the complete hermetic pytest suite with source coverage and
-fails when coverage for MAC-owned `src/mac` code is below 95%. Vendored Hermes
-internals under `src/mac/_hermes` are excluded from that repository threshold.
-Use `make coverage` when you want the same full-suite coverage report directly.
+`make test` runs the complete hermetic pytest suite with statement, branch, and
+Python-subprocess coverage for MAC-owned `src/mac` code. Vendored Hermes
+internals under `src/mac/_hermes` are excluded. Coverage is a regression safety
+floor rather than a target for generating tests; see
+[the test portfolio strategy](docs/testing-strategy.md). Use `make coverage`
+for the same full-suite report, `make test-portfolio` to audit redundant
+execution, and `make fault-replay` to prove tests detect known historical bugs.
 
 The common lifecycle is deliberately conventional:
 

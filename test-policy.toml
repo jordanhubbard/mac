@@ -1,0 +1,13 @@
+schema = "mac.test_policy.v1"
+
+[coverage]
+# Safety rails, not optimization targets. Changes to these values require a
+# portfolio report and behavioral/fault-detection justification.
+statement_safety_floor = 90.0
+branch_safety_floor = 80.0
+require_branch_measurement = true
+
+[portfolio]
+protect_historical_fault_probes = true
+candidate_requires_zero_unique_lines = true
+candidate_requires_zero_unique_arcs = true

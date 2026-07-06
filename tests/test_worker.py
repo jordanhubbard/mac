@@ -3123,50 +3123,6 @@ def test_worker_detects_stale_local_attestation_key():
     assert _attestation_key_matches_hub(api, registered["id"], local_key) is False
 
 
-def test_mac_worker_dry_run_claim_uses_canary_policy_without_leasing(tmp_path: Path):
-    cp = ControlPlane.in_memory()
-    client = TestClient(create_app(control_plane=cp))
-    api = MacApiClient("http://mac.test", transport=api_transport(client))
-    registered = register_worker(
-        api,
-        hostname="rocky.local",
-        agent_name="rocky",
-        capabilities=["python"],
-    )
-    normal = cp.create_task(
-        "normal",
-        project="mac-canary",
-        priority=100,
-        required_capabilities=["python"],
-    )
-    canary = cp.create_task(
-        "canary",
-        project="mac-canary",
-        priority=10,
-        required_capabilities=["python"],
-        metadata={"canary": True},
-    )
-    worker = MacWorker(
-        api,
-        registered["id"],
-        tmp_path,
-        lambda _t, _d: WorkerExecution(0, "unused"),
-        allowed_projects=["mac-canary"],
-        require_canary=True,
-    )
-
-    assignment = worker.dry_run_claim()
-
-    assert assignment is not None
-    assert assignment["task"]["id"] == canary.id
-    assert assignment["lease"] is None
-    assert cp.get_task(normal.id).state == TaskState.OPEN.value
-    assert cp.get_task(canary.id).state == TaskState.OPEN.value
-    names = {item.name for item in cp.list_observability(layer="worker", limit=20)}
-    assert "worker.routing.policy" in names
-    assert "worker.routing.dry_run_result" in names
-
-
 def test_mac_worker_completes_task_even_if_observability_writes_fail(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

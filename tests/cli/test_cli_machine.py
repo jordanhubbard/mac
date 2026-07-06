@@ -1,4 +1,4 @@
-"""CLI coverage tests for ``mac machine list`` and ``mac machine show``.
+"""Behavioral CLI tests for machine inventory and agent hardware projection.
 
 Both subcommands are exercised:
 - exit code 0
@@ -12,8 +12,6 @@ from __future__ import annotations
 import io
 import json
 import sys
-
-import pytest
 
 from mac.cli import main
 
@@ -174,3 +172,20 @@ def test_machine_list_hardware_summary(tmp_path):
     assert "linux/x86_64" in line or "8c" in line, (
         "expected hardware summary tokens in line: %r" % line
     )
+
+
+def test_agent_hardware_lists_registered_machine_projection(tmp_path):
+    """The one agent-hardware CLI contract not covered by another domain suite."""
+
+    rc, machine = _run(tmp_path, "machine", "register", "agent-hw-host")
+    assert rc == 0
+    rc, agent = _run(tmp_path, "agent", "register", machine["id"], "agent-hw")
+    assert rc == 0
+
+    rc, hardware = _run(tmp_path, "agent", "hardware")
+
+    assert rc == 0
+    assert isinstance(hardware, list)
+    projected = next(row for row in hardware if row.get("agent") == agent["name"])
+    assert "hardware" in projected
+    assert "runnable_models" in projected

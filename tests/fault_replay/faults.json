@@ -1,0 +1,15 @@
+{
+  "schema": "mac.historical_fault_corpus.v1",
+  "faults": [
+    {
+      "id": "reviewer-starvation-single-node",
+      "description": "A task waited forever when its only eligible reviewer had executed the task.",
+      "fixed_by": "4407eb4eea99638b2e333ab2641ed84fe0fdd6bc",
+      "probe": "tests/fault_replay/reviewer_starvation_probe.py",
+      "expected_fixed_exit": 0,
+      "expected_fixed_output_contains": "fault absent:",
+      "expected_prefix_exit": 1,
+      "expected_prefix_output_contains": "fault reproduced:"
+    }
+  ]
+}

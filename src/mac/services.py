@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -13985,7 +13986,7 @@ class ControlPlane:
 
     def _hub_verify_repo_info(
         self, task: Task, executor_evidence: Evidence
-    ) -> Optional[Dict[str, str]]:
+    ) -> Optional[Dict[str, Any]]:
         """Extract the pushed-branch coordinates the hub verifier needs: the
         remote (evidence repo.remote_url, else the task's canonical contract
         remote), the branch, and head_sha. Returns None when the evidence is
@@ -14029,7 +14030,18 @@ class ControlPlane:
             return None
         if repo.get("pushed") is not True:
             return None
-        return {"remote_url": remote_url, "head_sha": head_sha, "branch": branch}
+        files_changed = repo.get("files_changed")
+        trusted_files = (
+            [str(path) for path in files_changed if isinstance(path, str)]
+            if isinstance(files_changed, list)
+            else []
+        )
+        return {
+            "remote_url": remote_url,
+            "head_sha": head_sha,
+            "branch": branch,
+            "files_changed": trusted_files,
+        }
 
     def _hub_verify_run_contract_test(
         self, remote_url: str, branch: str, head_sha: str, test_command: str
@@ -14204,6 +14216,45 @@ class ControlPlane:
     def _hub_review_verification_uri(self, review_id: str, head_sha: str) -> str:
         return "hub-verify://%s/%s" % (review_id, head_sha[:12])
 
+    def _hub_review_test_command(self, task: Task, info: Mapping[str, Any]) -> str:
+        """Choose the explicit sanity contract when changed paths are trustworthy.
+
+        Older branches and repositories without the contract still run their
+        full configured command. Unsafe or absent paths also fail closed to the
+        full command rather than becoming shell input.
+        """
+
+        configured = _repository_contract_test_command_for_task(task)
+        full_command = configured or "scripts/run-contract-tests.sh"
+        if configured and configured not in {
+            "scripts/run-contract-tests.sh",
+            "./scripts/run-contract-tests.sh",
+        }:
+            return configured
+        raw_files = info.get("files_changed")
+        if not isinstance(raw_files, list) or not raw_files:
+            return full_command
+        safe_files: list[str] = []
+        for raw in raw_files:
+            value = str(raw or "").strip().replace("\\", "/")
+            parts = value.split("/")
+            if (
+                not value
+                or value.startswith("/")
+                or any(part in {"", ".", ".."} for part in parts)
+                or any(ord(char) < 32 for char in value)
+            ):
+                return full_command
+            safe_files.append(value)
+        changed_args = " ".join(
+            "--changed-file %s" % shlex.quote(path) for path in sorted(set(safe_files))
+        )
+        return (
+            "if [ -x scripts/run-sanity-tests.sh ]; then "
+            "scripts/run-sanity-tests.sh %s; else %s; fi"
+            % (changed_args, full_command)
+        )
+
     def _matches_hub_review_verification_evidence(
         self,
         evidence: Evidence,
@@ -14281,21 +14332,13 @@ class ControlPlane:
 
     def _run_hub_review_verification_locked(
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
-        info: Dict[str, str], key: str,
+        info: Mapping[str, Any], key: str,
     ) -> Optional[Evidence]:
-        # Test-command selection decision (Option C, hub verify):
-        # Hub verify always uses the FULL contract test command, never an
-        # affected-tests subset derived from files_changed.
-        #
-        # Rationale: hub verify is the authoritative trust anchor for the
-        # review->merge gate.  An affected-tests subset optimises for speed
-        # at the cost of coverage — a regression in a file not flagged by
-        # codegraph-affected could slip through undetected.  The hub runs
-        # the test exactly once in a controlled sandbox (cost is bounded);
-        # correctness outweighs runtime here.  If files_changed is small the
-        # full suite still finishes quickly; if it is large the full suite is
-        # exactly what's needed to catch cross-cutting regressions.
-        test_command = _repository_contract_test_command_for_task(task)
+        # The repository-owned selector combines changed/CodeGraph tests with
+        # public and process-E2E canaries, and itself falls back to the full
+        # suite for broad or uncertain changes. This keeps the independent hub
+        # environment without unconditionally duplicating mainline coverage.
+        test_command = self._hub_review_test_command(task, info)
         try:
             returncode, output = self._hub_verify_run_contract_test(
                 info["remote_url"], info["branch"], info["head_sha"], test_command

@@ -1,16 +1,18 @@
-# OpenShell + NeMo Relay: Docker E2E Verification
+# OpenShell + NeMo Relay: container-contract verification
 
-Status: **Container e2e harness** (skipped unless `TEST_DOCKER_E2E=1`)
+Status: **Container-contract harness** (skipped unless `TEST_CONTAINER_CONTRACT=1`)
 
-This document describes the containerized end-to-end verification harness for the
+This document describes the in-container contract harness for the
 OpenShell sandbox + NeMo Relay observability integration. It complements the
 architecture guide in `docs/openshell-nemo-relay-integration.md`.
 
 Unit/integration coverage of the moving parts lives in the main suite —
 `tests/test_openshell_sandbox.py` (the sandbox wrapper) and
-`tests/test_relay_observability.py` (the OCSF translator). **This** harness is the
-container-level seam: it builds the executor image and exercises the full chain
-against the real binary.
+`tests/test_relay_observability.py` (the OCSF translator). This harness builds
+the executor image and calls those internals inside the real container. It is
+not black-box E2E because it does not submit work through a public hub/worker
+boundary. The mandatory black-box process seam is
+`tests/test_worker_process_e2e.py`.
 
 ---
 
@@ -18,7 +20,7 @@ against the real binary.
 
 | File | Purpose |
 |---|---|
-| `tests/e2e/test_openshell_nemo_relay.py` | Container-level (`docker_e2e`) pytest suite |
+| `tests/e2e/test_openshell_nemo_relay.py` | In-container (`container_contract`) pytest suite |
 | `tests/e2e/docker-compose.e2e.yaml` | Container topology for executor + relay collector |
 | `tests/e2e/otelcol-config.yaml` | OpenTelemetry Collector config for relay export verification |
 | `Dockerfile.e2e` | executor image with openshell + nemo-relay installed |
@@ -62,8 +64,8 @@ the body is a transparent no-op.
 
 ## Test Execution
 
-The container tests are marked `docker_e2e` and **skipped automatically** unless
-`TEST_DOCKER_E2E=1` is set and `docker compose` is available, so the normal
+The container tests are marked `container_contract` and **skipped automatically** unless
+`TEST_CONTAINER_CONTRACT=1` is set and `docker compose` is available, so the normal
 contract suite stays hermetic.
 
 ```bash
@@ -71,7 +73,7 @@ contract suite stays hermetic.
 docker build -f Dockerfile.e2e -t mac-executor-e2e:latest .
 
 # Run the container e2e suite:
-TEST_DOCKER_E2E=1 pytest tests/e2e/test_openshell_nemo_relay.py -v -m docker_e2e
+TEST_CONTAINER_CONTRACT=1 pytest tests/e2e/test_openshell_nemo_relay.py -v -m container_contract
 
 # Or bring up the full compose stack interactively:
 docker compose -f tests/e2e/docker-compose.e2e.yaml up
@@ -90,11 +92,11 @@ suite: `pytest tests/test_openshell_sandbox.py tests/test_relay_observability.py
   run: docker build -f Dockerfile.e2e -t mac-executor-e2e:latest .
 - name: Run Docker e2e tests
   env:
-    TEST_DOCKER_E2E: "1"
-  run: pytest tests/e2e/test_openshell_nemo_relay.py -v -m docker_e2e
+    TEST_CONTAINER_CONTRACT: "1"
+  run: pytest tests/e2e/test_openshell_nemo_relay.py -v -m container_contract
 ```
 
-When Docker is unavailable, the `docker_e2e` tests skip automatically; the
+When Docker is unavailable, the `container_contract` tests skip automatically; the
 behaviour they exercise is also covered (unit-level) by the main suite.
 
 ---
@@ -107,7 +109,7 @@ behaviour they exercise is also covered (unit-level) by the main suite.
 | `MAC_OPENSHELL_POLICY` | auto-discover | Path to the YAML policy file for openshell |
 | `MAC_RELAY_OBSERVABILITY` | unset/0 | `1` = NeMo Relay export active |
 | `NEMO_RELAY_ENDPOINT` | (none) | OTLP endpoint for the relay exporter |
-| `TEST_DOCKER_E2E` | unset | `1` = run the `docker_e2e` container tests |
+| `TEST_CONTAINER_CONTRACT` | unset | `1` = run the in-container contract tests |
 
 ---
 

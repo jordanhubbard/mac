@@ -1924,7 +1924,10 @@ def test_mac_repository_contract_test_command_uses_hermetic_runner():
     # Interpreter is discovered (repo .venv on dev hosts; /opt/mac-venv in the
     # OpenShell task sandbox), not hardcoded to .venv — a hardcoded
     # .venv/bin/python is rc 127 in-sandbox and blocked every code task.
-    assert 'exec "$PY" -m pytest "$@"' in text
+    # Do not require ``exec`` here: focused runs use a temporary HOME that the
+    # runner must remove after pytest returns.  The contract is interpreter
+    # discovery plus lossless forwarding of the caller's pytest arguments.
+    assert '"$PY" -m pytest "$@"' in text
     assert "/opt/mac-venv/bin/python" in text
 
 

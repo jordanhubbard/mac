@@ -5,40 +5,132 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 jobs:
-  test:
+  sanity:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Set up primary Python
+        run: uv python install 3.11
+      - name: Sync dependencies
+        run: uv sync --extra dev --python 3.11
+      - name: Run affected, public-contract, and process-E2E sanity scope
+        run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
+
+  mainline:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v3
+      - name: Set up primary Python
+        run: uv python install 3.11
+      - name: Sync dependencies
+        run: uv sync --extra dev --python 3.11
+      - name: Run full statement, branch, and subprocess coverage gate once
+        run: scripts/run-contract-tests.sh
+      - name: Upload coverage policy evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainline-coverage
+          path: coverage.json
+
+  compatibility:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Set up secondary Python
+        run: uv python install 3.12
+      - name: Sync dependencies
+        run: uv sync --extra dev --python 3.12
+      - name: Run secondary-version public/process compatibility slice
+        run: scripts/run-compatibility-tests.sh
+
+  nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
       - name: Sync dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - name: Run full scheduled matrix
+        run: scripts/run-contract-tests.sh
+      - name: Prove historical fault detection
+        if: matrix.python-version == '3.11'
+        run: scripts/fault-replay.py
 
-      - name: Run API tests
-        run: uv run --extra dev pytest -q --tb=short -m api tests/
+  portfolio:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Set up primary Python
+        run: uv python install 3.11
+      - name: Sync dependencies
+        run: uv sync --extra dev --python 3.11
+      - name: Measure per-test contribution and duration
+        env:
+          MAC_TEST_PORTFOLIO: "1"
+        run: scripts/run-contract-tests.sh
+      - name: Upload portfolio evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-portfolio
+          path: .test-portfolio/
 
-      - name: Run CLI tests
-        run: uv run --extra dev pytest -q --tb=short -m cli tests/
-
-      - name: Run UI tests
-        run: uv run --extra dev pytest -q --tb=short -m ui tests/
-
-      - name: Run full regression suite
-        run: uv run --extra dev pytest -q --tb=short
+  container-contract:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Sync dependencies
+        run: uv sync --extra dev --python 3.11
+      - name: Run in-container OpenShell and relay contracts
+        env:
+          TEST_CONTAINER_CONTRACT: "1"
+        run: uv run --extra dev pytest -q -m container_contract tests/e2e/test_openshell_nemo_relay.py
 
   docker:
-    runs-on: ubuntu-latest
-    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [mainline, compatibility]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
@@ -50,16 +142,22 @@ jobs:
           push: false
           tags: mac:ci-${{ github.sha }}
           load: true
-      - name: Smoke-test container starts with required env
+      - name: Black-box deployed hub authentication and task round trip
+        env:
+          MAC_BLACKBOX_TOKEN: ci-blackbox-token-with-at-least-32-characters
         run: |
           docker run --rm -d --name mac-ci \
             -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
+            -e MAC_API_TOKEN="$MAC_BLACKBOX_TOKEN" \
             -p 8000:8000 mac:ci-${{ github.sha }}
+          cleanup() { docker rm -f mac-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
-              echo "ok"; break
+              break
             fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:8000/health
-          docker stop mac-ci
+          python3 scripts/blackbox-hub-smoke.py \
+            --url http://127.0.0.1:8000 \
+            --token "$MAC_BLACKBOX_TOKEN"

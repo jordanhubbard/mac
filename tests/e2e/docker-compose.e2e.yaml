@@ -4,7 +4,7 @@
 #
 # Usage:
 #   # Run full e2e suite (unit + container tests):
-#   TEST_DOCKER_E2E=1 pytest tests/e2e/test_openshell_nemo_relay.py -v
+#   TEST_CONTAINER_CONTRACT=1 pytest tests/e2e/test_openshell_nemo_relay.py -v -m container_contract
 #
 #   # Start services interactively:
 #   docker compose -f docker-compose.e2e.yaml up
@@ -25,7 +25,7 @@
 #     Required secret: none (containers are built locally, no registry).
 #   - GitLab CI: use `services:` with `docker:dind`.
 #   - When Docker Engine/Moby is unavailable in CI, the compose tests are skipped
-#     automatically (TEST_DOCKER_E2E is unset by default). Unit tests in the
+#     automatically (TEST_CONTAINER_CONTRACT is unset by default). Unit tests in the
 #     same file run without any container dependency.
 #
 # Prerequisites:

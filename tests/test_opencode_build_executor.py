@@ -1297,6 +1297,33 @@ def test_detect_emitted_subdir_command_quotes_path(tmp_path: Path) -> None:
     )
 
 
+def test_explicit_sanity_contract_precedes_ecosystem_detection(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    sanity = scripts / "run-sanity-tests.sh"
+    sanity.write_text("#!/bin/sh\nexit 0\n")
+    sanity.chmod(0o755)
+    (repo / "test-policy.toml").write_text('schema = "mac.test_policy.v1"\n')
+    (repo / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    base = "a" * 40
+
+    result = _run_helper(
+        [
+            "_with_timeout",
+            "_pkg_has_test_script",
+            "_dir_has_js_tests",
+            "_find_subdir_js_project",
+            "gate_detect_test_command",
+        ],
+        f'MAC_TASK_REPO_BASE_SHA={base} gate_detect_test_command "{repo}"',
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"scripts/run-sanity-tests.sh --base {base}"
+
+
 def test_detect_readme_command_returns_first_match_no_sigpipe(
     tmp_path: Path,
 ) -> None:

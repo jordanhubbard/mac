@@ -118,7 +118,9 @@ applies uniformly to **every** repo (`mac`, `ivan-plugin`,
 
 Sequence before any `git push` / MR:
 
-1. **Detect test command** — `package.json` (`test` script) → `npm test`;
+1. **Detect test command** — an executable repository-owned
+   `scripts/run-sanity-tests.sh` plus `test-policy.toml` is preferred and gets
+   the prepared base SHA; otherwise `package.json` (`test` script) → `npm test`;
    `pyproject.toml`/`pytest.ini`/`setup.cfg`/`setup.py` → `pytest`;
    `Makefile` (`test` target) → `make test`; otherwise scan
    `README.md`/`CONTRIBUTING.md`. If none can be detected the gate does

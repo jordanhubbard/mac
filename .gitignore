@@ -3,7 +3,9 @@ __pycache__/
 .coverage
 .coverage.*
 coverage.xml
+coverage.json
 htmlcov/
+.test-portfolio/
 .venv/
 node_modules/
 dist/

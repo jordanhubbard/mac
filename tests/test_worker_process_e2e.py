@@ -1,3 +1,5 @@
+"""Black-box hub/worker E2E through HTTP and process entry points only."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +13,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import pytest
+
+
+pytestmark = pytest.mark.process_e2e
 
 
 def _free_port() -> int:
@@ -273,6 +280,8 @@ print("executor completed " + task["id"])
         )
         names = {item["name"] for item in observations}
         assert {
+            "worker.routing.policy",
+            "worker.routing.dry_run_result",
             "worker.routing.dry_run_candidate",
             "worker.routing.claimed",
             "worker.task_claimed",

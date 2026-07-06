@@ -1,4 +1,4 @@
-"""Containerized full-stack e2e: OpenShell sandbox + NeMo Relay observability.
+"""Container contracts for OpenShell wrapping + NeMo Relay translation.
 
 These are the Docker Engine/Moby container tests that exercise the full integration
 chain against the real built image:
@@ -15,13 +15,12 @@ The container topology (executor + OpenTelemetry collector) lives in
 
 Run them::
 
-    TEST_DOCKER_E2E=1 pytest tests/e2e/test_openshell_nemo_relay.py -v -m docker_e2e
+    TEST_CONTAINER_CONTRACT=1 pytest tests/e2e/test_openshell_nemo_relay.py -v -m container_contract
 
-They are marked ``docker_e2e`` and skipped automatically unless
-``TEST_DOCKER_E2E=1`` is set and ``docker compose`` is available, so the normal
-contract suite stays hermetic. Unit-level coverage of the sandbox wrapper and
-the OCSF translator lives in ``tests/test_openshell_sandbox.py`` and
-``tests/test_relay_observability.py``; this file is the container-level seam.
+They are marked ``container_contract`` and skipped automatically unless
+``TEST_CONTAINER_CONTRACT=1`` (or the legacy ``TEST_DOCKER_E2E=1``) is set and
+``docker compose`` is available. These tests call MAC internals inside the
+container, so they are intentionally not described as black-box E2E tests.
 """
 from __future__ import annotations
 
@@ -32,7 +31,10 @@ from pathlib import Path
 
 import pytest
 
-DOCKER_E2E = os.environ.get("TEST_DOCKER_E2E", "").strip() == "1"
+CONTAINER_CONTRACT = (
+    os.environ.get("TEST_CONTAINER_CONTRACT", "").strip() == "1"
+    or os.environ.get("TEST_DOCKER_E2E", "").strip() == "1"
+)
 COMPOSE_FILE = Path(__file__).parent / "docker-compose.e2e.yaml"
 
 
@@ -48,8 +50,11 @@ def _docker_available() -> bool:
         return False
 
 
-@pytest.mark.docker_e2e
-@pytest.mark.skipif(not DOCKER_E2E, reason="Set TEST_DOCKER_E2E=1 to run Docker e2e tests")
+@pytest.mark.container_contract
+@pytest.mark.skipif(
+    not CONTAINER_CONTRACT,
+    reason="Set TEST_CONTAINER_CONTRACT=1 to run container contract tests",
+)
 class TestDockerE2E:
     """Container-level e2e tests using docker-compose.e2e.yaml."""
 

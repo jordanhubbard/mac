@@ -41,7 +41,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9.0",
-    "coverage[toml]>=7.6,<8.0",
+    "coverage[toml]>=7.10,<8.0",
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
     "kubernetes>=30.1,<33",
@@ -101,11 +101,18 @@ markers = [
     "cli: CLI command tests — mac (tests/cli/)",
     "ui: UI asset-serving and dashboard tests (tests/ui/)",
     "postgres: live-Postgres tests; need MAC_TEST_PG_URL pointing at a writable test DB",
-    "docker_e2e: Docker/Podman container e2e tests; require TEST_DOCKER_E2E=1 and docker compose",
+    "process_e2e: black-box tests using real MAC processes and public network/CLI boundaries",
+    "container_contract: in-container contract tests; require TEST_CONTAINER_CONTRACT=1 and docker compose",
+    "docker_e2e: legacy alias for container-contract selection during migration",
 ]
 
 [tool.coverage.run]
 source = ["src/mac"]
+branch = true
+relative_files = true
+# Coverage.py 7.10+ propagates measurement into Python child processes and
+# automatically writes parallel data files for later `coverage combine`.
+patch = ["subprocess"]
 omit = [
     # Pinned upstream snapshot; keep mac-owned adapters covered here, but do
     # not count vendored Hermes internals against this repository's threshold.
@@ -113,13 +120,11 @@ omit = [
 ]
 
 [tool.coverage.report]
-# TEMPORARY: reduced from 95 to 94. A batch of recently-landed work
-# (task-authority guarding, the Fleet Workbench rebuild, local-ledger
-# migration) added an under-tested surface in cli.py/services.py/worker.py that
-# left the aggregate marginally short of 95 (~94.96%). This 1-point floor keeps
-# the gate meaningful and absorbs run-to-run variance; restore to 95 once the
-# remaining lines are covered — coverage is already almost back.
-fail_under = 94
+# Separate statement and branch safety floors live in test-policy.toml and are
+# enforced by scripts/coverage-policy.py. The built-in aggregate percentage
+# mixes statements and branches, so it must not become a coverage-maximization
+# KPI or hide weak decision coverage behind a high statement percentage.
+fail_under = 0
 precision = 2
 show_missing = true
 skip_covered = true

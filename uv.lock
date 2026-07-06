@@ -1027,7 +1027,7 @@ relay = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'hermes-gateway'", specifier = "==3.13.4" },
-    { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=7.6,<8.0" },
+    { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=7.10,<8.0" },
     { name = "croniter", specifier = "==6.0.0" },
     { name = "cryptography", specifier = ">=42,<46" },
     { name = "discord-py", marker = "extra == 'hermes-gateway'", specifier = "==2.7.1" },

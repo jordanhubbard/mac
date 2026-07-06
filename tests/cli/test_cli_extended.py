@@ -1,4 +1,4 @@
-"""Extended behavioral tests for CLI domains not yet covered by test_cli_coverage.py.
+"""Extended behavioral tests for less common CLI domains.
 
 Covers:
   - diagnostics: basic health report
@@ -35,7 +35,7 @@ from mac.cli import main
 
 
 # ---------------------------------------------------------------------------
-# shared helper (same pattern as test_cli_coverage.py)
+# shared helper
 # ---------------------------------------------------------------------------
 
 
@@ -609,7 +609,7 @@ def test_task_detect_ticketing_path(tmp_path):
 def test_extended_cli_coverage_gate():
     """Meta-test: assert that the extended domains are all registered in cli.py.
 
-    This test complements test_cli_subcommand_coverage_gate in test_cli_coverage.py,
+    This test complements the parser-wide gate in test_cli_coverage_gate.py,
     verifying the newly covered domains so both gates stay in sync.
     """
     # Domains verified by tests in THIS file

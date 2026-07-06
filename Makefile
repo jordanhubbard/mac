@@ -27,6 +27,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
 	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage \
+	test-portfolio fault-replay sanity-test compatibility-test \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
 
@@ -211,9 +212,20 @@ deploy: require-python codegraph-sync ## Deploy to an already configured fleet h
 test: codegraph-sync ## Run the mandatory hermetic contract test suite.
 	scripts/run-contract-tests.sh
 
-coverage: codegraph-sync ## Run the full test suite and print coverage.
-	uv run --extra dev coverage run -m pytest
-	uv run --extra dev coverage report
+coverage: codegraph-sync ## Run the canonical statement/branch/subprocess coverage gate.
+	scripts/run-contract-tests.sh
+
+test-portfolio: codegraph-sync ## Measure per-test timings and unique line/arc contribution.
+	MAC_TEST_PORTFOLIO=1 scripts/run-contract-tests.sh
+
+fault-replay: ## Prove historical probes pass now and fail before their fixes.
+	uv run --extra dev python scripts/fault-replay.py
+
+sanity-test: codegraph-sync ## Run affected tests + public/process canaries, fail closed to full.
+	scripts/run-sanity-tests.sh $(ARGS)
+
+compatibility-test: codegraph-sync ## Run the secondary-version public/process compatibility slice.
+	scripts/run-compatibility-tests.sh
 
 test-api: codegraph-sync ## Run API-marked tests.
 	uv run --extra dev pytest -q -m api tests/

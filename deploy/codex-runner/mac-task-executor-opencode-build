@@ -372,6 +372,21 @@ EOF
 gate_detect_test_command() {
     local d="$1"
 
+    # 0. Explicit repository-owned sanity contract. This is the only detector
+    # allowed to precede ecosystem defaults: its presence plus test-policy.toml
+    # is an intentional opt-in to affected/canary selection with a fail-closed
+    # full-suite fallback. Pass the prepared base SHA when available so a
+    # committed task branch is compared with its actual pre-task source.
+    if [ -x "${d}/scripts/run-sanity-tests.sh" ] && [ -f "${d}/test-policy.toml" ]; then
+        local sanity_base="${MAC_TASK_REPO_BASE_SHA:-${BASE_SHA:-}}"
+        if printf '%s' "${sanity_base}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "scripts/run-sanity-tests.sh --base ${sanity_base}"
+        else
+            echo "scripts/run-sanity-tests.sh"
+        fi
+        return 0
+    fi
+
     # Pre-scan: detect whether JS/TS test files exist (a stronger signal than config) to avoid mis-detecting polyglot repos (e.g. TS projects carrying pyproject.toml only for ruff/black tooling). No depth cap.
     local has_js_tests=0
     if _dir_has_js_tests "${d}"; then

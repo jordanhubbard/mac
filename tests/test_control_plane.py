@@ -10375,6 +10375,22 @@ def test_hub_verify_prefers_canonical_contract_remote_over_redacted_evidence(cp)
     assert info["remote_url"] == "git@github.com:org/repo.git"
 
 
+def test_hub_verify_uses_sanity_scope_and_fails_closed_for_unsafe_paths(cp):
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp, lambda *args: (0, "ok")
+    )
+    info = cp._hub_verify_repo_info(task, evidence)
+    assert info is not None
+
+    command = cp._hub_review_test_command(task, info)
+
+    assert "scripts/run-sanity-tests.sh" in command
+    assert "--changed-file src/example.py" in command
+    assert "else scripts/run-contract-tests.sh" in command
+    unsafe = dict(info, files_changed=["../escape.py"])
+    assert cp._hub_review_test_command(task, unsafe) == "scripts/run-contract-tests.sh"
+
+
 def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     seen = []
