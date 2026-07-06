@@ -1743,6 +1743,27 @@ class SQLiteStore:
         self._ensure_column(
             "agents", "installed_packages", "installed_packages TEXT NOT NULL DEFAULT '{}'"
         )
+        # schema_dispatch_hold: per-agent dispatch hold + zombie-detection counters.
+        self._ensure_column(
+            "agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0"
+        )
+        self._ensure_column(
+            "agents", "dispatch_hold_reason", "dispatch_hold_reason TEXT"
+        )
+        self._ensure_column(
+            "agents", "dispatch_hold_at", "dispatch_hold_at TEXT"
+        )
+        self._ensure_column(
+            "agents",
+            "consecutive_lease_expiries_no_telemetry",
+            "consecutive_lease_expiries_no_telemetry INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            "agents", "last_control_stream_published_at", "last_control_stream_published_at TEXT"
+        )
+        self._ensure_column(
+            "agents", "last_control_stream_consumed_at", "last_control_stream_consumed_at TEXT"
+        )
         self._ensure_column("machines", "hardware", "hardware TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("tasks", "started_at", "started_at TEXT")
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")

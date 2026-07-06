@@ -1,16 +1,20 @@
 {
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
-  "evidence_type": "operator_result",
-  "task_id": "task_643b33ee1c7b4a4ab7a81bf8d5af34a4",
+  "evidence_type": "repo_change",
+  "task_id": "task_add526b89c0849c3a64c6a990c5645ea",
   "repo": {
-    "head_sha": "898f050dfa1311751d3e0fa40f57b25c2ed3a310",
-    "base_sha": "898f050dfa1311751d3e0fa40f57b25c2ed3a310",
-    "branch": "mac/agent_rocky/task_643b33ee1c7b4a4ab7a81bf8d5af34a4-lease_92659c28805746428b",
+    "head_sha": "76283466b26f568a6059443970e35328da93ba2b",
+    "base_sha": "f9e237c8e489a12e4723e0835771bd77dd023897",
+    "branch": "mac/agent_bullwinkle/task_add526b89c0849c3a64c6a990c5645ea-lease_9d87335d2b284befa1",
     "dirty": true,
     "pushed": false,
     "files_changed": [
-      "docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md"
+      "src/mac/models.py",
+      "src/mac/store.py",
+      "src/mac/store_postgres.py",
+      "src/mac/services.py",
+      "src/mac/data/postgres/schema.sql"
     ]
   },
   "tests": [
@@ -19,81 +23,54 @@
       "command": "scripts/run-contract-tests.sh",
       "returncode": 0,
       "status": "pass",
-      "summary": "All contract tests passed (94.07% coverage); no code changes made — only a forensics report doc was added"
+      "summary": "5198 passed, 21 skipped, 5 warnings in 356.03s; coverage 94.06%"
     }
   ],
   "checks": [
     {
       "name": "codegraph_audit",
-      "command": "codegraph init && codegraph affected docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md",
+      "command": "codegraph init && codegraph affected src/mac/models.py src/mac/store.py src/mac/store_postgres.py src/mac/services.py",
       "returncode": 0,
-      "status": "skipped",
-      "reason": "non_code_change",
+      "status": "pass",
       "relevant_files": [
-        "docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md"
+        "src/mac/models.py",
+        "src/mac/store.py",
+        "src/mac/store_postgres.py",
+        "src/mac/services.py",
+        "src/mac/data/postgres/schema.sql"
       ]
     }
   ],
   "codegraph": {
     "schema": "mac.codegraph_audit.v1",
-    "status": "skipped",
-    "reason": "non_code_change",
+    "status": "pass",
     "relevant_files": [
-      "docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md"
+      "src/mac/models.py",
+      "src/mac/store.py",
+      "src/mac/store_postgres.py",
+      "src/mac/services.py",
+      "src/mac/data/postgres/schema.sql"
     ],
     "commands": [
       {
         "argv": ["codegraph", "init"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "37,404 nodes, 122,865 edges in 10.8s"
+        "stdout": "37,414 nodes, 121,561 edges in 20.8s"
       },
       {
-        "argv": ["codegraph", "affected", "docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md"],
+        "argv": ["codegraph", "affected", "src/mac/models.py", "src/mac/store.py", "src/mac/store_postgres.py", "src/mac/services.py"],
         "returncode": 0,
         "status": "pass",
-        "stdout": "No test files affected by the changed files."
+        "stdout": "Affected test files (7): comfyui tests, tests/e2e/test_openshell_nemo_relay.py"
+      },
+      {
+        "argv": ["codegraph", "impact", "src/mac/models.py"],
+        "returncode": 0,
+        "status": "pass",
+        "stdout": "Impact: 163 affected symbols — cascades into services.py, all agent-consuming modules"
       }
     ]
   },
-  "operator_result": {
-    "schema": "mac.operator_result.v1",
-    "subject_task_id": "task_e5b3dc5bf5ba446bbfe3b0704b153ec7",
-    "analysis_task_id": "task_643b33ee1c7b4a4ab7a81bf8d5af34a4",
-    "fix_commit": "898f050dfa1311751d3e0fa40f57b25c2ed3a310",
-    "status": "complete",
-    "summary": "The 90s dispatch delay for CLI-created probe task task_e5b3dc5bf5ba446bbfe3b0704b153ec7 was caused by a fleet publication window (workers restarting after 898f050 landed), not a dispatch evaluation code defect.",
-    "report_path": "docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md",
-    "findings": {
-      "task_shape_diff_cli_vs_fleet": {
-        "result": "no_meaningful_difference",
-        "detail": "_normalize_task_execution_contract runs unconditionally in create_task() for ALL paths including CLI. For the mac project (which has a registered repository), CLI-created tasks receive quality=strong, source=registered_project, acc_metadata stamped, and origin.type=direct_task — identical fields to groomer and workflow-spawned tasks."
-      },
-      "dispatch_eligibility_gates": {
-        "result": "not_blocked",
-        "detail": "The probe task had required_capabilities=[], no_dispatch=absent, project not paused, and execution_contract.quality=strong. No dispatch gate in _task_matches_worker_claim_policy() or _agent_availability_for_task() would have rejected it. The dispatch SQL WHERE clause (state=OPEN, owner_agent_id IS NULL, lease_id IS NULL) does not filter on acc_metadata or execution_contract.quality."
-      },
-      "acc_metadata_absent_at_creation": {
-        "result": "not_applicable",
-        "detail": "acc_metadata IS absent in the raw CLI payload, but _normalize_task_execution_contract stamps it automatically when it resolves the registered project repository (Branch 3, services.py:3640). The normalized task stored in the DB has acc_metadata. This is not a dispatch gate."
-      },
-      "normalize_not_running_on_cli_path": {
-        "result": "false",
-        "detail": "_normalize_task_execution_contract is called at services.py:3332 inside create_task(), which is the single canonical path used by CLI, groomer, workflow child addition, and all other callers. No bypass exists."
-      },
-      "worker_routing_task_skipped_logs": {
-        "result": "zero_logs_expected_if_workers_offline",
-        "detail": "worker.routing.task_skipped is emitted at level=debug inside _claim_next_for_agent_impl() (the worker-pull path). If workers were offline/restarting during the 90s window, they would not have called claim-next at all, producing zero skip logs. Absence of skip logs means the task was never evaluated, NOT that evaluation was suppressed."
-      },
-      "correlation_with_898f050_deployment": {
-        "result": "fleet_publication_window",
-        "detail": "898f050 is the base SHA of this worktree and landed shortly before the probe task was claimed. MAC fleet workers restart when a REPO_UPDATE_TOPIC AgentBus stream is processed (_handle_repo_update_stream -> restart_requested=True -> run_forever exits -> process-manager restarts). During restart, workers are OFFLINE and excluded from _available_agents(). If all fleet workers were mid-restart simultaneously, no agent was available to claim the task from either the worker-pull (claim-next) or hub-push (dispatch_once/tick) paths. 90s is consistent with a fleet-wide rolling restart including runtime-dep reconcile on startup."
-      },
-      "separate_dispatch_code_defect": {
-        "result": "none_found",
-        "detail": "No dispatch evaluation code defect separate from the silent-death bug was identified. The delay was purely operational: workers offline during fleet publication window. No follow-up task is warranted for a dispatch code fix."
-      }
-    },
-    "follow_up_tasks": []
-  }
+  "summary": "Added 6 new fields to Agent dataclass (dispatch_hold, dispatch_hold_reason, dispatch_hold_at, consecutive_lease_expiries_no_telemetry, last_control_stream_published_at, last_control_stream_consumed_at). Added idempotent _ensure_column migrations to store.py and ensure_column calls in store_postgres.py initialize(). Added new columns to postgres schema.sql for fresh installs. Updated _agent_from_row in services.py to read all new fields with safe key-presence guards. All 5198 tests pass."
 }

@@ -12271,6 +12271,28 @@ class ControlPlane:
             if "installed_packages" in keys
             else {}
         )
+        dispatch_hold = bool(row["dispatch_hold"]) if "dispatch_hold" in keys else False
+        dispatch_hold_reason = (
+            row["dispatch_hold_reason"] if "dispatch_hold_reason" in keys else None
+        )
+        dispatch_hold_at = (
+            row["dispatch_hold_at"] if "dispatch_hold_at" in keys else None
+        )
+        consecutive_lease_expiries_no_telemetry = (
+            int(row["consecutive_lease_expiries_no_telemetry"])
+            if "consecutive_lease_expiries_no_telemetry" in keys
+            else 0
+        )
+        last_control_stream_published_at = (
+            row["last_control_stream_published_at"]
+            if "last_control_stream_published_at" in keys
+            else None
+        )
+        last_control_stream_consumed_at = (
+            row["last_control_stream_consumed_at"]
+            if "last_control_stream_consumed_at" in keys
+            else None
+        )
         return Agent(
             row["id"],
             row["machine_id"],
@@ -12287,6 +12309,12 @@ class ControlPlane:
             role_id,
             hermes_instance_id,
             installed_packages,
+            dispatch_hold,
+            dispatch_hold_reason,
+            dispatch_hold_at,
+            consecutive_lease_expiries_no_telemetry,
+            last_control_stream_published_at,
+            last_control_stream_consumed_at,
         )
 
     def _project_item_from_row(self, row: Any) -> ProjectItem:

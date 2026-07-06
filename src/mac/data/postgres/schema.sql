@@ -323,6 +323,13 @@ CREATE TABLE IF NOT EXISTS agents (
     hermes_instance_id TEXT,
     attestation_key_ciphertext TEXT,
     attestation_key_rotated_at TEXT,
+    installed_packages TEXT NOT NULL DEFAULT '{}',
+    dispatch_hold INTEGER NOT NULL DEFAULT 0,
+    dispatch_hold_reason TEXT,
+    dispatch_hold_at TEXT,
+    consecutive_lease_expiries_no_telemetry INTEGER NOT NULL DEFAULT 0,
+    last_control_stream_published_at TEXT,
+    last_control_stream_consumed_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL

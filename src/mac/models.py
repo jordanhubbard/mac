@@ -679,6 +679,16 @@ class Agent:
     # Packages the agent has self-installed into its own environment (pip/npm),
     # reported to the hub as its "default footprint" so redeploys re-hydrate it.
     installed_packages: JsonDict = field(default_factory=dict)
+    # Dispatch hold: operator-set quarantine preventing new task dispatch.
+    dispatch_hold: bool = False
+    dispatch_hold_reason: Optional[str] = None
+    dispatch_hold_at: Optional[str] = None
+    # Zombie-detection counter: incremented when a lease expires with no
+    # telemetry from the agent; reset to 0 on any successful heartbeat.
+    consecutive_lease_expiries_no_telemetry: int = 0
+    # Control-stream health timestamps for zombie detection.
+    last_control_stream_published_at: Optional[str] = None
+    last_control_stream_consumed_at: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
