@@ -8360,6 +8360,31 @@ class ControlPlane:
             actor=actor,
         )
 
+    def set_agent_dispatch_hold(self, agent_id: str, reason: str) -> "Agent":
+        """Place a dispatch hold on an agent; held agents are skipped during claim-next.
+
+        The hold is a pure DB update — the agent need not be reachable or online.
+        """
+        self.get_agent(agent_id)  # raises NotFoundError if absent
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ?, dispatch_hold_at = ?, updated_at = ? WHERE id = ?",
+                (reason, now, now, agent_id),
+            )
+        return self.get_agent(agent_id)
+
+    def clear_agent_dispatch_hold(self, agent_id: str) -> "Agent":
+        """Remove the dispatch hold from an agent, making it eligible for dispatch again."""
+        self.get_agent(agent_id)  # raises NotFoundError if absent
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE agents SET dispatch_hold = 0, dispatch_hold_reason = NULL, dispatch_hold_at = NULL, updated_at = ? WHERE id = ?",
+                (now, agent_id),
+            )
+        return self.get_agent(agent_id)
+
     def delete_agent(self, agent_id: str, *, actor: str = "human") -> None:
         agent = self.get_agent(agent_id)
         if self._agent_has_active_lease(agent_id):
@@ -13364,6 +13389,8 @@ class ControlPlane:
         return available
 
     def _agent_availability_for_task(self, agent: Agent, task: Task) -> Tuple[bool, str]:
+        if agent.dispatch_hold:
+            return False, "agent_dispatch_held"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:

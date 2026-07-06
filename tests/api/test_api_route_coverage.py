@@ -360,6 +360,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
+    ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
 
     policy_text = """
 version: 1
@@ -950,6 +951,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/disable"): {"agent_id": "disable_agent_id"},
         ("DELETE", "/agents/{agent_id}"): {"agent_id": "delete_agent_id"},
         ("POST", "/agents/bulk"): {},
+        ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
+        ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("POST", "/agents/{agent_id}/claim-next"): {"agent_id": "claim_next_agent_id"},
         ("POST", "/agents/{agent_id}/nap-runs"): {"agent_id": "nap_begin_agent_id"},
         ("GET", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
@@ -1243,6 +1246,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             ),
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
+        ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
         ("POST", "/roles"): {
             "slug": "route-role-case",
             "name": "Route Role Case",

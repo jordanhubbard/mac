@@ -2127,6 +2127,16 @@ def cmd_agent_heartbeat(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agent_hold(args: argparse.Namespace) -> None:
+    """Place a dispatch hold on an agent; the agent will be skipped during claim-next."""
+    _print(_plane(args).set_agent_dispatch_hold(args.agent_id, args.reason))
+
+
+def cmd_agent_resume(args: argparse.Namespace) -> None:
+    """Remove the dispatch hold from an agent, making it eligible for dispatch again."""
+    _print(_plane(args).clear_agent_dispatch_hold(args.agent_id))
+
+
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
@@ -4914,6 +4924,21 @@ def build_parser() -> argparse.ArgumentParser:
     agent_delete.add_argument("agent_id")
     agent_delete.add_argument("--actor", default="human")
     _set(cmd_agent_delete, agent_delete)
+
+    agent_hold = agent.add_parser(
+        "hold",
+        help="place a dispatch hold on an agent; held agents are skipped during claim-next",
+    )
+    agent_hold.add_argument("agent_id")
+    agent_hold.add_argument("--reason", required=True, help="human-readable reason for the hold")
+    _set(cmd_agent_hold, agent_hold)
+
+    agent_resume = agent.add_parser(
+        "resume",
+        help="remove the dispatch hold from an agent, making it eligible for dispatch again",
+    )
+    agent_resume.add_argument("agent_id")
+    _set(cmd_agent_resume, agent_resume)
 
     agent_migrate = agent.add_parser(
         "migrate",

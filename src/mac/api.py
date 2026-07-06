@@ -814,6 +814,10 @@ class DispatchRequest(BaseModel):
     stale_after_seconds: Optional[int] = None
 
 
+class DispatchHoldRequest(BaseModel):
+    reason: str
+
+
 class AgentClaimNextRequest(BaseModel):
     lease_seconds: int = 900
     allowed_projects: List[str] = Field(default_factory=list)
@@ -4902,6 +4906,23 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         return cp.roles.unassign_role(agent_id).to_dict()
+
+    @app.post("/agents/{agent_id}/dispatch-hold")
+    def set_dispatch_hold(
+        agent_id: str,
+        body: DispatchHoldRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.set_agent_dispatch_hold(agent_id, body.reason).to_dict()
+
+    @app.delete("/agents/{agent_id}/dispatch-hold")
+    def clear_dispatch_hold(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.clear_agent_dispatch_hold(agent_id).to_dict()
 
     @app.get("/agents/{agent_id}/identity")
     def get_agent_identity(agent_id: str) -> Dict[str, Any]:
