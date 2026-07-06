@@ -416,6 +416,115 @@ def _backfill_optional_provenance(quiet: bool = False) -> List[str]:
     return backfilled
 
 
+def remove_shadowed_top_level_duplicates(quiet: bool = False) -> List[str]:
+    """Archive stale top-level skill dirs that are shadowed by a categorized copy.
+
+    When skills are restructured from the flat layout (e.g.
+    ``~/.hermes/skills/writing-plans/``) into a category subdirectory
+    (e.g. ``~/.hermes/skills/software-development/writing-plans/``), both
+    locations end up on disk.  The Hermes skill-view resolver then raises
+    "Ambiguous skill name" because the same bare name appears under two
+    different paths.
+
+    This function finds every SKILL.md directly inside a *top-level*
+    ``SKILLS_DIR/<name>/`` folder where a deeper categorized copy
+    (``SKILLS_DIR/<category>/<name>/``) also exists, and moves the top-level
+    duplicate into ``SKILLS_DIR/.archive/<name>/`` so it is out of the way
+    but recoverable.
+
+    Safe by design:
+    - Only moves directories that are *direct children* of SKILLS_DIR (depth 1).
+    - Only acts when a deeper copy with the *same folder name* exists.
+    - Moves (does not delete) — recovery is ``mv .archive/<name> .``.
+    - Skips directories listed in EXCLUDED_SKILL_DIRS.
+
+    Returns:
+        list of folder-name strings that were archived (empty when nothing to do).
+    """
+    if not SKILLS_DIR.exists():
+        return []
+
+    archive_dir = SKILLS_DIR / ".archive"
+    archived: List[str] = []
+
+    # Build a set of skill folder names that appear at depth >= 2 (categorized).
+    # We only care about folders that contain a SKILL.md.
+    categorized_names: set = set()
+    for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+        if is_excluded_skill_path(skill_md):
+            continue
+        skill_dir = skill_md.parent
+        try:
+            rel = skill_dir.relative_to(SKILLS_DIR)
+        except ValueError:
+            continue
+        # depth == 1 means directly under SKILLS_DIR (top-level)
+        if len(rel.parts) >= 2:
+            categorized_names.add(skill_dir.name)
+
+    if not categorized_names:
+        return []
+
+    # Now look for top-level dirs (depth == 1) whose name is in categorized_names.
+    for candidate in sorted(SKILLS_DIR.iterdir()):
+        if not candidate.is_dir():
+            continue
+        if candidate.name in {".", ".."} or candidate.name.startswith("."):
+            continue
+        if is_excluded_skill_path(candidate):
+            continue
+        # Must be a direct child of SKILLS_DIR (depth 1)
+        try:
+            rel = candidate.relative_to(SKILLS_DIR)
+        except ValueError:
+            continue
+        if len(rel.parts) != 1:
+            continue
+        # Must contain a SKILL.md
+        if not (candidate / "SKILL.md").exists():
+            continue
+        # Is it shadowed by a categorized copy of the same folder name?
+        if candidate.name not in categorized_names:
+            continue
+
+        # Move to .archive/<name>
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        dest = archive_dir / candidate.name
+        if dest.exists():
+            # Already archived from a prior run — just remove the duplicate
+            try:
+                _rmtree_writable(candidate)
+                archived.append(candidate.name)
+                if not quiet:
+                    print(
+                        f"  - {candidate.name} (top-level duplicate removed; "
+                        f"archive copy already present)"
+                    )
+            except (OSError, IOError) as e:
+                logger.warning(
+                    "Could not remove shadowed top-level skill %s: %s",
+                    candidate,
+                    e,
+                )
+        else:
+            try:
+                shutil.move(str(candidate), str(dest))
+                archived.append(candidate.name)
+                if not quiet:
+                    print(
+                        f"  - {candidate.name} (top-level duplicate archived → "
+                        f".archive/{candidate.name})"
+                    )
+            except (OSError, IOError) as e:
+                logger.warning(
+                    "Could not archive shadowed top-level skill %s: %s",
+                    candidate,
+                    e,
+                )
+
+    return archived
+
+
 def sync_skills(quiet: bool = False) -> dict:
     """
     Sync bundled skills into ~/.hermes/skills/ using the manifest.
@@ -430,6 +539,7 @@ def sync_skills(quiet: bool = False) -> dict:
             "copied": [], "updated": [], "skipped": 0,
             "user_modified": [], "cleaned": [], "total_bundled": 0,
             "optional_provenance_backfilled": [],
+            "shadowed_archived": [],
         }
 
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -555,6 +665,13 @@ def sync_skills(quiet: bool = False) -> dict:
     _write_manifest(manifest)
     optional_provenance_backfilled = _backfill_optional_provenance(quiet=quiet)
 
+    # Archive any stale top-level skill dirs that are now shadowed by categorized
+    # copies (e.g. ~/.hermes/skills/writing-plans/ shadowed by
+    # ~/.hermes/skills/software-development/writing-plans/). Must run after the
+    # main sync so the categorized copies are guaranteed to be present before
+    # any top-level duplicate is removed.
+    shadowed_archived = remove_shadowed_top_level_duplicates(quiet=quiet)
+
     return {
         "copied": copied,
         "updated": updated,
@@ -563,6 +680,7 @@ def sync_skills(quiet: bool = False) -> dict:
         "cleaned": cleaned,
         "total_bundled": len(bundled_skills),
         "optional_provenance_backfilled": optional_provenance_backfilled,
+        "shadowed_archived": shadowed_archived,
     }
 
 
@@ -708,4 +826,6 @@ if __name__ == "__main__":
         parts.append(f"{len(result['cleaned'])} cleaned from manifest")
     if result.get("optional_provenance_backfilled"):
         parts.append(f"{len(result['optional_provenance_backfilled'])} official optional backfilled")
+    if result.get("shadowed_archived"):
+        parts.append(f"{len(result['shadowed_archived'])} top-level duplicates archived")
     print(f"\nDone: {', '.join(parts)}. {result['total_bundled']} total bundled.")

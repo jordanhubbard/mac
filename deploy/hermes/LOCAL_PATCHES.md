@@ -32,6 +32,7 @@ future drift — a hand edit or a re-vendor — fails loudly rather than silentl
 | `post-snapshot-mac-fixes.patch` | **reconstructed** — the 10 text-source edits that had been made directly to the vendored tree without a patch (X-MAC billing-attribution headers in `agent/agent_init.py`, the Slack thread-trigger fix, reconciliation edits, and other de-personalization/runtime edits across `agent/`, `gateway/`, `cron/scheduler.py`, `tools/{code_execution,todo}_tool.py`, `toolsets.py`). Applies after `multi-slack-mvp.patch` (both touch `gateway/platforms/slack.py`). |
 | `review-completion-exit-status.patch` | Makes quiet one-shot Hermes runs return nonzero when a turn is partial, failed, or incomplete (including max-turn exhaustion), so MAC cannot mistake a generated exhaustion summary for completed reviewer work. |
 | `sandbox-path-precedence.patch` | Reasserts MAC's task-toolchain-first, image-runtime-second PATH after Hermes login profiles run, so terminal snapshots and fallback commands cannot select host or profile-provided binaries ahead of sandbox contract tools. |
+| `remove-duplicate-top-level-skills.patch` | Adds `remove_shadowed_top_level_duplicates()` to `tools/skills_sync.py` and integrates it into `sync_skills()`. Archives legacy top-level skill dirs (e.g. `~/.hermes/skills/writing-plans/`) that are shadowed by a categorized copy (e.g. `~/.hermes/skills/software-development/writing-plans/`), eliminating "Ambiguous skill name" errors when `skill_view()` is called by bare name. |
 
 ## Overlay files (`deploy/hermes/overlay/`)
 
