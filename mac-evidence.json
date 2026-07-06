@@ -2,75 +2,32 @@
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
   "evidence_type": "repo_change",
-  "task_id": "task_add526b89c0849c3a64c6a990c5645ea",
-  "repo": {
-    "head_sha": "76283466b26f568a6059443970e35328da93ba2b",
-    "base_sha": "f9e237c8e489a12e4723e0835771bd77dd023897",
-    "branch": "mac/agent_bullwinkle/task_add526b89c0849c3a64c6a990c5645ea-lease_9d87335d2b284befa1",
-    "dirty": true,
-    "pushed": false,
-    "files_changed": [
-      "src/mac/models.py",
-      "src/mac/store.py",
-      "src/mac/store_postgres.py",
-      "src/mac/services.py",
-      "src/mac/data/postgres/schema.sql"
+  "task_id": "task_39f18474296b45b89c63457343f7f1ba",
+  "files_changed": [
+    "tests/test_scientific_optimizer.py"
+  ],
+  "summary": "Added deterministic sampling bucket harness to tests/test_scientific_optimizer.py. Added _stable_point to the module import list, a _bucket_cases() helper that uses production _stable_point to identify task keys outside the 0.01 exploration bucket and inside it (with treatment and control arm selection), plus two new tests: test_sampling_bucket_harness_documents_thresholds (asserts bucket thresholds 0.0/0.01 and arm threshold 0.5 explicitly) and test_sampling_bucket_harness_drives_prepare_task_assignment (calls prepare_task_assignment with pre-verified keys and confirms assignment.arm and assignment.policy_id). No production seam was introduced.",
+  "tests": {
+    "command": ".venv/bin/pytest tests/test_scientific_optimizer.py -v --tb=short",
+    "status": "passed",
+    "note": "29 passed, 1 pre-existing failure (test_optimizer_api_and_cli_expose_durable_policy_crud: 403 auth env issue, present on base branch before this change)",
+    "new_tests_passed": [
+      "test_sampling_bucket_harness_documents_thresholds",
+      "test_sampling_bucket_harness_drives_prepare_task_assignment"
     ]
   },
-  "tests": [
-    {
-      "name": "contract tests (scripts/run-contract-tests.sh)",
-      "command": "scripts/run-contract-tests.sh",
-      "returncode": 0,
-      "status": "pass",
-      "summary": "5198 passed, 21 skipped, 5 warnings in 356.03s; coverage 94.06%"
-    }
-  ],
-  "checks": [
-    {
-      "name": "codegraph_audit",
-      "command": "codegraph init && codegraph affected src/mac/models.py src/mac/store.py src/mac/store_postgres.py src/mac/services.py",
-      "returncode": 0,
-      "status": "pass",
-      "relevant_files": [
-        "src/mac/models.py",
-        "src/mac/store.py",
-        "src/mac/store_postgres.py",
-        "src/mac/services.py",
-        "src/mac/data/postgres/schema.sql"
-      ]
-    }
-  ],
   "codegraph": {
-    "schema": "mac.codegraph_audit.v1",
-    "status": "pass",
-    "relevant_files": [
-      "src/mac/models.py",
-      "src/mac/store.py",
-      "src/mac/store_postgres.py",
-      "src/mac/services.py",
-      "src/mac/data/postgres/schema.sql"
-    ],
+    "status": "passed",
     "commands": [
-      {
-        "argv": ["codegraph", "init"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "37,414 nodes, 121,561 edges in 20.8s"
-      },
-      {
-        "argv": ["codegraph", "affected", "src/mac/models.py", "src/mac/store.py", "src/mac/store_postgres.py", "src/mac/services.py"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "Affected test files (7): comfyui tests, tests/e2e/test_openshell_nemo_relay.py"
-      },
-      {
-        "argv": ["codegraph", "impact", "src/mac/models.py"],
-        "returncode": 0,
-        "status": "pass",
-        "stdout": "Impact: 163 affected symbols — cascades into services.py, all agent-consuming modules"
-      }
-    ]
+      "codegraph init",
+      "codegraph affected tests/test_scientific_optimizer.py",
+      "codegraph impact tests/test_scientific_optimizer.py"
+    ],
+    "affected": "No test files affected by the changed files.",
+    "impact": "Impact scoped to tests/test_scientific_optimizer.py only (1 affected symbol). No production code changed.",
+    "note": "Change is test-only; codegraph confirms no production code paths affected."
   },
-  "summary": "Added 6 new fields to Agent dataclass (dispatch_hold, dispatch_hold_reason, dispatch_hold_at, consecutive_lease_expiries_no_telemetry, last_control_stream_published_at, last_control_stream_consumed_at). Added idempotent _ensure_column migrations to store.py and ensure_column calls in store_postgres.py initialize(). Added new columns to postgres schema.sql for fresh installs. Updated _agent_from_row in services.py to read all new fields with safe key-presence guards. All 5198 tests pass."
+  "verification": {
+    "approach": "test-only change; _bucket_cases() helper uses production _stable_point to compute deterministic bucket membership; thresholds documented via sentinel assertions; end-to-end prepare_task_assignment verified for outside-bucket (no assignment), treatment-arm (assignment.arm==treatment), and control-arm (assignment.arm==control) cases"
+  }
 }

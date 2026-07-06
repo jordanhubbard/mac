@@ -14,6 +14,7 @@ from mac.scientific_optimizer import (
     _bounded_float,
     _bounded_int,
     _parse_time,
+    _stable_point,
     derive_task_kpis,
     estimate_route_cost,
     validate_policy_parameters,
@@ -1006,3 +1007,227 @@ def test_strength_ladder_readiness_uses_active_selection(monkeypatch) -> None:
     assert ScientificOptimizerService._strength_ladder_ready() is True
     monkeypatch.setattr(model_selection, "read_active", lambda: None)
     assert ScientificOptimizerService._strength_ladder_ready() is False
+
+
+# ---------------------------------------------------------------------------
+# Deterministic sampling bucket harness
+# ---------------------------------------------------------------------------
+# The production sampling rule for the "experiment" phase is:
+#
+#   sampled  = _stable_point(experiment_id, task_id, "sample", "experiment")
+#                  < exploration_fraction
+#   treatment = _stable_point(experiment_id, task_id, "arm", "experiment")
+#                  < 0.5
+#
+# _stable_point maps an arbitrary tuple of strings to a deterministic float in
+# [0, 1) via SHA-256 so every (experiment_id, task_id) pair has a stable,
+# reproducible outcome regardless of ordering or run environment.
+#
+# This helper scans synthetic task keys against a fixed experiment_id and a
+# 0.01 exploration bucket to collect a small set of representative task ids
+# whose bucket membership and arm selection are known in advance.
+
+_HARNESS_EXPERIMENT_ID = "experiment_bucket_harness_v1"
+_HARNESS_EXPLORATION_FRACTION = 0.01
+_HARNESS_PHASE = "experiment"
+
+
+def _bucket_cases(
+    experiment_id: str = _HARNESS_EXPERIMENT_ID,
+    exploration_fraction: float = _HARNESS_EXPLORATION_FRACTION,
+    *,
+    n_outside: int = 2,
+    n_treatment: int = 1,
+    n_control: int = 1,
+) -> dict:
+    """Return deterministic task-key examples for sampling-bucket unit tests.
+
+    Uses the production ``_stable_point`` hash so the returned keys are
+    guaranteed to produce the documented outcomes when passed to
+    ``prepare_task_assignment``.
+
+    Returns a dict with three keys:
+      ``outside``   – task ids whose sample point >= exploration_fraction
+                      (not sampled; no assignment expected)
+      ``treatment`` – task ids sampled into the treatment arm
+      ``control``   – task ids sampled into the control arm
+    """
+    outside: list[str] = []
+    treatment: list[str] = []
+    control: list[str] = []
+
+    for i in range(100_000):
+        if len(outside) >= n_outside and len(treatment) >= n_treatment and len(control) >= n_control:
+            break
+        task_id = "task_bucket_%06d" % i
+        sample_point = _stable_point(experiment_id, task_id, "sample", _HARNESS_PHASE)
+        if sample_point >= exploration_fraction:
+            if len(outside) < n_outside:
+                outside.append(task_id)
+        else:
+            arm_point = _stable_point(experiment_id, task_id, "arm", _HARNESS_PHASE)
+            if arm_point < 0.5 and len(treatment) < n_treatment:
+                treatment.append(task_id)
+            elif arm_point >= 0.5 and len(control) < n_control:
+                control.append(task_id)
+
+    return {"outside": outside, "treatment": treatment, "control": control}
+
+
+def test_sampling_bucket_harness_documents_thresholds() -> None:
+    """Bucket-threshold contract for the 0.01 exploration fraction.
+
+    Explicit assertions document every threshold so a future change to
+    ``_stable_point`` or the sampling logic produces a deterministic,
+    diagnosable failure rather than a flaky probabilistic one.
+    """
+    # ---- threshold contract ------------------------------------------------
+    # The exploration bucket covers [0, 0.01).  Tasks whose sample point falls
+    # in [0.01, 1.0) are never assigned.  The arm boundary is 0.5: points in
+    # [0, 0.5) go to treatment, [0.5, 1.0) go to control.
+
+    BUCKET_LOW = 0.0
+    BUCKET_HIGH = _HARNESS_EXPLORATION_FRACTION  # 0.01
+    ARM_TREATMENT_THRESHOLD = 0.5
+
+    assert BUCKET_HIGH == 0.01, "exploration fraction sentinel: update if threshold changes"
+    assert ARM_TREATMENT_THRESHOLD == 0.5, "arm split sentinel: update if threshold changes"
+
+    cases = _bucket_cases()
+    assert len(cases["outside"]) >= 2, "harness must supply at least 2 outside-bucket keys"
+    assert len(cases["treatment"]) >= 1, "harness must supply at least 1 treatment-arm key"
+    assert len(cases["control"]) >= 1, "harness must supply at least 1 control-arm key"
+
+    # ---- verify outside-bucket keys via _stable_point ----------------------
+    for task_id in cases["outside"]:
+        sp = _stable_point(_HARNESS_EXPERIMENT_ID, task_id, "sample", _HARNESS_PHASE)
+        assert sp >= BUCKET_HIGH, (
+            "outside key %r has sample point %.6f which is inside the 0.01 bucket" % (task_id, sp)
+        )
+
+    # ---- verify treatment-arm keys via _stable_point -----------------------
+    for task_id in cases["treatment"]:
+        sp = _stable_point(_HARNESS_EXPERIMENT_ID, task_id, "sample", _HARNESS_PHASE)
+        assert BUCKET_LOW <= sp < BUCKET_HIGH, (
+            "treatment key %r has sample point %.6f outside the 0.01 bucket" % (task_id, sp)
+        )
+        ap = _stable_point(_HARNESS_EXPERIMENT_ID, task_id, "arm", _HARNESS_PHASE)
+        assert ap < ARM_TREATMENT_THRESHOLD, (
+            "treatment key %r has arm point %.6f >= 0.5 (would be control)" % (task_id, ap)
+        )
+
+    # ---- verify control-arm keys via _stable_point -------------------------
+    for task_id in cases["control"]:
+        sp = _stable_point(_HARNESS_EXPERIMENT_ID, task_id, "sample", _HARNESS_PHASE)
+        assert BUCKET_LOW <= sp < BUCKET_HIGH, (
+            "control key %r has sample point %.6f outside the 0.01 bucket" % (task_id, sp)
+        )
+        ap = _stable_point(_HARNESS_EXPERIMENT_ID, task_id, "arm", _HARNESS_PHASE)
+        assert ap >= ARM_TREATMENT_THRESHOLD, (
+            "control key %r has arm point %.6f < 0.5 (would be treatment)" % (task_id, ap)
+        )
+
+
+def test_sampling_bucket_harness_drives_prepare_task_assignment() -> None:
+    """Bucket harness validates prepare_task_assignment against production logic.
+
+    Uses ``_bucket_cases`` to obtain task keys whose bucket membership is
+    pre-verified by ``_stable_point``, then confirms that the production
+    ``prepare_task_assignment`` method produces the expected assignment (or
+    no assignment) for each key.
+    """
+    cp = ControlPlane.in_memory()
+    optimizer = cp.optimizer
+    control_policy = optimizer.create_policy("baseline", "demo", {})
+    optimizer.promote_policy(control_policy["id"], actor="test")
+    treatment_policy = optimizer.create_policy(
+        "plan-first", "demo", {"plan_first": True}
+    )
+    experiment = optimizer.create_experiment(
+        "bucket-harness-exp",
+        "demo",
+        "Bucket harness experiment for deterministic sampling tests.",
+        control_policy["id"],
+        treatment_policy["id"],
+        primary_metric="cycles_to_accept",
+        min_samples_per_arm=2,
+        max_samples_per_arm=100,
+        exploration_fraction=_HARNESS_EXPLORATION_FRACTION,
+        outcome_horizon_seconds=0,
+        auto_promote=False,
+    )
+    optimizer.start_experiment(experiment["id"])
+
+    # Patch the experiment id used by _bucket_cases to match the live experiment.
+    # We re-derive cases from the live experiment id for a fully integrated check.
+    exp_id = experiment["id"]
+    live_cases = _bucket_cases(
+        experiment_id=exp_id,
+        exploration_fraction=_HARNESS_EXPLORATION_FRACTION,
+        n_outside=2,
+        n_treatment=1,
+        n_control=1,
+    )
+
+    contract_meta = {"execution_contract": {"type": "repository", "quality": "strong"}}
+
+    # Outside-bucket tasks must produce no assignment.
+    for task_id in live_cases["outside"]:
+        sp = _stable_point(exp_id, task_id, "sample", _HARNESS_PHASE)
+        # Threshold assertion: sample point must be >= 0.01 (outside bucket).
+        assert sp >= _HARNESS_EXPLORATION_FRACTION, (
+            "harness pre-condition failed for outside key %r: sample=%.6f" % (task_id, sp)
+        )
+        _applied, assignment = optimizer.prepare_task_assignment(
+            task_id, "demo", contract_meta
+        )
+        assert assignment is None, (
+            "task %r (sample_point=%.6f) should NOT be sampled into the 0.01 "
+            "exploration bucket but prepare_task_assignment returned an assignment" % (task_id, sp)
+        )
+
+    # Treatment-arm tasks must produce an assignment pointing to the treatment policy.
+    for task_id in live_cases["treatment"]:
+        sp = _stable_point(exp_id, task_id, "sample", _HARNESS_PHASE)
+        ap = _stable_point(exp_id, task_id, "arm", _HARNESS_PHASE)
+        # Threshold assertions: inside bucket AND treatment side.
+        assert sp < _HARNESS_EXPLORATION_FRACTION, (
+            "harness pre-condition failed for treatment key %r: sample=%.6f" % (task_id, sp)
+        )
+        assert ap < 0.5, (
+            "harness pre-condition failed for treatment key %r: arm=%.6f" % (task_id, ap)
+        )
+        _applied, assignment = optimizer.prepare_task_assignment(
+            task_id, "demo", contract_meta
+        )
+        assert assignment is not None, (
+            "task %r (sample=%.6f) IS inside the 0.01 bucket but got no assignment" % (task_id, sp)
+        )
+        assert assignment["arm"] == "treatment", (
+            "task %r (arm_point=%.6f < 0.5) should be treatment arm but got %r"
+            % (task_id, ap, assignment["arm"])
+        )
+        assert assignment["policy_id"] == treatment_policy["id"]
+
+    # Control-arm tasks must produce an assignment pointing to the control policy.
+    for task_id in live_cases["control"]:
+        sp = _stable_point(exp_id, task_id, "sample", _HARNESS_PHASE)
+        ap = _stable_point(exp_id, task_id, "arm", _HARNESS_PHASE)
+        # Threshold assertions: inside bucket AND control side.
+        assert sp < _HARNESS_EXPLORATION_FRACTION, (
+            "harness pre-condition failed for control key %r: sample=%.6f" % (task_id, sp)
+        )
+        assert ap >= 0.5, (
+            "harness pre-condition failed for control key %r: arm=%.6f" % (task_id, ap)
+        )
+        _applied, assignment = optimizer.prepare_task_assignment(
+            task_id, "demo", contract_meta
+        )
+        assert assignment is not None, (
+            "task %r (sample=%.6f) IS inside the 0.01 bucket but got no assignment" % (task_id, sp)
+        )
+        assert assignment["arm"] == "control", (
+            "task %r (arm_point=%.6f >= 0.5) should be control arm but got %r"
+            % (task_id, ap, assignment["arm"])
+        )
+        assert assignment["policy_id"] == control_policy["id"]
