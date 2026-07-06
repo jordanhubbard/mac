@@ -11,6 +11,10 @@ Source/build/dependency/runtime changes require a passing CodeGraph
 sync/affected audit. Do not fetch, rebase, commit, push, or open a PR from the
 agent process; the deterministic host finalizer validates canonical freshness,
 commits the harvested changes, reruns tests and CodeGraph, and publishes.
+If your deliverable includes any NEW files, you MUST git add + git commit them
+yourself before finishing. Modified tracked files are auto-committed by the
+finalizer; untracked or staged-new files at finalize time cause the publisher
+to refuse the entire task.
 
 Write $MAC_TASK_WORKSPACE/mac-evidence.json using mac.worker_evidence.v1 with
 status=complete and an accurate evidence_type. Preliminary repository evidence
