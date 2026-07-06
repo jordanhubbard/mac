@@ -28,6 +28,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "runtime image smoke: gh/codex/codegraph visible through OpenShell" in script
     assert "run_live_confinement_probe" in script
     assert "live-confinement-probe.sh" in script
+    assert '--upload "$probe:/sandbox"' in script
     assert "CONFINEMENT_PROBE_OK" in (
         ROOT / "deploy" / "openshell" / "live-confinement-probe.sh"
     ).read_text(encoding="utf-8")

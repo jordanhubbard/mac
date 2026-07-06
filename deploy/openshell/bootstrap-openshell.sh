@@ -112,7 +112,7 @@ run_live_confinement_probe() {
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
-      --upload "$probe:/sandbox/live-confinement-probe.sh" \
+      --upload "$probe:/sandbox" \
       -- bash /sandbox/live-confinement-probe.sh \
       >"$output" 2>&1; then
     "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
