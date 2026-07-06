@@ -3790,19 +3790,30 @@ class ControlPlane:
         tenant_id: Optional[str] = None,
         *,
         limit: Optional[int] = None,
+        project: Optional[str] = None,
     ) -> List[Task]:
         # mac-5ayd: dispatch_once / claim_next used to pull EVERY open
         # task into Python and sort in memory on every tick. Pass an
         # explicit ``limit`` from those hot paths so the working set
         # stays bounded; default None keeps full-list semantics for
         # admin / CLI listings.
-        limit_clause = ""
+        #
+        # mac-perf: push project and state filters into SQL so the hub
+        # does not transfer full task rows for irrelevant projects over
+        # the SSH tunnel. With 110+ tasks and per-task metadata of ~1KB
+        # this halves (or better) the response payload when the CLI is
+        # scoped to a single project.
+        where: list = []
         params: list = []
         if state:
-            sql = "SELECT * FROM tasks WHERE state = ? ORDER BY priority DESC, created_at"
+            where.append("state = ?")
             params.append(_state_value(state))
-        else:
-            sql = "SELECT * FROM tasks ORDER BY priority DESC, created_at"
+        if project is not None:
+            where.append("project = ?")
+            params.append(project)
+        where_clause = (" WHERE " + " AND ".join(where)) if where else ""
+        sql = "SELECT * FROM tasks" + where_clause + " ORDER BY priority DESC, created_at"
+        limit_clause = ""
         if limit is not None:
             limit_clause = " LIMIT ?"
             params.append(int(max(1, limit)))

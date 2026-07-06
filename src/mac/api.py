@@ -4250,8 +4250,10 @@ def create_app(
         state: Optional[str] = Query(default=None),
         tenant_id: Optional[str] = Query(default=None),
         view: Optional[str] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id)]
+        tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id, project=project, limit=limit)]
         if view == "summary":
             tasks = [
                 {k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS}
