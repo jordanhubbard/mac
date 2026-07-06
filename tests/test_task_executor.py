@@ -829,6 +829,71 @@ def test_classify_outcome_success_and_failure(tmp_path):
     assert bad["error_signature"]
 
 
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "untracked files present at finalize time - agent must commit ALL new files before declaring done: generated.txt",
+        "new files staged at finalize time - agent must commit ALL new files before declaring done: tests/new_case.py",
+    ],
+)
+def test_classify_outcome_finalizer_new_file_refusal_includes_file_lists(tmp_path, problem):
+    task = {"id": "t1", "title": "Finalize refusal", "project": "demo"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "status": "fail",
+        "problems": [problem],
+        "repo": {
+            "pushed": False,
+            "dirty": True,
+            "files_changed": [],
+            "untracked_files": ["generated.txt"],
+            "staged_new_files": ["tests/new_case.py"],
+        },
+        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+    }))
+
+    out = te.classify_outcome(tmp_path, task, 0)
+
+    assert out["outcome"] == "failure"
+    assert out["error_signature"] == "untracked_new_files_at_finalize"
+    assert out["signals"]["untracked_files"] == ["generated.txt"]
+    assert out["signals"]["staged_new_files"] == ["tests/new_case.py"]
+
+    rec = te.build_learning_record(task, out)
+    content = json.loads(rec["content"])
+    assert content["error_signature"] == "untracked_new_files_at_finalize"
+    assert content["signals"]["untracked_files"] == ["generated.txt"]
+    assert content["signals"]["staged_new_files"] == ["tests/new_case.py"]
+
+    rendered = te._format_learning_content(rec["content"])
+    assert "untracked files: generated.txt" in rendered
+    assert "staged new files: tests/new_case.py" in rendered
+
+
+def test_classify_outcome_dirty_git_finalizer_failure_uses_new_file_signature(tmp_path):
+    task = {"id": "t1", "project": "demo"}
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "status": "fail",
+        "summary": "git finalizer refused dirty worktree",
+        "repo": {
+            "pushed": False,
+            "dirty": True,
+            "files_changed": [],
+            "untracked_files": ["artifact.log"],
+            "staged_new_files": [],
+        },
+        "checks": [{"name": "git_finalizer", "returncode": "1", "status": "fail"}],
+    }))
+
+    out = te.classify_outcome(tmp_path, task, 0)
+
+    assert out["outcome"] == "failure"
+    assert out["error_signature"] == "untracked_new_files_at_finalize"
+    assert out["signals"]["untracked_files"] == ["artifact.log"]
+    assert out["signals"]["staged_new_files"] == []
+
+
 def test_classify_outcome_failure_when_no_evidence(tmp_path):
     out = te.classify_outcome(tmp_path, {"id": "t1"}, 0)
     assert out["outcome"] == "failure"

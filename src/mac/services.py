@@ -522,7 +522,7 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
     if reason == "verification_contract_failed" or "refusing to push" in blob or "pushed=true" in blob or "contract" in blob:
         return note(
             "Contract verification failed — work was not pushed/accepted (%s)." % (problems_text or error or "see evidence")[:280],
-            "Run the repository contract test in the worktree and make it pass cleanly (incl. lint/guard/docs tests), commit ALL changes (no untracked files), and push the branch before declaring done.",
+            "Run the repository contract test in the worktree and make it pass cleanly (incl. lint/guard/docs tests), commit ALL changes including every new file (no untracked or staged-new files), and push the branch before declaring done.",
         )
     if "review_retraction_cap_hit" in blob or "review_verdict_wait_cap_hit" in blob or "reviewer" in blob:
         return note(

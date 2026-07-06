@@ -1264,6 +1264,12 @@ def _task_project(task: Dict[str, Any]) -> str:
     return str(task.get("project") or "default")
 
 
+def _string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
 def _format_learning_content(raw: str) -> str:
     """Render a stored ``mac.deployment_learning.v1`` blob as a one-line lesson."""
     fleet_learning = parse_repository_access_learning(raw)
@@ -1299,6 +1305,17 @@ def _format_learning_content(raw: str) -> str:
     err = str(data.get("error_signature") or "").strip()
     line = "[%s] %s (%s)" % (outcome, title, etype)
     if outcome == "failure" and err:
+        if err == "untracked_new_files_at_finalize":
+            signals = data.get("signals") if isinstance(data.get("signals"), dict) else {}
+            untracked = _string_list(signals.get("untracked_files"))
+            staged_new = _string_list(signals.get("staged_new_files"))
+            details: List[str] = []
+            if untracked:
+                details.append("untracked files: %s" % ", ".join(untracked[:8]))
+            if staged_new:
+                details.append("staged new files: %s" % ", ".join(staged_new[:8]))
+            if details:
+                err = "%s (%s)" % (err, "; ".join(details))
         line += " — failed: %s" % err
     return line[:300]
 
@@ -1793,6 +1810,10 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
         "tests": tests_state,
         "checks_pass": checks_pass if checks else None,
     }
+    new_file_refusal = _is_untracked_new_files_refusal(manifest, repo, checks)
+    if new_file_refusal:
+        signals["untracked_files"] = _string_list(repo.get("untracked_files"))
+        signals["staged_new_files"] = _string_list(repo.get("staged_new_files"))
     # Success: the run exited cleanly, evidence exists, and (where relevant)
     # it was pushed and tests/checks passed. Absent repo/checks don't fail it.
     success = (
@@ -1806,8 +1827,40 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
         "evidence_type": evidence_type,
         "outcome": "success" if success else "failure",
         "signals": signals,
-        "error_signature": "" if success else _error_signature(manifest),
+        "error_signature": "" if success else (
+            "untracked_new_files_at_finalize" if new_file_refusal else _error_signature(manifest)
+        ),
     }
+
+
+def _is_truthy(value: Any) -> bool:
+    return value is True or str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _is_untracked_new_files_refusal(
+    manifest: Dict[str, Any],
+    repo: Dict[str, Any],
+    checks: List[Any],
+) -> bool:
+    problem_values = manifest.get("problems") or []
+    if not isinstance(problem_values, list):
+        problem_values = [problem_values]
+    problem_blob = "\n".join(str(item).lower() for item in problem_values)
+    if (
+        "untracked files present at finalize time" in problem_blob
+        or "new files staged at finalize time" in problem_blob
+    ):
+        return True
+    if not _is_truthy(repo.get("dirty")):
+        return False
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if str(check.get("name") or "") != "git_finalizer":
+            continue
+        if str(check.get("returncode")) == "1":
+            return True
+    return False
 
 
 def _error_signature(manifest: Dict[str, Any]) -> str:
