@@ -1595,3 +1595,36 @@ CREATE TABLE IF NOT EXISTS fleet_desired_source_idempotency (
 );
 CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
     ON fleet_desired_source_idempotency (scope_key, request_id);
+
+-- ============================================================================
+-- Human principals registry
+-- First-class assignable human identities (username / email / GitHub login)
+-- and explicit group membership rows.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS humans (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT,
+    github_login TEXT UNIQUE,
+    display_name TEXT,
+    groups TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_humans_username
+    ON humans (username);
+CREATE INDEX IF NOT EXISTS idx_humans_github_login
+    ON humans (github_login)
+    WHERE github_login IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS human_groups (
+    id TEXT PRIMARY KEY,
+    human_id TEXT NOT NULL REFERENCES humans(id) ON DELETE CASCADE,
+    group_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(human_id, group_name)
+);
+CREATE INDEX IF NOT EXISTS idx_human_groups_human
+    ON human_groups (human_id);
+CREATE INDEX IF NOT EXISTS idx_human_groups_group
+    ON human_groups (group_name);

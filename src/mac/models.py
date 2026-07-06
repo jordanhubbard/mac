@@ -1864,3 +1864,55 @@ def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
     if value is None:
         return {}
     return dict(value)
+
+
+# ---------------------------------------------------------------------------
+# Human principals: first-class assignable human identities (username / email /
+# GitHub login) and group membership rows. Human ids use the "human_" prefix so
+# they are distinguishable from agent ids ("agent_*") in mixed lists.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Human:
+    """A first-class human principal in the MAC control plane.
+
+    Humans are assignable to tasks (human_assignees) and can stamp task
+    creation (created_by_human). They are identified by a stable synthetic id
+    (``human_<uuid>``) plus three optional external identity anchors:
+    username, email, and github_login.
+
+    ``groups`` is a JSON-serialised list of group name strings; group
+    membership rows are also stored in the ``human_groups`` table for
+    index-friendly queries.
+    """
+
+    id: str
+    username: str
+    email: Optional[str]
+    github_login: Optional[str]
+    display_name: Optional[str]
+    groups: List[str]
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class HumanGroup:
+    """One group-membership row for a human principal.
+
+    Stored in the ``human_groups`` table alongside the JSON ``groups``
+    column on ``humans`` so that both per-human group lookups and
+    per-group member queries are index-friendly.
+    """
+
+    id: str
+    human_id: str
+    group_name: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)

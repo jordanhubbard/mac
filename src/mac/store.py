@@ -253,7 +253,9 @@ class SQLiteStore:
                     started_at TEXT,
                     completed_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    human_assignees TEXT,
+                    created_by_human TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_tasks_state_priority
@@ -1692,6 +1694,36 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                     ON fleet_desired_source_idempotency (scope_key, request_id);
+
+                -- Human principals registry: first-class assignable human identities
+                -- (username / email / GitHub login) and explicit group membership.
+                CREATE TABLE IF NOT EXISTS humans (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT,
+                    github_login TEXT UNIQUE,
+                    display_name TEXT,
+                    groups TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_humans_username
+                    ON humans (username);
+                CREATE INDEX IF NOT EXISTS idx_humans_github_login
+                    ON humans (github_login)
+                    WHERE github_login IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS human_groups (
+                    id TEXT PRIMARY KEY,
+                    human_id TEXT NOT NULL REFERENCES humans(id) ON DELETE CASCADE,
+                    group_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(human_id, group_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_human_groups_human
+                    ON human_groups (human_id);
+                CREATE INDEX IF NOT EXISTS idx_human_groups_group
+                    ON human_groups (group_name);
                 """
             )
             self._migrate()
@@ -1889,10 +1921,154 @@ class SQLiteStore:
             );
             CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                 ON fleet_desired_source_idempotency (scope_key, request_id);
+
+            -- Human principals registry: first-class assignable human identities
+            -- (username / email / GitHub login) and explicit group membership.
+            CREATE TABLE IF NOT EXISTS humans (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT,
+                github_login TEXT UNIQUE,
+                display_name TEXT,
+                groups TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_humans_username
+                ON humans (username);
+            CREATE INDEX IF NOT EXISTS idx_humans_github_login
+                ON humans (github_login)
+                WHERE github_login IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS human_groups (
+                id TEXT PRIMARY KEY,
+                human_id TEXT NOT NULL REFERENCES humans(id) ON DELETE CASCADE,
+                group_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(human_id, group_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_human_groups_human
+                ON human_groups (human_id);
+            CREATE INDEX IF NOT EXISTS idx_human_groups_group
+                ON human_groups (group_name);
             """
+        )
+        # Human assignees and identity stamp on tasks: human_assignees is a
+        # JSON list of human ids/logins; created_by_human stamps the task's
+        # creating human identity. Both are nullable so existing rows keep
+        # their NULL values after the migration.
+        self._ensure_column(
+            "tasks", "human_assignees", "human_assignees TEXT"
+        )
+        self._ensure_column(
+            "tasks", "created_by_human", "created_by_human TEXT"
         )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}
         if column not in columns:
             self._conn.execute("ALTER TABLE %s ADD COLUMN %s" % (table, definition))
+
+    # ------------------------------------------------------------------
+    # Human principals CRUD helpers
+    # ------------------------------------------------------------------
+    # These helpers mirror the style of the rest of SQLiteStore: callers
+    # are responsible for JSON-serialising / deserialising list fields.
+    # ``groups`` is stored as a JSON array text column.  The upsert also
+    # reconciles the ``human_groups`` membership table so both the denorm
+    # JSON column and the normalised table stay in sync.
+    # ------------------------------------------------------------------
+
+    def upsert_human(
+        self,
+        human_id: str,
+        username: str,
+        *,
+        email: Optional[str] = None,
+        github_login: Optional[str] = None,
+        display_name: Optional[str] = None,
+        groups: Optional[list] = None,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        """Insert or replace a human row and reconcile group membership."""
+        import json as _json
+
+        groups_json = _json.dumps(sorted(set(groups or [])))
+        self.execute(
+            """
+            INSERT INTO humans (id, username, email, github_login, display_name,
+                                groups, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                username     = excluded.username,
+                email        = excluded.email,
+                github_login = excluded.github_login,
+                display_name = excluded.display_name,
+                groups       = excluded.groups,
+                updated_at   = excluded.updated_at
+            """,
+            (
+                human_id,
+                username,
+                email,
+                github_login,
+                display_name,
+                groups_json,
+                created_at,
+                updated_at,
+            ),
+        )
+        # Reconcile human_groups: remove rows no longer in the groups list,
+        # then insert any new ones (idempotent via INSERT OR IGNORE).
+        current_groups = sorted(set(groups or []))
+        self.execute(
+            "DELETE FROM human_groups WHERE human_id = ?", (human_id,)
+        )
+        for group_name in current_groups:
+            self.execute(
+                """
+                INSERT OR IGNORE INTO human_groups (id, human_id, group_name, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "hg_%s_%s" % (human_id, group_name),
+                    human_id,
+                    group_name,
+                    created_at,
+                ),
+            )
+
+    def get_human(self, human_id: str) -> Optional[Any]:
+        """Return the human row for ``human_id``, or None if not found."""
+        return self.query_one(
+            "SELECT * FROM humans WHERE id = ?", (human_id,)
+        )
+
+    def get_human_by_username(self, username: str) -> Optional[Any]:
+        """Return the human row for ``username``, or None if not found."""
+        return self.query_one(
+            "SELECT * FROM humans WHERE username = ?", (username,)
+        )
+
+    def list_humans(self, *, group: Optional[str] = None) -> list:
+        """Return all humans, optionally filtered by group membership."""
+        if group is not None:
+            return self.query_all(
+                """
+                SELECT h.* FROM humans h
+                INNER JOIN human_groups hg ON hg.human_id = h.id
+                WHERE hg.group_name = ?
+                ORDER BY h.username
+                """,
+                (group,),
+            )
+        return self.query_all("SELECT * FROM humans ORDER BY username")
+
+    def delete_human(self, human_id: str) -> bool:
+        """Delete a human by id; returns True if a row was deleted."""
+        cursor = self.execute(
+            "DELETE FROM humans WHERE id = ?", (human_id,)
+        )
+        return cursor.rowcount > 0
+
