@@ -4259,6 +4259,13 @@ class ControlPlane:
                 child_project,
                 child_capabilities,
             )
+            normalized_metadata, optimizer_assignment = (
+                self.optimizer.prepare_task_assignment(
+                    allocated_child_ids[index - 1],
+                    child_project,
+                    normalized_metadata,
+                )
+            )
             prepared.append(
                 {
                     "id": allocated_child_ids[index - 1],
@@ -4278,6 +4285,7 @@ class ControlPlane:
                     "required_capabilities": child_capabilities,
                     "dependencies": child_dependencies,
                     "metadata": normalized_metadata,
+                    "optimizer_assignment": optimizer_assignment,
                     "max_attempts": int(
                         spec["max_attempts"]
                         if spec.get("max_attempts") is not None
@@ -4355,6 +4363,10 @@ class ControlPlane:
                     },
                     conn=conn,
                 )
+                if child["optimizer_assignment"] is not None:
+                    self.optimizer.insert_assignment(
+                        conn, child["optimizer_assignment"]
+                    )
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",

@@ -2047,10 +2047,22 @@ class ScientificOptimizerService:
 
     def _record_decision(
         self, experiment: Mapping[str, Any], decision: Mapping[str, Any], actor: str
-    ) -> None:
+    ) -> bool:
+        """Persist a materially new decision and suppress unchanged scheduler polls."""
         now = utcnow()
         decision_id = new_id("decision")
         with self.store.transaction() as conn:
+            previous_row = conn.execute(
+                "SELECT decision FROM scientific_decisions "
+                "WHERE experiment_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                (experiment["id"],),
+            ).fetchone()
+            if previous_row is not None:
+                previous = json_loads(previous_row["decision"], {})
+                if self._decision_fingerprint(previous) == self._decision_fingerprint(
+                    decision
+                ):
+                    return False
             conn.execute(
                 "INSERT INTO scientific_decisions (id, experiment_id, status, decision, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (
@@ -2076,6 +2088,14 @@ class ScientificOptimizerService:
                 {"decision_id": decision_id, "status": decision["status"]},
                 now,
             )
+        return True
+
+    @staticmethod
+    def _decision_fingerprint(decision: Mapping[str, Any]) -> str:
+        """Return stable decision content, excluding poll-time bookkeeping."""
+        stable = copy.deepcopy(dict(decision))
+        stable.pop("generated_at", None)
+        return hashlib.sha256(json_dumps(stable).encode("utf-8")).hexdigest()
 
     def _set_experiment_state(
         self,

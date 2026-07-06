@@ -68,6 +68,146 @@ def _completed_experiment() -> tuple[ControlPlane, dict, dict, dict]:
     return cp, control, treatment, experiment
 
 
+def _running_experiment(
+    cp: ControlPlane, project: str = "demo"
+) -> tuple[dict, dict, dict]:
+    optimizer = cp.optimizer
+    control = optimizer.create_policy("baseline", project, {})
+    optimizer.promote_policy(control["id"], actor="test")
+    treatment = optimizer.create_policy("plan-first", project, {"plan_first": True})
+    experiment = optimizer.create_experiment(
+        "decomposition-policy",
+        project,
+        "Planning first reduces rework without reducing accepted quality.",
+        control["id"],
+        treatment["id"],
+        primary_metric="cycles_to_accept",
+        min_samples_per_arm=2,
+        max_samples_per_arm=2,
+        exploration_fraction=1.0,
+        outcome_horizon_seconds=0,
+        auto_promote=False,
+    )
+    optimizer.start_experiment(experiment["id"], actor="test")
+    return control, treatment, experiment
+
+
+def test_decomposed_children_receive_policy_and_atomic_experiment_assignment() -> None:
+    cp = ControlPlane.in_memory()
+    parent = cp.create_task(
+        "integration parent",
+        project="demo",
+        metadata={"execution_contract": {"type": "repository", "quality": "strong"}},
+    )
+    _control, _treatment, experiment = _running_experiment(cp)
+
+    result = cp.add_child_tasks(
+        parent.id,
+        [
+            {
+                "title": "implement child",
+                "metadata": {
+                    "execution_contract": {
+                        "type": "repository",
+                        "quality": "strong",
+                    }
+                },
+            }
+        ],
+        actor="test",
+    )
+
+    child = result["children"][0]
+    optimizer_metadata = child["metadata"]["scientific_optimizer"]
+    assert (
+        child["metadata"]["scientific_policy"]["policy_id"]
+        == optimizer_metadata["policy_id"]
+    )
+    assert optimizer_metadata["experiment_id"] == experiment["id"]
+    assignment = cp.store.query_one(
+        "SELECT * FROM scientific_assignments WHERE task_id = ?", (child["id"],)
+    )
+    assert assignment is not None
+    assert assignment["experiment_id"] == experiment["id"]
+    assert assignment["policy_id"] == optimizer_metadata["policy_id"]
+
+
+def test_decomposed_child_and_assignment_roll_back_together(monkeypatch) -> None:
+    cp = ControlPlane.in_memory()
+    parent = cp.create_task(
+        "rollback parent",
+        project="demo",
+        metadata={"execution_contract": {"type": "repository", "quality": "strong"}},
+    )
+    _running_experiment(cp)
+
+    def fail_assignment(_conn, _assignment) -> None:
+        raise RuntimeError("assignment persistence failed")
+
+    monkeypatch.setattr(cp.optimizer, "insert_assignment", fail_assignment)
+    with pytest.raises(RuntimeError, match="assignment persistence failed"):
+        cp.add_child_tasks(
+            parent.id,
+            [
+                {
+                    "title": "rolled-back child",
+                    "metadata": {
+                        "execution_contract": {
+                            "type": "repository",
+                            "quality": "strong",
+                        }
+                    },
+                }
+            ],
+            actor="test",
+        )
+
+    assert (
+        cp.store.query_one(
+            "SELECT id FROM tasks WHERE title = ?", ("rolled-back child",)
+        )
+        is None
+    )
+    unchanged_parent = cp.get_task(parent.id)
+    assert unchanged_parent.state == "open"
+    assert unchanged_parent.dependencies == []
+
+
+def test_unchanged_scientific_decisions_do_not_grow_the_audit_log() -> None:
+    cp = ControlPlane.in_memory()
+    _control, _treatment, experiment = _running_experiment(cp)
+
+    first = cp.optimizer.analyze_experiment(experiment["id"], actor="test")
+    second = cp.optimizer.analyze_experiment(experiment["id"], actor="test")
+    assert first["status"] == second["status"] == "collecting"
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM scientific_decisions WHERE experiment_id = ?",
+            (experiment["id"],),
+        )["count"]
+        == 1
+    )
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM scientific_optimizer_events "
+            "WHERE subject_id = ? AND event_type = 'experiment.decision'",
+            (experiment["id"],),
+        )["count"]
+        == 1
+    )
+
+    cp.optimizer.pause_experiment(experiment["id"], actor="test")
+    changed = cp.optimizer.analyze_experiment(experiment["id"], actor="test")
+    assert changed["state"] == "paused"
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM scientific_decisions WHERE experiment_id = ?",
+            (experiment["id"],),
+        )["count"]
+        == 2
+    )
+
+
 def test_policy_allowlist_cannot_change_safety_contract() -> None:
     assert (
         validate_policy_parameters(
