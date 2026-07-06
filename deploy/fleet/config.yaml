@@ -27,6 +27,14 @@ defaults:
     slack_home_channel_name: ""
     gateway_provider: custom
     gateway_base_url: ""
+    # gateway_impl selects the chat-gateway service installed on this host.
+    # Values:
+    #   hermes    — vendored Hermes gateway (legacy, default for upgrade safety)
+    #   nemoclaw  — NemoClaw/OpenClaw gateway (YOLO migration target, ADR 0002)
+    # The fleet deploy script reads this field to decide which service unit to
+    # install/enable and which to stop/disable.  The task-executor role always
+    # uses the vendored Hermes regardless of this setting (ADR 0001).
+    gateway_impl: nemoclaw
   worker:
     mode: heartbeat
     capabilities:

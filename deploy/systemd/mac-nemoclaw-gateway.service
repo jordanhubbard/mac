@@ -1,0 +1,50 @@
+[Unit]
+Description=mac NemoClaw chat-gateway (NemoClaw/OpenClaw replaces hermes gateway)
+After=network-online.target
+Wants=network-online.target
+# NemoClaw replaces the hermes gateway role; the hermes gateway service must be
+# stopped and disabled before this unit is enabled.  The fleet deploy script
+# (deploy/deploy-mac-fleet.sh) handles ordering: it stops/disables the hermes
+# gateway service, then enables and starts this unit.
+# See deploy/nemoclaw/RUNBOOK.md for the per-host migration procedure.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=%h/.mac
+# mac.env supplies the runtime config (hub URL, API keys, Slack tokens, etc.).
+# The nemoclaw-specific overrides (NEMOCLAW_HERMES_HOME, MAC_NEMOCLAW_AGENT_ID,
+# MAC_NEMOCLAW_INSTANCE_ID, MAC_NEMOCLAW_SLACK_BOT_TOKEN,
+# MAC_NEMOCLAW_SLACK_APP_TOKEN) are set here and referenced by the launch
+# wrapper; literal token values must never appear in this unit file.
+EnvironmentFile=%h/.mac/mac.env
+# Per-instance Hermes home, isolated from the task-executor Hermes home.
+Environment=NEMOCLAW_HERMES_HOME=%h/.hermes-nemoclaw
+# Node prefix installed by install-nemoclaw-gateway.sh.
+Environment=NEMOCLAW_NODE_PREFIX=%h/.mac/nemoclaw-node
+ExecStart=%h/.mac/bin/nemoclaw-gateway
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+SuccessExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+# NemoClaw does not have a gateway-side drain timeout; 60 s is conservative.
+TimeoutStopSec=60
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (inherits the user's home; required for ~/.hermes-nemoclaw access).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=%h/.hermes-nemoclaw %h/.mac
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

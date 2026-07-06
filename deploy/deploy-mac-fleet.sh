@@ -500,6 +500,7 @@ def hermes_surface_payload(hermes: Dict[str, Any]) -> str:
                 "gateway_model",
                 "gateway_provider",
                 "gateway_base_url",
+                "gateway_impl",
             )
             if key in hermes
         },
@@ -1283,6 +1284,24 @@ fi
 HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
 HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
+# gateway_impl: which chat-gateway service to install.
+#   hermes   — vendored Hermes gateway (legacy default)
+#   nemoclaw — NemoClaw/OpenClaw gateway (YOLO migration target)
+# Decoded from the hermes_surface_b64 payload; also injectable via env.
+HERMES_GATEWAY_IMPL="${MAC_DEPLOY_HERMES_GATEWAY_IMPL:-$(
+  if [ -n "${MAC_DEPLOY_HERMES_SURFACE_B64:-}" ]; then
+    python3 -c "
+import base64, json, sys
+try:
+    p = json.loads(base64.b64decode(sys.argv[1]))
+    print(p.get('runtime', {}).get('gateway_impl', 'hermes'))
+except Exception:
+    print('hermes')
+" "${MAC_DEPLOY_HERMES_SURFACE_B64}" 2>/dev/null || echo "hermes"
+  else
+    echo "hermes"
+  fi
+)}"
 HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
@@ -1384,6 +1403,8 @@ MANIFEST_POST="$LOG_DIR/deploy-manifest-${DEPLOY_TS}-post.json"
 MAC_SERVICE_NAME="${FLEET_NAME}.service"
 HERMES_SERVICE_NAME="${FLEET_NAME}-hermes-gateway.service"
 MAC_AGENT_SERVICE_NAME="${FLEET_NAME}-agent.service"
+# NemoClaw gateway service name (chat-gateway YOLO migration target).
+NEMOCLAW_SERVICE_NAME="${FLEET_NAME}-nemoclaw-gateway.service"
 MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"
 MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"
 MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"
@@ -1471,7 +1492,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_SURFACE_B64 HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -4776,7 +4797,54 @@ EOF
   fi
   scrub_spoke_provider_secrets
   sync_messaging_config
-  install_linux_hermes_service
+  # Route to the correct gateway service installer based on gateway_impl.
+  # nemoclaw: YOLO migration target (install NemoClaw, stop+disable hermes gateway).
+  # hermes:   legacy default (install hermes gateway, leave NemoClaw absent/stopped).
+  case "${HERMES_GATEWAY_IMPL:-hermes}" in
+    nemoclaw)
+      install_linux_nemoclaw_service ;;
+    *)
+      install_linux_hermes_service ;;
+  esac
+}
+
+install_linux_nemoclaw_service() {
+  # Install the NemoClaw gateway service (YOLO migration: replaces hermes gateway).
+  # Requires install-nemoclaw-gateway.sh to have already been run (or will run it).
+  local unit_src="$SRC_DIR/deploy/systemd/mac-nemoclaw-gateway.service"
+  local unit="/etc/systemd/system/${NEMOCLAW_SERVICE_NAME}" restart_since control_after=""
+  if control_plane_enabled; then
+    control_after="$MAC_SERVICE_NAME"
+  fi
+  log "installing NemoClaw gateway systemd service $unit"
+  if sudo test -f "$unit"; then
+    local nemoclaw_unit_backup
+    nemoclaw_unit_backup="$MAC_HOME/backups/${NEMOCLAW_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
+    sudo cp -f "$unit" "$nemoclaw_unit_backup"
+    sudo chown "$USER" "$nemoclaw_unit_backup" || true
+    write_rollback_script
+  fi
+  [ -f "$unit_src" ] || die "NemoClaw service template not found: $unit_src"
+  sudo cp -f "$unit_src" "$unit"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$NEMOCLAW_SERVICE_NAME"
+  restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  sudo systemctl restart "$NEMOCLAW_SERVICE_NAME"
+  sleep 5
+  sudo systemctl --no-pager -l status "$NEMOCLAW_SERVICE_NAME" || true
+  sudo journalctl -u "$NEMOCLAW_SERVICE_NAME" --since "$restart_since" --no-pager \
+    > "$LOG_DIR/nemoclaw-gateway-journal.txt" || true
+
+  # Stop and disable the hermes gateway service (YOLO: it must not run alongside NemoClaw).
+  log "disabling hermes gateway service (YOLO: NemoClaw replaces it)"
+  if sudo systemctl is-active --quiet "$HERMES_SERVICE_NAME" 2>/dev/null; then
+    sudo systemctl stop "$HERMES_SERVICE_NAME"
+  fi
+  if sudo systemctl is-enabled --quiet "$HERMES_SERVICE_NAME" 2>/dev/null; then
+    sudo systemctl disable "$HERMES_SERVICE_NAME"
+  fi
+  log "hermes gateway stopped and disabled; NemoClaw gateway active"
+  install_linux_agent_service
 }
 
 install_hermes_gateway_wrapper() {

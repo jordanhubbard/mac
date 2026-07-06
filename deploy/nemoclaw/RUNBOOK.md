@@ -1,203 +1,225 @@
-# NemoClaw Pilot Runbook
+# NemoClaw Fleet-Wide YOLO Migration Runbook
 
-Single-host OpenClaw gateway pilot running alongside the existing hermes
-gateway service.  This runbook is fleet-generic: substitute all
-`<placeholder>` values for your fleet's real values at deploy time.
+**YOLO rescope (2026-07-04):** Fleet is pre-release, sole user, no compat
+requirements.  Drop the pilot ceremony — this runbook covers full YOLO
+migration of the chat-gateway role on all fleet hosts.
 
 ---
 
-## Architecture
+## Overview
 
-```
-Host: <host>
-  ├── hermes gateway (existing, port 8765, ~/.hermes)
-  └── nemoclaw gateway (pilot, port 18765, ~/.hermes-nemoclaw)
-        └── OpenClaw sandbox
-              └── mac-hermes:net runtime image
-```
+| Item | Value |
+|---|---|
+| Gateway being replaced | hermes gateway (`<fleet>-hermes-gateway.service`) |
+| Gateway being installed | NemoClaw (`<fleet>-nemoclaw-gateway.service`) |
+| OpenShell required | 0.0.72 (NemoClaw hard pin) |
+| Node required | 22+ (installed task-locally by install-nemoclaw-gateway.sh) |
+| Executor impact | **None** — vendored Hermes executor stays (ADR 0001) |
+| Host order | worker-1 → worker-2 → pods → hub (hub LAST) |
 
-Both gateways share the MAC router on the hub (`http://hub.example.internal:8789/v1`)
-but use distinct HERMES_HOME directories, Slack workspaces, and MAC
-hermes-instance IDs.
+### What moves and what stays
+
+| Component | Before | After |
+|---|---|---|
+| Chat-gateway service | `<fleet>-hermes-gateway.service` | `<fleet>-nemoclaw-gateway.service` |
+| Chat-gateway binary | `~/.mac/bin/hermes-gateway` | `~/.mac/bin/nemoclaw-gateway` |
+| Chat-gateway port | 8765 | 8765 (same port; hermes gateway disabled). During pilot phase port 18765 was used for coexistence; YOLO migration reclaims 8765. |
+| Hermes home (chat) | `~/.hermes` | `~/.hermes` (reused as `~/.hermes-nemoclaw` alias in pilot; YOLO reuses `~/.hermes` directly) |
+| Task executor | vendored Hermes (in-process Python) | **unchanged** |
+| Executor Hermes home | `~/.hermes` | **unchanged** |
+| Multi-slack patch | active (gateway-side dead code after migration) | follow-up task to prune |
+| Gateway-side hermes patches | active | follow-up task to prune |
 
 ---
 
 ## Prerequisites
 
-| Requirement | Notes |
+| Requirement | Check |
 |---|---|
-| Docker Engine / Moby | MAC standardizes on Docker Engine; do not use Podman |
-| OpenClaw installed | `openshell --version`; install via fleet deploy or bootstrap-openshell.sh |
-| mac runtime image built | `docker inspect localhost/mac-hermes:net` must succeed |
-| Hub reachable | `curl http://hub.example.internal:8789/healthz` returns 200 |
-| Slack app configured | Socket Mode enabled, bot + app tokens obtained |
+| OpenShell 0.0.72 | `openshell --version` → `0.0.72` |
+| Docker Engine/Moby | `docker info` succeeds |
+| Hub reachable | `curl http://<hub>:8789/healthz` → 200 |
+| Slack app tokens | Socket Mode enabled; `xoxb-...` + `xapp-...` obtained |
+| mac source tree | `$MAC_HOME/src/mac` contains this file |
 
----
-
-## Initial Setup
-
-### 1. Build the runtime image (if not already built)
-
+If OpenShell is wrong version, run first:
 ```bash
-cd <mac-src>
-docker build -t localhost/mac-hermes:net \
-  -f deploy/openshell/mac-hermes.Containerfile .
-```
-
-### 2. Create the pilot Hermes home directory
-
-```bash
-NEMOCLAW_HOME="${HOME}/.hermes-nemoclaw"
-mkdir -p "${NEMOCLAW_HOME}"
-chmod 0700 "${NEMOCLAW_HOME}"
-```
-
-### 3. Install the provider config
-
-```bash
-cp deploy/nemoclaw/config.yaml "${NEMOCLAW_HOME}/config.yaml"
-# Edit: replace all <placeholder> values
-"${EDITOR:-vi}" "${NEMOCLAW_HOME}/config.yaml"
-```
-
-### 4. Install the Slack account credentials
-
-```bash
-# Copy the example and fill in real tokens (bot_token, app_token).
-# NEVER commit the filled-in file.
-cp deploy/nemoclaw/slack-account.example.json \
-  "${NEMOCLAW_HOME}/slack_accounts.json"
-chmod 0600 "${NEMOCLAW_HOME}/slack_accounts.json"
-"${EDITOR:-vi}" "${NEMOCLAW_HOME}/slack_accounts.json"
-```
-
-Obtain the tokens from https://api.slack.com/apps:
-- **bot_token** (`xoxb-...`): OAuth & Permissions → Bot User OAuth Token
-- **app_token** (`xapp-...`): Basic Information → App-Level Tokens
-  (requires the `connections:write` scope)
-
-### 5. Write the MAC runtime context file
-
-The MAC fleet deploy normally writes this file automatically.  For a
-manual pilot setup, create it by hand:
-
-```bash
-cat > "${NEMOCLAW_HOME}/mac-runtime-context.md" << 'EOF'
-## NemoClaw Pilot Context
-
-- Agent: <agent-id>
-- Fleet: <fleet-name>
-- Role: nemoclaw-gateway
-- Hub: http://hub.example.internal:8789
-- Pilot Slack workspace: <workspace-name>
-EOF
-```
-
-### 6. Install the OpenClaw sandbox policy
-
-The policy file for this agent must exist before the gateway starts.
-The MAC fleet deploy writes it to `~/.mac/openshell/<agent-id>-policy.yaml`.
-For a manual pilot, copy and customize the template:
-
-```bash
-mkdir -p "${HOME}/.mac/openshell"
-cp deploy/openshell/mac-hermes-policy.yaml \
-  "${HOME}/.mac/openshell/<agent-id>-policy.yaml"
-# Substitute __PLACEHOLDER__ tokens for your fleet's values.
-"${EDITOR:-vi}" "${HOME}/.mac/openshell/<agent-id>-policy.yaml"
-```
-
-### 7. Start the NemoClaw gateway
-
-```bash
-NEMOCLAW_HERMES_HOME="${HOME}/.hermes-nemoclaw" \
-MAC_HOME="${HOME}/.mac" \
-docker compose \
-  -f deploy/nemoclaw/docker-compose.yaml \
-  up -d
+OPENSHELL_VERSION=0.0.72 deploy/openshell/bootstrap-openshell.sh
 ```
 
 ---
 
-## Verification
+## Host Migration Procedure
+
+Run the following on each host in order: **worker-1 → worker-2 → pods → hub**.
+
+If any host migration fails:
+1. Leave its hermes gateway running (do **not** stop it).
+2. Note the failure in the `## Host Status` table below.
+3. Proceed to the next host.
+4. File a follow-up task to repair the failed host.
+
+### Environment (set before running on each host)
 
 ```bash
-# Check the container is running
-docker compose -f deploy/nemoclaw/docker-compose.yaml ps
+# Source mac.env for standard vars; then add nemoclaw-specific overrides.
+source ~/.mac/mac.env
 
-# Tail the gateway log
-docker compose -f deploy/nemoclaw/docker-compose.yaml logs -f
+export MAC_NEMOCLAW_HUB_URL="http://<hub>:8789/v1"
+export MAC_NEMOCLAW_AGENT_ID="agent_<hostname>"
+export MAC_NEMOCLAW_INSTANCE_ID="hermes_<hostname>_nemoclaw"
+export MAC_NEMOCLAW_SLACK_WORKSPACE="<slack-workspace-name>"
+export MAC_NEMOCLAW_FLEET_NAME="mac"
+export MAC_NEMOCLAW_HOME_CHANNEL="<home-channel-name>"
 
-# Confirm it listens on the pilot port
-curl -s http://127.0.0.1:18765/healthz || echo "healthz not exposed — check gateway log"
-
-# Confirm the existing hermes gateway is still running on its original port
-# (replace 8765 with the actual port if it differs on your host)
-curl -s http://127.0.0.1:8765/healthz && echo "existing gateway OK"
+# Tokens from vault / host secret store — never hardcoded.
+export MAC_NEMOCLAW_SLACK_BOT_TOKEN="$(cat ~/.mac/secrets/slack_bot_token)"
+export MAC_NEMOCLAW_SLACK_APP_TOKEN="$(cat ~/.mac/secrets/slack_app_token)"
 ```
 
-Send a mention in the configured Slack channel to verify end-to-end
-connectivity:
-
-```
-@nemoclaw-agent ping
-```
-
-The agent should respond.  If it does not, check:
-
-1. `docker compose logs nemoclaw-gateway` — look for connection errors.
-2. Confirm `slack_accounts.json` has the correct `bot_token` and `app_token`.
-3. Confirm the Slack app has Socket Mode enabled and the app token scope
-   includes `connections:write`.
-
----
-
-## Upgrading the Runtime Image
+### Run the migration script
 
 ```bash
-# 1. Rebuild the image from the updated mac source tree.
-cd <mac-src>
-docker build -t localhost/mac-hermes:net \
-  -f deploy/openshell/mac-hermes.Containerfile .
+cd ~/.mac/src/mac
+bash deploy/nemoclaw/install-nemoclaw-gateway.sh
+```
 
-# 2. Record the new image digest.
-docker inspect localhost/mac-hermes:net \
-  --format '{{index .RepoDigests 0}}'
-# Update the digest comment in docker-compose.yaml with the new value.
+The script is idempotent: safe to re-run after fixing a failure.
 
-# 3. Restart the pilot gateway to pick up the new image.
-docker compose -f deploy/nemoclaw/docker-compose.yaml up -d --force-recreate
+### Dry-run (preview without making changes)
+
+```bash
+NEMOCLAW_DRY_RUN=1 bash deploy/nemoclaw/install-nemoclaw-gateway.sh
 ```
 
 ---
 
-## Stopping and Removing
+## Verification (per host)
+
+After the script completes, verify:
 
 ```bash
-# Stop (preserve volumes and config):
-docker compose -f deploy/nemoclaw/docker-compose.yaml down
+# 1. NemoClaw gateway service is active.
+systemctl status mac-nemoclaw-gateway.service
 
-# Full teardown (also removes volumes):
-docker compose -f deploy/nemoclaw/docker-compose.yaml down -v
+# 2. Hermes gateway service is stopped and disabled.
+systemctl status mac-hermes-gateway.service   # should show: inactive (dead)
+
+# 3. Gateway log shows no fatal errors.
+journalctl -u mac-nemoclaw-gateway.service --since "5 minutes ago" --no-pager
+
+# 4. Executor sandbox still works (executor runs in-process hermes, not gateway).
+~/.mac/venv/bin/python -c "import mac.hermes_gateway; print('executor hermes OK')"
+
+# 5. Hub connectivity.
+curl http://<hub>:8789/healthz
 ```
 
-The existing hermes gateway service is unaffected by either command.
+Send a mention in the configured Slack channel to verify end-to-end:
+```
+@<agent-name> ping
+```
 
 ---
 
-## Coexistence Notes
+## Credential Audit
 
-- NemoClaw uses a **separate HERMES_HOME** (`~/.hermes-nemoclaw`) and a
-  **separate Slack workspace**; it does not share config or state with
-  the existing hermes gateway.
-- NemoClaw listens on port **18765**; the existing hermes gateway on
-  port **8765** (or your configured port).  Both can run concurrently.
-- Both gateways route model calls through the same MAC router hub URL
-  (`http://hub.example.internal:8789/v1`) but use distinct
-  `x-mac-hermes-instance-id` headers so the router attributes usage
-  correctly.
-- Do not modify `deploy/hermes/` or any existing service files as part
-  of the NemoClaw pilot.
+Per CREDENTIAL MIGRATION spec: record here which env vars map to which
+credentials for teardown/rotation auditability.
+
+| Credential | Source env var | Target config field |
+|---|---|---|
+| Slack bot token | `MAC_NEMOCLAW_SLACK_BOT_TOKEN` | `~/.hermes/slack_accounts.json[0].bot_token` |
+| Slack app token | `MAC_NEMOCLAW_SLACK_APP_TOKEN` | `~/.hermes/slack_accounts.json[0].app_token` |
+| Router API key | `OPENAI_API_KEY` / `MAC_API_TOKEN` in mac.env | nemoclaw-gateway wrapper `OPENAI_API_KEY` |
+| Router x-mac-agent-id | `MAC_NEMOCLAW_AGENT_ID` | `~/.hermes/config.yaml static_headers` |
+| Router x-mac-hermes-instance-id | `MAC_NEMOCLAW_INSTANCE_ID` | `~/.hermes/config.yaml static_headers` |
+
+Token rotation: update the source (vault / host secret store) and re-run
+`install-nemoclaw-gateway.sh` to re-render `slack_accounts.json` and
+`config.yaml`.  No service restart is needed if only `config.yaml` changes
+(Hermes hot-reloads on SIGUSR1 via `systemctl reload <svc>`).
+
+---
+
+## Rollback (per host)
+
+```bash
+sudo systemctl stop    mac-nemoclaw-gateway.service
+sudo systemctl disable mac-nemoclaw-gateway.service
+sudo systemctl enable  mac-hermes-gateway.service
+sudo systemctl start   mac-hermes-gateway.service
+# Verify hermes gateway is running.
+systemctl status mac-hermes-gateway.service
+```
+
+The hermes gateway unit was backed up by the install script under
+`~/.mac/backups/` before being replaced.  If the unit file was lost:
+
+```bash
+# Restore from deploy source.
+sudo cp deploy/systemd/mac-hermes-gateway.service /etc/systemd/system/mac-hermes-gateway.service
+sudo systemctl daemon-reload
+sudo systemctl enable mac-hermes-gateway.service
+sudo systemctl start  mac-hermes-gateway.service
+```
+
+---
+
+## Host Status
+
+Update this table as each host is migrated.
+
+| Host | Role | Status | Notes |
+|---|---|---|---|
+| worker-1 | bare metal | pending | Migrate first |
+| worker-2 | spoke | pending | |
+| pods | spoke | pending | |
+| hub | hub | pending | Migrate LAST |
+
+---
+
+## Follow-up Tasks (post-migration)
+
+Once all hosts are migrated:
+
+1. **Prune dead code**: the multi-slack patch and gateway-side hermes patches
+   become dead code once all hosts are on NemoClaw.  File a task to remove:
+   - `deploy/hermes/multi-slack-mvp.patch`
+   - `deploy/hermes/mac-runtime-context-prompt.patch`
+   - `deploy/hermes/mac-provider-decision.patch`
+   - `deploy/hermes/post-snapshot-mac-fixes.patch`
+   - `deploy/hermes/disable-shutdown-chat-notices.patch`
+   - The hermes gateway service from `deploy/deploy-mac-fleet.sh` install path.
+
+2. **Update fleet config defaults**: set `hermes.gateway_impl: nemoclaw` as
+   the default in `deploy/fleet/config.yaml`.
+
+3. **Update this runbook** with final per-host migration timestamps.
+
+---
+
+## Architecture (post-migration)
+
+```
+Each fleet host
+  ├── <fleet>-nemoclaw-gateway.service  (NemoClaw chat gateway — replaces hermes gateway)
+  │     └── ~/.mac/bin/nemoclaw-gateway
+  │           └── OpenClaw sandbox
+  │                 └── mac-hermes:net runtime image
+  │                       └── Hermes (vendored, for the chat session context only)
+  │                             └── MAC router (http://<hub>:8789/v1)
+  │
+  ├── mac-openshell-supervisor.service   (task executor parent — UNCHANGED)
+  │     └── mac-hermes-task-executor     (in-process Python, ADR 0001 — UNCHANGED)
+  │           └── vendored Hermes        (task executor — NOT migrating)
+  │
+  └── mac.service                        (control plane — UNCHANGED)
+```
+
+The executor's `~/.hermes` home and its Hermes process are **completely
+separate** from the NemoClaw gateway.  The gateway replacing hermes does not
+affect task execution.
 
 ---
 
@@ -205,9 +227,11 @@ The existing hermes gateway service is unaffected by either command.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Gateway exits immediately | Missing `mac-runtime-context.md` | Write the context file (Step 5) |
-| `policy file not found` | OpenClaw policy not installed | Install policy (Step 6) |
-| No Slack events received | Incorrect `app_token` or Socket Mode not enabled | Verify Slack app config |
-| `401 Unauthorized` from router | Wrong `OPENAI_API_KEY` or expired token | Refresh token from mac vault |
-| Port 18765 already in use | Another service on that port | Change `MAC_NEMOCLAW_GATEWAY_PORT` in docker-compose.yaml |
-| Existing hermes gateway fails after deploy | NemoClaw modified a shared file | NemoClaw must not modify shared config; check for accidental bind-mount overlap |
+| `openshell: command not found` | OpenShell not installed | Run `bootstrap-openshell.sh` with `OPENSHELL_VERSION=0.0.72` |
+| `OpenShell X.Y.Z installed but NemoClaw requires 0.0.72` | Wrong version | Re-run bootstrap with correct version |
+| Gateway exits immediately | Missing `mac-runtime-context.md` | Check `~/.hermes/mac-runtime-context.md` |
+| `policy file not found` | OpenClaw policy not installed | Check `~/.mac/openshell/<agent-id>-policy.yaml` |
+| No Slack events | Wrong `app_token` or Socket Mode off | Verify Slack app config |
+| `401 Unauthorized` from router | Wrong `OPENAI_API_KEY` | Refresh from mac vault |
+| Executor broken after migration | Shared Hermes home conflict | Check `HERMES_HOME` env in executor vs gateway |
+| Port 8765 already in use | Another process on that port | `lsof -i :8765` to identify; set `MAC_NEMOCLAW_GATEWAY_PORT` |
