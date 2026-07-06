@@ -97,6 +97,70 @@ from mac.review_failure_classifier import (
     classify_finalizer_refusal,
 )
 
+PRESERVED_EXECUTOR_WORKTREE_FILENAME = "preserved-executor-worktree.json"
+PRESERVED_EXECUTOR_EVIDENCE_FILENAME = "executor-evidence-preserved.json"
+
+
+class PreservationMissing(RuntimeError):
+    """Raised when preserved executor recovery state is absent or unusable."""
+
+
+@dataclass(frozen=True)
+class PreservedExecutorState:
+    """Recovery payload saved before a new-file finalizer refusal overwrites evidence."""
+
+    snapshot_path: Path
+    evidence_path: Path
+    worktree_path: Path
+    base_sha: str
+    task_branch: str
+    untracked_files: List[str]
+    staged_new_files: List[str]
+    status_porcelain: List[str]
+    timestamp: str
+    evidence_type: str
+    summary: str
+    executor_evidence: Dict[str, Any]
+
+
+def load_preserved_executor_state(workspace: Path) -> PreservedExecutorState:
+    """Load the executor state preserved by a new-file finalizer refusal.
+
+    Recovery must fail closed when either artifact is missing; silently returning
+    ``None`` would force callers to rediscover whether there is reusable verified
+    work.
+    """
+    snapshot_path = workspace / PRESERVED_EXECUTOR_WORKTREE_FILENAME
+    evidence_path = workspace / PRESERVED_EXECUTOR_EVIDENCE_FILENAME
+    if not snapshot_path.exists():
+        raise PreservationMissing("%s is missing" % snapshot_path.name)
+    if not evidence_path.exists():
+        raise PreservationMissing("%s is missing" % evidence_path.name)
+    try:
+        snapshot_raw = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        evidence_raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise PreservationMissing("preserved executor state is not valid JSON") from exc
+    if not isinstance(snapshot_raw, dict):
+        raise PreservationMissing("%s must contain a JSON object" % snapshot_path.name)
+    if not isinstance(evidence_raw, dict):
+        raise PreservationMissing("%s must contain a JSON object" % evidence_path.name)
+    return PreservedExecutorState(
+        snapshot_path=snapshot_path,
+        evidence_path=evidence_path,
+        worktree_path=Path(str(snapshot_raw.get("worktree_path") or "")),
+        base_sha=str(snapshot_raw.get("base_sha") or ""),
+        task_branch=str(snapshot_raw.get("task_branch") or ""),
+        untracked_files=_string_list(snapshot_raw.get("untracked_files")),
+        staged_new_files=_string_list(snapshot_raw.get("staged_new_files")),
+        status_porcelain=_string_list(snapshot_raw.get("status_porcelain")),
+        timestamp=str(snapshot_raw.get("timestamp") or ""),
+        evidence_type=str(snapshot_raw.get("evidence_type") or ""),
+        summary=str(snapshot_raw.get("summary") or ""),
+        executor_evidence=evidence_raw,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Small utilities (ported verbatim from the deploy heredoc)
 # ---------------------------------------------------------------------------
@@ -2084,6 +2148,19 @@ def _repository_prepared_base(task: Dict[str, Any]) -> str:
     return str(runtime.get("repository_base_sha") or "").strip() if isinstance(runtime, dict) else ""
 
 
+def _repository_task_branch(task: Dict[str, Any], fallback: str = "") -> str:
+    value = os.environ.get("MAC_TASK_REPO_BRANCH", "").strip()
+    if value:
+        return value
+    metadata = task.get("metadata") if isinstance(task, dict) else {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+    if isinstance(runtime, dict):
+        value = str(runtime.get("repository_branch") or "").strip()
+        if value:
+            return value
+    return fallback
+
+
 def _repository_lease_id(task: Dict[str, Any]) -> str:
     value = os.environ.get("MAC_TASK_REPO_LEASE_ID", "").strip()
     if value:
@@ -2445,6 +2522,50 @@ def _new_file_finalize_message(paths: List[str]) -> str:
     )
 
 
+def _read_executor_evidence_payload(task_workspace: Path) -> Dict[str, Any]:
+    evidence_path = task_workspace / "mac-evidence.json"
+    if not evidence_path.exists():
+        return {}
+    try:
+        loaded = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _preserve_executor_state_before_refusal(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    worktree_path: Path,
+    *,
+    branch: str,
+    status_stdout: str,
+    untracked_paths: List[str],
+    staged_new_paths: List[str],
+) -> None:
+    executor_evidence = _read_executor_evidence_payload(task_workspace)
+    (task_workspace / PRESERVED_EXECUTOR_EVIDENCE_FILENAME).write_text(
+        json.dumps(executor_evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    snapshot = {
+        "schema": "mac.preserved_executor_worktree.v1",
+        "timestamp": utcnow(),
+        "worktree_path": str(worktree_path),
+        "base_sha": _repository_prepared_base(task),
+        "task_branch": _repository_task_branch(task, branch),
+        "untracked_files": list(untracked_paths),
+        "staged_new_files": list(staged_new_paths),
+        "status_porcelain": [line for line in status_stdout.splitlines() if line],
+        "evidence_type": str(executor_evidence.get("evidence_type") or ""),
+        "summary": str(executor_evidence.get("summary") or ""),
+    }
+    (task_workspace / PRESERVED_EXECUTOR_WORKTREE_FILENAME).write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_git_finalizer_refusal_manifest(
     task_workspace: Path,
     task: Dict[str, Any],
@@ -2457,6 +2578,15 @@ def _write_git_finalizer_refusal_manifest(
 ) -> None:
     head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    _preserve_executor_state_before_refusal(
+        task_workspace,
+        task,
+        worktree_path,
+        branch=branch,
+        status_stdout=status_stdout,
+        untracked_paths=untracked_paths,
+        staged_new_paths=staged_new_paths,
+    )
     # Determine the structured refusal kind from the paths provided so downstream
     # services can read the reason without re-parsing problems[].
     if untracked_paths:
@@ -2470,6 +2600,7 @@ def _write_git_finalizer_refusal_manifest(
         "status": "fail",
         "evidence_type": "repo_change",
         "finalizer_refusal_kind": refusal_kind_value,
+        "preserved_worktree_snapshot": True,
         "summary": message,
         "problems": [message],
         "repo": {

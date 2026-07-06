@@ -3417,6 +3417,8 @@ def test_classify_outcome_annotates_finalizer_refusal_kind_staged(tmp_path):
 
 def test_write_git_finalizer_refusal_manifest_includes_kind_untracked(tmp_path, monkeypatch):
     """_write_git_finalizer_refusal_manifest writes finalizer_refusal_kind=untracked_new_files."""
+    monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "base-untracked")
+    monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "task-untracked")
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))
     work = tmp_path / "work"
@@ -3431,6 +3433,15 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_untracked(tmp_path, 
     ws = tmp_path / "ws"
     ws.mkdir()
     task = {"id": "t-kind-untracked", "metadata": {}}
+    original_evidence = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "executor finished with generated files",
+        "tests": [{"name": "unit", "status": "pass"}],
+        "codegraph": {"status": "pass"},
+    }
+    (ws / "mac-evidence.json").write_text(json.dumps(original_evidence), encoding="utf-8")
 
     te._write_git_finalizer_refusal_manifest(
         ws, task, work,
@@ -3442,12 +3453,37 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_untracked(tmp_path, 
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["finalizer_refusal_kind"] == "untracked_new_files"
+    assert manifest["preserved_worktree_snapshot"] is True
     assert manifest["repo"]["untracked_files"] == ["leaked.py"]
     assert manifest["repo"]["staged_new_files"] == []
+    preserved_evidence = json.loads((ws / "executor-evidence-preserved.json").read_text(encoding="utf-8"))
+    assert preserved_evidence == original_evidence
+    snapshot = json.loads((ws / "preserved-executor-worktree.json").read_text(encoding="utf-8"))
+    assert snapshot["worktree_path"] == str(work)
+    assert snapshot["base_sha"] == "base-untracked"
+    assert snapshot["task_branch"] == "task-untracked"
+    assert snapshot["untracked_files"] == ["leaked.py"]
+    assert snapshot["staged_new_files"] == []
+    assert snapshot["status_porcelain"] == ["?? leaked.py"]
+    assert snapshot["evidence_type"] == "repo_change"
+    assert snapshot["summary"] == "executor finished with generated files"
+
+    loaded = te.load_preserved_executor_state(ws)
+    assert loaded.worktree_path == work
+    assert loaded.base_sha == "base-untracked"
+    assert loaded.task_branch == "task-untracked"
+    assert loaded.untracked_files == ["leaked.py"]
+    assert loaded.staged_new_files == []
+    assert loaded.status_porcelain == ["?? leaked.py"]
+    assert loaded.evidence_type == "repo_change"
+    assert loaded.summary == "executor finished with generated files"
+    assert loaded.executor_evidence == original_evidence
 
 
 def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, monkeypatch):
     """_write_git_finalizer_refusal_manifest writes finalizer_refusal_kind=staged_new_files."""
+    monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "base-staged")
+    monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "task-staged")
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))
     work = tmp_path / "work"
@@ -3462,6 +3498,14 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, mon
     ws = tmp_path / "ws"
     ws.mkdir()
     task = {"id": "t-kind-staged", "metadata": {}}
+    original_evidence = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "executor staged a new module",
+        "checks": [{"name": "contract", "status": "pass"}],
+    }
+    (ws / "mac-evidence.json").write_text(json.dumps(original_evidence), encoding="utf-8")
 
     te._write_git_finalizer_refusal_manifest(
         ws, task, work,
@@ -3473,5 +3517,22 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, mon
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["finalizer_refusal_kind"] == "staged_new_files"
+    assert manifest["preserved_worktree_snapshot"] is True
     assert manifest["repo"]["untracked_files"] == []
     assert manifest["repo"]["staged_new_files"] == ["new_mod.py"]
+    preserved_evidence = json.loads((ws / "executor-evidence-preserved.json").read_text(encoding="utf-8"))
+    assert preserved_evidence == original_evidence
+    snapshot = json.loads((ws / "preserved-executor-worktree.json").read_text(encoding="utf-8"))
+    assert snapshot["worktree_path"] == str(work)
+    assert snapshot["base_sha"] == "base-staged"
+    assert snapshot["task_branch"] == "task-staged"
+    assert snapshot["untracked_files"] == []
+    assert snapshot["staged_new_files"] == ["new_mod.py"]
+    assert snapshot["status_porcelain"] == ["A  new_mod.py"]
+    assert snapshot["evidence_type"] == "repo_change"
+    assert snapshot["summary"] == "executor staged a new module"
+
+
+def test_load_preserved_executor_state_missing_snapshot_raises(tmp_path):
+    with pytest.raises(te.PreservationMissing):
+        te.load_preserved_executor_state(tmp_path)
