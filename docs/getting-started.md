@@ -125,8 +125,10 @@ This creates a standalone control-plane authority, not an offline replica of a
 fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
 workers configured to use this same file. They are never synchronized with a
 remote hub. Relative or temporary database paths are appropriate for this
-tutorial; task-producing commands against `~/.mac/mac.db` require the explicit
-`--local-authority` acknowledgement.
+tutorial. `MAC_DB` configures a server and is not an implicit CLI selector;
+continue passing `--db mac.db` for this standalone tutorial. Direct access to
+`~/.mac/mac.db` or a deployed hub's configured database requires
+`--local-authority`, and a deployed hub must be stopped first.
 
 If this machine is becoming a client of a remote fleet and the default local
 database already contains work, run `mac --json migrate local-ledger` before

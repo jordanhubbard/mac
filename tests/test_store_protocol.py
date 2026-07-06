@@ -85,6 +85,24 @@ def test_transaction_rolls_back_on_exception(store: Store) -> None:
     assert store.query_one("SELECT id FROM t WHERE id = ?", ("txn-bad",)) is None
 
 
+def test_transaction_rolls_back_on_base_exception(store: Store) -> None:
+    class _Cancelled(BaseException):
+        pass
+
+    with pytest.raises(_Cancelled):
+        with store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO t (id, payload) VALUES (?, ?)", ("cancelled", "x")
+            )
+            raise _Cancelled("cancelled")
+
+    # The shared connection must be usable by the next request.
+    with store.transaction() as conn:
+        conn.execute("INSERT INTO t (id, payload) VALUES (?, ?)", ("next", "ok"))
+    assert store.query_one("SELECT id FROM t WHERE id = ?", ("cancelled",)) is None
+    assert store.query_one("SELECT id FROM t WHERE id = ?", ("next",)) is not None
+
+
 def test_store_path_attribute(store: Store) -> None:
     assert store.path == ":memory:"
 
@@ -134,3 +152,34 @@ def test_sqlite_upgrade_adds_indexed_workflow_deadline(tmp_path) -> None:
     assert "next_action_at" in columns
     assert "idx_workflow_runs_next_action" in indexes
     upgraded.close()
+
+
+def test_sqlite_existing_open_skips_schema_ddl_during_active_writer(tmp_path) -> None:
+    database = tmp_path / "authority.sqlite"
+    owner = SQLiteStore(str(database))
+    try:
+        with owner.transaction() as conn:
+            conn.execute(
+                "INSERT INTO tasks (id, title, description, state, "
+                "required_capabilities, dependencies, metadata, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("task_writer", "writer", "", "open", "[]", "[]", "{}", "now", "now"),
+            )
+            reader = SQLiteStore(str(database), initialize_schema=False)
+            try:
+                row = reader.query_one("SELECT COUNT(*) AS n FROM tasks")
+                assert row is not None
+                assert row["n"] == 0
+            finally:
+                reader.close()
+    finally:
+        owner.close()
+
+
+def test_sqlite_existing_open_refuses_to_create_database(tmp_path) -> None:
+    database = tmp_path / "missing.sqlite"
+
+    with pytest.raises(StoreError, match="does not exist"):
+        SQLiteStore(str(database), initialize_schema=False)
+
+    assert not database.exists()

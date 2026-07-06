@@ -14,16 +14,21 @@ A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
 ``resolve_dispatch(args)`` decides which flavor to use:
 
-1. ``--db <path>`` (or ``MAC_DB`` env) → direct SQLite authority at that path,
-   with a stderr banner so silent isolated writes can't happen. The canonical
-   client-side ``~/.mac/mac.db`` requires ``--local-authority`` before any
-   task-producing operation; SQLite tasks are never reconciled with a hub.
+1. ``--db <path>`` → direct SQLite for standalone development or explicit
+   maintenance. The deployed hub authority requires ``--local-authority`` and
+   the hub service must be stopped.
 2. ``--hub-url URL`` (with optional ``--token``) → remote HTTP.
-3. ``MAC_API_URL`` / ``MAC_URL`` / ``MAC_HUB_URL`` env → remote HTTP.
+3. ``MAC_API_URL`` / ``MAC_URL`` / ``MAC_HUB_URL`` env → remote HTTP, even
+   when the same process environment contains the server-side ``MAC_DB``.
 4. A fleet → its ``hub_url`` in ``~/.mac/fleets.yaml`` → remote HTTP. The
    fleet is ``--fleet`` / ``MAC_FLEET`` if set, else the default fleet:
    the lone fleet, or the one marked ``default: true`` in fleets.yaml.
-5. Nothing configured → error with help text. No silent fallback.
+5. ``--local-authority`` with ``MAC_DB`` → stopped-hub SQLite maintenance.
+6. Nothing configured → error with help text. No silent fallback.
+
+``MAC_DB`` is server configuration, not an implicit CLI transport selector.
+Routine CLI opens of an existing standalone database also skip schema DDL;
+schema initialization and additive migration remain startup/``mac init`` work.
 
 The effective fleet (explicit, env, or default) also scopes the token via
 :func:`mac.fleet_env.resolve` so ``MAC_API_TOKEN__<FLEET>`` takes precedence
@@ -45,6 +50,8 @@ from __future__ import annotations
 
 import os
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 from urllib.parse import quote, urlencode
@@ -1890,6 +1897,52 @@ def _is_canonical_client_db(db_path: str) -> bool:
         return False
 
 
+def _is_hub_authority_db(db_path: str, env: Dict[str, str]) -> bool:
+    """Whether ``db_path`` is the database owned by this deployed hub."""
+
+    if env.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower() != "hub":
+        return False
+    configured = env.get("MAC_DB")
+    if not configured:
+        return False
+    try:
+        return Path(db_path).expanduser().resolve() == Path(configured).expanduser().resolve()
+    except OSError:
+        return False
+
+
+def _hub_is_reachable(url: str) -> bool:
+    """Return true when a configured local hub answers its health endpoint."""
+
+    request = urllib.request.Request(url.rstrip("/") + "/health", method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=1):
+            return True
+    except urllib.error.HTTPError:
+        # An HTTP response still proves that the service is running.
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _local_authority_error(
+    db_path: str,
+    remote_authority: Optional[str],
+) -> DispatchError:
+    message = (
+        "refusing direct SQLite access to control-plane authority %s without "
+        "--local-authority. This authority is not a repository ticket store or "
+        "an offline hub replica; its tasks are never uploaded or reconciled "
+        "with a hub. " % db_path
+    )
+    if remote_authority:
+        message += "%s is configured; omit --db and use its HTTP API. " % remote_authority
+    message += (
+        "For maintenance, stop the hub service and rerun with --local-authority."
+    )
+    return DispatchError(message)
+
+
 def _configured_remote_authority(args: Any, env: Dict[str, str]) -> Optional[str]:
     """Describe a configured remote authority without opening a login tunnel."""
 
@@ -2150,9 +2203,8 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
     env: Dict[str, str] = dict(os.environ)
     _load_dotenv_into(env)
 
-    # Priority 1: explicit --db beats everything (lets you debug against
-    # a local copy even if a hub is configured in your shell).
-    db_path = getattr(args, "db", None) or env.get("MAC_DB")
+    explicit_db = getattr(args, "db", None)
+    env_db = env.get("MAC_DB")
     local_authority = bool(getattr(args, "local_authority", False))
     explicit_remote = [
         name
@@ -2163,33 +2215,73 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         )
         if value
     ]
-    if db_path and explicit_remote:
+    if explicit_db and explicit_remote:
         raise DispatchError(
             "conflicting control-plane authorities: --db selects direct SQLite, "
             "while %s selects a remote hub. Choose exactly one."
             % ", ".join(explicit_remote)
         )
-    if local_authority and not db_path:
+    if local_authority and not (explicit_db or env_db):
         raise DispatchError("--local-authority requires --db or MAC_DB")
+
+    # A normal CLI invocation always prefers the hub. Deployed hub processes
+    # necessarily export both MAC_DB (server ownership) and MAC_HUB_URL (client
+    # transport); MAC_DB must not make every operator command open SQLite.
+    if not explicit_db and not local_authority:
+        url = _resolve_hub_url(args, env)
+        if url:
+            token = _resolve_hub_token(args, env)
+            return RemoteDispatch(HubClient(url, token=token))
+        if env_db:
+            raise DispatchError(
+                "MAC_DB is control-plane server configuration, not implicit CLI "
+                "permission for direct SQLite access. Configure a hub URL, pass "
+                "--db for a standalone development database, or stop the hub and "
+                "rerun with --local-authority for maintenance."
+            )
+
+    db_path = explicit_db or (env_db if local_authority else None)
     if db_path:
         from mac.services import ControlPlane
         from mac.store import SQLiteStore
 
-        _maybe_print_local_banner(db_path)
-        canonical_client_db = _is_canonical_client_db(db_path)
         resolved_db_path = str(Path(db_path).expanduser().resolve())
         remote_authority = _configured_remote_authority(args, env)
-        operation = _task_producing_cli_operation(args)
-        if canonical_client_db and not local_authority and operation:
-            raise _task_authority_error(resolved_db_path, operation, remote_authority)
+        hub_authority_db = _is_hub_authority_db(resolved_db_path, env)
+        protected_authority = _is_canonical_client_db(resolved_db_path) or hub_authority_db
+        if protected_authority and not local_authority:
+            raise _local_authority_error(resolved_db_path, remote_authority)
+        if hub_authority_db and local_authority:
+            hub_url = next(
+                (
+                    env[name]
+                    for name in ("MAC_HUB_URL", "MAC_URL", "MAC_API_URL", "HGMAC_URL")
+                    if env.get(name)
+                ),
+                None,
+            )
+            if hub_url and _hub_is_reachable(hub_url):
+                raise DispatchError(
+                    "refusing direct SQLite maintenance while the hub is running at %s. "
+                    "Use the HTTP API for operational commands, or stop the hub service "
+                    "before rerunning with --local-authority." % hub_url
+                )
+        _maybe_print_local_banner(db_path)
+        initialize_schema = (
+            getattr(args, "command", None) == "init"
+            or db_path == ":memory:"
+            or not Path(db_path).expanduser().is_file()
+        )
         return LocalDispatch(
-            ControlPlane(SQLiteStore(db_path)),
+            ControlPlane(
+                SQLiteStore(db_path, initialize_schema=initialize_schema)
+            ),
             db_path=resolved_db_path,
-            local_authority_confirmed=local_authority or not canonical_client_db,
+            local_authority_confirmed=local_authority or not protected_authority,
             remote_authority=remote_authority,
         )
 
-    # Priority 2-4: hub mode.
+    # Explicit selectors and environments without MAC_DB still resolve here.
     url = _resolve_hub_url(args, env)
     if url:
         token = _resolve_hub_token(args, env)

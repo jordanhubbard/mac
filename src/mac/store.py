@@ -76,8 +76,8 @@ def make_store_from_env(
     MAC without a hub configuration.
 
     The Postgres backend auto-applies the bundled schema on first
-    construction so a fresh CNPG cluster comes up ready; SQLite already
-    runs `_initialize` from its constructor for the same effect.
+    construction so a fresh CNPG cluster comes up ready; this server factory
+    likewise constructs SQLite with schema initialization enabled.
     """
     role = os.environ.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower()
     if role == "client":
@@ -109,9 +109,19 @@ def make_store_from_env(
 
 
 class SQLiteStore:
-    """Durable SQLite backing store for the control plane."""
+    """Durable SQLite backing store for the control plane.
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    Server startup uses the default ``initialize_schema=True`` to create and
+    migrate the authority. Routine direct CLI access to an existing database
+    passes ``False`` so a read does not acquire schema or journal-mode locks.
+    """
+
+    def __init__(
+        self,
+        path: Optional[str] = None,
+        *,
+        initialize_schema: bool = True,
+    ) -> None:
         if not path:
             raise StoreError(
                 "SQLiteStore requires an explicit database path; pass a path "
@@ -119,15 +129,24 @@ class SQLiteStore:
             )
         self.path = path
         if path != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            database = Path(path).expanduser()
+            if initialize_schema:
+                database.parent.mkdir(parents=True, exist_ok=True)
+            elif not database.is_file():
+                raise StoreError(
+                    "SQLite authority database does not exist: %s; run `mac --db %s init` "
+                    "to initialize a standalone authority" % (database, database)
+                )
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        if path != ":memory:":
+        self._conn.execute("PRAGMA busy_timeout = 5000")
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        if initialize_schema and path != ":memory:":
             self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.execute("PRAGMA synchronous = NORMAL")
-        self._conn.execute("PRAGMA busy_timeout = 5000")
-        self._initialize()
+        if initialize_schema:
+            self._initialize()
 
     def close(self) -> None:
         with self._lock:
@@ -140,8 +159,14 @@ class SQLiteStore:
             try:
                 yield self._conn
                 self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
+            except BaseException:
+                # Cancellation and interpreter-level exits inherit directly
+                # from BaseException. If one crosses the context boundary,
+                # leaving this shared connection in_transaction poisons every
+                # later API write with "cannot start a transaction within a
+                # transaction". Always unwind before releasing the RLock.
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
                 raise
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
@@ -2071,4 +2096,3 @@ class SQLiteStore:
             "DELETE FROM humans WHERE id = ?", (human_id,)
         )
         return cursor.rowcount > 0
-

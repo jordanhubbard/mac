@@ -245,7 +245,8 @@ def test_task_producing_cli_operation_classifies_indirect_writes(values, expecte
     assert _task_producing_cli_operation(_ns(**values)) == expected
 
 
-def test_configured_remote_authority_describes_explicit_selection(monkeypatch):
+def test_configured_remote_authority_describes_explicit_selection(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     assert _configured_remote_authority(_ns(profile="operator"), {}) == (
         "client profile 'operator'"
@@ -269,12 +270,30 @@ def test_resolve_dispatch_with_explicit_db(tmp_path, monkeypatch, capsys):
     assert isinstance(disp, LocalDispatch)
 
 
-def test_resolve_dispatch_with_mac_db_env(tmp_path, monkeypatch):
-    monkeypatch.delenv("MAC_API_URL", raising=False)
+def test_resolve_dispatch_requires_local_authority_for_mac_db_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "HGMAC_URL", "MAC_FLEET"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent-fleets.yaml"))
     monkeypatch.setenv("MAC_DB", str(tmp_path / "from_env.db"))
     monkeypatch.setenv("MAC_QUIET_LOCAL_BANNER", "1")
-    disp = resolve_dispatch(_ns())
+
+    with pytest.raises(DispatchError, match="server configuration"):
+        resolve_dispatch(_ns())
+
+    disp = resolve_dispatch(_ns(local_authority=True))
     assert isinstance(disp, LocalDispatch)
+
+
+def test_resolve_dispatch_prefers_hub_over_mac_db_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "hub.db"))
+    monkeypatch.setenv("MAC_HUB_URL", "http://127.0.0.1:8789")
+
+    disp = resolve_dispatch(_ns())
+
+    assert isinstance(disp, RemoteDispatch)
 
 
 def test_resolve_dispatch_with_explicit_hub_url(monkeypatch):
@@ -327,12 +346,50 @@ def test_resolve_dispatch_guards_canonical_home_db_task_writes(tmp_path, monkeyp
     db_path = tmp_path / ".mac" / "mac.db"
     db_path.parent.mkdir(parents=True)
 
-    guarded = resolve_dispatch(_ns(db=str(db_path)))
-    with pytest.raises(DispatchError, match="never uploaded or reconciled"):
-        guarded.create_task("stranded work")
+    with pytest.raises(DispatchError, match="--local-authority"):
+        resolve_dispatch(_ns(db=str(db_path)))
 
     confirmed = resolve_dispatch(_ns(db=str(db_path), local_authority=True))
     assert confirmed.create_task("standalone work").title == "standalone work"
+
+
+def test_resolve_dispatch_refuses_live_hub_database_maintenance(tmp_path, monkeypatch):
+    import mac.dispatch as dispatch_mod
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.setenv("MAC_CONTROL_PLANE_ROLE", "hub")
+    db_path = tmp_path / ".mac" / "mac.db"
+    db_path.parent.mkdir(parents=True)
+    monkeypatch.setenv("MAC_DB", str(db_path))
+    monkeypatch.setenv("MAC_HUB_URL", "http://127.0.0.1:8789")
+    monkeypatch.setattr(dispatch_mod, "_hub_is_reachable", lambda _url: True)
+
+    with pytest.raises(DispatchError, match="while the hub is running"):
+        resolve_dispatch(_ns(local_authority=True))
+
+
+def test_resolve_dispatch_opens_existing_db_without_schema_initialization(
+    tmp_path, monkeypatch
+):
+    import mac.store as store_mod
+
+    db_path = tmp_path / "existing.db"
+    store = store_mod.SQLiteStore(str(db_path))
+    store.close()
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent-fleets.yaml"))
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.delenv("MAC_API_URL", raising=False)
+
+    def fail_if_initialized(_self):
+        raise AssertionError("routine CLI open must not run schema DDL")
+
+    monkeypatch.setattr(store_mod.SQLiteStore, "_initialize", fail_if_initialized)
+
+    disp = resolve_dispatch(_ns(db=str(db_path)))
+
+    assert isinstance(disp, LocalDispatch)
 
 
 def test_resolve_dispatch_rejects_local_authority_without_db(monkeypatch):
@@ -343,6 +400,7 @@ def test_resolve_dispatch_rejects_local_authority_without_db(monkeypatch):
 
 
 def test_resolve_dispatch_errors_when_nothing_configured(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_URL", raising=False)
     monkeypatch.delenv("MAC_HUB_URL", raising=False)
@@ -976,13 +1034,16 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
     assert request_body == {}
 
 
-def test_remote_cli_task_claim_matches_live_api_and_persists_lease(monkeypatch):
+def test_remote_cli_task_claim_matches_live_api_and_persists_lease(monkeypatch, tmp_path):
     """Exercise the documented CLI through RemoteDispatch and the real API."""
     import json as _json
     from urllib.parse import urlsplit
 
     from fastapi.testclient import TestClient
 
+    # mac.api exposes a production-style module app at import time; give that
+    # unrelated app an isolated authority before importing the test factory.
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "module-app.db"))
     from mac.api import create_app
     from mac.cli import main
     from mac.http_client import HubClient

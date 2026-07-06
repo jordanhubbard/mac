@@ -3974,9 +3974,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-authority",
         action="store_true",
-        help="confirm that --db is the authoritative database used by this "
-        "control plane's API, dispatcher, and workers. Required before "
-        "task-producing operations against ~/.mac/mac.db.",
+        help="enable stopped-hub maintenance against the authoritative SQLite "
+        "database selected by --db or MAC_DB. The command refuses this mode "
+        "while the configured hub health endpoint is reachable.",
     )
     parser.add_argument(
         "--hub-url",

@@ -205,10 +205,13 @@ MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
 uv run mac-hermes --url http://127.0.0.1:8000 --help
 ```
 
-For local work, pass `--db path/to/file.db` or set `MAC_DB`. Without `--db`, the
-CLI selects a configured hub (`--hub-url`, `MAC_API_URL`, `MAC_URL`,
-`MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise refuses to run instead of
-silently creating a stray `./mac.db`.
+For standalone local work, pass `--db path/to/file.db`. `MAC_DB` is server
+configuration; it does not implicitly opt CLI commands into direct SQLite
+access. Without `--db`, the CLI selects a configured hub (`--hub-url`,
+`MAC_API_URL`, `MAC_URL`, `MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise
+refuses to run instead of silently creating a stray `./mac.db`. On a deployed
+hub, where `MAC_DB` and `MAC_HUB_URL` are both present, operator commands use
+the HTTP API.
 
 Control-plane server startup likewise requires either an explicit `MAC_DB`
 SQLite path or `MAC_DATABASE_URL` Postgres DSN. It never creates
@@ -217,13 +220,31 @@ legacy local-ledger migration command.
 
 ### Control-plane authority is not repository-local task storage
 
-`--db` selects a **direct SQLite authority**: a complete MAC control plane whose
-API, dispatcher, and workers all use that exact database. It is useful for a
-single-host deployment, hub-host maintenance, tests, and migrations. It is not
-an offline cache and its tasks are never uploaded, merged, or reconciled with a
-remote hub. Task-producing commands against the ambiguous client path
-`~/.mac/mac.db` therefore require `--local-authority`; otherwise MAC refuses the
-write and directs the operator to the configured hub.
+`--db` selects a **direct SQLite authority**. It is appropriate for a standalone
+development database, tests, explicit migrations, and stopped-hub maintenance;
+it is not an offline cache, and its tasks are never uploaded, merged, or
+reconciled with a remote hub. Direct access to `~/.mac/mac.db` or a deployed
+hub's configured `MAC_DB` therefore requires `--local-authority`. MAC also probes
+the configured local health endpoint and refuses that maintenance mode while
+the hub is running.
+
+Normal operations against a running hub omit both flags:
+
+```bash
+mac task stats
+mac task show task_...
+```
+
+For exceptional SQLite maintenance, stop `mac-api` first, preserve its existing
+`MAC_DB` environment, and make the override explicit:
+
+```bash
+mac --local-authority task stats
+```
+
+Restart the hub before resuming fleet work. Opening an existing database through
+this direct path does not run schema DDL. Schema creation and additive migrations
+run at control-plane startup or through an explicit `mac --db <path> init`.
 
 The hub ledger is intentionally not rooted in one checkout. It coordinates
 leases, agents, reviews, workflows, evidence, A2A work, non-repository
