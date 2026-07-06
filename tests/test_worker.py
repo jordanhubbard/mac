@@ -1424,9 +1424,7 @@ def test_mac_worker_finalizes_dirty_repository_despite_incomplete_manifest(tmp_p
 
     def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
         worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
-        docs = worktree / "docs"
-        docs.mkdir()
-        (docs / "demo-story.md").write_text("demo\n", encoding="utf-8")
+        (worktree / "README.md").write_text("demo\n", encoding="utf-8")
         (task_dir / "mac-evidence.json").write_text(
             json.dumps(
                 {
@@ -1457,7 +1455,7 @@ def test_mac_worker_finalizes_dirty_repository_despite_incomplete_manifest(tmp_p
     repo_anchor = evidence.metadata["verification"]["repo"]
     assert repo_anchor["dirty"] is False
     assert repo_anchor["pushed"] is True
-    assert repo_anchor["files_changed"] == ["docs/demo-story.md"]
+    assert repo_anchor["files_changed"] == ["README.md"]
     branch = repo_anchor["remote_ref"].removeprefix("refs/heads/")
     assert _git(repo, "ls-remote", "origin", "refs/heads/%s" % branch).startswith(
         repo_anchor["head_sha"]
@@ -1529,8 +1527,11 @@ def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
 
     def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
         worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
-        (worktree / "feature.py").write_text("feature\n", encoding="utf-8")
-        _commit_fixture_update(seed, "canonical advanced\n")
+        (worktree / "README.md").write_text("task edit\n", encoding="utf-8")
+        (seed / "canonical.txt").write_text("canonical advanced\n", encoding="utf-8")
+        _git(seed, "add", "canonical.txt")
+        _git(seed, "commit", "-m", "canonical advance")
+        _git(seed, "push", "origin", "main")
         return WorkerExecution(0, "changed repo after canonical advanced", stdout="ok\n")
 
     worker = MacWorker(
@@ -1622,7 +1623,7 @@ def test_mac_worker_publishes_after_merging_new_canonical_tip(
         _commit_fixture_update(seed, "canonical advanced\n")
         _git(worktree, "fetch", "origin", "main")
         _git(worktree, "merge", "--ff-only", "FETCH_HEAD")
-        (worktree / "feature.py").write_text("feature\n", encoding="utf-8")
+        (worktree / "README.md").write_text("task after merge\n", encoding="utf-8")
         return WorkerExecution(0, "merged canonical and changed repo", stdout="ok\n")
 
     worker = MacWorker(
@@ -1649,7 +1650,7 @@ def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path
     agent = register_worker_fixture(cp)
     _seed, repo = _git_fixture(tmp_path)
     metadata = _repository_task_metadata(repo)
-    metadata["execution_contract"]["required_changed_files"] = ["README.md"]
+    metadata["execution_contract"]["required_changed_files"] = ["docs/demo-story.md"]
     task = cp.create_task(
         "Repository task forgot manifest and required file",
         required_capabilities=["python"],
@@ -1659,9 +1660,7 @@ def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path
 
     def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
         worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
-        docs = worktree / "docs"
-        docs.mkdir()
-        (docs / "demo-story.md").write_text("demo\n", encoding="utf-8")
+        (worktree / "README.md").write_text("wrong tracked file\n", encoding="utf-8")
         return WorkerExecution(0, "changed wrong repo file without evidence", stdout="ok\n")
 
     worker = MacWorker(
@@ -1684,9 +1683,9 @@ def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path
     assert manifest["tests"][0]["returncode"] == 0
     assert repo_anchor["dirty"] is False
     assert repo_anchor["pushed"] is False
-    assert repo_anchor["files_changed"] == ["docs/demo-story.md"]
+    assert repo_anchor["files_changed"] == ["README.md"]
     assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]) == ""
-    assert "repo evidence missing required changed files: README.md" in problems
+    assert "repo evidence missing required changed files: docs/demo-story.md" in problems
     assert "refusing to push" in problems
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
@@ -1700,7 +1699,6 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
     metadata = _repository_task_metadata(repo)
     metadata["execution_contract"]["evidence_type"] = "documentation"
     metadata["execution_contract"]["required_changed_files"] = [
-        "README.md",
         "docs/demo-story.md",
     ]
     task = cp.create_task(
@@ -1712,9 +1710,7 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
 
     def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
         worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
-        docs = worktree / "docs"
-        docs.mkdir()
-        (docs / "demo-story.md").write_text("demo\n", encoding="utf-8")
+        (worktree / "README.md").write_text("docs task touched tracked file\n", encoding="utf-8")
         (task_dir / "mac-evidence.json").write_text(
             json.dumps(
                 {
@@ -1741,7 +1737,7 @@ def test_mac_worker_fails_when_required_changed_files_are_missing(tmp_path: Path
     result = worker.run_once()
 
     assert result.status == "blocked"
-    assert "README.md" in (result.error or "")
+    assert "docs/demo-story.md" in (result.error or "")
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
     assert cp.list_reviews(task.id) == []
 
@@ -1793,6 +1789,51 @@ def test_mac_worker_rescues_dirty_worktree_when_contract_test_passes(tmp_path: P
     assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]).startswith(
         repo_anchor["head_sha"]
     )
+
+
+def test_mac_worker_blocks_untracked_files_before_repository_rescue(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    task = cp.create_task(
+        "Dirty result with untracked file",
+        required_capabilities=["python"],
+        metadata=_repository_task_metadata(repo),
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        (worktree / "leaked_module.py").write_text("print('leak')\n", encoding="utf-8")
+        return WorkerExecution(0, "left untracked file", stdout="ok\n")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked", result.error
+    evidence = cp.list_evidence(task.id)[0]
+    manifest = evidence.metadata["verification"]
+    repo_anchor = manifest["repo"]
+    problems = " ".join(manifest.get("problems") or [])
+    assert repo_anchor["dirty"] is True
+    assert repo_anchor["pushed"] is False
+    assert "untracked files present at finalize time" in problems
+    assert "leaked_module.py" in problems
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]) == ""
 
 
 def test_mac_worker_blocks_dirty_worktree_when_contract_test_fails(tmp_path: Path):

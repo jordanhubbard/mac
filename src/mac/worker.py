@@ -3790,32 +3790,6 @@ class MacWorker:
         worktree: Path,
         problems: List[str],
     ) -> None:
-        # ROOT-CAUSE NOTE (task_5b8931a38d1a4213adf2e7106a36d54a): this method
-        # shares the same blind git add -A pattern as
-        # run_deterministic_git_finalizer in task_executor.py.
-        #
-        # This path is reached from _finalize_missing_repository_evidence_manifest
-        # (~line 3593) when the worker-loop detects a dirty worktree AFTER the
-        # agent process has exited (see the is_dirty check at ~line 3524).  At that
-        # point the worktree may already contain files that were harvested from the
-        # sandbox via _sandbox_download → _merge_sandbox_download_tree, including
-        # new source modules the sandbox agent created that are now sitting as
-        # untracked ("??") entries.
-        #
-        # Like the task_executor path: `git status --porcelain` is used only as a
-        # boolean gate (line ~3766/3773); if the worktree is dirty for any reason,
-        # `git add -A` (line ~3775) stages EVERYTHING — both legitimately modified
-        # tracked files AND all untracked files — with no check on whether those
-        # untracked files were intentionally created by this task.
-        #
-        # There is no subsequent git clean -Xdf here, so the newly committed
-        # untracked modules are never removed, and the final git status --porcelain
-        # check (if any) will be clean, allowing the branch to be pushed.
-        #
-        # FIX DIRECTION (to be implemented in the next child task): same as
-        # task_executor.py — inspect and filter "??" lines in the porcelain output
-        # before staging, or restrict staging to the files the task evidence claims
-        # it changed, rather than blindly accepting the entire worktree state.
         status = _run_git(worktree, ["status", "--porcelain"])
         if status.returncode != 0:
             problems.append(
@@ -3823,9 +3797,16 @@ class MacWorker:
                 % ((status.stderr or status.stdout or "").strip() or worktree)
             )
             return
-        if not status.stdout.strip():
+        tracked_lines, untracked_paths, staged_new_paths = _split_repository_porcelain_status(status.stdout)
+        if untracked_paths:
+            problems.append(_repository_untracked_finalize_message(untracked_paths))
             return
-        add = _run_git(worktree, ["add", "-A"])
+        if staged_new_paths:
+            problems.append(_repository_new_file_finalize_message(staged_new_paths))
+            return
+        if not tracked_lines:
+            return
+        add = _run_git(worktree, ["add", "-u"])
         if add.returncode != 0:
             problems.append(
                 "repository finalizer add failed: %s"
@@ -6005,6 +5986,37 @@ def _worker_verification_item_passed(item: Any) -> bool:
         _worker_verification_item_passed(nested)
         for nested in item.values()
         if isinstance(nested, (dict, list))
+    )
+
+
+def _split_repository_porcelain_status(status_text: str) -> tuple[List[str], List[str], List[str]]:
+    tracked_lines: List[str] = []
+    untracked_paths: List[str] = []
+    staged_new_paths: List[str] = []
+    for line in str(status_text or "").splitlines():
+        if not line:
+            continue
+        if line.startswith("?? "):
+            untracked_paths.append(line[3:])
+            continue
+        tracked_lines.append(line)
+        xy = line[:2]
+        if ("A" in xy or "C" in xy) and "R" not in xy:
+            staged_new_paths.append(line[3:])
+    return tracked_lines, untracked_paths, staged_new_paths
+
+
+def _repository_untracked_finalize_message(untracked_paths: List[str]) -> str:
+    return (
+        "untracked files present at finalize time — agent must commit ALL new files "
+        "before declaring done: %s" % ", ".join(untracked_paths)
+    )
+
+
+def _repository_new_file_finalize_message(paths: List[str]) -> str:
+    return (
+        "new files staged at finalize time — agent must commit ALL new files "
+        "before declaring done: %s" % ", ".join(paths)
     )
 
 

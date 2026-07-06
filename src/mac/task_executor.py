@@ -2340,6 +2340,91 @@ def _git(args, cwd):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
 
 
+def _split_porcelain_status(status_text: str) -> tuple[List[str], List[str], List[str]]:
+    """Return ``(tracked_lines, untracked_paths, added_paths)`` from porcelain v1.
+
+    Finalizers may rescue modified/deleted/renamed tracked files, but new files
+    must already be committed by the agent before publication.
+    """
+    tracked_lines: List[str] = []
+    untracked_paths: List[str] = []
+    added_paths: List[str] = []
+    for line in str(status_text or "").splitlines():
+        if not line:
+            continue
+        if line.startswith("?? "):
+            untracked_paths.append(line[3:])
+            continue
+        tracked_lines.append(line)
+        xy = line[:2]
+        if ("A" in xy or "C" in xy) and "R" not in xy:
+            added_paths.append(line[3:])
+    return tracked_lines, untracked_paths, added_paths
+
+
+def _untracked_finalize_message(untracked_paths: List[str]) -> str:
+    return (
+        "untracked files present at finalize time — agent must commit ALL new files "
+        "before declaring done: %s" % ", ".join(untracked_paths)
+    )
+
+
+def _new_file_finalize_message(paths: List[str]) -> str:
+    return (
+        "new files staged at finalize time — agent must commit ALL new files "
+        "before declaring done: %s" % ", ".join(paths)
+    )
+
+
+def _write_git_finalizer_refusal_manifest(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    worktree_path: Path,
+    message: str,
+    *,
+    status_stdout: str,
+    untracked_paths: List[str],
+    staged_new_paths: List[str],
+) -> None:
+    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "fail",
+        "evidence_type": "repo_change",
+        "summary": message,
+        "problems": [message],
+        "repo": {
+            "head_sha": head_sha,
+            "base_sha": _repository_prepared_base(task),
+            "pushed": False,
+            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else "",
+            "dirty": True,
+            "files_changed": [],
+            "status_porcelain": [line for line in status_stdout.splitlines() if line],
+            "untracked_files": untracked_paths,
+            "staged_new_files": staged_new_paths,
+        },
+        "tests": None,
+        "push": {
+            "returncode": 1,
+            "status": "skipped",
+            "reason": message,
+        },
+        "checks": [
+            {
+                "name": "git_finalizer",
+                "returncode": 1,
+                "status": "fail",
+                "stderr": message,
+            }
+        ],
+    }
+    (task_workspace / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def _load_harness_recovery_log(task_workspace: Path) -> List[Dict[str, Any]]:
     """Read harness-recovery-log.json from task_workspace if present.
 
@@ -2404,53 +2489,32 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     worktree_path = Path(worktree).expanduser() if worktree else None
     if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
         return
-    # ROOT-CAUSE NOTE (task_5b8931a38d1a4213adf2e7106a36d54a): untracked-file
-    # guard gap — the blind git add -A path.
-    #
-    # Execution sequence that produced the 2026-07-05 hub outage:
-    #
-    # (1) SANDBOX HARVEST: _run_sandboxed() (task_executor.py ~line 4482) runs
-    #     the agent inside an OpenShell container, then in its finally-block calls
-    #     _sandbox_download() (~line 4550), which calls
-    #     _merge_sandbox_download_tree() (~line 4274 / 4111).
-    #     _merge_sandbox_download_tree copies every file from the downloaded
-    #     sandbox archive into the host task-worktree.  The only exclusions are:
-    #       * paths under ".git" or ".git.bak*" (git metadata)
-    #       * runtime dependency roots (.venv/, venv/, node_modules/) beneath
-    #         known repository roots
-    #     New source modules created by the sandbox agent are NOT excluded, so they
-    #     land in the host worktree as untracked files (shown as "??" lines by
-    #     `git status --porcelain`).
-    #
-    # (2) UNCONDITIONAL git add -A: immediately below, `git status --porcelain`
-    #     is used only as a boolean gate — if the output is non-empty (any tracked
-    #     or untracked change), `git add -A` is run with NO filtering.  git add -A
-    #     stages EVERYTHING: modified tracked files AND all untracked files,
-    #     including the newly harvested source modules that arrived from the sandbox
-    #     but were never reviewed or intentionally authored by the host task.
-    #
-    # (3) git clean -Xdf DOES NOT help: at ~line 2438 git clean -Xdf runs after
-    #     the commit to purge cross-OS build artifacts.  The -X flag removes only
-    #     gitignored files.  The newly committed source modules are now tracked,
-    #     not ignored, so git clean does not touch them.  They persist in the
-    #     working tree and in the commit.
-    #
-    # (4) CLEAN FINAL STATUS: by the time `git status --porcelain` is checked
-    #     again at ~line 2504 (the `clean` guard before guarded_push), the worktree
-    #     is clean because the untracked files were already staged and committed in
-    #     step (2).  The guard passes, and guarded_push proceeds to publish the
-    #     branch — including the unintended modules — to the canonical remote.
-    #
-    # FIX DIRECTION (to be implemented in the next child task): before git add -A,
-    # inspect the porcelain output and reject (or at minimum warn loudly on) any
-    # "??" (untracked) lines that correspond to source files that were not present
-    # in the repository at HEAD.  Only legitimately intentional new files — those
-    # the task explicitly created — should be staged.  One safe pattern is to
-    # restrict staging to the files reported by the agent's evidence manifest
-    # (repo.files_changed) rather than blindly staging the entire worktree.
     status = _git(["status", "--porcelain"], worktree_path)
-    if status.stdout.strip():
-        _git(["add", "-A"], worktree_path)
+    tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(status.stdout)
+    if untracked_paths:
+        _write_git_finalizer_refusal_manifest(
+            task_workspace,
+            task,
+            worktree_path,
+            _untracked_finalize_message(untracked_paths),
+            status_stdout=status.stdout,
+            untracked_paths=untracked_paths,
+            staged_new_paths=[],
+        )
+        return
+    if staged_new_paths:
+        _write_git_finalizer_refusal_manifest(
+            task_workspace,
+            task,
+            worktree_path,
+            _new_file_finalize_message(staged_new_paths),
+            status_stdout=status.stdout,
+            untracked_paths=[],
+            staged_new_paths=staged_new_paths,
+        )
+        return
+    if tracked_lines:
+        _git(["add", "-u"], worktree_path)
         commit_msg = "auto-commit: %s" % task.get("id", "unknown")
         _git(
             ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet", "commit", "-m", commit_msg],

@@ -1045,7 +1045,7 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     _git(work, "push", "origin", "main")
     # a feature branch with an uncommitted edit the finalizer should commit+push
     _git(work, "checkout", "-b", "task/x")
-    (work / "feature.py").write_text("print('x')\n")
+    (work / "README.md").write_text("hello\ntracked change\n")
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1065,9 +1065,56 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     manifest = json.loads((ws / "mac-evidence.json").read_text())
     assert manifest["evidence_type"] == "repo_change"
     assert manifest["repo"]["pushed"] is True
-    assert "feature.py" in manifest["repo"]["files_changed"]
-    assert manifest["codegraph"]["status"] == "pass"
+    assert "README.md" in manifest["repo"]["files_changed"]
+    assert manifest["codegraph"]["status"] in {"pass", "skipped"}
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
+
+
+def test_git_finalizer_refuses_untracked_files_before_staging(tmp_path, monkeypatch):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/untracked")
+    (work / "leaked_module.py").write_text("print('leak')\n", encoding="utf-8")
+    original_head = _git(work, "rev-parse", "HEAD").stdout.strip()
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-untracked",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "test": {"command": "true"},
+                },
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    message = " ".join(manifest.get("problems") or [])
+    assert manifest["status"] == "fail"
+    assert manifest["repo"]["pushed"] is False
+    assert manifest["push"]["status"] == "skipped"
+    assert "untracked files present at finalize time" in message
+    assert "leaked_module.py" in message
+    assert _git(work, "rev-parse", "HEAD").stdout.strip() == original_head
+    assert "?? leaked_module.py" in _git(work, "status", "--porcelain").stdout
+    assert _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/untracked").stdout.strip() == ""
 
 
 def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, monkeypatch):
@@ -1087,7 +1134,7 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
     # Push main to canonical so the freshness fetch can resolve it.
     _git(work, "push", canonical.as_uri(), "main")
     _git(work, "checkout", "-b", "task/canonical")
-    (work / "feature.py").write_text("print('canonical')\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\ncanonical task change\n", encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1151,7 +1198,7 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     _git(work, "branch", "-M", "main")
     _git(work, "push", "origin", "main")
     _git(work, "checkout", "-b", "task/bootstrap")
-    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\nbootstrap task change\n", encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1218,7 +1265,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     _git(work, "branch", "-M", "main")
     _git(work, "push", "origin", "main")
     _git(work, "checkout", "-b", "task/bootstrap-fail")
-    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\nbootstrap failure task change\n", encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1284,7 +1331,9 @@ def _setup_two_repo_worktree(tmp_path):
     _git(canonical, "symbolic-ref", "HEAD", "refs/heads/main")
     main_sha = _git(work, "rev-parse", "main").stdout.strip()
     _git(work, "checkout", "-b", "task/feature")
-    (work / "feature.py").write_text("print('feature')\n", encoding="utf-8")
+    (work / "README.md").write_text("task feature\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "task feature")
     return origin, canonical, work, main_sha
 
 
@@ -1371,8 +1420,8 @@ def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatc
     _git(tmp_path, "clone", canonical.as_uri(), str(advance_dir))
     _git(advance_dir, "config", "user.email", "t@t")
     _git(advance_dir, "config", "user.name", "t")
-    # The task worktree also writes feature.py -> guaranteed rebase conflict.
-    (advance_dir / "feature.py").write_text("print('peer conflicting')\n", encoding="utf-8")
+    # The task worktree also writes README.md -> guaranteed rebase conflict.
+    (advance_dir / "README.md").write_text("peer conflicting\n", encoding="utf-8")
     _git(advance_dir, "add", "-A")
     _git(advance_dir, "commit", "-m", "conflicting canonical advance")
     _git(advance_dir, "push", "origin", "main")
@@ -1494,7 +1543,7 @@ def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
     _git(work, "branch", "-M", "develop")
     _git(work, "push", "origin", "develop")
     _git(work, "checkout", "-b", "task/feature-develop")
-    (work / "feature.py").write_text("print('develop-feature')\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\ndevelop task change\n", encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1518,7 +1567,7 @@ def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is True
-    assert "feature.py" in manifest["repo"]["files_changed"]
+    assert "README.md" in manifest["repo"]["files_changed"]
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
@@ -1536,7 +1585,7 @@ def test_git_finalizer_blocks_when_canonical_remote_is_missing(tmp_path, monkeyp
     _git(work, "branch", "-M", "main")
     _git(work, "push", "origin", "main")
     _git(work, "checkout", "-b", "task/no-remote")
-    (work / "feature.py").write_text("print('x')\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\nmissing remote task change\n", encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()
