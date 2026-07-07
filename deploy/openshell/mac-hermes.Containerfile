@@ -24,6 +24,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   helper not found" otherwise). git/curl/gh: task work + git push egress.
 # codex: repository-editing agent for confined coding tasks. codegraph: local
 # codebase indexing and inspection baseline for agent work.
+# bash >=5.2: the explicit task-runtime shell contract.  Do not rely on the
+# base image carrying Bash transitively; executor and verification commands
+# invoke /bin/bash and deployment fails if its version/features are unsuitable.
 # make/node/npm/java/pnpm/lein: common repository contracts. The executor can
 # still provision missing tools into a task-local .mac-toolchain, but the base
 # image should cover ordinary polyglot repos without mutating the host fleet.
@@ -40,9 +43,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG GH_VERSION="2.95.0"
 ARG CODEGRAPH_VERSION="v1.1.6"
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
+COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tar \
-    && bash /tmp/mac-openshell-build-assets/nodesource_setup.sh \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl tar \
+    && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
+    && /usr/local/bin/mac-verify-bash-contract \
+    && /bin/bash /tmp/mac-openshell-build-assets/nodesource_setup.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev nodejs openjdk-17-jre-headless \
     && gh_arch="$(dpkg --print-architecture)" \

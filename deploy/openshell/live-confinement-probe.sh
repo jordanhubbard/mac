@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Fail-closed runtime probe for the confinement properties MAC depends on.
 # This script is uploaded into a throwaway OpenShell sandbox by the bootstrap.
 set -euo pipefail

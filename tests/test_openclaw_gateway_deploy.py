@@ -24,25 +24,35 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "ghcr.io/openclaw/openclaw:2026.6.11@sha256:" in container
     assert 'OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"' in container
-    assert 'MAC_OPENCLAW_IMAGE_REVISION="4"' in container
+    assert 'MAC_OPENCLAW_IMAGE_REVISION="5"' in container
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.
-    assert "apt-get install -y --no-install-recommends iproute2" in container
+    assert "apt-get install -y --no-install-recommends bash iproute2" in container
+    assert (
+        "COPY deploy/verify-bash-contract.sh "
+        "/usr/local/bin/mac-verify-bash-contract" in container
+    )
+    assert container.count("/usr/local/bin/mac-verify-bash-contract") >= 2
+    assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="4"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="5"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
     assert 'docker_path="$(dirname "$docker_bin"):$PATH"' in installer
     assert 'PATH="$docker_path" "$docker_bin" build --pull' in installer
+    assert 'BUILD_CONTEXT="${MAC_OPENCLAW_BUILD_CONTEXT:-$MAC_SRC}"' in installer
+    assert '"$BUILD_CONTEXT"' in installer
     assert "USER sandbox" in container
     assert "nemoclaw gateway" not in container.lower()
     assert "/nemoclaw" not in container.lower()
     assert "nemoclaw gateway" not in installer.lower()
     assert "/nemoclaw" not in installer.lower()
     assert 'image_revision" = "$OPENCLAW_IMAGE_REVISION"' in installer
+    assert installer.count("/bin/bash -lc") >= 2
+    assert "/usr/local/bin/mac-verify-bash-contract" in installer
 
 
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
@@ -182,7 +192,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
         encoding="utf-8"
     )
+    managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
     assert "sandbox create" in wrapper
+    assert "-- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
+    assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "sandbox delete" in stop_wrapper
     assert "pgrep -x openclaw" not in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
@@ -192,6 +205,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         message_wrapper
     )
+    assert "/bin/bash -lc" in message_wrapper
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         INSTALLER.read_text(encoding="utf-8")
     )

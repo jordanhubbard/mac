@@ -1,6 +1,7 @@
 """Behavioral tests for extended `mac task` CLI subcommands.
 
 Subcommands covered:
+  - task audit   [--project] [--no-git]
   - task stats   [--project] [--all]
   - task summary <task_id>
   - task claim   <task_id> <agent_id>
@@ -71,6 +72,44 @@ def _create_task(tmp_path, title="test task", project=None):
     rc, task = _run(tmp_path, *args)
     assert rc == 0
     return task
+
+
+# ---------------------------------------------------------------------------
+# task audit
+# ---------------------------------------------------------------------------
+
+
+def test_task_audit_reports_every_local_ledger_task(tmp_path):
+    first = _create_task(tmp_path, title="audit first", project="project-a")
+    second = _create_task(tmp_path, title="audit second", project="project-b")
+
+    rc, report = _run(tmp_path, "task", "audit", "--no-git")
+
+    assert rc == 0
+    assert report["schema"] == "mac.task_ledger_audit.v1"
+    assert report["snapshot"]["task_count"] == 2
+    assert {row["task_id"] for row in report["tasks"]} == {
+        first["id"],
+        second["id"],
+    }
+
+
+def test_task_audit_project_filter_is_explicit(tmp_path):
+    selected = _create_task(tmp_path, title="selected", project="project-a")
+    _create_task(tmp_path, title="excluded", project="project-b")
+
+    rc, report = _run(
+        tmp_path,
+        "task",
+        "audit",
+        "--project",
+        "project-a",
+        "--no-git",
+    )
+
+    assert rc == 0
+    assert report["snapshot"]["task_count"] == 1
+    assert [row["task_id"] for row in report["tasks"]] == [selected["id"]]
 
 
 def test_task_recover_finalizer_forwards_explicit_recovery_contract(

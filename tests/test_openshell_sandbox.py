@@ -96,9 +96,9 @@ def _build(workspace="/work/task-7", argv=None):
 
 
 def _inner(out):
-    """The non-login `bash -c <inner>` command after the `--` separator."""
+    """The non-login `/bin/bash -c <inner>` after the `--` separator."""
     i = out.index("--")
-    assert out[i + 1 : i + 3] == ["bash", "-c"]
+    assert out[i + 1 : i + 3] == ["/bin/bash", "-c"]
     return out[i + 3]
 
 
@@ -251,7 +251,7 @@ def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
 def test_build_separator_appears_once_before_command():
     out = _build()
     assert out.count("--") == 1
-    assert out.index("--") < out.index("bash")
+    assert out.index("--") < out.index("/bin/bash")
 
 
 def test_build_bin_override(monkeypatch):
@@ -264,7 +264,7 @@ def test_build_create_args_spliced(monkeypatch):
     out = _build()
     for tok in ("--from", "img", "--upload", "/a:/b"):
         assert tok in out
-        assert out.index(tok) < out.index("bash")
+        assert out.index(tok) < out.index("/bin/bash")
 
 
 def test_build_rejects_direct_prompt_bearing_agent_argv():

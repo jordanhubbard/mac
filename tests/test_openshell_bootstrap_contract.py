@@ -25,7 +25,10 @@ def test_openshell_bootstrap_is_docker_engine_only():
         in script
     )
     assert "podman load" in script
-    assert "runtime image smoke: gh/codex/codegraph visible through OpenShell" in script
+    assert (
+        "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph visible through OpenShell"
+        in script
+    )
     assert "run_live_confinement_probe" in script
     assert "live-confinement-probe.sh" in script
     assert '--upload "$probe:/sandbox"' in script
@@ -36,7 +39,8 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400" in script
     assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
     assert script.count("import mac.agent_command") >= 2
-    assert "-- bash -c" in script
+    assert script.count("-- /bin/bash -c") >= 2
+    assert "-- /bin/bash /sandbox/live-confinement-probe.sh" in script
     assert 'current_openshell_version" != "$OPENSHELL_VERSION"' in script
     assert 'current_gateway_version" != "$OPENSHELL_VERSION"' in script
     assert 'uv tool install --force "openshell==$OPENSHELL_VERSION"' in script
@@ -76,6 +80,35 @@ def test_openshell_image_docs_do_not_advertise_podman_builds():
     assert "docker build" in containerfile
     assert "podman build" not in containerfile
     assert "Docker Engine/Moby" in containerfile
+
+
+def test_openshell_image_declares_and_verifies_modern_bash_runtime():
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+    contract_path = ROOT / "deploy" / "verify-bash-contract.sh"
+    contract = contract_path.read_text(encoding="utf-8")
+
+    assert "apt-get install -y --no-install-recommends bash " in containerfile
+    assert (
+        "COPY deploy/verify-bash-contract.sh "
+        "/usr/local/bin/mac-verify-bash-contract" in containerfile
+    )
+    assert containerfile.count("/usr/local/bin/mac-verify-bash-contract") >= 2
+    assert "/bin/bash /tmp/mac-openshell-build-assets/nodesource_setup.sh" in containerfile
+    assert "#!/bin/bash" in contract
+    assert "BASH_VERSINFO[0]" in contract
+    assert "minimum_major=5" in contract
+    assert "minimum_minor=2" in contract
+    assert "declare -A mac_bash_contract" in contract
+    assert "mapfile -t mac_bash_lines" in contract
+    assert "MAC_BASH_CONTRACT_OK" in contract
+    assert bootstrap.count("-- /bin/bash -c") >= 2
+    assert bootstrap.count("/usr/local/bin/mac-verify-bash-contract") >= 2
+    assert "set -euo pipefail" in bootstrap
 
 
 def test_openshell_image_installs_codegraph_baseline():

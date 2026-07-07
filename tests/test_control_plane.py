@@ -10566,6 +10566,8 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     )
     assert rc == 0
     create = next(a for a in captured if "create" in a and "--upload" in a)
+    separator = create.index("--")
+    assert create[separator + 1 : separator + 3] == ["/bin/bash", "-c"]
     inner = create[create.index("-c") + 1]
     from mac.openshell_runtime import SANDBOX_BASE_PATH
 

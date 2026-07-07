@@ -113,7 +113,7 @@ run_live_confinement_probe() {
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
       --upload "$probe:/sandbox" \
-      -- bash /sandbox/live-confinement-probe.sh \
+      -- /bin/bash /sandbox/live-confinement-probe.sh \
       >"$output" 2>&1; then
     "$cli" sandbox delete "$name" >/dev/null 2>&1 || true
     grep -q '^CONFINEMENT_PROBE_OK$' "$output" \
@@ -250,9 +250,9 @@ EOF
     if "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
         --label mac.owner=mac --label mac.kind=runtime-smoke --label "mac.pid=$$" --label mac.keep=false \
         --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
-        -- bash -c 'set -eu; command -v gh; command -v codegraph; command -v python3; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
+        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codegraph; command -v python3; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
       "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
-      log "runtime image smoke: gh/codegraph/python visible through OpenShell on Docker Desktop"
+      log "runtime image smoke: Bash >=5.2 plus gh/codegraph/python visible through OpenShell on Docker Desktop"
     else
       "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
       echo "ERROR: OpenShell smoke failed; see $OSH_DIR/runtime-image-smoke.log" >&2; tail -40 "$OSH_DIR/runtime-image-smoke.log" >&2; exit 1
@@ -369,10 +369,10 @@ validate_openshell_runtime_image() {
       --from "$OSH_IMAGE_TAG" \
       "${gpu_flag[@]}" \
       --env HOME=/tmp \
-      -- bash -c 'set -eu; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: gh/codex/codegraph visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph visible through OpenShell"
   else
     rc=$?
     "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true

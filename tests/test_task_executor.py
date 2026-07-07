@@ -566,7 +566,7 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert not verify_script.exists(), "executor-only verification script should be cleaned"
     assert steps[1][3] == "/sandbox/task/.mac-sandbox-repository-verify.sh"
     assert steps[2][:2] == ["exec", "--name"]
-    assert steps[2][-2:] == ["bash", "/sandbox/task/.mac-sandbox-repository-verify.sh"]
+    assert steps[2][-2:] == ["/bin/bash", "/sandbox/task/.mac-sandbox-repository-verify.sh"]
     assert all("\n" not in str(arg) and "\r" not in str(arg) for arg in steps[2])
     assert "export MAC_TASK_FILE=/sandbox/task/task.json" in uploaded_scripts[0]
     assert "export MAC_TASK_WORKSPACE=/sandbox/task" in uploaded_scripts[0]
@@ -2540,6 +2540,45 @@ def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verifie
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
     assert "require a verified in-sandbox coding agent" in joined
+
+
+def test_coding_agent_required_failure_preserves_private_prompt_bundle_contract(
+    tmp_path, monkeypatch
+):
+    """The fail-closed route must execute its diagnostic, not fail while the
+    private command bundle is being written.
+
+    A live task previously exhausted all retries because this argv omitted the
+    mandatory prompt sentinel and ``_write_agent_command_bundle`` raised before
+    the intended exit-42 command could run.
+    """
+    from mac import coding_agent as ca
+
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
+    monkeypatch.setenv("MAC_OPENSHELL_REQUIRED", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: False)
+    captured = {}
+
+    def fake_runner(argv, cwd, task_id, metadata):
+        command_file = Path(argv[argv.index("--command-file") + 1])
+        captured.update(json.loads(command_file.read_text(encoding="utf-8")))
+        return _FakeResult(42, stderr="coding agent required")
+
+    result = te._invoke_agent(
+        fake_runner,
+        "private task prompt",
+        tmp_path,
+        "task-fail-closed",
+        {"task": {"metadata": {"execution_contract": {"type": "repository"}}}},
+    )
+
+    assert result.returncode == 42
+    assert captured["argv"].count(te.PROMPT_SENTINEL) == 1
+    assert "private task prompt" not in captured["argv"]
 
 
 def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_not_verified(tmp_path, monkeypatch):

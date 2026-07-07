@@ -4017,7 +4017,7 @@ EOF
     # and discards the toolchain bin we prepended above. Re-assert the toolchain
     # PATH (and clear bash's command hash) INSIDE the login shell, after the
     # profile runs, so the pinned tools win.
-    ( cd "$worktree" && bash -lc 'export PATH="$MAC_SANDBOX_PATH_PREFIX:$MAC_SANDBOX_BASE_PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
+    ( cd "$worktree" && /bin/bash -lc 'export PATH="$MAC_SANDBOX_PATH_PREFIX:$MAC_SANDBOX_BASE_PATH"; hash -r 2>/dev/null || true; '"$MAC_REPO_BOOTSTRAP_COMMAND" ) >> "$mac_log" 2>&1
     bootstrap_returncode=$?
     # Restore the original pnpm-workspace.yaml so the worktree is not left dirty.
     if [ "$mac_ws_tuned" = "1" ]; then
@@ -4134,7 +4134,7 @@ def run_bounded_bash(command, timeout):
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
             proc = subprocess.Popen(
-                ["bash", "-lc", _TC_PATH_PREFIX + command],
+                ["/bin/bash", "-lc", _TC_PATH_PREFIX + command],
                 cwd=worktree,
                 env=os.environ.copy(),
                 stdout=stdout_file,
@@ -4394,7 +4394,7 @@ def _build_sandbox_create_argv(
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "bash", "-c", inner]
+    argv += ["--", "/bin/bash", "-c", inner]
     return argv
 
 
@@ -4615,7 +4615,7 @@ def _sandbox_run_repository_verification(
             str(max(1, int(timeout))),
             "--no-tty",
             "--",
-            "bash",
+            "/bin/bash",
             sandbox_script,
         ],
         timeout=timeout + 90.0,
@@ -4701,7 +4701,7 @@ def _sandbox_progress_snapshot(
             "15",
             "--no-tty",
             "--",
-            "bash",
+            "/bin/bash",
             "-c",
             script,
         ],
@@ -5053,7 +5053,13 @@ def _coding_agent_required_failure_argv(reason: str) -> List[str]:
         "agent; %s" % (reason or "no coding agent was verified")
     )
     code = "import sys; sys.stderr.write(%r + '\\n'); raise SystemExit(42)" % msg
-    return [_hermes_python(), "-c", code]
+    # Every command is serialized through ``_write_agent_command_bundle``, which
+    # requires exactly one private-prompt sentinel so no task prompt can leak
+    # into argv.  The fail-closed command does not consume the prompt, but it
+    # still needs the sentinel as an inert ``sys.argv[1]`` for the common bundle
+    # contract.  Omitting it made the error path itself raise ValueError before
+    # the intended exit-42 diagnostic could run, exhausting task retry budgets.
+    return [_hermes_python(), "-c", code, PROMPT_SENTINEL]
 
 
 def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
@@ -5143,7 +5149,7 @@ def _build_sandbox_probe_argv(
             "exec %s" % shlex.join(agent_argv),
         ]
     )
-    argv += ["--", "bash", "-lc", inner]
+    argv += ["--", "/bin/bash", "-lc", inner]
     return argv
 
 

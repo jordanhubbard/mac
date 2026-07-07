@@ -8,7 +8,7 @@
 set -euo pipefail
 
 OPENCLAW_VERSION="2026.6.11"
-OPENCLAW_IMAGE_REVISION="4"
+OPENCLAW_IMAGE_REVISION="5"
 OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
@@ -22,6 +22,7 @@ WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
 STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 CONTAINERFILE="${MAC_OPENCLAW_CONTAINERFILE:-$MAC_SRC/deploy/openclaw/OpenClaw.Containerfile}"
+BUILD_CONTEXT="${MAC_OPENCLAW_BUILD_CONTEXT:-$MAC_SRC}"
 POLICY_TEMPLATE="${MAC_OPENCLAW_POLICY_TEMPLATE:-$MAC_SRC/deploy/openclaw/openclaw-policy.yaml}"
 GATEWAY_PORT="${MAC_OPENCLAW_GATEWAY_PORT:-18789}"
 DRY_RUN="${MAC_OPENCLAW_DRY_RUN:-0}"
@@ -394,8 +395,8 @@ PY
 
 write_managed_entrypoint() {
   cat > "$MANAGED_DIR/entrypoint.sh" <<'EOF'
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -euo pipefail
 set -a
 . /home/sandbox/.config/mac-openclaw/runtime.env
 set +a
@@ -507,7 +508,7 @@ run_attached "\$OPEN_SHELL" sandbox create \
   --upload "\$MANAGED/runtime.env:/home/sandbox/.config/mac-openclaw/runtime.env" \
   --upload "\$MANAGED/entrypoint.sh:/home/sandbox/.config/mac-openclaw/entrypoint.sh" \
   --upload "\$WORKSPACE/AGENTS.md:/home/sandbox/workspace/AGENTS.md" \
-  -- /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
+  -- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh
 exit \$?
 EOF
   chmod 0700 "$WRAPPER_PATH"
@@ -517,14 +518,14 @@ set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
-  /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
+  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
 EOF
   chmod 0700 "$MESSAGE_WRAPPER_PATH"
 }
 
 build_image() {
   if truthy "$DRY_RUN" && ! truthy "$SKIP_IMAGE"; then
-    log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE"
+    log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE $BUILD_CONTEXT"
     return
   fi
   local docker_bin
@@ -541,7 +542,7 @@ build_image() {
     return
   fi
   [ -f "$CONTAINERFILE" ] || die "Containerfile not found: $CONTAINERFILE"
-  PATH="$docker_path" "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$(dirname "$CONTAINERFILE")"
+  PATH="$docker_path" "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$BUILD_CONTEXT"
 }
 
 backup_and_delete_stale_sandbox() {
@@ -589,7 +590,7 @@ sandbox_command() {
   local openshell_bin="$1"
   shift
   "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-    /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
+    /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
 }
 
 verify() {
@@ -598,6 +599,7 @@ verify() {
   local openshell_bin
   openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
   "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || die "sandbox $SANDBOX_NAME is absent"
+  sandbox_command "$openshell_bin" /usr/local/bin/mac-verify-bash-contract
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null
   case ",$MAC_OPENCLAW_CHANNELS," in
@@ -716,11 +718,11 @@ with open(path, "w", encoding="utf-8") as handle:
 os.chmod(path, 0o600)
 PY
   if truthy "$LIVE_CANARY"; then
-    log "verified stock OpenClaw runtime: config, sandbox RPC health, configured channel probes, model canary, channel sends"
+    log "verified stock OpenClaw runtime: Bash >=5.2, config, sandbox RPC health, configured channel probes, model canary, channel sends"
   elif [ -n "$MAC_OPENCLAW_CHANNELS" ]; then
-    log "verified stock OpenClaw gateway: config, sandbox RPC health, configured channel probes ($MAC_OPENCLAW_CHANNELS)"
+    log "verified stock OpenClaw gateway: Bash >=5.2, config, sandbox RPC health, configured channel probes ($MAC_OPENCLAW_CHANNELS)"
   else
-    log "verified stock OpenClaw headless runtime: config and sandbox RPC health"
+    log "verified stock OpenClaw headless runtime: Bash >=5.2, config and sandbox RPC health"
   fi
 }
 

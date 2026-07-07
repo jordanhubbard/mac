@@ -69,6 +69,44 @@ def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
     assert reconciler.status()["thread_alive"] is False
 
 
+def test_task_ledger_audit_route_is_static_and_covers_every_task():
+    cp = ControlPlane.in_memory()
+    first = cp.create_task("first audit task", project="demo")
+    second = cp.create_task(
+        "completed report task",
+        project="demo",
+        metadata={"deliverable": "report"},
+    )
+    cp.add_evidence(
+        second.id,
+        "artifact",
+        "artifact://report",
+        "completed report",
+        "operator",
+        metadata={
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "operator_result",
+            }
+        },
+    )
+    cp.force_complete_task(second.id, "operator", "report accepted")
+    app = create_app(control_plane=cp)
+
+    with TestClient(app) as client:
+        response = client.get("/tasks/audit?verify_git=false")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["schema"] == "mac.task_ledger_audit.v1"
+    assert report["snapshot"]["task_count"] == 2
+    assert report["snapshot"]["changed_during_run"] is False
+    assert {row["task_id"] for row in report["tasks"]} == {first.id, second.id}
+    second_row = next(row for row in report["tasks"] if row["task_id"] == second.id)
+    assert second_row["assessment"]["verdict"] == "verified"
+
+
 def test_repository_ref_reconciler_operator_trigger_and_admin_scope(monkeypatch):
     monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
     app = create_app(

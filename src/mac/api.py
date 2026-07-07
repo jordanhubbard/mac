@@ -4393,6 +4393,15 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
+    @app.get("/tasks/audit")
+    def audit_tasks(
+        project: Optional[str] = Query(default=None),
+        verify_git: bool = Query(default=True),
+    ) -> Dict[str, Any]:
+        """Point-in-time, read-only reconciliation of all task states."""
+
+        return cp.task_ledger_audit(project=project, verify_git=verify_git)
+
     @app.get("/tasks/{task_id}")
     def get_task(
         task_id: str,

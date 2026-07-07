@@ -351,6 +351,20 @@ class RemoteDispatch:
     ) -> Dict[str, Any]:
         return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
+    def task_ledger_audit(
+        self,
+        *,
+        project: Optional[str] = None,
+        verify_git: bool = True,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/tasks/audit",
+                project=project,
+                verify_git=verify_git,
+            )
+        )
+
     def task_detail(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))
 

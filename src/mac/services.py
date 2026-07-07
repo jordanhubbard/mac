@@ -4844,6 +4844,54 @@ class ControlPlane:
             ],
         }
 
+    def task_ledger_audit(
+        self,
+        *,
+        project: Optional[str] = None,
+        verify_git: bool = True,
+    ) -> JsonDict:
+        """Read and reconcile every task against its durable proof.
+
+        The task identifiers and ``updated_at`` values are sampled before and
+        after detail collection.  The report therefore discloses concurrent
+        ledger mutations instead of presenting a moving target as an atomic
+        snapshot.  Repository inspection is read-only and never fetches.
+        """
+
+        from mac.task_ledger_audit import build_task_ledger_audit
+
+        started_at = utcnow()
+        start_models = self.list_tasks(project=project)
+        start_tasks = [task.to_dict() for task in start_models]
+        details: List[JsonDict] = []
+        detail_errors: List[JsonDict] = []
+        for task in start_models:
+            try:
+                details.append(self.task_detail(task.id))
+            except MACError as exc:
+                detail_errors.append(
+                    {
+                        "task_id": task.id,
+                        "error": str(exc),
+                    }
+                )
+        end_tasks = [task.to_dict() for task in self.list_tasks(project=project)]
+        repositories = [
+            repository.to_dict()
+            for repository in self.list_project_repositories(enabled=True)
+        ]
+        return build_task_ledger_audit(
+            details,
+            repositories,
+            snapshot_started_at=started_at,
+            snapshot_finished_at=utcnow(),
+            start_tasks=start_tasks,
+            end_tasks=end_tasks,
+            detail_errors=detail_errors,
+            project=project,
+            verify_git=verify_git,
+        )
+
     def assign_review_experiment(
         self,
         task_id: str,
@@ -14474,7 +14522,7 @@ class ControlPlane:
                 # control-plane host's PATH.
                 "--env", "PATH=%s" % SANDBOX_BASE_PATH,
                 "--upload", "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
-                "--", "bash", "-c",
+                "--", "/bin/bash", "-c",
                 "export PATH=%s; hash -r 2>/dev/null || true; "
                 "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s" % (
                     SANDBOX_BASE_PATH,

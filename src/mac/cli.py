@@ -1812,6 +1812,59 @@ def cmd_task_stats(args: argparse.Namespace) -> None:
     _print(cp.task_stats(project=project))
 
 
+def cmd_task_audit(args: argparse.Namespace) -> None:
+    """Audit the complete ledger without applying any state transitions."""
+
+    report = _plane(args).task_ledger_audit(
+        project=args.project,
+        verify_git=not bool(args.no_git),
+    )
+    report = _unwrap(report)
+    if _OUTPUT_JSON:
+        _print(report)
+        return
+    snapshot = report.get("snapshot") or {}
+    summary = report.get("summary") or {}
+    verdicts = summary.get("verdict_counts") or {}
+    print(
+        "Audited %s task(s) across every project; snapshot changed during run: %s"
+        % (snapshot.get("task_count", 0), "yes" if snapshot.get("changed_during_run") else "no")
+    )
+    print(
+        "  verified=%s  active=%s  needs-review=%s  contradictions=%s  unresolved=%s"
+        % (
+            verdicts.get("verified", 0),
+            verdicts.get("active_valid", 0),
+            verdicts.get("needs_review", 0),
+            verdicts.get("contradiction", 0),
+            summary.get("unresolved_count", 0),
+        )
+    )
+    print("  task-set %s" % (snapshot.get("task_set_digest") or "unknown"))
+    unresolved = [
+        row
+        for row in report.get("tasks") or []
+        if ((row.get("assessment") or {}).get("verdict"))
+        in {"contradiction", "needs_review"}
+    ]
+    if unresolved:
+        print("\nUnresolved:")
+        for row in unresolved:
+            assessment = row.get("assessment") or {}
+            findings = ",".join(assessment.get("findings") or [])
+            print(
+                "  %-13s %-11s %-13s %-10s %s%s"
+                % (
+                    _short_task_id(str(row.get("task_id") or "")),
+                    row.get("state") or "?",
+                    assessment.get("verdict") or "?",
+                    row.get("project") or "-",
+                    _trunc(row.get("title") or "", 58),
+                    ("  [" + findings + "]") if findings else "",
+                )
+            )
+
+
 def cmd_project_list(args: argparse.Namespace) -> None:
     _print(_plane(args).list_projects())
 
@@ -4689,6 +4742,21 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--project", help="filter to this project (default: the cwd's project)")
     stats.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_stats, stats)
+
+    audit = task.add_parser(
+        "audit",
+        help="read-only reconciliation of every task's history, evidence, dependencies, replacements, and git ancestry",
+    )
+    audit.add_argument(
+        "--project",
+        help="audit only this project (default: every project; cwd scoping is intentionally disabled)",
+    )
+    audit.add_argument(
+        "--no-git",
+        action="store_true",
+        help="skip repository ancestry checks (results remain unverified)",
+    )
+    _set(cmd_task_audit, audit)
 
     start = task.add_parser("start")
     start.add_argument("task_id")
