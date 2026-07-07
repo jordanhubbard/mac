@@ -8,10 +8,13 @@ ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.6.11@sha256:3814fb1f62f9cfc59
 FROM ${OPENCLAW_IMAGE}
 
 ARG OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"
-ARG MAC_OPENCLAW_IMAGE_REVISION="2"
+ARG MAC_OPENCLAW_IMAGE_REVISION="3"
 
 USER root
-RUN groupadd --system sandbox \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system sandbox \
     && useradd --system --gid sandbox --create-home --home-dir /home/sandbox sandbox \
     && install -d -m 0700 -o sandbox -g sandbox \
          /home/sandbox/.config/mac-openclaw \
