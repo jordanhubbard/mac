@@ -68,6 +68,27 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
 def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Path) -> None:
     home = tmp_path / "home"
     mac_home = home / ".mac"
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True)
+    (hermes_home / "slack_home_channels.json").write_text(
+        json.dumps(
+            [
+                {
+                    "name": "offtera",
+                    "team_id": "T123",
+                    "channel_id": "C123HOME",
+                    "channel_name": "#rockyandfriends",
+                },
+                {
+                    "name": "other",
+                    "team_id": "T456",
+                    "channel_id": "C456HOME",
+                    "channel_name": "#rockyandfriends",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
     secrets = (
         "router-secret-value",
         "xox" + "b-test-placeholder",
@@ -88,6 +109,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "MAC_OPENCLAW_MODEL": "azure/anthropic/claude-sonnet-4-6",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_PUBLIC_IDENTITY": "mac-hive",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_ID": "offtera",
+        "MAC_OPENCLAW_HOME_CHANNEL": "rockyandfriends",
         "MAC_OPENCLAW_SLACK_BOT_TOKEN": secrets[1],
         "MAC_OPENCLAW_SLACK_APP_TOKEN": secrets[2],
         "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN": secrets[3],
@@ -119,7 +142,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert runtime_path.read_text(encoding="utf-8") == first_runtime
     config = json.loads(config_path.read_text(encoding="utf-8"))
     provider = config["models"]["providers"]["mac-router"]
-    slack = config["channels"]["slack"]["accounts"]["default"]
+    slack = config["channels"]["slack"]["accounts"]["offtera"]
     telegram = config["channels"]["telegram"]["accounts"]["default"]
     assert provider["apiKey"] == "${MAC_OPENCLAW_ROUTER_API_KEY}"
     assert provider["headers"] == {
@@ -145,6 +168,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert runtime_path.stat().st_mode & 0o777 == 0o600
     assert wrapper_path.stat().st_mode & 0o777 == 0o700
     assert (mac_home / "bin" / "openclaw-message").stat().st_mode & 0o777 == 0o700
+    assert (mac_home / "openclaw" / "home-channel-target").read_text(
+        encoding="utf-8"
+    ).strip() == "channel:C123HOME"
     wrapper = wrapper_path.read_text(encoding="utf-8")
     message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
         encoding="utf-8"

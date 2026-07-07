@@ -54,6 +54,55 @@ find_openshell() {
   return 1
 }
 
+resolve_slack_home_target() {
+  local configured="${1:-}" account_id="${2:-default}"
+  local homes_file="${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}"
+  python3 - "$configured" "$account_id" "$homes_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+configured, account_id, homes_file = sys.argv[1:]
+configured = configured.strip()
+if not configured:
+    print("")
+    raise SystemExit(0)
+if re.fullmatch(r"(?:channel|user|conversation):[^\s]+", configured):
+    print(configured)
+    raise SystemExit(0)
+if re.fullmatch(r"[CG][A-Z0-9]+", configured):
+    print("channel:%s" % configured)
+    raise SystemExit(0)
+
+wanted_name = configured.lstrip("#").lower()
+wanted_account = account_id.strip().lower().replace("_", "-")
+try:
+    rows = json.loads(Path(homes_file).read_text(encoding="utf-8"))
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    rows = []
+matches = []
+for row in rows if isinstance(rows, list) else []:
+    if not isinstance(row, dict):
+        continue
+    row_account = str(row.get("name") or "").strip().lower().replace("_", "-")
+    row_name = str(row.get("channel_name") or "").strip().lstrip("#").lower()
+    channel_id = str(row.get("channel_id") or row.get("chat_id") or "").strip()
+    if channel_id and row_name == wanted_name:
+        matches.append((row_account, channel_id))
+for row_account, channel_id in matches:
+    if row_account == wanted_account:
+        print("channel:%s" % channel_id)
+        raise SystemExit(0)
+if len(matches) == 1:
+    print("channel:%s" % matches[0][1])
+else:
+    # Preserve the operator input so validation can produce a precise error
+    # when a live canary requires a durable provider target.
+    print(configured)
+PY
+}
+
 source_host_env() {
   # Generated runtime.env is trusted local state and preserves the gateway auth
   # token across idempotent deploys.  Fleet/Hermes env files then refresh the
@@ -80,6 +129,8 @@ source_host_env() {
   MAC_OPENCLAW_ROUTER_API_KEY="${MAC_OPENCLAW_ROUTER_API_KEY:-${MAC_HERMES_GATEWAY_API_KEY:-${MAC_API_TOKEN:-}}}"
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
+  MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-default}"
+  MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
   MAC_OPENCLAW_HOME_CHANNEL="${MAC_OPENCLAW_HOME_CHANNEL:-${MAC_HERMES_SLACK_HOME_CHANNEL_NAME:-${SLACK_HOME_CHANNEL_NAME:-}}}"
   MAC_OPENCLAW_SLACK_BOT_TOKEN="${MAC_OPENCLAW_SLACK_BOT_TOKEN:-${SLACK_BOT_TOKEN:-}}"
   MAC_OPENCLAW_SLACK_APP_TOKEN="${MAC_OPENCLAW_SLACK_APP_TOKEN:-${SLACK_APP_TOKEN:-}}"
@@ -88,8 +139,6 @@ source_host_env() {
   MAC_OPENCLAW_PUBLIC_IDENTITY="${MAC_OPENCLAW_PUBLIC_IDENTITY:-}"
   MAC_OPENCLAW_REPRESENTED_BY="${MAC_OPENCLAW_REPRESENTED_BY:-}"
   MAC_OPENCLAW_REPRESENTATION_MODE="${MAC_OPENCLAW_REPRESENTATION_MODE:-delegated}"
-  MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-default}"
-  MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
   # Merely having old Hermes credentials on a worker must not turn that worker
   # into a public bot.  Channel activation is owned by a logical public
   # identity assignment; unassigned OpenClaw runtimes are deliberately headless.
@@ -106,6 +155,12 @@ source_host_env() {
     channels+=(telegram)
   fi
   MAC_OPENCLAW_CHANNELS="$(IFS=,; printf '%s' "${channels[*]}")"
+  case ",$MAC_OPENCLAW_CHANNELS," in
+    *,slack,*)
+      MAC_OPENCLAW_HOME_CHANNEL="$(resolve_slack_home_target \
+        "$MAC_OPENCLAW_HOME_CHANNEL" "$MAC_OPENCLAW_SLACK_ACCOUNT_ID")"
+      ;;
+  esac
   OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$persisted_gateway_token}"
   if [ -z "$OPENCLAW_GATEWAY_TOKEN" ]; then
     command -v openssl >/dev/null 2>&1 || die "openssl is required to create the local gateway token"
@@ -158,7 +213,13 @@ validate_env() {
   esac
   if truthy "$LIVE_CANARY"; then
     case ",$MAC_OPENCLAW_CHANNELS," in
-      *,slack,*) [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ] || die "Slack live canary requires a home channel" ;;
+      *,slack,*)
+        [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ] || die "Slack live canary requires a home channel"
+        case "$MAC_OPENCLAW_HOME_CHANNEL" in
+          channel:*|conversation:*|user:*) ;;
+          *) die "Slack live canary requires a durable channel target; could not resolve $MAC_OPENCLAW_HOME_CHANNEL for account $MAC_OPENCLAW_SLACK_ACCOUNT_ID" ;;
+        esac
+        ;;
     esac
     case ",$MAC_OPENCLAW_CHANNELS," in
       *,telegram,*) [ -n "$MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" ] \
@@ -173,6 +234,12 @@ prepare_directories() {
   umask 077
   mkdir -p "$MANAGED_DIR" "$WORKSPACE_DIR" "$BACKUP_DIR" "$MAC_HOME/bin"
   chmod 0700 "$OPENCLAW_HOST_DIR" "$MANAGED_DIR" "$WORKSPACE_DIR" "$BACKUP_DIR"
+  if [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ]; then
+    printf '%s\n' "$MAC_OPENCLAW_HOME_CHANNEL" > "$OPENCLAW_HOST_DIR/home-channel-target"
+    chmod 0600 "$OPENCLAW_HOST_DIR/home-channel-target"
+  else
+    rm -f "$OPENCLAW_HOST_DIR/home-channel-target"
+  fi
 }
 
 write_config() {
