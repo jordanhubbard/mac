@@ -38,7 +38,6 @@ ENVF="$MAC_HOME/mac.env"
 OSH_DIR="$MAC_HOME/openshell"
 BIN="$HOME/.local/bin"
 ARCH="$(uname -m)"   # x86_64 | aarch64
-IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"
 DO_ENABLE=0; DO_FAILCLOSED=0; SKIP_IMAGE=0
 for a in "$@"; do case "$a" in
   --enable) DO_ENABLE=1;; --fail-closed) DO_FAILCLOSED=1; DO_ENABLE=1;; --skip-image) SKIP_IMAGE=1;;
@@ -49,52 +48,15 @@ download(){ curl --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 
 export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p "$OSH_DIR" "$BIN"
 
-cleanup_image_build_assets() {
-  rm -rf "$IMAGE_ASSET_DIR"
-}
-
-prepare_image_build_assets() {
-  case "$ARCH" in
-    x86_64|amd64) gh_arch=amd64; codegraph_arch=x64;;
-    aarch64|arm64) gh_arch=arm64; codegraph_arch=arm64;;
-    *) echo "unsupported image-build architecture $ARCH" >&2; exit 1;;
-  esac
-  cleanup_image_build_assets
-  mkdir -p "$IMAGE_ASSET_DIR"
-  log "prefetching pinned runtime-image assets on the host"
-  download -o "$IMAGE_ASSET_DIR/nodesource_setup.sh" \
-    https://deb.nodesource.com/setup_22.x
-  download -o "$IMAGE_ASSET_DIR/gh.tgz" \
-    "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"
-  if ! download -o "$IMAGE_ASSET_DIR/lein" \
-    https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein; then
-    log "raw.githubusercontent.com unavailable; fetching Leiningen via jsDelivr"
-    download -o "$IMAGE_ASSET_DIR/lein" \
-      https://cdn.jsdelivr.net/gh/technomancy/leiningen@stable/bin/lein
-  fi
-  download -o "$IMAGE_ASSET_DIR/codegraph.tgz" \
-    "https://github.com/colbymchenry/codegraph/releases/download/${CODEGRAPH_VERSION}/codegraph-linux-${codegraph_arch}.tar.gz"
-  chmod 0755 "$IMAGE_ASSET_DIR/nodesource_setup.sh" "$IMAGE_ASSET_DIR/lein"
-}
-
 build_runtime_image() {
-  cf="$(cd "$(dirname "$0")" && pwd)/mac-hermes.Containerfile"
-  prepare_image_build_assets
+  builder="$(cd "$(dirname "$0")" && pwd)/build-runtime-image.sh"
+  image_source_sha="$(git -C "$MAC_SRC" rev-parse HEAD 2>/dev/null || true)"
   log "building $OSH_IMAGE_TAG with Docker Engine/Moby from $MAC_SRC"
-  # Bypass any configured credential helper (e.g. docker-credential-desktop,
-  # which is absent from the PATH of a non-interactive SSH build session and
-  # fails the base-image pull). The Containerfile's base images are public, so
-  # no registry auth is needed; an empty DOCKER_CONFIG avoids the helper.
-  _osh_docker_config="$(mktemp -d)"; printf '{}' > "$_osh_docker_config/config.json"
-  ( cd "$MAC_SRC" && DOCKER_CONFIG="$_osh_docker_config" "$OSH_DOCKER_BIN" build \
-      --build-arg "GH_VERSION=$GH_VERSION" \
-      --build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION" \
-      -t "$OSH_IMAGE_TAG" -f "$cf" . )
-  rm -rf "$_osh_docker_config"
-  cleanup_image_build_assets
+  GH_VERSION="$GH_VERSION" CODEGRAPH_VERSION="$CODEGRAPH_VERSION" \
+    MAC_SRC="$MAC_SRC" OSH_DOCKER_BIN="$OSH_DOCKER_BIN" \
+    OSH_IMAGE_TAG="$OSH_IMAGE_TAG" MAC_IMAGE_SOURCE_SHA="$image_source_sha" \
+    MAC_IMAGE_SOURCE_SHA_FILE="$OSH_DIR/image-source-sha" /bin/bash "$builder"
 }
-
-trap cleanup_image_build_assets EXIT
 
 run_live_confinement_probe() {
   local cli="$1" name="$2" output="$3"

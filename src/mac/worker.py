@@ -2473,27 +2473,25 @@ class MacWorker:
         after_sha = after.stdout.strip() if after.returncode == 0 else ""
         updated = bool(before_sha and after_sha and before_sha != after_sha)
         summary = "repo already current"
-        image_rebuild: Optional[JsonDict] = None
+        image_rebuild = self._maybe_rebuild_openshell_image_after_update(
+            repo, before_sha, after_sha
+        )
+        image_rebuild_failed = bool(
+            image_rebuild and image_rebuild.get("status") in {"drift", "failed"}
+        )
         if updated:
             summary = "repo updated"
-            # mac-osdr: refresh-source pulls source + restarts the agent but does
-            # NOT rebuild the OpenShell sandbox image (a separate build artifact).
-            # When the pull changed the sandbox Containerfile the running image is
-            # now stale (e.g. missing a newly-added build toolchain) -> in-sandbox
-            # builds silently use the old image. Rebuild it here so source and
-            # image can't drift across a refresh.
-            image_rebuild = self._maybe_rebuild_openshell_image_after_update(
-                repo, before_sha, after_sha
-            )
-            if image_rebuild:
-                summary += "; openshell image %s" % image_rebuild.get("status")
-            if restart:
+            if restart and not image_rebuild_failed:
                 summary += "; restart requested"
-            if restart_services:
+            if restart_services and not image_rebuild_failed:
                 summary += "; service restart requested"
+        if image_rebuild:
+            summary += "; openshell image %s" % image_rebuild.get("status")
+        if image_rebuild_failed:
+            summary += "; deployment blocked until image rebuild succeeds"
         return self._repo_update_result(
             stream_id,
-            "updated" if updated else "no_update",
+            "error" if image_rebuild_failed else "updated" if updated else "no_update",
             summary,
             request,
             repo_path=str(repo),
@@ -2501,33 +2499,49 @@ class MacWorker:
             after_sha=after_sha,
             stdout=pulled.stdout,
             stderr=pulled.stderr,
-            restart_requested=updated and restart,
-            service_restart_requested=updated and bool(restart_services),
-            restart_services=restart_services if updated and restart_services else [],
+            restart_requested=updated and restart and not image_rebuild_failed,
+            service_restart_requested=(
+                updated and bool(restart_services) and not image_rebuild_failed
+            ),
+            restart_services=(
+                restart_services
+                if updated and restart_services and not image_rebuild_failed
+                else []
+            ),
             openshell_image_rebuild=image_rebuild,
         )
 
     def _maybe_rebuild_openshell_image_after_update(
         self, repo: Path, before_sha: str, after_sha: str
     ) -> Optional[JsonDict]:
-        """Rebuild the OpenShell sandbox image when a source pull changed its
-        Containerfile. Best-effort: failures are observed, never raised.
+        """Rebuild the OpenShell sandbox image when its source SHA is stale.
 
-        Closes the drift where ``refresh-source`` advances source but leaves the
-        sandbox image built from an older Containerfile. Only acts on nodes that
-        actually run the sandbox (``MAC_OPENSHELL_SANDBOX``); skippable with
-        ``MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE=0``.
+        The image embeds MAC's source tree, not just its Containerfile. A durable
+        SHA marker therefore tracks the complete build input and also makes an
+        unchanged-source refresh retry a previously failed build. Failures are
+        reported to the caller, which blocks the deployment restart.
         """
         if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
             return None  # node doesn't run the sandbox -> no image to keep current
         if not _env_truthy(os.environ.get("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")):
             return None
-        if not _openshell_containerfile_changed(repo, before_sha, after_sha):
+        marker = Path(
+            os.environ.get("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE")
+            or Path(os.environ.get("MAC_HOME") or Path.home() / ".mac")
+            / "openshell"
+            / "image-source-sha"
+        ).expanduser()
+        try:
+            marked_sha = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            marked_sha = ""
+        if after_sha and marked_sha == after_sha:
             return None
         containerfile = repo / _OPENSHELL_CONTAINERFILE_RELPATH
+        image_builder = repo / "deploy/openshell/build-runtime-image.sh"
         tag = (os.environ.get("MAC_OPENSHELL_IMAGE_TAG") or "").strip() or "localhost/mac-hermes:net"
         docker = shutil.which((os.environ.get("MAC_OPENSHELL_DOCKER_BIN") or "").strip() or "docker")
-        if not containerfile.is_file() or not docker:
+        if not containerfile.is_file() or not image_builder.is_file() or not docker:
             self._observe_log(
                 "worker.openshell.image_drift",
                 level="error",
@@ -2536,6 +2550,7 @@ class MacWorker:
                 detail={
                     "reason": "sandbox Containerfile changed but image could not be rebuilt",
                     "containerfile_present": containerfile.is_file(),
+                    "image_builder_present": image_builder.is_file(),
                     "docker_present": bool(docker),
                     "before_sha": before_sha,
                     "after_sha": after_sha,
@@ -2550,13 +2565,24 @@ class MacWorker:
             detail={"tag": tag, "before_sha": before_sha, "after_sha": after_sha},
         )
         try:
+            build_env = os.environ.copy()
+            build_env.update(
+                {
+                    "MAC_SRC": str(repo),
+                    "OSH_DOCKER_BIN": docker,
+                    "OSH_IMAGE_TAG": tag,
+                    "MAC_IMAGE_SOURCE_SHA": after_sha,
+                    "MAC_IMAGE_SOURCE_SHA_FILE": str(marker),
+                }
+            )
             build = subprocess.run(
-                [docker, "build", "-t", tag, "-f", str(containerfile), str(repo)],
+                ["/bin/bash", str(image_builder)],
                 cwd=str(repo),
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=1800,
+                env=build_env,
             )
         except Exception as exc:  # noqa: BLE001 - rebuild is best-effort.
             self._observe_log(
@@ -6307,16 +6333,15 @@ def _extract_marked_summary(text: str) -> str:
 
 
 #: Path (relative to the self-update repo root) of the OpenShell sandbox image
-#: build recipe. A change here means a running sandbox image is stale.
+#: build recipe.
 _OPENSHELL_CONTAINERFILE_RELPATH = "deploy/openshell/mac-hermes.Containerfile"
 
 
 def _openshell_containerfile_changed(repo: Path, before_sha: str, after_sha: str) -> bool:
-    """True iff the OpenShell sandbox Containerfile changed between two commits.
+    """Return whether a pull changed the historical image recipe path.
 
-    Used after a source pull to decide whether the sandbox image must be rebuilt
-    (``refresh-source`` updates source + restarts the agent but does NOT rebuild
-    the image, so a Containerfile change would otherwise leave a stale image).
+    Kept as a public test/diagnostic primitive even though deployment freshness
+    now uses the stronger complete-source SHA marker.
     """
     if not before_sha or not after_sha or before_sha == after_sha:
         return False

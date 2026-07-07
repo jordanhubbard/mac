@@ -115,13 +115,16 @@ def test_openshell_image_installs_codegraph_baseline():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
+    builder = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(
+        encoding="utf-8"
+    )
     containerfile = (
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
 
     assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.1.6}"' in bootstrap
-    assert "prefetching pinned runtime-image assets on the host" in bootstrap
-    assert "codegraph-linux-${codegraph_arch}.tar.gz" in bootstrap
+    assert "prefetching pinned runtime-image assets on the host" in builder
+    assert "codegraph-linux-${codegraph_arch}.tar.gz" in builder
     assert 'ARG CODEGRAPH_VERSION="v1.1.6"' in containerfile
     assert (
         "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets"
@@ -134,8 +137,8 @@ def test_openshell_image_installs_codegraph_baseline():
     )
     assert 'ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current' in containerfile
     assert 'ARG GH_VERSION="2.95.0"' in containerfile
-    assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in bootstrap
-    assert "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" in bootstrap
+    assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in builder
+    assert "gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" in builder
     assert "https://cli.github.com/packages" not in containerfile
     assert "github.com" not in containerfile
     assert "raw.githubusercontent.com" not in containerfile
@@ -149,20 +152,25 @@ def test_openshell_image_installs_codegraph_baseline():
 
 
 def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
-    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    script = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(
         encoding="utf-8"
     )
 
     assert 'IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"' in script
-    assert "prepare_image_build_assets" in script
     assert "nodesource_setup.sh" in script
     assert "gh.tgz" in script
     assert "raw.githubusercontent.com/technomancy/leiningen" in script
     assert "cdn.jsdelivr.net/gh/technomancy/leiningen@stable/bin/lein" in script
     assert "codegraph.tgz" in script
-    assert "trap cleanup_image_build_assets EXIT" in script
+    assert "trap cleanup EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
     assert '--build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION"' in script
+    assert 'MAC_IMAGE_SOURCE_SHA_FILE="$OSH_DIR/image-source-sha"' in bootstrap
+    assert 'mv -f "$marker_tmp" "$MAC_IMAGE_SOURCE_SHA_FILE"' in script
+    assert '/bin/bash "$builder"' in bootstrap
 
 
 def test_openshell_image_installs_dev_extra_for_contract_tests():

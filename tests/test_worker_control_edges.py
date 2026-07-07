@@ -361,9 +361,11 @@ def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "0")
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") is None
     monkeypatch.setenv("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")
-    monkeypatch.setattr(worker, "_openshell_containerfile_changed", lambda *_a: False)
+    marker = tmp_path / "image-source-sha"
+    marker.write_text("b\n")
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(marker))
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") is None
-    monkeypatch.setattr(worker, "_openshell_containerfile_changed", lambda *_a: True)
+    marker.unlink()
     monkeypatch.setattr(worker.shutil, "which", lambda *_a: None)
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "drift"
 
@@ -373,9 +375,11 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
     containerfile = tmp_path / worker._OPENSHELL_CONTAINERFILE_RELPATH
     containerfile.parent.mkdir(parents=True)
     containerfile.write_text("FROM scratch\n")
+    image_builder = tmp_path / "deploy/openshell/build-runtime-image.sh"
+    image_builder.write_text("#!/usr/bin/env bash\n")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_TAG", "custom:tag")
-    monkeypatch.setattr(worker, "_openshell_containerfile_changed", lambda *_a: True)
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(tmp_path / "image-source-sha"))
     monkeypatch.setattr(worker.shutil, "which", lambda name: "/docker" if name != "podman" else None)
     monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("daemon down")))
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "failed"
@@ -389,14 +393,23 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
         "status": "rebuilt", "tag": "custom:tag"
     }
 
+    calls = []
+    monkeypatch.setattr(worker.subprocess, "run", lambda *a, **k: calls.append((a, k)) or _cp())
+    instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")
+    assert calls[0][0][0] == ["/bin/bash", str(image_builder)]
+    assert calls[0][1]["env"]["MAC_SRC"] == str(tmp_path)
+    assert calls[0][1]["env"]["OSH_IMAGE_TAG"] == "custom:tag"
+
 
 def test_openshell_image_podman_mirror_success_and_failure(monkeypatch, tmp_path) -> None:
     instance = _instance(tmp_path)
     containerfile = tmp_path / worker._OPENSHELL_CONTAINERFILE_RELPATH
     containerfile.parent.mkdir(parents=True)
     containerfile.write_text("FROM scratch\n")
+    image_builder = tmp_path / "deploy/openshell/build-runtime-image.sh"
+    image_builder.write_text("#!/usr/bin/env bash\n")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
-    monkeypatch.setattr(worker, "_openshell_containerfile_changed", lambda *_a: True)
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(tmp_path / "image-source-sha"))
     monkeypatch.setattr(worker.shutil, "which", lambda name: "/" + name)
     calls = []
     monkeypatch.setattr(worker.subprocess, "run", lambda *a, **k: calls.append((a, k)) or _cp())
