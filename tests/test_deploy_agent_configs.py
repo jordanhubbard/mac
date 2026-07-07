@@ -46,6 +46,10 @@ def load_sample_fleet_config():
     return yaml.safe_load((ROOT / "deploy" / "fleet" / "config.yaml").read_text(encoding="utf-8"))
 
 
+def deploy_script_text():
+    return (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+
+
 def deploy_env_config(
     tmp_path,
     *,
@@ -1797,7 +1801,7 @@ def test_setup_fleet_writes_deploy_plan_for_new_hub(tmp_path):
 
 
 def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     cleanup_plan = "\n".join(cleanup_path_strings(Path.home(), Path.home() / ".mac"))
 
     assert "--ssh-port <port>" in script
@@ -1817,6 +1821,102 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     assert ".acc/deploy" in cleanup_plan
     assert ".acc/logs" in cleanup_plan
     assert ".acc/hermes-agent" in cleanup_plan
+
+
+def _run_reconcile_remote_deploy(tmp_path, *, deploy_ts="20260707T182907Z"):
+    script = deploy_script_text()
+    function_text = "reconcile_remote_deploy() {" + script.split(
+        "reconcile_remote_deploy() {", 1
+    )[1].split("\n# Optional", 1)[0]
+    mac_home = tmp_path / ".mac"
+    (mac_home / "logs").mkdir(parents=True, exist_ok=True)
+    snippet = f"""
+set -euo pipefail
+TS={deploy_ts}
+shell_quote() {{
+  python3 - "$1" <<'PY'
+import shlex
+import sys
+print(shlex.quote(sys.argv[1]))
+PY
+}}
+ssh_target_args() {{
+  printf '%s\\0' fake-host
+}}
+ssh() {{
+  local remote_cmd="${{!#}}"
+  bash -c "$remote_cmd"
+}}
+{function_text}
+reconcile_remote_deploy rocky fake-target
+"""
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "MAC_HOME": str(mac_home),
+        "PATH": os.environ.get("PATH", ""),
+    }
+    return subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, env=env)
+
+
+def test_remote_deploy_reconciliation_fails_when_zero_exit_left_no_post_manifest(tmp_path):
+    result = _run_reconcile_remote_deploy(tmp_path)
+
+    assert result.returncode != 0
+    assert "missing post manifest" in result.stderr
+
+
+def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    log_dir = tmp_path / ".mac" / "logs"
+    log_dir.mkdir(parents=True)
+    manifest = {"stage": "post", "agent": "rocky", "deploy": {"timestamp": deploy_ts}}
+    (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (log_dir / "deploy-manifest-latest.json").write_text(
+        json.dumps({**manifest, "stage": "pre"}), encoding="utf-8"
+    )
+    (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts)
+
+    assert result.returncode != 0
+    assert "latest manifest stage is 'pre'" in result.stderr
+
+
+def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    log_dir = tmp_path / ".mac" / "logs"
+    log_dir.mkdir(parents=True)
+    manifest = {"stage": "post", "agent": "rocky", "deploy": {"timestamp": deploy_ts}}
+    (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (log_dir / "deploy-manifest-latest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts)
+
+    assert result.returncode == 0, result.stderr
+    assert "remote reconciliation succeeded for rocky" in result.stdout
+
+
+def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
+    script = deploy_script_text()
+    ssh_invocation = script.split('remote_cmd="${remote_env[*]} bash -s"', 1)[1].split(
+        '"$remote_cmd" <<', 1
+    )[0]
+    deploy_host_tail = script.split('if ssh -A -o BatchMode=yes', 1)[1].split(
+        'if [ "$openshell_enabled" = "1" ]', 1
+    )[0]
+
+    assert "if ssh -A -o BatchMode=yes" in ssh_invocation
+    assert "if ! ssh -A -o BatchMode=yes" not in ssh_invocation
+    assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
+    assert 'if ! reconcile_remote_deploy "$agent" "$target"; then' in deploy_host_tail
+    assert "remote deploy returned success but post manifest validation failed" in deploy_host_tail
+    assert 'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"' in deploy_host_tail
 
 
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():

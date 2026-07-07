@@ -920,6 +920,20 @@ log_dir="$mac_home/logs"
 manifest="$log_dir/deploy-manifest-${deploy_ts}-post.json"
 latest="$log_dir/deploy-manifest-latest.json"
 deploy_log="$log_dir/deploy-${deploy_ts}.log"
+python_bin="${PYTHON_BIN:-}"
+if [ -z "$python_bin" ] || ! command -v "$python_bin" >/dev/null 2>&1; then
+  python_bin=""
+  for candidate in python3.13 python3.12 python3.11 python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      python_bin="$(command -v "$candidate")"
+      break
+    fi
+  done
+fi
+if [ -z "$python_bin" ]; then
+  echo "remote reconciliation failed: no Python interpreter found" >&2
+  exit 1
+fi
 if [ ! -s "$manifest" ]; then
   echo "remote reconciliation failed: missing post manifest $manifest" >&2
   exit 1
@@ -932,15 +946,25 @@ if ! grep -q "deploy complete" "$deploy_log"; then
   echo "remote reconciliation failed: deploy log lacks completion marker" >&2
   exit 1
 fi
-"$PYTHON_BIN" - "$manifest" "$agent" <<'PY'
+"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" <<'PY'
 import json
 import sys
-manifest_path, expected_agent = sys.argv[1], sys.argv[2]
-data = json.load(open(manifest_path, encoding="utf-8"))
-if data.get("stage") != "post":
-    raise SystemExit("remote reconciliation failed: manifest stage is %r" % data.get("stage"))
-if data.get("agent") != expected_agent:
-    raise SystemExit("remote reconciliation failed: manifest agent is %r" % data.get("agent"))
+manifest_path, latest_path, expected_agent, expected_ts = sys.argv[1:]
+for label, path in (("post manifest", manifest_path), ("latest manifest", latest_path)):
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise SystemExit("remote reconciliation failed: %s is not a JSON object" % label)
+    if data.get("stage") != "post":
+        raise SystemExit("remote reconciliation failed: %s stage is %r" % (label, data.get("stage")))
+    if data.get("agent") != expected_agent:
+        raise SystemExit("remote reconciliation failed: %s agent is %r" % (label, data.get("agent")))
+    deploy = data.get("deploy") or {}
+    if deploy.get("timestamp") != expected_ts:
+        raise SystemExit(
+            "remote reconciliation failed: %s deploy timestamp is %r"
+            % (label, deploy.get("timestamp"))
+        )
 PY
 if [ -f "$mac_home/mac.env" ]; then
   set -a
@@ -1268,7 +1292,7 @@ deploy_host() {
   add_remote_env PERPLEXITY_API_BASE "$perplexity_api_base"
   remote_cmd="${remote_env[*]} bash -s"
   unset -f add_remote_env
-  if ! ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+  if ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "$remote_cmd" <<'REMOTE'
 set -euo pipefail
 
@@ -6271,6 +6295,12 @@ cp -f "$MANIFEST_POST" "$LOG_DIR/deploy-manifest-latest.json"
 log "deploy complete"
 REMOTE
   then
+    echo "==> ${agent}: validating remote post-deploy manifest"
+    if ! reconcile_remote_deploy "$agent" "$target"; then
+      echo "==> ${agent}: remote deploy returned success but post manifest validation failed" >&2
+      return 1
+    fi
+  else
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
     reconcile_remote_deploy "$agent" "$target"
   fi
