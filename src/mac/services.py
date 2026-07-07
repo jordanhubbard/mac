@@ -6360,6 +6360,11 @@ class ControlPlane:
             if task_row is None:
                 raise NotFoundError("task not found: %s" % task_id)
             task = self._task_from_row(task_row)
+        # ``get_task`` accepts unambiguous display prefixes.  Every write and
+        # related-record lookup below must use the canonical id it resolved;
+        # otherwise the initial read succeeds but the UPDATE/history/outbox
+        # writes target the non-existent prefix.
+        task_id = task.id
         transition_detail = dict(detail or {})
         if target == TaskState.CANCELLED.value:
             transition_detail = normalize_cancellation_detail(transition_detail)
@@ -7026,6 +7031,10 @@ class ControlPlane:
         sync_beads: bool = True,
     ) -> Evidence:
         task = self.get_task(task_id)
+        # Prefix resolution is part of the public id-taking contract.  Persist
+        # evidence, artifacts, and history under the canonical foreign key,
+        # not the caller's shortened display id.
+        task_id = task.id
         if task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
             if not self._lease_actor_allowed(task, created_by):
                 raise AuthorizationError("agent does not own task lease")

@@ -191,6 +191,46 @@ class TestGetTaskPrefixResolution:
         assert summary["task_id"] == full_id
         assert summary["evidence_count"] == 1
 
+    def test_add_evidence_persists_under_canonical_id_for_prefix(self, cp):
+        full_id = self._make_task_with_prefix(cp, "2468ace0abcdef01", "evidence mutation")
+
+        evidence = cp.add_evidence(
+            "task_2468ace0",
+            "test",
+            "artifact://short-id-evidence",
+            "short-id evidence",
+            "operator",
+        )
+
+        assert evidence.task_id == full_id
+        detail = cp.task_detail(full_id)
+        assert [item["id"] for item in detail["evidence"]] == [evidence.id]
+        assert any(
+            item["event_type"] == "task.evidence_added"
+            and item["task_id"] == full_id
+            for item in detail["history"]
+        )
+
+    def test_transition_persists_under_canonical_id_for_prefix(self, cp):
+        full_id = self._make_task_with_prefix(cp, "13579bdfabcdef01", "transition mutation")
+
+        transitioned = cp.transition_task(
+            "task_13579bdf",
+            "cancelled",
+            "operator",
+            {"reason": "short-id transition proof"},
+        )
+
+        assert transitioned.id == full_id
+        assert transitioned.state == "cancelled"
+        detail = cp.task_detail(full_id)
+        assert any(
+            item["event_type"] == "task.transitioned"
+            and item["task_id"] == full_id
+            and item["to_state"] == "cancelled"
+            for item in detail["history"]
+        )
+
     def test_prefix_resolution_case_insensitive(self, cp):
         """Uppercase hex prefix is normalised and resolved."""
         full_id = self._make_task_with_prefix(cp, "abcdef0011223344", "case test")
