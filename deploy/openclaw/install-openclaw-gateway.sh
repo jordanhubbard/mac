@@ -529,17 +529,19 @@ build_image() {
   fi
   local docker_bin
   docker_bin="$(find_docker)" || die "Docker CLI not found; install Docker Desktop or set MAC_OPENCLAW_DOCKER_BIN"
+  local docker_path
+  docker_path="$(dirname "$docker_bin"):$PATH"
   if truthy "$SKIP_IMAGE"; then
-    "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1 \
+    PATH="$docker_path" "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1 \
       || die "MAC_OPENCLAW_SKIP_IMAGE=1 but $OPENCLAW_IMAGE is absent"
     return
   fi
-  if "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1; then
+  if PATH="$docker_path" "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1; then
     log "pinned stock OpenClaw image already present"
     return
   fi
   [ -f "$CONTAINERFILE" ] || die "Containerfile not found: $CONTAINERFILE"
-  "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$(dirname "$CONTAINERFILE")"
+  PATH="$docker_path" "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$(dirname "$CONTAINERFILE")"
 }
 
 backup_and_delete_stale_sandbox() {
