@@ -24,14 +24,14 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "ghcr.io/openclaw/openclaw:2026.6.11@sha256:" in container
     assert 'OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"' in container
-    assert 'MAC_OPENCLAW_IMAGE_REVISION="3"' in container
+    assert 'MAC_OPENCLAW_IMAGE_REVISION="4"' in container
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.
     assert "apt-get install -y --no-install-recommends iproute2" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="3"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="4"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "USER sandbox" in container
     assert "nemoclaw gateway" not in container.lower()
@@ -44,6 +44,9 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
     text = POLICY.read_text(encoding="utf-8")
     assert "run_as_user: sandbox" in text
+    read_only, read_write = text.split("  read_write:", maxsplit=1)
+    assert "/home/sandbox/.config/mac-openclaw" not in read_only
+    assert "/home/sandbox/.config/mac-openclaw" in read_write
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
     for host in (

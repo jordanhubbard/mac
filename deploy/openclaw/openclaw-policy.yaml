@@ -16,10 +16,14 @@ filesystem_policy:
     - /etc
     - /proc
     - /app
-    - /home/sandbox/.config/mac-openclaw
   read_write:
     - /tmp
     - /dev
+    # OpenShell uploads MAC's owner-only managed config into this directory
+    # before launching the gateway.  Marking it read-only prevents the trusted
+    # upload itself; OpenClaw already needs read access to the credentials, and
+    # network egress remains constrained by the deny-by-default proxy policy.
+    - /home/sandbox/.config/mac-openclaw
     - /home/sandbox/.openclaw-data
     - /home/sandbox/workspace
 
