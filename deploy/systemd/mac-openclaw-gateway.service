@@ -1,0 +1,22 @@
+[Unit]
+Description=MAC stock OpenClaw gateway inside OpenShell
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=__MAC_USER__
+WorkingDirectory=__MAC_HOME__
+ExecStart=__MAC_HOME__/bin/openclaw-gateway
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=90
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,98 @@
+# MAC-authored OpenShell policy for the stock OpenClaw chat gateway.
+#
+# Derived from the Apache-2.0 NemoClaw OpenClaw and Slack policies, then reduced
+# to MAC's actual gateway contract: one MAC router plus Slack Socket Mode.  The
+# installer renders the two router placeholders before assigning this policy.
+version: 1
+
+filesystem_policy:
+  include_workdir: false
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /proc
+    - /app
+    - /home/sandbox/.config/mac-openclaw
+  read_write:
+    - /tmp
+    - /dev
+    - /home/sandbox/.openclaw-data
+    - /home/sandbox/workspace
+
+landlock:
+  # MAC independently checks for a usable OpenShell enforcement boundary.  The
+  # gateway's L7 deny-by-default proxy remains active when Landlock must skip an
+  # incompatible internal path rule on a particular kernel.
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  mac_router:
+    name: mac-router
+    endpoints:
+      - host: __MAC_ROUTER_HOST__
+        port: __MAC_ROUTER_PORT__
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: wss-primary.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: wss-backup.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

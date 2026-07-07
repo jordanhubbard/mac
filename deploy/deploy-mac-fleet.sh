@@ -1285,8 +1285,9 @@ HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
 HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
 # gateway_impl: which chat-gateway service to install.
-#   hermes   — vendored Hermes gateway (legacy default)
-#   nemoclaw — NemoClaw/OpenClaw gateway (YOLO migration target)
+#   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy
+#   hermes   — vendored Hermes gateway (rollback path)
+#   nemoclaw — retained reference/compatibility path
 # Decoded from the hermes_surface_b64 payload; also injectable via env.
 HERMES_GATEWAY_IMPL="${MAC_DEPLOY_HERMES_GATEWAY_IMPL:-$(
   if [ -n "${MAC_DEPLOY_HERMES_SURFACE_B64:-}" ]; then
@@ -1403,6 +1404,7 @@ MANIFEST_POST="$LOG_DIR/deploy-manifest-${DEPLOY_TS}-post.json"
 MAC_SERVICE_NAME="${FLEET_NAME}.service"
 HERMES_SERVICE_NAME="${FLEET_NAME}-hermes-gateway.service"
 MAC_AGENT_SERVICE_NAME="${FLEET_NAME}-agent.service"
+OPENCLAW_SERVICE_NAME="${FLEET_NAME}-openclaw-gateway.service"
 # NemoClaw gateway service name (chat-gateway YOLO migration target).
 NEMOCLAW_SERVICE_NAME="${FLEET_NAME}-nemoclaw-gateway.service"
 MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"
@@ -1410,9 +1412,11 @@ MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"
 MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"
 MAC_LAUNCHD_LABEL="com.${FLEET_NAME}.control-plane"
 HERMES_LAUNCHD_LABEL="com.${FLEET_NAME}.hermes-gateway"
+OPENCLAW_LAUNCHD_LABEL="com.${FLEET_NAME}.openclaw-gateway"
 MAC_AGENT_LAUNCHD_LABEL="com.${FLEET_NAME}.agent"
 MAC_SUPERVISORD_PROG="${FLEET_NAME}-control-plane"
 HERMES_SUPERVISORD_PROG="${FLEET_NAME}-hermes-gateway"
+OPENCLAW_SUPERVISORD_PROG="${FLEET_NAME}-openclaw-gateway"
 AGENT_SUPERVISORD_PROG="${FLEET_NAME}-agent"
 MAC_SUPERVISORD_CONF_NAME="${FLEET_NAME}-fleet.conf"
 SRC_BACKUP=""
@@ -1492,7 +1496,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -2486,9 +2490,9 @@ write_deploy_manifest() {
   MAC_PLIST_BACKUP="$MAC_PLIST_BACKUP" HERMES_PLIST_BACKUP="$HERMES_PLIST_BACKUP" \
   MAC_AGENT_PLIST_BACKUP="$MAC_AGENT_PLIST_BACKUP" \
   FLEET_NAME="$FLEET_NAME" \
-  MAC_SERVICE_NAME="$MAC_SERVICE_NAME" HERMES_SERVICE_NAME="$HERMES_SERVICE_NAME" MAC_AGENT_SERVICE_NAME="$MAC_AGENT_SERVICE_NAME" \
-  MAC_LAUNCHD_LABEL="$MAC_LAUNCHD_LABEL" HERMES_LAUNCHD_LABEL="$HERMES_LAUNCHD_LABEL" MAC_AGENT_LAUNCHD_LABEL="$MAC_AGENT_LAUNCHD_LABEL" \
-  MAC_SUPERVISORD_PROG="$MAC_SUPERVISORD_PROG" HERMES_SUPERVISORD_PROG="$HERMES_SUPERVISORD_PROG" AGENT_SUPERVISORD_PROG="$AGENT_SUPERVISORD_PROG" \
+  MAC_SERVICE_NAME="$MAC_SERVICE_NAME" HERMES_SERVICE_NAME="$HERMES_SERVICE_NAME" OPENCLAW_SERVICE_NAME="$OPENCLAW_SERVICE_NAME" MAC_AGENT_SERVICE_NAME="$MAC_AGENT_SERVICE_NAME" \
+  MAC_LAUNCHD_LABEL="$MAC_LAUNCHD_LABEL" HERMES_LAUNCHD_LABEL="$HERMES_LAUNCHD_LABEL" OPENCLAW_LAUNCHD_LABEL="$OPENCLAW_LAUNCHD_LABEL" MAC_AGENT_LAUNCHD_LABEL="$MAC_AGENT_LAUNCHD_LABEL" \
+  MAC_SUPERVISORD_PROG="$MAC_SUPERVISORD_PROG" HERMES_SUPERVISORD_PROG="$HERMES_SUPERVISORD_PROG" OPENCLAW_SUPERVISORD_PROG="$OPENCLAW_SUPERVISORD_PROG" AGENT_SUPERVISORD_PROG="$AGENT_SUPERVISORD_PROG" \
   "$PY" - "$stage" "$path" <<'PY'
 import json
 import os
@@ -2550,13 +2554,16 @@ def service_summary():
     fleet = os.environ.get("FLEET_NAME", "mac")
     mac_svc = os.environ.get("MAC_SERVICE_NAME", fleet + ".service")
     hermes_svc = os.environ.get("HERMES_SERVICE_NAME", fleet + "-hermes-gateway.service")
+    openclaw_svc = os.environ.get("OPENCLAW_SERVICE_NAME", fleet + "-openclaw-gateway.service")
     agent_svc = os.environ.get("MAC_AGENT_SERVICE_NAME", fleet + "-agent.service")
     mac_label = os.environ.get("MAC_LAUNCHD_LABEL", "com." + fleet + ".control-plane")
     hermes_label = os.environ.get("HERMES_LAUNCHD_LABEL", "com." + fleet + ".hermes-gateway")
+    openclaw_label = os.environ.get("OPENCLAW_LAUNCHD_LABEL", "com." + fleet + ".openclaw-gateway")
     agent_label = os.environ.get("MAC_AGENT_LAUNCHD_LABEL", "com." + fleet + ".agent")
     qdrant_label = "com." + fleet + ".qdrant"
     mac_prog = os.environ.get("MAC_SUPERVISORD_PROG", fleet + "-control-plane")
     hermes_prog = os.environ.get("HERMES_SUPERVISORD_PROG", fleet + "-hermes-gateway")
+    openclaw_prog = os.environ.get("OPENCLAW_SUPERVISORD_PROG", fleet + "-openclaw-gateway")
     agent_prog = os.environ.get("AGENT_SUPERVISORD_PROG", fleet + "-agent")
     qdrant_prog = fleet + "-qdrant"
     if supervisor == "systemd":
@@ -2566,6 +2573,7 @@ def service_summary():
                 "show",
                 mac_svc,
                 hermes_svc,
+                openclaw_svc,
                 agent_svc,
                 fleet + "-qdrant.service",
                 "-p",
@@ -2590,6 +2598,7 @@ def service_summary():
             "manager": "launchd",
             "control_plane": run(["launchctl", "list", mac_label]),
             "hermes_gateway": run(["launchctl", "list", hermes_label]),
+            "openclaw_gateway": run(["launchctl", "list", openclaw_label]),
             "mac_agent": run(["launchctl", "list", agent_label]),
             "qdrant": run(["launchctl", "list", qdrant_label]),
         }
@@ -2602,6 +2611,7 @@ def service_summary():
                     "status",
                     mac_prog,
                     hermes_prog,
+                    openclaw_prog,
                     agent_prog,
                     qdrant_prog,
                 ]
@@ -2818,12 +2828,15 @@ HERMES_PLIST_BACKUP='$HERMES_PLIST_BACKUP'
 MAC_AGENT_PLIST_BACKUP='$MAC_AGENT_PLIST_BACKUP'
 MAC_SERVICE_NAME='$MAC_SERVICE_NAME'
 HERMES_SERVICE_NAME='$HERMES_SERVICE_NAME'
+OPENCLAW_SERVICE_NAME='$OPENCLAW_SERVICE_NAME'
 MAC_AGENT_SERVICE_NAME='$MAC_AGENT_SERVICE_NAME'
 MAC_LAUNCHD_LABEL='$MAC_LAUNCHD_LABEL'
 HERMES_LAUNCHD_LABEL='$HERMES_LAUNCHD_LABEL'
+OPENCLAW_LAUNCHD_LABEL='$OPENCLAW_LAUNCHD_LABEL'
 MAC_AGENT_LAUNCHD_LABEL='$MAC_AGENT_LAUNCHD_LABEL'
 MAC_SUPERVISORD_PROG='$MAC_SUPERVISORD_PROG'
 HERMES_SUPERVISORD_PROG='$HERMES_SUPERVISORD_PROG'
+OPENCLAW_SUPERVISORD_PROG='$OPENCLAW_SUPERVISORD_PROG'
 AGENT_SUPERVISORD_PROG='$AGENT_SUPERVISORD_PROG'
 ROLLBACK_TS="\$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -2840,16 +2853,17 @@ restore_dir() {
 
 case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
   systemd|linux)
-    sudo systemctl stop "\$MAC_AGENT_SERVICE_NAME" "\$HERMES_SERVICE_NAME" "\$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo systemctl stop "\$MAC_AGENT_SERVICE_NAME" "\$HERMES_SERVICE_NAME" "\$OPENCLAW_SERVICE_NAME" "\$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
     ;;
   supervisord)
-    supervisorctl stop "\$AGENT_SUPERVISORD_PROG" "\$HERMES_SUPERVISORD_PROG" "\$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
-    sudo supervisorctl stop "\$AGENT_SUPERVISORD_PROG" "\$HERMES_SUPERVISORD_PROG" "\$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+    supervisorctl stop "\$AGENT_SUPERVISORD_PROG" "\$HERMES_SUPERVISORD_PROG" "\$OPENCLAW_SUPERVISORD_PROG" "\$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+    sudo supervisorctl stop "\$AGENT_SUPERVISORD_PROG" "\$HERMES_SUPERVISORD_PROG" "\$OPENCLAW_SUPERVISORD_PROG" "\$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
     ;;
   launchd|darwin)
     uid="\$(id -u)"
     launchctl bootout "gui/\$uid/\$MAC_AGENT_LAUNCHD_LABEL" >/dev/null 2>&1 || true
     launchctl bootout "gui/\$uid/\$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    launchctl bootout "gui/\$uid/\$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
     launchctl bootout "gui/\$uid/\$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
     ;;
 esac
@@ -2864,6 +2878,7 @@ case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
     [ -n "\$HERMES_UNIT_BACKUP" ] && [ -f "\$HERMES_UNIT_BACKUP" ] && sudo cp -f "\$HERMES_UNIT_BACKUP" /etc/systemd/system/\$HERMES_SERVICE_NAME
     [ -n "\$MAC_AGENT_UNIT_BACKUP" ] && [ -f "\$MAC_AGENT_UNIT_BACKUP" ] && sudo cp -f "\$MAC_AGENT_UNIT_BACKUP" /etc/systemd/system/\$MAC_AGENT_SERVICE_NAME
     sudo systemctl daemon-reload
+    sudo systemctl disable "\$OPENCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
     sudo systemctl restart "\$MAC_SERVICE_NAME" "\$HERMES_SERVICE_NAME" "\$MAC_AGENT_SERVICE_NAME"
     ;;
   supervisord)
@@ -2878,6 +2893,7 @@ case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
     [ -n "\$HERMES_PLIST_BACKUP" ] && [ -f "\$HERMES_PLIST_BACKUP" ] && cp -f "\$HERMES_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$HERMES_LAUNCHD_LABEL.plist"
     [ -n "\$MAC_AGENT_PLIST_BACKUP" ] && [ -f "\$MAC_AGENT_PLIST_BACKUP" ] && cp -f "\$MAC_AGENT_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$MAC_AGENT_LAUNCHD_LABEL.plist"
     uid="\$(id -u)"
+    launchctl disable "gui/\$uid/\$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
     launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$MAC_LAUNCHD_LABEL"
     launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$HERMES_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$HERMES_LAUNCHD_LABEL"
     launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$MAC_AGENT_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$MAC_AGENT_LAUNCHD_LABEL"
@@ -2913,16 +2929,17 @@ stop_existing_services_for_deploy() {
   log "stopping existing mac services for artifact replacement"
   case "$SUPERVISOR_KIND" in
     systemd)
-      sudo systemctl stop "$MAC_AGENT_SERVICE_NAME" "$HERMES_SERVICE_NAME" "$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
+      sudo systemctl stop "$MAC_AGENT_SERVICE_NAME" "$HERMES_SERVICE_NAME" "$OPENCLAW_SERVICE_NAME" "$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
       ;;
     supervisord)
-      run_supervisorctl stop "$AGENT_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+      run_supervisorctl stop "$AGENT_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$OPENCLAW_SUPERVISORD_PROG" "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
       ;;
     launchd)
       local uid
       uid="$(id -u)"
       launchctl bootout "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+      launchctl bootout "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       ;;
   esac
@@ -4747,6 +4764,35 @@ sync_messaging_config() {
   sync_hermes_home_channels
 }
 
+prepare_openclaw_gateway() {
+  local installer="$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
+  [ -x "$installer" ] || die "stock OpenClaw installer not found/executable: $installer"
+  MAC_SRC="$SRC_DIR" \
+  MAC_OPENCLAW_AGENT_ID="${MAC_AGENT_ID:-agent_$AGENT}" \
+  MAC_OPENCLAW_FLEET_NAME="$FLEET_NAME" \
+  MAC_OPENCLAW_MODEL="${HERMES_GATEWAY_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-}}" \
+  MAC_OPENCLAW_ROUTER_URL="${HERMES_GATEWAY_BASE_URL:-${MAC_HERMES_GATEWAY_BASE_URL:-}}" \
+    "$installer" prepare
+}
+
+verify_openclaw_gateway() {
+  local installer="$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
+  MAC_SRC="$SRC_DIR" \
+  MAC_OPENCLAW_AGENT_ID="${MAC_AGENT_ID:-agent_$AGENT}" \
+  MAC_OPENCLAW_FLEET_NAME="$FLEET_NAME" \
+  MAC_OPENCLAW_MODEL="${HERMES_GATEWAY_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-}}" \
+  MAC_OPENCLAW_ROUTER_URL="${HERMES_GATEWAY_BASE_URL:-${MAC_HERMES_GATEWAY_BASE_URL:-}}" \
+  MAC_OPENCLAW_LIVE_CANARY="${MAC_DEPLOY_OPENCLAW_LIVE_CANARY:-0}" \
+    "$installer" verify
+}
+
+rollback_openclaw_gateway() {
+  local installer="$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
+  MAC_OPENCLAW_FLEET_NAME="$FLEET_NAME" \
+  MAC_OPENCLAW_SUPERVISOR="$SUPERVISOR_KIND" \
+    "$installer" rollback
+}
+
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   install_hermes_gateway_wrapper
@@ -4797,15 +4843,57 @@ EOF
   fi
   scrub_spoke_provider_secrets
   sync_messaging_config
-  # Route to the correct gateway service installer based on gateway_impl.
-  # nemoclaw: YOLO migration target (install NemoClaw, stop+disable hermes gateway).
-  # hermes:   legacy default (install hermes gateway, leave NemoClaw absent/stopped).
+  # Route to the configured gateway implementation. Stock OpenClaw is the
+  # primary; Hermes remains the explicit rollback path; NemoClaw is reference
+  # compatibility only.
   case "${HERMES_GATEWAY_IMPL:-hermes}" in
+    openclaw)
+      install_linux_openclaw_service ;;
     nemoclaw)
       install_linux_nemoclaw_service ;;
     *)
       install_linux_hermes_service ;;
   esac
+}
+
+install_linux_openclaw_service() {
+  local unit_src="$SRC_DIR/deploy/systemd/mac-openclaw-gateway.service"
+  local rendered="$MAC_HOME/openclaw/${OPENCLAW_SERVICE_NAME}.rendered"
+  local unit="/etc/systemd/system/${OPENCLAW_SERVICE_NAME}" restart_since
+  prepare_openclaw_gateway
+  [ -f "$unit_src" ] || die "stock OpenClaw systemd template not found: $unit_src"
+  python3 - "$unit_src" "$rendered" "$USER" "$MAC_HOME" <<'PY'
+import sys
+
+source, dest, user, home = sys.argv[1:]
+text = open(source, encoding="utf-8").read()
+text = text.replace("__MAC_USER__", user).replace("__MAC_HOME__", home)
+if "__MAC_" in text:
+    raise SystemExit("unresolved OpenClaw systemd placeholder")
+with open(dest, "w", encoding="utf-8") as handle:
+    handle.write(text)
+PY
+  chmod 0600 "$rendered"
+  if sudo test -f "$unit"; then
+    sudo cp -f "$unit" "$MAC_HOME/backups/${OPENCLAW_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
+  fi
+  sudo install -m 0644 "$rendered" "$unit"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$OPENCLAW_SERVICE_NAME"
+  restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  sudo systemctl restart "$OPENCLAW_SERVICE_NAME"
+  sleep 8
+  sudo journalctl -u "$OPENCLAW_SERVICE_NAME" --since "$restart_since" --no-pager \
+    > "$LOG_DIR/openclaw-gateway-journal.txt" || true
+  if ! verify_openclaw_gateway; then
+    log "ERROR: stock OpenClaw verification failed; restoring Hermes gateway"
+    rollback_openclaw_gateway || true
+    return 1
+  fi
+  sudo systemctl disable --now "$HERMES_SERVICE_NAME" >/dev/null 2>&1 || true
+  sudo systemctl disable --now "$NEMOCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
+  log "stock OpenClaw verified; Hermes gateway disabled but retained for rollback"
+  install_linux_agent_service
 }
 
 install_linux_nemoclaw_service() {
@@ -5459,6 +5547,8 @@ PY
 
 install_linux_hermes_service() {
   local unit="/etc/systemd/system/${HERMES_SERVICE_NAME}" restart_since control_after=""
+  sudo systemctl disable --now "$OPENCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
+  sudo systemctl disable --now "$NEMOCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
   if control_plane_enabled; then
     control_after="$MAC_SERVICE_NAME"
   fi
@@ -5564,12 +5654,51 @@ EOF
 
 
 install_supervisord_service() {
-  local conf_dir conf restart_since control_program=""
+  local conf_dir conf restart_since control_program="" gateway_program active_gateway_program
   conf_dir="$(supervisord_conf_dir)"
   conf="$conf_dir/$MAC_SUPERVISORD_CONF_NAME"
   log "installing supervisord programs in $conf"
   install_hermes_gateway_wrapper
   install_mac_agent_wrapper
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    active_gateway_program="$OPENCLAW_SUPERVISORD_PROG"
+    gateway_program="[program:$HERMES_SUPERVISORD_PROG]
+command=$MAC_HOME/bin/hermes-gateway
+directory=$MAC_HOME
+user=$USER
+autostart=false
+autorestart=false
+startsecs=5
+stopwaitsecs=120
+stdout_logfile=$LOG_DIR/hermes-gateway.log
+stderr_logfile=$LOG_DIR/hermes-gateway.log
+environment=HOME=\"$HOME\"
+
+[program:$OPENCLAW_SUPERVISORD_PROG]
+command=$MAC_HOME/bin/openclaw-gateway
+directory=$MAC_HOME
+user=$USER
+autostart=true
+autorestart=true
+startsecs=8
+stopwaitsecs=90
+stdout_logfile=$LOG_DIR/openclaw-gateway.log
+stderr_logfile=$LOG_DIR/openclaw-gateway.log
+environment=HOME=\"$HOME\""
+  else
+    active_gateway_program="$HERMES_SUPERVISORD_PROG"
+    gateway_program="[program:$HERMES_SUPERVISORD_PROG]
+command=$MAC_HOME/bin/hermes-gateway
+directory=$MAC_HOME
+user=$USER
+autostart=true
+autorestart=true
+startsecs=5
+stopwaitsecs=120
+stdout_logfile=$LOG_DIR/hermes-gateway.log
+stderr_logfile=$LOG_DIR/hermes-gateway.log
+environment=HOME=\"$HOME\""
+  fi
   if control_plane_enabled; then
     install_mac_control_wrapper
     control_program="[program:$MAC_SUPERVISORD_PROG]
@@ -5594,17 +5723,7 @@ environment=HOME=\"$HOME\""
   sudo tee "$conf" >/dev/null <<EOF
 $control_program
 
-[program:$HERMES_SUPERVISORD_PROG]
-command=$MAC_HOME/bin/hermes-gateway
-directory=$MAC_HOME
-user=$USER
-autostart=true
-autorestart=true
-startsecs=5
-stopwaitsecs=120
-stdout_logfile=$LOG_DIR/hermes-gateway.log
-stderr_logfile=$LOG_DIR/hermes-gateway.log
-environment=HOME="$HOME"
+$gateway_program
 
 [program:$AGENT_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/mac-agent-service
@@ -5646,14 +5765,25 @@ EOF
   fi
   scrub_spoke_provider_secrets
   sync_messaging_config
-  run_supervisorctl restart "$HERMES_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$HERMES_SUPERVISORD_PROG" >/dev/null
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    prepare_openclaw_gateway
+  fi
+  run_supervisorctl restart "$active_gateway_program" >/dev/null 2>&1 || run_supervisorctl start "$active_gateway_program" >/dev/null
   sleep 5
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    if ! verify_openclaw_gateway; then
+      log "ERROR: stock OpenClaw verification failed under supervisord; restoring Hermes gateway"
+      rollback_openclaw_gateway || true
+      return 1
+    fi
+    run_supervisorctl stop "$HERMES_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+  fi
   run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
   sleep 3
   if control_plane_enabled; then
-    run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+    run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
   else
-    run_supervisorctl status "$HERMES_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+    run_supervisorctl status "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
   fi
   printf 'supervisord restarted at %s\n' "$restart_since" >> "$LOG_DIR/supervisord-services.txt"
 }
@@ -5723,12 +5853,55 @@ EOF
   fi
   scrub_spoke_provider_secrets
   sync_messaging_config
-  install_darwin_hermes_service "$uid"
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    install_darwin_openclaw_service "$uid"
+  else
+    install_darwin_hermes_service "$uid"
+  fi
   install_darwin_agent_service "$uid"
+}
+
+install_darwin_openclaw_service() {
+  local uid="$1" plist="$HOME/Library/LaunchAgents/${OPENCLAW_LAUNCHD_LABEL}.plist"
+  prepare_openclaw_gateway
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$OPENCLAW_LAUNCHD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$MAC_HOME/bin/openclaw-gateway</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>WorkingDirectory</key><string>$MAC_HOME</string>
+  <key>StandardOutPath</key><string>$LOG_DIR/openclaw-gateway.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/openclaw-gateway.log</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$plist"
+  launchctl bootout "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  : > "$LOG_DIR/openclaw-gateway.log"
+  launchctl enable "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"
+  launchctl bootstrap "gui/$uid" "$plist"
+  launchctl kickstart -k "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"
+  sleep 8
+  if ! verify_openclaw_gateway; then
+    log "ERROR: stock OpenClaw verification failed under launchd; restoring Hermes gateway"
+    rollback_openclaw_gateway || true
+    return 1
+  fi
+  launchctl bootout "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  launchctl disable "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  log "stock OpenClaw verified; Hermes launchd gateway disabled but retained for rollback"
 }
 
 install_darwin_hermes_service() {
   local uid="$1" plist="$HOME/Library/LaunchAgents/${HERMES_LAUNCHD_LABEL}.plist"
+  launchctl bootout "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  launchctl disable "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
   if [ -f "$plist" ]; then
     HERMES_PLIST_BACKUP="$MAC_HOME/backups/${HERMES_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.plist"
     cp -f "$plist" "$HERMES_PLIST_BACKUP"
@@ -5952,13 +6125,19 @@ install_gpu_gen_server || true
 # media-01 Part C3: re-hydrate the agent's self-installed pip/npm footprint.
 install_agent_footprint || true
 
-if [ "$SUPERVISOR_KIND" = "systemd" ]; then
+if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+  if [ "$SUPERVISOR_KIND" = "systemd" ]; then
+    classify_gateway_logs "$LOG_DIR/openclaw-gateway-journal.txt"
+  else
+    classify_gateway_logs "$LOG_DIR/openclaw-gateway.log"
+  fi
+elif [ "$SUPERVISOR_KIND" = "systemd" ]; then
   classify_gateway_logs "$LOG_DIR/hermes-gateway-journal.txt"
 else
   classify_gateway_logs "$LOG_DIR/hermes-gateway.log"
 fi
 
-log "verifying hub health and local Hermes startup report"
+log "verifying hub health and local executor startup report"
 if control_plane_enabled; then
   curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
   curl -fsS --config - \
