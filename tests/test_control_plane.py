@@ -9143,6 +9143,28 @@ def test_agentbus_streams_typed_content_without_weakening_control_messages(cp):
         cp.append_agentbus_chunk(stream.id, sender.id, payload={"late": True})
 
 
+def test_repo_update_control_stream_stamps_unconsumed_age_until_read(cp):
+    sender = register_agent(cp, "control-sender", ["python"])
+    recipient = register_agent(cp, "control-recipient", ["python"])
+
+    published = cp.publish_agentbus_repo_update(
+        sender.id,
+        recipient_agent_ids=[recipient.id],
+        request_id="control-age",
+    )
+
+    stamped = cp.get_agent(recipient.id)
+    assert stamped.last_control_stream_published_at is not None
+    assert stamped.last_control_stream_consumed_at is None
+    assert cp.unconsumed_control_stream_age_seconds(recipient.id) is not None
+
+    cp.read_agentbus_chunks(recipient.id, published["streams"][0]["id"])
+
+    consumed = cp.get_agent(recipient.id)
+    assert consumed.last_control_stream_consumed_at is not None
+    assert cp.unconsumed_control_stream_age_seconds(recipient.id) is None
+
+
 def test_agent_reflection_publishes_runtime_description_over_agentbus(cp):
     sender = register_agent(
         cp,

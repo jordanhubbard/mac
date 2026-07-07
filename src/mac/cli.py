@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac.migration import import_jsonl, migrate_acc_sqlite
-from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind
+from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind, parse_time, utcnow
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -1954,7 +1954,36 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
 
 
 def cmd_agent_list(args: argparse.Namespace) -> None:
-    _print([agent.to_dict() for agent in _plane(args).list_agents()])
+    cp = _plane(args)
+    rows = [agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()]
+    if getattr(args, "health", False):
+        age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
+        for row in rows:
+            age: Optional[float]
+            if callable(age_helper):
+                try:
+                    age = age_helper(str(row.get("id") or ""))
+                except Exception:  # noqa: BLE001 - fall back to response timestamps below.
+                    age = _agent_unconsumed_control_stream_age_from_row(row)
+            else:
+                age = _agent_unconsumed_control_stream_age_from_row(row)
+            row["dispatch_hold"] = bool(row.get("dispatch_hold", False))
+            row["unconsumed_control_stream_age_seconds"] = age
+    _print(rows)
+
+
+def _agent_unconsumed_control_stream_age_from_row(row: Mapping[str, Any]) -> Optional[float]:
+    published_at = row.get("last_control_stream_published_at")
+    if not published_at:
+        return None
+    try:
+        published = parse_time(str(published_at))
+        consumed_at = row.get("last_control_stream_consumed_at")
+        if consumed_at and parse_time(str(consumed_at)) >= published:
+            return None
+        return max(0.0, (parse_time(utcnow()) - published).total_seconds())
+    except Exception:  # noqa: BLE001 - malformed hub data should not break list output.
+        return None
 
 
 def cmd_agent_reflect(args: argparse.Namespace) -> None:
@@ -5073,6 +5102,7 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_agent_register, agent_register)
 
     agent_list = agent.add_parser("list")
+    agent_list.add_argument("--health", action="store_true")
     _set(cmd_agent_list, agent_list)
 
     agent_reflect = agent.add_parser(

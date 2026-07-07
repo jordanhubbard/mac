@@ -48,6 +48,16 @@ REFLECT_RESULT_SCHEMA = "mac.agentbus.reflect_result.v1"
 REFLECT_RESULT_TOPIC = "mac.reflect.result.v1"
 REFLECT_RESULT_CONTENT_TYPE = "application/vnd.mac.reflect-result+json"
 
+CONTROL_STREAM_TYPES = {
+    (REPO_UPDATE_TOPIC, REPO_UPDATE_CONTENT_TYPE),
+    (REFLECT_REQUEST_TOPIC, REFLECT_REQUEST_CONTENT_TYPE),
+}
+
+
+def is_control_stream(topic: str, content_type: str) -> bool:
+    base_content_type = str(content_type or "").split(";", 1)[0]
+    return (str(topic or ""), base_content_type) in CONTROL_STREAM_TYPES
+
 
 def repo_update_payload(
     *,

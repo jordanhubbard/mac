@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from mac.models import NotFoundError, ValidationError
+from mac.agentbus_control import REFLECT_REQUEST_TOPIC
+from mac.models import NotFoundError, ValidationError, utcnow
 from mac.services import ControlPlane
 
 
@@ -179,3 +180,68 @@ def test_hold_then_resume_restores_availability():
     agent = cp.get_agent(agent.id)
     _, reason_after = cp._agent_availability_for_task(agent, task)
     assert reason_after != "agent_dispatch_held"
+
+
+def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
+    monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
+    cp = _make_cp()
+    agent = _register_agent(cp, "auto-quarantine-agent")
+
+    for index in range(2):
+        task = cp.create_task("no telemetry %d" % index)
+        cp.claim_task(task.id, agent.id, lease_seconds=-1)
+        cp.expire_leases(now=utcnow())
+
+    held = cp.get_agent(agent.id)
+    assert held.dispatch_hold is True
+    assert held.dispatch_hold_reason == "auto_quarantine:consecutive_expiries_no_telemetry"
+    assert held.consecutive_lease_expiries_no_telemetry == 2
+    streams = cp.list_agentbus_streams(agent_id=agent.id)
+    assert any(stream.topic == REFLECT_REQUEST_TOPIC for stream in streams)
+
+
+def test_expired_lease_telemetry_resets_no_telemetry_counter(monkeypatch):
+    monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
+    cp = _make_cp()
+    agent = _register_agent(cp, "telemetry-agent")
+
+    first = cp.create_task("missing telemetry")
+    cp.claim_task(first.id, agent.id, lease_seconds=-1)
+    cp.expire_leases(now=utcnow())
+    assert cp.get_agent(agent.id).consecutive_lease_expiries_no_telemetry == 1
+
+    second = cp.create_task("has telemetry")
+    cp.claim_task(second.id, agent.id, lease_seconds=-1)
+    cp.record_log(
+        "executor.started",
+        layer="executor",
+        source="mac-hermes-task-executor",
+        subject_type="task",
+        subject_id=second.id,
+        detail={"agent_id": agent.id},
+    )
+    cp.expire_leases(now=utcnow())
+
+    refreshed = cp.get_agent(agent.id)
+    assert refreshed.consecutive_lease_expiries_no_telemetry == 0
+    assert refreshed.dispatch_hold is False
+
+
+def test_evidence_row_resets_no_telemetry_counter(monkeypatch):
+    monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
+    cp = _make_cp()
+    agent = _register_agent(cp, "evidence-agent")
+
+    first = cp.create_task("missing evidence")
+    cp.claim_task(first.id, agent.id, lease_seconds=-1)
+    cp.expire_leases(now=utcnow())
+    assert cp.get_agent(agent.id).consecutive_lease_expiries_no_telemetry == 1
+
+    second = cp.create_task("has evidence")
+    cp.claim_task(second.id, agent.id, lease_seconds=-1)
+    cp.add_evidence(second.id, "log", "artifact://attempt", "attempt log", agent.id)
+    cp.expire_leases(now=utcnow())
+
+    refreshed = cp.get_agent(agent.id)
+    assert refreshed.consecutive_lease_expiries_no_telemetry == 0
+    assert refreshed.dispatch_hold is False

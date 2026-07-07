@@ -20,6 +20,7 @@ import base64
 import re
 from typing import Any, Dict, List, Optional
 
+from mac.agentbus_control import is_control_stream
 from mac.models import (
     AgentBusChunk,
     AgentBusStream,
@@ -283,6 +284,12 @@ class AgentBusService:
             "SELECT * FROM agentbus_streams%s ORDER BY updated_at DESC, id LIMIT ?" % where,
             tuple(params),
         )
+        if agent_id is not None and any(
+            row["recipient_agent_id"] == agent_id
+            and is_control_stream(row["topic"], row["content_type"])
+            for row in rows
+        ):
+            self._stamp_control_stream_consumed(agent_id)
         return [self._stream_from_row(row) for row in rows]
 
     def assert_authorized(self, agent_id: str, stream_id: str) -> AgentBusStream:
@@ -299,7 +306,12 @@ class AgentBusService:
         after_sequence: int = 0,
         limit: int = 100,
     ) -> List[AgentBusChunk]:
-        self.assert_authorized(agent_id, stream_id)
+        stream = self.assert_authorized(agent_id, stream_id)
+        if (
+            stream.recipient_agent_id == agent_id
+            and is_control_stream(stream.topic, stream.content_type)
+        ):
+            self._stamp_control_stream_consumed(agent_id)
         rows = self.store.query_all(
             """
             SELECT * FROM agentbus_chunks
@@ -359,6 +371,8 @@ class AgentBusService:
             payload_encoding=payload_encoding,
             final=True,
         )
+        if recipient_agent_id and is_control_stream(topic, content_type):
+            self._stamp_control_stream_published(recipient_agent_id)
         self.observability.record_log(
             "agentbus.content.published",
             layer="agentbus",
@@ -378,6 +392,28 @@ class AgentBusService:
             "stream": self.get_stream(stream.id).to_dict(),
             "chunk": chunk.to_dict(),
         }
+
+    def _stamp_control_stream_published(self, agent_id: str) -> None:
+        now = utcnow()
+        self.store.execute(
+            """
+            UPDATE agents
+            SET last_control_stream_published_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, agent_id),
+        )
+
+    def _stamp_control_stream_consumed(self, agent_id: str) -> None:
+        now = utcnow()
+        self.store.execute(
+            """
+            UPDATE agents
+            SET last_control_stream_consumed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, agent_id),
+        )
 
     # Validation ---------------------------------------------------------
 

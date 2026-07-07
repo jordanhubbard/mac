@@ -32,6 +32,7 @@ from mac.agentbus_control import (
     REFLECT_REQUEST_CONTENT_TYPE,
     REFLECT_REQUEST_SCHEMA,
     REFLECT_REQUEST_TOPIC,
+    reflect_request_payload,
     repo_update_payload,
 )
 from mac.attempt_failure_classifier import classify_attempt_failure
@@ -223,6 +224,24 @@ DEFAULT_EVIDENCE_ARTIFACT_BYTES = 5 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
+AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(minimum, value)
+
+
+def _agent_quarantine_threshold() -> int:
+    return _env_int("MAC_AGENT_QUARANTINE_THRESHOLD", 2, minimum=1)
+
+
+def _agent_zombie_stream_age_seconds() -> int:
+    return _env_int("MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS", 300, minimum=1)
 
 
 def _evidence_artifact_max_bytes() -> int:
@@ -7653,8 +7672,166 @@ class ControlPlane:
                 conn=conn,
             )
         recovered = self.get_task(task.id)
+        try:
+            self._record_expired_lease_zombie_signal(lease)
+        except Exception as exc:  # noqa: BLE001 - lease recovery has already committed.
+            self.record_log(
+                "agent.expired_lease_zombie_signal_failed",
+                level="warning",
+                layer="control_plane",
+                source="dispatcher",
+                subject_type="agent",
+                subject_id=lease.agent_id,
+                detail={
+                    "agent_id": lease.agent_id,
+                    "lease_id": lease.id,
+                    "task_id": lease.task_id,
+                    "error": str(exc),
+                },
+            )
         self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
+
+    def _record_expired_lease_zombie_signal(self, lease: Lease) -> None:
+        had_telemetry = self._lease_attempt_telemetry_exists(lease)
+        now = utcnow()
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT consecutive_lease_expiries_no_telemetry
+                FROM agents
+                WHERE id = ?
+                """,
+                (lease.agent_id,),
+            ).fetchone()
+            if row is None:
+                return
+            previous_count = int(row["consecutive_lease_expiries_no_telemetry"] or 0)
+            next_count = 0 if had_telemetry else previous_count + 1
+            conn.execute(
+                """
+                UPDATE agents
+                SET consecutive_lease_expiries_no_telemetry = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (next_count, now, lease.agent_id),
+            )
+        self._maybe_auto_quarantine_agent(
+            lease,
+            previous_count=previous_count,
+            next_count=next_count,
+            had_telemetry=had_telemetry,
+        )
+
+    def _lease_attempt_telemetry_exists(self, lease: Lease) -> bool:
+        actor_ids = [lease.agent_id]
+        if lease.delegated_agent_id:
+            actor_ids.append(lease.delegated_agent_id)
+        actor_ids = list(dict.fromkeys(actor_ids))
+        placeholders = ", ".join("?" for _ in actor_ids)
+        evidence = self.store.query_one(
+            """
+            SELECT id
+            FROM evidence
+            WHERE task_id = ?
+              AND created_by IN (%s)
+              AND created_at >= ?
+            ORDER BY created_at
+            LIMIT 1
+            """ % placeholders,
+            tuple([lease.task_id, *actor_ids, lease.created_at]),
+        )
+        if evidence is not None:
+            return True
+        rows = self.store.query_all(
+            """
+            SELECT detail
+            FROM observability_events
+            WHERE name = ?
+              AND subject_type = ?
+              AND subject_id = ?
+              AND created_at >= ?
+            ORDER BY created_at
+            """,
+            ("executor.started", "task", lease.task_id, lease.created_at),
+        )
+        actors = set(actor_ids)
+        for row in rows:
+            detail = json_loads(row["detail"], {})
+            if str(detail.get("agent_id") or "") in actors:
+                return True
+        return False
+
+    def _maybe_auto_quarantine_agent(
+        self,
+        lease: Lease,
+        *,
+        previous_count: int,
+        next_count: int,
+        had_telemetry: bool,
+    ) -> None:
+        threshold = _agent_quarantine_threshold()
+        stream_age = self.unconsumed_control_stream_age_seconds(lease.agent_id)
+        stream_age_signal = (
+            stream_age is not None and stream_age > _agent_zombie_stream_age_seconds()
+        )
+        current_signals = next_count + (1 if stream_age_signal else 0)
+        if current_signals < threshold:
+            return
+        agent = self.get_agent(lease.agent_id)
+        if agent.dispatch_hold:
+            return
+        held = self.set_agent_dispatch_hold(lease.agent_id, AUTO_QUARANTINE_REASON)
+        request_id = "auto-quarantine-%s" % lease.id
+        detail = {
+            "agent_id": lease.agent_id,
+            "lease_id": lease.id,
+            "task_id": lease.task_id,
+            "reason": AUTO_QUARANTINE_REASON,
+            "threshold": threshold,
+            "previous_consecutive_expiries_no_telemetry": previous_count,
+            "consecutive_expiries_no_telemetry": next_count,
+            "had_attempt_telemetry": had_telemetry,
+            "unconsumed_control_stream_age_seconds": stream_age,
+            "unconsumed_control_stream_age_signal": stream_age_signal,
+        }
+        self.record_log(
+            "agent.auto_quarantined",
+            level="warning",
+            layer="control_plane",
+            source="dispatcher",
+            subject_type="agent",
+            subject_id=lease.agent_id,
+            detail=detail,
+        )
+        try:
+            self.publish_agentbus_content(
+                sender_agent_id=held.id,
+                recipient_agent_id=held.id,
+                content_type=REFLECT_REQUEST_CONTENT_TYPE,
+                topic=REFLECT_REQUEST_TOPIC,
+                payload=reflect_request_payload(
+                    sender_agent_id=held.id,
+                    request_id=request_id,
+                    query=(
+                        "Auto-quarantine diagnostic: your last lease expired "
+                        "without executor.started telemetry or task evidence. "
+                        "Report whether your worker loop is alive, whether "
+                        "AgentBus control messages are being consumed, and the "
+                        "last task action you attempted."
+                    ),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - quarantine must not depend on AgentBus.
+            self.record_log(
+                "agent.auto_quarantine_reflect_failed",
+                level="warning",
+                layer="control_plane",
+                source="dispatcher",
+                subject_type="agent",
+                subject_id=lease.agent_id,
+                detail={**detail, "error": str(exc)},
+            )
 
     def _expire_leases_sweep_page(self, *, limit: int) -> JsonDict:
         claim = self.reconciliation.claim("expired-lease-sweep")
@@ -8498,6 +8675,18 @@ class ControlPlane:
                 (now, agent_id),
             )
         return self.get_agent(agent_id)
+
+    def unconsumed_control_stream_age_seconds(self, agent_id: str) -> Optional[float]:
+        agent = self.get_agent(agent_id)
+        published_at = agent.last_control_stream_published_at
+        if not published_at:
+            return None
+        published = parse_time(published_at)
+        consumed_at = agent.last_control_stream_consumed_at
+        if consumed_at and parse_time(consumed_at) >= published:
+            return None
+        age = (parse_time(utcnow()) - published).total_seconds()
+        return max(0.0, age)
 
     def delete_agent(self, agent_id: str, *, actor: str = "human") -> None:
         agent = self.get_agent(agent_id)

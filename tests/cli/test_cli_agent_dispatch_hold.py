@@ -81,6 +81,31 @@ def test_agent_hold_returns_updated_agent_record(tmp_path):
     assert held["name"] == "hold-agent-2"
 
 
+def test_agent_list_health_surfaces_hold_and_unconsumed_control_age(tmp_path):
+    sender = _register_agent(tmp_path, "health-sender")
+    recipient = _register_agent(tmp_path, "health-recipient")
+    rc, _ = _run(
+        tmp_path,
+        "agentbus",
+        "repo-update",
+        sender["id"],
+        "--recipient-agent-id",
+        recipient["id"],
+    )
+    assert rc == 0
+    rc, _ = _run(tmp_path, "agent", "hold", recipient["id"], "--reason", "health check")
+    assert rc == 0
+
+    rc, agents = _run(tmp_path, "agent", "list", "--health")
+
+    assert rc == 0
+    by_id = {agent["id"]: agent for agent in agents}
+    row = by_id[recipient["id"]]
+    assert row["dispatch_hold"] is True
+    assert row["dispatch_hold_reason"] == "health check"
+    assert row["unconsumed_control_stream_age_seconds"] is not None
+
+
 # ---------------------------------------------------------------------------
 # mac agent resume
 # ---------------------------------------------------------------------------
