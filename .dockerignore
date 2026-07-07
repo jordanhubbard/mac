@@ -8,6 +8,7 @@ __pycache__
 *.sqlite
 dist
 .git
+.mac-openshell-build.lock
 .github
 tests
 docs

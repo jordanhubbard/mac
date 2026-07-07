@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,6 +163,13 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     )
 
     assert 'IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"' in script
+    assert 'BUILD_LOCK_DIR="$MAC_SRC/.mac-openshell-build.lock"' in script
+    assert "acquire_build_lock" in script
+    assert 'kill -0 "$owner_pid"' in script
+    assert "timed out waiting for OpenShell image-build lock" in script
+    assert ".mac-openshell-build.lock" in (ROOT / ".dockerignore").read_text(
+        encoding="utf-8"
+    )
     assert "nodesource_setup.sh" in script
     assert "gh.tgz" in script
     assert "raw.githubusercontent.com/technomancy/leiningen" in script
@@ -171,6 +181,78 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert 'MAC_IMAGE_SOURCE_SHA_FILE="$OSH_DIR/image-source-sha"' in bootstrap
     assert 'mv -f "$marker_tmp" "$MAC_IMAGE_SOURCE_SHA_FILE"' in script
     assert '/bin/bash "$builder"' in bootstrap
+
+
+def test_openshell_image_builder_serializes_shared_checkout_builds(tmp_path):
+    """Concurrent agents on one host must not delete each other's assets."""
+    source = tmp_path / "mac"
+    deploy = source / "deploy" / "openshell"
+    deploy.mkdir(parents=True)
+    (deploy / "mac-hermes.Containerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        """#!/bin/bash
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; shift 2; else shift; fi
+done
+[ -n "$out" ]
+printf '%s\n' "$PPID" > "$out"
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    ready = tmp_path / "ready"
+    ready.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/bin/bash
+set -eu
+asset="$MAC_SRC/.mac-openshell-build-assets/nodesource_setup.sh"
+owner="$(cat "$asset")"
+[ "$owner" = "$PPID" ]
+touch "$MAC_TEST_READY_DIR/$PPID"
+sleep 0.25
+[ "$(cat "$asset")" = "$owner" ]
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "MAC_SRC": str(source),
+        "OSH_DOCKER_BIN": str(fake_docker),
+        "MAC_TEST_READY_DIR": str(ready),
+        "MAC_OPENSHELL_BUILD_LOCK_POLL_SECONDS": "0.02",
+        "MAC_OPENSHELL_BUILD_LOCK_WAIT_SECONDS": "10",
+    }
+    builder = ROOT / "deploy" / "openshell" / "build-runtime-image.sh"
+    first = subprocess.Popen(
+        ["/bin/bash", str(builder)], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + 5
+    while not any(ready.iterdir()) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert any(ready.iterdir()), first.communicate(timeout=1)
+
+    second = subprocess.Popen(
+        ["/bin/bash", str(builder)], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    first_output = first.communicate(timeout=10)
+    second_output = second.communicate(timeout=10)
+    assert first.returncode == 0, first_output
+    assert second.returncode == 0, second_output
+    assert not (source / ".mac-openshell-build-assets").exists()
+    assert not (source / ".mac-openshell-build.lock").exists()
 
 
 def test_openshell_image_installs_dev_extra_for_contract_tests():

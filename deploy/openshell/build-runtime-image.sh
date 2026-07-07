@@ -16,6 +16,9 @@ MAC_IMAGE_SOURCE_SHA="${MAC_IMAGE_SOURCE_SHA:-}"
 MAC_IMAGE_SOURCE_SHA_FILE="${MAC_IMAGE_SOURCE_SHA_FILE:-}"
 ARCH="$(uname -m)"
 IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"
+BUILD_LOCK_DIR="$MAC_SRC/.mac-openshell-build.lock"
+BUILD_LOCK_WAIT_SECONDS="${MAC_OPENSHELL_BUILD_LOCK_WAIT_SECONDS:-1900}"
+BUILD_LOCK_POLL_SECONDS="${MAC_OPENSHELL_BUILD_LOCK_POLL_SECONDS:-2}"
 CONTAINERFILE="$MAC_SRC/deploy/openshell/mac-hermes.Containerfile"
 
 log(){ printf '[build-openshell-image] %s\n' "$*"; }
@@ -23,8 +26,41 @@ download(){ curl --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 
 cleanup(){
   rm -rf "$IMAGE_ASSET_DIR"
   [ -z "${DOCKER_CONFIG_TMP:-}" ] || rm -rf "$DOCKER_CONFIG_TMP"
+  if [ -f "$BUILD_LOCK_DIR/owner-pid" ] \
+      && [ "$(cat "$BUILD_LOCK_DIR/owner-pid" 2>/dev/null || true)" = "$$" ]; then
+    rm -rf "$BUILD_LOCK_DIR"
+  fi
 }
-trap cleanup EXIT
+
+acquire_build_lock(){
+  local started_at now owner_pid
+  started_at="$(date +%s)"
+  while ! mkdir "$BUILD_LOCK_DIR" 2>/dev/null; do
+    owner_pid="$(cat "$BUILD_LOCK_DIR/owner-pid" 2>/dev/null || true)"
+    if [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
+      log "removing stale image-build lock owned by dead pid $owner_pid"
+      rm -rf "$BUILD_LOCK_DIR"
+      continue
+    fi
+    # A process can be pre-empted between mkdir and writing owner-pid. Give it
+    # time to finish that atomic acquisition; only reap an ownerless directory
+    # after it has demonstrably been stale for at least one minute.
+    if [ -z "$owner_pid" ] \
+        && [ -n "$(find "$BUILD_LOCK_DIR" -type d -mmin +1 -print -quit 2>/dev/null)" ]; then
+      log "removing stale ownerless image-build lock"
+      rm -rf "$BUILD_LOCK_DIR"
+      continue
+    fi
+    now="$(date +%s)"
+    if [ $((now - started_at)) -ge "$BUILD_LOCK_WAIT_SECONDS" ]; then
+      echo "timed out waiting for OpenShell image-build lock: $BUILD_LOCK_DIR" >&2
+      exit 1
+    fi
+    sleep "$BUILD_LOCK_POLL_SECONDS"
+  done
+  printf '%s\n' "$$" > "$BUILD_LOCK_DIR/owner-pid"
+  trap cleanup EXIT
+}
 
 case "$ARCH" in
   x86_64|amd64) gh_arch=amd64; codegraph_arch=x64;;
@@ -35,6 +71,7 @@ esac
 [ -f "$CONTAINERFILE" ] || { echo "missing OpenShell Containerfile: $CONTAINERFILE" >&2; exit 1; }
 command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1 || { echo "docker CLI not found: $OSH_DOCKER_BIN" >&2; exit 1; }
 
+acquire_build_lock
 rm -rf "$IMAGE_ASSET_DIR"
 mkdir -p "$IMAGE_ASSET_DIR"
 log "prefetching pinned runtime-image assets on the host"
