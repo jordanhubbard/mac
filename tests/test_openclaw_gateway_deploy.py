@@ -130,6 +130,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     config_path = managed / "openclaw.json"
     runtime_path = managed / "runtime.env"
     wrapper_path = mac_home / "bin" / "openclaw-gateway"
+    stop_wrapper_path = mac_home / "bin" / "openclaw-gateway-stop"
     first_runtime = runtime_path.read_text(encoding="utf-8")
     subprocess.run(
         [str(INSTALLER), "prepare"],
@@ -167,19 +168,22 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert config_path.stat().st_mode & 0o777 == 0o600
     assert runtime_path.stat().st_mode & 0o777 == 0o600
     assert wrapper_path.stat().st_mode & 0o777 == 0o700
+    assert stop_wrapper_path.stat().st_mode & 0o777 == 0o700
     assert (mac_home / "bin" / "openclaw-message").stat().st_mode & 0o777 == 0o700
     assert (mac_home / "openclaw" / "home-channel-target").read_text(
         encoding="utf-8"
     ).strip() == "channel:C123HOME"
     wrapper = wrapper_path.read_text(encoding="utf-8")
+    stop_wrapper = stop_wrapper_path.read_text(encoding="utf-8")
     message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
         encoding="utf-8"
     )
     assert "sandbox create" in wrapper and "sandbox exec" in wrapper
-    assert "pgrep -x openclaw" in wrapper
+    assert "pgrep -x openclaw" in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
     assert "stop_gateway" in wrapper
     subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
+    subprocess.run(["bash", "-n", str(stop_wrapper_path)], check=True, timeout=10)
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         message_wrapper
     )
@@ -213,6 +217,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "OPENCLAW_REPRESENTATION_MODE" in deploy
     assert "disable --now \"$HERMES_SERVICE_NAME\"" in deploy
     assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
+    assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
     assert "User=__MAC_USER__" in unit
 
 
@@ -226,6 +231,9 @@ def test_openclaw_verification_probes_only_configured_channels_and_advertises_af
     assert "--channel telegram" in installer
     assert "--dry-run --json" in installer
     assert 'rm -f "$OPENCLAW_HOST_DIR/service-advertisement.json"' in installer
+    assert '"endpoint": "openshell://%s"' in installer
+    assert '"access": "sandbox_exec"' in installer
+    assert "http://127.0.0.1:${GATEWAY_PORT}/healthz" not in installer
 
 
 def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> None:

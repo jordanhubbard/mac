@@ -70,10 +70,8 @@ this order:
 `deploy/deploy-mac-fleet.sh` supports systemd, supervisord, and launchd. It
 starts OpenClaw, then requires all of these checks before disabling Hermes:
 
-- `/healthz` liveness;
-- `/readyz` readiness;
 - `openclaw config validate --json`;
-- authenticated gateway health RPC;
+- authenticated in-sandbox `openclaw health --verbose --json` RPC health;
 - live Slack and Telegram channel probes.
 
 For a canary, additionally export `MAC_DEPLOY_OPENCLAW_LIVE_CANARY=1`. The
@@ -85,7 +83,7 @@ home channel and `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET`.
 Only a successful verification writes
 `~/.mac/openclaw/service-advertisement.json`. The worker registers that record
 as `resources.chat_gateway`, including the stock OpenClaw version, OpenShell
-sandbox, loopback endpoint, Slack/Telegram transports, and verification time.
+sandbox, sandbox-exec access method, Slack/Telegram transports, and verification time.
 The Fleet IDE displays the same record in the agent inspector. Rollback removes
 the advertisement before restoring Hermes, so desired state is never reported
 as a live service.
@@ -105,12 +103,14 @@ Useful secret-free checks:
 
 ```bash
 openshell sandbox get mac-openclaw-<agent>
-curl -fsS http://127.0.0.1:18789/healthz
-curl -fsS http://127.0.0.1:18789/readyz
+openshell sandbox exec --name mac-openclaw-<agent> --no-tty -- \
+  /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw health --verbose --json'
 ```
 
-OpenClaw documents `/healthz` as liveness and `/readyz` as the stricter usable
-readiness check: <https://docs.openclaw.ai/cli/gateway>.
+The gateway remains inside a reusable OpenShell sandbox. OpenShell 0.0.72 does
+not expose a command to recreate a host port forward for an existing sandbox,
+so MAC verifies health through the supported sandbox RPC instead of advertising
+a stale loopback endpoint.
 
 ## Rollback
 

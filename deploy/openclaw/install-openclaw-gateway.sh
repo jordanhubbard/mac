@@ -19,6 +19,7 @@ WORKSPACE_DIR="$OPENCLAW_HOST_DIR/workspace"
 BACKUP_DIR="$OPENCLAW_HOST_DIR/backups"
 POLICY_PATH="$OPENCLAW_HOST_DIR/openclaw-policy.yaml"
 WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
+STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 CONTAINERFILE="${MAC_OPENCLAW_CONTAINERFILE:-$MAC_SRC/deploy/openclaw/OpenClaw.Containerfile}"
 POLICY_TEMPLATE="${MAC_OPENCLAW_POLICY_TEMPLATE:-$MAC_SRC/deploy/openclaw/openclaw-policy.yaml}"
@@ -420,6 +421,25 @@ PY
 
 write_host_wrapper() {
   local openshell_bin="$1"
+  cat > "$STOP_WRAPPER_PATH" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+OPEN_SHELL=$(printf '%q' "$openshell_bin")
+SANDBOX=$(printf '%q' "$SANDBOX_NAME")
+"\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || exit 0
+"\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- /bin/sh -lc '
+  pids="\$(pgrep -x openclaw 2>/dev/null || true)"
+  [ -z "\$pids" ] || kill -TERM \$pids 2>/dev/null || true
+  count=0
+  while pgrep -x openclaw >/dev/null 2>&1 && [ "\$count" -lt 10 ]; do
+    sleep 0.5
+    count=\$((count + 1))
+  done
+  pids="\$(pgrep -x openclaw 2>/dev/null || true)"
+  [ -z "\$pids" ] || kill -KILL \$pids 2>/dev/null || true
+' >/dev/null 2>&1 || true
+EOF
+  chmod 0700 "$STOP_WRAPPER_PATH"
   cat > "$WRAPPER_PATH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -429,7 +449,7 @@ IMAGE=$(printf '%q' "$OPENCLAW_IMAGE")
 POLICY=$(printf '%q' "$POLICY_PATH")
 MANAGED=$(printf '%q' "$MANAGED_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
-PORT=$(printf '%q' "$GATEWAY_PORT")
+STOPPER=$(printf '%q' "$STOP_WRAPPER_PATH")
 
 upload_managed() {
   "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$MANAGED/openclaw.json" /home/sandbox/.config/mac-openclaw/openclaw.json >/dev/null
@@ -439,18 +459,7 @@ upload_managed() {
 }
 
 stop_gateway() {
-  "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || return 0
-  "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- /bin/sh -lc '
-    pids="\$(pgrep -x openclaw 2>/dev/null || true)"
-    [ -z "\$pids" ] || kill -TERM \$pids 2>/dev/null || true
-    count=0
-    while pgrep -x openclaw >/dev/null 2>&1 && [ "\$count" -lt 10 ]; do
-      sleep 0.5
-      count=\$((count + 1))
-    done
-    pids="\$(pgrep -x openclaw 2>/dev/null || true)"
-    [ -z "\$pids" ] || kill -KILL \$pids 2>/dev/null || true
-  ' >/dev/null 2>&1 || true
+  "\$STOPPER" || true
 }
 
 run_attached() {
@@ -487,7 +496,6 @@ run_attached "\$OPEN_SHELL" sandbox create \
   --from "\$IMAGE" \
   --policy "\$POLICY" \
   --name "\$SANDBOX" \
-  --forward "127.0.0.1:\$PORT" \
   --label mac.role=openclaw-gateway \
   --upload "\$MANAGED/openclaw.json:/home/sandbox/.config/mac-openclaw/openclaw.json" \
   --upload "\$MANAGED/runtime.env:/home/sandbox/.config/mac-openclaw/runtime.env" \
@@ -580,10 +588,6 @@ verify() {
   local openshell_bin
   openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
   "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || die "sandbox $SANDBOX_NAME is absent"
-  curl -fsS --max-time 10 "http://127.0.0.1:${GATEWAY_PORT}/healthz" >/dev/null \
-    || die "OpenClaw liveness probe failed"
-  curl -fsS --max-time 15 "http://127.0.0.1:${GATEWAY_PORT}/readyz" >/dev/null \
-    || die "OpenClaw readiness probe failed"
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null
   case ",$MAC_OPENCLAW_CHANNELS," in
@@ -688,8 +692,8 @@ if channels:
         "service_role": "chat_gateway",
         "service_name": "%s-openclaw-gateway"
         % os.environ["MAC_OPENCLAW_FLEET_NAME"],
-        "endpoint": "http://127.0.0.1:%s"
-        % os.environ["MAC_OPENCLAW_GATEWAY_PORT"],
+        "endpoint": "openshell://%s" % runtime["confinement"]["sandbox"],
+        "access": "sandbox_exec",
         "public_identity": os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or None,
         "confinement": runtime["confinement"],
         "channels": channels,
@@ -702,11 +706,11 @@ with open(path, "w", encoding="utf-8") as handle:
 os.chmod(path, 0o600)
 PY
   if truthy "$LIVE_CANARY"; then
-    log "verified stock OpenClaw runtime: liveness, readiness, config, RPC health, configured channel probes, model canary, channel sends"
+    log "verified stock OpenClaw runtime: config, sandbox RPC health, configured channel probes, model canary, channel sends"
   elif [ -n "$MAC_OPENCLAW_CHANNELS" ]; then
-    log "verified stock OpenClaw gateway: liveness, readiness, config, RPC health, configured channel probes ($MAC_OPENCLAW_CHANNELS)"
+    log "verified stock OpenClaw gateway: config, sandbox RPC health, configured channel probes ($MAC_OPENCLAW_CHANNELS)"
   else
-    log "verified stock OpenClaw headless runtime: liveness, readiness, config, RPC health"
+    log "verified stock OpenClaw headless runtime: config and sandbox RPC health"
   fi
 }
 
@@ -726,6 +730,7 @@ rollback() {
   case "$supervisor" in
     systemd)
       sudo systemctl disable --now "${fleet}-openclaw-gateway.service" || true
+      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
       sudo systemctl enable --now "${fleet}-hermes-gateway.service"
       ;;
     launchd)
@@ -733,12 +738,14 @@ rollback() {
       uid="$(id -u)"
       launchctl bootout "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1 || true
       launchctl disable "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1 || true
+      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
       launchctl enable "gui/$uid/com.${fleet}.hermes-gateway"
       launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.${fleet}.hermes-gateway.plist" >/dev/null 2>&1 || true
       launchctl kickstart -k "gui/$uid/com.${fleet}.hermes-gateway"
       ;;
     supervisord)
       sudo supervisorctl stop "${fleet}-openclaw-gateway" >/dev/null 2>&1 || true
+      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
       sudo supervisorctl start "${fleet}-hermes-gateway"
       ;;
     *) die "unsupported supervisor for rollback: $supervisor" ;;

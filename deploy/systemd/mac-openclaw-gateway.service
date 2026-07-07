@@ -9,6 +9,7 @@ Type=simple
 User=__MAC_USER__
 WorkingDirectory=__MAC_HOME__
 ExecStart=__MAC_HOME__/bin/openclaw-gateway
+ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop
 Restart=always
 RestartSec=5
 KillMode=mixed
