@@ -414,6 +414,33 @@ def test_canonical_short_task_id_commit_message_recovers_legacy_publication(tmp_
     assert row["assessment"]["verdict"] == "verified"
 
 
+def test_canonical_short_task_id_in_other_task_prose_is_not_attribution(tmp_path):
+    repo, _landed, _unmerged = _repo(tmp_path)
+    task = _task("task_" + "d" * 32, "open", metadata=_repo_task_metadata())
+    other_task = "task_" + "e" * 32
+    (repo / "other-task.txt").write_text("done\n", encoding="utf-8")
+    _git(repo, "add", "other-task.txt")
+    _git(
+        repo,
+        "commit",
+        "-m",
+        "MAC task %s: reproduce failure on %s payload"
+        % (other_task, task["id"][:13]),
+    )
+    unrelated = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", unrelated)
+
+    report = build_task_ledger_audit(
+        [_detail(task)],
+        [_registered_repo(repo)],
+    )
+    row = report["tasks"][0]
+
+    assert row["repository"]["proof_sha"] is None
+    assert row["repository"]["claims"] == []
+    assert row["assessment"]["verdict"] == "active_valid"
+
+
 def test_canonical_exact_task_title_recovers_legacy_publication(tmp_path):
     repo, _landed, _unmerged = _repo(tmp_path)
     title = "Add deterministic navigation helper to the runtime"

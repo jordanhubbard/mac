@@ -97,7 +97,23 @@ def _task_commit_attribution(commit_message: str, task_id: str) -> str:
     if match is None:
         return "none"
     short_id = "task_" + match.group(1)[:8]
-    if re.search(r"(?<![0-9A-Za-z_])%s(?![0-9a-f])" % re.escape(short_id), commit_message):
+    subject = commit_message.splitlines()[0].strip()
+    # A short display id is not globally unique evidence when it merely occurs
+    # in descriptive prose (for example, ``MAC task task_A: reproduce the
+    # failure on task_B payload``).  Accept the legacy form only when the
+    # subject identifies it as the commit's primary task, or when an old/manual
+    # publication subject ends with the task reference.  Full 32-hex ids remain
+    # independently strong enough to match anywhere in the message.
+    primary = re.search(
+        r"^(?:MAC\s+task|task)\s+%s(?:\s*[:\-]|\s|$)" % re.escape(short_id),
+        subject,
+        flags=re.IGNORECASE,
+    )
+    terminal = re.search(
+        r"(?<![0-9A-Za-z_])%s(?:[.):,;!?])?$" % re.escape(short_id),
+        subject,
+    )
+    if primary or terminal:
         return "task_id_prefix_in_commit_message"
     return "none"
 
