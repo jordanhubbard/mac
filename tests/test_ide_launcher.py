@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -92,6 +93,71 @@ def test_required_or_broken_profile_fails_closed(monkeypatch) -> None:
     )
     with pytest.raises(ide_launcher.IdeLauncherError, match="SSH failed"):
         ide_launcher.resolve_ide_connection({"MAC_API_TOKEN": "must-not-fallback"})
+
+
+def test_private_deploy_handoff_file_precedes_legacy_tokens(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(ide_launcher, "active_profile_name", lambda: None)
+    handoff = tmp_path / "fleet-ide-handoff.json"
+    handoff.write_text(
+        json.dumps(
+            {
+                "schema": ide_launcher.HANDOFF_SCHEMA,
+                "api_url": "http://127.0.0.1:8789",
+                "token": "handoff-token-placeholder",
+                "source": "fleet-deploy",
+                "hub_port": 8789,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    handoff.chmod(0o600)
+
+    connection = ide_launcher.resolve_ide_connection(
+        {
+            "IDE_HANDOFF_FILE": str(handoff),
+            "MAC_API_TOKEN": "legacy-token-placeholder",
+        }
+    )
+    child = ide_launcher.build_vite_environment(
+        connection,
+        {
+            "IDE_HANDOFF_FILE": str(handoff),
+            "MAC_API_TOKEN": "legacy-token-placeholder",
+        },
+    )
+
+    assert connection == ide_launcher.IdeConnection(
+        api_url="http://127.0.0.1:8789",
+        token="handoff-token-placeholder",
+        source="handoff-file:fleet-deploy",
+    )
+    assert child["MAC_IDE_PROXY_TOKEN"] == "handoff-token-placeholder"
+    assert "IDE_HANDOFF_FILE" not in child
+    assert "MAC_API_TOKEN" not in child
+
+
+def test_private_deploy_handoff_file_requires_owner_only_permissions(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(ide_launcher, "active_profile_name", lambda: None)
+    handoff = tmp_path / "fleet-ide-handoff.json"
+    handoff.write_text(
+        json.dumps(
+            {
+                "schema": ide_launcher.HANDOFF_SCHEMA,
+                "api_url": "http://127.0.0.1:8789",
+                "token": "handoff-token-placeholder",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    handoff.chmod(0o644)
+
+    with pytest.raises(ide_launcher.IdeLauncherError, match="permissions"):
+        ide_launcher.resolve_ide_connection({"IDE_HANDOFF_FILE": str(handoff)})
 
 
 def test_vite_environment_keeps_token_server_side() -> None:
@@ -252,6 +318,21 @@ def test_run_starts_vite_without_token_in_command(tmp_path, monkeypatch) -> None
     ]
     assert "secret-token" not in " ".join(seen["command"])
     assert seen["env"]["MAC_IDE_PROXY_TOKEN"] == "secret-token"
+
+
+def test_open_flag_does_not_put_credentials_in_vite_command() -> None:
+    command = ide_launcher.vite_command(
+        {
+            "NPM": "npm",
+            "IDE_HOST": "127.0.0.1",
+            "IDE_PORT": "5273",
+            "IDE_OPEN": "1",
+            "IDE_TOKEN": "must-not-enter-command",
+        }
+    )
+
+    assert command[-1] == "--open"
+    assert "must-not-enter-command" not in " ".join(command)
 
 
 def test_main_handles_ctrl_c_without_traceback(monkeypatch) -> None:

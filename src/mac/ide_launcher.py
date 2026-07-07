@@ -8,13 +8,16 @@ exposed to the rendered application.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Callable, MutableMapping, Optional, Sequence
 from urllib.parse import urlsplit
 
 from mac.client_login import ClientLoginError, ensure_session
@@ -27,7 +30,20 @@ from mac.client_profiles import (
 
 DEFAULT_API_URL = "http://127.0.0.1:8789"
 DEFAULT_HUB_PORT = 8789
+HANDOFF_SCHEMA = "mac.ide_handoff.v1"
 _AUTH_MODES = {"auto", "profile", "manual"}
+_HANDOFF_ENV_KEYS = ("IDE_HANDOFF_FILE", "MAC_IDE_HANDOFF_FILE")
+_HANDOFF_ALLOWED = {
+    "schema",
+    "api_url",
+    "token",
+    "profile",
+    "source",
+    "hub_port",
+    "fleet",
+    "hub_agent",
+    "created_at",
+}
 
 
 class IdeLauncherError(RuntimeError):
@@ -72,8 +88,94 @@ def _legacy_token(env: Mapping[str, str]) -> tuple[str, str]:
     return "", "manual"
 
 
+def _truthy(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _normalize_fleet(value: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in value.upper()).strip("_")
+
+
+def _handoff_file(env: Mapping[str, str]) -> Optional[Path]:
+    for key in _HANDOFF_ENV_KEYS:
+        raw = _value(env, key)
+        if raw:
+            return Path(raw).expanduser()
+    return None
+
+
+def _assert_owner_only_file(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError as exc:
+        raise IdeLauncherError("IDE handoff file was not found: %s" % path) from exc
+    if stat.S_ISLNK(info.st_mode):
+        raise IdeLauncherError("IDE handoff file must not be a symlink: %s" % path)
+    if not stat.S_ISREG(info.st_mode):
+        raise IdeLauncherError("IDE handoff file must be a regular file: %s" % path)
+    if os.name == "nt":
+        return
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise IdeLauncherError("IDE handoff file must be owned by the current user: %s" % path)
+    mode = info.st_mode & 0o777
+    if mode & 0o077:
+        raise IdeLauncherError(
+            "IDE handoff file permissions are %04o; expected 0600 or stricter" % mode
+        )
+
+
+def _token_from_handoff(value: Any, *, path: Path) -> str:
+    token = str(value or "")
+    if token != token.strip() or not token:
+        raise IdeLauncherError("IDE handoff file has an empty or padded token: %s" % path)
+    if any(ord(char) < 32 or char.isspace() for char in token):
+        raise IdeLauncherError("IDE handoff file token contains whitespace: %s" % path)
+    return token
+
+
+def _hub_port_from_handoff(value: Any, *, path: Path) -> int:
+    if value in (None, ""):
+        return DEFAULT_HUB_PORT
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as exc:
+        raise IdeLauncherError("IDE handoff file has an invalid hub port: %s" % path) from exc
+    if not 1 <= port <= 65535:
+        raise IdeLauncherError("IDE handoff file has an invalid hub port: %s" % path)
+    return port
+
+
+def load_handoff_connection(path: Path, *, api_url_override: str = "") -> IdeConnection:
+    """Read a private deploy handoff without putting its token in URLs or argv."""
+
+    _assert_owner_only_file(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise IdeLauncherError("IDE handoff file is not valid JSON: %s" % path) from exc
+    except OSError as exc:
+        raise IdeLauncherError("could not read IDE handoff file %s: %s" % (path, exc)) from exc
+    if not isinstance(raw, Mapping):
+        raise IdeLauncherError("IDE handoff file must contain a JSON object: %s" % path)
+    unknown = sorted(set(raw) - _HANDOFF_ALLOWED)
+    if unknown:
+        raise IdeLauncherError(
+            "IDE handoff file contains unsupported field(s): %s" % ", ".join(unknown)
+        )
+    if raw.get("schema") != HANDOFF_SCHEMA:
+        raise IdeLauncherError("IDE handoff file schema must be %s" % HANDOFF_SCHEMA)
+
+    api_url = _validated_api_url(api_url_override or str(raw.get("api_url") or DEFAULT_API_URL))
+    token = _token_from_handoff(raw.get("token"), path=path)
+    profile = str(raw.get("profile") or "").strip() or None
+    source = str(raw.get("source") or "deploy-handoff").strip() or "deploy-handoff"
+    return IdeConnection(
+        api_url=api_url,
+        token=token,
+        source="handoff-file:%s" % source,
+        profile=profile,
+        hub_port=_hub_port_from_handoff(raw.get("hub_port"), path=path),
+    )
 
 
 def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnection:
@@ -143,6 +245,13 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
     if requested_profile or auth_mode == "profile":
         raise IdeLauncherError(
             "no active MAC login profile; run `mac login` before starting the GUI"
+        )
+
+    handoff_path = _handoff_file(values)
+    if handoff_path:
+        return load_handoff_connection(
+            handoff_path,
+            api_url_override=explicit_api_url,
         )
 
     token, source = _legacy_token(values)
@@ -260,6 +369,8 @@ def build_vite_environment(
     for key in list(child):
         if key in {
             "IDE_TOKEN",
+            "IDE_HANDOFF_FILE",
+            "MAC_IDE_HANDOFF_FILE",
             "VITE_MAC_TOKEN",
             "MAC_API_TOKEN",
             "MAC_DEPLOY_HUB_TOKEN",
@@ -285,7 +396,10 @@ def vite_command(env: Mapping[str, str]) -> Sequence[str]:
     npm = shlex.split(_value(env, "NPM") or "npm")
     host = _value(env, "IDE_HOST") or "127.0.0.1"
     port = _value(env, "IDE_PORT") or "5273"
-    return [*npm, "run", "dev", "--", "--host", host, "--port", port]
+    command = [*npm, "run", "dev", "--", "--host", host, "--port", port]
+    if _truthy(_value(env, "IDE_OPEN") or _value(env, "IDE_OPEN_BROWSER")):
+        command.append("--open")
+    return command
 
 
 def run(env: Optional[Mapping[str, str]] = None) -> int:

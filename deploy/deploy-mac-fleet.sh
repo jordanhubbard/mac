@@ -6335,6 +6335,68 @@ upsert_local_env() {
   chmod 600 "$env_file"
 }
 
+write_ide_handoff_file() {
+  local api_url="$1" token="$2" hub_agent="$3" fleet_name="$4"
+  local handoff_file="${MAC_DEPLOY_IDE_HANDOFF_FILE:-$HOME/.mac/fleet-ide-handoff.json}"
+  "$PYTHON_BIN" -c '
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+
+path = Path(sys.argv[1]).expanduser()
+api_url = sys.argv[2].strip().rstrip("/")
+hub_agent = sys.argv[3].strip()
+fleet_name = sys.argv[4].strip()
+token = os.fdopen(3, "r", encoding="utf-8").read()
+if token.endswith("\n"):
+    token = token[:-1]
+parsed = urlsplit(api_url)
+if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    raise SystemExit("invalid Fleet IDE handoff URL")
+if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    raise SystemExit("Fleet IDE handoff URL must not contain credentials, query, or fragment")
+if token != token.strip() or not token or any(ord(ch) < 32 or ch.isspace() for ch in token):
+    raise SystemExit("invalid Fleet IDE handoff token")
+path.parent.mkdir(parents=True, exist_ok=True)
+try:
+    path.parent.chmod(0o700)
+except OSError:
+    pass
+payload = {
+    "schema": "mac.ide_handoff.v1",
+    "api_url": api_url,
+    "token": token,
+    "hub_port": 8789,
+    "source": "fleet-deploy",
+    "hub_agent": hub_agent,
+    "fleet": fleet_name,
+    "created_at": datetime.now(timezone.utc).isoformat(),
+}
+fd, tmp_name = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
+tmp = Path(tmp_name)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+finally:
+    if tmp.exists():
+        tmp.unlink()
+print(path)
+' "$handoff_file" "$api_url" "$hub_agent" "$fleet_name" 3<<<"$token"
+}
+
 read_hub_token() {
   local target hub_agent ssh_parts=() ssh_args=() ssh_target item last_index
   target="$(hub_target)"
@@ -6497,7 +6559,7 @@ worker_can_reach_hub_url() {
 
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count
+  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
@@ -6566,10 +6628,11 @@ main() {
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"
       upsert_local_env "$hub_token_key" "$hub_token"
+      ide_handoff_file="$(write_ide_handoff_file "http://127.0.0.1:8789" "$hub_token" "$hub_agent" "$fleet_name_field")"
       echo "==> ${agent}: hub UI access:"
       echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
-      echo "    2. open browser: http://localhost:8789/ui?t=${hub_token}"
-      echo "       (token auto-populates from ?t= param and is stripped from the URL)"
+      echo "    2. open Fleet IDE: IDE_HANDOFF_FILE=$(shell_quote "$ide_handoff_file") IDE_OPEN=1 make run-gui"
+      echo "       (bearer stored in the owner-only handoff file; not printed or placed in the URL)"
       echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as $hub_token_key"
       hub_tunnel_pubkey="$(read_hub_tunnel_pubkey)"
     else

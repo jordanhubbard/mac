@@ -422,11 +422,18 @@ terminal it then prompts for the target hub URL; press Enter for the profile
 endpoint, enter another `http://` or `https://` host, or set `IDE_API_URL`
 beforehand to skip the prompt. The credential stays inside the local Vite proxy
 and is not exposed to browser storage. If no active profile exists, the launcher
-sources `~/.mac/.env` and selects a token
-without printing it. Set `IDE_FLEET=<fleet>` to prefer the matching
-`MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls back to
-`MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run` compatibility
-alias uses the same launcher.
+can read a deploy-created owner-only handoff file:
+
+```bash
+IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make run-gui
+```
+
+The handoff file keeps the bearer out of browser-visible environment, argv,
+stdout, and deploy logs. As a final compatibility fallback the launcher sources
+`~/.mac/.env` and selects a token without printing it. Set `IDE_FLEET=<fleet>` to
+prefer the matching `MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls
+back to `MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run`
+compatibility alias uses the same launcher.
 
 ## Tell Agents To Work On A Project
 

@@ -11,9 +11,11 @@ CODEGRAPH ?= codegraph
 IDE_DIR ?= ide
 IDE_API_URL ?=
 IDE_AUTH ?= auto
+IDE_HANDOFF_FILE ?=
 IDE_PROFILE ?=
 IDE_FLEET ?=
 IDE_HOST ?= 127.0.0.1
+IDE_OPEN ?= 0
 IDE_PORT ?= 5273
 IDE_PACKAGE ?= dist/mac-ide-web.tar.gz
 IDE_NODE_MODULES_STAMP := $(IDE_DIR)/node_modules/.package-lock.json
@@ -253,9 +255,11 @@ ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_ST
 	IDE_DIR="$(abspath $(IDE_DIR))" \
 	IDE_API_URL="$(IDE_API_URL)" \
 	IDE_AUTH="$(IDE_AUTH)" \
+	IDE_HANDOFF_FILE="$(IDE_HANDOFF_FILE)" \
 	IDE_PROFILE="$(IDE_PROFILE)" \
 	IDE_FLEET="$(IDE_FLEET)" \
 	IDE_HOST="$(IDE_HOST)" \
+	IDE_OPEN="$(IDE_OPEN)" \
 	IDE_PORT="$(IDE_PORT)" \
 	NPM="$(NPM)" \
 	"$(PYTHON)" -m mac.ide_launcher

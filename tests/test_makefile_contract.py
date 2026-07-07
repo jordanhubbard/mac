@@ -83,12 +83,15 @@ def test_make_dry_run_builds_both_supported_surfaces() -> None:
 
 def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     launcher = (ROOT / "src" / "mac" / "ide_launcher.py").read_text(encoding="utf-8")
     vite_config = (ROOT / "ide" / "vite.config.ts").read_text(encoding="utf-8")
     app = (ROOT / "ide" / "src" / "App.tsx").read_text(encoding="utf-8")
 
     assert "IDE_FLEET ?=" in makefile
     assert "IDE_AUTH ?= auto" in makefile
+    assert "IDE_HANDOFF_FILE ?=" in makefile
+    assert "IDE_OPEN ?= 0" in makefile
     assert "IDE_PROFILE ?=" in makefile
     assert "run-gui: ide-run" in makefile
     assert 'if [ -f "$$HOME/.mac/.env" ]' in makefile
@@ -96,6 +99,7 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert "IDE auth token: %s" not in makefile
     assert "ensure_session(selected_profile)" in launcher
     assert 'load_profile(selected_profile, include_token=True)' in launcher
+    assert "load_handoff_connection" in launcher
     assert 'child["MAC_IDE_PROXY_TOKEN"] = connection.token' in launcher
     assert 'child.pop("VITE_MAC_TOKEN"' not in launcher
     assert '"VITE_MAC_TOKEN",' in launcher
@@ -103,6 +107,10 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert 'proxyRequest.setHeader("Authorization"' in vite_config
     assert "hasManagedAuth" in app
     assert "authLabel" in app
+    assert "http://localhost:8789/ui?t=${hub_token}" not in deploy
+    assert "write_ide_handoff_file" in deploy
+    assert "mac.ide_handoff.v1" in deploy
+    assert "IDE_OPEN=1 make run-gui" in deploy
 
 
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:

@@ -37,8 +37,15 @@ the URL, or exposed to browser storage. Set `IDE_PROFILE=<name>` to select a
 non-active profile.
 
 If no client profile exists, the launcher falls back to the existing
-fleet-scoped environment token lookup and finally to the browser's manual
-connection form. Use `IDE_AUTH=manual make run-gui` to force that fallback, or
+deploy handoff file, then the existing fleet-scoped environment token lookup,
+and finally to the browser's manual connection form. `deploy-mac-fleet.sh`
+writes the handoff as an owner-only JSON file and prints a token-free command:
+
+```bash
+IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make run-gui
+```
+
+Use `IDE_AUTH=manual make run-gui` to force the browser form, or
 `IDE_API_URL=<url>` to select the endpoint without an interactive prompt. The
 existing `make ide-run` target is a compatibility alias. Non-interactive runs
 also skip the prompt and retain the resolved profile or default endpoint.
