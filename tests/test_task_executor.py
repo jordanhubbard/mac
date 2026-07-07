@@ -226,6 +226,48 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     assert "mac_sandbox_toolchain_setup" in argv[-1]
 
 
+def test_openshell_create_args_drop_stale_codex_file_auth_when_env_auth_wins(
+    monkeypatch,
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("MAC_OPENSHELL_UPLOAD_CODEX_AUTH", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
+    monkeypatch.setenv(
+        "MAC_OPENSHELL_CREATE_ARGS",
+        "--from image --gpu "
+        "--upload /host/sandbox.yaml:/tmp/.hermes/config.yaml "
+        "--upload /host/.codex/auth.json:/tmp/.codex/auth.json",
+    )
+
+    argv = te._openshell_extra_create_argv()
+
+    assert argv == [
+        "--from",
+        "image",
+        "--gpu",
+        "--upload",
+        "/host/sandbox.yaml:/tmp/.hermes/config.yaml",
+    ]
+
+
+def test_openshell_create_args_require_both_file_auth_risk_flags(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "MAC_OPENSHELL_CREATE_ARGS",
+        "--from image --upload /host/.codex/auth.json:/tmp/.codex/auth.json",
+    )
+    monkeypatch.setenv("MAC_OPENSHELL_UPLOAD_CODEX_AUTH", "1")
+    monkeypatch.delenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", raising=False)
+    assert "/host/.codex/auth.json:/tmp/.codex/auth.json" not in (
+        te._openshell_extra_create_argv()
+    )
+
+    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
+    assert "/host/.codex/auth.json:/tmp/.codex/auth.json" in (
+        te._openshell_extra_create_argv()
+    )
+
+
 def test_sandbox_toolchain_setup_exports_repository_contract_env(tmp_path):
     workspace = tmp_path / "task"
     workspace.mkdir()

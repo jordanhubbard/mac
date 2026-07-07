@@ -221,7 +221,10 @@ the sandbox**:
    copy-only: a throwaway sandbox can consume and rotate the refresh token while
    the replacement is lost with the sandbox. `bootstrap-openshell.sh` only
    uploads Codex file auth when `MAC_OPENSHELL_UPLOAD_CODEX_AUTH=1`, and the
-   executor only probes that auth when `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1`.
+   executor only retains and probes that upload when
+   `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1` is also still set. A stale rendered
+   upload is removed at execution time, and `OPENAI_API_KEY` always suppresses
+   the file copy because environment auth wins.
 3. **Baseline repo tools present** — the MAC OpenShell image installs `git`,
    `gh`, and `codegraph`; custom images must provide the same baseline if they
    are used for repository work.

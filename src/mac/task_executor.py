@@ -4322,6 +4322,50 @@ def _write_sandbox_runtime_files(
     return env_file, toolchain_file
 
 
+def _openshell_extra_create_argv() -> List[str]:
+    """Parse executor-owned OpenShell args and remove stale Codex file auth.
+
+    ``bootstrap-openshell.sh`` only writes the Codex OAuth upload when the
+    operator opts in, but the rendered ``MAC_OPENSHELL_CREATE_ARGS`` can outlive
+    that opt-in.  Never keep copying the rotating host auth file merely because
+    an old recipe still contains it.  File auth is retained only when both
+    explicit risk flags remain enabled *and* no environment API key is present;
+    environment auth wins the coding-agent selection and makes the file both
+    unnecessary and unsafe to copy into a throwaway sandbox.
+    """
+    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+    if not extra:
+        return []
+    argv = shlex.split(extra)
+    if "--env" in argv or "--" in argv:
+        raise ValueError(
+            "MAC_OPENSHELL_CREATE_ARGS may not contain --env or --; "
+            "use MAC_OPENSHELL_ENV_PASSTHROUGH for private environment transfer"
+        )
+    permit_codex_file_auth = (
+        not (os.environ.get("OPENAI_API_KEY") or "").strip()
+        and _truthy(os.environ.get("MAC_OPENSHELL_UPLOAD_CODEX_AUTH"))
+        and _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH"))
+    )
+    filtered: List[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--upload" and index + 1 < len(argv):
+            upload = argv[index + 1]
+            _source, separator, destination = upload.rpartition(":")
+            if (
+                separator
+                and destination == "/tmp/.codex/auth.json"
+                and not permit_codex_file_auth
+            ):
+                index += 2
+                continue
+        filtered.append(token)
+        index += 1
+    return filtered
+
+
 def _build_sandbox_create_argv(
     name: str, workspace: Path, basename: str, agent_argv: List[str]
 ) -> List[str]:
@@ -4346,15 +4390,7 @@ def _build_sandbox_create_argv(
     argv += _sandbox_label_argv(
         "task", keep=_truthy(os.environ.get("MAC_OPENSHELL_KEEP"))
     )
-    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
-    if extra:
-        extra_argv = shlex.split(extra)
-        if "--env" in extra_argv or "--" in extra_argv:
-            raise ValueError(
-                "MAC_OPENSHELL_CREATE_ARGS may not contain --env or --; "
-                "use MAC_OPENSHELL_ENV_PASSTHROUGH for private environment transfer"
-            )
-        argv += extra_argv
+    argv += _openshell_extra_create_argv()
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     inner = "\n".join(
         [
@@ -5131,12 +5167,7 @@ def _build_sandbox_probe_argv(
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
     argv += _sandbox_label_argv("codingcap")
-    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
-    if extra:
-        extra_argv = shlex.split(extra)
-        if "--env" in extra_argv or "--" in extra_argv:
-            raise ValueError("MAC_OPENSHELL_CREATE_ARGS may not contain --env or --")
-        argv += extra_argv
+    argv += _openshell_extra_create_argv()
     sandbox_dir = "/sandbox/%s" % private_dir.name
     argv += ["--upload", "%s:/sandbox" % private_dir]
     inner = "\n".join(
