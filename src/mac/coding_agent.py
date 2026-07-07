@@ -189,6 +189,13 @@ def _detect_codex(
     binary = _which("codex", which)
     if not binary:
         return False, "", "", "codex: not on PATH"
+    # Prefer non-rotating environment auth when available.  The OpenShell
+    # executor already transfers OPENAI_API_KEY/OPENAI_BASE_URL through its
+    # private mode-0600 environment file, so this route can be verified inside
+    # an ephemeral sandbox without copying Codex's rotating OAuth refresh-token
+    # store and potentially leaving the host copy stale.
+    if str(env.get("OPENAI_API_KEY") or "").strip():
+        return True, binary, "OPENAI_API_KEY", "codex: authed via OPENAI_API_KEY"
     auth = home / ".codex" / "auth.json"
     try:
         present = auth.is_file() and auth.stat().st_size > 0
@@ -196,7 +203,12 @@ def _detect_codex(
         present = False
     if present:
         return True, binary, "~/.codex/auth.json", "codex: authed via ~/.codex/auth.json"
-    return False, binary, "", "codex: on PATH but ~/.codex/auth.json missing or empty"
+    return (
+        False,
+        binary,
+        "",
+        "codex: on PATH but no OPENAI_API_KEY and ~/.codex/auth.json missing or empty",
+    )
 
 
 def _detect_cursor(

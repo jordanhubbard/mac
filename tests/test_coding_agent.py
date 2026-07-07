@@ -108,6 +108,23 @@ def test_codex_chosen_when_claude_unauthed(tmp_path):
     assert choice.agent == "codex"
 
 
+def test_codex_prefers_openshell_safe_environment_auth(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "auth.json").write_text(
+        json.dumps({"tokens": {"refresh_token": "rotating"}}), encoding="utf-8"
+    )
+
+    choice = resolve_coding_agent(
+        env={"OPENAI_API_KEY": "sandbox-safe-key"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert choice.agent == "codex"
+    assert choice.auth_source == "OPENAI_API_KEY"
+    assert choice.rationale == ["claude: not on PATH", "codex: authed via OPENAI_API_KEY"]
+
+
 # --------------------------------------------------------------------------- #
 # Knobs: disable / pin
 # --------------------------------------------------------------------------- #
