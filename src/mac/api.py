@@ -1047,6 +1047,11 @@ class ObservabilityLogCreate(BaseModel):
     detail: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ObservabilityPruneRequest(BaseModel):
+    older_than: Optional[str] = None
+    keep_last: Optional[int] = None
+
+
 class NotificationDelivery(BaseModel):
     status: str = "delivered"
 
@@ -1449,6 +1454,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path.startswith("/agentbus"):
         return "agent"
+    if path == "/observability/prune":
+        # Pruning deletes global telemetry, so it requires an unbound admin
+        # principal rather than the agent scope used to append observations.
+        return "admin"
     if path.startswith("/observability"):
         return "agent"
     if path.startswith("/action-events"):
@@ -5703,6 +5712,14 @@ def create_app(
         # calling .to_dict() on None, which 500'd on every silenced poll log.
         event = cp.record_log(**_data(body))
         return event.to_dict() if event is not None else {"filtered": True}
+
+    @app.post("/observability/prune")
+    def prune_observability(
+        body: ObservabilityPruneRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, int]:
+        principal.require_global_fleet()
+        return {"removed": cp.prune_observability(**_data(body))}
 
     @app.get("/observability/metrics")
     def list_observability_metrics(

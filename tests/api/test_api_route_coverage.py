@@ -1469,6 +1469,7 @@ edges:
             "source": "route-coverage",
             "detail": {"ok": True},
         },
+        ("POST", "/observability/prune"): {"keep_last": 100},
         ("POST", "/memory/remembered"): {
             "key": "route-memory-key",
             "content": "route remembered memory content",

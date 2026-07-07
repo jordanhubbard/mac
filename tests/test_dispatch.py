@@ -941,6 +941,60 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
     assert token == "tok"
 
 
+def test_remote_observability_prune_via_cli_uses_hub(monkeypatch):
+    """The documented CLI path must prune through the hub, never local SQLite."""
+    import json as _json
+
+    from mac.cli import main
+    from mac.http_client import HubClient
+
+    monkeypatch.delenv("MAC_API_URL", raising=False)
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+
+    fake = _FakeTransport(
+        response_for={("POST", "/observability/prune"): {"removed": 7}}
+    )
+    original_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: original_init(
+            self, base_url, token=token, transport=fake
+        ),
+    )
+
+    output = io.StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = output
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "--token",
+                "tok",
+                "observability",
+                "prune",
+                "--keep-last",
+                "100",
+            ]
+        )
+    finally:
+        sys.stdout = old_stdout
+
+    assert rc == 0
+    assert _json.loads(output.getvalue()) == {"removed": 7}
+    assert fake.calls == [
+        (
+            "POST",
+            "http://hub.example:8789/observability/prune",
+            {"keep_last": 100},
+            "tok",
+        )
+    ]
+
+
 def test_remote_dispatch_task_show_via_cli(monkeypatch):
     import io
     import json as _json

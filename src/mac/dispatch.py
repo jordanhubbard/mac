@@ -1852,12 +1852,16 @@ class RemoteDispatch:
         older_than: Optional[str] = None,
         keep_last: Optional[int] = None,
     ) -> int:
-        # No HTTP endpoint exposes prune. Surface a clear refusal so the
-        # operator either uses --db or waits for the matching route.
-        raise DispatchError(
-            "prune_observability has no HTTP endpoint yet; run `mac --db <path> "
-            "observability prune` against the hub's SQLite file via ssh."
+        result = self._post(
+            "/observability/prune",
+            _drop_none(
+                {
+                    "older_than": older_than,
+                    "keep_last": keep_last,
+                }
+            ),
         )
+        return int(result["removed"])
 
     # -- Unknown methods ----------------------------------------------------
 

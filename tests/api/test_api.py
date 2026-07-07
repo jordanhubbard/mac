@@ -2667,6 +2667,65 @@ def test_observability_api_records_lists_and_streams_metrics_and_logs():
     assert [line["id"] for line in lines[:2]] == [metric["id"], log["id"]]
 
 
+def test_observability_prune_api_supports_both_selectors_and_validation():
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+
+    old = cp.record_log("prune.old", layer="test", source="api-test")
+    cp.record_log("prune.new", layer="test", source="api-test")
+    cp.store.execute(
+        "UPDATE observability_events SET created_at = ? WHERE id = ?",
+        ("2020-01-01T00:00:00+00:00", old.id),
+    )
+
+    by_age = client.post(
+        "/observability/prune",
+        json={"older_than": "2021-01-01T00:00:00+00:00"},
+    )
+    assert by_age.status_code == 200
+    assert by_age.json() == {"removed": 1}
+
+    cp.record_log("prune.extra.1", layer="test", source="api-test")
+    cp.record_log("prune.extra.2", layer="test", source="api-test")
+    by_count = client.post("/observability/prune", json={"keep_last": 1})
+    assert by_count.status_code == 200
+    assert by_count.json() == {"removed": 2}
+    assert len(cp.list_observability(limit=10)) == 1
+
+    invalid = client.post("/observability/prune", json={})
+    assert invalid.status_code == 400
+    assert "requires older_than or keep_last" in invalid.json()["detail"]
+
+
+def test_observability_prune_requires_global_admin_scope():
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={
+                "reader": ["read"],
+                "agent": ["agent"],
+                "admin": ["admin"],
+            },
+        )
+    )
+
+    for token in ("reader", "agent"):
+        response = client.post(
+            "/observability/prune",
+            headers={"Authorization": "Bearer %s" % token},
+            json={"keep_last": 10},
+        )
+        assert response.status_code == 403
+
+    allowed = client.post(
+        "/observability/prune",
+        headers={"Authorization": "Bearer admin"},
+        json={"keep_last": 10},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json() == {"removed": 0}
+
+
 def test_observability_logs_silenced_poll_name_is_filtered_not_500():
     """mem-04 silences high-volume idle-poll log names (record_log -> None).
     The endpoint must report that as filtered, not 500 on .to_dict() of None."""

@@ -44,6 +44,7 @@ class RecordingClient:
             "lease_expires_at": "2030-01-01T00:00:00+00:00",
             "content": "value",
             "deleted": True,
+            "removed": 2,
             "value": {},
             "stats": {},
         }
@@ -212,3 +213,23 @@ def test_dispatch_hold_uses_hub_endpoints_and_quotes_agent_id() -> None:
         ),
         ("DELETE", "/agents/agent%2Fworker/dispatch-hold", None),
     ]
+
+
+def test_observability_prune_uses_hub_endpoint_and_returns_count() -> None:
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    removed = dispatch.prune_observability(
+        older_than="2026-01-01T00:00:00+00:00",
+        keep_last=100,
+    )
+
+    assert removed == 2
+    assert client.calls[-1] == (
+        "POST",
+        "/observability/prune",
+        {
+            "older_than": "2026-01-01T00:00:00+00:00",
+            "keep_last": 100,
+        },
+    )
