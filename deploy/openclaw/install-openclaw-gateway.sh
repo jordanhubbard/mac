@@ -55,6 +55,29 @@ find_openshell() {
   return 1
 }
 
+find_docker() {
+  if [ -n "${MAC_OPENCLAW_DOCKER_BIN:-}" ] && [ -x "$MAC_OPENCLAW_DOCKER_BIN" ]; then
+    printf '%s\n' "$MAC_OPENCLAW_DOCKER_BIN"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    command -v docker
+    return
+  fi
+  # Docker Desktop deliberately does not always install its CLI symlink.
+  # Non-interactive launchd/SSH sessions also omit GUI application paths.
+  for candidate in \
+    /Applications/Docker.app/Contents/Resources/bin/docker \
+    /usr/local/bin/docker \
+    /opt/homebrew/bin/docker; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
+
 resolve_slack_home_target() {
   local configured="${1:-}" account_id="${2:-default}"
   local homes_file="${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}"
@@ -500,21 +523,23 @@ EOF
 }
 
 build_image() {
+  if truthy "$DRY_RUN" && ! truthy "$SKIP_IMAGE"; then
+    log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE"
+    return
+  fi
+  local docker_bin
+  docker_bin="$(find_docker)" || die "Docker CLI not found; install Docker Desktop or set MAC_OPENCLAW_DOCKER_BIN"
   if truthy "$SKIP_IMAGE"; then
-    docker image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1 \
+    "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1 \
       || die "MAC_OPENCLAW_SKIP_IMAGE=1 but $OPENCLAW_IMAGE is absent"
     return
   fi
-  if docker image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1; then
+  if "$docker_bin" image inspect "$OPENCLAW_IMAGE" >/dev/null 2>&1; then
     log "pinned stock OpenClaw image already present"
     return
   fi
   [ -f "$CONTAINERFILE" ] || die "Containerfile not found: $CONTAINERFILE"
-  if truthy "$DRY_RUN"; then
-    log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE"
-    return
-  fi
-  docker build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$(dirname "$CONTAINERFILE")"
+  "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$(dirname "$CONTAINERFILE")"
 }
 
 backup_and_delete_stale_sandbox() {

@@ -33,6 +33,9 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
     assert 'OPENCLAW_IMAGE_REVISION="4"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
+    assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
+    assert 'docker_bin="$(find_docker)"' in installer
+    assert '"$docker_bin" build --pull' in installer
     assert "USER sandbox" in container
     assert "nemoclaw gateway" not in container.lower()
     assert "/nemoclaw" not in container.lower()
