@@ -2540,7 +2540,7 @@ class MacWorker:
         containerfile = repo / _OPENSHELL_CONTAINERFILE_RELPATH
         image_builder = repo / "deploy/openshell/build-runtime-image.sh"
         tag = (os.environ.get("MAC_OPENSHELL_IMAGE_TAG") or "").strip() or "localhost/mac-hermes:net"
-        docker = shutil.which((os.environ.get("MAC_OPENSHELL_DOCKER_BIN") or "").strip() or "docker")
+        docker = _resolve_openshell_docker_bin()
         if not containerfile.is_file() or not image_builder.is_file() or not docker:
             self._observe_log(
                 "worker.openshell.image_drift",
@@ -6335,6 +6335,36 @@ def _extract_marked_summary(text: str) -> str:
 #: Path (relative to the self-update repo root) of the OpenShell sandbox image
 #: build recipe.
 _OPENSHELL_CONTAINERFILE_RELPATH = "deploy/openshell/mac-hermes.Containerfile"
+
+
+def _resolve_openshell_docker_bin() -> Optional[str]:
+    """Resolve Docker from service-safe paths, including Docker Desktop.
+
+    macOS launchd jobs do not inherit the interactive shell PATH, so a plain
+    ``shutil.which('docker')`` incorrectly reports drift on an otherwise ready
+    host.  Keep the configured override first, then conventional service paths.
+    """
+    configured = (os.environ.get("MAC_OPENSHELL_DOCKER_BIN") or "").strip()
+    if configured:
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+        candidate = Path(configured).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        return None
+    resolved = shutil.which("docker")
+    if resolved:
+        return resolved
+    for raw in (
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/usr/local/bin/docker",
+    ):
+        candidate = Path(raw)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def _openshell_containerfile_changed(repo: Path, before_sha: str, after_sha: str) -> bool:

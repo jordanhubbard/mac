@@ -366,7 +366,7 @@ def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(marker))
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") is None
     marker.unlink()
-    monkeypatch.setattr(worker.shutil, "which", lambda *_a: None)
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: None)
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "drift"
 
 
@@ -380,7 +380,8 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_TAG", "custom:tag")
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(tmp_path / "image-source-sha"))
-    monkeypatch.setattr(worker.shutil, "which", lambda name: "/docker" if name != "podman" else None)
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/docker")
+    monkeypatch.setattr(worker.shutil, "which", lambda name: None if name == "podman" else "/docker")
     monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("daemon down")))
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "failed"
 
@@ -410,6 +411,7 @@ def test_openshell_image_podman_mirror_success_and_failure(monkeypatch, tmp_path
     image_builder.write_text("#!/usr/bin/env bash\n")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(tmp_path / "image-source-sha"))
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/docker")
     monkeypatch.setattr(worker.shutil, "which", lambda name: "/" + name)
     calls = []
     monkeypatch.setattr(worker.subprocess, "run", lambda *a, **k: calls.append((a, k)) or _cp())
@@ -421,6 +423,19 @@ def test_openshell_image_podman_mirror_success_and_failure(monkeypatch, tmp_path
 
     monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError("save failed")))
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "rebuilt"
+
+
+def test_resolve_openshell_docker_bin_supports_launchd_paths(monkeypatch, tmp_path) -> None:
+    configured = tmp_path / "configured-docker"
+    configured.write_text("#!/bin/sh\n")
+    configured.chmod(0o755)
+    monkeypatch.setenv("MAC_OPENSHELL_DOCKER_BIN", str(configured))
+    monkeypatch.setattr(worker.shutil, "which", lambda *_a: None)
+    assert worker._resolve_openshell_docker_bin() == str(configured)
+
+    monkeypatch.delenv("MAC_OPENSHELL_DOCKER_BIN")
+    monkeypatch.setattr(worker.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    assert worker._resolve_openshell_docker_bin() == "/usr/bin/docker"
 
 
 def test_repo_update_service_restart_results(monkeypatch, tmp_path) -> None:
