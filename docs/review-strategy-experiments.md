@@ -155,6 +155,82 @@ mac review experiment report review-protocol-2026-07 \
   --min-validated-outcomes-per-arm=1
 ```
 
+## Ledger source map and extraction plan
+
+Use the durable task ledger as the only source of truth. For SQLite, the JSON
+examples below use `json_extract`; for Postgres, use the equivalent JSONB
+operators on the same stored columns.
+
+| Question | Durable sources | Existing code/docs/tests | Extraction |
+| --- | --- | --- | --- |
+| Reviewer relationship | `evidence.metadata.verification` for executor and `review_verdict` manifests; `reviews.reviewer_agent_id/evidence_id`; `evidence.created_by`; `leases.agent_id` for prior owners; `tasks.metadata.review_experiment`; `task_history.detail.reviewer_independence*` when fallback is used. | `src/mac/review_experiments.py` (`build_observation`, `_strategy`); `src/mac/review_service.py` (`cross_llm_review_problems`); `src/mac/services.py` reviewer eligibility helpers; `tests/test_review_experiments.py`, `tests/test_control_plane.py`; this document. | Join `reviews` to review verdict evidence, then follow `reviewed_evidence_id` back to executor evidence. Derive model/provider/family from both manifests and agent relationship from `created_by`, `reviewer_agent_id`, lease history, and review-request transition detail. |
+| Rejection cause and `failure_class` | `reviews.status/reason`; review verdict manifest fields `verdict`, `semantic_verdict`, `feedback`, `findings`; `task_history.detail.reason/failure_class/problems`; terminal `tasks.metadata.failure_class/salvage`. | `src/mac/review_failure_classifier.py`; `src/mac/attempt_failure_classifier.py`; `src/mac/services.py` terminal attempt classification; `tests/test_review_failure_classifier.py`, `tests/test_attempt_failure_classifier.py`, `tests/test_review_protocol_rejection.py`. | Classify review retractions with `classify_review_failure`. For exhausted attempts, read the already-persisted `tasks.metadata.failure_class` and fall back to replaying `task_history` through `classify_attempt_failure` only for older rows. |
+| Post-publication defect signals | `tasks.metadata.review_outcomes[]` with `kind` values `finding_validation`, `clean_window`, `escaped_defect`, `protocol_invalid`; `publications`; `scientific_observations.metrics.escaped_defect_severity/quality_source`; `task_history` event `task.review_outcome_recorded`. | `src/mac/review_experiments.py` (`build_outcome`, `append_outcome`); `src/mac/scientific_optimizer.py` (`derive_task_kpis`); `docs/scientific-optimizer.md`; `tests/test_review_experiments.py`, `tests/test_scientific_optimizer.py`. | Treat outcome labels as delayed annotations, not rewrites of signed evidence. Aggregate confirmed `escaped_defect` severity per task and join to publication rows to separate pre-publication rejection from post-publication quality failures. |
+| Starvation episodes | No dedicated starvation table. Infer from `tasks.state='open'`, `tasks.priority/created_at/lease_id/owner_agent_id`, dispatch ordering, `observability_events.name IN ('dispatcher.routing.task_skipped','worker.routing.task_skipped','worker.routing.no_candidate')`, skip `detail.reason/reason_class/candidate_rank`, `agents.dispatch_hold*`, and `agent_provisioning_requests.reason='dispatch.no_eligible_agent'`. | `src/mac/services.py` dispatch windows, priority aging, availability reasons, and routing skip logs; `tests/test_control_plane.py` priority-aging/starvation coverage; `tests/test_failure_diagnosis.py`; `tests/fault_replay/reviewer_starvation_probe.py`; `tests/test_agent_dispatch_hold.py`, `tests/test_task_no_dispatch.py`. | Build episodes by bucketing repeated skip/no-candidate observations for an open task until a lease appears or the task leaves `open`. Include computed age bonus from `created_at` and the current `MAC_DISPATCH_PRIORITY_AGING_SECONDS` value in reports. |
+| Optimizer review metrics | `scientific_policies`, `scientific_experiments`, `scientific_assignments`, `scientific_observations.metrics`, `scientific_decisions`, `scientific_optimizer_events`; supporting `observability_events` `llm.route` rows; task/review/publication rows above. | `src/mac/scientific_optimizer.py`; `src/mac/review_experiments.py`; `docs/scientific-optimizer.md`; `tests/test_scientific_optimizer.py`, `tests/cli/test_cli_optimizer.py`, `tests/cli/test_cli_review_experiment.py`. | Prefer persisted `scientific_observations.metrics` for optimizer analyses. Regenerate with `optimizer.observe_task` or `refresh_experiment` when delayed labels arrive, then analyze decisions by arm/phase and sample eligibility. |
+
+Minimum sample queries:
+
+```sql
+-- Evidence manifest types captured for a task.
+SELECT json_extract(metadata, '$.verification.evidence_type') AS evidence_type,
+       COUNT(*) AS count
+FROM evidence
+WHERE task_id = :task_id
+GROUP BY evidence_type;
+
+-- Review status and linked verdict evidence.
+SELECT r.status,
+       json_extract(e.metadata, '$.verification.verdict') AS verdict,
+       COUNT(*) AS count
+FROM reviews r
+LEFT JOIN evidence e ON e.id = r.evidence_id
+WHERE r.task_id = :task_id
+GROUP BY r.status, verdict;
+
+-- Delayed quality labels.
+SELECT json_extract(value, '$.kind') AS kind,
+       json_extract(value, '$.status') AS status,
+       COUNT(*) AS count
+FROM tasks, json_each(tasks.metadata, '$.review_outcomes')
+WHERE tasks.id = :task_id
+GROUP BY kind, status;
+
+-- Optimizer KPI projection.
+SELECT arm,
+       json_extract(metrics, '$.accepted_success') AS accepted_success,
+       json_extract(metrics, '$.review_attempts') AS review_attempts,
+       json_extract(metrics, '$.escaped_defect_severity') AS escaped_defect_severity
+FROM scientific_observations
+WHERE task_id = :task_id;
+```
+
+A disposable `ControlPlane.in_memory()` fixture with one executor evidence row,
+one approved reviewer verdict, one publication, one confirmed escaped-defect
+label, and one optimizer observation produced these counts:
+
+| Query | Result |
+| --- | --- |
+| task core | `state=completed`, `attempt_count=1`, `review_arm=blind`, first delayed outcome `escaped_defect` |
+| task history | `task.created=1`, `task.claimed=1`, `task.evidence_added=2`, `task.review_requested=1`, `task.review_completed=1`, `task.published=1`, `task.review_outcome_recorded=1`, `task.transitioned=4` |
+| evidence manifest types | `repo_change=1`, `review_verdict=1` |
+| reviews/publications | `approved review=1`, `publication=1` |
+| optimizer rows | `scientific_assignments=1`, `scientific_observations=1` |
+| optimizer metrics | `accepted_success=1.0`, `review_attempts=1.0`, `escaped_defect_severity=3.0` |
+
+Current gaps to preserve in analysis output:
+
+- Starvation has durable ingredients but no first-class episode table; reports
+  must label it as inferred from skip/no-candidate logs plus open-task age.
+- Reviewer relationship has explicit model and agent signals, but persona/tenant
+  relationship should be reconstructed through current agent/persona rows and
+  may be ambiguous for old headless agents.
+- Delayed escaped defects require operator or downstream labels; absence of an
+  `escaped_defect` outcome is unknown unless a confirmed `clean_window` or
+  elapsed optimizer horizon makes the sample quality-valid.
+- Cost is missing, not zero, when neither route telemetry nor the model catalog
+  can price every observed model route.
+
 ## Interpretation limits
 
 Confirmed incremental reviewer findings are direct evidence that the review
