@@ -63,6 +63,12 @@ def test_direct_hub_guard_returns_without_polling() -> None:
     assert "skipping reverse-tunnel wait" in result.stdout
 
 
+def test_hub_database_maintenance_explicitly_selects_local_authority() -> None:
+    function = _function("mac_authority")
+    assert '"$VENV/bin/mac" --local-authority --db "$MAC_DB" "$@"' in function
+    assert '"$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"' in function
+
+
 def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:
     function = _function("uses_direct_mesh_hub")
     snippet = "\n".join(

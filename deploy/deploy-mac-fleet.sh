@@ -4478,7 +4478,7 @@ log "installed Hermes agent from upstream plus mac-managed patches"
 
 mac_authority() {
   if control_plane_enabled; then
-    "$VENV/bin/mac" --db "$MAC_DB" "$@"
+    "$VENV/bin/mac" --local-authority --db "$MAC_DB" "$@"
   else
     "$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"
   fi
