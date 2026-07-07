@@ -16387,6 +16387,7 @@ class ControlPlane:
         return True
 
     def _expire_agent_active_leases(self, agent_id: str, timestamp: str, reason: str) -> None:
+        liveness_loss = reason in {"heartbeat_offline", "agent_update_offline"}
         rows = self.store.query_all(
             """
             SELECT
@@ -16408,10 +16409,15 @@ class ControlPlane:
             return
         with self.store.transaction() as conn:
             for row in rows:
-                next_state = (
-                    TaskState.FAILED.value
-                    if row["attempt_count"] >= row["max_attempts"]
-                    else TaskState.OPEN.value
+                if liveness_loss:
+                    next_state = TaskState.OPEN.value
+                elif row["attempt_count"] >= row["max_attempts"]:
+                    next_state = TaskState.FAILED.value
+                else:
+                    next_state = TaskState.OPEN.value
+                attempt_count_after = max(
+                    0,
+                    int(row["attempt_count"]) - (1 if liveness_loss else 0),
                 )
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
@@ -16421,6 +16427,7 @@ class ControlPlane:
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
+                        attempt_count = ?,
                         completed_at = CASE
                             WHEN ? = ? AND completed_at IS NULL THEN ?
                             ELSE completed_at
@@ -16430,6 +16437,7 @@ class ControlPlane:
                     """,
                     (
                         next_state,
+                        attempt_count_after,
                         next_state,
                         TaskState.FAILED.value,
                         timestamp,
@@ -16442,6 +16450,10 @@ class ControlPlane:
                     "lease_id": row["lease_id"],
                     "agent_id": agent_id,
                     "reason": reason,
+                    "failure_class": "environment" if liveness_loss else "work",
+                    "attempt_refunded": liveness_loss,
+                    "attempt_count_before": int(row["attempt_count"]),
+                    "attempt_count_after": attempt_count_after,
                 }
                 self._record_history(
                     row["task_id"],

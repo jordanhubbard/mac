@@ -3619,7 +3619,56 @@ def test_tick_marks_stale_agents_offline_and_requeues_work(cp):
     assert cp.get_agent(worker.id).status == AgentStatus.OFFLINE.value
     assert cp.get_lease(lease.id).status == LeaseStatus.EXPIRED.value
     assert cp.get_task(claimed.id).state == TaskState.OPEN.value
+    assert cp.get_task(claimed.id).attempt_count == 0
     assert tick["assignments"] == []
+
+    expiry = next(
+        event
+        for event in cp.task_history(task.id)
+        if event.event_type == "task.lease_expired"
+    )
+    assert expiry.detail == {
+        "lease_id": lease.id,
+        "agent_id": worker.id,
+        "reason": "heartbeat_offline",
+        "failure_class": "environment",
+        "attempt_refunded": True,
+        "attempt_count_before": 1,
+        "attempt_count_after": 0,
+    }
+
+
+def test_repeated_stale_agent_reaps_do_not_exhaust_execution_attempts(cp):
+    worker = register_agent(cp, "repeated-stale", ["python"])
+    task = cp.create_task(
+        "liveness loss preserves retry budget",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+
+    for _ in range(2):
+        cp.heartbeat_agent(worker.id, status=AgentStatus.IDLE.value)
+        _, lease = cp.claim_task(task.id, worker.id)
+        assert cp.get_task(task.id).attempt_count == 1
+        cp.store.execute(
+            "UPDATE agents SET last_seen_at = '1970-01-01T00:00:00+00:00' WHERE id = ?",
+            (worker.id,),
+        )
+
+        cp.tick(stale_after_seconds=60, limit=0)
+
+        recovered = cp.get_task(task.id)
+        assert recovered.state == TaskState.OPEN.value
+        assert recovered.attempt_count == 0
+        assert cp.get_lease(lease.id).status == LeaseStatus.EXPIRED.value
+
+    expiries = [
+        event
+        for event in cp.task_history(task.id)
+        if event.event_type == "task.lease_expired"
+    ]
+    assert len(expiries) == 2
+    assert all(event.detail["attempt_refunded"] is True for event in expiries)
 
 
 def test_dispatch_tick_round_robins_between_tenants(cp):
