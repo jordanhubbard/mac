@@ -57,6 +57,7 @@ from mac.models import (
     MoodOverlay,
     NapRun,
     NapSchedule,
+    NAP_WINDOW_MINUTES,
     ConversationThread,
     Deployment,
     Environment,
@@ -8859,7 +8860,7 @@ class ControlPlane:
     #
     # Each agent has a single nap_schedule row (offset_minutes, window_minutes).
     # The offset defaults to a stable hash of the agent's name to spread the
-    # fleet across the early-UTC window (matches ACC's spec, MD5 % 360). Nap
+    # fleet across each hourly cycle (MD5 % 60). Nap
     # *execution* is off-process — the agent (or a sidecar) decides what to
     # summarize and where to store it. mac records begin/complete events and
     # links to the produced summary evidence + vector refs.
@@ -8885,7 +8886,7 @@ class ControlPlane:
         self,
         *,
         qdrant_url: Optional[str] = None,
-        nap_interval_hours: float = 24.0,
+        nap_interval_hours: float = 1.0,
     ) -> JsonDict:
         """mem-10: memory-tier health snapshot.
 
@@ -8895,7 +8896,7 @@ class ControlPlane:
           * Inert vector tier — memory_records growing while
             vector_refs stays at 0. The audit's smoking gun.
           * Stalled consolidator — last_nap_run_at older than
-            ``2 * nap_interval_hours`` means the nightly nap stopped
+            ``2 * nap_interval_hours`` means the nap cycle stopped
             running.
           * Disk bloat — mac.db growing faster than the vector tier.
 
@@ -9292,8 +9293,9 @@ class ControlPlane:
         """Return enabled nap_schedules whose current window has opened
         and hasn't been completed yet.
 
-        An agent's "current window" is today's `midnight UTC +
-        offset_minutes` (or yesterday's if today's hasn't opened yet).
+        An agent's "current window" is the current cadence bucket start plus
+        ``offset_minutes`` (or the previous bucket if this bucket has not
+        opened yet).
         We consider it open when `as_of` >= window_start, and unclaimed
         when last_completed_at is either NULL or before window_start.
 
@@ -9302,9 +9304,9 @@ class ControlPlane:
         once `as_of` has passed window_end. ``window_minutes`` therefore
         does NOT gate the autonomous path — it only sets how long the
         informational ``in_window`` flag stays true. This keeps the
-        once-per-day nap robust against a tick that lands just after a
+        hourly nap robust against a tick that lands just after a
         narrow window closes (a strict in-window check would silently
-        skip the agent for the whole day). Callers that want strict
+        skip the agent for the whole cycle). Callers that want strict
         windowing should filter on ``in_window`` themselves.
         """
         from datetime import datetime, timedelta, timezone
@@ -9324,12 +9326,16 @@ class ControlPlane:
         )
         due: List[JsonDict] = []
         for row in rows:
-            offset = int(row["offset_minutes"] or 0)
+            offset = int(row["offset_minutes"] or 0) % NAP_WINDOW_MINUTES
             window = int(row["window_minutes"] or 15)
-            midnight = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            window_start = midnight + timedelta(minutes=offset)
+            day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            elapsed_minutes = int((as_of_dt - day_start).total_seconds() // 60)
+            cycle_minutes = (
+                elapsed_minutes // NAP_WINDOW_MINUTES
+            ) * NAP_WINDOW_MINUTES
+            window_start = day_start + timedelta(minutes=cycle_minutes + offset)
             if window_start > as_of_dt:
-                window_start = window_start - timedelta(days=1)
+                window_start = window_start - timedelta(minutes=NAP_WINDOW_MINUTES)
             window_end = window_start + timedelta(minutes=window)
             already_done = False
             if row["last_completed_at"]:

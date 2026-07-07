@@ -45,14 +45,17 @@ def _state_value(state: Any) -> str:
 
 
 def _deterministic_nap_offset(agent_name: str) -> int:
-    """MD5-derived UTC-midnight offset in minutes, in [0, NAP_WINDOW_MINUTES).
-
-    Matches ACC's spec so existing fleet schedules round-trip identically
-    when migrated.
-    """
+    """MD5-derived per-hour offset in minutes, in [0, NAP_WINDOW_MINUTES)."""
     digest = hashlib.md5(agent_name.encode("utf-8")).digest()
     value = int.from_bytes(digest[:8], byteorder="little", signed=False)
     return int(value % NAP_WINDOW_MINUTES)
+
+
+def _nap_cycle_start(reference: datetime) -> datetime:
+    day_start = reference.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed_minutes = int((reference - day_start).total_seconds() // 60)
+    bucket_minutes = (elapsed_minutes // NAP_WINDOW_MINUTES) * NAP_WINDOW_MINUTES
+    return day_start + timedelta(minutes=bucket_minutes)
 
 
 class AgentStateService:
@@ -298,10 +301,9 @@ class AgentStateService:
         if schedule is None or not schedule.enabled:
             return None
         reference = now if now is not None else datetime.now(timezone.utc)
-        midnight = reference.replace(hour=0, minute=0, second=0, microsecond=0)
-        candidate = midnight + timedelta(minutes=schedule.offset_minutes)
+        candidate = _nap_cycle_start(reference) + timedelta(minutes=schedule.offset_minutes)
         if candidate <= reference:
-            candidate = candidate + timedelta(days=1)
+            candidate = candidate + timedelta(minutes=NAP_WINDOW_MINUTES)
         end = candidate + timedelta(minutes=schedule.window_minutes)
         return {
             "agent_id": schedule.agent_id,
@@ -575,7 +577,7 @@ class AgentStateService:
     def _schedule_from_row(self, row: Any) -> NapSchedule:
         return NapSchedule(
             row["agent_id"],
-            int(row["offset_minutes"]),
+            int(row["offset_minutes"]) % NAP_WINDOW_MINUTES,
             int(row["window_minutes"]),
             bool(row["enabled"]),
             row["last_completed_at"],

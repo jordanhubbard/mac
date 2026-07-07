@@ -68,17 +68,17 @@ def test_nap_configure_creates_schedule(tmp_path):
     assert rc == 0
     assert schedule["agent_id"] == agent["id"]
     assert schedule["enabled"] is True
-    assert 0 <= schedule["offset_minutes"] < 360
+    assert 0 <= schedule["offset_minutes"] < 60
     assert schedule["window_minutes"] > 0
 
 
 def test_nap_configure_explicit_offset(tmp_path):
     agent = _register_agent(tmp_path)
     rc, schedule = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "90"
+        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "45"
     )
     assert rc == 0
-    assert schedule["offset_minutes"] == 90
+    assert schedule["offset_minutes"] == 45
 
 
 def test_nap_configure_window_minutes(tmp_path):
@@ -109,14 +109,14 @@ def test_nap_configure_disabled_flag(tmp_path):
 def test_nap_configure_is_idempotent(tmp_path):
     agent = _register_agent(tmp_path)
     rc, s1 = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "60"
+        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "30"
     )
     assert rc == 0
     rc, s2 = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "60"
+        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "30"
     )
     assert rc == 0
-    assert s1["offset_minutes"] == s2["offset_minutes"] == 60
+    assert s1["offset_minutes"] == s2["offset_minutes"] == 30
 
 
 # ---------------------------------------------------------------------------
@@ -163,14 +163,14 @@ def test_nap_show_null_for_unconfigured_agent(tmp_path):
 
 def test_nap_next_returns_window_fields(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "120")
+    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "45")
 
     rc, window = _run(tmp_path, "nap", "next", agent["id"])
     assert rc == 0
     assert window is not None
     assert "start" in window
     assert "end" in window
-    assert window["offset_minutes"] == 120
+    assert window["offset_minutes"] == 45
 
 
 def test_nap_next_returns_null_when_disabled(tmp_path):
@@ -358,15 +358,15 @@ def test_nap_begin_fail_run_appears_in_list(tmp_path):
 
 
 def test_nap_due_lists_agent_with_open_window(tmp_path):
-    """An agent with offset_minutes=0 and no prior completion is due at 00:00 UTC."""
+    """An agent with offset_minutes=0 and no prior completion is due hourly."""
     from datetime import datetime, timezone
 
     agent = _register_agent(tmp_path)
-    # Configure with offset 0 so the window starts at midnight UTC.
+    # Configure with offset 0 so each hourly window starts on the hour.
     _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
 
-    # Use a reference timestamp well after midnight (e.g. 06:00 UTC today).
-    as_of = datetime.now(timezone.utc).replace(hour=6, minute=0, second=0, microsecond=0)
+    # Use a reference timestamp after the top of the current hour.
+    as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
 
     rc, due = _run(
         tmp_path, "nap", "due", "--as-of", as_of.isoformat()
@@ -377,7 +377,7 @@ def test_nap_due_lists_agent_with_open_window(tmp_path):
 
 
 def test_nap_due_excludes_completed_agent(tmp_path):
-    """An agent that already completed its nap today is not in the due list."""
+    """An agent that already completed this cycle is not in the due list."""
     from datetime import datetime, timezone
 
     agent = _register_agent(tmp_path)
@@ -390,7 +390,7 @@ def test_nap_due_excludes_completed_agent(tmp_path):
     assert rc == 0
 
     # The agent should now be absent from due list.
-    as_of = datetime.now(timezone.utc).replace(hour=6, minute=0, second=0, microsecond=0)
+    as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
     rc, due = _run(tmp_path, "nap", "due", "--as-of", as_of.isoformat())
     assert rc == 0
     assert not any(d["agent_id"] == agent["id"] for d in due)
@@ -403,7 +403,7 @@ def test_nap_due_returns_list_with_expected_fields(tmp_path):
     agent = _register_agent(tmp_path)
     _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
 
-    as_of = datetime.now(timezone.utc).replace(hour=6, minute=0, second=0, microsecond=0)
+    as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
     rc, due = _run(
         tmp_path, "nap", "due", "--as-of", as_of.isoformat()
     )

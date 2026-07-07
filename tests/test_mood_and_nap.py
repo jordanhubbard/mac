@@ -141,7 +141,7 @@ def test_register_agent_creates_default_nap_schedule(cp):
     assert schedule is not None
     assert schedule.agent_id == agent.id
     assert schedule.enabled is True
-    assert 0 <= schedule.offset_minutes < 360
+    assert 0 <= schedule.offset_minutes < 60
 
 
 def test_heartbeat_backfills_missing_nap_schedule(cp):
@@ -164,8 +164,8 @@ def test_configure_nap_uses_deterministic_offset_when_unspecified(cp):
     schedule_b = cp.configure_nap(a2.id)
 
     # Offsets are within the documented window and stable across runs.
-    assert 0 <= schedule_a.offset_minutes < 360
-    assert 0 <= schedule_b.offset_minutes < 360
+    assert 0 <= schedule_a.offset_minutes < 60
+    assert 0 <= schedule_b.offset_minutes < 60
     # Same name -> same offset (idempotent + deterministic).
     schedule_a_again = cp.configure_nap(a1.id)
     assert schedule_a_again.offset_minutes == schedule_a.offset_minutes
@@ -176,7 +176,7 @@ def test_configure_nap_validates_bounds(cp):
     with pytest.raises(ValidationError):
         cp.configure_nap(agent.id, offset_minutes=-1)
     with pytest.raises(ValidationError):
-        cp.configure_nap(agent.id, offset_minutes=360)
+        cp.configure_nap(agent.id, offset_minutes=60)
     with pytest.raises(ValidationError):
         cp.configure_nap(agent.id, window_minutes=0)
     with pytest.raises(ValidationError):
@@ -185,17 +185,35 @@ def test_configure_nap_validates_bounds(cp):
 
 def test_next_nap_window_is_in_future_and_matches_offset(cp):
     agent = _register_agent(cp, "rocky")
-    cp.configure_nap(agent.id, offset_minutes=120, window_minutes=15)
-    reference = datetime(2026, 5, 18, 10, 0, 0, tzinfo=timezone.utc)
+    cp.configure_nap(agent.id, offset_minutes=45, window_minutes=15)
+    reference = datetime(2026, 5, 18, 10, 10, 0, tzinfo=timezone.utc)
     window = cp.next_nap_window(agent.id, now=reference)
     assert window is not None
-    assert window["offset_minutes"] == 120
+    assert window["offset_minutes"] == 45
     assert window["window_minutes"] == 15
     start = datetime.fromisoformat(window["start"])
     assert start > reference
-    assert start.hour == 2 and start.minute == 0  # offset=120 == 02:00 UTC
+    assert start.hour == 10 and start.minute == 45
     end = datetime.fromisoformat(window["end"])
     assert end - start == timedelta(minutes=15)
+
+
+def test_next_nap_window_normalizes_legacy_daily_offsets(cp):
+    agent = _register_agent(cp, "rocky")
+    cp.store.execute(
+        "UPDATE nap_schedules SET offset_minutes = ? WHERE agent_id = ?",
+        (125, agent.id),
+    )
+
+    schedule = cp.get_nap_schedule(agent.id)
+    reference = datetime(2026, 5, 18, 10, 3, 0, tzinfo=timezone.utc)
+    window = cp.next_nap_window(agent.id, now=reference)
+
+    assert schedule is not None
+    assert schedule.offset_minutes == 5
+    assert window is not None
+    assert window["offset_minutes"] == 5
+    assert datetime.fromisoformat(window["start"]).minute == 5
 
 
 def test_next_nap_window_disabled_returns_none(cp):
@@ -298,4 +316,4 @@ def test_nap_schedule_offset_spreads_across_typical_fleet():
     # All distinct — pure mathematical assertion the hash spreads four names.
     assert len(set(offsets.values())) == 4
     # And all within the documented window.
-    assert all(0 <= o < 360 for o in offsets.values())
+    assert all(0 <= o < 60 for o in offsets.values())

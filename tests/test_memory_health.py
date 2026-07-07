@@ -69,7 +69,7 @@ def test_no_nap_history_alert_when_memories_present(cp):
 
 def test_stalled_consolidator_alert(cp):
     """An old completed nap_run (older than 2× nap_interval) is a
-    critical alert: the daily nap stopped running."""
+    critical alert: the hourly nap stopped running."""
     # Pre-plant a completed nap_run with a `completed_at` 100h ago.
     old_at = (datetime.now(tz=timezone.utc) - timedelta(hours=100)).isoformat()
     machine = cp.register_machine("host-x")
@@ -82,7 +82,7 @@ def test_stalled_consolidator_alert(cp):
         """,
         (new_id("nap"), agent.id, old_at, old_at, old_at, old_at),
     )
-    # Default threshold is 2*24h = 48h; 100h > 48h so the alert fires.
+    # Default threshold is 2*1h = 2h; 100h > 2h so the alert fires.
     h = cp.memory_health()
     codes = [a["code"] for a in h["alerts"]]
     assert "stalled_consolidator" in codes

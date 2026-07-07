@@ -3,11 +3,10 @@ Description=Periodic trigger for mac nap-tick
 Documentation=https://github.com/jordanh/mac
 
 [Timer]
-# Tick every 15 minutes. `mac nap due` is catch-up, not strictly
-# windowed: once an agent's offset has passed it stays due until it
-# actually naps, so a missed window just means it naps on the next
-# tick rather than being skipped for the day. 15 min keeps the
-# once-per-day nap prompt without much drift past each agent's offset.
+# Tick every 15 minutes. `mac nap due` is catch-up within the hourly cycle,
+# not strictly windowed: once an agent's offset has passed it stays due until
+# it actually naps, so a missed window just means it naps on the next tick
+# rather than being skipped for the cycle.
 OnBootSec=5min
 OnUnitActiveSec=15min
 Persistent=true

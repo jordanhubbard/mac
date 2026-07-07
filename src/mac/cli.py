@@ -6474,7 +6474,7 @@ def build_parser() -> argparse.ArgumentParser:
         "inert vector tier / stalled consolidator / disk bloat)",
     )
     memory_health.add_argument(
-        "--nap-interval-hours", type=float, default=24.0,
+        "--nap-interval-hours", type=float, default=1.0,
         help="2× this value is the stalled-consolidator alert threshold",
     )
     memory_health.add_argument("--qdrant-url")

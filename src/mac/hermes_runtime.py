@@ -270,7 +270,12 @@ def _session_capability_contract(
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
             "Use mac-hermes-task-executor through mac-agent loop mode for production Hermes oneshot task execution.",
-            "Commit, pull/rebase, and push Git before reporting completed code work.",
+            "Own the full code lifecycle for repository work: write the change, "
+            "run the contract checks, commit/push the task branch, obtain "
+            "cross-review, and publish the approved change to the repository "
+            "target without routing through a human merge gate.",
+            "Continue filing discovered follow-up work as MAC tasks so the "
+            "ledger remains complete.",
         ],
     }
 
@@ -659,6 +664,11 @@ def build_runtime_context(
             "Record MAC command audit entries for shell phases that produce task evidence or change repository state.",
             "Use the mac-hermes web research commands instead of undocumented local web-search state.",
             "Do not copy MAC task state into Hermes memory as a source of truth; write only completed-task summaries back to Hermes memory.",
+            "MAC agents own the write, cross-review, and merge/publish loop; "
+            "humans direct intent and consume outcomes, but are not a required "
+            "code-diff quality gate.",
+            "File all new work as MAC tasks before or while acting on it so the "
+            "ledger remains complete.",
         ],
     }
 

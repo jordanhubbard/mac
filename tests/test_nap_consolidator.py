@@ -382,13 +382,13 @@ def test_list_due_nap_agents_finds_opened_windows(cp):
     machine = cp.register_machine("h1")
     a = cp.register_agent(machine.id, "agent-a", capabilities=[])
     b = cp.register_agent(machine.id, "agent-b", capabilities=[])
-    # Both agents pick offsets within the nap-window-cap [0, 360).
-    # agent-a: opens at midnight UTC; agent-b: opens at 5h UTC. Test at
-    # noon means both have already opened today; neither has been
-    # completed → both are due.
+    # Both agents pick offsets within the hourly nap-window cap [0, 60).
+    # agent-a opens on the hour; agent-b opens at :45. Test at 12:50 means
+    # both have already opened this cycle; neither has been completed, so
+    # both are due.
     cp.configure_nap(a.id, offset_minutes=0, window_minutes=30)
-    cp.configure_nap(b.id, offset_minutes=300, window_minutes=15)
-    as_of = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc).isoformat()
+    cp.configure_nap(b.id, offset_minutes=45, window_minutes=15)
+    as_of = datetime(2026, 5, 30, 12, 50, 0, tzinfo=timezone.utc).isoformat()
     due = cp.list_due_nap_agents(as_of=as_of)
     due_ids = {item["agent_id"] for item in due}
     assert a.id in due_ids
@@ -402,15 +402,33 @@ def test_list_due_nap_agents_skips_already_completed_windows(cp):
     machine = cp.register_machine("h1")
     a = cp.register_agent(machine.id, "agent-a", capabilities=[])
     cp.configure_nap(a.id, offset_minutes=0, window_minutes=30)
-    # Stamp a recent completion at today's window (midnight or after).
-    today_midnight = datetime(2026, 5, 30, 0, 0, 0, tzinfo=timezone.utc)
+    # Stamp a recent completion at this cycle's window start.
+    cycle_start = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
     cp.store.execute(
         "UPDATE nap_schedules SET last_completed_at = ? WHERE agent_id = ?",
-        ((today_midnight).isoformat(), a.id),
+        (cycle_start.isoformat(), a.id),
     )
     as_of = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc).isoformat()
     due_ids = {item["agent_id"] for item in cp.list_due_nap_agents(as_of=as_of)}
     assert a.id not in due_ids
+
+
+def test_list_due_nap_agents_normalizes_legacy_daily_offsets(cp):
+    """Persisted pre-hourly offsets above 59 still map into the hourly cycle."""
+    from datetime import datetime, timezone
+
+    machine = cp.register_machine("h1")
+    agent = cp.register_agent(machine.id, "legacy-offset", capabilities=[])
+    cp.store.execute(
+        "UPDATE nap_schedules SET offset_minutes = ? WHERE agent_id = ?",
+        (125, agent.id),
+    )
+
+    as_of = datetime(2026, 5, 30, 12, 6, 0, tzinfo=timezone.utc).isoformat()
+    due = cp.list_due_nap_agents(as_of=as_of)
+
+    entry = next(item for item in due if item["agent_id"] == agent.id)
+    assert datetime.fromisoformat(entry["window_start"]).minute == 5
 
 
 def test_consolidate_and_recall_end_to_end(cp, writer, fake_qdrant):

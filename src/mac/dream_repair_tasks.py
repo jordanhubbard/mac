@@ -136,7 +136,7 @@ def repair_fingerprint(
     classification: Mapping[str, Any] | None = None,
     affected: Mapping[str, list[str]] | None = None,
 ) -> str:
-    """Stable dedupe key for repeated nightly reports of the same finding."""
+    """Stable dedupe key for repeated cycle reports of the same finding."""
 
     classification = dict(classification or classify_candidate(dict(candidate)))
     affected = dict(affected or _affected_labels(candidate, classification))

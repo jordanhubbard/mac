@@ -70,7 +70,7 @@ def _candidate(**overrides: Any) -> dict[str, Any]:
         ),
         "project": "mac",
         "task_id": "task-source",
-        "nap_run_id": "nap-nightly",
+        "nap_run_id": "nap-cycle",
         "evidence": [
             {
                 "memory_id": "mem-1",
@@ -114,7 +114,7 @@ def test_files_low_confidence_task_with_evidence_and_labels() -> None:
     assert "agent_jordanh" not in created["description"]
 
 
-def test_dedupes_repeated_nightly_reports_by_fingerprint() -> None:
+def test_dedupes_repeated_cycle_reports_by_fingerprint() -> None:
     cp = FakeControlPlane()
 
     first = file_low_confidence_repair_tasks(cp, [_candidate()])

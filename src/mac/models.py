@@ -269,10 +269,10 @@ class NapStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-# Daily nap offset is computed deterministically from the agent's name so the
-# fleet spreads itself across the early-UTC window. Matches ACC's spec
-# (md5_u64(name) %% 360 minutes after 00:00 UTC).
-NAP_WINDOW_MINUTES = 360
+# Nap offset is computed deterministically from the agent's name so the fleet
+# spreads itself across each hourly cycle (md5_u64(name) %% 60 minutes after
+# the top of the hour).
+NAP_WINDOW_MINUTES = 60
 NAP_DEFAULT_DURATION_MINUTES = 15
 
 
@@ -1491,8 +1491,8 @@ class MoodOverlay:
 
 @dataclass
 class NapSchedule:
-    """One row per agent. `offset_minutes` is the UTC-midnight-offset window
-    start; defaults to a stable hash of agent.name to spread the fleet."""
+    """One row per agent. `offset_minutes` is the per-hour window start;
+    defaults to a stable hash of agent.name to spread the fleet."""
 
     agent_id: str
     offset_minutes: int
