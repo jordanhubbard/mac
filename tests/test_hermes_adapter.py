@@ -165,6 +165,7 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
     assert {
         "add_child_tasks",
         "list_tasks",
+        "search_memory",
         "list_projects",
         "get_project",
         "list_project_items",
@@ -203,6 +204,10 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
     )
     assert any(
         "mac-hermes command-audit" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes memory-search" in command
         for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert any(
@@ -454,6 +459,92 @@ def test_hermes_adapter_performs_task_lifecycle_operations_through_api():
     )
     assert publication["status"] == "published"
     assert adapter.task_summary(task["id"])["state"] == TaskState.COMPLETED.value
+
+
+def test_hermes_adapter_exposes_mcp_ready_read_create_surface():
+    calls = []
+
+    def transport(method, path, payload):
+        calls.append((method, path, payload))
+        return {"path": path, "payload": payload}
+
+    adapter = HermesMacAdapter(MacApiClient("http://hub:8789", transport=transport))
+
+    adapter.create_conversation_task(
+        "hermes_1",
+        ConversationTaskInput(
+            title="Triage customer report",
+            summary="The latest report needs investigation.",
+            project="support",
+            required_capabilities=["ops"],
+            metadata={"ticket": "SUP-1", "api_token": "drop", "raw_messages": ["drop"]},
+        ),
+    )
+    adapter.task_show("task/1")
+    adapter.list_task_summaries(state="open", tenant_id="tenant_1", project="support", limit=5)
+    adapter.add_evidence(
+        "task/1",
+        "test",
+        "artifact://pytest",
+        "tests passed",
+        "agent_1",
+        metadata={"result": "pass", "password": "drop"},
+    )
+    adapter.search_memory(
+        record_type_prefix="fleet_learning",
+        content_contains="merge-tree",
+        limit=3,
+        order="desc",
+    )
+    adapter.list_agents()
+
+    assert calls == [
+        (
+            "POST",
+            "/hermes-instances/hermes_1/tasks",
+            {
+                "title": "Triage customer report",
+                "description": "Summary:\nThe latest report needs investigation.",
+                "project": "support",
+                "priority": 0,
+                "required_capabilities": ["ops"],
+                "dependencies": [],
+                "metadata": {
+                    "ticket": "SUP-1",
+                    "sanitized_conversation": {
+                        "summary": "The latest report needs investigation.",
+                        "snippets": [],
+                        "links": [],
+                    },
+                },
+                "max_attempts": 3,
+                "user_id": None,
+                "platform_binding_id": None,
+                "conversation_ref": None,
+                "actor": "hermes",
+            },
+        ),
+        ("GET", "/tasks/task%2F1/summary", None),
+        ("GET", "/tasks?state=open&tenant_id=tenant_1&view=summary&project=support&limit=5", None),
+        (
+            "POST",
+            "/tasks/task%2F1/evidence",
+            {
+                "kind": "test",
+                "uri": "artifact://pytest",
+                "summary": "tests passed",
+                "created_by": "agent_1",
+                "checksum": None,
+                "metadata": {"result": "pass"},
+            },
+        ),
+        (
+            "GET",
+            "/memory?record_type_prefix=fleet_learning&limit=3&order=desc&content_contains=merge-tree",
+            None,
+        ),
+        ("GET", "/agents", None),
+    ]
 
 
 def test_hermes_adapter_transition_operation_updates_mac_task_state():
@@ -1022,6 +1113,60 @@ def test_mac_hermes_cli_exposes_task_lifecycle_operations(monkeypatch, capsys):
                 "created_by": "agent_2",
                 "evidence_id": "ev_1",
             },
+        ),
+    ]
+
+
+def test_mac_hermes_cli_exposes_mcp_summary_and_memory_search(monkeypatch, capsys):
+    calls = []
+
+    def request(self, method, path, payload):
+        calls.append((method, path, payload))
+        return {"schema": "ok", "path": path, "payload": payload}
+
+    monkeypatch.setattr(MacApiClient, "request", request)
+
+    commands = [
+        [
+            "tasks",
+            "--state",
+            "open",
+            "--tenant-id",
+            "tenant_1",
+            "--project",
+            "support",
+            "--limit",
+            "5",
+            "--summary",
+        ],
+        ["task-show", "task/1"],
+        [
+            "memory-search",
+            "--record-type-prefix",
+            "fleet_learning",
+            "--content-contains",
+            "merge-tree",
+            "--limit",
+            "3",
+            "--order",
+            "desc",
+        ],
+    ]
+    for command in commands:
+        assert mac_hermes_main(["--url", "http://hub:8789", *command]) == 0
+        capsys.readouterr()
+
+    assert calls == [
+        (
+            "GET",
+            "/tasks?state=open&tenant_id=tenant_1&view=summary&project=support&limit=5",
+            None,
+        ),
+        ("GET", "/tasks/task%2F1/summary", None),
+        (
+            "GET",
+            "/memory?record_type_prefix=fleet_learning&limit=3&order=desc&content_contains=merge-tree",
+            None,
         ),
     ]
 

@@ -2768,6 +2768,11 @@ class ControlPlane:
                     "path": "/memory",
                 },
                 {
+                    "name": "search_memory",
+                    "method": "GET",
+                    "path": "/memory",
+                },
+                {
                     "name": "create_project",
                     "method": "POST",
                     "path": "/projects",
@@ -2925,6 +2930,7 @@ class ControlPlane:
                 "mac-hermes publish {task_id} {target} {created_by}",
                 "mac-hermes command-audit record {agent_id} --phase started --argv-json '[\"git\",\"status\"]' --cwd /workspace",
                 "mac-hermes command-audit list --agent-id {agent_id}",
+                "mac-hermes memory-search --content-contains <text> --limit 20",
                 "mac-hermes web-search \"current release notes\" --limit 5",
                 "mac-hermes web-scrape https://example.com --format markdown",
                 "mac-hermes web-crawl https://example.com --limit 1",

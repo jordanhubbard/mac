@@ -244,8 +244,18 @@ class HermesMacAdapter:
             },
         )
 
+    def create_conversation_task(
+        self,
+        hermes_instance_id: str,
+        task_input: ConversationTaskInput,
+    ) -> JsonDict:
+        return self.create_task_from_conversation(hermes_instance_id, task_input)
+
     def task_summary(self, task_id: str) -> JsonDict:
         return self.client.get("/tasks/%s/summary" % _path_part(task_id))
+
+    def task_show(self, task_id: str) -> JsonDict:
+        return self.task_summary(task_id)
 
     def list_tasks(
         self,
@@ -253,9 +263,35 @@ class HermesMacAdapter:
         state: Optional[str] = None,
         tenant_id: Optional[str] = None,
         view: Optional[str] = None,
+        project: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> Any:
-        query = _query(((("state", state), ("tenant_id", tenant_id), ("view", view))))
+        query = _query(
+            (
+                ("state", state),
+                ("tenant_id", tenant_id),
+                ("view", view),
+                ("project", project),
+                ("limit", int(limit) if limit is not None else None),
+            )
+        )
         return self.client.get("/tasks%s" % (("?%s" % query) if query else ""))
+
+    def list_task_summaries(
+        self,
+        *,
+        state: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        project: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Any:
+        return self.list_tasks(
+            state=state,
+            tenant_id=tenant_id,
+            view="summary",
+            project=project,
+            limit=limit,
+        )
 
     def task_detail(self, task_id: str) -> JsonDict:
         return self.client.get("/tasks/%s" % _path_part(task_id))
@@ -763,6 +799,38 @@ class HermesMacAdapter:
             },
         )
 
+    def search_memory(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        record_type: Optional[str] = None,
+        record_type_prefix: Optional[str] = None,
+        created_by: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+        order: str = "asc",
+        content_contains: Optional[str] = None,
+    ) -> Any:
+        query = _query(
+            (
+                ("task_id", task_id),
+                ("subject_type", subject_type),
+                ("subject_id", subject_id),
+                ("record_type", record_type),
+                ("record_type_prefix", record_type_prefix),
+                ("created_by", created_by),
+                ("since", since),
+                ("until", until),
+                ("limit", int(limit) if limit is not None else None),
+                ("order", order),
+                ("content_contains", content_contains),
+            )
+        )
+        return self.client.get("/memory%s" % (("?%s" % query) if query else ""))
+
     def write_completed_task_to_memory(
         self,
         hermes_instance_id: str,
@@ -905,7 +973,16 @@ def _cmd_summary(args: argparse.Namespace) -> None:
 
 
 def _cmd_tasks(args: argparse.Namespace) -> None:
-    _print(_adapter(args).list_tasks(state=args.state, tenant_id=args.tenant_id))
+    view = "summary" if args.summary else args.view
+    _print(
+        _adapter(args).list_tasks(
+            state=args.state,
+            tenant_id=args.tenant_id,
+            view=view,
+            project=args.project,
+            limit=args.limit,
+        )
+    )
 
 
 def _cmd_task_detail(args: argparse.Namespace) -> None:
@@ -1197,6 +1274,24 @@ def _cmd_writeback(args: argparse.Namespace) -> None:
     _print(_adapter(args).write_completed_task_to_memory(args.hermes_instance_id, args.task_id))
 
 
+def _cmd_memory_search(args: argparse.Namespace) -> None:
+    _print(
+        _adapter(args).search_memory(
+            task_id=args.task_id,
+            subject_type=args.subject_type,
+            subject_id=args.subject_id,
+            record_type=args.record_type,
+            record_type_prefix=args.record_type_prefix,
+            created_by=args.created_by,
+            since=args.since,
+            until=args.until,
+            limit=args.limit,
+            order=args.order,
+            content_contains=args.content_contains,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mac-hermes",
@@ -1248,6 +1343,10 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("task_id")
     summary.set_defaults(func=_cmd_summary)
 
+    task_show = sub.add_parser("task-show", help="fetch a task using MAC's task summary projection")
+    task_show.add_argument("task_id")
+    task_show.set_defaults(func=_cmd_summary)
+
     task_detail = sub.add_parser("task-detail", help="fetch MAC's full task detail")
     task_detail.add_argument("task_id")
     task_detail.set_defaults(func=_cmd_task_detail)
@@ -1255,6 +1354,10 @@ def build_parser() -> argparse.ArgumentParser:
     tasks = sub.add_parser("tasks", help="list MAC task records")
     tasks.add_argument("--state")
     tasks.add_argument("--tenant-id")
+    tasks.add_argument("--project")
+    tasks.add_argument("--limit", type=int)
+    tasks.add_argument("--view", choices=("summary",))
+    tasks.add_argument("--summary", action="store_true", help="request the lightweight task summary projection")
     tasks.set_defaults(func=_cmd_tasks)
 
     work_context = sub.add_parser("work-context", help="fetch MAC's task/project/agent context for this Hermes instance")
@@ -1478,6 +1581,20 @@ def build_parser() -> argparse.ArgumentParser:
     writeback.add_argument("hermes_instance_id")
     writeback.add_argument("task_id")
     writeback.set_defaults(func=_cmd_writeback)
+
+    memory_search = sub.add_parser("memory-search", help="search MAC memory records")
+    memory_search.add_argument("--task-id")
+    memory_search.add_argument("--subject-type")
+    memory_search.add_argument("--subject-id")
+    memory_search.add_argument("--record-type")
+    memory_search.add_argument("--record-type-prefix")
+    memory_search.add_argument("--created-by")
+    memory_search.add_argument("--since")
+    memory_search.add_argument("--until")
+    memory_search.add_argument("--limit", type=int)
+    memory_search.add_argument("--order", choices=("asc", "desc"), default="asc")
+    memory_search.add_argument("--content-contains")
+    memory_search.set_defaults(func=_cmd_memory_search)
     return parser
 
 
