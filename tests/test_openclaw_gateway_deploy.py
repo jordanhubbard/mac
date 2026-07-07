@@ -176,6 +176,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         encoding="utf-8"
     )
     assert "sandbox create" in wrapper and "sandbox exec" in wrapper
+    assert "pgrep -x openclaw" in wrapper
+    assert "trap cleanup EXIT" in wrapper
+    assert "stop_gateway" in wrapper
+    subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         message_wrapper
     )

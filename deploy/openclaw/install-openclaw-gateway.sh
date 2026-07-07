@@ -438,12 +438,51 @@ upload_managed() {
   "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$WORKSPACE/AGENTS.md" /home/sandbox/workspace/AGENTS.md >/dev/null
 }
 
+stop_gateway() {
+  "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || return 0
+  "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- /bin/sh -lc '
+    pids="\$(pgrep -x openclaw 2>/dev/null || true)"
+    [ -z "\$pids" ] || kill -TERM \$pids 2>/dev/null || true
+    count=0
+    while pgrep -x openclaw >/dev/null 2>&1 && [ "\$count" -lt 10 ]; do
+      sleep 0.5
+      count=\$((count + 1))
+    done
+    pids="\$(pgrep -x openclaw 2>/dev/null || true)"
+    [ -z "\$pids" ] || kill -KILL \$pids 2>/dev/null || true
+  ' >/dev/null 2>&1 || true
+}
+
+run_attached() {
+  local child=0 status=0
+  cleanup() {
+    trap - EXIT INT TERM
+    if [ "\$child" -gt 0 ] && kill -0 "\$child" >/dev/null 2>&1; then
+      kill -TERM "\$child" >/dev/null 2>&1 || true
+      wait "\$child" 2>/dev/null || true
+    fi
+    stop_gateway
+  }
+  trap 'cleanup; exit 143' INT TERM
+  trap cleanup EXIT
+  "\$@" &
+  child=\$!
+  if wait "\$child"; then status=0; else status=\$?; fi
+  child=0
+  trap - EXIT INT TERM
+  stop_gateway
+  return "\$status"
+}
+
 if "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
   upload_managed
-  exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
+  stop_gateway
+  run_attached "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
+    /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
+  exit \$?
 fi
 
-exec "\$OPEN_SHELL" sandbox create \
+run_attached "\$OPEN_SHELL" sandbox create \
   --no-auto-providers \
   --from "\$IMAGE" \
   --policy "\$POLICY" \
@@ -455,6 +494,7 @@ exec "\$OPEN_SHELL" sandbox create \
   --upload "\$MANAGED/entrypoint.sh:/home/sandbox/.config/mac-openclaw/entrypoint.sh" \
   --upload "\$WORKSPACE/AGENTS.md:/home/sandbox/workspace/AGENTS.md" \
   -- /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
+exit \$?
 EOF
   chmod 0700 "$WRAPPER_PATH"
   cat > "$MESSAGE_WRAPPER_PATH" <<EOF
