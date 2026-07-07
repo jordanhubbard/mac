@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 
 
 FETCHER = Path(__file__).resolve().parents[1] / "scripts" / "mac-fetch-openclaw-secrets.py"
@@ -46,9 +48,40 @@ def test_owner_only_env_update_is_idempotent_and_supports_revocation(tmp_path: P
     assert "TELEGRAM" not in path.read_text(encoding="utf-8")
 
 
-def test_fetcher_uses_per_agent_vault_namespace_and_separate_openclaw_file() -> None:
+def test_fetcher_prefers_logical_identity_namespace_with_legacy_agent_fallback() -> None:
     text = FETCHER.read_text(encoding="utf-8")
+    assert '"channel-identity.%s.telegram.%s.bot"' in text
+    assert '"channel-identity.%s.slack.%s.bot"' in text
+    assert '"channel-identity.%s.slack.%s.app"' in text
     assert '"telegram.%s.bot" % agent' in text
     assert '"telegram.%s.canary_target" % agent' in text
     assert '".mac" / "openclaw" / "credentials.env"' in text
     assert '".hermes"' not in text
+
+
+def test_headless_runtime_clears_credentials_without_vault_access(tmp_path: Path) -> None:
+    credentials = tmp_path / "credentials.env"
+    credentials.write_text(
+        "SLACK_BOT_TOKEN=xoxb-stale\n"
+        "SLACK_APP_TOKEN=xapp-stale\n"
+        "TELEGRAM_BOT_TOKEN=123:stale\n",
+        encoding="utf-8",
+    )
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "MAC_AGENT_NAME": "headless-worker",
+        "MAC_OPENCLAW_CREDENTIALS_FILE": str(credentials),
+    }
+
+    result = subprocess.run(
+        [str(FETCHER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert "headless" in result.stdout
+    assert credentials.read_text(encoding="utf-8") == ""

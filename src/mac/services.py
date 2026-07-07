@@ -50,6 +50,10 @@ from mac.models import (
     ProjectRepository,
     COMMAND_AUDIT_PHASES,
     CommandAuditRecord,
+    CommunicationAccount,
+    CommunicationIdentity,
+    GatewayIdentityLease,
+    HumanMessageDelivery,
     MoodOverlay,
     NapRun,
     NapSchedule,
@@ -86,6 +90,7 @@ from mac.models import (
     ProjectItem,
     Publication,
     PublicationStatus,
+    RepresentationBinding,
     Review,
     ReviewStatus,
     Rollout,
@@ -148,6 +153,7 @@ from mac.identity_service import IdentityService
 from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
+from mac.communication_service import CommunicationService
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
@@ -1160,6 +1166,12 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_task=self.get_task,
         )
+        self.communication = CommunicationService(
+            self.store,
+            get_agent=self.get_agent,
+            get_task=self.get_task,
+            record_log=self.record_log,
+        )
         # Ticketing detection + one-way conversion, delegated off the god-object
         # (task_bf0d1f01). ControlPlane keeps thin shims below for compatibility.
         self.ticketing = TicketingCoordinator(self)
@@ -1171,6 +1183,9 @@ class ControlPlane:
             get_platform_binding=self.identity.get_platform_binding,
             send_message=self.send_message,
             record_log=self.record_log,
+            enqueue_human_message=self.enqueue_human_message,
+            resolve_agent_representation=self.resolve_agent_representation,
+            list_communication_identities=self.list_communication_identities,
         )
         self.evaluations = EvalService(
             self.store,
@@ -5773,6 +5788,101 @@ class ControlPlane:
 
     def deliver_pending_notifications(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.notifiers.deliver_pending(*args, **kwargs)
+
+    # Runtime-neutral human communication ------------------------------
+
+    def configure_communication_identity(
+        self, *args: Any, **kwargs: Any
+    ) -> CommunicationIdentity:
+        return self.communication.configure_identity(*args, **kwargs)
+
+    def get_communication_identity(self, *args: Any, **kwargs: Any) -> CommunicationIdentity:
+        return self.communication.get_identity(*args, **kwargs)
+
+    def list_communication_identities(
+        self, *args: Any, **kwargs: Any
+    ) -> List[CommunicationIdentity]:
+        return self.communication.list_identities(*args, **kwargs)
+
+    def delete_communication_identity(self, *args: Any, **kwargs: Any) -> None:
+        return self.communication.delete_identity(*args, **kwargs)
+
+    def configure_communication_account(
+        self, *args: Any, **kwargs: Any
+    ) -> CommunicationAccount:
+        return self.communication.configure_account(*args, **kwargs)
+
+    def get_communication_account(self, *args: Any, **kwargs: Any) -> CommunicationAccount:
+        return self.communication.get_account(*args, **kwargs)
+
+    def list_communication_accounts(
+        self, *args: Any, **kwargs: Any
+    ) -> List[CommunicationAccount]:
+        return self.communication.list_accounts(*args, **kwargs)
+
+    def delete_communication_account(self, *args: Any, **kwargs: Any) -> None:
+        return self.communication.delete_account(*args, **kwargs)
+
+    def configure_representation_binding(
+        self, *args: Any, **kwargs: Any
+    ) -> RepresentationBinding:
+        return self.communication.configure_representation(*args, **kwargs)
+
+    def get_representation_binding(self, *args: Any, **kwargs: Any) -> RepresentationBinding:
+        return self.communication.get_representation(*args, **kwargs)
+
+    def list_representation_bindings(
+        self, *args: Any, **kwargs: Any
+    ) -> List[RepresentationBinding]:
+        return self.communication.list_representations(*args, **kwargs)
+
+    def delete_representation_binding(self, *args: Any, **kwargs: Any) -> None:
+        return self.communication.delete_representation(*args, **kwargs)
+
+    def resolve_agent_representation(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.communication.resolve_representation(*args, **kwargs)
+
+    def acquire_gateway_identity_lease(
+        self, *args: Any, **kwargs: Any
+    ) -> GatewayIdentityLease:
+        return self.communication.acquire_gateway_lease(*args, **kwargs)
+
+    def renew_gateway_identity_lease(
+        self, *args: Any, **kwargs: Any
+    ) -> GatewayIdentityLease:
+        return self.communication.renew_gateway_lease(*args, **kwargs)
+
+    def release_gateway_identity_lease(self, *args: Any, **kwargs: Any) -> None:
+        return self.communication.release_gateway_lease(*args, **kwargs)
+
+    def list_gateway_identity_leases(
+        self, *args: Any, **kwargs: Any
+    ) -> List[GatewayIdentityLease]:
+        return self.communication.list_gateway_leases(*args, **kwargs)
+
+    def enqueue_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
+        return self.communication.enqueue_delivery(*args, **kwargs)
+
+    def claim_human_messages(
+        self, *args: Any, **kwargs: Any
+    ) -> List[HumanMessageDelivery]:
+        return self.communication.claim_deliveries(*args, **kwargs)
+
+    def acknowledge_human_message(
+        self, *args: Any, **kwargs: Any
+    ) -> HumanMessageDelivery:
+        return self.communication.acknowledge_delivery(*args, **kwargs)
+
+    def fail_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
+        return self.communication.fail_delivery(*args, **kwargs)
+
+    def get_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
+        return self.communication.get_delivery(*args, **kwargs)
+
+    def list_human_messages(
+        self, *args: Any, **kwargs: Any
+    ) -> List[HumanMessageDelivery]:
+        return self.communication.list_deliveries(*args, **kwargs)
 
     # Short-retention command audit -------------------------------------
 

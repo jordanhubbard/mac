@@ -127,6 +127,42 @@ export interface AgentCard {
   [key: string]: unknown;
 }
 
+export interface CommunicationIdentity {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string;
+  is_default: boolean;
+  enabled: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CommunicationAccount {
+  id: string;
+  identity_id: string;
+  channel: string;
+  account_id: string;
+  enabled: boolean;
+  credential_refs?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+}
+
+export interface RepresentationBinding {
+  id: string;
+  subject_kind: string;
+  subject_id: string;
+  identity_id?: string | null;
+  mode: "direct" | "delegated" | "internal_only";
+  enabled: boolean;
+}
+
+export interface GatewayIdentityLease {
+  id: string;
+  account_id: string;
+  agent_id: string;
+  leased_until: string;
+}
+
 export interface TaskCreatePayload {
   title: string;
   description: string;
@@ -279,6 +315,14 @@ export const api = {
     req<Task[]>("GET", `/tasks${state ? `?state=${encodeURIComponent(state)}` : ""}`),
   getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}?view=compact`),
   listAgents: () => req<Agent[]>("GET", "/agents"),
+  listCommunicationIdentities: () =>
+    req<CommunicationIdentity[]>("GET", "/communication/identities"),
+  listCommunicationAccounts: () =>
+    req<CommunicationAccount[]>("GET", "/communication/accounts"),
+  listRepresentationBindings: () =>
+    req<RepresentationBinding[]>("GET", "/communication/representations"),
+  listGatewayIdentityLeases: () =>
+    req<GatewayIdentityLease[]>("GET", "/communication/gateway-leases?active_only=true"),
   createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
   updateTask: (taskId: string, payload: TaskUpdatePayload) =>
     req<Task>("PUT", `/tasks/${encodeURIComponent(taskId)}`, payload),

@@ -61,8 +61,20 @@ function dashboardState(overrides?: {
           capabilities: ["testing"],
           resources: {
             hardware: { cpu_count: 4, memory_mb: 8192, arch: "x64" },
+            openclaw_runtime: {
+              implementation: "openclaw",
+              mode: "gateway",
+              confinement: { provider: "openshell" },
+              verified: true,
+            },
+            representation: {
+              mode: "delegated",
+              identity: "MAC Hive",
+              human_facing: true,
+            },
             chat_gateway: {
               implementation: "openclaw",
+              public_identity: "MAC Hive",
               confinement: { provider: "openshell" },
               channels: {
                 slack: { enabled: true },
@@ -113,6 +125,50 @@ async function setupPage(
   await page.route("**/api/.well-known/agent-card.json", async (route) => {
     await route.fulfill({ json: { name: "mac", protocolVersion: "0.3.0" } });
   });
+  await page.route("**/api/communication/identities", async (route) => {
+    await route.fulfill({
+      json: [{
+        id: "commid_hive",
+        name: "mac-hive",
+        display_name: "MAC Hive",
+        is_default: true,
+        enabled: true,
+      }],
+    });
+  });
+  await page.route("**/api/communication/accounts", async (route) => {
+    await route.fulfill({
+      json: [{
+        id: "commacct_slack",
+        identity_id: "commid_hive",
+        channel: "slack",
+        account_id: "operations",
+        enabled: true,
+      }],
+    });
+  });
+  await page.route("**/api/communication/representations", async (route) => {
+    await route.fulfill({
+      json: [{
+        id: "repr_workers",
+        subject_kind: "fleet",
+        subject_id: "mac",
+        identity_id: "commid_hive",
+        mode: "delegated",
+        enabled: true,
+      }],
+    });
+  });
+  await page.route("**/api/communication/gateway-leases?active_only=true", async (route) => {
+    await route.fulfill({
+      json: [{
+        id: "gwlease_slack",
+        account_id: "commacct_slack",
+        agent_id: "agent_test",
+        leased_until: "2099-01-01T00:00:00+00:00",
+      }],
+    });
+  });
   await page.route("**/api/tasks/*?view=compact", async (route) => {
     await route.fulfill({
       json: {
@@ -138,8 +194,25 @@ async function setupPage(
 test("agent inspector exposes the verified OpenClaw service advertisement", async ({ page }) => {
   await setupPage(page);
   await page.goto("/");
-  await expect(page.getByText("Chat gateway", { exact: true })).toBeVisible();
-  await expect(page.getByText("openclaw · openshell · slack + telegram · verified")).toBeVisible();
+  await expect(page.getByText("OpenClaw", { exact: true })).toBeVisible();
+  await expect(page.getByText("openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified")).toBeVisible();
+});
+
+test("connections explains shared public identity and its active delegate", async ({ page }) => {
+  await setupPage(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
+  await expect(page.getByText("Public identities", { exact: true })).toBeVisible();
+  await expect(page.getByText("Channel accounts", { exact: true })).toBeVisible();
+  await expect(page.locator("strong", { hasText: /^MAC Hive$/ })).toBeVisible();
+  await expect(page.getByText("fleet:mac", { exact: true })).toBeVisible();
+  await expect(
+    page.locator("section.primary-surface", { hasText: "Channel accounts" })
+      .getByText("slack/operations", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("agent_test", { exact: true })).toBeVisible();
 });
 
 // ─── mouse selection ─────────────────────────────────────────────────────────

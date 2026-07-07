@@ -6,9 +6,11 @@ Multi-agent coordinator control plane.
 sit underneath a human-facing agent runtime such as
 `NousResearch/hermes-agent`, OpenClaw, or a compatible system.
 
-Hermes owns conversation, personality, adaptive memory, skills, and messaging
-gateways. `mac` owns durable operational truth: tasks, leases, routing,
-reviews, evidence, secrets, runtime manifests, rollout state, and audit trails.
+The human-facing runtime owns conversation, personality, adaptive memory,
+skills, and messaging gateways. `mac` owns durable operational truth: tasks,
+leases, routing, reviews, evidence, secrets, runtime manifests, rollout state,
+and audit trails. Fleet deployments use stock OpenClaw in OpenShell for the
+human-channel role; internal agents may share a stable public identity.
 
 The goal is to let a user talk to a persistent Hermes agent with a real
 personality and memory, then let that agent create durable work that a broader
@@ -36,12 +38,14 @@ integration or protocol influence is not mistaken for copied source:
   security foundation:** MAC's agent process trees, filesystem/network policy,
   sandbox lifecycle, and normalized action-event collection integrate with
   OpenShell rather than reimplementing its isolation layer.
-- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) — gateway stack:**
-  MAC's fleet gateway deployment and migration path use NemoClaw's hardened
-  OpenShell-based agent stack.
+- **[NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) — reference
+  integration:** NemoClaw remains compatibility and design reference material;
+  it is not the implementation behind MAC's `openclaw` deployment mode.
 - **[OpenClaw](https://github.com/openclaw/openclaw) — conversational gateway
-  runtime:** the NemoClaw path uses OpenClaw for always-on chat channels while
-  MAC remains the durable task and fleet control plane.
+  runtime:** MAC deploys a pinned stock OpenClaw image inside a MAC-authored
+  OpenShell policy for always-on chat channels while MAC remains the durable
+  task and fleet control plane. See
+  [OpenClaw public identities](docs/openclaw-identities.md).
 - **[OpenAI Codex](https://github.com/openai/codex) — coding executor:** MAC
   installs and invokes the Codex CLI for repository-editing workers inside its
   evidence and sandbox gates.
@@ -696,6 +700,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
 - [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md)
 - [Fleet Operational Learning](docs/fleet-operational-learning.md)
+- [OpenClaw public identities](docs/openclaw-identities.md)
 - [Review-strategy experiments](docs/review-strategy-experiments.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)

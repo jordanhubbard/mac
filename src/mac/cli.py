@@ -3932,6 +3932,189 @@ def cmd_notifier_deliver(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_communication_identity_configure(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).configure_communication_identity(
+            args.name,
+            display_name=args.display_name or "",
+            description=args.description or "",
+            is_default=args.default,
+            enabled=not args.disabled,
+            metadata=_json_arg(args.metadata, {}),
+        )
+    )
+
+
+def cmd_communication_identity_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            item.to_dict()
+            for item in _plane(args).list_communication_identities(args.enabled)
+        ]
+    )
+
+
+def cmd_communication_identity_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_communication_identity(args.identity))
+
+
+def cmd_communication_identity_delete(args: argparse.Namespace) -> None:
+    _plane(args).delete_communication_identity(args.identity)
+    _print({"deleted": args.identity})
+
+
+def cmd_communication_account_configure(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).configure_communication_account(
+            args.identity,
+            args.channel,
+            account_id=args.account_id,
+            credential_refs=_json_arg(args.credential_refs, {}),
+            config=_json_arg(args.config, {}),
+            enabled=not args.disabled,
+        )
+    )
+
+
+def cmd_communication_account_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            item.to_dict()
+            for item in _plane(args).list_communication_accounts(
+                identity_id=args.identity,
+                channel=args.channel,
+                enabled=args.enabled,
+            )
+        ]
+    )
+
+
+def cmd_communication_account_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_communication_account(args.account))
+
+
+def cmd_communication_account_delete(args: argparse.Namespace) -> None:
+    _plane(args).delete_communication_account(args.account)
+    _print({"deleted": args.account})
+
+
+def cmd_communication_representation_configure(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).configure_representation_binding(
+            args.subject_kind,
+            args.subject_id,
+            identity_id=args.identity,
+            mode=args.mode,
+            priority=args.priority,
+            enabled=not args.disabled,
+            metadata=_json_arg(args.metadata, {}),
+        )
+    )
+
+
+def cmd_communication_representation_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            item.to_dict()
+            for item in _plane(args).list_representation_bindings(
+                subject_kind=args.subject_kind,
+                identity_id=args.identity,
+                enabled=args.enabled,
+            )
+        ]
+    )
+
+
+def cmd_communication_representation_resolve(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).resolve_agent_representation(
+            args.agent_id,
+            project=args.project,
+            role=args.role,
+            fleet=args.representation_fleet,
+        )
+    )
+
+
+def cmd_communication_representation_delete(args: argparse.Namespace) -> None:
+    _plane(args).delete_representation_binding(args.binding_id)
+    _print({"deleted": args.binding_id})
+
+
+def cmd_communication_lease_acquire(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).acquire_gateway_identity_lease(
+            args.account_id,
+            args.agent_id,
+            lease_seconds=args.lease_seconds,
+            metadata=_json_arg(args.metadata, {}),
+        )
+    )
+
+
+def cmd_communication_lease_list(args: argparse.Namespace) -> None:
+    _print(
+        [
+            item.to_dict()
+            for item in _plane(args).list_gateway_identity_leases(
+                agent_id=args.agent_id, active_only=args.active_only
+            )
+        ]
+    )
+
+
+def cmd_communication_lease_renew(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).renew_gateway_identity_lease(
+            args.lease_id,
+            args.agent_id,
+            args.fencing_token,
+            lease_seconds=args.lease_seconds,
+        )
+    )
+
+
+def cmd_communication_lease_release(args: argparse.Namespace) -> None:
+    _plane(args).release_gateway_identity_lease(
+        args.lease_id, args.agent_id, args.fencing_token
+    )
+    _print({"released": args.lease_id})
+
+
+def cmd_communication_send(args: argparse.Namespace) -> None:
+    body = args.body
+    if args.body_file:
+        body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+    _print(
+        _plane(args).enqueue_human_message(
+            args.target,
+            body,
+            origin_agent_id=args.origin_agent_id,
+            identity_id=args.identity,
+            account_id=args.account_id,
+            channel=args.channel,
+            task_id=args.task_id,
+            idempotency_key=args.idempotency_key,
+            max_attempts=args.max_attempts,
+            metadata=_json_arg(args.metadata, {}),
+        )
+    )
+
+
+def cmd_communication_deliveries(args: argparse.Namespace) -> None:
+    _print(
+        [
+            item.to_dict()
+            for item in _plane(args).list_human_messages(
+                status=args.status,
+                identity_id=args.identity,
+                origin_agent_id=args.origin_agent_id,
+                limit=args.limit,
+            )
+        ]
+    )
+
+
 def cmd_rollout_list(args: argparse.Namespace) -> None:
     _print([rollout.to_dict() for rollout in _plane(args).list_rollouts(args.tenant_id, args.channel)])
 
@@ -6545,6 +6728,147 @@ def build_parser() -> argparse.ArgumentParser:
         help="keep only the most recent N rows by sequence",
     )
     _set(cmd_observability_prune, observability_prune)
+
+    communication = sub.add_parser(
+        "communication",
+        aliases=["comm"],
+        help="logical public identities, representation, and OpenClaw delivery",
+    ).add_subparsers(dest="communication_command", required=True)
+
+    communication_identity = communication.add_parser(
+        "identity", help="manage stable human-facing identities"
+    ).add_subparsers(dest="communication_identity_command", required=True)
+    communication_identity_configure = communication_identity.add_parser("configure")
+    communication_identity_configure.add_argument("name")
+    communication_identity_configure.add_argument("--display-name")
+    communication_identity_configure.add_argument("--description")
+    communication_identity_configure.add_argument("--default", action="store_true")
+    communication_identity_configure.add_argument("--disabled", action="store_true")
+    communication_identity_configure.add_argument("--metadata", default="{}")
+    _set(cmd_communication_identity_configure, communication_identity_configure)
+    communication_identity_list = communication_identity.add_parser("list")
+    communication_identity_list.add_argument(
+        "--enabled", action=argparse.BooleanOptionalAction
+    )
+    _set(cmd_communication_identity_list, communication_identity_list)
+    communication_identity_show = communication_identity.add_parser("show")
+    communication_identity_show.add_argument("identity")
+    _set(cmd_communication_identity_show, communication_identity_show)
+    communication_identity_delete = communication_identity.add_parser("delete")
+    communication_identity_delete.add_argument("identity")
+    _set(cmd_communication_identity_delete, communication_identity_delete)
+
+    communication_account = communication.add_parser(
+        "account", help="manage channel accounts owned by identities"
+    ).add_subparsers(dest="communication_account_command", required=True)
+    communication_account_configure = communication_account.add_parser("configure")
+    communication_account_configure.add_argument("identity")
+    communication_account_configure.add_argument("channel")
+    communication_account_configure.add_argument("--account-id", default="default")
+    communication_account_configure.add_argument("--credential-refs", default="{}")
+    communication_account_configure.add_argument("--config", default="{}")
+    communication_account_configure.add_argument("--disabled", action="store_true")
+    _set(cmd_communication_account_configure, communication_account_configure)
+    communication_account_list = communication_account.add_parser("list")
+    communication_account_list.add_argument("--identity")
+    communication_account_list.add_argument("--channel")
+    communication_account_list.add_argument(
+        "--enabled", action=argparse.BooleanOptionalAction
+    )
+    _set(cmd_communication_account_list, communication_account_list)
+    communication_account_show = communication_account.add_parser("show")
+    communication_account_show.add_argument("account")
+    _set(cmd_communication_account_show, communication_account_show)
+    communication_account_delete = communication_account.add_parser("delete")
+    communication_account_delete.add_argument("account")
+    _set(cmd_communication_account_delete, communication_account_delete)
+
+    communication_representation = communication.add_parser(
+        "representation", help="map internal agents/roles/projects to public identities"
+    ).add_subparsers(dest="communication_representation_command", required=True)
+    communication_representation_configure = communication_representation.add_parser(
+        "configure"
+    )
+    communication_representation_configure.add_argument(
+        "subject_kind", choices=("agent", "role", "project", "fleet")
+    )
+    communication_representation_configure.add_argument("subject_id")
+    communication_representation_configure.add_argument("--identity")
+    communication_representation_configure.add_argument(
+        "--mode", choices=("direct", "delegated", "internal_only"), default="delegated"
+    )
+    communication_representation_configure.add_argument("--priority", type=int, default=100)
+    communication_representation_configure.add_argument("--disabled", action="store_true")
+    communication_representation_configure.add_argument("--metadata", default="{}")
+    _set(
+        cmd_communication_representation_configure,
+        communication_representation_configure,
+    )
+    communication_representation_list = communication_representation.add_parser("list")
+    communication_representation_list.add_argument("--subject-kind")
+    communication_representation_list.add_argument("--identity")
+    communication_representation_list.add_argument(
+        "--enabled", action=argparse.BooleanOptionalAction
+    )
+    _set(cmd_communication_representation_list, communication_representation_list)
+    communication_representation_resolve = communication_representation.add_parser("resolve")
+    communication_representation_resolve.add_argument("agent_id")
+    communication_representation_resolve.add_argument("--project")
+    communication_representation_resolve.add_argument("--role")
+    communication_representation_resolve.add_argument(
+        "--fleet", dest="representation_fleet", default="default"
+    )
+    _set(cmd_communication_representation_resolve, communication_representation_resolve)
+    communication_representation_delete = communication_representation.add_parser("delete")
+    communication_representation_delete.add_argument("binding_id")
+    _set(cmd_communication_representation_delete, communication_representation_delete)
+
+    communication_lease = communication.add_parser(
+        "lease", help="manage singleton gateway ownership of channel accounts"
+    ).add_subparsers(dest="communication_lease_command", required=True)
+    communication_lease_acquire = communication_lease.add_parser("acquire")
+    communication_lease_acquire.add_argument("account_id")
+    communication_lease_acquire.add_argument("agent_id")
+    communication_lease_acquire.add_argument("--lease-seconds", type=int, default=90)
+    communication_lease_acquire.add_argument("--metadata", default="{}")
+    _set(cmd_communication_lease_acquire, communication_lease_acquire)
+    communication_lease_list = communication_lease.add_parser("list")
+    communication_lease_list.add_argument("--agent-id")
+    communication_lease_list.add_argument("--active-only", action="store_true")
+    _set(cmd_communication_lease_list, communication_lease_list)
+    communication_lease_renew = communication_lease.add_parser("renew")
+    communication_lease_renew.add_argument("lease_id")
+    communication_lease_renew.add_argument("agent_id")
+    communication_lease_renew.add_argument("fencing_token")
+    communication_lease_renew.add_argument("--lease-seconds", type=int, default=90)
+    _set(cmd_communication_lease_renew, communication_lease_renew)
+    communication_lease_release = communication_lease.add_parser("release")
+    communication_lease_release.add_argument("lease_id")
+    communication_lease_release.add_argument("agent_id")
+    communication_lease_release.add_argument("fencing_token")
+    _set(cmd_communication_lease_release, communication_lease_release)
+
+    communication_send = communication.add_parser(
+        "send", help="enqueue an idempotent OpenClaw human-facing delivery"
+    )
+    communication_send.add_argument("target")
+    communication_send.add_argument("body", nargs="?", default="")
+    communication_send.add_argument("--body-file")
+    communication_send.add_argument("--origin-agent-id")
+    communication_send.add_argument("--identity")
+    communication_send.add_argument("--account-id")
+    communication_send.add_argument("--channel")
+    communication_send.add_argument("--task-id")
+    communication_send.add_argument("--idempotency-key")
+    communication_send.add_argument("--max-attempts", type=int, default=5)
+    communication_send.add_argument("--metadata", default="{}")
+    _set(cmd_communication_send, communication_send)
+    communication_deliveries = communication.add_parser("deliveries")
+    communication_deliveries.add_argument("--status")
+    communication_deliveries.add_argument("--identity")
+    communication_deliveries.add_argument("--origin-agent-id")
+    communication_deliveries.add_argument("--limit", type=int, default=100)
+    _set(cmd_communication_deliveries, communication_deliveries)
 
     notifier = sub.add_parser(
         "notifier", help="operator notification channel configuration"

@@ -1747,6 +1747,157 @@ class RemoteDispatch:
     def deliver_pending_notifications(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/notifier/deliver", _drop_none(kw)))
 
+    # -- Runtime-neutral human communication -----------------------------
+
+    def configure_communication_identity(self, name: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/identities", _drop_none({"name": name, **kw})
+            )
+        )
+
+    def get_communication_identity(self, identity_id_or_name: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/communication/identities/%s"
+                % quote(identity_id_or_name, safe="")
+            )
+        )
+
+    def list_communication_identities(self, enabled: Optional[bool] = None) -> List[_Dictish]:
+        return _wrap_list(self._get("/communication/identities", enabled=enabled))
+
+    def delete_communication_identity(self, identity_id_or_name: str) -> _Dictish:
+        return _Dictish(
+            self._delete(
+                "/communication/identities/%s"
+                % quote(identity_id_or_name, safe="")
+            )
+        )
+
+    def configure_communication_account(
+        self, identity_id: str, channel: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/accounts",
+                _drop_none({"identity_id": identity_id, "channel": channel, **kw}),
+            )
+        )
+
+    def get_communication_account(self, account_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/communication/accounts/%s" % quote(account_id, safe=""))
+        )
+
+    def list_communication_accounts(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/communication/accounts", **kw))
+
+    def delete_communication_account(self, account_id: str) -> _Dictish:
+        return _Dictish(
+            self._delete("/communication/accounts/%s" % quote(account_id, safe=""))
+        )
+
+    def configure_representation_binding(
+        self, subject_kind: str, subject_id: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/representations",
+                _drop_none(
+                    {"subject_kind": subject_kind, "subject_id": subject_id, **kw}
+                ),
+            )
+        )
+
+    def list_representation_bindings(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/communication/representations", **kw))
+
+    def delete_representation_binding(self, binding_id: str) -> _Dictish:
+        return _Dictish(
+            self._delete(
+                "/communication/representations/%s" % quote(binding_id, safe="")
+            )
+        )
+
+    def resolve_agent_representation(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/agents/%s/representation" % quote(agent_id, safe=""), **kw
+            )
+        )
+
+    def acquire_gateway_identity_lease(self, account_id: str, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/gateway-leases/acquire",
+                _drop_none({"account_id": account_id, "agent_id": agent_id, **kw}),
+            )
+        )
+
+    def renew_gateway_identity_lease(
+        self, lease_id: str, agent_id: str, fencing_token: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/gateway-leases/%s/renew" % quote(lease_id, safe=""),
+                _drop_none(
+                    {"agent_id": agent_id, "fencing_token": fencing_token, **kw}
+                ),
+            )
+        )
+
+    def release_gateway_identity_lease(
+        self, lease_id: str, agent_id: str, fencing_token: str
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/gateway-leases/%s/release"
+                % quote(lease_id, safe=""),
+                {"agent_id": agent_id, "fencing_token": fencing_token},
+            )
+        )
+
+    def list_gateway_identity_leases(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/communication/gateway-leases", **kw))
+
+    def enqueue_human_message(self, target: str, body: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/deliveries",
+                _drop_none({"target": target, "body": body, **kw}),
+            )
+        )
+
+    def claim_human_messages(self, agent_id: str, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(
+            self._post(
+                "/communication/deliveries/claim",
+                _drop_none({"agent_id": agent_id, **kw}),
+            )
+        )
+
+    def acknowledge_human_message(self, delivery_id: str, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/deliveries/%s/ack" % quote(delivery_id, safe=""),
+                _drop_none({"agent_id": agent_id, **kw}),
+            )
+        )
+
+    def fail_human_message(
+        self, delivery_id: str, agent_id: str, error: str, **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/communication/deliveries/%s/fail" % quote(delivery_id, safe=""),
+                _drop_none({"agent_id": agent_id, "error": error, **kw}),
+            )
+        )
+
+    def list_human_messages(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/communication/deliveries", **kw))
+
     def list_events(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/events", **kw))
 

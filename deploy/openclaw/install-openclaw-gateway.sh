@@ -8,7 +8,8 @@
 set -euo pipefail
 
 OPENCLAW_VERSION="2026.6.11"
-OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}"
+OPENCLAW_IMAGE_REVISION="2"
+OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
@@ -18,6 +19,7 @@ WORKSPACE_DIR="$OPENCLAW_HOST_DIR/workspace"
 BACKUP_DIR="$OPENCLAW_HOST_DIR/backups"
 POLICY_PATH="$OPENCLAW_HOST_DIR/openclaw-policy.yaml"
 WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
+MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 CONTAINERFILE="${MAC_OPENCLAW_CONTAINERFILE:-$MAC_SRC/deploy/openclaw/OpenClaw.Containerfile}"
 POLICY_TEMPLATE="${MAC_OPENCLAW_POLICY_TEMPLATE:-$MAC_SRC/deploy/openclaw/openclaw-policy.yaml}"
 GATEWAY_PORT="${MAC_OPENCLAW_GATEWAY_PORT:-18789}"
@@ -83,6 +85,27 @@ source_host_env() {
   MAC_OPENCLAW_SLACK_APP_TOKEN="${MAC_OPENCLAW_SLACK_APP_TOKEN:-${SLACK_APP_TOKEN:-}}"
   MAC_OPENCLAW_TELEGRAM_BOT_TOKEN="${MAC_OPENCLAW_TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
   MAC_OPENCLAW_TELEGRAM_CANARY_TARGET="${MAC_OPENCLAW_TELEGRAM_CANARY_TARGET:-${TELEGRAM_CANARY_TARGET:-}}"
+  MAC_OPENCLAW_PUBLIC_IDENTITY="${MAC_OPENCLAW_PUBLIC_IDENTITY:-}"
+  MAC_OPENCLAW_REPRESENTED_BY="${MAC_OPENCLAW_REPRESENTED_BY:-}"
+  MAC_OPENCLAW_REPRESENTATION_MODE="${MAC_OPENCLAW_REPRESENTATION_MODE:-delegated}"
+  MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-default}"
+  MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
+  # Merely having old Hermes credentials on a worker must not turn that worker
+  # into a public bot.  Channel activation is owned by a logical public
+  # identity assignment; unassigned OpenClaw runtimes are deliberately headless.
+  if [ -z "$MAC_OPENCLAW_PUBLIC_IDENTITY" ]; then
+    MAC_OPENCLAW_SLACK_BOT_TOKEN=""
+    MAC_OPENCLAW_SLACK_APP_TOKEN=""
+    MAC_OPENCLAW_TELEGRAM_BOT_TOKEN=""
+  fi
+  local channels=()
+  if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
+    channels+=(slack)
+  fi
+  if [ -n "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" ]; then
+    channels+=(telegram)
+  fi
+  MAC_OPENCLAW_CHANNELS="$(IFS=,; printf '%s' "${channels[*]}")"
   OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-$persisted_gateway_token}"
   if [ -z "$OPENCLAW_GATEWAY_TOKEN" ]; then
     command -v openssl >/dev/null 2>&1 || die "openssl is required to create the local gateway token"
@@ -96,6 +119,9 @@ source_host_env() {
   export MAC_OPENCLAW_HOME_CHANNEL MAC_OPENCLAW_SLACK_BOT_TOKEN
   export MAC_OPENCLAW_SLACK_APP_TOKEN MAC_OPENCLAW_TELEGRAM_BOT_TOKEN
   export MAC_OPENCLAW_TELEGRAM_CANARY_TARGET OPENCLAW_GATEWAY_TOKEN SANDBOX_NAME
+  export MAC_OPENCLAW_PUBLIC_IDENTITY MAC_OPENCLAW_CHANNELS
+  export MAC_OPENCLAW_REPRESENTED_BY MAC_OPENCLAW_REPRESENTATION_MODE
+  export MAC_OPENCLAW_SLACK_ACCOUNT_ID MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID
   export MAC_OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT"
 }
 
@@ -106,10 +132,7 @@ validate_env() {
     MAC_OPENCLAW_INSTANCE_ID \
     MAC_OPENCLAW_ROUTER_URL \
     MAC_OPENCLAW_ROUTER_API_KEY \
-    MAC_OPENCLAW_MODEL \
-    MAC_OPENCLAW_SLACK_BOT_TOKEN \
-    MAC_OPENCLAW_SLACK_APP_TOKEN \
-    MAC_OPENCLAW_TELEGRAM_BOT_TOKEN; do
+    MAC_OPENCLAW_MODEL; do
     [ -n "${!name:-}" ] || missing+=("$name")
   done
   [ "${#missing[@]}" -eq 0 ] || die "missing required host-local inputs: ${missing[*]}"
@@ -117,13 +140,30 @@ validate_env() {
     http://*|https://*) ;;
     *) die "MAC_OPENCLAW_ROUTER_URL must be an http(s) URL" ;;
   esac
-  [[ "$MAC_OPENCLAW_SLACK_BOT_TOKEN" == xoxb-* ]] || die "Slack bot token has the wrong type"
-  [[ "$MAC_OPENCLAW_SLACK_APP_TOKEN" == xapp-* ]] || die "Slack app token has the wrong type"
-  [[ "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" =~ ^[0-9]+:.+ ]] || die "Telegram bot token has the wrong type"
+  if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
+    [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] && [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ] \
+      || die "Slack requires both bot and app tokens"
+    [[ "$MAC_OPENCLAW_SLACK_BOT_TOKEN" == xoxb-* ]] || die "Slack bot token has the wrong type"
+    [[ "$MAC_OPENCLAW_SLACK_APP_TOKEN" == xapp-* ]] || die "Slack app token has the wrong type"
+  fi
+  if [ -n "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" ]; then
+    [[ "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" =~ ^[0-9]+:.+ ]] || die "Telegram bot token has the wrong type"
+  fi
+  if [ -n "$MAC_OPENCLAW_PUBLIC_IDENTITY" ] && [ -z "$MAC_OPENCLAW_CHANNELS" ]; then
+    die "public identity $MAC_OPENCLAW_PUBLIC_IDENTITY has no configured channel credentials"
+  fi
+  case "$MAC_OPENCLAW_REPRESENTATION_MODE" in
+    direct|delegated) ;;
+    *) die "MAC_OPENCLAW_REPRESENTATION_MODE must be direct or delegated" ;;
+  esac
   if truthy "$LIVE_CANARY"; then
-    [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ] || die "live canary requires a Slack home channel"
-    [ -n "$MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" ] \
-      || die "live canary requires MAC_OPENCLAW_TELEGRAM_CANARY_TARGET"
+    case ",$MAC_OPENCLAW_CHANNELS," in
+      *,slack,*) [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ] || die "Slack live canary requires a home channel" ;;
+    esac
+    case ",$MAC_OPENCLAW_CHANNELS," in
+      *,telegram,*) [ -n "$MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" ] \
+        || die "Telegram live canary requires MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" ;;
+    esac
   fi
   [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] || die "MAC_OPENCLAW_GATEWAY_PORT must be numeric"
   [ "$GATEWAY_PORT" -ge 1 ] && [ "$GATEWAY_PORT" -le 65535 ] || die "gateway port is out of range"
@@ -146,6 +186,36 @@ def secret_ref(name: str) -> dict:
 
 model = os.environ["MAC_OPENCLAW_MODEL"]
 provider_model = "mac-router/%s" % model
+channels = {}
+configured = {
+    item.strip()
+    for item in os.environ.get("MAC_OPENCLAW_CHANNELS", "").split(",")
+    if item.strip()
+}
+if "slack" in configured:
+    channels["slack"] = {
+        "enabled": True,
+        "mode": "socket",
+        "accounts": {
+            os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default"): {
+                "botToken": secret_ref("SLACK_BOT_TOKEN"),
+                "appToken": secret_ref("SLACK_APP_TOKEN"),
+                "groupPolicy": "open",
+            }
+        },
+    }
+if "telegram" in configured:
+    channels["telegram"] = {
+        "enabled": True,
+        "accounts": {
+            os.environ.get("MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID", "default"): {
+                "botToken": secret_ref("TELEGRAM_BOT_TOKEN"),
+                "dmPolicy": "pairing",
+                "groupPolicy": "allowlist",
+            }
+        },
+    }
+
 config = {
     "gateway": {
         "mode": "local",
@@ -157,19 +227,12 @@ config = {
         },
         "controlUi": {"enabled": False},
     },
-    "channels": {
-        "slack": {
-            "enabled": True,
-            "mode": "socket",
-            "botToken": secret_ref("SLACK_BOT_TOKEN"),
-            "appToken": secret_ref("SLACK_APP_TOKEN"),
-            "groupPolicy": "open",
-        },
-        "telegram": {
-            "enabled": True,
-            "botToken": secret_ref("TELEGRAM_BOT_TOKEN"),
-            "dmPolicy": "pairing",
-            "groupPolicy": "allowlist",
+    "channels": channels,
+    "plugins": {
+        "enabled": True,
+        "entries": {
+            "slack": {"enabled": "slack" in configured},
+            "telegram": {"enabled": "telegram" in configured},
         },
     },
     "models": {
@@ -191,9 +254,17 @@ config = {
         "defaults": {
             "model": {"primary": provider_model},
             "workspace": "/home/sandbox/workspace",
-        }
+        },
+        "list": [{
+            "id": "main",
+            "default": True,
+            "name": os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or os.environ["MAC_OPENCLAW_AGENT_ID"],
+            "workspace": "/home/sandbox/workspace",
+        }],
     },
 }
+if configured:
+    config["plugins"]["allow"] = sorted(configured)
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -214,10 +285,12 @@ values = {
     "OPENCLAW_CONFIG_PATH": "/home/sandbox/.config/mac-openclaw/openclaw.json",
     "OPENCLAW_GATEWAY_TOKEN": os.environ["OPENCLAW_GATEWAY_TOKEN"],
     "OPENCLAW_STATE_DIR": "/home/sandbox/.openclaw-data",
-    "SLACK_APP_TOKEN": os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"],
-    "SLACK_BOT_TOKEN": os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"],
-    "TELEGRAM_BOT_TOKEN": os.environ["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"],
 }
+if os.environ.get("MAC_OPENCLAW_SLACK_APP_TOKEN"):
+    values["SLACK_APP_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"]
+    values["SLACK_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"]
+if os.environ.get("MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"):
+    values["TELEGRAM_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"]
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write("# Generated host-local OpenClaw runtime environment.\n")
     for key in sorted(values):
@@ -244,7 +317,10 @@ write_workspace_context() {
 
 - Fleet: ${MAC_OPENCLAW_FLEET_NAME}
 - Agent: ${MAC_OPENCLAW_AGENT_ID}
-- Role: stock-openclaw-chat-gateway
+- Runtime role: stock-openclaw-internal-agent
+- Public identity: ${MAC_OPENCLAW_PUBLIC_IDENTITY:-none (represented through another gateway)}
+- Representation mode: ${MAC_OPENCLAW_REPRESENTATION_MODE}
+- Human channels: ${MAC_OPENCLAW_CHANNELS:-none}
 - MAC router: ${MAC_OPENCLAW_ROUTER_URL}
 - Model route: mac-router/${MAC_OPENCLAW_MODEL}
 - Task execution is a separate MAC worker role and is not performed by this gateway.
@@ -314,6 +390,15 @@ exec "\$OPEN_SHELL" sandbox create \
   -- /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
 EOF
   chmod 0700 "$WRAPPER_PATH"
+  cat > "$MESSAGE_WRAPPER_PATH" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+OPEN_SHELL=$(printf '%q' "$openshell_bin")
+SANDBOX=$(printf '%q' "$SANDBOX_NAME")
+exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
+  /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
+EOF
+  chmod 0700 "$MESSAGE_WRAPPER_PATH"
 }
 
 build_image() {
@@ -339,16 +424,19 @@ backup_and_delete_stale_sandbox() {
   "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || return 0
   local version
   version="$($openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- /usr/local/bin/openclaw --version 2>/dev/null || true)"
-  case "$version" in
-    *"$OPENCLAW_VERSION"*) return 0 ;;
-  esac
+  local image_revision
+  image_revision="$($openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- cat /etc/mac-openclaw-image-revision 2>/dev/null || true)"
+  if [[ "$version" == *"$OPENCLAW_VERSION"* ]] \
+    && [ "$image_revision" = "$OPENCLAW_IMAGE_REVISION" ]; then
+    return 0
+  fi
   local stamp="$BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$stamp"
   chmod 0700 "$stamp"
   "$openshell_bin" sandbox download "$SANDBOX_NAME" /home/sandbox/.openclaw-data "$stamp" >/dev/null 2>&1 || true
   "$openshell_bin" sandbox download "$SANDBOX_NAME" /home/sandbox/workspace "$stamp" >/dev/null 2>&1 || true
   "$openshell_bin" sandbox delete "$SANDBOX_NAME" >/dev/null
-  log "replaced stale sandbox after owner-only state backup at $stamp"
+  log "replaced stale sandbox (version=$version image_revision=${image_revision:-missing}) after owner-only state backup at $stamp"
 }
 
 prepare() {
@@ -376,7 +464,7 @@ sandbox_command() {
   local openshell_bin="$1"
   shift
   "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-    /bin/sh -lc '. /home/sandbox/.config/mac-openclaw/runtime.env; exec "$@"' mac-openclaw "$@"
+    /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
 }
 
 verify() {
@@ -391,10 +479,26 @@ verify() {
     || die "OpenClaw readiness probe failed"
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null
+  case ",$MAC_OPENCLAW_CHANNELS," in
+    *,slack,*)
+      sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+        --channel slack --account "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" \
+        --target channel:C00000000 --message 'MAC plugin preflight' \
+        --dry-run --json >/dev/null
+      ;;
+  esac
+  case ",$MAC_OPENCLAW_CHANNELS," in
+    *,telegram,*)
+      sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+        --channel telegram --account "$MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID" \
+        --target 0 --message 'MAC plugin preflight' --dry-run --json >/dev/null
+      ;;
+  esac
   local channel_status="$OPENCLAW_HOST_DIR/channel-status.json"
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw channels status --probe --json > "$channel_status"
   chmod 0600 "$channel_status"
-  python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" "$channel_status"
+  python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+    "$channel_status" --required "$MAC_OPENCLAW_CHANNELS"
   if truthy "$LIVE_CANARY"; then
     local output
     output="$(sandbox_command "$openshell_bin" /usr/local/bin/openclaw agent \
@@ -403,12 +507,22 @@ verify() {
     printf '%s' "$output" | grep -q 'MAC_OPENCLAW_CANARY_OK' \
       || die "authenticated model canary did not return the sentinel"
     local canary_message="MAC OpenClaw canary from ${MAC_OPENCLAW_AGENT_ID}"
-    sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
-      --channel slack --target "$MAC_OPENCLAW_HOME_CHANNEL" \
-      --message "$canary_message" --json >/dev/null
-    sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
-      --channel telegram --target "$MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" \
-      --message "$canary_message" --json >/dev/null
+    case ",$MAC_OPENCLAW_CHANNELS," in
+      *,slack,*)
+        sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+          --channel slack --account "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" \
+          --target "$MAC_OPENCLAW_HOME_CHANNEL" \
+          --message "$canary_message" --json >/dev/null
+        ;;
+    esac
+    case ",$MAC_OPENCLAW_CHANNELS," in
+      *,telegram,*)
+        sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+          --channel telegram --account "$MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID" \
+          --target "$MAC_OPENCLAW_TELEGRAM_CANARY_TARGET" \
+          --message "$canary_message" --json >/dev/null
+        ;;
+    esac
   fi
   python3 - "$OPENCLAW_HOST_DIR/service-advertisement.json" <<'PY'
 import json
@@ -419,8 +533,48 @@ import time
 path = sys.argv[1]
 agent_id = os.environ["MAC_OPENCLAW_AGENT_ID"]
 suffix = agent_id.removeprefix("agent_")
+channels = {
+    channel: {
+        "enabled": True,
+        "transport": "socket" if channel == "slack" else "long_polling",
+        "account_id": os.environ.get(
+            "MAC_OPENCLAW_%s_ACCOUNT_ID" % channel.upper(), "default"
+        ),
+    }
+    for channel in os.environ.get("MAC_OPENCLAW_CHANNELS", "").split(",")
+    if channel
+}
+runtime = {
+    "schema": "mac.openclaw_runtime.v1",
+    "implementation": "openclaw",
+    "version": "2026.6.11",
+    "mode": "gateway" if channels else "internal",
+    "confinement": {
+        "provider": "openshell",
+        "sandbox": "mac-openclaw-%s" % suffix,
+    },
+    "verified": True,
+    "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}
 record = {
-    "chat_gateway": {
+    "openclaw_runtime": runtime,
+    "representation": {
+        "schema": "mac.agent_representation.v1",
+        "mode": (
+            os.environ.get("MAC_OPENCLAW_REPRESENTATION_MODE", "delegated")
+            if (channels or os.environ.get("MAC_OPENCLAW_REPRESENTED_BY"))
+            else "internal_only"
+        ),
+        "identity": (
+            os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY")
+            if channels
+            else os.environ.get("MAC_OPENCLAW_REPRESENTED_BY")
+        ) or None,
+        "human_facing": bool(channels),
+    },
+}
+if channels:
+    record["chat_gateway"] = {
         "schema": "mac.chat_gateway_service.v1",
         "implementation": "openclaw",
         "version": "2026.6.11",
@@ -429,27 +583,23 @@ record = {
         % os.environ["MAC_OPENCLAW_FLEET_NAME"],
         "endpoint": "http://127.0.0.1:%s"
         % os.environ["MAC_OPENCLAW_GATEWAY_PORT"],
-        "confinement": {
-            "provider": "openshell",
-            "sandbox": "mac-openclaw-%s" % suffix,
-        },
-        "channels": {
-            "slack": {"enabled": True, "transport": "socket"},
-            "telegram": {"enabled": True, "transport": "long_polling"},
-        },
+        "public_identity": os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or None,
+        "confinement": runtime["confinement"],
+        "channels": channels,
         "verified": True,
-        "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "verified_at": runtime["verified_at"],
     }
-}
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(record, handle, indent=2, sort_keys=True)
     handle.write("\n")
 os.chmod(path, 0o600)
 PY
   if truthy "$LIVE_CANARY"; then
-    log "verified stock OpenClaw gateway: liveness, readiness, config, RPC health, Slack+Telegram probes, model canary, channel sends"
+    log "verified stock OpenClaw runtime: liveness, readiness, config, RPC health, configured channel probes, model canary, channel sends"
+  elif [ -n "$MAC_OPENCLAW_CHANNELS" ]; then
+    log "verified stock OpenClaw gateway: liveness, readiness, config, RPC health, configured channel probes ($MAC_OPENCLAW_CHANNELS)"
   else
-    log "verified stock OpenClaw gateway: liveness, readiness, config, RPC health, Slack+Telegram probes"
+    log "verified stock OpenClaw headless runtime: liveness, readiness, config, RPC health"
   fi
 }
 

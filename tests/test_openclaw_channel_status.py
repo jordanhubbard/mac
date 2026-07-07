@@ -1,4 +1,4 @@
-"""Behavioral tests for fail-closed OpenClaw Slack/Telegram probe validation."""
+"""Behavioral tests for configured-only OpenClaw channel probe validation."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def account(*, ok: bool = True, error: str = "") -> dict[str, object]:
     return result
 
 
-def test_both_healthy_channels_are_required() -> None:
+def test_default_compatibility_mode_requires_both_healthy_channels() -> None:
     validator = load_validator()
     payload = {
         "channelAccounts": {
@@ -57,3 +57,16 @@ def test_probe_failure_or_runtime_error_fails_closed() -> None:
         }
     }
     assert validator.channel_problems(payload) == ["slack", "telegram"]
+
+
+def test_headless_runtime_has_no_required_channel_probe() -> None:
+    validator = load_validator()
+    assert validator.channel_problems({}, ()) == []
+
+
+def test_single_configured_channel_is_validated_without_requiring_others() -> None:
+    validator = load_validator()
+    payload = {"channelAccounts": {"slack": [account()]}}
+    assert validator.channel_problems(payload, ("slack",)) == []
+    payload["channelAccounts"]["slack"] = [account(ok=False)]
+    assert validator.channel_problems(payload, ("slack",)) == ["slack"]

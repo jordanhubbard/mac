@@ -22,6 +22,8 @@ from mac.messaging_service import FORBIDDEN_MESSAGE_KEYS
 
 
 SendMessage = Callable[[str, Optional[str], str, Dict[str, Any]], AgentMessage]
+EnqueueHumanMessage = Callable[..., Any]
+ResolveRepresentation = Callable[..., Dict[str, Any]]
 
 
 def _message_safe_value(value: Any) -> Any:
@@ -61,6 +63,9 @@ class NotifierService:
         get_platform_binding: Callable[[str], Any],
         send_message: SendMessage,
         record_log: Callable[..., Any],
+        enqueue_human_message: Optional[EnqueueHumanMessage] = None,
+        resolve_agent_representation: Optional[ResolveRepresentation] = None,
+        list_communication_identities: Optional[Callable[..., List[Any]]] = None,
     ) -> None:
         self.store = store
         self._list_agents = list_agents
@@ -69,6 +74,9 @@ class NotifierService:
         self._get_platform_binding = get_platform_binding
         self._send_message = send_message
         self._record_log = record_log
+        self._enqueue_human_message = enqueue_human_message
+        self._resolve_agent_representation = resolve_agent_representation
+        self._list_communication_identities = list_communication_identities
 
     def configure_channel(
         self,
@@ -280,9 +288,25 @@ class NotifierService:
         if not targets and "hermes" in notification.channels:
             targets = self._auto_hermes_targets(notification)
         message_ids: List[str] = []
+        use_openclaw_outbox = bool(
+            self._enqueue_human_message
+            and self._resolve_agent_representation
+            and self._list_communication_identities
+            and self._list_communication_identities(enabled=True)
+        )
         for target in targets:
             agent_id = str(target.get("agent_id") or "").strip()
             if not agent_id:
+                continue
+            target_channel = str(
+                target.get("channel_type") or target.get("platform") or ""
+            ).strip().lower()
+            if use_openclaw_outbox and target_channel in {"slack", "telegram"}:
+                delivery_id = self._enqueue_openclaw_delivery(
+                    notification, target, agent_id
+                )
+                if delivery_id:
+                    message_ids.append(delivery_id)
                 continue
             payload = {
                 "schema": "mac.notifier.task_progress.v1",
@@ -310,6 +334,97 @@ class NotifierService:
                 detail={"notification_id": notification.id, "message_ids": message_ids},
             )
         return message_ids
+
+    def _enqueue_openclaw_delivery(
+        self,
+        notification: OperatorNotification,
+        target: JsonDict,
+        agent_id: str,
+    ) -> Optional[str]:
+        """Queue one human-facing delivery through a represented identity.
+
+        Once the runtime-neutral identity registry is configured, falling back
+        to a worker-local provider SDK would violate the OpenClaw-only channel
+        contract.  Misconfigured routes are logged and left undelivered for
+        operator repair instead of silently changing the speaking identity.
+        """
+
+        channel = str(
+            target.get("channel_type") or target.get("platform") or ""
+        ).strip().lower()
+        if channel not in {"slack", "telegram"}:
+            return None
+        try:
+            resolution = self._resolve_agent_representation(agent_id)
+            identity = ensure_json_object(resolution.get("identity"))
+            if not identity:
+                self._record_log(
+                    "notifier.representation_unavailable",
+                    layer="control_plane",
+                    source="notifier",
+                    subject_type=notification.subject_type,
+                    subject_id=notification.subject_id,
+                    detail={"notification_id": notification.id, "agent_id": agent_id},
+                )
+                return None
+            external_id = str(target.get("external_id") or "").strip()
+            if not external_id:
+                self._record_log(
+                    "notifier.channel_target_missing",
+                    layer="control_plane",
+                    source="notifier",
+                    subject_type=notification.subject_type,
+                    subject_id=notification.subject_id,
+                    detail={"notification_id": notification.id, "channel": channel},
+                )
+                return None
+            if channel == "slack":
+                channel_id = external_id.rsplit("/", 1)[-1]
+                external_id = (
+                    channel_id
+                    if channel_id.startswith(("channel:", "user:"))
+                    else "channel:%s" % channel_id
+                )
+            text = "[%s] %s" % (
+                notification.event_type,
+                notification.body or notification.title,
+            )
+            delivery = self._enqueue_human_message(
+                external_id,
+                text,
+                origin_agent_id=agent_id,
+                identity_id=identity["id"],
+                channel=channel,
+                task_id=(
+                    notification.subject_id
+                    if notification.subject_type == "task"
+                    else None
+                ),
+                idempotency_key="notifier:%s:%s:%s:%s"
+                % (notification.id, identity["id"], channel, external_id),
+                metadata={
+                    "notification_id": notification.id,
+                    "represented_agent_id": agent_id,
+                    "public_identity_id": identity["id"],
+                },
+            )
+            return str(delivery.id)
+        except Exception as exc:  # noqa: BLE001 - preserve pending notification for repair.
+            self._record_log(
+                "notifier.openclaw_enqueue_failed",
+                layer="control_plane",
+                source="notifier",
+                level="error",
+                subject_type=notification.subject_type,
+                subject_id=notification.subject_id,
+                detail={
+                    "notification_id": notification.id,
+                    "agent_id": agent_id,
+                    "channel": channel,
+                    "error": str(exc),
+                },
+            )
+            return None
 
     def _configured_targets(self, notification: OperatorNotification) -> List[JsonDict]:
         targets: List[JsonDict] = []

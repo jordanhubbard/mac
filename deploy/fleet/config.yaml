@@ -36,6 +36,16 @@ defaults:
     # install/enable and which to stop/disable.  The task-executor role always
     # uses the vendored Hermes regardless of this setting (ADR 0001).
     gateway_impl: openclaw
+    # Human-facing identity is optional.  Empty means a headless OpenClaw
+    # runtime represented through the fleet's default identity.  Assign the
+    # same stable logical name (for example mac-hive) to exactly one active
+    # gateway host.  The hub lease fences outbound delivery, while moving this
+    # assignment and redeploying performs an explicit channel-listener failover.
+    public_identity: ""
+    represented_by: mac-hive
+    representation_mode: delegated
+    slack_account_id: default
+    telegram_account_id: default
   worker:
     mode: heartbeat
     capabilities:

@@ -598,6 +598,7 @@ class MacWorker:
         self._declared_digest = False
         self._declared_policy = False
         self._last_command_inventory_at = 0.0
+        self._last_gateway_lease_renew_at = 0.0
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
 
@@ -699,6 +700,8 @@ class MacWorker:
             )
         self._heartbeat()
         self._maybe_sync_service_claims()
+        self._maintain_openclaw_gateway_leases()
+        self._process_human_delivery_outbox()
         review_result = self._process_review_nudges()
         if review_result is not None:
             return review_result
@@ -1107,6 +1110,17 @@ class MacWorker:
             )
 
     def _send_status_update_to_home_channels(self, payload: JsonDict) -> JsonDict:
+        if os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() == "openclaw":
+            # OpenClaw deployments use the fenced communication outbox.  Never
+            # fall back to a direct provider SDK: that would bypass the stable
+            # public identity, gateway lease, delivery receipt, and sandbox.
+            return {
+                "status": "skipped",
+                "sent": 0,
+                "skipped": 1,
+                "failed": 0,
+                "reason": "openclaw_outbox_required",
+            }
         channel_type = str(payload.get("channel_type") or "").strip().lower()
         target = ensure_json_object(payload.get("target"))
         target_type = str(target.get("channel_type") or "").strip().lower()
@@ -1190,6 +1204,159 @@ class MacWorker:
                 )
         status = "sent" if sent else ("failed" if failed else "skipped")
         return {"status": status, "sent": sent, "skipped": skipped, "failed": failed}
+
+    def _maintain_openclaw_gateway_leases(self) -> None:
+        identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
+        message_bin = Path(
+            os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
+            or Path.home() / ".mac" / "bin" / "openclaw-message"
+        )
+        if not identity or not message_bin.is_file():
+            return
+        now = time.monotonic()
+        if now - self._last_gateway_lease_renew_at < 30.0:
+            return
+        self._last_gateway_lease_renew_at = now
+        try:
+            accounts = self.client.get(
+                "/communication/accounts?%s"
+                % urlencode({"identity_id": identity, "enabled": "true"})
+            )
+            if not isinstance(accounts, list):
+                return
+            for account in accounts:
+                if not isinstance(account, dict) or not account.get("id"):
+                    continue
+                try:
+                    self.client.post(
+                        "/communication/gateway-leases/acquire",
+                        {
+                            "account_id": account["id"],
+                            "agent_id": self.agent_id,
+                            "lease_seconds": 90,
+                            "metadata": {
+                                "runtime": "openclaw",
+                                "confinement": "openshell",
+                                "public_identity": identity,
+                            },
+                        },
+                    )
+                except Exception as exc:  # another healthy provider owns it
+                    self._observe_log(
+                        "worker.communication.gateway_lease_unavailable",
+                        level="debug",
+                        detail={"account_id": account["id"], "error": str(exc)},
+                    )
+        except Exception as exc:
+            self._observe_log(
+                "worker.communication.gateway_lease_failed",
+                level="warning",
+                detail={"identity": identity, "error": str(exc)},
+            )
+
+    def _process_human_delivery_outbox(self) -> None:
+        identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
+        message_bin = Path(
+            os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
+            or Path.home() / ".mac" / "bin" / "openclaw-message"
+        )
+        if not identity or not message_bin.is_file():
+            return
+        try:
+            deliveries = self.client.post(
+                "/communication/deliveries/claim",
+                {"agent_id": self.agent_id, "limit": 10, "lease_seconds": 90},
+            )
+        except Exception as exc:
+            self._observe_log(
+                "worker.communication.outbox_claim_failed",
+                level="warning",
+                detail={"error": str(exc)},
+            )
+            return
+        if not isinstance(deliveries, list):
+            return
+        account_cache: Dict[str, JsonDict] = {}
+        for delivery in deliveries:
+            if not isinstance(delivery, dict):
+                continue
+            delivery_id = str(delivery.get("id") or "")
+            account_record_id = str(delivery.get("account_id") or "")
+            try:
+                account = account_cache.get(account_record_id)
+                if account is None:
+                    loaded = self.client.get(
+                        "/communication/accounts/%s"
+                        % quote(account_record_id, safe="")
+                    )
+                    if not isinstance(loaded, dict):
+                        raise MacApiError("communication account response is not an object")
+                    account = loaded
+                    account_cache[account_record_id] = account
+                command = [
+                    str(message_bin),
+                    "send",
+                    "--channel",
+                    str(delivery.get("channel") or account.get("channel") or ""),
+                    "--account",
+                    str(account.get("account_id") or "default"),
+                    "--target",
+                    str(delivery.get("target") or ""),
+                    "--message",
+                    str(delivery.get("body") or ""),
+                    "--json",
+                ]
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                )
+                if completed.returncode != 0:
+                    raise RuntimeError(
+                        (completed.stderr or completed.stdout or "OpenClaw send failed").strip()[:1000]
+                    )
+                receipt = _json_object_from_text(completed.stdout)
+                self.client.post(
+                    "/communication/deliveries/%s/ack"
+                    % quote(delivery_id, safe=""),
+                    {
+                        "agent_id": self.agent_id,
+                        "provider_message_id": _provider_message_id(receipt),
+                        "detail": {
+                            "channel": delivery.get("channel"),
+                            "account_id": account.get("account_id"),
+                            "openclaw": True,
+                        },
+                    },
+                )
+                self._observe_log(
+                    "worker.communication.delivery_sent",
+                    subject_type="human_message_delivery",
+                    subject_id=delivery_id,
+                    detail={"channel": delivery.get("channel"), "identity": identity},
+                )
+            except Exception as exc:
+                try:
+                    self.client.post(
+                        "/communication/deliveries/%s/fail"
+                        % quote(delivery_id, safe=""),
+                        {
+                            "agent_id": self.agent_id,
+                            "error": str(exc)[:1000],
+                            "retryable": True,
+                        },
+                    )
+                except Exception:
+                    pass
+                self._observe_log(
+                    "worker.communication.delivery_failed",
+                    level="warning",
+                    subject_type="human_message_delivery",
+                    subject_id=delivery_id,
+                    detail={"error": str(exc)},
+                )
 
     def _handle_review_verdict_nudge(self, message: JsonDict, payload: JsonDict) -> WorkerRunResult:
         task_id = str(payload.get("task_id") or "").strip()
@@ -4535,6 +4702,46 @@ def _sha256_text(value: str) -> str:
 
 def ensure_json_object(value: Any) -> JsonDict:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _json_object_from_text(value: str) -> JsonDict:
+    """Parse an OpenClaw JSON receipt without retaining human message text."""
+
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        # Some CLI builds prefix one informational line before the JSON body.
+        start = text.find("{")
+        if start < 0:
+            return {}
+        try:
+            parsed = json.loads(text[start:])
+        except json.JSONDecodeError:
+            return {}
+    return ensure_json_object(parsed)
+
+
+def _provider_message_id(receipt: Any) -> Optional[str]:
+    """Find a provider receipt id across OpenClaw channel result shapes."""
+
+    if isinstance(receipt, dict):
+        for key in ("messageId", "message_id", "ts", "id"):
+            value = receipt.get(key)
+            if value not in (None, "") and not isinstance(value, (dict, list)):
+                return str(value)
+        for key in ("result", "data", "message", "response"):
+            found = _provider_message_id(receipt.get(key))
+            if found:
+                return found
+    elif isinstance(receipt, list):
+        for item in receipt:
+            found = _provider_message_id(item)
+            if found:
+                return found
+    return None
 
 
 def _load_json_file(path: Path) -> Any:

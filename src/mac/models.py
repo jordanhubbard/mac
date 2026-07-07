@@ -1011,6 +1011,108 @@ class NotifierChannel:
         return asdict(self)
 
 
+@dataclass
+class CommunicationIdentity:
+    """Stable human-facing identity independent of any worker or host."""
+
+    id: str
+    name: str
+    display_name: str
+    description: str
+    is_default: bool
+    enabled: bool
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class CommunicationAccount:
+    """One provider account owned by a logical communication identity."""
+
+    id: str
+    identity_id: str
+    channel: str
+    account_id: str
+    credential_refs: JsonDict
+    config: JsonDict
+    enabled: bool
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class RepresentationBinding:
+    """Map an internal subject to a direct, delegated, or silent identity."""
+
+    id: str
+    subject_kind: str
+    subject_id: str
+    identity_id: Optional[str]
+    mode: str
+    priority: int
+    enabled: bool
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class GatewayIdentityLease:
+    """Fenced singleton ownership of a channel account by one fleet agent."""
+
+    id: str
+    account_id: str
+    agent_id: str
+    fencing_token: str
+    leased_until: str
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class HumanMessageDelivery:
+    """Durable, idempotent request for a public OpenClaw delivery."""
+
+    id: str
+    identity_id: str
+    account_id: Optional[str]
+    channel: Optional[str]
+    target: str
+    body: str
+    origin_agent_id: Optional[str]
+    task_id: Optional[str]
+    idempotency_key: str
+    status: str
+    attempt_count: int
+    max_attempts: int
+    delivery_agent_id: Optional[str]
+    delivery_lease_id: Optional[str]
+    leased_until: Optional[str]
+    provider_message_id: Optional[str]
+    last_error: Optional[str]
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+    delivered_at: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
 COMMAND_AUDIT_PHASES = {
     "started",
     "completed",

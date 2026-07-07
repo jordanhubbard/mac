@@ -405,6 +405,29 @@ def _chat_gateway_values(
     ).strip().lower()
     values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
     if implementation == "openclaw":
+        public_identity = (
+            env.get("OPENCLAW_PUBLIC_IDENTITY")
+            or env.get("MAC_DEPLOY_OPENCLAW_PUBLIC_IDENTITY")
+            or ""
+        ).strip()
+        represented_by = (
+            env.get("OPENCLAW_REPRESENTED_BY")
+            or env.get("MAC_DEPLOY_OPENCLAW_REPRESENTED_BY")
+            or ""
+        ).strip()
+        values["MAC_OPENCLAW_PUBLIC_IDENTITY"] = public_identity
+        values["MAC_OPENCLAW_REPRESENTED_BY"] = represented_by
+        values["MAC_OPENCLAW_REPRESENTATION_MODE"] = (
+            env.get("OPENCLAW_REPRESENTATION_MODE")
+            or env.get("MAC_DEPLOY_OPENCLAW_REPRESENTATION_MODE")
+            or "delegated"
+        ).strip()
+        values["MAC_OPENCLAW_SLACK_ACCOUNT_ID"] = (
+            env.get("OPENCLAW_SLACK_ACCOUNT_ID") or "default"
+        ).strip()
+        values["MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID"] = (
+            env.get("OPENCLAW_TELEGRAM_ACCOUNT_ID") or "default"
+        ).strip()
         values["MAC_WORKER_RESOURCES_FILE"] = str(
             cfg.paths.mac_home / "openclaw" / "service-advertisement.json"
         )

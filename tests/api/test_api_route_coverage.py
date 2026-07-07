@@ -691,6 +691,119 @@ network_policies:
             },
         )
     )["id"]
+
+    communication_identity = _ok(
+        client.post(
+            "/communication/identities",
+            json={
+                "name": "route-hive",
+                "display_name": "Route Hive",
+                "description": "Shared identity for route coverage",
+                "is_default": True,
+            },
+        )
+    )
+    ctx["communication_identity_id"] = communication_identity["id"]
+    ctx["delete_communication_identity_id"] = _ok(
+        client.post(
+            "/communication/identities",
+            json={"name": "route-hive-delete", "display_name": "Delete Route Hive"},
+        )
+    )["id"]
+    communication_account = _ok(
+        client.post(
+            "/communication/accounts",
+            json={
+                "identity_id": communication_identity["id"],
+                "channel": "slack",
+                "account_id": "route-primary",
+                "credential_refs": {"bot": "secret://route/slack/bot"},
+                "config": {"default": True},
+            },
+        )
+    )
+    ctx["communication_account_id"] = communication_account["id"]
+    ctx["delete_communication_account_id"] = _ok(
+        client.post(
+            "/communication/accounts",
+            json={
+                "identity_id": communication_identity["id"],
+                "channel": "telegram",
+                "account_id": "route-delete",
+            },
+        )
+    )["id"]
+    release_account = _ok(
+        client.post(
+            "/communication/accounts",
+            json={
+                "identity_id": communication_identity["id"],
+                "channel": "signal",
+                "account_id": "route-release",
+            },
+        )
+    )
+    representation = _ok(
+        client.post(
+            "/communication/representations",
+            json={
+                "subject_kind": "agent",
+                "subject_id": default_agent["id"],
+                "identity_id": communication_identity["id"],
+                "mode": "delegated",
+            },
+        )
+    )
+    ctx["representation_binding_id"] = representation["id"]
+    ctx["delete_representation_binding_id"] = _ok(
+        client.post(
+            "/communication/representations",
+            json={
+                "subject_kind": "project",
+                "subject_id": "route-representation-delete",
+                "identity_id": communication_identity["id"],
+                "mode": "delegated",
+            },
+        )
+    )["id"]
+    gateway_lease = _ok(
+        client.post(
+            "/communication/gateway-leases/acquire",
+            json={
+                "account_id": communication_account["id"],
+                "agent_id": default_agent["id"],
+            },
+        )
+    )
+    ctx["gateway_identity_lease_id"] = gateway_lease["id"]
+    ctx["gateway_identity_fencing_token"] = gateway_lease["fencing_token"]
+    release_lease = _ok(
+        client.post(
+            "/communication/gateway-leases/acquire",
+            json={
+                "account_id": release_account["id"],
+                "agent_id": default_agent["id"],
+            },
+        )
+    )
+    ctx["release_gateway_identity_lease_id"] = release_lease["id"]
+    ctx["release_gateway_identity_fencing_token"] = release_lease["fencing_token"]
+    for action in ("ack", "fail"):
+        delivery = _ok(
+            client.post(
+                "/communication/deliveries",
+                json={
+                    "target": "channel:C-route",
+                    "body": "Route coverage delivery for %s" % action,
+                    "origin_agent_id": default_agent["id"],
+                    "identity_id": communication_identity["id"],
+                    "account_id": communication_account["id"],
+                    "channel": "slack",
+                    "idempotency_key": "route-coverage-%s" % action,
+                },
+            )
+        )
+        ctx["%s_human_delivery_id" % action] = delivery["id"]
     cp.record_integration_observation(
         "repository",
         "route-repo",
@@ -978,6 +1091,27 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/rollouts/{rollout_id}/health"): {"rollout_id": "health_rollout_id"},
         ("POST", "/rollouts/{rollout_id}/rescue"): {"rollout_id": "rescue_rollout_id"},
         ("DELETE", "/notifier/channels/{channel_id_or_name}"): {"channel_id_or_name": "delete_channel_id"},
+        ("DELETE", "/communication/identities/{identity_id_or_name}"): {
+            "identity_id_or_name": "delete_communication_identity_id"
+        },
+        ("DELETE", "/communication/accounts/{account_id}"): {
+            "account_id": "delete_communication_account_id"
+        },
+        ("DELETE", "/communication/representations/{binding_id}"): {
+            "binding_id": "delete_representation_binding_id"
+        },
+        ("POST", "/communication/gateway-leases/{lease_id}/renew"): {
+            "lease_id": "gateway_identity_lease_id"
+        },
+        ("POST", "/communication/gateway-leases/{lease_id}/release"): {
+            "lease_id": "release_gateway_identity_lease_id"
+        },
+        ("POST", "/communication/deliveries/{delivery_id}/ack"): {
+            "delivery_id": "ack_human_delivery_id"
+        },
+        ("POST", "/communication/deliveries/{delivery_id}/fail"): {
+            "delivery_id": "fail_human_delivery_id"
+        },
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
@@ -1004,6 +1138,10 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
         "artifact_id": ctx["evidence_artifact_id"],
+        "identity_id_or_name": ctx["communication_identity_id"],
+        "account_id": ctx["communication_account_id"],
+        "binding_id": ctx["representation_binding_id"],
+        "delivery_id": ctx["ack_human_delivery_id"],
         "key": "route-memory-key",
         "lease_id": ctx["lease_id"],
         "machine_id": ctx["machine_id"],
@@ -1497,6 +1635,60 @@ edges:
             "target": {"channel": "C-case"},
         },
         ("POST", "/notifier/deliver"): {"limit": 5},
+        ("POST", "/communication/identities"): {
+            "name": "route-hive-case",
+            "display_name": "Route Hive Case",
+        },
+        ("POST", "/communication/accounts"): {
+            "identity_id": ctx["communication_identity_id"],
+            "channel": "mattermost",
+            "account_id": "route-case",
+            "credential_refs": {"token": "secret://route/mattermost/token"},
+        },
+        ("POST", "/communication/representations"): {
+            "subject_kind": "project",
+            "subject_id": "route-representation-case",
+            "identity_id": ctx["communication_identity_id"],
+            "mode": "delegated",
+        },
+        ("POST", "/communication/gateway-leases/acquire"): {
+            "account_id": ctx["communication_account_id"],
+            "agent_id": ctx["agent_id"],
+            "lease_seconds": 120,
+        },
+        ("POST", "/communication/gateway-leases/{lease_id}/renew"): {
+            "agent_id": ctx["agent_id"],
+            "fencing_token": ctx["gateway_identity_fencing_token"],
+            "lease_seconds": 120,
+        },
+        ("POST", "/communication/gateway-leases/{lease_id}/release"): {
+            "agent_id": ctx["agent_id"],
+            "fencing_token": ctx["release_gateway_identity_fencing_token"],
+        },
+        ("POST", "/communication/deliveries"): {
+            "target": "channel:C-route",
+            "body": "Route coverage outbound message",
+            "origin_agent_id": ctx["agent_id"],
+            "identity_id": ctx["communication_identity_id"],
+            "account_id": ctx["communication_account_id"],
+            "channel": "slack",
+            "idempotency_key": "route-coverage-case",
+        },
+        ("POST", "/communication/deliveries/claim"): {
+            "agent_id": ctx["agent_id"],
+            "limit": 20,
+            "lease_seconds": 60,
+        },
+        ("POST", "/communication/deliveries/{delivery_id}/ack"): {
+            "agent_id": ctx["agent_id"],
+            "provider_message_id": "route-provider-message",
+            "detail": {"route_case": True},
+        },
+        ("POST", "/communication/deliveries/{delivery_id}/fail"): {
+            "agent_id": ctx["agent_id"],
+            "error": "route coverage retry",
+            "retryable": True,
+        },
         ("POST", "/messages"): {
             "sender_agent_id": ctx["agent_id"],
             "recipient_agent_id": ctx["reviewer_agent_id"],

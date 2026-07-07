@@ -642,6 +642,96 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_notifier_channels_type_enabled
                     ON notifier_channels (channel_type, enabled);
 
+                -- Human-facing identities are logical fleet resources.  They
+                -- are deliberately independent of workers and of the retired
+                -- Hermes-instance identity model so one stable "hive" can
+                -- represent any number of internal agents.
+                CREATE TABLE IF NOT EXISTS communication_identities (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_communication_identity_default
+                    ON communication_identities (is_default) WHERE is_default = 1;
+
+                CREATE TABLE IF NOT EXISTS communication_accounts (
+                    id TEXT PRIMARY KEY,
+                    identity_id TEXT NOT NULL REFERENCES communication_identities(id) ON DELETE CASCADE,
+                    channel TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    credential_refs TEXT NOT NULL DEFAULT '{}',
+                    config TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(identity_id, channel, account_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_communication_accounts_channel
+                    ON communication_accounts (channel, enabled);
+
+                CREATE TABLE IF NOT EXISTS representation_bindings (
+                    id TEXT PRIMARY KEY,
+                    subject_kind TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    identity_id TEXT REFERENCES communication_identities(id) ON DELETE CASCADE,
+                    mode TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(subject_kind, subject_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_representation_bindings_identity
+                    ON representation_bindings (identity_id, enabled);
+
+                CREATE TABLE IF NOT EXISTS gateway_identity_leases (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL UNIQUE REFERENCES communication_accounts(id) ON DELETE CASCADE,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    fencing_token TEXT NOT NULL UNIQUE,
+                    leased_until TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_identity_leases_agent
+                    ON gateway_identity_leases (agent_id, leased_until);
+
+                CREATE TABLE IF NOT EXISTS human_message_deliveries (
+                    id TEXT PRIMARY KEY,
+                    identity_id TEXT NOT NULL REFERENCES communication_identities(id) ON DELETE RESTRICT,
+                    account_id TEXT NOT NULL REFERENCES communication_accounts(id) ON DELETE RESTRICT,
+                    channel TEXT,
+                    target TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    origin_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 5,
+                    delivery_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                    delivery_lease_id TEXT,
+                    leased_until TEXT,
+                    provider_message_id TEXT,
+                    last_error TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    delivered_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_human_message_deliveries_status
+                    ON human_message_deliveries (status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_human_message_deliveries_identity
+                    ON human_message_deliveries (identity_id, created_at);
+
                 CREATE TABLE IF NOT EXISTS command_audit (
                     id TEXT PRIMARY KEY,
                     command_id TEXT NOT NULL,

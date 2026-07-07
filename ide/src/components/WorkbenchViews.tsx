@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { api, type Agent, type AgentCard, type DashboardAgent, type DashboardState, type TaskDetail } from "../api/mac";
+import { useEffect, useMemo, useState } from "react";
+import { api, type Agent, type AgentCard, type CommunicationAccount, type CommunicationIdentity, type DashboardAgent, type DashboardState, type GatewayIdentityLease, type RepresentationBinding, type TaskDetail } from "../api/mac";
 import type { WorkbenchView } from "./ActivityRail";
 import { agentHardware, availabilityLabel, availableCodingClis, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
 import { TaskInspector } from "./TaskInspector";
@@ -483,9 +483,71 @@ function ObservabilityView({ data }: { data: DashboardState }) {
 }
 
 function ConnectionsView({ data, card }: { data: DashboardState; card: AgentCard | null }) {
+  const [identities, setIdentities] = useState<CommunicationIdentity[]>([]);
+  const [accounts, setAccounts] = useState<CommunicationAccount[]>([]);
+  const [representations, setRepresentations] = useState<RepresentationBinding[]>([]);
+  const [leases, setLeases] = useState<GatewayIdentityLease[]>([]);
+  const [communicationError, setCommunicationError] = useState("");
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      api.listCommunicationIdentities(),
+      api.listCommunicationAccounts(),
+      api.listRepresentationBindings(),
+      api.listGatewayIdentityLeases(),
+    ]).then(([nextIdentities, nextAccounts, nextRepresentations, nextLeases]) => {
+      if (!active) return;
+      setIdentities(nextIdentities);
+      setAccounts(nextAccounts);
+      setRepresentations(nextRepresentations);
+      setLeases(nextLeases);
+      setCommunicationError("");
+    }).catch((error: unknown) => {
+      if (active) setCommunicationError(String(error));
+    });
+    return () => { active = false; };
+  }, []);
+  const identityById = useMemo(
+    () => new Map(identities.map((identity) => [identity.id, identity.display_name || identity.name])),
+    [identities],
+  );
+  const accountById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, `${account.channel}/${account.account_id}`])),
+    [accounts],
+  );
+  const identityRecords = identities.map((identity) => ({
+    ...identity,
+    role: identity.is_default ? "fleet default" : "optional direct identity",
+    status: identity.enabled ? "enabled" : "disabled",
+  }));
+  const accountRecords = accounts.map((account) => ({
+    ...account,
+    name: `${account.channel}/${account.account_id}`,
+    identity: identityById.get(account.identity_id) || account.identity_id,
+    status: account.enabled ? "enabled" : "disabled",
+  }));
+  const representationRecords = representations.map((binding) => ({
+    ...binding,
+    name: `${binding.subject_kind}:${binding.subject_id}`,
+    identity: binding.identity_id ? identityById.get(binding.identity_id) || binding.identity_id : "none",
+    status: binding.enabled ? binding.mode : "disabled",
+  }));
+  const leaseRecords = leases.map((lease) => ({
+    ...lease,
+    name: accountById.get(lease.account_id) || lease.account_id,
+    role: lease.agent_id,
+    status: new Date(lease.leased_until) > new Date() ? "active" : "expired",
+  }));
   return (
     <main className="workbench-view">
-      <ViewHeader description="Discover protocol capabilities and adjacent fleet services without exposing credentials." eyebrow="Interoperability" title="Connections" />
+      <ViewHeader description="Stable public identities represent the fleet; internal workers do not need individual channel accounts." eyebrow="Interoperability" title="Connections" />
+      {communicationError ? <div className="inline-error">Communication registry unavailable: {communicationError}</div> : null}
+      <div className="three-column-grid">
+        <RecordSection label="Public identities" records={identityRecords} primary="display_name" secondary="role" state="status" />
+        <RecordSection label="Channel accounts" records={accountRecords} primary="name" secondary="identity" state="status" />
+        <RecordSection label="Representation" records={representationRecords} primary="name" secondary="identity" state="status" />
+        <RecordSection label="Active gateway leases" records={leaseRecords} primary="name" secondary="role" state="status" />
+      </div>
       <div className="three-column-grid">
         <section className="primary-surface protocol-card">
           <div className="surface-heading"><span className="surface-kicker">A2A Agent Card</span><span>{card?.protocolVersion || "unavailable"}</span></div>

@@ -184,7 +184,7 @@ function AgentInspector({ item, selectedTask }: { item: DashboardAgent; selected
       <Definition label="CPU / memory" value={`${cpuLabel(item)} · ${memoryLabel(item)}`} />
       <Definition label="GPU" value={gpuName(item) || "none reported"} />
       <Definition label="Coding CLIs" value={codingClis.join(", ") || "none reported"} />
-      <Definition label="Chat gateway" value={chatGatewayLabel(item)} />
+      <Definition label="OpenClaw" value={chatGatewayLabel(item)} />
       <div className="inspector-section"><span>Declared capabilities</span><div className="capability-list">{(agent.capabilities || []).map((item) => <span key={item}>{item}</span>)}</div></div>
       <div className="inspector-section"><span>Protocols</span><div className="protocol-list"><span>A2A routable</span><span>ACP</span></div></div>
     </section>

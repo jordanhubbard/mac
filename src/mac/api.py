@@ -1070,6 +1070,86 @@ class NotifierDeliveryRun(BaseModel):
     notification_id: Optional[str] = None
 
 
+class CommunicationIdentityConfig(BaseModel):
+    name: str
+    display_name: str = ""
+    description: str = ""
+    is_default: bool = False
+    enabled: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    identity_id: Optional[str] = None
+
+
+class CommunicationAccountConfig(BaseModel):
+    identity_id: str
+    channel: str
+    account_id: str = "default"
+    credential_refs: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    record_id: Optional[str] = None
+
+
+class RepresentationBindingConfig(BaseModel):
+    subject_kind: str
+    subject_id: str
+    identity_id: Optional[str] = None
+    mode: str = "delegated"
+    priority: int = 100
+    enabled: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    binding_id: Optional[str] = None
+
+
+class GatewayIdentityLeaseAcquire(BaseModel):
+    account_id: str
+    agent_id: str
+    lease_seconds: int = 90
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GatewayIdentityLeaseRenew(BaseModel):
+    agent_id: str
+    fencing_token: str
+    lease_seconds: int = 90
+
+
+class GatewayIdentityLeaseRelease(BaseModel):
+    agent_id: str
+    fencing_token: str
+
+
+class HumanMessageCreate(BaseModel):
+    target: str
+    body: str
+    origin_agent_id: Optional[str] = None
+    identity_id: Optional[str] = None
+    account_id: Optional[str] = None
+    channel: Optional[str] = None
+    task_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    max_attempts: int = 5
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HumanMessageClaim(BaseModel):
+    agent_id: str
+    limit: int = 20
+    lease_seconds: int = 60
+
+
+class HumanMessageAck(BaseModel):
+    agent_id: str
+    provider_message_id: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HumanMessageFail(BaseModel):
+    agent_id: str
+    error: str
+    retryable: bool = True
+
+
 class ReviewRequest(BaseModel):
     reviewer_agent_id: str
     actor: str = "dispatcher"
@@ -1454,6 +1534,18 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path.startswith("/agentbus"):
         return "agent"
+    if path.startswith("/communication"):
+        if (
+            path == "/communication/deliveries"
+            or path == "/communication/deliveries/claim"
+            or path.endswith("/ack")
+            or path.endswith("/fail")
+            or path == "/communication/gateway-leases/acquire"
+            or path.endswith("/renew")
+            or path.endswith("/release")
+        ):
+            return "agent"
+        return "admin"
     if path == "/observability/prune":
         # Pruning deletes global telemetry, so it requires an unbound admin
         # principal rather than the agent scope used to append observations.
@@ -5932,6 +6024,203 @@ def create_app(
             limit=body.limit,
             notification_id=body.notification_id,
         )
+
+    # Runtime-neutral public identities and OpenClaw delivery ------------
+
+    @app.post("/communication/identities")
+    def configure_communication_identity(
+        body: CommunicationIdentityConfig,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.configure_communication_identity(**_data(body)).to_dict()
+
+    @app.get("/communication/identities")
+    def list_communication_identities(
+        enabled: Optional[bool] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [item.to_dict() for item in cp.list_communication_identities(enabled)]
+
+    @app.get("/communication/identities/{identity_id_or_name}")
+    def get_communication_identity(identity_id_or_name: str) -> Dict[str, Any]:
+        return cp.get_communication_identity(identity_id_or_name).to_dict()
+
+    @app.delete("/communication/identities/{identity_id_or_name}")
+    def delete_communication_identity(
+        identity_id_or_name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_communication_identity(identity_id_or_name)
+        return {"deleted": identity_id_or_name}
+
+    @app.post("/communication/accounts")
+    def configure_communication_account(
+        body: CommunicationAccountConfig,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.configure_communication_account(**_data(body)).to_dict()
+
+    @app.get("/communication/accounts")
+    def list_communication_accounts(
+        identity_id: Optional[str] = Query(default=None),
+        channel: Optional[str] = Query(default=None),
+        enabled: Optional[bool] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            item.to_dict()
+            for item in cp.list_communication_accounts(
+                identity_id=identity_id, channel=channel, enabled=enabled
+            )
+        ]
+
+    @app.get("/communication/accounts/{account_id}")
+    def get_communication_account(account_id: str) -> Dict[str, Any]:
+        return cp.get_communication_account(account_id).to_dict()
+
+    @app.delete("/communication/accounts/{account_id}")
+    def delete_communication_account(
+        account_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_communication_account(account_id)
+        return {"deleted": account_id}
+
+    @app.post("/communication/representations")
+    def configure_representation_binding(
+        body: RepresentationBindingConfig,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.configure_representation_binding(**_data(body)).to_dict()
+
+    @app.get("/communication/representations")
+    def list_representation_bindings(
+        subject_kind: Optional[str] = Query(default=None),
+        identity_id: Optional[str] = Query(default=None),
+        enabled: Optional[bool] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            item.to_dict()
+            for item in cp.list_representation_bindings(
+                subject_kind=subject_kind, identity_id=identity_id, enabled=enabled
+            )
+        ]
+
+    @app.delete("/communication/representations/{binding_id}")
+    def delete_representation_binding(
+        binding_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        cp.delete_representation_binding(binding_id)
+        return {"deleted": binding_id}
+
+    @app.get("/agents/{agent_id}/representation")
+    def resolve_agent_representation(
+        agent_id: str,
+        project: Optional[str] = Query(default=None),
+        role: Optional[str] = Query(default=None),
+        fleet: str = Query(default="default"),
+    ) -> Dict[str, Any]:
+        return cp.resolve_agent_representation(
+            agent_id, project=project, role=role, fleet=fleet
+        )
+
+    @app.post("/communication/gateway-leases/acquire")
+    def acquire_gateway_identity_lease(
+        body: GatewayIdentityLeaseAcquire,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.agent_id)
+        return cp.acquire_gateway_identity_lease(**_data(body)).to_dict()
+
+    @app.post("/communication/gateway-leases/{lease_id}/renew")
+    def renew_gateway_identity_lease(
+        lease_id: str,
+        body: GatewayIdentityLeaseRenew,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.agent_id)
+        return cp.renew_gateway_identity_lease(lease_id, **_data(body)).to_dict()
+
+    @app.post("/communication/gateway-leases/{lease_id}/release")
+    def release_gateway_identity_lease(
+        lease_id: str,
+        body: GatewayIdentityLeaseRelease,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.agent_id)
+        cp.release_gateway_identity_lease(lease_id, **_data(body))
+        return {"released": lease_id}
+
+    @app.get("/communication/gateway-leases")
+    def list_gateway_identity_leases(
+        agent_id: Optional[str] = Query(default=None),
+        active_only: bool = Query(default=False),
+    ) -> List[Dict[str, Any]]:
+        return [
+            item.to_dict()
+            for item in cp.list_gateway_identity_leases(
+                agent_id=agent_id, active_only=active_only
+            )
+        ]
+
+    @app.post("/communication/deliveries")
+    def enqueue_human_message(
+        body: HumanMessageCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if body.origin_agent_id:
+            principal.assert_actor(body.origin_agent_id)
+        elif not principal.is_admin:
+            raise AuthorizationError("agent delivery requires origin_agent_id")
+        return cp.enqueue_human_message(**_data(body)).to_dict()
+
+    @app.get("/communication/deliveries")
+    def list_human_messages(
+        status: Optional[str] = Query(default=None),
+        identity_id: Optional[str] = Query(default=None),
+        origin_agent_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return [
+            item.to_dict()
+            for item in cp.list_human_messages(
+                status=status,
+                identity_id=identity_id,
+                origin_agent_id=origin_agent_id,
+                limit=limit,
+            )
+        ]
+
+    @app.post("/communication/deliveries/claim")
+    def claim_human_messages(
+        body: HumanMessageClaim,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        principal.assert_actor(body.agent_id)
+        return [item.to_dict() for item in cp.claim_human_messages(**_data(body))]
+
+    @app.post("/communication/deliveries/{delivery_id}/ack")
+    def acknowledge_human_message(
+        delivery_id: str,
+        body: HumanMessageAck,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.agent_id)
+        return cp.acknowledge_human_message(delivery_id, **_data(body)).to_dict()
+
+    @app.post("/communication/deliveries/{delivery_id}/fail")
+    def fail_human_message(
+        delivery_id: str,
+        body: HumanMessageFail,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(body.agent_id)
+        return cp.fail_human_message(delivery_id, **_data(body)).to_dict()
 
     @app.get("/observability/summary")
     def observability_summary(limit: int = Query(default=80)) -> Dict[str, Any]:
