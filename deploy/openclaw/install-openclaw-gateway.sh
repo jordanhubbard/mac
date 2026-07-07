@@ -148,14 +148,16 @@ source_host_env() {
     MAC_OPENCLAW_SLACK_APP_TOKEN=""
     MAC_OPENCLAW_TELEGRAM_BOT_TOKEN=""
   fi
-  local channels=()
+  # Keep this scalar for compatibility with the system Bash 3.2 on macOS:
+  # expanding an empty array with ${channels[*]} under `set -u` is treated as
+  # an unbound variable there, which broke intentionally headless gateways.
+  MAC_OPENCLAW_CHANNELS=""
   if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
-    channels+=(slack)
+    MAC_OPENCLAW_CHANNELS="slack"
   fi
   if [ -n "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" ]; then
-    channels+=(telegram)
+    MAC_OPENCLAW_CHANNELS="${MAC_OPENCLAW_CHANNELS:+$MAC_OPENCLAW_CHANNELS,}telegram"
   fi
-  MAC_OPENCLAW_CHANNELS="$(IFS=,; printf '%s' "${channels[*]}")"
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
       MAC_OPENCLAW_HOME_CHANNEL="$(resolve_slack_home_target \

@@ -280,6 +280,10 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     assert "SLACK_" not in runtime
     assert "TELEGRAM_" not in runtime
     assert "Representation mode: delegated" in workspace
+    installer = INSTALLER.read_text(encoding="utf-8")
+    assert 'MAC_OPENCLAW_CHANNELS=""' in installer
+    assert "local channels=()" not in installer
+    assert 'printf \'%s\' "${channels[*]}"' not in installer
 
 
 def test_public_identity_without_any_channel_credentials_fails_closed(
