@@ -59,7 +59,18 @@ function dashboardState(overrides?: {
           status: "idle",
           health_status: "healthy",
           capabilities: ["testing"],
-          resources: { hardware: { cpu_count: 4, memory_mb: 8192, arch: "x64" } },
+          resources: {
+            hardware: { cpu_count: 4, memory_mb: 8192, arch: "x64" },
+            chat_gateway: {
+              implementation: "openclaw",
+              confinement: { provider: "openshell" },
+              channels: {
+                slack: { enabled: true },
+                telegram: { enabled: true },
+              },
+              verified: true,
+            },
+          },
         },
         machine: null,
         availability: { eligible: true, reasons: [] },
@@ -123,6 +134,13 @@ async function setupPage(
   });
   return state;
 }
+
+test("agent inspector exposes the verified OpenClaw service advertisement", async ({ page }) => {
+  await setupPage(page);
+  await page.goto("/");
+  await expect(page.getByText("Chat gateway", { exact: true })).toBeVisible();
+  await expect(page.getByText("openclaw · openshell · slack + telegram · verified")).toBeVisible();
+});
 
 // ─── mouse selection ─────────────────────────────────────────────────────────
 

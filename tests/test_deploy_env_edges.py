@@ -144,6 +144,28 @@ def test_gateway_values_build_env_passthrough_and_write(tmp_path) -> None:
     assert written["MAC_SECRET_KEY"]
 
 
+def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    stale = str(tmp_path / "stale.json")
+    openclaw = deploy_env.build_mac_env(
+        {"MAC_WORKER_RESOURCES_FILE": stale},
+        cfg,
+        environ={"HERMES_GATEWAY_IMPL": "openclaw"},
+    )
+    assert openclaw["MAC_CHAT_GATEWAY_IMPL"] == "openclaw"
+    assert openclaw["MAC_WORKER_RESOURCES_FILE"] == str(
+        tmp_path / ".mac" / "openclaw" / "service-advertisement.json"
+    )
+
+    rollback = deploy_env.build_mac_env(
+        openclaw,
+        cfg,
+        environ={"HERMES_GATEWAY_IMPL": "hermes"},
+    )
+    assert rollback["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert "MAC_WORKER_RESOURCES_FILE" not in rollback
+
+
 def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path):
     hub = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
     assert hub["MAC_CONTROL_PLANE_ROLE"] == "hub"

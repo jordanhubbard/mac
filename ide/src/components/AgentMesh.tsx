@@ -1,6 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { api, type Agent, type AgentCard, type DashboardAgent, type DashboardState, type TaskDetail } from "../api/mac";
-import { availabilityLabel, availableCodingClis, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
+import { availabilityLabel, availableCodingClis, chatGatewayLabel, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
 
 type MeshTab = "agents" | "a2a";
 
@@ -184,6 +184,7 @@ function AgentInspector({ item, selectedTask }: { item: DashboardAgent; selected
       <Definition label="CPU / memory" value={`${cpuLabel(item)} · ${memoryLabel(item)}`} />
       <Definition label="GPU" value={gpuName(item) || "none reported"} />
       <Definition label="Coding CLIs" value={codingClis.join(", ") || "none reported"} />
+      <Definition label="Chat gateway" value={chatGatewayLabel(item)} />
       <div className="inspector-section"><span>Declared capabilities</span><div className="capability-list">{(agent.capabilities || []).map((item) => <span key={item}>{item}</span>)}</div></div>
       <div className="inspector-section"><span>Protocols</span><div className="protocol-list"><span>A2A routable</span><span>ACP</span></div></div>
     </section>

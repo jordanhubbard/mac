@@ -26,7 +26,19 @@ names or explicit `MAC_OPENCLAW_*` overrides:
 
 - agent and Hermes-instance identity;
 - MAC router URL, API key, and selected model;
-- Slack Socket Mode bot and app tokens.
+- Slack Socket Mode bot and app tokens;
+- one Telegram bot token unique to this agent.
+
+Telegram long polling permits only one active gateway per bot token. Do not
+copy one Telegram token to multiple fleet agents: provision a distinct
+`TELEGRAM_BOT_TOKEN` for every enabled agent. For live channel-send validation,
+also set `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET` to that bot's operator chat ID.
+Fleet deploy reads these from the MAC vault names
+`telegram.<agent>.bot` and `telegram.<agent>.canary_target`, validates the bot
+with Telegram `getMe`, and materializes them in the OpenClaw-only, mode-0600
+`~/.mac/openclaw/credentials.env`. They are intentionally not written to
+`~/.hermes/.env`, which prevents the retained rollback gateway from competing
+for the same Telegram long-poll stream.
 
 The generated `openclaw.json` contains SecretRefs and `${ENV}` references, not
 credential values. Actual values are written only to
@@ -50,10 +62,10 @@ before deletion.
 Set `hermes.gateway_impl: openclaw` in the fleet configuration and deploy in
 this order:
 
-1. Bullwinkle canary.
-2. Natasha.
-3. GKE worker and hub nodes.
-4. Rocky hub last.
+1. One non-hub physical worker as the canary.
+2. The remaining non-hub physical workers.
+3. Containerized worker and hub nodes.
+4. The primary fleet hub last.
 
 `deploy/deploy-mac-fleet.sh` supports systemd, supervisord, and launchd. It
 starts OpenClaw, then requires all of these checks before disabling Hermes:
@@ -62,11 +74,21 @@ starts OpenClaw, then requires all of these checks before disabling Hermes:
 - `/readyz` readiness;
 - `openclaw config validate --json`;
 - authenticated gateway health RPC;
-- live Slack channel probe.
+- live Slack and Telegram channel probes.
 
 For a canary, additionally export `MAC_DEPLOY_OPENCLAW_LIVE_CANARY=1`. The
 verification command performs a real model turn and requires the sentinel
-`MAC_OPENCLAW_CANARY_OK`.
+`MAC_OPENCLAW_CANARY_OK`, then sends a labeled canary message through both
+Slack and Telegram. A live canary therefore also requires the configured Slack
+home channel and `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET`.
+
+Only a successful verification writes
+`~/.mac/openclaw/service-advertisement.json`. The worker registers that record
+as `resources.chat_gateway`, including the stock OpenClaw version, OpenShell
+sandbox, loopback endpoint, Slack/Telegram transports, and verification time.
+The Fleet IDE displays the same record in the agent inspector. Rollback removes
+the advertisement before restoring Hermes, so desired state is never reported
+as a live service.
 
 Hermes is disabled only after verification succeeds. It remains installed as
 the rollback gateway until the separate Hermes-retirement chain completes. A

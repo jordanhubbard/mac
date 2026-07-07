@@ -32,7 +32,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "/nemoclaw" not in installer.lower()
 
 
-def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_mac_and_slack() -> None:
+def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
     text = POLICY.read_text(encoding="utf-8")
     assert "run_as_user: sandbox" in text
     assert "__MAC_ROUTER_HOST__" in text
@@ -46,6 +46,9 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_mac_and_slack() 
     ):
         assert f"host: {host}" in text
     assert "protocol: websocket" in text
+    assert "host: api.telegram.org" in text
+    assert 'path: "/bot*/**"' in text
+    assert 'path: "/file/bot*/**"' in text
     assert "host: '*'" not in text
     assert "0.0.0.0/0" not in text
 
@@ -57,6 +60,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "router-secret-value",
         "xox" + "b-test-placeholder",
         "xap" + "p-test-placeholder",
+        "123456:test-telegram-placeholder",
     )
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -73,6 +77,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SLACK_BOT_TOKEN": secrets[1],
         "MAC_OPENCLAW_SLACK_APP_TOKEN": secrets[2],
+        "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN": secrets[3],
     }
     result = subprocess.run(
         [str(INSTALLER), "prepare"],
@@ -102,6 +107,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     config = json.loads(config_path.read_text(encoding="utf-8"))
     provider = config["models"]["providers"]["mac-router"]
     slack = config["channels"]["slack"]
+    telegram = config["channels"]["telegram"]
     assert provider["apiKey"] == "${MAC_OPENCLAW_ROUTER_API_KEY}"
     assert provider["headers"] == {
         "x-mac-agent-id": "agent_test",
@@ -109,6 +115,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     }
     assert slack["botToken"]["id"] == "SLACK_BOT_TOKEN"
     assert slack["appToken"]["id"] == "SLACK_APP_TOKEN"
+    assert telegram["botToken"]["id"] == "TELEGRAM_BOT_TOKEN"
+    assert telegram["dmPolicy"] == "pairing"
+    assert telegram["groupPolicy"] == "allowlist"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
     assert config_path.stat().st_mode & 0o777 == 0o600
@@ -137,9 +146,22 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy
     assert "verify_openclaw_gateway" in deploy
     assert "rollback_openclaw_gateway" in deploy
+    assert "MAC_DEPLOY_OPENCLAW_LIVE_CANARY" in deploy
+    assert "MAC_WORKER_RESOURCES_FILE" in deploy
     assert "disable --now \"$HERMES_SERVICE_NAME\"" in deploy
     assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
     assert "User=__MAC_USER__" in unit
+
+
+def test_openclaw_verification_requires_both_channels_and_advertises_only_after_proof() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8")
+    assert "validate-openclaw-channel-status.py" in installer
+    assert "service-advertisement.json" in installer
+    assert '"schema": "mac.chat_gateway_service.v1"' in installer
+    assert '"provider": "openshell"' in installer
+    assert "--channel slack" in installer
+    assert "--channel telegram" in installer
+    assert 'rm -f "$OPENCLAW_HOST_DIR/service-advertisement.json"' in installer
 
 
 def test_shell_artifacts_parse() -> None:

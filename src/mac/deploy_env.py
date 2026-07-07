@@ -388,6 +388,29 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
     }
 
 
+def _chat_gateway_values(
+    cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> Dict[str, str]:
+    """Point worker registration at verified chat-gateway service metadata.
+
+    The OpenClaw installer creates this file only after its liveness, readiness,
+    model, and channel probes pass.  A failed prepare therefore cannot advertise
+    desired state as live state, and rollback removes the file before restoring
+    Hermes.
+    """
+    implementation = (
+        env.get("HERMES_GATEWAY_IMPL")
+        or env.get("MAC_DEPLOY_HERMES_GATEWAY_IMPL")
+        or "hermes"
+    ).strip().lower()
+    values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
+    if implementation == "openclaw":
+        values["MAC_WORKER_RESOURCES_FILE"] = str(
+            cfg.paths.mac_home / "openclaw" / "service-advertisement.json"
+        )
+    return values
+
+
 def _shared_service_requirement_values() -> Dict[str, str]:
     return {
         "MAC_REQUIRE_QDRANT_MEMORY": "1",
@@ -759,6 +782,8 @@ def build_mac_env(
     values.update(_identity_values(cfg))
     values.update(_gateway_values(cfg))
     values.update(_worker_values(cfg, values))
+    values.pop("MAC_WORKER_RESOURCES_FILE", None)
+    values.update(_chat_gateway_values(cfg, env))
     values.update(_shared_service_requirement_values())
     values.update(_shared_service_url_values(values, cfg))
     values.update(_webdav_values(values, cfg, env))

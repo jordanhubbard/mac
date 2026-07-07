@@ -1143,6 +1143,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_PROVIDER "$gateway_provider"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_BASE_URL "$gateway_base_url"
   add_remote_env MAC_DEPLOY_HERMES_SURFACE_B64 "$hermes_surface_b64"
+  add_remote_env MAC_DEPLOY_OPENCLAW_LIVE_CANARY "${MAC_DEPLOY_OPENCLAW_LIVE_CANARY:-0}"
   add_remote_env MAC_DEPLOY_HUB_URL "$hub_url"
   add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"
   add_remote_env MAC_DEPLOY_CONTROL_BIND_HOST "$bind_host"
@@ -3386,6 +3387,17 @@ fetch_slack_secrets_from_vault() {
       HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
       "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
         log "WARNING: mac-vault Slack fetch failed for ${AGENT}; existing slack config preserved"
+    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+      local openclaw_fetcher="$SRC_DIR/scripts/mac-fetch-openclaw-secrets.py"
+      if [ -f "$openclaw_fetcher" ]; then
+        MAC_AGENT_NAME="$AGENT" \
+          MAC_SECRET_VAULT_URL="$mac_vault_url" \
+          MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
+          MAC_OPENCLAW_CREDENTIALS_FILE="$MAC_HOME/openclaw/credentials.env" \
+          "$PY" "$openclaw_fetcher" >> "$DEPLOY_LOG" 2>&1 || \
+            log "WARNING: mac-vault OpenClaw credential fetch failed for ${AGENT}"
+      fi
+    fi
     return 0
   fi
 }
@@ -5037,8 +5049,12 @@ common=(
   --rotate-missing-attestation-key
   --rotate-invalid-attestation-key
 )
-if [ -n "${MAC_WORKER_RESOURCES:-}" ]; then
-  common+=(--resources "$MAC_WORKER_RESOURCES")
+worker_resources="${MAC_WORKER_RESOURCES:-}"
+if [ -n "${MAC_WORKER_RESOURCES_FILE:-}" ] && [ -f "$MAC_WORKER_RESOURCES_FILE" ]; then
+  worker_resources="$(< "$MAC_WORKER_RESOURCES_FILE")"
+fi
+if [ -n "$worker_resources" ]; then
+  common+=(--resources "$worker_resources")
 fi
 if [ -n "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}" ]; then
   common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")

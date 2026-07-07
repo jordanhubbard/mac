@@ -45,6 +45,21 @@ export function availableCodingClis(item: DashboardAgent): string[] {
     .map(([name]) => name);
 }
 
+export function chatGatewayLabel(item: DashboardAgent): string {
+  const gateway = record(record(item.agent.resources).chat_gateway);
+  const implementation = String(gateway.implementation || "").trim();
+  if (!implementation) return "not advertised";
+  const confinement = String(record(gateway.confinement).provider || "").trim();
+  const channels = record(gateway.channels);
+  const activeChannels = Object.entries(channels)
+    .filter(([, value]) => record(value).enabled === true)
+    .map(([name]) => name);
+  const verified = gateway.verified === true ? "verified" : "unverified";
+  return [implementation, confinement, activeChannels.join(" + "), verified]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function isAgentOnline(item: DashboardAgent): boolean {
   return item.agent.health_status === "healthy" && item.agent.status !== "offline";
 }
