@@ -427,17 +427,7 @@ set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || exit 0
-"\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- /bin/sh -lc '
-  pids="\$(pgrep -x openclaw 2>/dev/null || true)"
-  [ -z "\$pids" ] || kill -TERM \$pids 2>/dev/null || true
-  count=0
-  while pgrep -x openclaw >/dev/null 2>&1 && [ "\$count" -lt 10 ]; do
-    sleep 0.5
-    count=\$((count + 1))
-  done
-  pids="\$(pgrep -x openclaw 2>/dev/null || true)"
-  [ -z "\$pids" ] || kill -KILL \$pids 2>/dev/null || true
-' >/dev/null 2>&1 || true
+"\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1 || true
 EOF
   chmod 0700 "$STOP_WRAPPER_PATH"
   cat > "$WRAPPER_PATH" <<EOF
@@ -450,13 +440,6 @@ POLICY=$(printf '%q' "$POLICY_PATH")
 MANAGED=$(printf '%q' "$MANAGED_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
 STOPPER=$(printf '%q' "$STOP_WRAPPER_PATH")
-
-upload_managed() {
-  "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$MANAGED/openclaw.json" /home/sandbox/.config/mac-openclaw/openclaw.json >/dev/null
-  "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$MANAGED/runtime.env" /home/sandbox/.config/mac-openclaw/runtime.env >/dev/null
-  "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$MANAGED/entrypoint.sh" /home/sandbox/.config/mac-openclaw/entrypoint.sh >/dev/null
-  "\$OPEN_SHELL" sandbox upload "\$SANDBOX" "\$WORKSPACE/AGENTS.md" /home/sandbox/workspace/AGENTS.md >/dev/null
-}
 
 stop_gateway() {
   "\$STOPPER" || true
@@ -483,13 +466,11 @@ run_attached() {
   return "\$status"
 }
 
-if "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
-  upload_managed
-  stop_gateway
-  run_attached "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
-    /bin/sh /home/sandbox/.config/mac-openclaw/entrypoint.sh
-  exit \$?
-fi
+# OpenShell 0.0.72 cannot re-establish create-time forwarding or reliably
+# reap every foreground exec process in a reused service sandbox. Recreate
+# only this long-lived gateway container on service start; the pinned image is
+# cached, while durable identities, outbox state, and memory remain in MAC.
+stop_gateway
 
 run_attached "\$OPEN_SHELL" sandbox create \
   --no-auto-providers \

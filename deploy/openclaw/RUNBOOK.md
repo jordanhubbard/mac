@@ -107,10 +107,14 @@ openshell sandbox exec --name mac-openclaw-<agent> --no-tty -- \
   /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw health --verbose --json'
 ```
 
-The gateway remains inside a reusable OpenShell sandbox. OpenShell 0.0.72 does
-not expose a command to recreate a host port forward for an existing sandbox,
-so MAC verifies health through the supported sandbox RPC instead of advertising
-a stale loopback endpoint.
+The gateway remains inside an OpenShell sandbox, but that service sandbox is
+disposable: each service start recreates its container from the cached pinned
+image. OpenShell 0.0.72 cannot re-establish create-time forwarding or reliably
+reap every foreground exec process in a reused service sandbox. Recreating the
+container guarantees one channel consumer without rebuilding the image. Durable
+identity, outbox, and memory state remains in MAC; this does not change reuse of
+task-execution sandboxes. MAC verifies health through the supported sandbox RPC
+instead of advertising a stale loopback endpoint.
 
 ## Rollback
 

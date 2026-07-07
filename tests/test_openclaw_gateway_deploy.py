@@ -178,8 +178,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
         encoding="utf-8"
     )
-    assert "sandbox create" in wrapper and "sandbox exec" in wrapper
-    assert "pgrep -x openclaw" in stop_wrapper
+    assert "sandbox create" in wrapper
+    assert "sandbox delete" in stop_wrapper
+    assert "pgrep -x openclaw" not in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
     assert "stop_gateway" in wrapper
     subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
@@ -217,6 +218,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "OPENCLAW_REPRESENTATION_MODE" in deploy
     assert "disable --now \"$HERMES_SERVICE_NAME\"" in deploy
     assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
+    assert "ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
     assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
     assert "User=__MAC_USER__" in unit
 
