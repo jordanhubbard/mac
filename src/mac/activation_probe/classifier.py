@@ -1,4 +1,4 @@
-"""Small, independently-loadable logistic probe for J-lens activations."""
+"""Small logistic classifier for externally supplied model activations."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class JLensPrediction:
+class ActivationProbePrediction:
     score: float
     label: str
     confidence: float
@@ -25,7 +25,7 @@ class JLensPrediction:
         }
 
 
-class JLensClassifier:
+class ActivationProbeClassifier:
     """Mean-pooled linear/logistic probe.
 
     Checkpoints are small JSON documents with ``weights``, ``bias``,
@@ -59,13 +59,13 @@ class JLensClassifier:
         return self.weights is not None
 
     @classmethod
-    def load(cls, checkpoint_path: Optional[str | Path]) -> "JLensClassifier":
+    def load(cls, checkpoint_path: Optional[str | Path]) -> "ActivationProbeClassifier":
         if checkpoint_path is None or not str(checkpoint_path).strip():
             return cls()
         path = Path(checkpoint_path).expanduser()
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, Mapping):
-            raise ValueError("J-lens checkpoint must contain a JSON object")
+            raise ValueError("activation-probe checkpoint must contain a JSON object")
         return cls(
             data.get("weights"),
             bias=float(data.get("bias", 0.0)),
@@ -75,14 +75,18 @@ class JLensClassifier:
             checkpoint=str(path),
         )
 
-    def predict(self, activations: Any) -> JLensPrediction:
+    def predict(self, activations: Any) -> ActivationProbePrediction:
         if not self.enabled:
-            return JLensPrediction(score=0.5, label="disabled", confidence=0.0)
+            return ActivationProbePrediction(
+                score=0.5, label="disabled", confidence=0.0
+            )
         array = np.asarray(activations, dtype=float)
         if array.ndim == 2:
             array = array.mean(axis=0)
         if array.ndim != 1:
-            raise ValueError("classifier input must be [seq_len, hidden_dim] or [hidden_dim]")
+            raise ValueError(
+                "classifier input must be [seq_len, hidden_dim] or [hidden_dim]"
+            )
         if array.shape[0] != self.weights.shape[0]:
             raise ValueError(
                 "classifier hidden dimension mismatch: expected %d, got %d"
@@ -95,4 +99,6 @@ class JLensClassifier:
         label = self.positive_label if score >= self.threshold else self.negative_label
         denominator = self.threshold if score < self.threshold else 1.0 - self.threshold
         confidence = min(1.0, abs(score - self.threshold) / max(denominator, 1e-9))
-        return JLensPrediction(score=score, label=label, confidence=confidence)
+        return ActivationProbePrediction(
+            score=score, label=label, confidence=confidence
+        )

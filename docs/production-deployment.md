@@ -1059,12 +1059,16 @@ private portion out of model-facing prompts, preserve benchmark/realistic pair
 IDs, and review both aggregate quality and the realism gap before promotion.
 
 Opaque hosted-model APIs expose outputs, not residual-stream activations, so
-MAC cannot honestly run activation-level probes such as a J-lens through the
-current router. If an open-weight backend later exposes compatible residuals,
-activation probes should be an advisory audit with a separately validated
-classifier and held-out calibration set. Deterministic evidence, test,
-CodeGraph, review-diversity, and publication gates remain authoritative; an
-activation classifier must never be allowed to approve work by itself.
+MAC cannot honestly run a Jacobian lens or any other model-internal activation
+audit through the current router. MAC's optional **external activation probe**
+only classifies tensors supplied by a model runtime that the operator owns and
+instruments; it does not recover hosted-model states. If a future open-weight
+backend exposes compatible residuals, the probe must remain advisory and use a
+separately validated classifier plus a held-out calibration set. Deterministic
+evidence, test, CodeGraph, review-diversity, and publication gates remain
+authoritative; an activation classifier must never approve work by itself.
+See [External activation-probe prototype](activation-probe/prototype-report.md)
+for its exact data boundary and non-goals.
 
 Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
 pins by capability (resolved via the strength ladder; **hub agent only** until

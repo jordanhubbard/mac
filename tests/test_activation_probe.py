@@ -9,20 +9,20 @@ import numpy as np
 import pytest
 
 from mac import worker
-from mac.jlens.advisory import advisory_audit_from_environment
-from mac.jlens.calibration import (
+from mac.activation_probe.advisory import activation_probe_audit_from_environment
+from mac.activation_probe.calibration import (
     accuracy_at_threshold,
     auroc,
     calibration_report,
     expected_calibration_error,
     load_calibration_records,
 )
-from mac.jlens.classifier import JLensClassifier
-from mac.jlens.runtime import ForwardHookActivationExtractor
+from mac.activation_probe.classifier import ActivationProbeClassifier
+from mac.activation_probe.runtime import ForwardHookActivationExtractor
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "tests" / "fixtures" / "jlens"
+FIXTURES = ROOT / "tests" / "fixtures" / "activation_probe"
 
 
 class _Handle:
@@ -64,17 +64,17 @@ def test_runtime_captures_per_token_activations_and_removes_hook():
 
 
 def test_classifier_accepts_sequence_or_summary_and_disabled_checkpoint():
-    classifier = JLensClassifier.load(FIXTURES / "checkpoint.json")
+    classifier = ActivationProbeClassifier.load(FIXTURES / "checkpoint.json")
     sequence = classifier.predict([[2.0, -2.0], [1.0, -1.0]])
     summary = classifier.predict([1.5, -1.5])
     assert 0.0 <= sequence.score <= 1.0
     assert sequence.label == "flagged"
     assert sequence.score == pytest.approx(summary.score)
-    assert JLensClassifier.load(None).predict([0.0]).label == "disabled"
+    assert ActivationProbeClassifier.load(None).predict([0.0]).label == "disabled"
 
 
 def test_classifier_rejects_dimension_mismatch():
-    classifier = JLensClassifier.load(FIXTURES / "checkpoint.json")
+    classifier = ActivationProbeClassifier.load(FIXTURES / "checkpoint.json")
     with pytest.raises(ValueError, match="dimension mismatch"):
         classifier.predict([1.0, 2.0, 3.0])
 
@@ -82,7 +82,7 @@ def test_classifier_rejects_dimension_mismatch():
 def test_calibration_split_and_metrics():
     records = load_calibration_records(FIXTURES / "calibration.jsonl")
     report = calibration_report(
-        JLensClassifier.load(FIXTURES / "checkpoint.json"), records, bins=5
+        ActivationProbeClassifier.load(FIXTURES / "checkpoint.json"), records, bins=5
     )
     assert report["training_data_used"] is False
     assert report["metrics"]["accuracy"] == 1.0
@@ -105,7 +105,7 @@ def test_calibration_cli_writes_report(tmp_path):
     completed = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "jlens_calibrate.py"),
+            str(ROOT / "scripts" / "activation_probe_calibrate.py"),
             "--checkpoint",
             str(FIXTURES / "checkpoint.json"),
             "--dataset",
@@ -121,32 +121,38 @@ def test_calibration_cli_writes_report(tmp_path):
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(output.read_text())["schema"] == "mac.jlens.calibration.v1"
+    assert (
+        json.loads(output.read_text())["schema"]
+        == "mac.activation_probe.calibration.v1"
+    )
 
 
 def test_advisory_audit_is_disabled_by_default_and_attaches_when_enabled(tmp_path):
-    metadata = {"jlens_activations": [[2.0, -2.0], [1.0, -1.0]]}
-    assert advisory_audit_from_environment(tmp_path, metadata, env={}) is None
-    result = advisory_audit_from_environment(
+    metadata = {"activation_probe_activations": [[2.0, -2.0], [1.0, -1.0]]}
+    assert activation_probe_audit_from_environment(tmp_path, metadata, env={}) is None
+    result = activation_probe_audit_from_environment(
         tmp_path,
         metadata,
         env={
-            "MAC_JLENS_ENABLED": "1",
-            "MAC_JLENS_CHECKPOINT": str(FIXTURES / "checkpoint.json"),
+            "MAC_ACTIVATION_PROBE_ENABLED": "1",
+            "MAC_ACTIVATION_PROBE_CHECKPOINT": str(FIXTURES / "checkpoint.json"),
         },
     )
     assert result["label"] == "flagged"
     assert result["advisory_only"] is True
+    assert result["schema"] == "mac.activation_probe.audit.v1"
     assert result["runtime_ms"] >= 0.0
-    disabled = advisory_audit_from_environment(
-        tmp_path, {}, env={"MAC_JLENS_ENABLED": "1"}
+    disabled = activation_probe_audit_from_environment(
+        tmp_path, {}, env={"MAC_ACTIVATION_PROBE_ENABLED": "1"}
     )
     assert disabled["label"] == "disabled"
 
 
 def test_advisory_error_never_propagates_to_worker_evidence(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAC_JLENS_ENABLED", "1")
-    monkeypatch.setenv("MAC_JLENS_CHECKPOINT", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("MAC_ACTIVATION_PROBE_ENABLED", "1")
+    monkeypatch.setenv(
+        "MAC_ACTIVATION_PROBE_CHECKPOINT", str(tmp_path / "missing.json")
+    )
     instance = object.__new__(worker.MacWorker)
     instance.attestation_key = ""
     (tmp_path / "stdout.txt").write_text("")
@@ -154,12 +160,14 @@ def test_advisory_error_never_propagates_to_worker_evidence(monkeypatch, tmp_pat
     execution = worker.WorkerExecution(returncode=0, summary="ok")
     metadata = instance._execution_metadata(tmp_path, execution)
     assert metadata["verification"]["status"] == "missing"
-    assert "jlens_audit" not in metadata
+    assert "activation_probe_audit" not in metadata
 
 
 def test_worker_evidence_attaches_only_bounded_advisory_result(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAC_JLENS_ENABLED", "1")
-    monkeypatch.setenv("MAC_JLENS_CHECKPOINT", str(FIXTURES / "checkpoint.json"))
+    monkeypatch.setenv("MAC_ACTIVATION_PROBE_ENABLED", "1")
+    monkeypatch.setenv(
+        "MAC_ACTIVATION_PROBE_CHECKPOINT", str(FIXTURES / "checkpoint.json")
+    )
     instance = object.__new__(worker.MacWorker)
     instance.attestation_key = ""
     (tmp_path / "stdout.txt").write_text("")
@@ -167,9 +175,9 @@ def test_worker_evidence_attaches_only_bounded_advisory_result(monkeypatch, tmp_
     execution = worker.WorkerExecution(
         returncode=0,
         summary="ok",
-        metadata={"jlens_activations": [[2.0, -2.0], [1.0, -1.0]]},
+        metadata={"activation_probe_activations": [[2.0, -2.0], [1.0, -1.0]]},
     )
     metadata = instance._execution_metadata(tmp_path, execution)
-    assert metadata["jlens_audit"]["advisory_only"] is True
-    assert metadata["jlens_audit"]["label"] == "flagged"
-    assert "jlens_activations" not in metadata
+    assert metadata["activation_probe_audit"]["advisory_only"] is True
+    assert metadata["activation_probe_audit"]["label"] == "flagged"
+    assert "activation_probe_activations" not in metadata

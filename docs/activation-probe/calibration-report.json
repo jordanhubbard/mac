@@ -3,9 +3,9 @@
   "metrics": {
     "accuracy": 1.0,
     "auroc": 1.0,
-    "ece": 0.10586887727885634
+    "ece": 0.10586887727885631
   },
-  "schema": "mac.jlens.calibration.v1",
+  "schema": "mac.activation_probe.calibration.v1",
   "split": "calibration",
   "threshold": 0.5,
   "training_data_used": false

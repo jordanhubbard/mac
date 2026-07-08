@@ -1,4 +1,4 @@
-"""Held-out calibration metrics and dataset helpers for the J-lens probe."""
+"""Held-out calibration helpers for the external activation probe."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .classifier import JLensClassifier
+from .classifier import ActivationProbeClassifier
 
 
 def expected_calibration_error(
@@ -50,13 +50,17 @@ def accuracy_at_threshold(
 ) -> float:
     if len(scores) != len(labels) or not scores:
         raise ValueError("scores and labels must have equal nonzero length")
-    correct = sum((score >= threshold) == bool(label) for score, label in zip(scores, labels))
+    correct = sum(
+        (score >= threshold) == bool(label) for score, label in zip(scores, labels)
+    )
     return correct / len(scores)
 
 
 def load_calibration_records(path: str | Path) -> list[Mapping[str, Any]]:
     records = []
-    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         record = json.loads(line)
@@ -72,7 +76,7 @@ def load_calibration_records(path: str | Path) -> list[Mapping[str, Any]]:
 
 
 def calibration_report(
-    classifier: JLensClassifier,
+    classifier: ActivationProbeClassifier,
     records: Iterable[Mapping[str, Any]],
     *,
     bins: int = 10,
@@ -82,7 +86,7 @@ def calibration_report(
     scores = [prediction.score for prediction in predictions]
     labels = [int(record["label"]) for record in materialized]
     return {
-        "schema": "mac.jlens.calibration.v1",
+        "schema": "mac.activation_probe.calibration.v1",
         "split": "calibration",
         "training_data_used": False,
         "examples": len(materialized),
@@ -90,6 +94,8 @@ def calibration_report(
         "metrics": {
             "ece": expected_calibration_error(scores, labels, bins=bins),
             "auroc": auroc(scores, labels),
-            "accuracy": accuracy_at_threshold(scores, labels, threshold=classifier.threshold),
+            "accuracy": accuracy_at_threshold(
+                scores, labels, threshold=classifier.threshold
+            ),
         },
     }

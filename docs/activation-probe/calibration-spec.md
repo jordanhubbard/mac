@@ -10,3 +10,5 @@ AUROC (pairwise ranking with half credit for ties), and accuracy at the probe's
 declared threshold. Every production candidate should also record model ID,
 layer path, checkpoint digest, calibration dataset digest, seed, and confidence
 intervals. The checked-in fixture is synthetic and validates only plumbing.
+It is not evidence that the classifier detects useful properties in a real
+instrumented model, much less in a separate hosted model.

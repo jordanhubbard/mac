@@ -4277,23 +4277,26 @@ class MacWorker:
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = dict(execution.metadata)
-        # J-lens is optional diagnostic evidence only.  Its adapter catches
-        # model/checkpoint/input failures, and this outer boundary guarantees a
-        # future adapter regression still cannot change task success, review,
-        # or publication decisions.
+        # The external activation probe is optional diagnostic evidence only.
+        # It consumes activations supplied by an instrumented runtime; it cannot
+        # inspect hosted-model internals. Its adapter catches model/checkpoint/
+        # input failures, and this outer boundary guarantees a future adapter
+        # regression still cannot change task success, review, or publication.
         try:
-            from mac.jlens.advisory import advisory_audit_from_environment
+            from mac.activation_probe.advisory import (
+                activation_probe_audit_from_environment,
+            )
 
-            jlens_audit = advisory_audit_from_environment(
+            activation_probe_audit = activation_probe_audit_from_environment(
                 task_dir, execution.metadata
             )
-            if jlens_audit is not None:
-                metadata["jlens_audit"] = jlens_audit
+            if activation_probe_audit is not None:
+                metadata["activation_probe_audit"] = activation_probe_audit
         except Exception as exc:  # noqa: BLE001 - advisory means non-authoritative.
-            logger.warning("J-lens advisory evidence unavailable: %s", exc)
+            logger.warning("external activation-probe evidence unavailable: %s", exc)
         # Raw residual tensors can be very large and are an executor-to-auditor
         # handoff, not durable task evidence.  Persist only the bounded result.
-        metadata.pop("jlens_activations", None)
+        metadata.pop("activation_probe_activations", None)
         repository_context = _load_repository_context(task_dir)
         manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
         manifest = _enrich_verification_manifest_from_repository_context(

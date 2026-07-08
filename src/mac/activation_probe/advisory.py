@@ -1,4 +1,4 @@
-"""Best-effort worker evidence integration for advisory J-lens results."""
+"""Best-effort worker integration for external activation-probe results."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from .classifier import JLensClassifier
+from .classifier import ActivationProbeClassifier
 
-logger = logging.getLogger("mac.jlens")
+logger = logging.getLogger("mac.activation_probe")
 
 
 def _enabled(env: Mapping[str, str]) -> bool:
-    return str(env.get("MAC_JLENS_ENABLED") or "").strip().lower() in {
+    return str(env.get("MAC_ACTIVATION_PROBE_ENABLED") or "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -26,17 +26,21 @@ def _enabled(env: Mapping[str, str]) -> bool:
 def _activation_input(
     task_dir: Path, execution_metadata: Mapping[str, Any], env: Mapping[str, str]
 ) -> Any:
-    if "jlens_activations" in execution_metadata:
-        return execution_metadata["jlens_activations"]
-    configured = str(env.get("MAC_JLENS_ACTIVATIONS_FILE") or "").strip()
-    path = Path(configured).expanduser() if configured else task_dir / "jlens-activations.json"
+    if "activation_probe_activations" in execution_metadata:
+        return execution_metadata["activation_probe_activations"]
+    configured = str(env.get("MAC_ACTIVATION_PROBE_ACTIVATIONS_FILE") or "").strip()
+    path = (
+        Path(configured).expanduser()
+        if configured
+        else task_dir / "activation-probe-activations.json"
+    )
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, Mapping):
         return data.get("activations")
     return data
 
 
-def advisory_audit_from_environment(
+def activation_probe_audit_from_environment(
     task_dir: Path,
     execution_metadata: Mapping[str, Any],
     *,
@@ -48,10 +52,15 @@ def advisory_audit_from_environment(
         return None
     started = time.perf_counter()
     try:
-        checkpoint = str(environment.get("MAC_JLENS_CHECKPOINT") or "").strip() or None
-        classifier = JLensClassifier.load(checkpoint)
+        checkpoint = (
+            str(environment.get("MAC_ACTIVATION_PROBE_CHECKPOINT") or "").strip()
+            or None
+        )
+        classifier = ActivationProbeClassifier.load(checkpoint)
         prediction = (
-            classifier.predict(_activation_input(task_dir, execution_metadata, environment))
+            classifier.predict(
+                _activation_input(task_dir, execution_metadata, environment)
+            )
             if classifier.enabled
             else classifier.predict([])
         )
@@ -59,8 +68,8 @@ def advisory_audit_from_environment(
             **prediction.to_dict(),
             "runtime_ms": round((time.perf_counter() - started) * 1000.0, 3),
             "advisory_only": True,
-            "schema": "mac.jlens.audit.v1",
+            "schema": "mac.activation_probe.audit.v1",
         }
     except Exception as exc:  # noqa: BLE001 - advisory analysis must never fail work.
-        logger.warning("J-lens advisory audit skipped after error: %s", exc)
+        logger.warning("external activation probe skipped after error: %s", exc)
         return None

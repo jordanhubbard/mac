@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the J-lens probe over a strictly held-out JSONL calibration split."""
+"""Calibrate the external activation probe on a held-out JSONL split."""
 
 from __future__ import annotations
 
@@ -7,8 +7,11 @@ import argparse
 import json
 from pathlib import Path
 
-from mac.jlens.calibration import calibration_report, load_calibration_records
-from mac.jlens.classifier import JLensClassifier
+from mac.activation_probe.calibration import (
+    calibration_report,
+    load_calibration_records,
+)
+from mac.activation_probe.classifier import ActivationProbeClassifier
 
 
 def main() -> int:
@@ -16,12 +19,12 @@ def main() -> int:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument(
-        "--output", default="docs/jlens/calibration-report.json"
+        "--output", default="docs/activation-probe/calibration-report.json"
     )
     parser.add_argument("--bins", type=int, default=10)
     args = parser.parse_args()
 
-    classifier = JLensClassifier.load(args.checkpoint)
+    classifier = ActivationProbeClassifier.load(args.checkpoint)
     report = calibration_report(
         classifier,
         load_calibration_records(args.dataset),
@@ -29,7 +32,9 @@ def main() -> int:
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(output)
     return 0
 
