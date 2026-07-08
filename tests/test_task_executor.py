@@ -703,6 +703,7 @@ def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, mo
     )
 
     assert result.returncode == 42
+    assert result.mac_clean_agent_failure is True
     assert harvested and deleted == ["sb-clean-failure"]
     skipped = [detail for event, detail in telemetry if event == "sandbox_verification_skipped"]
     assert skipped == [
@@ -714,6 +715,61 @@ def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, mo
             "returncode": 42,
         }
     ]
+
+
+def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(
+    tmp_path, monkeypatch
+):
+    task = {"id": "task-clean-failure", "title": "repair route", "metadata": {}}
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}), encoding="utf-8")
+    result = _FakeResult(42, stdout="", stderr="route unavailable")
+    result.mac_clean_agent_failure = True
+    telemetry = []
+
+    monkeypatch.setattr(te, "recall_deployment_lessons", lambda _task: [])
+    monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda _task: None)
+    monkeypatch.setattr(te, "is_planning_phase", lambda _task: False)
+    monkeypatch.setattr(te, "_invoke_agent", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(
+        te,
+        "run_deterministic_git_finalizer",
+        lambda *_args: pytest.fail("clean failure reached git finalization"),
+    )
+    monkeypatch.setattr(
+        te,
+        "maybe_auto_decompose",
+        lambda *_args: pytest.fail("clean failure reached decomposition"),
+    )
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: telemetry.append((event, detail)) or True,
+    )
+    monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
+    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
+
+    rc = te._run_executor(
+        runner=lambda *_args, **_kwargs: None,
+        task=task,
+        task_file=task_file,
+        task_workspace=tmp_path,
+        task_id=task["id"],
+        review_context=None,
+        is_review=False,
+    )
+
+    assert rc == 42
+    assert not (tmp_path / "mac-evidence.json").exists()
+    assert (
+        "executor_finalization_skipped",
+        {
+            "task_id": task["id"],
+            "level": "warning",
+            "reason": "clean_agent_failure",
+            "returncode": 42,
+        },
+    ) in telemetry
 
 
 def test_sandbox_repository_verifier_kills_process_tree_on_timeout(tmp_path):

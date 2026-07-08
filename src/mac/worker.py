@@ -612,6 +612,7 @@ class MacWorker:
         self._coding_route_report_dirty = True
         self._last_coding_route_probe_at = 0.0
         self._last_gateway_lease_renew_at = 0.0
+        self._last_dispatch_hold_reason: Optional[str] = None
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
 
@@ -721,6 +722,18 @@ class MacWorker:
         self._observe_policy_once()
         assignment = self._claim_next_for_agent()
         if assignment is None:
+            hold = self._current_dispatch_hold()
+            if hold is not None:
+                reason = str(hold.get("dispatch_hold_reason") or "dispatch held")
+                if reason != self._last_dispatch_hold_reason:
+                    self._observe_log(
+                        "worker.dispatch_held",
+                        level="info",
+                        detail={"agent_id": self.agent_id, "reason": reason},
+                    )
+                    self._last_dispatch_hold_reason = reason
+                return WorkerRunResult(status="held", error=reason)
+            self._last_dispatch_hold_reason = None
             self._observe_log("worker.no_task", level="debug", detail={"agent_id": self.agent_id})
             return WorkerRunResult(status="no_task")
 
@@ -949,6 +962,22 @@ class MacWorker:
                 daemon=True,
             )
             thread.start()
+        metadata = task.get("metadata") if isinstance(task, dict) else {}
+        runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+        break_glass = (
+            runtime.get("break_glass_authorization")
+            if isinstance(runtime, dict)
+            and isinstance(runtime.get("break_glass_authorization"), dict)
+            else None
+        )
+        audit_metadata: JsonDict = {"execution_kind": "task"}
+        if break_glass is not None:
+            audit_metadata.update(
+                {
+                    "execution_boundary": "host",
+                    "break_glass_authorization_id": break_glass.get("id"),
+                }
+            )
         try:
             return self._call_executor(
                 task,
@@ -957,7 +986,7 @@ class MacWorker:
                     "agent_id": self.agent_id,
                     "task_id": task["id"],
                     "lease_id": lease["id"],
-                    "metadata": {"execution_kind": "task"},
+                    "metadata": audit_metadata,
                 },
             )
         finally:
@@ -1037,6 +1066,17 @@ class MacWorker:
             "/agents/%s/claim-next" % quote(self.agent_id, safe=""),
             self._claim_payload(dry_run=False),
         )
+
+    def _current_dispatch_hold(self) -> Optional[JsonDict]:
+        """Return the durable hold record, distinguishing it from an empty queue."""
+
+        try:
+            agent = self.client.get(
+                "/agents/%s" % quote(self.agent_id, safe="")
+            )
+        except Exception:  # noqa: BLE001 - status reporting must not break polling
+            return None
+        return agent if isinstance(agent, dict) and agent.get("dispatch_hold") else None
 
     def dry_run_claim(self) -> Optional[JsonDict]:
         self._heartbeat()

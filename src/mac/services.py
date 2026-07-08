@@ -48,6 +48,7 @@ from mac.models import (
     AgentStatus,
     Artifact,
     AuthorizationError,
+    BreakGlassAuthorization,
     ProjectRepository,
     COMMAND_AUDIT_PHASES,
     CommandAuditRecord,
@@ -229,6 +230,10 @@ MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
 AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
+BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
+BREAK_GLASS_EXECUTION_BOUNDARY = "host"
+BREAK_GLASS_MIN_TTL_SECONDS = 60
+BREAK_GLASS_MAX_TTL_SECONDS = 3600
 
 
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -3390,6 +3395,19 @@ class ControlPlane:
         normalized["toolchain_requirements"] = toolchain
         return kept, normalized
 
+    @staticmethod
+    def _reject_reserved_break_glass_metadata(metadata: Dict[str, Any]) -> None:
+        runtime = ensure_json_object(metadata.get("runtime"))
+        if (
+            "break_glass_authorization" in runtime
+            or "break_glass_authorization" in metadata
+            or "execution_boundary" in metadata
+        ):
+            raise ValidationError(
+                "break-glass execution metadata is control-plane-owned; "
+                "use the admin break-glass authorization API"
+            )
+
     def create_task(
         self,
         title: str,
@@ -3420,6 +3438,7 @@ class ControlPlane:
                 "workflow-linked task creation requires both run id and node key"
             )
         state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
+        self._reject_reserved_break_glass_metadata(ensure_json_object(metadata))
         task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
             coerce_list(required_capabilities),
@@ -3938,9 +3957,10 @@ class ControlPlane:
         for task in self._dispatch_ordered_tasks(project=project):
             if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
                 continue
-            if self._task_dispatch_held(task):
+            break_glass = self._active_break_glass_authorization(task.id)
+            if self._task_dispatch_held(task) and break_glass is None:
                 continue  # staged / do-not-dispatch — not claimable until released
-            if self._project_dispatch_paused(task.project):
+            if self._project_dispatch_paused(task.project) and break_glass is None:
                 continue  # project not yet activated for autonomous dispatch
             try:
                 ready = self._dependencies_satisfied(task)
@@ -4066,6 +4086,7 @@ class ControlPlane:
             new_capabilities = coerce_list(required_capabilities)
         if metadata is not None:
             new_metadata = ensure_json_object(metadata)
+            self._reject_reserved_break_glass_metadata(new_metadata)
         if should_reconcile_metadata:
             new_capabilities, new_metadata = self._apply_project_task_defaults(
                 new_project,
@@ -4477,6 +4498,12 @@ class ControlPlane:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (LeaseStatus.RELEASED.value, now, release_lease_id, LeaseStatus.ACTIVE.value),
+                )
+                self._consume_break_glass_authorizations(
+                    conn,
+                    task_id=task_id,
+                    lease_id=release_lease_id,
+                    now=now,
                 )
             conn.execute(
                 """
@@ -4904,6 +4931,231 @@ class ControlPlane:
                 )
             ],
         }
+
+    def authorize_task_break_glass(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        reason: str,
+        authorized_by: str,
+        ttl_seconds: int = 900,
+    ) -> BreakGlassAuthorization:
+        """Authorize one OPEN task to run directly on one trusted agent host.
+
+        This record is the authority.  Task metadata is intentionally ignored,
+        so a prompt, imported ticket, or ordinary task author cannot opt itself
+        out of sandbox confinement.  The authorization is short-lived until
+        claimed and single-use once bound to a lease.
+        """
+
+        task = self.get_task(task_id)
+        agent = self.get_agent(agent_id)
+        reason = str(reason or "").strip()
+        authorized_by = str(authorized_by or "").strip()
+        if task.state != TaskState.OPEN.value:
+            raise ValidationError("break-glass authorization requires an open task")
+        if isinstance(ensure_json_object(task.metadata).get("review_context"), dict):
+            raise ValidationError(
+                "review tasks cannot use host break-glass execution"
+            )
+        if not reason:
+            raise ValidationError("break-glass reason is required")
+        if not authorized_by:
+            raise ValidationError("break-glass authorizer is required")
+        ttl = int(ttl_seconds)
+        if ttl < BREAK_GLASS_MIN_TTL_SECONDS or ttl > BREAK_GLASS_MAX_TTL_SECONDS:
+            raise ValidationError(
+                "break-glass ttl_seconds must be between %d and %d"
+                % (BREAK_GLASS_MIN_TTL_SECONDS, BREAK_GLASS_MAX_TTL_SECONDS)
+            )
+        machine = self.get_machine(agent.machine_id)
+        if not machine.trusted:
+            raise AuthorizationError(
+                "break-glass host execution requires a trusted machine"
+            )
+        if agent.health_status != HealthStatus.HEALTHY.value:
+            raise ValidationError(
+                "break-glass target agent must be healthy"
+            )
+        now = utcnow()
+        expires_at = (
+            parse_time(now) + timedelta(seconds=ttl)
+        ).isoformat(timespec="microseconds")
+        authorization_id = new_id("breakglass")
+        metadata = {
+            "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
+            "single_use": True,
+            "bypasses": [
+                "agent_dispatch_hold",
+                "task_dispatch_hold",
+                "project_dispatch_pause",
+                "worker_claim_policy",
+                "task_agent_compatibility",
+                "openshell",
+            ],
+        }
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE task_break_glass_authorizations
+                SET status = 'expired'
+                WHERE status = 'active' AND expires_at <= ?
+                """,
+                (now,),
+            )
+            existing = conn.execute(
+                """
+                SELECT id FROM task_break_glass_authorizations
+                WHERE task_id = ? AND status = 'active' AND expires_at > ?
+                LIMIT 1
+                """,
+                (task.id, now),
+            ).fetchone()
+            if existing is not None:
+                raise ValidationError(
+                    "task %s already has an active break-glass authorization"
+                    % task.id
+                )
+            conn.execute(
+                """
+                INSERT INTO task_break_glass_authorizations (
+                    id, task_id, agent_id, execution_boundary, reason,
+                    authorized_by, status, metadata, created_at, expires_at,
+                    claimed_at, lease_id, consumed_at, revoked_at, revoked_by,
+                    revoke_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)
+                """,
+                (
+                    authorization_id,
+                    task.id,
+                    agent.id,
+                    BREAK_GLASS_EXECUTION_BOUNDARY,
+                    reason,
+                    authorized_by,
+                    json_dumps(metadata),
+                    now,
+                    expires_at,
+                ),
+            )
+            self._record_history(
+                task.id,
+                "task.break_glass_authorized",
+                authorized_by,
+                task.state,
+                task.state,
+                {
+                    "authorization_id": authorization_id,
+                    "agent_id": agent.id,
+                    "execution_boundary": BREAK_GLASS_EXECUTION_BOUNDARY,
+                    "expires_at": expires_at,
+                    "reason": reason,
+                },
+                conn=conn,
+            )
+        self.record_log(
+            "task.break_glass.authorized",
+            layer="control_plane",
+            source=authorized_by,
+            level="warning",
+            subject_type="task",
+            subject_id=task.id,
+            detail={
+                "authorization_id": authorization_id,
+                "agent_id": agent.id,
+                "execution_boundary": BREAK_GLASS_EXECUTION_BOUNDARY,
+                "expires_at": expires_at,
+                "reason": reason,
+            },
+        )
+        return self.get_task_break_glass_authorization(authorization_id)
+
+    def get_task_break_glass_authorization(
+        self, authorization_id: str
+    ) -> BreakGlassAuthorization:
+        row = self.store.query_one(
+            "SELECT * FROM task_break_glass_authorizations WHERE id = ?",
+            (authorization_id,),
+        )
+        if row is None:
+            raise NotFoundError(
+                "break-glass authorization %s not found" % authorization_id
+            )
+        return self._break_glass_authorization_from_row(row)
+
+    def list_task_break_glass_authorizations(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[BreakGlassAuthorization]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        if task_id is not None:
+            resolved = self.get_task(task_id).id
+            clauses.append("task_id = ?")
+            params.append(resolved)
+        if agent_id is not None:
+            self.get_agent(agent_id)
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(str(status))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(max(1, min(int(limit), 1000)))
+        rows = self.store.query_all(
+            "SELECT * FROM task_break_glass_authorizations%s "
+            "ORDER BY created_at DESC, id DESC LIMIT ?" % where,
+            tuple(params),
+        )
+        return [self._break_glass_authorization_from_row(row) for row in rows]
+
+    def revoke_task_break_glass(
+        self,
+        authorization_id: str,
+        *,
+        revoked_by: str,
+        reason: str,
+    ) -> BreakGlassAuthorization:
+        authorization = self.get_task_break_glass_authorization(authorization_id)
+        revoked_by = str(revoked_by or "").strip()
+        reason = str(reason or "").strip()
+        if not revoked_by or not reason:
+            raise ValidationError("break-glass revoker and reason are required")
+        if authorization.status != "active":
+            raise ValidationError(
+                "only an unclaimed active break-glass authorization can be revoked"
+            )
+        now = utcnow()
+        task = self.get_task(authorization.task_id)
+        with self.store.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE task_break_glass_authorizations
+                SET status = 'revoked', revoked_at = ?, revoked_by = ?, revoke_reason = ?
+                WHERE id = ? AND status = 'active'
+                """,
+                (now, revoked_by, reason, authorization.id),
+            )
+            if updated.rowcount != 1:
+                raise ValidationError("break-glass authorization changed concurrently")
+            self._record_history(
+                task.id,
+                "task.break_glass_revoked",
+                revoked_by,
+                task.state,
+                task.state,
+                {
+                    "authorization_id": authorization.id,
+                    "agent_id": authorization.agent_id,
+                    "reason": reason,
+                },
+                conn=conn,
+            )
+        return self.get_task_break_glass_authorization(authorization.id)
 
     def task_ledger_audit(
         self,
@@ -6831,6 +7083,12 @@ class ControlPlane:
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (LeaseStatus.RELEASED.value, now, release_lease_id, LeaseStatus.ACTIVE.value),
                 )
+                self._consume_break_glass_authorizations(
+                    conn,
+                    task_id=task_id,
+                    lease_id=release_lease_id,
+                    now=now,
+                )
             if is_requeue_from_terminal:
                 changed = conn.execute(
                     """
@@ -6989,6 +7247,12 @@ class ControlPlane:
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (LeaseStatus.RELEASED.value, now, task.lease_id, LeaseStatus.ACTIVE.value),
                 )
+                self._consume_break_glass_authorizations(
+                    conn,
+                    task_id=task.id,
+                    lease_id=task.lease_id,
+                    now=now,
+                )
             if task.owner_agent_id:
                 self._set_agent_idle(task.owner_agent_id, conn=conn)
             conn.execute(
@@ -7067,6 +7331,9 @@ class ControlPlane:
         now = utcnow()
         expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat(timespec="microseconds")
         lease_id = new_id("lease")
+        break_glass = self._active_break_glass_authorization(
+            task.id, agent.id, now=now
+        )
         coordination_related_ids = self._coordination_related_task_ids(task)
         coordination_lock_task_id: Optional[str] = None
         if coordination_related_ids:
@@ -7133,6 +7400,27 @@ class ControlPlane:
                 """,
                 (lease_id, task_id, agent_id, expires_at, LeaseStatus.ACTIVE.value, now, now),
             )
+            if break_glass is not None:
+                authorization_update = conn.execute(
+                    """
+                    UPDATE task_break_glass_authorizations
+                    SET status = 'claimed', claimed_at = ?, lease_id = ?
+                    WHERE id = ? AND task_id = ? AND agent_id = ?
+                      AND status = 'active' AND expires_at > ?
+                    """,
+                    (
+                        now,
+                        lease_id,
+                        break_glass.id,
+                        task.id,
+                        agent.id,
+                        now,
+                    ),
+                )
+                if authorization_update.rowcount != 1:
+                    raise ValidationError(
+                        "break-glass authorization expired or changed during claim"
+                    )
             conn.execute(
                 """
                 UPDATE agents
@@ -7142,6 +7430,9 @@ class ControlPlane:
                 (AgentStatus.BUSY.value, task_id, now, now, agent_id),
             )
             detail = {"lease_id": lease_id, "expires_at": expires_at}
+            if break_glass is not None:
+                detail["break_glass_authorization_id"] = break_glass.id
+                detail["execution_boundary"] = break_glass.execution_boundary
             self._record_history(
                 task_id,
                 "task.claimed",
@@ -8040,6 +8331,12 @@ class ControlPlane:
             )
             if cur.rowcount == 0:
                 return None
+            self._consume_break_glass_authorizations(
+                conn,
+                task_id=task.id,
+                lease_id=lease.id,
+                now=timestamp,
+            )
             conn.execute(
                 """
                 UPDATE agents
@@ -8255,6 +8552,12 @@ class ControlPlane:
                 raise TransitionError(
                     "lease %s is no longer active (already released or expired)" % lease_id
                 )
+            self._consume_break_glass_authorizations(
+                conn,
+                task_id=task.id,
+                lease_id=lease_id,
+                now=now,
+            )
             # mac-79s1: guard the task UPDATE on the lease still pointing at
             # this lease and being owned by this agent. If a new owner has
             # taken over, the row count is 0 and we refuse.
@@ -10033,6 +10336,9 @@ class ControlPlane:
                     "agent_id": agent.id,
                     "status": agent.status,
                     "health": agent.health_status,
+                    "dispatch_hold": agent.dispatch_hold,
+                    "dispatch_hold_reason": agent.dispatch_hold_reason,
+                    "dispatch_hold_at": agent.dispatch_hold_at,
                     "current_task_id": cur.id if cur else agent.current_task_id,
                     "current_task_title": (cur.title if cur else None),
                     "last_seen_at": agent.last_seen_at,
@@ -10115,13 +10421,14 @@ class ControlPlane:
         assignments: List[JsonDict] = []
         skip_logs = 0
         for candidate_rank, task in enumerate(tasks, start=1):
+            break_glass = self._active_break_glass_authorization(task.id)
             # Autonomous-dispatch gates: a per-task no_dispatch hold or a
             # project-level pause must keep the push dispatcher from auto-
             # claiming, exactly as they keep tasks out of ready_tasks() and the
             # worker-pull claim policy. claim_task() deliberately does NOT
             # enforce these (operators may still claim/start a staged task
             # explicitly), so the gate has to live on every autonomous path.
-            if self._task_dispatch_held(task):
+            if self._task_dispatch_held(task) and break_glass is None:
                 if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
                     self._record_routing_skip(
                         name="dispatcher.routing.task_skipped",
@@ -10134,7 +10441,7 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
-            if self._project_dispatch_paused(task.project):
+            if self._project_dispatch_paused(task.project) and break_glass is None:
                 if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
                     self._record_routing_skip(
                         name="dispatcher.routing.task_skipped",
@@ -10189,7 +10496,7 @@ class ControlPlane:
                 )
                 assignments.append(
                     {
-                        "task": claimed.to_dict(),
+                        "task": self._assignment_task_payload(claimed, lease),
                         "agent": agent.to_dict(),
                         "lease": lease.to_dict(),
                     }
@@ -10314,7 +10621,9 @@ class ControlPlane:
         skip_logs = 0
         for task in self._dispatch_ordered_tasks():
             considered += 1
-            allowed, reason = self._task_matches_worker_claim_policy(task, policy)
+            allowed, reason = self._task_matches_worker_claim_policy(
+                task, policy, agent_id=agent.id
+            )
             if not allowed:
                 rejected_policy[reason] = rejected_policy.get(reason, 0) + 1
                 if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
@@ -10393,7 +10702,7 @@ class ControlPlane:
                     skip_logs += 1
                 continue
             assignment = {
-                "task": claimed.to_dict(),
+                "task": self._assignment_task_payload(claimed, lease),
                 "agent": agent.to_dict(),
                 "lease": lease.to_dict(),
             }
@@ -10498,7 +10807,7 @@ class ControlPlane:
         task = self.get_task(str(row["task_id"]))
         lease = self.get_lease(str(row["lease_id"]))
         return {
-            "task": task.to_dict(),
+            "task": self._assignment_task_payload(task, lease),
             "agent": self.get_agent(agent.id).to_dict(),
             "lease": lease.to_dict(),
             "resumed": True,
@@ -12804,6 +13113,28 @@ class ControlPlane:
             updated_at=row["updated_at"],
         )
 
+    def _break_glass_authorization_from_row(
+        self, row: Any
+    ) -> BreakGlassAuthorization:
+        return BreakGlassAuthorization(
+            id=row["id"],
+            task_id=row["task_id"],
+            agent_id=row["agent_id"],
+            execution_boundary=row["execution_boundary"],
+            reason=row["reason"],
+            authorized_by=row["authorized_by"],
+            status=row["status"],
+            metadata=json_loads(row["metadata"], {}),
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            claimed_at=row["claimed_at"],
+            lease_id=row["lease_id"],
+            consumed_at=row["consumed_at"],
+            revoked_at=row["revoked_at"],
+            revoked_by=row["revoked_by"],
+            revoke_reason=row["revoke_reason"],
+        )
+
     def _history_from_row(self, row: Any) -> HistoryEvent:
         return HistoryEvent(
             row["id"],
@@ -13948,6 +14279,86 @@ class ControlPlane:
             ),
         }
 
+    def _active_break_glass_authorization(
+        self,
+        task_id: str,
+        agent_id: Optional[str] = None,
+        *,
+        now: Optional[str] = None,
+    ) -> Optional[BreakGlassAuthorization]:
+        current = now or utcnow()
+        clauses = ["task_id = ?", "status = 'active'", "expires_at > ?"]
+        params: List[Any] = [task_id, current]
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        row = self.store.query_one(
+            "SELECT * FROM task_break_glass_authorizations WHERE %s "
+            "ORDER BY created_at DESC LIMIT 1" % " AND ".join(clauses),
+            tuple(params),
+        )
+        return self._break_glass_authorization_from_row(row) if row is not None else None
+
+    def _claimed_break_glass_authorization(
+        self, task_id: str, agent_id: str, lease_id: str
+    ) -> Optional[BreakGlassAuthorization]:
+        row = self.store.query_one(
+            """
+            SELECT * FROM task_break_glass_authorizations
+            WHERE task_id = ? AND agent_id = ? AND lease_id = ? AND status = 'claimed'
+            ORDER BY claimed_at DESC LIMIT 1
+            """,
+            (task_id, agent_id, lease_id),
+        )
+        return self._break_glass_authorization_from_row(row) if row is not None else None
+
+    def _assignment_task_payload(self, task: Task, lease: Lease) -> JsonDict:
+        """Attach a lease-bound host authorization to an in-memory assignment.
+
+        This transient projection is the only task document the executor trusts
+        for host execution.  The durable task metadata remains unchanged.
+        """
+
+        payload = task.to_dict()
+        metadata = ensure_json_object(payload.get("metadata"))
+        runtime = ensure_json_object(metadata.get("runtime"))
+        # Strip caller-controlled lookalikes even when no authorization exists.
+        runtime.pop("break_glass_authorization", None)
+        if runtime:
+            metadata["runtime"] = runtime
+        else:
+            metadata.pop("runtime", None)
+        payload["metadata"] = metadata
+        authorization = self._claimed_break_glass_authorization(
+            task.id, lease.agent_id, lease.id
+        )
+        if authorization is None:
+            return payload
+        runtime = ensure_json_object(metadata.get("runtime"))
+        runtime["break_glass_authorization"] = authorization.to_dict()
+        metadata["runtime"] = runtime
+        payload["metadata"] = metadata
+        return payload
+
+    def _consume_break_glass_authorizations(
+        self,
+        conn: Any,
+        *,
+        task_id: str,
+        lease_id: Optional[str],
+        now: str,
+    ) -> None:
+        if not lease_id:
+            return
+        conn.execute(
+            """
+            UPDATE task_break_glass_authorizations
+            SET status = 'consumed', consumed_at = ?
+            WHERE task_id = ? AND lease_id = ? AND status = 'claimed'
+            """,
+            (now, task_id, lease_id),
+        )
+
     def _task_dispatch_held(self, task: Task) -> bool:
         """True when a task is explicitly held from autonomous dispatch (staged).
 
@@ -13982,11 +14393,24 @@ class ControlPlane:
             return False
         return bool(ensure_json_object(rec.metadata).get("dispatch_paused"))
 
-    def _task_matches_worker_claim_policy(self, task: Task, policy: JsonDict) -> Tuple[bool, str]:
-        if self._task_dispatch_held(task):
+    def _task_matches_worker_claim_policy(
+        self, task: Task, policy: JsonDict, *, agent_id: Optional[str] = None
+    ) -> Tuple[bool, str]:
+        break_glass = (
+            self._active_break_glass_authorization(task.id, agent_id)
+            if agent_id
+            else None
+        )
+        if self._task_dispatch_held(task) and break_glass is None:
             return False, "dispatch_held"
-        if self._project_dispatch_paused(task.project):
+        if self._project_dispatch_paused(task.project) and break_glass is None:
             return False, "project_dispatch_paused"
+        if break_glass is not None:
+            # Admin authorization binds this exact task to this exact worker and
+            # intentionally overrides worker-side project/canary/metadata lanes.
+            # The hard host trust, health, capacity, and tenant checks still run
+            # in _agent_availability_for_task.
+            return True, "break_glass_authorized"
         allowed_projects = set(policy.get("allowed_projects") or [])
         if allowed_projects and (task.project or "") not in allowed_projects:
             return False, "project_not_allowed"
@@ -14083,7 +14507,16 @@ class ControlPlane:
         return available
 
     def _agent_availability_for_task(self, agent: Agent, task: Task) -> Tuple[bool, str]:
-        if agent.dispatch_hold:
+        task_authorization = self._active_break_glass_authorization(task.id)
+        break_glass = (
+            task_authorization
+            if task_authorization is not None
+            and task_authorization.agent_id == agent.id
+            else None
+        )
+        if task_authorization is not None and break_glass is None:
+            return False, "break_glass_agent_mismatch"
+        if agent.dispatch_hold and break_glass is None:
             return False, "agent_dispatch_held"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return False, "agent_status_unavailable"
@@ -14115,6 +14548,15 @@ class ControlPlane:
             return False, "agent_capacity_full"
         if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
             return False, "machine_tenant_not_allowed"
+        if break_glass is not None:
+            # The operator selected this exact trusted host because ordinary
+            # compatibility may itself be what needs repair: stale runtime
+            # digests, missing sandbox-visible commands, broken coding-route
+            # proofs, capabilities, roles, or task target hints.  Retain the
+            # hard trust, health, status, capacity, and tenant boundaries above,
+            # then bypass those task/agent compatibility checks only for this
+            # short-lived authorization.
+            return True, "break_glass_authorized"
         if not self._agent_resources_satisfy(agent, machine, task):
             return False, "agent_resources_insufficient"
         if not self._agent_has_repository_commands(agent, task):
@@ -16823,6 +17265,12 @@ class ControlPlane:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
                     (LeaseStatus.EXPIRED.value, timestamp, row["lease_id"]),
+                )
+                self._consume_break_glass_authorizations(
+                    conn,
+                    task_id=row["task_id"],
+                    lease_id=row["lease_id"],
+                    now=timestamp,
                 )
                 conn.execute(
                     """

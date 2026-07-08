@@ -368,6 +368,74 @@ class RemoteDispatch:
     def task_detail(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))
 
+    def authorize_task_break_glass(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        reason: str,
+        authorized_by: Optional[str] = None,
+        ttl_seconds: int = 900,
+    ) -> _Dictish:
+        # authorized_by is derived from the authenticated principal on the hub;
+        # accept it only for local ControlPlane interface parity.
+        del authorized_by
+        return _Dictish(
+            self._post(
+                "/tasks/%s/break-glass-authorizations"
+                % quote(task_id, safe=""),
+                {
+                    "agent_id": agent_id,
+                    "reason": reason,
+                    "ttl_seconds": ttl_seconds,
+                },
+            )
+        )
+
+    def list_task_break_glass_authorizations(
+        self,
+        *,
+        task_id: str,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[_Dictish]:
+        # The task-scoped endpoint intentionally does not expose broad fleet
+        # enumeration. Filter any optional status/agent request client-side.
+        items = _wrap_list(
+            self._get(
+                "/tasks/%s/break-glass-authorizations"
+                % quote(task_id, safe="")
+            )
+        )
+        out = []
+        for item in items:
+            data = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            if agent_id is not None and data.get("agent_id") != agent_id:
+                continue
+            if status is not None and data.get("status") != status:
+                continue
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+
+    def revoke_task_break_glass(
+        self,
+        authorization_id: str,
+        *,
+        revoked_by: Optional[str] = None,
+        reason: str,
+    ) -> _Dictish:
+        del revoked_by
+        return _Dictish(
+            self._post(
+                "/break-glass-authorizations/%s/revoke"
+                % quote(authorization_id, safe=""),
+                {"reason": reason},
+            )
+        )
+
     def assign_review_experiment(
         self,
         task_id: str,

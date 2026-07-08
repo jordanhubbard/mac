@@ -9,6 +9,9 @@ Subcommands covered:
   - task reopen  <task_id> [--reason] [--actor]
   - task recover-finalizer <workspace> [--approve-new-file ...] [--execute]
   - task release <task_id> [--actor]
+  - task break-glass <task_id> <agent_id> --reason ...
+  - task break-glass-list <task_id>
+  - task break-glass-revoke <authorization_id> --reason ...
   - task evidence <task_id> --kind ... --uri ... --summary ... --created-by ...
 
 These complement the core subcommands already covered in test_mac_cli.py
@@ -292,6 +295,53 @@ def test_task_claim_prevents_double_claim(tmp_path):
 
     rc2, err = _run(tmp_path, "task", "claim", task["id"], a2["id"])
     assert rc2 != 0  # second claim must fail
+
+
+# ---------------------------------------------------------------------------
+# task break-glass recovery
+# ---------------------------------------------------------------------------
+
+
+def test_task_break_glass_authorize_list_and_revoke(tmp_path):
+    agent = _register_agent(tmp_path, name="recovery-worker")
+    task = _create_task(tmp_path, title="repair sandbox runtime")
+
+    rc, authorization = _run(
+        tmp_path,
+        "task",
+        "break-glass",
+        task["id"],
+        agent["id"],
+        "--reason",
+        "repair the sandbox launcher from the trusted host",
+        "--ttl-seconds",
+        "300",
+        "--actor",
+        "cli-test",
+    )
+    assert rc == 0
+    assert authorization["task_id"] == task["id"]
+    assert authorization["agent_id"] == agent["id"]
+    assert authorization["status"] == "active"
+
+    rc, authorizations = _run(
+        tmp_path, "task", "break-glass-list", task["id"]
+    )
+    assert rc == 0
+    assert [item["id"] for item in authorizations] == [authorization["id"]]
+
+    rc, revoked = _run(
+        tmp_path,
+        "task",
+        "break-glass-revoke",
+        authorization["id"],
+        "--reason",
+        "recovery was cancelled before claim",
+        "--actor",
+        "cli-test",
+    )
+    assert rc == 0
+    assert revoked["status"] == "revoked"
 
 
 # ---------------------------------------------------------------------------

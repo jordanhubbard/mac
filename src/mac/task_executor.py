@@ -99,6 +99,7 @@ from mac.review_failure_classifier import (
 
 PRESERVED_EXECUTOR_WORKTREE_FILENAME = "preserved-executor-worktree.json"
 PRESERVED_EXECUTOR_EVIDENCE_FILENAME = "executor-evidence-preserved.json"
+BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 
 
 class PreservationMissing(RuntimeError):
@@ -5000,6 +5001,10 @@ def _run_sandboxed(
             and progress_evidence.get("mutation_observed") is False
             and progress_evidence.get("manifest_observed") is False
         ):
+            # Carry the proof across _invoke_agent's return boundary.  Without
+            # this marker _run_executor would still enter deterministic git or
+            # review finalization after the sandbox verifier correctly stopped.
+            setattr(result, "mac_clean_agent_failure", True)
             emit_telemetry(
                 "sandbox_verification_skipped",
                 task_id=str(audit_id) if audit_id else None,
@@ -5094,7 +5099,83 @@ def _force_child_yolo_env() -> None:
     os.environ["HERMES_YOLO_MODE"] = "1"
 
 
-def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
+def _validated_host_break_glass_authorization(task: Any) -> Optional[Dict[str, Any]]:
+    """Validate the lease-bound control-plane projection for host execution.
+
+    The task description and durable task metadata are untrusted.  The worker
+    receives this projection only in a claimed assignment and strips any
+    caller-supplied lookalikes.  We still validate every binding here so a
+    malformed or replayed task file fails closed before bypassing OpenShell.
+    """
+
+    if not isinstance(task, dict):
+        return None
+    metadata = task.get("metadata")
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    raw = (
+        runtime.get("break_glass_authorization")
+        if isinstance(runtime, dict)
+        else None
+    )
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RuntimeError("invalid break-glass authorization projection")
+    checks = {
+        "schema": raw.get("metadata", {}).get("schema")
+        if isinstance(raw.get("metadata"), dict)
+        else None,
+        "status": raw.get("status"),
+        "execution_boundary": raw.get("execution_boundary"),
+        "task_id": raw.get("task_id"),
+        "agent_id": raw.get("agent_id"),
+        "lease_id": raw.get("lease_id"),
+    }
+    expected = {
+        "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
+        "status": "claimed",
+        "execution_boundary": "host",
+        "task_id": str(task.get("id") or ""),
+        "agent_id": str(os.environ.get("MAC_AGENT_ID") or ""),
+        "lease_id": str(os.environ.get("MAC_LEASE_ID") or ""),
+    }
+    mismatches = [
+        key
+        for key, value in expected.items()
+        if not value or str(checks.get(key) or "") != value
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "break-glass authorization binding mismatch: %s"
+            % ", ".join(sorted(mismatches))
+        )
+    if not str(raw.get("id") or "").startswith("breakglass_"):
+        raise RuntimeError("break-glass authorization id is invalid")
+    return dict(raw)
+
+
+def _break_glass_prompt(authorization: Mapping[str, Any]) -> str:
+    return """
+
+HOST BREAK-GLASS RECOVERY BOUNDARY (EXPLICITLY AUTHORIZED)
+
+This exact task and lease are running directly on the trusted worker host because
+the work may need to repair the sandbox, worker, router, deployment, or other
+execution infrastructure that a sandbox cannot modify. This is not general
+permission to broaden scope. Make only the host changes necessary for the task,
+preserve secrets, record every material host mutation in evidence, keep rollback
+possible, and leave the host in a verified state. Authorization: %s. Reason: %s.
+""" % (
+        str(authorization.get("id") or "unknown"),
+        str(authorization.get("reason") or "operator-authorized recovery"),
+    )
+
+
+def _unsandboxed_agent_argv(
+    agent_argv: List[str],
+    *,
+    break_glass_authorization: Optional[Mapping[str, Any]] = None,
+) -> List[str]:
     """Gate an already-built agent argv for an UNSANDBOXED run.
 
     The agent runs with its own approval bypass (Hermes ``--yolo`` or a coding
@@ -5103,6 +5184,22 @@ def _unsandboxed_agent_argv(agent_argv: List[str]) -> List[str]:
     the current live fleet; "0" fails closed). Raises when fail-closed. The
     sandboxed path does not go through here — see :func:`_invoke_agent`.
     """
+    if break_glass_authorization is not None:
+        _force_child_yolo_env()
+        authorization_id = str(break_glass_authorization.get("id") or "unknown")
+        sys.stderr.write(
+            "[executor] BREAK-GLASS: launching exact lease directly on the host "
+            "under authorization %s; OpenShell bypass is task-scoped.\n"
+            % authorization_id
+        )
+        emit_telemetry(
+            "break_glass_host_execution",
+            level="warning",
+            authorization_id=authorization_id,
+            execution_boundary="host",
+            authorized_by=break_glass_authorization.get("authorized_by"),
+        )
+        return agent_argv
     default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
     if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", default_unsandboxed)):
         _force_child_yolo_env()
@@ -5789,8 +5886,13 @@ def _invoke_agent(
     # the production supervisor (which runs this whole process inside a sandbox,
     # with MAC_OPENSHELL_SANDBOX off but the agent required). Coding-agent
     # enablement is gated on `confined`, not `wrap`.
-    wrap = _openshell_enabled()
-    confined = wrap or _openshell_required_for_local_agent()
+    break_glass_authorization = _validated_host_break_glass_authorization(
+        opts.get("task")
+    )
+    wrap = _openshell_enabled() and break_glass_authorization is None
+    confined = (
+        wrap or _openshell_required_for_local_agent()
+    ) and break_glass_authorization is None
     agent_argv = _agent_argv(
         PROMPT_SENTINEL, workspace, confined=confined, task=opts.get("task")
     )
@@ -5809,7 +5911,23 @@ def _invoke_agent(
                 opts,
             )
         return runner(
-            _unsandboxed_agent_argv(bundle.argv()), workspace, audit_id, opts
+            _unsandboxed_agent_argv(
+                bundle.argv(),
+                break_glass_authorization=break_glass_authorization,
+            ),
+            workspace,
+            audit_id,
+            {
+                **opts,
+                "execution_boundary": (
+                    "host" if break_glass_authorization is not None else "unsandboxed"
+                ),
+                "break_glass_authorization_id": (
+                    break_glass_authorization.get("id")
+                    if break_glass_authorization is not None
+                    else None
+                ),
+            },
         )
     finally:
         bundle.cleanup()
@@ -5905,6 +6023,7 @@ def _run_executor(
 ) -> int:
     """Inner executor body extracted so the relay scope wraps the whole run."""
     started = time.monotonic()
+    break_glass_authorization = _validated_host_break_glass_authorization(task)
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
     if is_review:
@@ -5921,7 +6040,15 @@ def _run_executor(
         task_id=task_id,
         kind="review" if is_review else "task",
         recalled_lessons=len(lessons),
-        sandboxed=_openshell_enabled(),
+        sandboxed=_openshell_enabled() and break_glass_authorization is None,
+        execution_boundary=(
+            "host" if break_glass_authorization is not None else "sandbox"
+        ),
+        break_glass_authorization_id=(
+            break_glass_authorization.get("id")
+            if break_glass_authorization is not None
+            else None
+        ),
     )
 
     # Scope-estimate preflight (scope-01): on the FIRST attempt of a non-review
@@ -5971,6 +6098,11 @@ def _run_executor(
             emit_telemetry("planning_phase_started", task_id=task_id, level="info")
         else:
             prompt = build_task_prompt(task, task_file, lessons)
+
+    if break_glass_authorization is not None:
+        if is_review:
+            raise RuntimeError("review tasks cannot execute through host break-glass")
+        prompt += _break_glass_prompt(break_glass_authorization)
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
     assignment = _review_experiment_assignment(task) if is_review else {}
@@ -6083,8 +6215,19 @@ def _run_executor(
         returncode=result.returncode,
         duration_ms=(time.monotonic() - started) * 1000.0,
     )
+    clean_agent_failure = bool(
+        getattr(result, "mac_clean_agent_failure", False)
+    )
 
-    if not is_review:
+    if clean_agent_failure:
+        emit_telemetry(
+            "executor_finalization_skipped",
+            task_id=task_id,
+            level="warning",
+            reason="clean_agent_failure",
+            returncode=result.returncode,
+        )
+    elif not is_review:
         try:
             # Planning-phase runs produce evidence_type=plan_decomposed, not a
             # repo change.  Skip the git finalizer so a clean worktree is not
@@ -6114,7 +6257,7 @@ def _run_executor(
 
     # Task-sizing: if the agent wrote plan_steps in its evidence, auto-post them
     # as child tasks so the parent blocks on the children.  Best-effort.
-    if not is_review:
+    if not is_review and not clean_agent_failure:
         try:
             decomposed = maybe_auto_decompose(task_workspace, task)
             if decomposed:

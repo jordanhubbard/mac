@@ -1916,6 +1916,40 @@ class SQLiteStore:
         self._ensure_column("tasks", "completed_at", "completed_at TEXT")
         self._ensure_column("tasks", "workflow_run_id", "workflow_run_id TEXT")
         self._ensure_column("tasks", "workflow_node_key", "workflow_node_key TEXT")
+        # A break-glass authorization is deliberately outside task metadata:
+        # ordinary task authors must never be able to request host execution by
+        # writing a magic key into an otherwise untrusted task document.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS task_break_glass_authorizations (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                execution_boundary TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                authorized_by TEXT NOT NULL,
+                status TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                claimed_at TEXT,
+                lease_id TEXT REFERENCES leases(id) ON DELETE SET NULL,
+                consumed_at TEXT,
+                revoked_at TEXT,
+                revoked_by TEXT,
+                revoke_reason TEXT,
+                CHECK(execution_boundary = 'host'),
+                CHECK(status IN ('active', 'claimed', 'consumed', 'revoked', 'expired'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_break_glass_task_status
+                ON task_break_glass_authorizations (task_id, status, expires_at);
+            CREATE INDEX IF NOT EXISTS idx_task_break_glass_agent_status
+                ON task_break_glass_authorizations (agent_id, status, expires_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_task_break_glass_active
+                ON task_break_glass_authorizations (task_id)
+                WHERE status = 'active';
+            """
+        )
         self._ensure_column(
             "workflow_runs", "next_action_at", "next_action_at TEXT"
         )

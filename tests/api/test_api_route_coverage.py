@@ -525,6 +525,15 @@ network_policies:
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
     ctx["evidence_task_id"] = task("route evidence task")["id"]
     ctx["runtime_task_id"] = task("route runtime task")["id"]
+    ctx["break_glass_task_id"] = task("route break-glass authorize task")["id"]
+    revoke_break_glass_task = task("route break-glass revoke task")
+    ctx["break_glass_authorization_id"] = cp.authorize_task_break_glass(
+        revoke_break_glass_task["id"],
+        ctx["agent_id"],
+        reason="route coverage host recovery",
+        authorized_by="route-coverage",
+        ttl_seconds=300,
+    ).id
 
     lease_task = task("route lease task")
     _, lease = cp.claim_task(lease_task["id"], ctx["lease_agent_id"], sync_beads=False)
@@ -1056,6 +1065,12 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/start"): {"task_id": "start_task_id"},
         ("POST", "/tasks/{task_id}/submit-for-review"): {"task_id": "submit_task_id"},
         ("POST", "/tasks/{task_id}/evidence"): {"task_id": "evidence_task_id"},
+        ("POST", "/tasks/{task_id}/break-glass-authorizations"): {
+            "task_id": "break_glass_task_id"
+        },
+        ("POST", "/break-glass-authorizations/{authorization_id}/revoke"): {
+            "authorization_id": "break_glass_authorization_id"
+        },
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
@@ -1385,6 +1400,14 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
+        ("POST", "/tasks/{task_id}/break-glass-authorizations"): {
+            "agent_id": ctx["agent_id"],
+            "reason": "route coverage host repair",
+            "ttl_seconds": 300,
+        },
+        ("POST", "/break-glass-authorizations/{authorization_id}/revoke"): {
+            "reason": "route coverage revocation"
+        },
         ("POST", "/roles"): {
             "slug": "route-role-case",
             "name": "Route Role Case",

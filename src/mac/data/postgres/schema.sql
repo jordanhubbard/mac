@@ -336,6 +336,34 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE INDEX IF NOT EXISTS idx_agents_status_health ON agents (status, health_status);
 
+-- Explicit, admin-authorized escape hatch for recovery work that must repair
+-- the sandbox/worker environment itself.  This is separate from task metadata
+-- so an ordinary task author cannot self-select direct host execution.
+CREATE TABLE IF NOT EXISTS task_break_glass_authorizations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    execution_boundary TEXT NOT NULL CHECK(execution_boundary = 'host'),
+    reason TEXT NOT NULL,
+    authorized_by TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active', 'claimed', 'consumed', 'revoked', 'expired')),
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    claimed_at TEXT,
+    lease_id TEXT REFERENCES leases(id) ON DELETE SET NULL,
+    consumed_at TEXT,
+    revoked_at TEXT,
+    revoked_by TEXT,
+    revoke_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_task_break_glass_task_status
+    ON task_break_glass_authorizations (task_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_task_break_glass_agent_status
+    ON task_break_glass_authorizations (agent_id, status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_task_break_glass_active
+    ON task_break_glass_authorizations (task_id) WHERE status = 'active';
+
 -- media-01 service-role election: desired media services + the leased holds
 -- capable hosts claim (mirrors tasks+leases). Ported from SQLiteStore._initialize.
 -- Placed after `agents` so the service_claims -> agents FK resolves (Postgres

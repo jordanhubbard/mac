@@ -497,6 +497,36 @@ class Task:
 
 
 @dataclass
+class BreakGlassAuthorization:
+    """Single-task authorization to execute directly on one trusted host.
+
+    The control plane, not task metadata, owns these records.  A task may carry
+    a transient copy in its assignment payload only after an ACTIVE record has
+    been atomically bound to the task's exact lease and agent.
+    """
+
+    id: str
+    task_id: str
+    agent_id: str
+    execution_boundary: str
+    reason: str
+    authorized_by: str
+    status: str
+    metadata: JsonDict
+    created_at: str
+    expires_at: str
+    claimed_at: Optional[str]
+    lease_id: Optional[str]
+    consumed_at: Optional[str]
+    revoked_at: Optional[str]
+    revoked_by: Optional[str]
+    revoke_reason: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
 class HistoryEvent:
     id: str
     task_id: str

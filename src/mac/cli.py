@@ -374,11 +374,18 @@ def _one_liner(value: Any) -> str:
         ))
     if "status" in d and ("name" in d or "current_task_id" in d or "capabilities" in d):
         cur = d.get("current_task_id")
+        held = bool(d.get("dispatch_hold"))
+        status = "held" if held else d.get("status", "?")
+        activity = (
+            "hold: " + _trunc(d.get("dispatch_hold_reason", ""), 60)
+            if held
+            else ("▶ " + str(cur)) if cur else "idle"
+        )
         return "%-16s %-9s %-28s %s" % (
             d.get("name") or ident,
-            d.get("status", "?"),
+            status,
             _agent_hw_summary(d),
-            ("▶ " + str(cur)) if cur else "idle",
+            activity,
         )
     scal = [
         "%s=%s" % (k, _trunc(v, 40))
@@ -1648,6 +1655,39 @@ def cmd_task_claim(args: argparse.Namespace) -> None:
     cp = _plane(args)
     task, lease = cp.claim_task(args.task_id, args.agent_id)
     _print({"task": task.to_dict(), "lease_id": lease.id if lease else None})
+
+
+def cmd_task_break_glass_authorize(args: argparse.Namespace) -> None:
+    """Authorize one exact task/agent pair for direct host recovery execution."""
+
+    _print(
+        _plane(args).authorize_task_break_glass(
+            args.task_id,
+            args.agent_id,
+            reason=args.reason,
+            authorized_by=args.actor,
+            ttl_seconds=args.ttl_seconds,
+        )
+    )
+
+
+def cmd_task_break_glass_list(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).list_task_break_glass_authorizations(
+            task_id=args.task_id,
+            limit=args.limit,
+        )
+    )
+
+
+def cmd_task_break_glass_revoke(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).revoke_task_break_glass(
+            args.authorization_id,
+            revoked_by=args.actor,
+            reason=args.reason,
+        )
+    )
 
 
 def cmd_task_close(args: argparse.Namespace) -> None:
@@ -4665,6 +4705,39 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("task_id")
     claim.add_argument("agent_id")
     _set(cmd_task_claim, claim)
+
+    break_glass = task.add_parser(
+        "break-glass",
+        help="admin-only: authorize an exact task/agent pair for single-use direct host execution",
+    )
+    break_glass.add_argument("task_id")
+    break_glass.add_argument("agent_id")
+    break_glass.add_argument("--reason", required=True)
+    break_glass.add_argument(
+        "--ttl-seconds",
+        type=int,
+        default=900,
+        help="claim window before the authorization expires (60..3600; default 900)",
+    )
+    break_glass.add_argument("--actor", default="human")
+    _set(cmd_task_break_glass_authorize, break_glass)
+
+    break_glass_list = task.add_parser(
+        "break-glass-list",
+        help="list durable break-glass authorizations for a task",
+    )
+    break_glass_list.add_argument("task_id")
+    break_glass_list.add_argument("--limit", type=int, default=100)
+    _set(cmd_task_break_glass_list, break_glass_list)
+
+    break_glass_revoke = task.add_parser(
+        "break-glass-revoke",
+        help="admin-only: revoke an unclaimed host authorization",
+    )
+    break_glass_revoke.add_argument("authorization_id")
+    break_glass_revoke.add_argument("--reason", required=True)
+    break_glass_revoke.add_argument("--actor", default="human")
+    _set(cmd_task_break_glass_revoke, break_glass_revoke)
 
     close = task.add_parser(
         "close",

@@ -41,6 +41,9 @@ mac project activate <project>               # clear project-level dispatch paus
 mac task create "title" --project=<project> --description-file=desc.txt --metadata-file=meta.json
 mac task create "title" --no-dispatch        # stage task; writes metadata.no_dispatch=true
 mac task release <task_id>                   # clear no_dispatch so fleet can claim it
+mac task break-glass <task_id> <agent_id> --reason="..."  # admin, single-use direct-host recovery
+mac task break-glass-list <task_id>          # inspect durable recovery authorization
+mac task break-glass-revoke <auth_id> --reason="..."
 mac task claim <task_id> <agent_id>
 mac task start <task_id> <agent_id>
 mac task show <task_id>                      # detail + history

@@ -3918,7 +3918,8 @@ def test_dispatch_priority_aging_prevents_low_priority_starvation(cp):
     assert claimed["task"]["id"] == old_default.id
 
 
-def test_claim_next_records_per_task_agent_skip_reason(cp):
+def test_claim_next_records_per_task_agent_skip_reason(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     worker = register_agent(cp, "worker", ["python"])
     skipped = cp.create_task(
         "needs-review-capability",
@@ -3947,7 +3948,8 @@ def test_claim_next_records_per_task_agent_skip_reason(cp):
     assert observations[0].detail["reason_class"] == "agent_availability"
 
 
-def test_dispatch_records_cooperative_skip_reason_per_agent(cp):
+def test_dispatch_records_cooperative_skip_reason_per_agent(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     child = cp.create_task("child", required_capabilities=["python"])
@@ -10371,6 +10373,8 @@ def test_no_publication_target_is_silenced():
     from mac.observability_service import _VERBOSE_POLL_LOG_NAMES
 
     assert "workflow.default_review.no_publication_target" in _VERBOSE_POLL_LOG_NAMES
+    assert "worker.routing.task_skipped" in _VERBOSE_POLL_LOG_NAMES
+    assert "dispatcher.routing.task_skipped" in _VERBOSE_POLL_LOG_NAMES
 
 
 def test_agent_installed_packages_footprint_persists_and_survives_register(cp):

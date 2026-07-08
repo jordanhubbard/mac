@@ -148,6 +148,12 @@ class TokenPrincipal:
             "token is bound to a tenant and cannot operate on global fleet resources"
         )
 
+    def require_admin(self) -> None:
+        """Require an explicitly admin-scoped principal for host escape hatches."""
+
+        if not self.is_admin:
+            raise AuthorizationError("admin scope is required for this operation")
+
     def assert_actor(self, claimed_agent_id: str) -> None:
         """Bind a request's actor field to the bearer principal.
 
@@ -836,6 +842,16 @@ class DispatchRequest(BaseModel):
 
 
 class DispatchHoldRequest(BaseModel):
+    reason: str
+
+
+class BreakGlassAuthorizeRequest(BaseModel):
+    agent_id: str
+    reason: str
+    ttl_seconds: int = 900
+
+
+class BreakGlassRevokeRequest(BaseModel):
     reason: str
 
 
@@ -4508,6 +4524,47 @@ def create_app(
         if view == "compact":
             return _dashboard_task(cp, task_id, compact=True)
         return cp.task_detail(task_id)
+
+    @app.get("/tasks/{task_id}/break-glass-authorizations")
+    def list_break_glass_authorizations(
+        task_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        principal.require_admin()
+        return [
+            item.to_dict()
+            for item in cp.list_task_break_glass_authorizations(task_id=task_id)
+        ]
+
+    @app.post("/tasks/{task_id}/break-glass-authorizations")
+    def authorize_break_glass(
+        task_id: str,
+        body: BreakGlassAuthorizeRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        actor = principal.client_id or principal.agent_id or "admin"
+        return cp.authorize_task_break_glass(
+            task_id,
+            body.agent_id,
+            reason=body.reason,
+            authorized_by=actor,
+            ttl_seconds=body.ttl_seconds,
+        ).to_dict()
+
+    @app.post("/break-glass-authorizations/{authorization_id}/revoke")
+    def revoke_break_glass(
+        authorization_id: str,
+        body: BreakGlassRevokeRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        actor = principal.client_id or principal.agent_id or "admin"
+        return cp.revoke_task_break_glass(
+            authorization_id,
+            revoked_by=actor,
+            reason=body.reason,
+        ).to_dict()
 
     @app.put("/tasks/{task_id}")
     def update_task(task_id: str, body: TaskUpdate) -> Dict[str, Any]:

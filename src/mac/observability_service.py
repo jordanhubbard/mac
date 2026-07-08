@@ -45,6 +45,13 @@ _VERBOSE_POLL_LOG_NAMES = frozenset(
     {
         "worker.routing.no_candidate",
         "worker.no_task",
+        # Per-candidate reasons are useful during a bounded routing debug run,
+        # but a held fleet emits up to 25 of each on every two-second poll.  In
+        # one live incident these two names produced 7.5M rows and a 15.9GB
+        # control-plane database.  Keep them behind the existing verbose-poll
+        # switch; durable hold state and the aggregate held status remain visible.
+        "worker.routing.task_skipped",
+        "dispatcher.routing.task_skipped",
         "workflow.default_review.waiting",
         "workflow.default_review.waiting_for_verdict",
         "workflow.default_review.heartbeat_tick",
