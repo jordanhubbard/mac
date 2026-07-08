@@ -5171,6 +5171,53 @@ possible, and leave the host in a verified state. Authorization: %s. Reason: %s.
     )
 
 
+def _prepare_host_break_glass_environment(
+    authorization: Mapping[str, Any],
+) -> None:
+    """Replace sandbox-only process settings with trusted host equivalents.
+
+    launchd workers have a deliberately narrow PATH, while their task-executor
+    environment may point ``MAC_HERMES_PYTHON`` at the OpenShell image.  Once an
+    exact lease is authorized to run on the host, retaining either setting makes
+    the escape hatch unable to execute the repair tools it exists for.  This is
+    process-local (the task executor is one-shot) and does not mutate host config.
+    """
+
+    configured = str(os.environ.get("MAC_BREAK_GLASS_HOST_PATH") or "").strip()
+    candidates = [
+        *(configured.split(os.pathsep) if configured else []),
+        str(Path.home() / ".mac" / "bin"),
+        str(Path.home() / ".local" / "bin"),
+        "/opt/homebrew/bin",
+        "/opt/local/bin",
+        "/usr/local/bin",
+        *str(os.environ.get("PATH") or "").split(os.pathsep),
+    ]
+    host_path: List[str] = []
+    for raw in candidates:
+        path = str(Path(raw).expanduser()) if raw else ""
+        if path and path not in host_path and Path(path).is_dir():
+            host_path.append(path)
+    if host_path:
+        os.environ["PATH"] = os.pathsep.join(host_path)
+
+    hermes_python = str(os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    cleared_sandbox_python = bool(
+        hermes_python
+        and Path(hermes_python).is_absolute()
+        and not Path(hermes_python).exists()
+    )
+    if cleared_sandbox_python:
+        os.environ.pop("MAC_HERMES_PYTHON", None)
+    emit_telemetry(
+        "break_glass_host_environment_prepared",
+        level="warning",
+        authorization_id=authorization.get("id"),
+        path_entries=len(host_path),
+        cleared_sandbox_python=cleared_sandbox_python,
+    )
+
+
 def _unsandboxed_agent_argv(
     agent_argv: List[str],
     *,
@@ -5889,6 +5936,8 @@ def _invoke_agent(
     break_glass_authorization = _validated_host_break_glass_authorization(
         opts.get("task")
     )
+    if break_glass_authorization is not None:
+        _prepare_host_break_glass_environment(break_glass_authorization)
     wrap = _openshell_enabled() and break_glass_authorization is None
     confined = (
         wrap or _openshell_required_for_local_agent()

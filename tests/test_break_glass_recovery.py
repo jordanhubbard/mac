@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -201,6 +202,31 @@ def test_executor_rejects_replayed_break_glass_projection(monkeypatch):
 
     with pytest.raises(RuntimeError, match="binding mismatch: task_id"):
         te._validated_host_break_glass_authorization(task)
+
+
+def test_break_glass_prepares_host_path_and_clears_sandbox_python(
+    monkeypatch, tmp_path: Path
+):
+    host_bin = tmp_path / "host-bin"
+    host_bin.mkdir()
+    monkeypatch.setenv("MAC_BREAK_GLASS_HOST_PATH", str(host_bin))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("MAC_HERMES_PYTHON", "/sandbox/does-not-exist/python")
+    emitted = []
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: emitted.append((event, detail)) or True,
+    )
+
+    te._prepare_host_break_glass_environment(
+        {"id": "breakglass_1234567890abcdef"}
+    )
+
+    assert str(host_bin) == os.environ["PATH"].split(os.pathsep)[0]
+    assert "MAC_HERMES_PYTHON" not in os.environ
+    assert emitted[0][0] == "break_glass_host_environment_prepared"
+    assert emitted[0][1]["cleared_sandbox_python"] is True
 
 
 def test_break_glass_api_requires_admin_and_records_client_identity():
