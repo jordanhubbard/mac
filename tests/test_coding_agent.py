@@ -139,7 +139,7 @@ def test_codex_mac_router_route_is_explicit_and_secret_free(tmp_path):
     )
 
     assert choice.provider == "mac-router"
-    assert choice.protocol == "responses"
+    assert choice.protocol == "chat"
     assert choice.endpoint == "http://127.0.0.1:8789/v1"
     observable = json.dumps(choice.observable())
     assert "mac-secret-bearer" not in observable
@@ -193,7 +193,11 @@ def test_codex_nonstandard_env_auth_uses_custom_provider_even_at_openai(tmp_path
 def test_route_fingerprint_changes_with_protocol_or_endpoint(tmp_path):
     base = {"OPENAI_API_KEY": "same-secret"}
     responses = resolve_coding_agent(
-        env={**base, "OPENAI_BASE_URL": "https://proxy-a.example/v1"},
+        env={
+            **base,
+            "OPENAI_BASE_URL": "https://proxy-a.example/v1",
+            "MAC_CODEX_WIRE_API": "responses",
+        },
         home=tmp_path,
         which=_which("codex"),
     )
@@ -213,6 +217,21 @@ def test_route_fingerprint_changes_with_protocol_or_endpoint(tmp_path):
     )
 
     assert len({responses.route_fingerprint(), chat.route_fingerprint(), other_endpoint.route_fingerprint()}) == 3
+
+
+def test_codex_mac_router_can_explicitly_select_responses(tmp_path):
+    choice = resolve_coding_agent(
+        env={
+            "OPENAI_API_KEY": "secret",
+            "OPENAI_BASE_URL": "https://responses-proxy.example/v1",
+            "MAC_CODEX_WIRE_API": "responses",
+        },
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert choice.provider == "mac-router"
+    assert choice.protocol == "responses"
 
 
 def test_detect_all_requires_matching_route_verification(tmp_path):
