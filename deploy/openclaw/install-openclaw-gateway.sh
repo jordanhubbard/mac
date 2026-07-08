@@ -131,6 +131,56 @@ else:
 PY
 }
 
+migrate_legacy_slack_home_channels() {
+  # Channel routing metadata is not a credential, but the pre-OpenClaw deploy
+  # stored it under HERMES_HOME. Import it once into OpenClaw-owned state so a
+  # migrated public identity can resolve its durable Slack target without a
+  # runtime dependency on Hermes files. Existing OpenClaw state is authoritative.
+  local target="${MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE:-$OPENCLAW_HOST_DIR/slack_home_channels.json}"
+  local legacy="${MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE:-${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}}"
+  [ -s "$target" ] && return 0
+  [ -s "$legacy" ] || return 0
+  mkdir -p "$(dirname "$target")"
+  python3 - "$legacy" "$target" <<'PY'
+import json
+import os
+import sys
+
+source, destination = sys.argv[1:]
+try:
+    with open(source, encoding="utf-8") as handle:
+        rows = json.load(handle)
+except (OSError, ValueError):
+    raise SystemExit(0)
+if not isinstance(rows, list):
+    raise SystemExit(0)
+allowed = ("name", "team_id", "channel_id", "chat_id", "channel_name")
+sanitized = []
+for row in rows:
+    if not isinstance(row, dict):
+        continue
+    item = {
+        key: str(row[key]).strip()
+        for key in allowed
+        if row.get(key) not in (None, "")
+    }
+    if item.get("channel_id") or item.get("chat_id"):
+        sanitized.append(item)
+if not sanitized:
+    raise SystemExit(0)
+temporary = destination + ".tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(sanitized, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, destination)
+PY
+  if [ -s "$target" ]; then
+    chmod 0600 "$target"
+    log "migrated legacy Slack channel routing into OpenClaw-owned state"
+  fi
+}
+
 source_host_env() {
   # Generated runtime.env is trusted local state and preserves the gateway auth
   # token across idempotent deploys. Fleet config refreshes router settings;
@@ -150,6 +200,8 @@ source_host_env() {
   [ -f "$OPENCLAW_HOST_DIR/credentials.env" ] && . "$OPENCLAW_HOST_DIR/credentials.env"
   set +a
   set -u
+
+  migrate_legacy_slack_home_channels
 
   MAC_OPENCLAW_AGENT_ID="${MAC_OPENCLAW_AGENT_ID:-${MAC_AGENT_ID:-}}"
   MAC_OPENCLAW_INSTANCE_ID="${MAC_OPENCLAW_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-${MAC_WORKER_HERMES_INSTANCE_ID:-}}}"

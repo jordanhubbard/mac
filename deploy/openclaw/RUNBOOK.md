@@ -33,6 +33,12 @@ configuration or explicit `MAC_OPENCLAW_*` overrides:
 - an optional Slack and/or Telegram account assigned to the logical public
   identity hosted by this agent.
 
+During the first migration only, if OpenClaw has no channel-routing map yet,
+the installer sanitizes and copies Slack account/channel IDs from the legacy
+Hermes map into `~/.mac/openclaw/slack_home_channels.json`. The OpenClaw-owned
+copy becomes authoritative and is never overwritten; no token or other legacy
+field is imported.
+
 Telegram long polling permits only one active gateway per bot token. Do not
 copy one Telegram token to multiple public identities. Headless agents receive
 no human-facing credentials and are represented by the fleet identity. For live channel-send validation,

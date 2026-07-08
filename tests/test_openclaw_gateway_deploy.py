@@ -228,6 +228,74 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "__MAC_" not in rendered_policy
 
 
+def test_prepare_migrates_legacy_slack_routing_into_openclaw_state(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    legacy_home = home / ".hermes"
+    legacy_home.mkdir(parents=True)
+    (legacy_home / "slack_home_channels.json").write_text(
+        json.dumps(
+            [
+                {
+                    "name": "offtera",
+                    "team_id": "T123",
+                    "channel_id": "C123HOME",
+                    "channel_name": "#rockyandfriends",
+                    "ignored_secret": "must-not-migrate",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_LIVE_CANARY": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_PUBLIC_IDENTITY": "mac-hive",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_ID": "offtera",
+        "MAC_OPENCLAW_HOME_CHANNEL": "rockyandfriends",
+        "MAC_OPENCLAW_SLACK_BOT_TOKEN": "xoxb-placeholder",
+        "MAC_OPENCLAW_SLACK_APP_TOKEN": "xapp-placeholder",
+    }
+
+    result = subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    migrated = mac_home / "openclaw" / "slack_home_channels.json"
+    rows = json.loads(migrated.read_text(encoding="utf-8"))
+    assert rows == [
+        {
+            "channel_id": "C123HOME",
+            "channel_name": "#rockyandfriends",
+            "name": "offtera",
+            "team_id": "T123",
+        }
+    ]
+    assert migrated.stat().st_mode & 0o777 == 0o600
+    assert "ignored_secret" not in migrated.read_text(encoding="utf-8")
+    assert "migrated legacy Slack channel routing" in result.stdout
+    assert (mac_home / "openclaw" / "home-channel-target").read_text(
+        encoding="utf-8"
+    ).strip() == "channel:C123HOME"
+
+
 def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
     deploy = DEPLOY.read_text(encoding="utf-8")
