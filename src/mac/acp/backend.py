@@ -68,7 +68,7 @@ _ENV_BACKEND_CMD = "MAC_ACP_BACKEND_CMD"
 def default_argv(prompt: str) -> List[str]:
     """The default mac/Hermes agent invocation for ``prompt``.
 
-    Replicates the minimal argv shape of :func:`mac.task_executor._hermes_argv`
+    Replicates the minimal argv shape of the legacy Hermes one-shot invocation
     (``<python> -m hermes_cli.main chat --query <prompt> --quiet ...``) *without*
     importing ``task_executor`` -- this module stays self-contained. The Hermes
     interpreter is ``$MAC_HERMES_PYTHON`` when set, else the vendored

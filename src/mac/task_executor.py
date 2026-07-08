@@ -3298,41 +3298,6 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
 # ---------------------------------------------------------------------------
 
 
-def _hermes_python() -> str:
-    """Resolve the interpreter that can import ``hermes_cli``.
-
-    Host mode: the vendored Hermes runtime under ``~/.mac`` — set PYTHONPATH so
-    ``hermes_cli`` resolves. Sandbox image mode: ``MAC_HERMES_PYTHON`` points at
-    the in-image interpreter (e.g. ``/opt/mac-venv/bin/python``) whose
-    site-packages already contain ``hermes_cli``, so no host PYTHONPATH is
-    injected — and the host path would not exist inside the sandbox anyway.
-    """
-    override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
-    if override:
-        return override
-    hermes_py = str(Path.home() / ".mac" / "venv" / "bin" / "python")
-    hermes_vendored = str(Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes")
-    os.environ["PYTHONPATH"] = hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
-    return hermes_py
-
-
-def _hermes_argv(prompt: str) -> List[str]:
-    """The vendored-Hermes-runtime agent invocation (the fallback runner)."""
-    argv = [_hermes_python(), "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"]
-    # Per-task model override (task metadata.model, exported by the worker as
-    # MAC_TASK_MODEL). Wins over the deployed gateway default for this run
-    # only; llm.route records requested/resolved model so the pin is auditable.
-    task_model = (os.environ.get("MAC_TASK_MODEL") or "").strip()
-    if task_model:
-        argv += ["--model", task_model]
-    task_max_iterations = (
-        os.environ.get("MAC_TASK_MAX_ITERATIONS") or ""
-    ).strip()
-    if task_max_iterations.isdigit() and 1 <= int(task_max_iterations) <= 500:
-        argv += ["--max-turns", task_max_iterations]
-    return argv
-
-
 @dataclass(frozen=True)
 class _AgentCommandBundle:
     workspace: Path
@@ -3345,9 +3310,7 @@ class _AgentCommandBundle:
         if sandbox_workspace:
             command_file = "%s/%s" % (sandbox_workspace.rstrip("/"), self.command_file.name)
             prompt_file = "%s/%s" % (sandbox_workspace.rstrip("/"), self.prompt_file.name)
-            interpreter = (
-                os.environ.get("MAC_HERMES_PYTHON") or "/opt/mac-venv/bin/python"
-            )
+            interpreter = "/opt/mac-venv/bin/python"
         else:
             command_file = str(self.command_file)
             prompt_file = str(self.prompt_file)
@@ -3394,20 +3357,21 @@ def _write_agent_command_bundle(
         encoding="utf-8",
     )
     policy_file.chmod(0o600)
-    interpreter = agent_argv[0] if agent_argv[1:3] == ["-m", "hermes_cli.main"] else sys.executable
     return _AgentCommandBundle(
         workspace=workspace,
         prompt_file=prompt_file,
         command_file=command_file,
         policy_file=policy_file,
-        interpreter=interpreter,
+        interpreter=sys.executable,
     )
 
 
 def _mcp_serve_argv() -> List[str]:
     """The vendored messaging MCP server command (registered with a coding-agent
     CLI for messaging-tool parity, where the CLI supports per-invocation MCP)."""
-    return [_hermes_python(), "-m", "hermes_cli.main", "mcp", "serve"]
+    from mac.hermes_runtime import hermes_python
+
+    return [hermes_python(), "-m", "hermes_cli.main", "mcp", "serve"]
 
 
 # ---------------------------------------------------------------------------
@@ -5176,11 +5140,10 @@ def _prepare_host_break_glass_environment(
 ) -> None:
     """Replace sandbox-only process settings with trusted host equivalents.
 
-    launchd workers have a deliberately narrow PATH, while their task-executor
-    environment may point ``MAC_HERMES_PYTHON`` at the OpenShell image.  Once an
-    exact lease is authorized to run on the host, retaining either setting makes
-    the escape hatch unable to execute the repair tools it exists for.  This is
-    process-local (the task executor is one-shot) and does not mutate host config.
+    launchd workers have a deliberately narrow PATH.  Once an exact lease is
+    authorized to run on the host, expand it to the trusted host tool locations
+    the recovery task may need.  This is process-local (the task executor is
+    one-shot) and does not mutate host config.
     """
 
     configured = str(os.environ.get("MAC_BREAK_GLASS_HOST_PATH") or "").strip()
@@ -5201,20 +5164,11 @@ def _prepare_host_break_glass_environment(
     if host_path:
         os.environ["PATH"] = os.pathsep.join(host_path)
 
-    hermes_python = str(os.environ.get("MAC_HERMES_PYTHON") or "").strip()
-    cleared_sandbox_python = bool(
-        hermes_python
-        and Path(hermes_python).is_absolute()
-        and not Path(hermes_python).exists()
-    )
-    if cleared_sandbox_python:
-        os.environ.pop("MAC_HERMES_PYTHON", None)
     emit_telemetry(
         "break_glass_host_environment_prepared",
         level="warning",
         authorization_id=authorization.get("id"),
         path_entries=len(host_path),
-        cleared_sandbox_python=cleared_sandbox_python,
     )
 
 
@@ -5291,29 +5245,11 @@ def _record_runner_choice(
         pass
 
 
-def _repo_requires_verified_coding_agent(task: Any) -> bool:
-    """Whether repo work must fail closed without a verified coding CLI.
-
-    Default true (fail-closed): fleet-wide since the hermes retirement sequence
-    set MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1 as the build_mac_env default
-    and bootstrap-openshell.sh writes it unconditionally on every host.  Hermes
-    chat fallback is no longer acceptable for repository tasks in the OpenShell
-    executor path.
-
-    Operators who have provisioned a durable in-sandbox coding-agent auth
-    mechanism and want to re-enable the Hermes fallback may set
-    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=0`` in mac.env; the setdefault
-    in build_mac_env will not clobber an explicit override.
-    """
-    if not (isinstance(task, dict) and task_is_repo_coupled(task)):
-        return False
-    return _truthy(os.environ.get("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT"))
-
-
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     msg = (
-        "repository tasks under OpenShell require a verified in-sandbox coding "
-        "agent; %s" % (reason or "no coding agent was verified")
+        "task execution requires an available coding agent and, when confined, "
+        "a verified in-sandbox route; %s"
+        % (reason or "no coding agent was verified")
     )
     code = "import sys; sys.stderr.write(%r + '\\n'); raise SystemExit(42)" % msg
     # Every command is serialized through ``_write_agent_command_bundle``, which
@@ -5322,7 +5258,7 @@ def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     # still needs the sentinel as an inert ``sys.argv[1]`` for the common bundle
     # contract.  Omitting it made the error path itself raise ValueError before
     # the intended exit-42 diagnostic could run, exhausting task retry budgets.
-    return [_hermes_python(), "-c", code, PROMPT_SENTINEL]
+    return ["python3", "-c", code, PROMPT_SENTINEL]
 
 
 def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
@@ -5342,7 +5278,7 @@ def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
     ):
         sys.stderr.write(
             "[executor] coding-agent sandbox preflight (codex): skipped "
-            "(~/.codex/auth.json is rotating file auth; using Hermes gateway)\n"
+            "(~/.codex/auth.json is rotating file auth; route unavailable)\n"
         )
         return False
     return True
@@ -5613,7 +5549,7 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
       * ``verify`` (default) — gate on a cached in-sandbox preflight that actually
         runs the agent; only enable when it works there.
       * ``trust`` / ``1`` — assume the sandbox image is provisioned; skip the probe.
-      * ``off`` / ``0`` — never use a coding agent when sandboxed (always Hermes).
+      * ``off`` / ``0`` — never use a coding agent when sandboxed (fail closed).
     """
     mode = (os.environ.get("MAC_CODING_AGENT_SANDBOX") or "verify").strip().lower()
     if mode in {"off", "0", "false", "no"}:
@@ -5628,7 +5564,7 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
 def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = None) -> List[str]:
     """Pick the agent runner: a coding-agent CLI when one is available + authed
     (and — when OpenShell-confined — verified to actually work inside the sandbox),
-    else the vendored Hermes -> LLM gateway argv.
+    otherwise return a deterministic fail-closed command.
 
     Coding-agent CLIs (Claude Code, Codex, Cursor) authenticate against a
     subscription/seat rather than a metered API token, so they are preferred for
@@ -5643,40 +5579,25 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     (a real in-sandbox preflight by default), because a host-side ``which``/cred
     check does NOT prove the agent works inside the confined sandbox.
 
-    Fail-closed is now the fleet-wide default: ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT``
-    defaults to ``1`` via build_mac_env and bootstrap-openshell.sh, so when no
-    verified coding CLI is present the executor fails with the
-    ``coding-agent-required`` path instead of degrading to the Hermes chat
-    fallback.  Operators may opt out by setting
-    ``MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=0`` in mac.env.
+    The retired Hermes chat fallback is deliberately not configurable.  A
+    missing or unverified route always selects ``coding-agent-required`` so a
+    worker cannot silently execute through the runtime being removed.
     """
     from . import coding_agent as _ca
 
-    repo_requires_agent = confined and _repo_requires_verified_coding_agent(task)
     task_id = str(task.get("id") or "").strip() if isinstance(task, dict) else ""
     choice = _ca.resolve_coding_agent()
     rationale = list(choice.rationale)
     if not choice.available:
-        if repo_requires_agent:
-            reason = "no host coding agent is available/authenticated"
-            rationale.append(reason)
-            _record_runner_choice(
-                "coding-agent-required", rationale, task_id=task_id
-            )
-            return _coding_agent_required_failure_argv(reason)
-        _record_runner_choice("hermes-gateway", rationale, task_id=task_id)
-        return _hermes_argv(prompt)
+        reason = "no host coding agent is available/authenticated"
+        rationale.append(reason)
+        _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
+        return _coding_agent_required_failure_argv(reason)
     if confined and not _coding_agent_sandbox_ok(choice):
         reason = "%s not verified inside the OpenShell sandbox" % choice.agent
-        if repo_requires_agent:
-            rationale.append(reason)
-            _record_runner_choice(
-                "coding-agent-required", rationale, task_id=task_id
-            )
-            return _coding_agent_required_failure_argv(reason)
-        rationale.append("%s; using gateway" % reason)
-        _record_runner_choice("hermes-gateway", rationale, task_id=task_id)
-        return _hermes_argv(prompt)
+        rationale.append(reason)
+        _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
+        return _coding_agent_required_failure_argv(reason)
 
     # MCP wiring is unconfined-only: the host config path + host MCP-server
     # interpreter do not reliably resolve inside the sandbox (messaging-MCP parity
@@ -5914,8 +5835,8 @@ def _invoke_agent(
 ) -> Any:
     """Run the agent for one task, atomically coupling --yolo to enforcement.
 
-    Invariant: an approval-bypassed agent (Hermes ``--yolo`` or a coding agent's
-    ``--dangerously-*``) is only used when the run is confined by OpenShell, so we
+    Invariant: an approval-bypassed coding agent (``--dangerously-*``) is only
+    used when the run is confined by OpenShell, so we
     never launch an *unguarded* bypass agent.
       * backend=acp      -> drive an external ACP agent (ADR 0006); confinement
         is the OpenShell sandbox + the permission bridge.
@@ -5923,8 +5844,8 @@ def _invoke_agent(
         agent confined, download results, delete). Fails closed if no policy
         resolves or the kernel can't enforce Landlock.
       * sandbox disabled -> direct run, gated by MAC_ALLOW_UNSANDBOXED_YOLO.
-    The agent argv is a detected coding-agent CLI when one is available + authed,
-    else the Hermes -> gateway argv (see :func:`_agent_argv`).
+    The agent argv is a detected coding-agent CLI when one is available + authed;
+    otherwise execution fails closed (see :func:`_agent_argv`).
     Returns the runner's result (carries .returncode)."""
     if _executor_backend() == "acp":
         return _invoke_acp_agent(prompt, workspace, audit_id, opts)

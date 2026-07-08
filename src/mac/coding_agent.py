@@ -35,7 +35,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Tuple
@@ -467,19 +466,21 @@ def resolve_coding_agent(
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
 ) -> CodingAgentChoice:
-    """Resolve which coding-agent CLI to prefer, or none (fall back to gateway).
+    """Resolve which coding-agent CLI to prefer, or none (fail closed).
 
     ``env``/``home``/``which`` are injectable for tests; they default to the
-    live process environment, ``Path.home()`` and :func:`shutil.which`.
+    live process environment, ``Path.home()`` and the same service-augmented
+    lookup used by :func:`detect_all`. Selection and heartbeat inventory must
+    not disagree merely because a supervisor starts with a minimal PATH.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
-    which = shutil.which if which is None else which
+    which = _service_augmented_which(env, home) if which is None else which
 
     rationale: List[str] = []
 
     if not _truthy(env.get(PREFERENCE_ENV, "1")):
-        rationale.append("%s is disabled; using Hermes -> gateway" % PREFERENCE_ENV)
+        rationale.append("%s is disabled; executor will fail closed" % PREFERENCE_ENV)
         return _choice("", False, "", "", rationale, env)
 
     forced = str(env.get(FORCE_ENV) or "").strip().lower()
@@ -501,7 +502,7 @@ def resolve_coding_agent(
         if available:
             return _choice(agent, True, binary, auth_source, rationale, env)
 
-    rationale.append("no coding agent available/authed; using Hermes -> gateway")
+    rationale.append("no coding agent available/authed; executor will fail closed")
     return _choice("", False, "", "", rationale, env)
 
 
@@ -521,10 +522,9 @@ def _default_argv(
 ) -> List[str]:
     """Non-interactive, approvals-bypassed invocation per agent.
 
-    Approval bypass is intentional and *coupled to the executor's existing
-    OpenShell/--yolo invariant*: these argvs are routed through the same
-    sandbox-or-fail-closed gate as the Hermes ``--yolo`` invocation, so the
-    coding-agent CLI is only run unconfined under the same escape hatch.
+    Approval bypass is intentional and coupled to the executor's OpenShell
+    invariant: these argvs are routed through the sandbox-or-fail-closed gate,
+    so a coding-agent CLI is only run unconfined under explicit break glass.
 
     ``model`` (per-task override, from ``MAC_TASK_MODEL``) maps to each CLI's
     own model flag so a task can pin a cheaper or stronger model without
@@ -634,6 +634,6 @@ def _describe(env: Optional[Mapping[str, str]] = None) -> str:
 
 if __name__ == "__main__":  # pragma: no cover - operator debugging aid
     # `python -m mac.coding_agent` prints the (secret-free) routing decision for
-    # the current environment, so a fleet operator can see why a node routes to
-    # a coding agent or to the gateway.
+    # the current environment, so a fleet operator can see why a node selects a
+    # coding agent or fails closed.
     print(_describe())

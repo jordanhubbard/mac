@@ -204,7 +204,7 @@ def test_executor_rejects_replayed_break_glass_projection(monkeypatch):
         te._validated_host_break_glass_authorization(task)
 
 
-def test_break_glass_prepares_host_path_and_clears_sandbox_python(
+def test_break_glass_prepares_host_path_without_mutating_legacy_runtime_python(
     monkeypatch, tmp_path: Path
 ):
     host_bin = tmp_path / "host-bin"
@@ -224,9 +224,9 @@ def test_break_glass_prepares_host_path_and_clears_sandbox_python(
     )
 
     assert str(host_bin) == os.environ["PATH"].split(os.pathsep)[0]
-    assert "MAC_HERMES_PYTHON" not in os.environ
+    assert os.environ["MAC_HERMES_PYTHON"] == "/sandbox/does-not-exist/python"
     assert emitted[0][0] == "break_glass_host_environment_prepared"
-    assert emitted[0][1]["cleared_sandbox_python"] is True
+    assert "cleared_sandbox_python" not in emitted[0][1]
 
 
 def test_break_glass_api_requires_admin_and_records_client_identity():

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 import urllib.parse
 from pathlib import Path
@@ -13,6 +14,33 @@ import yaml
 
 
 RUNTIME_CONTEXT_SCHEMA = "mac.hermes.runtime_context.v1"
+
+
+def hermes_python() -> str:
+    """Resolve the interpreter for the remaining vendored-Hermes consumers.
+
+    Task execution no longer falls back to Hermes chat.  Reflection and the
+    temporary messaging-MCP compatibility surface still import ``hermes_cli``
+    until their own retirement steps land, so keep their interpreter/PYTHONPATH
+    setup here instead of exposing a chat-runner helper from ``task_executor``.
+    """
+
+    override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    if override:
+        return override
+    installed = Path.home() / ".mac" / "venv" / "bin" / "python"
+    vendored = Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes"
+    if installed.exists():
+        os.environ["PYTHONPATH"] = str(vendored) + os.pathsep + os.environ.get(
+            "PYTHONPATH", ""
+        )
+        return str(installed)
+    # Development/test environments may not have a deployed ~/.mac runtime.
+    local_vendored = Path(__file__).resolve().parent / "_hermes"
+    os.environ["PYTHONPATH"] = str(local_vendored) + os.pathsep + os.environ.get(
+        "PYTHONPATH", ""
+    )
+    return sys.executable
 
 
 def stable_id(prefix: str, value: str) -> str:

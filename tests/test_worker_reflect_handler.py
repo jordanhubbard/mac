@@ -237,7 +237,7 @@ class TestRunReflectQuery:
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setenv("MAC_HERMES_HOME", str(mac_hermes_home))
         monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "12.5")
-        monkeypatch.setattr("mac.task_executor._hermes_python", lambda: "/hermes/python")
+        monkeypatch.setattr("mac.hermes_runtime.hermes_python", lambda: "/hermes/python")
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
 

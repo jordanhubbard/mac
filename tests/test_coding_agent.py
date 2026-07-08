@@ -31,11 +31,11 @@ def _which(*available):
 # --------------------------------------------------------------------------- #
 
 
-def test_no_agent_on_path_falls_back_to_gateway(tmp_path):
+def test_no_agent_on_path_fails_closed(tmp_path):
     choice = resolve_coding_agent(env={}, home=tmp_path, which=_which())
     assert choice.available is False
     assert choice.agent == ""
-    assert any("gateway" in line for line in choice.rationale)
+    assert any("fail closed" in line for line in choice.rationale)
 
 
 def test_claude_via_anthropic_api_key(tmp_path):
@@ -445,3 +445,29 @@ def test_detect_all_augments_service_path_with_user_bins(tmp_path):
 
     status = detect_all(env={"PATH": "/usr/bin:/bin"}, home=home)
     assert status["claude"]["on_path"] is True
+
+
+def test_resolver_augments_service_path_like_inventory(tmp_path):
+    """Runner selection must see a CLI that heartbeat inventory advertises."""
+    from mac.coding_agent import detect_all
+
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    fake_codex = local_bin / "codex"
+    fake_codex.write_text("#!/bin/sh\nexit 0\n")
+    fake_codex.chmod(0o755)
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "OPENAI_API_KEY": "test-only",
+        "OPENAI_BASE_URL": "http://hub.example:8789/v1",
+        "MAC_OPENAI_PROTOCOL": "responses",
+    }
+
+    status = detect_all(env=env, home=home)
+    choice = resolve_coding_agent(env=env, home=home)
+
+    assert status["codex"]["available"] is True
+    assert choice.available is True
+    assert choice.agent == "codex"
+    assert choice.binary == str(fake_codex)

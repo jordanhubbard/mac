@@ -925,7 +925,9 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert "raise SystemExit(main())" in script
     assert "mac-hermes-task-executor" in script
     executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
-    assert '"chat", "--query", prompt, "--quiet", "--accept-hooks", "--yolo"' in executor_module
+    assert "def _hermes_argv(" not in executor_module
+    assert '"hermes_cli.main", "chat"' not in executor_module
+    assert '"coding-agent-required"' in executor_module
     assert "def write_fallback_evidence_manifest(" in executor_module
     # autonomy-loop fix (preserved through the extraction): the fallback must
     # never fabricate verified completion — UNVERIFIED operator_result only,

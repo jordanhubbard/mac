@@ -14,6 +14,7 @@ fail-closed precheck. They never spawn OpenShell.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -269,7 +270,7 @@ def test_build_create_args_spliced(monkeypatch):
 
 def test_build_rejects_direct_prompt_bearing_agent_argv():
     with pytest.raises(ValueError, match="private-file command wrapper"):
-        _build(argv=te._hermes_argv("do; rm -rf / # $(whoami)"))
+        _build(argv=["codex", "exec", "do; rm -rf / # $(whoami)"])
 
 
 def test_build_rejects_env_values_in_extra_argv(monkeypatch):
@@ -455,21 +456,23 @@ def test_invoke_sandboxed_keep_skips_delete(monkeypatch, tmp_path):
 
 
 def test_unsandboxed_allowed_by_default(monkeypatch):
-    # _unsandboxed_agent_argv now gates an already-built agent argv (the runner
-    # selection happens upstream in _agent_argv); pass the Hermes argv here.
-    argv = te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
-    assert "openshell" not in argv[0] and argv[0].endswith("python") and "--yolo" in argv
+    agent_argv = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
+    argv = te._unsandboxed_agent_argv(agent_argv)
+    assert argv == agent_argv
 
 
 def test_unsandboxed_explicit_allow(monkeypatch):
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
-    assert "--yolo" in te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
+    agent_argv = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
+    assert te._unsandboxed_agent_argv(agent_argv) == agent_argv
 
 
 def test_unsandboxed_fail_closed_raises(monkeypatch):
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
-        te._unsandboxed_agent_argv(te._hermes_argv("do the thing"))
+        te._unsandboxed_agent_argv(
+            ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
+        )
 
 
 def test_invoke_unsandboxed_fail_closed_raises(monkeypatch, tmp_path):
@@ -494,21 +497,30 @@ def test_invoke_sandbox_overrides_failclosed_hatch(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_hermes_argv_uses_image_python_override(monkeypatch):
+def test_agent_bundle_uses_image_owned_python_in_sandbox(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_HERMES_PYTHON", "/opt/mac-venv/bin/python")
-    monkeypatch.delenv("PYTHONPATH", raising=False)
-    argv = te._hermes_argv("do it")
-    assert argv[0] == "/opt/mac-venv/bin/python"
-    assert argv[1:4] == ["-m", "hermes_cli.main", "chat"]
-    assert "/.mac/src/" not in os.environ.get("PYTHONPATH", "")
+    bundle = te._write_agent_command_bundle(
+        tmp_path,
+        "do it",
+        ["codex", "exec", te.PROMPT_SENTINEL],
+    )
+    try:
+        assert bundle.argv(sandbox_workspace="/sandbox/task")[0] == "/opt/mac-venv/bin/python"
+    finally:
+        bundle.cleanup()
 
 
-def test_hermes_argv_host_default_injects_pythonpath(monkeypatch):
-    monkeypatch.delenv("MAC_HERMES_PYTHON", raising=False)
-    monkeypatch.delenv("PYTHONPATH", raising=False)
-    argv = te._hermes_argv("do it")
-    assert argv[0].endswith("/.mac/venv/bin/python")
-    assert "/.mac/src/mac/src/mac/_hermes" in os.environ["PYTHONPATH"]
+def test_agent_bundle_host_wrapper_ignores_hermes_python(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAC_HERMES_PYTHON", "/does/not/exist")
+    bundle = te._write_agent_command_bundle(
+        tmp_path,
+        "do it",
+        ["codex", "exec", te.PROMPT_SENTINEL],
+    )
+    try:
+        assert bundle.argv()[0] == sys.executable
+    finally:
+        bundle.cleanup()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "0.0.0.0", "::1"])

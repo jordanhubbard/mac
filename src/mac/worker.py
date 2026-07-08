@@ -2310,7 +2310,7 @@ class MacWorker:
         # the reflection fell back to a stub. Use the executor's PROVEN agent
         # invocation instead: the vendored Hermes runtime via hermes_cli.main
         # chat, which loads this agent's soul/memory from HERMES_HOME.
-        from mac.task_executor import _hermes_python
+        from mac.hermes_runtime import hermes_python
 
         runtime_query = self._reflect_runtime_query(query)
         timeout_s = _bounded_float(os.environ.get("MAC_REFLECT_TIMEOUT"), 1.0, 600.0, 120.0)
@@ -2322,7 +2322,7 @@ class MacWorker:
             env["MAC_WORKER_AGENT_ID"] = self.agent_id
             result = subprocess.run(
                 [
-                    _hermes_python(),
+                    hermes_python(),
                     "-m",
                     "hermes_cli.main",
                     "chat",
