@@ -661,12 +661,36 @@ sandbox_command() {
     /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
 }
 
+wait_for_sandbox_ready() {
+  local openshell_bin="$1"
+  local timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
+  local interval="${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
+  case "$timeout" in
+    ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT must be a non-negative integer" ;;
+  esac
+  case "$interval" in
+    ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL must be a non-negative integer" ;;
+  esac
+
+  local deadline=$((SECONDS + timeout))
+  while :; do
+    if "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 \
+      && sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      die "sandbox $SANDBOX_NAME did not become healthy within ${timeout}s"
+    fi
+    sleep "$interval"
+  done
+}
+
 verify() {
   source_host_env
   validate_env
   local openshell_bin
   openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
-  "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || die "sandbox $SANDBOX_NAME is absent"
+  wait_for_sandbox_ready "$openshell_bin"
   sandbox_command "$openshell_bin" /usr/local/bin/mac-verify-bash-contract
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null

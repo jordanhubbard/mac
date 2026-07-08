@@ -296,6 +296,77 @@ def test_prepare_migrates_legacy_slack_routing_into_openclaw_state(
     ).strip() == "channel:C123HOME"
 
 
+def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    counter = tmp_path / "attempts"
+    openshell = bin_dir / "openshell"
+    openshell.write_text(
+        "#!/bin/sh\n"
+        "counter=${MAC_TEST_ATTEMPTS:?}\n"
+        "attempts=$(cat \"$counter\" 2>/dev/null || echo 0)\n"
+        "case \"$1:$2\" in\n"
+        "  sandbox:get)\n"
+        "    attempts=$((attempts + 1)); echo \"$attempts\" > \"$counter\"\n"
+        "    [ \"$attempts\" -ge 3 ]\n"
+        "    ;;\n"
+        "  sandbox:exec)\n"
+        "    case \"$*\" in\n"
+        "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {}}' ;;\n"
+        "      *) : ;;\n"
+        "    esac\n"
+        "    ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    openshell.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": str(openshell),
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_headless",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_headless",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT": "3",
+        "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL": "0",
+        "MAC_TEST_ATTEMPTS": str(counter),
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    result = subprocess.run(
+        [str(INSTALLER), "verify"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    assert int(counter.read_text(encoding="utf-8")) >= 3
+    assert "verified stock OpenClaw headless runtime" in result.stdout
+    pending = json.loads(
+        (mac_home / "openclaw" / "verification-pending.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert pending["openclaw_runtime"]["verified"] is True
+
+
 def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
     deploy = DEPLOY.read_text(encoding="utf-8")
