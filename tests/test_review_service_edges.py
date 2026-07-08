@@ -106,6 +106,7 @@ def test_submit_review_validation_and_verdict_finder_edges(monkeypatch) -> None:
     with pytest.raises(ValidationError, match="signed review_verdict"):
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
     service._find_verdict_evidence = lambda *_a, **_k: (verdict, [])
+    monkeypatch.setattr(service, "_get_task", lambda *_a: _task())
     with pytest.raises(ValidationError, match="different reviewer LLM"):
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
 

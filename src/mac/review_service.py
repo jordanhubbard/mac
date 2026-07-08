@@ -17,6 +17,7 @@ emits the matching observability events, and idles the owning agent.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
@@ -70,6 +71,109 @@ def normalize_llm_model(model: str) -> str:
     return " ".join(str(model or "").strip().lower().split())
 
 
+_MODEL_FAMILY_PATTERNS = (
+    ("claude", re.compile(r"\bclaude\b", re.IGNORECASE)),
+    ("openai-o", re.compile(r"(?:^|[/ :])o[1-9](?:\b|-)", re.IGNORECASE)),
+    ("gpt", re.compile(r"\bgpt\b", re.IGNORECASE)),
+    ("gemini", re.compile(r"\bgemini\b", re.IGNORECASE)),
+    ("grok", re.compile(r"\bgrok\b", re.IGNORECASE)),
+    ("deepseek", re.compile(r"\bdeepseek\b", re.IGNORECASE)),
+    ("qwen", re.compile(r"\bqwen\b", re.IGNORECASE)),
+    ("llama", re.compile(r"\bllama\b", re.IGNORECASE)),
+    ("mistral", re.compile(r"\bmistral\b", re.IGNORECASE)),
+    ("kimi", re.compile(r"\bkimi\b", re.IGNORECASE)),
+    ("glm", re.compile(r"\bglm\b", re.IGNORECASE)),
+    ("minimax", re.compile(r"\bminimax\b", re.IGNORECASE)),
+)
+_MODEL_PROVIDER_NAMES = (
+    "anthropic", "openai", "google", "xai", "deepseek", "qwen", "meta",
+    "mistral", "moonshot", "zai", "minimax",
+)
+_FAMILY_PROVIDER = {
+    "claude": "anthropic",
+    "gpt": "openai",
+    "openai-o": "openai",
+    "gemini": "google",
+    "grok": "xai",
+    "deepseek": "deepseek",
+    "qwen": "qwen",
+    "llama": "meta",
+    "mistral": "mistral",
+    "kimi": "moonshot",
+    "glm": "zai",
+    "minimax": "minimax",
+}
+
+
+def manifest_llm_family(manifest: Any) -> str:
+    """Return a stable model lineage (Claude/GPT/Gemini/etc.) when known."""
+    if not isinstance(manifest, dict):
+        return ""
+    explicit = normalize_llm_model(str(manifest.get("llm_family") or ""))
+    if explicit:
+        return explicit
+    llm = manifest.get("llm")
+    if isinstance(llm, dict):
+        explicit = normalize_llm_model(str(llm.get("family") or ""))
+        if explicit:
+            return explicit
+    model = manifest_llm_model(manifest)
+    for family, pattern in _MODEL_FAMILY_PATTERNS:
+        if pattern.search(model):
+            return family
+    return ""
+
+
+def manifest_llm_provider(manifest: Any) -> str:
+    """Return the upstream model provider, preferring explicit provenance."""
+    if not isinstance(manifest, dict):
+        return ""
+    explicit = normalize_llm_model(str(manifest.get("llm_provider") or ""))
+    if explicit:
+        return explicit
+    llm = manifest.get("llm")
+    if isinstance(llm, dict):
+        explicit = normalize_llm_model(str(llm.get("provider") or ""))
+        if explicit:
+            return explicit
+    model = normalize_llm_model(manifest_llm_model(manifest))
+    segments = [part for part in re.split(r"[/ :]", model) if part]
+    for provider in _MODEL_PROVIDER_NAMES:
+        if provider in segments:
+            return provider
+    return _FAMILY_PROVIDER.get(manifest_llm_family(manifest), "")
+
+
+def review_diversity_requirements(task: Any) -> Dict[str, bool]:
+    """Resolve opt-in and high-risk cross-model review requirements."""
+    metadata = getattr(task, "metadata", None)
+    if not isinstance(metadata, dict) and isinstance(task, dict):
+        metadata = task.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    policy: Dict[str, Any] = {}
+    for key in ("review", "default_review"):
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            policy = value
+            break
+    risk = str(
+        policy.get("risk_level")
+        or policy.get("risk")
+        or metadata.get("risk_level")
+        or metadata.get("risk")
+        or ""
+    ).strip().lower()
+    high_risk = policy.get("high_risk") is True or risk in {"high", "critical"}
+    return {
+        "high_risk": high_risk,
+        "different_model_family": high_risk
+        or policy.get("require_different_model_family") is True,
+        "different_provider": high_risk
+        or policy.get("require_different_model_provider") is True
+        or policy.get("require_different_provider") is True,
+    }
+
+
 def manifest_requires_cross_llm_review(manifest: Any) -> bool:
     if not isinstance(manifest, dict):
         return False
@@ -86,7 +190,12 @@ def manifest_requires_cross_llm_review(manifest: Any) -> bool:
     return bool(manifest_llm_model(manifest))
 
 
-def cross_llm_review_problems(executor_manifest: Any, verdict_manifest: Any) -> List[str]:
+def cross_llm_review_problems(
+    executor_manifest: Any,
+    verdict_manifest: Any,
+    *,
+    requirements: Optional[Dict[str, bool]] = None,
+) -> List[str]:
     if not manifest_requires_cross_llm_review(executor_manifest):
         return []
     executor_model = manifest_llm_model(executor_manifest)
@@ -107,6 +216,31 @@ def cross_llm_review_problems(executor_manifest: Any, verdict_manifest: Any) -> 
             "reviewer LLM must differ from executor LLM (both %s)"
             % executor_model
         )
+    requirements = requirements or {}
+    if executor_model and reviewer_model and requirements.get("different_model_family"):
+        executor_family = manifest_llm_family(executor_manifest)
+        reviewer_family = manifest_llm_family(verdict_manifest)
+        if not executor_family:
+            problems.append("executor evidence requires llm.family for family-diverse review")
+        if not reviewer_family:
+            problems.append("review verdict requires llm.family for family-diverse review")
+        if executor_family and reviewer_family and executor_family == reviewer_family:
+            problems.append(
+                "reviewer LLM family must differ from executor family (both %s)"
+                % executor_family
+            )
+    if executor_model and reviewer_model and requirements.get("different_provider"):
+        executor_provider = manifest_llm_provider(executor_manifest)
+        reviewer_provider = manifest_llm_provider(verdict_manifest)
+        if not executor_provider:
+            problems.append("executor evidence requires llm.provider for provider-diverse review")
+        if not reviewer_provider:
+            problems.append("review verdict requires llm.provider for provider-diverse review")
+        if executor_provider and reviewer_provider and executor_provider == reviewer_provider:
+            problems.append(
+                "reviewer LLM provider must differ from executor provider (both %s)"
+                % executor_provider
+            )
     return problems
 
 
@@ -376,7 +510,13 @@ class ReviewService:
                     if isinstance(executor_evidence.metadata, dict)
                     else None
                 )
-                llm_problems = cross_llm_review_problems(executor_manifest, manifest)
+                llm_problems = cross_llm_review_problems(
+                    executor_manifest,
+                    manifest,
+                    requirements=review_diversity_requirements(
+                        self._get_task(review.task_id)
+                    ),
+                )
                 if llm_problems:
                     raise ValidationError(
                         "review approval requires a different reviewer LLM: %s"

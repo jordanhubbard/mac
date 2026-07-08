@@ -6420,11 +6420,69 @@ def test_submit_review_accepts_different_llm_for_agent_executor(cp):
     assert result.status == ReviewStatus.APPROVED.value
 
 
+def test_submit_review_high_risk_requires_different_model_family_and_provider(cp):
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "w", ["python"])
+    reviewer = register_agent(cp, "r", ["review"])
+    task = cp.create_task(
+        "t",
+        required_capabilities=["python"],
+        metadata={"review": {"risk_level": "high"}},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        worker.id,
+        metadata={
+            "returncode": 0,
+            "verification": _signed_agent_executor_manifest(
+                cp,
+                worker.id,
+                "inference-hub/anthropic/claude-sonnet",
+            ),
+        },
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        reviewer_llm_model="inference-hub/anthropic/claude-opus",
+    )
+
+    with pytest.raises(ValidationError, match="family must differ"):
+        cp.submit_review(
+            review.id,
+            ReviewStatus.APPROVED.value,
+            reviewer.id,
+            evidence_id=verdict_id,
+        )
+
+
+def test_high_risk_review_disables_independence_fallback(cp):
+    task = cp.create_task(
+        "t",
+        metadata={"default_review": {"risk_level": "critical"}},
+    )
+
+    assert cp._reviewer_independence_fallback_enabled(task) is False
+
+
 def test_cross_llm_review_helper_contracts():
     from mac.review_service import (
         cross_llm_review_problems,
+        manifest_llm_family,
         manifest_llm_model,
+        manifest_llm_provider,
         manifest_requires_cross_llm_review,
+        review_diversity_requirements,
     )
 
     assert manifest_llm_model({"llm": {"model": " Model A "}}) == "Model A"
@@ -6432,6 +6490,23 @@ def test_cross_llm_review_helper_contracts():
     assert manifest_llm_model({"opencode_model": "model-c"}) == "model-c"
     assert manifest_llm_model({"gateway_model": "model-d"}) == "model-d"
     assert manifest_llm_model(None) == ""
+    assert manifest_llm_family(
+        {"llm_model": "inference-hub/anthropic/claude-sonnet"}
+    ) == "claude"
+    assert manifest_llm_family({"llm_family": "custom-lineage"}) == "custom-lineage"
+    assert manifest_llm_provider(
+        {"llm_model": "inference-hub/openai/gpt-5"}
+    ) == "openai"
+    assert manifest_llm_provider(
+        {"llm_provider": "private-provider"}
+    ) == "private-provider"
+    assert review_diversity_requirements(
+        {"metadata": {"review": {"risk_level": "high"}}}
+    ) == {
+        "high_risk": True,
+        "different_model_family": True,
+        "different_provider": True,
+    }
 
     assert manifest_requires_cross_llm_review(
         {"executor": "mac-task-executor-opencode-build"}
@@ -6460,6 +6535,39 @@ def test_cross_llm_review_helper_contracts():
         {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
         {"llm_model": "Model Y"},
     ) == []
+    high_risk = {
+        "high_risk": True,
+        "different_model_family": True,
+        "different_provider": True,
+    }
+    same_lineage = cross_llm_review_problems(
+        {
+            "executor": "mac-task-executor-opencode-build",
+            "llm_model": "inference-hub/anthropic/claude-sonnet",
+        },
+        {"llm_model": "inference-hub/anthropic/claude-opus"},
+        requirements=high_risk,
+    )
+    assert any("family must differ" in problem for problem in same_lineage)
+    assert any("provider must differ" in problem for problem in same_lineage)
+    assert cross_llm_review_problems(
+        {
+            "executor": "mac-task-executor-opencode-build",
+            "llm_model": "inference-hub/anthropic/claude-sonnet",
+        },
+        {"llm_model": "inference-hub/openai/gpt-5"},
+        requirements=high_risk,
+    ) == []
+    unknown_lineage = cross_llm_review_problems(
+        {
+            "executor": "mac-task-executor-opencode-build",
+            "llm_model": "private-model-a",
+        },
+        {"llm_model": "private-model-b"},
+        requirements=high_risk,
+    )
+    assert any("requires llm.family" in problem for problem in unknown_lineage)
+    assert any("requires llm.provider" in problem for problem in unknown_lineage)
 
 
 def test_register_artifact_recomputes_local_digest_and_rejects_mismatch(cp, tmp_path):

@@ -518,6 +518,7 @@ def write_selection(sel: ModelSelection, path: Optional[Path] = None,
 # increase; latency/cost regress UP.
 _QUALITY_METRICS = ("overall_score", "avg_correctness", "avg_groundedness")
 _COST_METRICS = ("latency_p50_ms", "latency_p95_ms", "unit_output_cost_avg")
+_ROBUSTNESS_METRICS = ("realism_gap",)
 _SAFETY_METRIC = "safety_violation_rate"
 
 
@@ -530,11 +531,12 @@ def compare_eval_metrics(
     """Multi-metric drift comparison between a candidate's eval (``current``) and
     the incumbent's (``baseline``). Returns ``{"regressed": bool, "drifted": [...]}``.
 
-    Quality down > threshold, safety up at all, latency/cost up > threshold each
-    count as a regression. ``threshold`` is a relative delta; NOTE this is a
-    simple ratio, not a significance test — small eval sets make it noise-prone,
-    so treat it as a floor and prefer a statistical test when the golden set is
-    small (tracked in task_7ae3b6bd)."""
+    Quality down > threshold, safety up at all, latency/cost up > threshold, or
+    an absolute increase in benchmark-vs-realistic behavior gap > threshold each
+    count as a regression. ``threshold`` is a relative delta for quality/cost
+    and an absolute delta for bounded robustness metrics. NOTE this is not a
+    significance test — small eval sets make it noise-prone, so treat it as a
+    floor and prefer a statistical test when the golden set is small."""
     drifted: List[dict] = []
 
     def rel(b: float, c: float) -> float:
@@ -555,6 +557,13 @@ def compare_eval_metrics(
             d = rel(float(baseline[metric]), float(current[metric]))
             if d > threshold:
                 drifted.append({"metric": metric, "rel_delta": d, "direction": "up"})
+    for metric in _ROBUSTNESS_METRICS:
+        if metric in baseline and metric in current:
+            delta = float(current[metric]) - float(baseline[metric])
+            if delta > threshold:
+                drifted.append(
+                    {"metric": metric, "abs_delta": delta, "direction": "up"}
+                )
     return {"regressed": bool(drifted), "drifted": drifted}
 
 

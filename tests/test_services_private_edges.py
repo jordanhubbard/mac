@@ -241,7 +241,7 @@ def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, proble
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
     monkeypatch.setattr(cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}}))
-    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a: [])
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
     found, problems = cp._find_review_verdict_evidence(
         "task", "reviewer", executor_evidence_id="executor"
@@ -266,13 +266,13 @@ def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkey
 
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
     monkeypatch.setattr(cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}}))
-    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a: ["same model"])
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: ["same model"])
     found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
     assert found is None and "same model" in problems[0]
 
     rejected = _verdict(_base_verdict(verdict="rejected"))
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [rejected])
-    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a: [])
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "rejected_verdict_feedback_problems", lambda *_a: [])
     found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
     assert found is rejected and problems == []
@@ -314,7 +314,7 @@ def test_review_verdict_reports_deep_validation_failures(monkeypatch) -> None:
         services, "verify_verification_manifest_signature", lambda *_a: True
     )
     monkeypatch.setattr(cp, "get_evidence", lambda *_a: executor)
-    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a: [])
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
 
     found, problems = cp._find_review_verdict_evidence(

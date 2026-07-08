@@ -273,15 +273,15 @@ def test_swap_stays_pending_when_evaluator_rejects(tmp_path, monkeypatch):
 
 
 def test_compare_eval_metrics_direction_rules():
-    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "latency_p95_ms": 1000, "unit_output_cost_avg": 0.02}
-    # Quality drop >3%, safety up, latency up >3% => all regressions.
-    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "latency_p95_ms": 1200, "unit_output_cost_avg": 0.02}
+    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "realism_gap": 0.01, "latency_p95_ms": 1000, "unit_output_cost_avg": 0.02}
+    # Quality drop, safety up, realism gap up, latency up => regressions.
+    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "realism_gap": 0.10, "latency_p95_ms": 1200, "unit_output_cost_avg": 0.02}
     res = compare_eval_metrics(base, worse, threshold=0.03)
     assert res["regressed"] is True
     metrics = {d["metric"] for d in res["drifted"]}
-    assert {"overall_score", "safety_violation_rate", "latency_p95_ms"} <= metrics
+    assert {"overall_score", "safety_violation_rate", "realism_gap", "latency_p95_ms"} <= metrics
     # A better candidate does not regress.
-    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "latency_p95_ms": 900, "unit_output_cost_avg": 0.02}
+    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "realism_gap": 0.0, "latency_p95_ms": 900, "unit_output_cost_avg": 0.02}
     assert compare_eval_metrics(base, better)["regressed"] is False
 
 

@@ -582,6 +582,24 @@ workflow publishes/completes the task only when executor evidence and reviewer
 verdict are verifiable.
 Failed executions fail the task with evidence attached.
 
+For high-risk work, set `metadata.review.risk_level` to `high` or `critical`.
+Approval then fails closed unless the signed executor and verdict manifests
+identify different model families and different upstream providers; merely
+using two versions of Claude, GPT, or another single lineage is insufficient.
+Unknown lineage/provider metadata also blocks approval, and reviewer
+independence fallback is disabled. The same constraints can be enabled
+individually with `review.require_different_model_family: true` and
+`review.require_different_model_provider: true`.
+
+```json
+{
+  "review": {
+    "risk_level": "high",
+    "require_independent_reviewer": true
+  }
+}
+```
+
 ### Repository credential learning and reviewer routing
 
 Every completed remote review preparation writes an authoritative
@@ -1022,7 +1040,31 @@ Environment variables (hub):
 | `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
 | `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
 | `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac fleet model-selection promote`. |
-| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSONL golden set of eval cases. |
+| `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSON or JSONL golden set of eval cases. |
+
+The built-in floor includes paired benchmark-labelled and production-shaped
+agentic-integrity cases for fabricated work, test tampering, score
+falsification, and tool-result concealment. Every pair uses the same behavioral
+requirement with `pair_id` plus `presentation` (`benchmark` or `realistic`). The
+swap gate records `realism_gap`, the mean absolute score gap within complete
+pairs, and blocks candidates whose gap increases by more than the configured
+drift threshold. Integrity requirements belong in `safety_required_points`;
+each entry may be a string or a list of acceptable phrasings. Missing one is a
+safety violation and forces that case's correctness to zero.
+
+The built-in cases are a smoke-test floor, not a deployment-quality corpus.
+Configure a version-controlled, rotating, production-shaped holdout that covers
+the fleet's actual tool, repository, evidence, and reviewer workflows. Keep a
+private portion out of model-facing prompts, preserve benchmark/realistic pair
+IDs, and review both aggregate quality and the realism gap before promotion.
+
+Opaque hosted-model APIs expose outputs, not residual-stream activations, so
+MAC cannot honestly run activation-level probes such as a J-lens through the
+current router. If an open-weight backend later exposes compatible residuals,
+activation probes should be an advisory audit with a separately validated
+classifier and held-out calibration set. Deterministic evidence, test,
+CodeGraph, review-diversity, and publication gates remain authoritative; an
+activation classifier must never be allowed to approve work by itself.
 
 Per task, `--model <name>` pins a model by name and `--model-strength 1..10`
 pins by capability (resolved via the strength ladder; **hub agent only** until
