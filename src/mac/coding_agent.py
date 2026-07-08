@@ -225,12 +225,20 @@ def _route_fields(
             "openai" if host.endswith("openai.com") else "mac-router"
         )
         auth_kind = "oauth_file" if auth_source == "~/.codex/auth.json" else "bearer_env"
+        configured_model = str(
+            env.get("MAC_TASK_MODEL") or env.get("MAC_CODEX_MODEL") or ""
+        ).strip()
         return {
             "provider": provider,
             "protocol": str(env.get("MAC_CODEX_WIRE_API") or "responses").strip().lower(),
             "auth_kind": auth_kind,
             "endpoint": endpoint,
-            "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CODEX_MODEL") or "").strip(),
+            # Codex has its own product default (currently gpt-5.5).  Letting it
+            # leak into the MAC router bypasses the router's measured wildcard
+            # ladder and can select a model the configured provider cannot
+            # serve.  An unpinned routed invocation therefore requests MAC's
+            # canonical wildcard explicitly; a user/task pin still wins.
+            "model": configured_model or ("*" if provider == "mac-router" else ""),
         }
     if agent == "claude":
         provider = "anthropic"

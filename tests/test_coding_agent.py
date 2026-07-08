@@ -141,10 +141,26 @@ def test_codex_mac_router_route_is_explicit_and_secret_free(tmp_path):
     assert choice.provider == "mac-router"
     assert choice.protocol == "responses"
     assert choice.endpoint == "http://127.0.0.1:8789/v1"
+    assert choice.model == "*"
     observable = json.dumps(choice.observable())
     assert "mac-secret-bearer" not in observable
     assert "password" not in observable
     assert "token=leak" not in observable
+
+
+def test_codex_mac_router_explicit_model_overrides_router_wildcard(tmp_path):
+    choice = resolve_coding_agent(
+        env={
+            "OPENAI_API_KEY": "mac-secret-bearer",
+            "OPENAI_BASE_URL": "http://127.0.0.1:8789/v1",
+            "MAC_CODEX_MODEL": "operator-pinned-model",
+        },
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert choice.provider == "mac-router"
+    assert choice.model == "operator-pinned-model"
 
 
 def test_invalid_or_ipv6_endpoint_is_safely_normalized(tmp_path):
