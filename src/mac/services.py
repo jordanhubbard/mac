@@ -2512,6 +2512,7 @@ class ControlPlane:
                 }
             return buckets[project]
 
+        project_pause_cache: Dict[str, bool] = {}
         for record in project_records or []:
             name = str(record.get("name") or record.get("project") or "").strip()
             if not name:
@@ -2522,10 +2523,12 @@ class ControlPlane:
             metadata = record.get("metadata")
             item["metadata"] = metadata if isinstance(metadata, dict) else {}
             item["project_id"] = record.get("id")
+            project_pause_cache[name] = bool(
+                ensure_json_object(metadata).get("dispatch_paused")
+            )
             if isinstance(metadata, dict) and metadata.get("repository_url"):
                 item["repository_url"] = str(metadata.get("repository_url"))
 
-        project_pause_cache: Dict[str, bool] = {}
         for task in tasks:
             project = self._hermes_task_project_key(task)
             item = bucket(project)
@@ -2566,11 +2569,11 @@ class ControlPlane:
             compact = self._hermes_task_context(task)
             dispatch_held = self._task_dispatch_held(task)
             project_key = str(task.project or "")
-            if project_key not in project_pause_cache:
-                project_pause_cache[project_key] = self._project_dispatch_paused(
-                    task.project
-                )
-            project_paused = project_pause_cache[project_key]
+            # ``project_records`` is the authoritative snapshot loaded by the
+            # caller. Missing records are implicit projects and therefore not
+            # paused. Avoid one database lookup per project while rendering a
+            # dashboard snapshot.
+            project_paused = project_pause_cache.get(project_key, False)
             if task.state == TaskState.OPEN.value and dispatch_held:
                 item["held_count"] += 1
             if (
@@ -5272,6 +5275,258 @@ class ControlPlane:
         "fleet",
     )
 
+    def _list_recent_events_bounded(self, limit: int) -> List[JsonDict]:
+        """Merge bounded, index-friendly reads from the unified event sources.
+
+        SQLite cannot push ``ORDER BY ... LIMIT`` through the ``events``
+        ``UNION ALL`` view. On a long-running hub that made an unfiltered
+        ``limit=100`` request scan and sort millions of action rows. Reading at
+        most ``limit`` rows from each source is exact: no source can contribute
+        more than ``limit`` rows to the global top ``limit``. The final merge is
+        tiny and preserves the view's newest-first contract.
+        """
+
+        events: List[JsonDict] = []
+
+        def add(
+            event_id: Any,
+            subject_type: str,
+            subject_id: Any,
+            event_type: Any,
+            actor: Any,
+            detail: Any,
+            created_at: Any,
+        ) -> None:
+            events.append(
+                {
+                    "id": event_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "event_type": event_type,
+                    "actor": actor,
+                    "detail": ensure_json_object(detail),
+                    "created_at": created_at,
+                }
+            )
+
+        task_rows = self.store.query_all(
+            """
+            SELECT id, task_id, event_type, actor, detail,
+                   from_state, to_state, created_at
+            FROM task_history
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in task_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {"from_state": row["from_state"], "to_state": row["to_state"]}
+            )
+            add(
+                row["id"],
+                "task",
+                row["task_id"],
+                row["event_type"],
+                row["actor"],
+                detail,
+                row["created_at"],
+            )
+
+        simple_sources = (
+            ("rollout_events", "rollout", "rollout_id"),
+            ("eval_set_events", "eval_set", "eval_set_id"),
+            ("environment_events", "environment", "environment_id"),
+            ("project_events", "project", "project_id"),
+            ("fleet_events", "fleet", "fleet_id"),
+            ("agent_lifecycle_events", "agent", "agent_id"),
+            ("agent_events", "agent", "agent_id"),
+        )
+        for table, subject_type, subject_column in simple_sources:
+            rows = self.store.query_all(
+                "SELECT id, %s AS subject_id, event_type, actor, detail, created_at "
+                "FROM %s ORDER BY created_at DESC, id DESC LIMIT ?"
+                % (subject_column, table),
+                (limit,),
+            )
+            for row in rows:
+                add(
+                    row["id"],
+                    subject_type,
+                    row["subject_id"],
+                    row["event_type"],
+                    row["actor"],
+                    json_loads(row["detail"], {}),
+                    row["created_at"],
+                )
+
+        secret_rows = self.store.query_all(
+            """
+            SELECT id, secret_id, result, accessor_agent_id, purpose,
+                   expires_at, revealed_at, created_at
+            FROM secret_access_audit
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in secret_rows:
+            add(
+                row["id"],
+                "secret",
+                row["secret_id"],
+                "secret.%s" % row["result"],
+                row["accessor_agent_id"],
+                {
+                    "purpose": row["purpose"],
+                    "expires_at": row["expires_at"],
+                    "revealed_at": row["revealed_at"],
+                },
+                row["created_at"],
+            )
+
+        command_rows = self.store.query_all(
+            """
+            SELECT id, command_id, agent_id, phase, argv, cwd, task_id,
+                   lease_id, started_at, completed_at, duration_ms, returncode,
+                   stdout_sha256, stderr_sha256, stdout_bytes, stderr_bytes,
+                   metadata, created_at
+            FROM command_audit
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in command_rows:
+            argv = json_loads(row["argv"], [])
+            add(
+                row["id"],
+                "task" if row["task_id"] is not None else "agent",
+                row["task_id"] or row["agent_id"],
+                "command.%s" % row["phase"],
+                row["agent_id"],
+                {
+                    "command_id": row["command_id"],
+                    "agent_id": row["agent_id"],
+                    "argv0": argv[0] if isinstance(argv, list) and argv else None,
+                    "argv_redacted": True,
+                    "cwd": row["cwd"],
+                    "task_id": row["task_id"],
+                    "lease_id": row["lease_id"],
+                    "started_at": row["started_at"],
+                    "completed_at": row["completed_at"],
+                    "duration_ms": row["duration_ms"],
+                    "returncode": row["returncode"],
+                    "stdout_sha256": row["stdout_sha256"],
+                    "stderr_sha256": row["stderr_sha256"],
+                    "stdout_bytes": row["stdout_bytes"],
+                    "stderr_bytes": row["stderr_bytes"],
+                    "metadata": json_loads(row["metadata"], {}),
+                },
+                row["created_at"],
+            )
+
+        action_rows = self.store.query_all(
+            """
+            SELECT event_id, timestamp, agent_id, hermes_instance_id, task_id,
+                   session_id, sandbox_id, actor, action_type, action_name,
+                   subject_type, subject_id, outcome, severity, policy_id,
+                   policy_version, command_id, parent_event_id, attributes,
+                   redaction_state
+            FROM action_events
+            ORDER BY timestamp DESC, event_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in action_rows:
+            event_id = row["event_id"]
+            add(
+                event_id,
+                row["subject_type"] or "action_event",
+                row["subject_id"] or event_id,
+                "action.%s.%s" % (row["action_type"], row["action_name"]),
+                row["actor"],
+                {
+                    "schema": "mac.action_event.v1",
+                    "agent_id": row["agent_id"],
+                    "hermes_instance_id": row["hermes_instance_id"],
+                    "task_id": row["task_id"],
+                    "session_id": row["session_id"],
+                    "sandbox_id": row["sandbox_id"],
+                    "action_type": row["action_type"],
+                    "action_name": row["action_name"],
+                    "outcome": row["outcome"],
+                    "severity": row["severity"],
+                    "policy_id": row["policy_id"],
+                    "policy_version": row["policy_version"],
+                    "command_id": row["command_id"],
+                    "parent_event_id": row["parent_event_id"],
+                    "redaction_state": row["redaction_state"],
+                    "attributes": json_loads(row["attributes"], {}),
+                },
+                row["timestamp"],
+            )
+
+        conversation_rows = self.store.query_all(
+            """
+            SELECT id, platform_binding_id, external_thread_id,
+                   latest_task_id, summary, last_seen_at
+            FROM conversation_threads
+            ORDER BY last_seen_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in conversation_rows:
+            add(
+                row["id"],
+                "conversation_thread",
+                row["id"],
+                "gateway.thread_tracked",
+                "gateway",
+                {
+                    "platform_binding_id": row["platform_binding_id"],
+                    "external_thread_id": row["external_thread_id"],
+                    "latest_task_id": row["latest_task_id"],
+                    "summary": row["summary"],
+                },
+                row["last_seen_at"],
+            )
+
+        vector_rows = self.store.query_all(
+            """
+            SELECT id, memory_id, created_by, vector_db, collection, point_id,
+                   embedding_model, created_at
+            FROM vector_refs
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in vector_rows:
+            add(
+                row["id"],
+                "vector_ref",
+                row["memory_id"],
+                "vector.indexed",
+                row["created_by"],
+                {
+                    "vector_db": row["vector_db"],
+                    "collection": row["collection"],
+                    "point_id": row["point_id"],
+                    "embedding_model": row["embedding_model"],
+                },
+                row["created_at"],
+            )
+
+        events.sort(
+            key=lambda event: (str(event["created_at"]), str(event["id"])),
+            reverse=True,
+        )
+        return events[:limit]
+
     def list_events(
         self,
         subject_type: Optional[str] = None,
@@ -5294,6 +5549,20 @@ class ControlPlane:
                 "unsupported event subject_type: %s (allowed: %s)"
                 % (subject_type, ", ".join(self.EVENT_SUBJECT_TYPES))
             )
+        limit_value = min(max(1, int(limit)), 1000)
+        if all(
+            value is None
+            for value in (
+                subject_type,
+                subject_id,
+                actor,
+                event_type,
+                event_type_prefix,
+                since,
+                until,
+            )
+        ):
+            return self._list_recent_events_bounded(limit_value)
         clauses: List[str] = []
         params: List[Any] = []
         if subject_type is not None:
@@ -5322,7 +5591,7 @@ class ControlPlane:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
-        params.append(min(max(1, int(limit)), 1000))
+        params.append(limit_value)
         rows = self.store.query_all(sql, tuple(params))
         return [
             {

@@ -432,7 +432,7 @@ def test_workbench_ide_state_is_bounded_and_does_not_load_secret_audits(monkeypa
     assert "history" not in projected
     assert "evidence" not in projected
     assert len(resp.content) < 250_000
-    assert pause_checks == ["mac"]
+    assert pause_checks == []
 
 
 def test_workbench_ide_state_compresses_and_excludes_virtual_service_agents():

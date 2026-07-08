@@ -8763,7 +8763,7 @@ def test_runtime_run_status_is_enum_validated(cp):
     assert completed.status == "completed"
 
 
-def test_events_view_unifies_all_audit_surfaces(cp):
+def test_events_view_unifies_all_audit_surfaces(cp, monkeypatch):
     # Generate one event of each kind.
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -8787,10 +8787,46 @@ def test_events_view_unifies_all_audit_surfaces(cp):
     deployer = register_agent(cp, "deployer", ["deploy"])
     secret = cp.create_secret("audit-token", "x", {"capabilities": ["deploy"]}, "human")
     cp.request_secret(secret.id, deployer.id, "audit-test")
+    cp.record_command_audit(
+        worker.id,
+        "completed",
+        argv=["python", "-m", "pytest"],
+        cwd="/tmp",
+        task_id=task.id,
+        returncode=0,
+        metadata={"source": "test"},
+    )
+    action = cp.record_action_event(
+        actor="worker",
+        agent_id=worker.id,
+        task_id=task.id,
+        action_type="tool",
+        action_name="pytest",
+        outcome="success",
+        attributes={"suite": "contract"},
+    )
+
+    queries = []
+    original_query_all = cp.store.query_all
+
+    def record_query(sql, params=()):
+        queries.append(sql)
+        return original_query_all(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_all", record_query)
 
     events = cp.list_events(limit=500)
     subject_types = {event["subject_type"] for event in events}
-    assert subject_types == {"task", "agent", "project", "fleet", "rollout", "eval_set", "secret"}
+    assert subject_types == {
+        "task",
+        "agent",
+        "project",
+        "fleet",
+        "rollout",
+        "eval_set",
+        "secret",
+        "action_event",
+    }
     # Each event includes the unified shape.
     for event in events:
         assert set(event.keys()) >= {
@@ -8803,6 +8839,14 @@ def test_events_view_unifies_all_audit_surfaces(cp):
             "created_at",
         }
         assert isinstance(event["detail"], dict)
+    assert not any(" FROM events" in query for query in queries)
+    assert any("FROM action_events" in query for query in queries)
+    action_event = next(event for event in events if event["id"] == action.event_id)
+    assert action_event["detail"]["attributes"] == {"suite": "contract"}
+    command_event = next(
+        event for event in events if event["event_type"] == "command.completed"
+    )
+    assert command_event["detail"]["argv0"] == "python"
     project_events = cp.list_events(subject_type="project", subject_id=project.id)
     assert {event["event_type"] for event in project_events} >= {
         "project.created",
