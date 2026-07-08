@@ -3,9 +3,8 @@
 These verify that mac decides — from the same environment the executor runs in —
 which coding-agent CLI is available and authenticated (so the work runs against
 a cheaper subscription/seat instead of the metered LLM gateway), builds the
-right non-interactive invocation, honors the disable/pin/override knobs, wires
-the messaging MCP server only where supported, and never leaks a credential
-into the legible decision.
+right non-interactive invocation, honors the disable/pin/override knobs, and
+never leaks a credential into the legible decision.
 """
 
 import json
@@ -14,7 +13,6 @@ from mac.coding_agent import (
     CodingAgentChoice,
     coding_agent_argv,
     mcp_config_document,
-    messaging_mcp_enabled,
     resolve_coding_agent,
     supports_per_invocation_mcp,
 )
@@ -386,11 +384,6 @@ def test_supports_per_invocation_mcp():
     assert supports_per_invocation_mcp("claude") is True
     assert supports_per_invocation_mcp("codex") is False
     assert supports_per_invocation_mcp("cursor") is False
-
-
-def test_messaging_mcp_default_on_and_overridable():
-    assert messaging_mcp_enabled({}) is True
-    assert messaging_mcp_enabled({"MAC_CODING_AGENT_MESSAGING_MCP": "0"}) is False
 
 
 def test_mcp_config_document_shape():

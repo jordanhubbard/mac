@@ -150,7 +150,7 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert "mac-hermes tasks --state open" in markdown
     assert "`scripts/run-contract-tests.sh`" in markdown
     assert "`hermes_oneshot_executor`" in markdown
-    assert "mac-hermes-task-executor" in markdown
+    assert "mac-task-executor" in markdown
     assert "mac-agent --loop --executor" in markdown
     session_rules = "\n".join(stored["session_capabilities"]["rules"])
     assert "Own the full code lifecycle" in session_rules

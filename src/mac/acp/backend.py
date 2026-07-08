@@ -5,15 +5,15 @@ external ACP client driving a mac agent (via :class:`~mac.acp.server.ACPAgentSer
 actually runs a mac agent turn instead of the :class:`~mac.acp.server.EchoBackend`
 placeholder.
 
-On :meth:`MacAgentBackend.run_prompt` it spawns a mac/Hermes agent subprocess
+On :meth:`MacAgentBackend.run_prompt` it spawns the host's OpenClaw wrapper
 for the prompt, in the session's ``cwd``, and streams the agent's stdout back to
 the client line-by-line as ``agent_message_chunk`` ``session/update``
 notifications so the client sees live progress.
 
 The agent command is configurable via ``MAC_ACP_BACKEND_CMD`` (shlex-split). When
-unset it derives the same minimal ``hermes_cli chat`` invocation
-:mod:`mac.task_executor` uses (replicated here, *not* imported, to keep this
-module self-contained: it imports only from :mod:`mac.acp` and the stdlib).
+unset it invokes ``~/.mac/bin/openclaw-agent``. That wrapper enters the
+verified long-lived OpenClaw OpenShell sandbox; ACP has no direct provider or
+vendored-Hermes fallback.
 
 A ``runner`` seam is injected for tests: ``runner(argv, cwd, on_line) -> int``
 runs the command, invoking ``on_line(text)`` for each output line and returning
@@ -66,34 +66,22 @@ _ENV_BACKEND_CMD = "MAC_ACP_BACKEND_CMD"
 
 
 def default_argv(prompt: str) -> List[str]:
-    """The default mac/Hermes agent invocation for ``prompt``.
+    """Build the OpenClaw-in-OpenShell invocation for ``prompt``."""
 
-    Replicates the minimal argv shape of the legacy Hermes one-shot invocation
-    (``<python> -m hermes_cli.main chat --query <prompt> --quiet ...``) *without*
-    importing ``task_executor`` -- this module stays self-contained. The Hermes
-    interpreter is ``$MAC_HERMES_PYTHON`` when set, else the vendored
-    ``~/.mac/venv/bin/python`` (with the vendored ``_hermes`` tree on
-    ``PYTHONPATH`` so ``hermes_cli`` resolves), mirroring host vs. sandbox-image
-    resolution there.
-
-    The ``--yolo`` flag is intentionally **omitted**: that bypasses Hermes' own
-    approval and is only safe under the OpenShell sandbox the task executor wraps
-    around it. This backend runs the agent directly, so it keeps Hermes'
-    approval gate in place.
-    """
-
-    override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
-    if override:
-        hermes_py = override
-    else:
-        hermes_py = str(Path.home() / ".mac" / "venv" / "bin" / "python")
-        hermes_vendored = str(
-            Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes"
-        )
-        os.environ["PYTHONPATH"] = (
-            hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")
-        )
-    return [hermes_py, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"]
+    wrapper = (
+        os.environ.get("MAC_OPENCLAW_AGENT_BIN")
+        or str(Path.home() / ".mac" / "bin" / "openclaw-agent")
+    )
+    return [
+        wrapper,
+        "--agent",
+        "main",
+        "--message",
+        prompt,
+        "--session-id",
+        "mac-acp",
+        "--json",
+    ]
 
 
 class MacAgentBackend:
@@ -106,7 +94,7 @@ class MacAgentBackend:
         command is resolved per turn from ``$MAC_ACP_BACKEND_CMD`` (shlex-split)
         or, failing that, :func:`default_argv`. An explicit ``argv`` (or the env
         command) receives the prompt as a trailing positional argument; the
-        derived default already embeds the prompt via ``--query``.
+        derived default already embeds the prompt via ``--message``.
     runner:
         The execution seam: ``runner(argv, cwd, on_line) -> returncode``. Defaults
         to :func:`_subprocess_runner`. Tests inject a fake that calls

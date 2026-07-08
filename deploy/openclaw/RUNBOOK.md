@@ -4,8 +4,10 @@ This is MAC's primary chat-gateway implementation. It runs the official stock
 OpenClaw image inside a MAC-owned OpenShell sandbox. `deploy/nemoclaw/` remains
 reference material and is not invoked by this path.
 
-Task execution is a separate MAC worker role. Migrating this gateway does not
-change the executor or authorize deletion of `src/mac/_hermes`.
+Task execution is a separate MAC worker role. It uses an authenticated coding
+agent inside the task OpenShell sandbox and fails closed when no verified route
+exists. Reflection and ACP agent turns enter this OpenClaw sandbox through the
+host `openclaw-agent` wrapper; no path falls back to Hermes chat.
 
 ## Pinned runtime
 
@@ -20,21 +22,24 @@ The official image is extended only with OpenShell's required non-root
 
 ## Host-local inputs
 
-The installer reads the deployed `~/.mac/mac.env` and `~/.hermes/.env`. The
-following values must be available, either through their existing MAC/Hermes
-names or explicit `MAC_OPENCLAW_*` overrides:
+The installer reads deployed `~/.mac/mac.env` for fleet/router settings and the
+owner-only `~/.mac/openclaw/credentials.env` for human-channel secrets. It does
+not source `~/.hermes/.env`. The following values must be available through MAC
+configuration or explicit `MAC_OPENCLAW_*` overrides:
 
 - agent and Hermes-instance identity;
 - MAC router URL, API key, and selected model;
 - Slack Socket Mode bot and app tokens;
-- one Telegram bot token unique to this agent.
+- an optional Slack and/or Telegram account assigned to the logical public
+  identity hosted by this agent.
 
 Telegram long polling permits only one active gateway per bot token. Do not
-copy one Telegram token to multiple fleet agents: provision a distinct
-`TELEGRAM_BOT_TOKEN` for every enabled agent. For live channel-send validation,
+copy one Telegram token to multiple public identities. Headless agents receive
+no human-facing credentials and are represented by the fleet identity. For live channel-send validation,
 also set `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET` to that bot's operator chat ID.
-Fleet deploy reads these from the MAC vault names
-`telegram.<agent>.bot` and `telegram.<agent>.canary_target`, validates the bot
+Fleet deploy prefers identity-scoped MAC vault names such as
+`channel-identity.<identity>.telegram.<account>.bot` and
+`channel-identity.<identity>.telegram.<account>.canary_target`, validates the bot
 with Telegram `getMe`, and materializes them in the OpenClaw-only, mode-0600
 `~/.mac/openclaw/credentials.env`. They are intentionally not written to
 `~/.hermes/.env`, which prevents the retained rollback gateway from competing
@@ -74,16 +79,23 @@ starts OpenClaw, then requires all of these checks before disabling Hermes:
 - authenticated in-sandbox `openclaw health --verbose --json` RPC health;
 - live Slack and Telegram channel probes.
 
+After those positive probes, deploy disables Hermes and NemoClaw and runs a
+second, supervisor-specific finalization gate. That gate proves OpenClaw is
+active and both legacy gateways are inactive. A service advertisement is not
+published until this negative exclusivity proof passes.
+
 For a canary, additionally export `MAC_DEPLOY_OPENCLAW_LIVE_CANARY=1`. The
 verification command performs a real model turn and requires the sentinel
 `MAC_OPENCLAW_CANARY_OK`, then sends a labeled canary message through both
 Slack and Telegram. A live canary therefore also requires the configured Slack
 home channel and `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET`.
 
-Only a successful verification writes
+Successful sandbox verification first writes an owner-only pending record.
+Only successful post-cutover finalization atomically publishes
 `~/.mac/openclaw/service-advertisement.json`. The worker registers that record
 as `resources.chat_gateway`, including the stock OpenClaw version, OpenShell
-sandbox, sandbox-exec access method, Slack/Telegram transports, and verification time.
+sandbox, sandbox-exec access method, Slack/Telegram transports, verification
+time, supervisor states, and explicit exclusive-ownership proof.
 The Fleet IDE displays the same record in the agent inspector. Rollback removes
 the advertisement before restoring Hermes, so desired state is never reported
 as a live service.
@@ -99,13 +111,23 @@ MAC_OPENCLAW_LIVE_CANARY=1 \
   deploy/openclaw/install-openclaw-gateway.sh verify
 ```
 
+This command validates the sandbox and writes only
+`verification-pending.json`; it does not claim exclusive ownership. Normal
+fleet deploy stops the legacy services and invokes `finalize`. Do not invoke
+`finalize` manually unless the supervisor cutover has already occurred: it
+fails closed if OpenClaw is inactive or either legacy gateway is active.
+
 Useful secret-free checks:
 
 ```bash
 openshell sandbox get mac-openclaw-<agent>
 openshell sandbox exec --name mac-openclaw-<agent> --no-tty -- \
-  /bin/sh -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw health --verbose --json'
+  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw health --verbose --json'
 ```
+
+On every worker start, `mac-agent-startup-self-test` independently requires the
+exclusive advertisement, OpenShell confinement, readable OpenClaw model route,
+and a `MAC_OPENCLAW_STARTUP_OK` model sentinel through `openclaw-agent`.
 
 The gateway remains inside an OpenShell sandbox, but that service sandbox is
 disposable: each service start recreates its container from the cached pinned

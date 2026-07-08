@@ -309,7 +309,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     cfg = load_sample_fleet_config()
     expected = (
-        "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+        "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
         "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
     )
 
@@ -321,7 +321,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     assert cfg["defaults"]["worker"]["capabilities"] == [
         "ops",
         "python",
-        "hermes",
+        "openclaw",
         "review",
         "api",
         "architecture",
@@ -671,7 +671,7 @@ def test_fleet_deploy_applies_hermes_patch_set():
     assert "mac-hermes projects" in script
     assert "shell_execution" in script
     assert "workspace_file_access" in script
-    assert "mac-hermes-task-executor" in script
+    assert "mac-task-executor" in script
     assert "_load_mac_runtime_context" in runtime_patch.read_text(encoding="utf-8")
     assert "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN" in runtime_patch.read_text(encoding="utf-8")
     assert "Shutdown chat notifications disabled by MAC deployment policy." in quench_patch.read_text(
@@ -756,7 +756,7 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     assert "MAC_QDRANT_MEMORY_ALLOW_DEGRADED" not in env_example
     assert env_example["MAC_HERMES_RUNTIME_CONTEXT_REQUIRED"] == "1"
     assert env_example["MAC_WORKER_HERMES_INSTANCE_ID"] == "hermes_example"
-    assert env_example["MAC_WORKER_EXECUTOR"] == "/home/mac/.mac/bin/mac-hermes-task-executor"
+    assert env_example["MAC_WORKER_EXECUTOR"] == "/home/mac/.mac/bin/mac-task-executor"
     assert env_example["MAC_HERMES_WORKSPACE"] == "/home/mac/.mac/src/mac"
     assert env_example["SLACK_ALLOWED_USERS"] == "*"
     assert env_example["SLACK_STRICT_MENTION"] == "true"
@@ -868,19 +868,22 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
         'cat > "$executor_py" <<', 1
     )[0]
 
-    # th-merge-07: TokenHub is retired. Messaging config (Slack secrets +
-    # identity + home channels) is synced as one unit AFTER the mac.service
-    # (re)start, before the gateway comes up.
+    # Messaging state is synchronized after mac.service starts. OpenClaw reads
+    # only its identity-scoped credentials file; the Hermes files are touched
+    # only on the explicit rollback implementation.
     assert "sync_messaging_config()" in script
     assert (
         "  reload_mac_env\n"
         "  fetch_slack_secrets_from_vault\n"
         "  reload_mac_env\n"
-        "  sync_hermes_slack_identity_env\n"
-        "  sync_hermes_home_channels"
+        '  if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then\n'
+        "    sync_hermes_slack_identity_env\n"
+        "    sync_hermes_home_channels"
     ) in script
     assert "fetch_slack_secrets_from_vault()" in script
     assert "scripts/mac-fetch-slack-secrets.py" in script
+    assert "scripts/mac-fetch-openclaw-secrets.py" in script
+    assert "must never refresh the retained rollback gateway" in script
     assert "-m mac.deploy_env write-mac-env" in script
 
     # The TokenHub install/sync/runtime machinery is gone — no installer call, no
@@ -923,7 +926,7 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     # shim that delegates to it.
     assert "from mac.task_executor import main" in script
     assert "raise SystemExit(main())" in script
-    assert "mac-hermes-task-executor" in script
+    assert "mac-task-executor" in script
     executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
     assert "def _hermes_argv(" not in executor_module
     assert '"hermes_cli.main", "chat"' not in executor_module
@@ -2046,15 +2049,18 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
 
     assert generated_env["MAC_AGENT_STARTUP_SELF_TEST"] == "1"
     assert '"$HOME/.mac/bin/mac-agent-startup-self-test"' in wrapper
-    assert 'resolve_runtime_provider(' in selftest
+    assert 'openclaw_config["models"]["providers"]["mac-router"]' in selftest
     assert "MAC_REQUIRE_QDRANT_MEMORY must be true" in selftest
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
-    assert '[python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"]' in selftest
+    assert 'str(openclaw_agent_bin)' in selftest
+    assert '"MAC_OPENCLAW_STARTUP_OK" not in agent_output' in selftest
+    assert '"exclusive_service_owner"' in selftest
+    assert 'runtime["confinement"].get("provider") != "openshell"' in selftest
     assert "def output_text" in selftest
     assert "output_text(exc.stdout)" in selftest
-    assert "classify_hermes_chat_failure" in selftest
-    assert '"hermes_failure_class": hermes_failure_class' in selftest
+    assert "classify_openclaw_agent_failure" in selftest
+    assert '"openclaw_failure_class": openclaw_failure_class' in selftest
     assert '"blocking_problems": blocking_problems' in selftest
     assert '"status": "offline" if blocking_problems else "idle"' in selftest
     assert "sys.exit(1 if blocking_problems else 0)" in selftest

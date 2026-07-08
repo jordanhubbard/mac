@@ -178,20 +178,9 @@ def test_progress_monitor_does_not_claim_clean_when_snapshot_is_unavailable(
     assert monitor.evidence()["ready_observed"] is False
 
 
-def test_coding_agent_mcp_config_success_disabled_and_error(monkeypatch, tmp_path) -> None:
-    from mac import coding_agent
-
-    choice = SimpleNamespace(agent="claude")
-    monkeypatch.setattr(coding_agent, "messaging_mcp_enabled", lambda _env: False)
-    assert te._coding_agent_mcp_config_path(tmp_path, choice) is None
-    monkeypatch.setattr(coding_agent, "messaging_mcp_enabled", lambda _env: True)
-    monkeypatch.setattr(coding_agent, "supports_per_invocation_mcp", lambda _agent: True)
-    monkeypatch.setattr(coding_agent, "mcp_config_document", lambda *_a, **_k: {"servers": {}})
-    monkeypatch.setattr(te, "_mcp_serve_argv", lambda: ["serve"])
-    result = te._coding_agent_mcp_config_path(tmp_path, choice)
-    assert json.loads(Path(result).read_text()) == {"servers": {}}
-    monkeypatch.setattr(coding_agent, "mcp_config_document", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("bad")))
-    assert te._coding_agent_mcp_config_path(tmp_path, choice) is None
+def test_executor_has_no_vendored_hermes_messaging_mcp_bypass() -> None:
+    assert not hasattr(te, "_mcp_serve_argv")
+    assert not hasattr(te, "_coding_agent_mcp_config_path")
 
 
 def test_build_probe_argv_validation_and_openshell_probe(monkeypatch, tmp_path) -> None:

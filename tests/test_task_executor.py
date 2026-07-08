@@ -946,7 +946,7 @@ def test_build_learning_record_shape():
     rec = te.build_learning_record(task, outcome)
     assert rec["subject_type"] == "project" and rec["subject_id"] == "demo"
     assert rec["record_type"] == "deployment_learning:demo"
-    assert rec["created_by"] == "mac-hermes-task-executor"
+    assert rec["created_by"] == "mac-task-executor"
     content = json.loads(rec["content"])
     assert content["schema"] == "mac.deployment_learning.v1"
     assert content["repository"] == "demo-repo"
@@ -2597,7 +2597,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
 
 def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatch):
     """When a coding-agent CLI is available + authed, _invoke_agent runs THAT
-    in the checkout, with the same prompt + a materialized MCP config."""
+    in the checkout without injecting the retired Hermes messaging MCP."""
     from mac import coding_agent as ca
 
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
@@ -2627,9 +2627,8 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     assert agent_argv[0] == "/usr/local/bin/claude"
     assert "-p" in agent_argv and agent_argv[-1] == te.PROMPT_SENTINEL
     assert "--dangerously-skip-permissions" in agent_argv
-    # Messaging MCP config was materialized in the workspace and wired in (Claude).
-    assert "--mcp-config" in agent_argv
-    assert (tmp_path / ".mac-coding-agent-mcp.json").is_file()
+    assert "--mcp-config" not in agent_argv
+    assert not (tmp_path / ".mac-coding-agent-mcp.json").exists()
 
 
 def test_invoke_agent_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):

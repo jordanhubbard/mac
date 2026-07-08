@@ -187,7 +187,6 @@ EOF
   # authority ($POLICY_HUB): loopback -> host.openshell.internal, and a STALE hub
   # host (e.g. a pre-migration tailnet IP) -> the live hub instead of passing
   # through. Non-hub-port providers (other services, external APIs) are untouched.
-  [ -f "$HOME/.hermes/config.yaml" ] && { sed -E "s#(https?://)[^/@:]+(:${HUB_PORT}/)#\1${POLICY_HUB}\2#g" "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"; chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"; }
   # 8. env recipe (BSD sed -i '')
   cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
   sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
@@ -198,10 +197,9 @@ EOF
     echo "MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1"
     echo "MAC_OPENSHELL_GC=1"
     echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
-    echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
     echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
     echo "MAC_OPENSHELL_BIN=$OSH_CLI"
-    echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml\""
+    echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG\""
     echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
     [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
   } >> "$ENVF"
@@ -575,8 +573,6 @@ chmod 600 "$MAC_HOME/openshell-policy.yaml"
 # authority ($POLICY_HUB): loopback -> host.openshell.internal, and a STALE hub
 # host (e.g. a pre-migration tailnet IP) -> the live hub instead of passing
 # through. Non-hub-port providers (other services, external APIs) are untouched.
-sed -E "s#(https?://)[^/@:]+(:${HUB_PORT}/)#\1${POLICY_HUB}\2#g" "$HOME/.hermes/config.yaml" > "$OSH_DIR/sandbox-hermes-config.yaml"
-chmod 600 "$OSH_DIR/sandbox-hermes-config.yaml"
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
 gpuarg=""; [ "$OSH_GPU" = yes ] && gpuarg=" --gpu"
@@ -602,10 +598,9 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPE
   echo "MAC_OPENSHELL_SANDBOX=$DO_ENABLE"
   echo "MAC_OPENSHELL_GC=1"
   echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
-  echo "MAC_HERMES_PYTHON=/opt/mac-venv/bin/python"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg --upload $OSH_DIR/sandbox-hermes-config.yaml:/tmp/.hermes/config.yaml$codex_uploads\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg$codex_uploads\""
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"

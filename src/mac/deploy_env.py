@@ -22,11 +22,12 @@ from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provide
 
 
 DEFAULT_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
+    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 
 
@@ -879,7 +880,7 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
-    values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-hermes-task-executor"))
+    values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-task-executor"))
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
     # Fail-closed default: repo tasks under OpenShell require a verified coding

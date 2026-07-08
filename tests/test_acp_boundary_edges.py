@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from types import SimpleNamespace
 
@@ -74,15 +73,24 @@ class _Proc:
 
 
 def test_backend_default_and_argv_precedence(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("MAC_HERMES_PYTHON", "/custom/python")
-    assert backend.default_argv("prompt")[0] == "/custom/python"
+    monkeypatch.setenv("MAC_OPENCLAW_AGENT_BIN", "/custom/openclaw-agent")
+    assert backend.default_argv("prompt") == [
+        "/custom/openclaw-agent",
+        "--agent",
+        "main",
+        "--message",
+        "prompt",
+        "--session-id",
+        "mac-acp",
+        "--json",
+    ]
     explicit = backend.MacAgentBackend(argv=["agent", "run"])
     assert explicit._resolve_argv("prompt") == ["agent", "run", "prompt"]
     monkeypatch.setenv("MAC_ACP_BACKEND_CMD", "env-agent --flag")
     env_backend = backend.MacAgentBackend()
     assert env_backend._resolve_argv("prompt") == ["env-agent", "--flag", "prompt"]
     monkeypatch.delenv("MAC_ACP_BACKEND_CMD")
-    assert env_backend._resolve_argv("prompt")[-2:] == ["prompt", "--quiet"]
+    assert env_backend._resolve_argv("prompt")[-2:] == ["mac-acp", "--json"]
 
 
 def test_subprocess_runner_streams_and_closes(monkeypatch) -> None:

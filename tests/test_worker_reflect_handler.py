@@ -5,17 +5,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
-
-import pytest
-
 from mac import worker
 from mac.agentbus_control import (
     REFLECT_REQUEST_CONTENT_TYPE,
     REFLECT_REQUEST_TOPIC,
     REFLECT_RESULT_CONTENT_TYPE,
     REFLECT_RESULT_TOPIC,
-    reflect_result_payload,
 )
 
 
@@ -219,12 +214,12 @@ class TestRunReflectQuery:
         response = inst._run_reflect_query("Who are you?")
         assert response == "I am ready."
 
-    def test_runtime_query_passed_to_hermes_with_agent_context(
+    def test_runtime_query_passed_to_openclaw_in_openshell(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         inst = _instance(tmp_path)
         captured: Dict[str, Any] = {}
-        mac_hermes_home = tmp_path / "mac-hermes-home"
+        agent_bin = tmp_path / "openclaw-agent"
 
         def _capture_run(argv, *, env, timeout, **kw):
             captured["argv"] = argv
@@ -234,10 +229,8 @@ class TestRunReflectQuery:
                 args=argv, returncode=0, stdout="runtime answer", stderr=""
             )
 
-        monkeypatch.delenv("HERMES_HOME", raising=False)
-        monkeypatch.setenv("MAC_HERMES_HOME", str(mac_hermes_home))
+        monkeypatch.setenv("MAC_OPENCLAW_AGENT_BIN", str(agent_bin))
         monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "12.5")
-        monkeypatch.setattr("mac.hermes_runtime.hermes_python", lambda: "/hermes/python")
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
 
@@ -245,23 +238,32 @@ class TestRunReflectQuery:
 
         assert response == "runtime answer"
         argv = captured["argv"]
-        assert argv[:4] == ["/hermes/python", "-m", "hermes_cli.main", "chat"]
-        assert argv[4:6] == ["--query", argv[5]]
-        runtime_query = argv[5]
+        assert argv[:4] == [str(agent_bin), "--agent", "main", "--message"]
+        runtime_query = argv[4]
         assert "Requester query:\nWhat task are you running?" in runtime_query
-        assert "SOUL.md" in runtime_query
-        assert "MEMORY.md" in runtime_query
+        assert "OpenClaw workspace context" in runtime_query
         assert "host or command inventory" in runtime_query
         assert "300 words" in runtime_query
-        assert "--quiet" in argv
-        assert "--accept-hooks" in argv
-        assert "--yolo" in argv
+        assert argv[5:] == ["--session-id", "mac-reflect-agent_test", "--json"]
         env = captured["env"]
-        assert env["HERMES_HOME"] == str(mac_hermes_home)
-        assert env["MAC_HERMES_HOME"] == str(mac_hermes_home)
         assert env["MAC_AGENT_ID"] == "agent_test"
         assert env["MAC_WORKER_AGENT_ID"] == "agent_test"
         assert captured["timeout"] == 12.5
+
+    def test_extracts_text_from_openclaw_json(self, tmp_path: Path, monkeypatch) -> None:
+        inst = _instance(tmp_path)
+        monkeypatch.setattr(
+            worker.subprocess,
+            "run",
+            lambda *a, **kw: subprocess.CompletedProcess(
+                args=a[0],
+                returncode=0,
+                stdout='{"payloads":[{"text":"OpenClaw answer"}]}',
+                stderr="",
+            ),
+        )
+        monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
+        assert inst._run_reflect_query("Who?") == "OpenClaw answer"
 
     def test_nonzero_returncode_returns_error_text(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
@@ -284,7 +286,7 @@ class TestRunReflectQuery:
 
         def _timeout_run(*a, **kw):
             captured.update(kw)
-            raise subprocess.TimeoutExpired(cmd="mac-hermes", timeout=120)
+            raise subprocess.TimeoutExpired(cmd="openclaw-agent", timeout=120)
 
         monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "7")
         monkeypatch.setattr(worker.subprocess, "run", _timeout_run)
@@ -300,7 +302,7 @@ class TestRunReflectQuery:
         observations = []
 
         def _bad_run(*a, **kw):
-            raise FileNotFoundError("mac-hermes not found")
+            raise FileNotFoundError("openclaw-agent not found")
 
         monkeypatch.setattr(worker.subprocess, "run", _bad_run)
         monkeypatch.setattr(inst, "_observe_log", lambda name, **kw: observations.append(name))
@@ -309,28 +311,25 @@ class TestRunReflectQuery:
         assert "reflect query failed" in response
         assert "worker.agentbus.reflect.error" in observations
 
-    def test_hermes_home_and_mac_hermes_home_propagated_to_env(
+    def test_stream_id_is_sanitized_for_openclaw_session(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """HERMES_HOME and MAC_HERMES_HOME should reach the runtime subprocess."""
         inst = _instance(tmp_path)
-        captured_env = {}
+        captured_argv = []
 
         def _capture_run(argv, *, env, **kw):
-            captured_env.update(env)
+            captured_argv.extend(argv)
             return subprocess.CompletedProcess(
                 args=argv, returncode=0, stdout="ok", stderr=""
             )
 
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
-        monkeypatch.setenv("MAC_HERMES_HOME", str(tmp_path / "mac-hermes"))
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
 
-        inst._run_reflect_query("Q?")
-        assert captured_env.get("HERMES_HOME") == str(tmp_path / "hermes")
-        assert captured_env.get("MAC_HERMES_HOME") == str(tmp_path / "mac-hermes")
-        assert captured_env.get("MAC_AGENT_ID") == "agent_test"
+        inst._run_reflect_query("Q?", stream_id="stream/with spaces")
+        assert captured_argv[captured_argv.index("--session-id") + 1] == (
+            "mac-reflect-stream-with-spaces"
+        )
 
 
 # ---------------------------------------------------------------------------

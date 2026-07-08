@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 import urllib.parse
 from pathlib import Path
@@ -14,33 +13,6 @@ import yaml
 
 
 RUNTIME_CONTEXT_SCHEMA = "mac.hermes.runtime_context.v1"
-
-
-def hermes_python() -> str:
-    """Resolve the interpreter for the remaining vendored-Hermes consumers.
-
-    Task execution no longer falls back to Hermes chat.  Reflection and the
-    temporary messaging-MCP compatibility surface still import ``hermes_cli``
-    until their own retirement steps land, so keep their interpreter/PYTHONPATH
-    setup here instead of exposing a chat-runner helper from ``task_executor``.
-    """
-
-    override = (os.environ.get("MAC_HERMES_PYTHON") or "").strip()
-    if override:
-        return override
-    installed = Path.home() / ".mac" / "venv" / "bin" / "python"
-    vendored = Path.home() / ".mac" / "src" / "mac" / "src" / "mac" / "_hermes"
-    if installed.exists():
-        os.environ["PYTHONPATH"] = str(vendored) + os.pathsep + os.environ.get(
-            "PYTHONPATH", ""
-        )
-        return str(installed)
-    # Development/test environments may not have a deployed ~/.mac runtime.
-    local_vendored = Path(__file__).resolve().parent / "_hermes"
-    os.environ["PYTHONPATH"] = str(local_vendored) + os.pathsep + os.environ.get(
-        "PYTHONPATH", ""
-    )
-    return sys.executable
 
 
 def stable_id(prefix: str, value: str) -> str:
@@ -217,9 +189,9 @@ def _session_capability_contract(
             "name": "hermes_oneshot_executor",
             "kind": "executor",
             "required": True,
-            "command": "mac-hermes-task-executor",
-            "expected_path": str(mac_home / "bin" / "mac-hermes-task-executor"),
-            "purpose": "Run a MAC task through Hermes oneshot mode with the same workspace, prompt context, and command audit envelope as deployed agents.",
+            "command": "mac-task-executor",
+            "expected_path": str(mac_home / "bin" / "mac-task-executor"),
+            "purpose": "Run a MAC task through a verified coding-agent CLI inside OpenShell with the same workspace and command audit envelope as deployed agents.",
         },
         {
             "name": "command_audit",
@@ -271,7 +243,7 @@ def _session_capability_contract(
     direct_session_workflow.extend(
         [
             "mac-hermes agent-identity %s" % agent_id,
-            "mac-agent --loop --executor %s" % (mac_home / "bin" / "mac-hermes-task-executor"),
+            "mac-agent --loop --executor %s" % (mac_home / "bin" / "mac-task-executor"),
             "git status --short --branch",
             test_command,
             "git add <files>",
@@ -297,7 +269,7 @@ def _session_capability_contract(
             "Use `mac` / `mac-hermes` for agent CRUD and operational agent state, not ad hoc database edits.",
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
-            "Use mac-hermes-task-executor through mac-agent loop mode for production Hermes oneshot task execution.",
+            "Use mac-task-executor through mac-agent loop mode for production coding-agent task execution.",
             "Own the full code lifecycle for repository work: write the change, "
             "run the contract checks, commit/push the task branch, obtain "
             "cross-review, and publish the approved change to the repository "

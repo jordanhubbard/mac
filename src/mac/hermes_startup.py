@@ -7,7 +7,6 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,7 +64,7 @@ RUNTIME_MARKDOWN_REQUIRED_SNIPPETS = (
     "selected={task_id}",
     "Direct Session Parity",
     "`hermes_oneshot_executor`",
-    "mac-hermes-task-executor",
+    "mac-task-executor",
     "`shell_execution`",
     "`workspace_file_access`",
     "mac task ready",

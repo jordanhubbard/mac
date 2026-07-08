@@ -168,19 +168,19 @@ def test_run_prompt_cancelled_mid_run_returns_cancelled():
 
 
 def test_default_argv_shape():
-    """The derived default mirrors the task_executor hermes invocation shape."""
+    """The default enters the verified OpenClaw OpenShell service sandbox."""
 
     argv = default_argv("solve it")
+    assert argv[0].endswith("/.mac/bin/openclaw-agent")
     assert argv[1:] == [
-        "-m",
-        "hermes_cli.main",
-        "chat",
-        "--query",
+        "--agent",
+        "main",
+        "--message",
         "solve it",
-        "--quiet",
+        "--session-id",
+        "mac-acp",
+        "--json",
     ]
-    # --yolo is deliberately NOT in the unsandboxed backend invocation.
-    assert "--yolo" not in argv
 
 
 # ---------------------------------------------------------------------------

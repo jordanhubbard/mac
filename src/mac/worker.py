@@ -216,8 +216,7 @@ class SubprocessExecutor:
         if agent_id_ctx:
             env["MAC_AGENT_ID"] = agent_id_ctx
         # Per-task model override (metadata.model / metadata.runtime.model):
-        # the vendored Hermes runtime reads MAC_TASK_MODEL at argv build time
-        # and the coding-CLI argv builders pass it as --model/-m, so a task
+        # coding-CLI argv builders pass it as --model/-m, so a task
         # that declares a cheaper (or stronger) model gets it without any
         # fleet-wide config change. llm.route records requested/resolved
         # model per completion, so the override is visible in observability.
@@ -2204,7 +2203,7 @@ class MacWorker:
     # ------------------------------------------------------------------
 
     def _handle_reflect_request_stream(self, stream: JsonDict) -> JsonDict:
-        """Dispatch a reflect request to this agent's own Hermes runtime.
+        """Dispatch a reflect request to this agent's OpenClaw runtime.
 
         The request payload may include a *query* field.  A bounded subprocess
         call is made so a slow LLM response cannot block the poll loop.  The
@@ -2278,13 +2277,13 @@ class MacWorker:
         return {"status": "completed", "summary": "reflect completed", "stream_id": stream_id}
 
     def _reflect_runtime_query(self, query: str) -> str:
-        """Build the bounded prompt sent into this agent's Hermes runtime."""
+        """Build the bounded prompt sent into this agent's OpenClaw runtime."""
         request = str(query or "").strip()
         return "\n".join(
             [
-                "You are answering a MAC reflect request from inside your own Hermes runtime.",
-                "Use the active HERMES_HOME/MAC_HERMES_HOME context, including SOUL.md, "
-                "MEMORY.md, MAC runtime context, and any visible host or command inventory.",
+                "You are answering a MAC reflect request from inside your own OpenClaw runtime.",
+                "Use the active OpenClaw workspace context, MAC runtime context, and any "
+                "visible host or command inventory.",
                 "Answer with concrete details about your runtime identity, memory context, "
                 "host inventory or capabilities, active task/status, and the requester query.",
                 "Keep the final answer at or below 300 words.",
@@ -2295,44 +2294,35 @@ class MacWorker:
         )
 
     def _run_reflect_query(self, query: str, *, stream_id: str = "") -> str:
-        """Run *query* through this agent's own Hermes runtime via a bounded subprocess.
+        """Run *query* through this agent's OpenClaw/OpenShell runtime.
 
-        Reads HERMES_HOME/MAC_HERMES_HOME from the environment so the
-        subprocess loads this agent's own soul/memory/host context.  Times out
-        after 120 s by default so a slow LLM call cannot block the poll loop.
+        The host wrapper performs ``openshell sandbox exec`` into the verified
+        long-lived OpenClaw sandbox.  No host-side Hermes process or direct
+        provider fallback is allowed.  The bounded timeout prevents a slow LLM
+        response from blocking the worker poll loop.
         """
-        hermes_home = (
-            os.environ.get("HERMES_HOME")
-            or os.environ.get("MAC_HERMES_HOME")
-            or str(Path.home() / ".hermes")
-        ).strip()
-
-        # `mac-hermes` is the ADAPTER CLI (task/agent ops) and has no oneshot
-        # mode — the original invocation always failed with a usage error and
-        # the reflection fell back to a stub. Use the executor's PROVEN agent
-        # invocation instead: the vendored Hermes runtime via hermes_cli.main
-        # chat, which loads this agent's soul/memory from HERMES_HOME.
-        from mac.hermes_runtime import hermes_python
-
         runtime_query = self._reflect_runtime_query(query)
         timeout_s = _bounded_float(os.environ.get("MAC_REFLECT_TIMEOUT"), 1.0, 600.0, 120.0)
+        agent_bin = Path(
+            os.environ.get("MAC_OPENCLAW_AGENT_BIN")
+            or Path.home() / ".mac" / "bin" / "openclaw-agent"
+        )
+        safe_stream = re.sub(r"[^A-Za-z0-9_.-]+", "-", stream_id).strip("-")
+        session_id = "mac-reflect-%s" % (safe_stream or self.agent_id)
         try:
             env = os.environ.copy()
-            env["HERMES_HOME"] = hermes_home
-            env.setdefault("MAC_HERMES_HOME", hermes_home)
             env["MAC_AGENT_ID"] = self.agent_id
             env["MAC_WORKER_AGENT_ID"] = self.agent_id
             result = subprocess.run(
                 [
-                    hermes_python(),
-                    "-m",
-                    "hermes_cli.main",
-                    "chat",
-                    "--query",
+                    str(agent_bin),
+                    "--agent",
+                    "main",
+                    "--message",
                     runtime_query,
-                    "--quiet",
-                    "--accept-hooks",
-                    "--yolo",
+                    "--session-id",
+                    session_id,
+                    "--json",
                 ],
                 capture_output=True,
                 text=True,
@@ -2348,7 +2338,32 @@ class MacWorker:
                     "reflect query completed with returncode %d. %s"
                     % (result.returncode, stderr_summary)
                 ).strip()
-            return output
+            try:
+                payload = json.loads(output)
+            except (TypeError, ValueError):
+                return output
+
+            def response_text(value: Any) -> str:
+                if isinstance(value, dict):
+                    for key in ("text", "response", "content", "message"):
+                        candidate = value.get(key)
+                        if isinstance(candidate, str) and candidate.strip():
+                            return candidate.strip()
+                        nested = response_text(candidate)
+                        if nested:
+                            return nested
+                    for key in ("payloads", "messages", "result", "data"):
+                        nested = response_text(value.get(key))
+                        if nested:
+                            return nested
+                elif isinstance(value, list):
+                    for item in value:
+                        nested = response_text(item)
+                        if nested:
+                            return nested
+                return ""
+
+            return response_text(payload) or output
         except subprocess.TimeoutExpired:
             self._observe_log(
                 "worker.agentbus.reflect.error",

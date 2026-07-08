@@ -21,6 +21,9 @@ POLICY_PATH="$OPENCLAW_HOST_DIR/openclaw-policy.yaml"
 WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
 STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
+AGENT_WRAPPER_PATH="$MAC_HOME/bin/openclaw-agent"
+VERIFICATION_RECORD_PATH="$OPENCLAW_HOST_DIR/verification-pending.json"
+ADVERTISEMENT_PATH="$OPENCLAW_HOST_DIR/service-advertisement.json"
 CONTAINERFILE="${MAC_OPENCLAW_CONTAINERFILE:-$MAC_SRC/deploy/openclaw/OpenClaw.Containerfile}"
 BUILD_CONTEXT="${MAC_OPENCLAW_BUILD_CONTEXT:-$MAC_SRC}"
 POLICY_TEMPLATE="${MAC_OPENCLAW_POLICY_TEMPLATE:-$MAC_SRC/deploy/openclaw/openclaw-policy.yaml}"
@@ -81,7 +84,7 @@ find_docker() {
 
 resolve_slack_home_target() {
   local configured="${1:-}" account_id="${2:-default}"
-  local homes_file="${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}"
+  local homes_file="${MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE:-$OPENCLAW_HOST_DIR/slack_home_channels.json}"
   python3 - "$configured" "$account_id" "$homes_file" <<'PY'
 import json
 import re
@@ -130,8 +133,8 @@ PY
 
 source_host_env() {
   # Generated runtime.env is trusted local state and preserves the gateway auth
-  # token across idempotent deploys.  Fleet/Hermes env files then refresh the
-  # router and channel credentials from their canonical host-local sources.
+  # token across idempotent deploys. Fleet config refreshes router settings;
+  # the owner-only OpenClaw credentials file is the sole channel-secret source.
   local persisted_gateway_token=""
   if [ -f "$MANAGED_DIR/runtime.env" ]; then
     persisted_gateway_token="$(
@@ -143,7 +146,7 @@ source_host_env() {
   set +u
   set -a
   [ -f "$MAC_HOME/mac.env" ] && . "$MAC_HOME/mac.env"
-  [ -f "$HOME/.hermes/.env" ] && . "$HOME/.hermes/.env"
+  unset SLACK_BOT_TOKEN SLACK_APP_TOKEN TELEGRAM_BOT_TOKEN
   [ -f "$OPENCLAW_HOST_DIR/credentials.env" ] && . "$OPENCLAW_HOST_DIR/credentials.env"
   set +a
   set -u
@@ -521,6 +524,15 @@ exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
   /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
 EOF
   chmod 0700 "$MESSAGE_WRAPPER_PATH"
+  cat > "$AGENT_WRAPPER_PATH" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+OPEN_SHELL=$(printf '%q' "$openshell_bin")
+SANDBOX=$(printf '%q' "$SANDBOX_NAME")
+exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
+  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw agent "\$@"' mac-openclaw-agent "\$@"
+EOF
+  chmod 0700 "$AGENT_WRAPPER_PATH"
 }
 
 build_image() {
@@ -568,6 +580,10 @@ backup_and_delete_stale_sandbox() {
 prepare() {
   source_host_env
   validate_env
+  # An advertisement is live-state evidence, not desired state.  Withdraw the
+  # prior record before changing the service and republish only after the
+  # post-cutover exclusivity check succeeds.
+  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
   prepare_directories
   write_config
   write_runtime_env
@@ -647,7 +663,9 @@ verify() {
         ;;
     esac
   fi
-  python3 - "$OPENCLAW_HOST_DIR/service-advertisement.json" <<'PY'
+  # This is deliberately only a pending record.  The deployer must stop every
+  # legacy gateway and invoke ``finalize`` before workers may advertise it.
+  python3 - "$VERIFICATION_RECORD_PATH" <<'PY'
 import json
 import os
 import sys
@@ -726,10 +744,104 @@ PY
   fi
 }
 
+finalize() {
+  source_host_env
+  validate_env
+  [ -f "$VERIFICATION_RECORD_PATH" ] \
+    || die "OpenClaw verification record is absent; run verify before finalize"
+
+  local fleet="$MAC_OPENCLAW_FLEET_NAME"
+  local supervisor="${MAC_OPENCLAW_SUPERVISOR:-auto}"
+  if [ "$supervisor" = auto ]; then
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+      supervisor=systemd
+    elif [ "$(uname -s)" = Darwin ]; then
+      supervisor=launchd
+    else
+      supervisor=supervisord
+    fi
+  fi
+
+  local openclaw_state="unknown" hermes_state="unknown" nemoclaw_state="unknown"
+  case "$supervisor" in
+    systemd)
+      openclaw_state="$(sudo systemctl is-active "${fleet}-openclaw-gateway.service" 2>/dev/null || true)"
+      hermes_state="$(sudo systemctl is-active "${fleet}-hermes-gateway.service" 2>/dev/null || true)"
+      nemoclaw_state="$(sudo systemctl is-active "${fleet}-nemoclaw-gateway.service" 2>/dev/null || true)"
+      ;;
+    launchd)
+      local uid
+      uid="$(id -u)"
+      if launchctl print "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1; then openclaw_state=active; else openclaw_state=inactive; fi
+      if launchctl print "gui/$uid/com.${fleet}.hermes-gateway" >/dev/null 2>&1; then hermes_state=active; else hermes_state=inactive; fi
+      if launchctl print "gui/$uid/com.${fleet}.nemoclaw-gateway" >/dev/null 2>&1; then nemoclaw_state=active; else nemoclaw_state=inactive; fi
+      ;;
+    supervisord)
+      openclaw_state="$(sudo supervisorctl status "${fleet}-openclaw-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
+      hermes_state="$(sudo supervisorctl status "${fleet}-hermes-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
+      nemoclaw_state="$(sudo supervisorctl status "${fleet}-nemoclaw-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
+      ;;
+    *) die "unsupported supervisor for OpenClaw finalization: $supervisor" ;;
+  esac
+
+  case "$openclaw_state" in
+    active|running) ;;
+    *) die "OpenClaw service is not active after cutover ($supervisor state=${openclaw_state:-missing})" ;;
+  esac
+  case "$hermes_state" in
+    active|running|starting|backoff) die "Hermes gateway remains active after OpenClaw cutover ($supervisor state=$hermes_state)" ;;
+  esac
+  case "$nemoclaw_state" in
+    active|running|starting|backoff) die "NemoClaw gateway remains active after OpenClaw cutover ($supervisor state=$nemoclaw_state)" ;;
+  esac
+
+  MAC_OPENCLAW_FINALIZE_SUPERVISOR="$supervisor" \
+  MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE="$openclaw_state" \
+  MAC_OPENCLAW_FINALIZE_HERMES_STATE="${hermes_state:-absent}" \
+  MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE="${nemoclaw_state:-absent}" \
+    python3 - "$VERIFICATION_RECORD_PATH" "$ADVERTISEMENT_PATH" <<'PY'
+import json
+import os
+import sys
+import time
+
+source, destination = sys.argv[1:]
+with open(source, encoding="utf-8") as handle:
+    record = json.load(handle)
+verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+ownership = {
+    "schema": "mac.gateway_ownership.v1",
+    "exclusive": True,
+    "owner": "openclaw",
+    "supervisor": os.environ["MAC_OPENCLAW_FINALIZE_SUPERVISOR"],
+    "services": {
+        "openclaw": os.environ["MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE"],
+        "hermes": os.environ["MAC_OPENCLAW_FINALIZE_HERMES_STATE"],
+        "nemoclaw": os.environ["MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE"],
+    },
+    "verified_at": verified_at,
+}
+record["gateway_ownership"] = ownership
+record["openclaw_runtime"]["exclusive_service_owner"] = True
+record["openclaw_runtime"]["exclusive_verified_at"] = verified_at
+if "chat_gateway" in record:
+    record["chat_gateway"]["exclusive_channel_owner"] = True
+    record["chat_gateway"]["exclusive_verified_at"] = verified_at
+temporary = destination + ".tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(record, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, destination)
+os.unlink(source)
+PY
+  log "published OpenClaw service advertisement after exclusive gateway ownership was proved"
+}
+
 rollback() {
   local fleet="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
   local supervisor="${MAC_OPENCLAW_SUPERVISOR:-auto}"
-  rm -f "$OPENCLAW_HOST_DIR/service-advertisement.json"
+  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
   if [ "$supervisor" = auto ]; then
     if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
       supervisor=systemd
@@ -768,6 +880,7 @@ rollback() {
 case "${1:-prepare}" in
   prepare) prepare ;;
   verify) verify ;;
+  finalize) finalize ;;
   rollback) rollback ;;
-  *) die "usage: $0 [prepare|verify|rollback]" ;;
+  *) die "usage: $0 [prepare|verify|finalize|rollback]" ;;
 esac

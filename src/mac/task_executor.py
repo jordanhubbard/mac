@@ -1,8 +1,8 @@
 """Autonomous task executor (extracted from the deploy heredoc — loop-01).
 
 This is the process the MacWorker spawns per claimed task. It builds a prompt,
-runs the vendored Hermes agent (``hermes_cli.main chat --query … --yolo``,
-agentic, max_turns=90) in the task's git worktree, then derives **honest,
+runs an authenticated coding-agent CLI inside a mandatory OpenShell sandbox in
+the task's git worktree, then derives **honest,
 deterministic** evidence from real git state (or, for non-repo work, records the
 agent's output as an *unverified* operator_result — never a fabricated pass).
 
@@ -1233,7 +1233,7 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
         "cwd": str(cwd),
         "task_id": task_id,
         "started_at": started_at,
-        "metadata": {"component": "mac-hermes-task-executor", "argv_sha256": argv_hash, **metadata},
+        "metadata": {"component": "mac-task-executor", "argv_sha256": argv_hash, **metadata},
     }
     post_command_audit(agent_id, {**base, "phase": "started"})
     timeout = metadata.pop("timeout", None) if isinstance(metadata, dict) else None
@@ -1305,7 +1305,7 @@ def build_telemetry_record(
         "name": "executor.%s" % event,
         "level": level,
         "layer": "executor",
-        "source": "mac-hermes-task-executor",
+        "source": "mac-task-executor",
         "subject_type": "task" if task_id else None,
         "subject_id": task_id,
         "detail": {"schema": "mac.executor_telemetry.v1", "agent_id": local_agent_id(), **detail},
@@ -1590,7 +1590,7 @@ def build_learning_record(task: Dict[str, Any], outcome: Dict[str, Any]) -> Dict
         "record_type": "%s:%s" % (DEPLOYMENT_LEARNING_PREFIX, project),
         "content": json.dumps(content, sort_keys=True, separators=(",", ":")),
         "task_id": task.get("id"),
-        "created_by": "mac-hermes-task-executor",
+        "created_by": "mac-task-executor",
     }
 
 
@@ -1644,7 +1644,7 @@ def build_plan_learning_record(
         "record_type": "%s:%s" % (DEPLOYMENT_LEARNING_PREFIX, project),
         "content": json.dumps(content, sort_keys=True, separators=(",", ":")),
         "task_id": task.get("id"),
-        "created_by": "mac-hermes-task-executor",
+        "created_by": "mac-task-executor",
     }
 
 
@@ -3364,14 +3364,6 @@ def _write_agent_command_bundle(
         policy_file=policy_file,
         interpreter=sys.executable,
     )
-
-
-def _mcp_serve_argv() -> List[str]:
-    """The vendored messaging MCP server command (registered with a coding-agent
-    CLI for messaging-tool parity, where the CLI supports per-invocation MCP)."""
-    from mac.hermes_runtime import hermes_python
-
-    return [hermes_python(), "-m", "hermes_cli.main", "mcp", "serve"]
 
 
 # ---------------------------------------------------------------------------
@@ -5284,28 +5276,6 @@ def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
     return True
 
 
-def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]:
-    """Materialize an MCP config registering the messaging server, return its path.
-
-    Only when messaging-MCP is enabled and the agent supports per-invocation MCP
-    (Claude Code). Best-effort: any failure returns ``None`` — hub parity via the
-    ``mac`` CLI + runtime context is unaffected. Not used on the sandboxed path
-    (the host config-file path and host MCP-server interpreter do not resolve
-    inside the sandbox — see :func:`_agent_argv`).
-    """
-    try:
-        from . import coding_agent as _ca
-
-        if not (_ca.messaging_mcp_enabled(os.environ) and _ca.supports_per_invocation_mcp(choice.agent)):
-            return None
-        doc = _ca.mcp_config_document(_mcp_serve_argv(), name="hermes")
-        path = workspace / ".mac-coding-agent-mcp.json"
-        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-        return str(path)
-    except Exception:  # noqa: BLE001 - MCP wiring is best-effort parity, not required
-        return None
-
-
 # Per-process cache keyed by the full secret-free route fingerprint. A binary-only
 # key incorrectly reused success after an endpoint, protocol, auth source, or model
 # changed. Entries expire so revoked credentials and dead routes stop dispatch.
@@ -5603,7 +5573,10 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     # interpreter do not reliably resolve inside the sandbox (messaging-MCP parity
     # there is provisioned image-side). Hub parity (mac CLI + runtime context)
     # still applies regardless.
-    mcp_path = None if confined else _coding_agent_mcp_config_path(workspace, choice)
+    # Human-facing delivery is owned exclusively by the OpenClaw gateway.  Do
+    # not inject the retired vendored-Hermes messaging MCP into coding agents;
+    # task-to-human messages flow through MAC's durable delivery outbox instead.
+    mcp_path = None
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(choice.agent, rationale, task_id=task_id)

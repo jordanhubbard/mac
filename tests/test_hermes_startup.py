@@ -95,7 +95,7 @@ def _executable(path, content: str = "#!/bin/sh\nexit 0\n") -> None:
 def _prepare_direct_session_tools(monkeypatch, mac_home, workspace) -> None:
     for name in ("mac", "mac-hermes", "mac-firecrawl-gateway"):
         _executable(mac_home / "venv" / "bin" / name)
-    for name in ("mac-hermes-task-executor",):
+    for name in ("mac-task-executor",):
         _executable(mac_home / "bin" / name)
     _executable(workspace / "scripts" / "run-contract-tests.sh")
     monkeypatch.setenv(

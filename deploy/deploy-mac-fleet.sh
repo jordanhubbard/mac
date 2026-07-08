@@ -422,7 +422,7 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
-DEFAULT_WORKER_CAPABILITIES = "ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 LEGACY_WORKER_CAPABILITIES = {
     "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
 }
@@ -1397,7 +1397,7 @@ HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
 WORKER_MODE="${MAC_DEPLOY_WORKER_MODE:-heartbeat}"
-WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_REQUIRE_CANARY="${MAC_DEPLOY_WORKER_REQUIRE_CANARY:-1}"
@@ -2396,7 +2396,7 @@ required = [
     "Dashboard Views",
     "/ui?view=work",
     "Direct Session Parity",
-    "mac-hermes-task-executor",
+    "mac-task-executor",
     "mac-hermes work-context",
     "mac-hermes tasks",
     "mac-hermes add-child-task",
@@ -3441,18 +3441,10 @@ PY
 }
 
 fetch_slack_secrets_from_vault() {
-  # Pull this agent's Slack tokens from mac's OWN vault (the hub's
-  # SecretsService, via /secrets + /secrets/<name>/resolve) — the
-  # centralized secret store that replaces per-host .env scattering.
-  # Idempotent; writes ~/.hermes/slack_accounts.json and updates
-  # SLACK_BOT_TOKEN / SLACK_APP_TOKEN in ~/.hermes/config.yaml's env block.
-  # (Secrets were migrated off the retired TokenHub by
-  # scripts/migrate-tokenhub-vault.sh.)
+  # Pull this agent's channel credentials from MAC's own vault.  OpenClaw and
+  # Hermes have deliberately disjoint destinations: an OpenClaw deployment
+  # must never refresh the retained rollback gateway's credential files.
   local fetcher="$SRC_DIR/scripts/mac-fetch-slack-secrets.py"
-  if [ ! -f "$fetcher" ]; then
-    log "skipping Slack vault fetch: $fetcher not present (older mac source?)"
-    return 0
-  fi
   if [ "$(printf '%s' "${MAC_DEPLOY_ROUTER_BACKEND:-}" | tr 'A-Z' 'a-z')" = inproc ]; then
     local mac_vault_url="${MAC_HUB_URL:-http://127.0.0.1:${MAC_PORT:-8789}}"
     local mac_vault_token="${MAC_WORKER_TOKEN:-${MAC_API_TOKEN:-}}"
@@ -3469,27 +3461,33 @@ fetch_slack_secrets_from_vault() {
       curl -fsS -m3 "${mac_vault_url%/}/health" >/dev/null 2>&1 && break
       sleep 2
     done
-    log "fetching Slack secrets for ${AGENT} from mac vault ($mac_vault_url)"
+    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+      local openclaw_fetcher="$SRC_DIR/scripts/mac-fetch-openclaw-secrets.py"
+      [ -f "$openclaw_fetcher" ] \
+        || die "OpenClaw credential fetcher is missing: $openclaw_fetcher"
+      log "fetching OpenClaw channel credentials for ${AGENT} from mac vault ($mac_vault_url)"
+      MAC_AGENT_NAME="$AGENT" \
+        MAC_OPENCLAW_PUBLIC_IDENTITY="$OPENCLAW_PUBLIC_IDENTITY" \
+        MAC_OPENCLAW_SLACK_ACCOUNT_ID="$OPENCLAW_SLACK_ACCOUNT_ID" \
+        MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="$OPENCLAW_TELEGRAM_ACCOUNT_ID" \
+        MAC_SECRET_VAULT_URL="$mac_vault_url" \
+        MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
+        MAC_OPENCLAW_CREDENTIALS_FILE="$MAC_HOME/openclaw/credentials.env" \
+        "$PY" "$openclaw_fetcher" >> "$DEPLOY_LOG" 2>&1 \
+        || die "mac-vault OpenClaw credential fetch failed for ${AGENT}"
+      return 0
+    fi
+    if [ ! -f "$fetcher" ]; then
+      log "skipping Hermes Slack vault fetch: $fetcher not present (older mac source?)"
+      return 0
+    fi
+    log "fetching Hermes rollback Slack secrets for ${AGENT} from mac vault ($mac_vault_url)"
     MAC_AGENT_NAME="$AGENT" \
       MAC_SECRET_VAULT_URL="$mac_vault_url" \
       MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
       HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
       "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
         log "WARNING: mac-vault Slack fetch failed for ${AGENT}; existing slack config preserved"
-    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
-      local openclaw_fetcher="$SRC_DIR/scripts/mac-fetch-openclaw-secrets.py"
-      if [ -f "$openclaw_fetcher" ]; then
-        MAC_AGENT_NAME="$AGENT" \
-          MAC_OPENCLAW_PUBLIC_IDENTITY="$OPENCLAW_PUBLIC_IDENTITY" \
-          MAC_OPENCLAW_SLACK_ACCOUNT_ID="$OPENCLAW_SLACK_ACCOUNT_ID" \
-          MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="$OPENCLAW_TELEGRAM_ACCOUNT_ID" \
-          MAC_SECRET_VAULT_URL="$mac_vault_url" \
-          MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
-          MAC_OPENCLAW_CREDENTIALS_FILE="$MAC_HOME/openclaw/credentials.env" \
-          "$PY" "$openclaw_fetcher" >> "$DEPLOY_LOG" 2>&1 || \
-            log "WARNING: mac-vault OpenClaw credential fetch failed for ${AGENT}"
-      fi
-    fi
     return 0
   fi
 }
@@ -4864,8 +4862,10 @@ sync_messaging_config() {
   reload_mac_env
   fetch_slack_secrets_from_vault
   reload_mac_env
-  sync_hermes_slack_identity_env
-  sync_hermes_home_channels
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then
+    sync_hermes_slack_identity_env
+    sync_hermes_home_channels
+  fi
 }
 
 prepare_openclaw_gateway() {
@@ -4898,6 +4898,22 @@ verify_openclaw_gateway() {
   MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="$OPENCLAW_TELEGRAM_ACCOUNT_ID" \
   MAC_OPENCLAW_LIVE_CANARY="${MAC_DEPLOY_OPENCLAW_LIVE_CANARY:-0}" \
     "$installer" verify
+}
+
+finalize_openclaw_gateway() {
+  local installer="$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
+  MAC_SRC="$SRC_DIR" \
+  MAC_OPENCLAW_AGENT_ID="${MAC_AGENT_ID:-agent_$AGENT}" \
+  MAC_OPENCLAW_FLEET_NAME="$FLEET_NAME" \
+  MAC_OPENCLAW_MODEL="${HERMES_GATEWAY_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-}}" \
+  MAC_OPENCLAW_ROUTER_URL="${HERMES_GATEWAY_BASE_URL:-${MAC_HERMES_GATEWAY_BASE_URL:-}}" \
+  MAC_OPENCLAW_PUBLIC_IDENTITY="$OPENCLAW_PUBLIC_IDENTITY" \
+  MAC_OPENCLAW_REPRESENTED_BY="$OPENCLAW_REPRESENTED_BY" \
+  MAC_OPENCLAW_REPRESENTATION_MODE="$OPENCLAW_REPRESENTATION_MODE" \
+  MAC_OPENCLAW_SLACK_ACCOUNT_ID="$OPENCLAW_SLACK_ACCOUNT_ID" \
+  MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="$OPENCLAW_TELEGRAM_ACCOUNT_ID" \
+  MAC_OPENCLAW_SUPERVISOR="$SUPERVISOR_KIND" \
+    "$installer" finalize
 }
 
 rollback_openclaw_gateway() {
@@ -5006,7 +5022,12 @@ PY
   fi
   sudo systemctl disable --now "$HERMES_SERVICE_NAME" >/dev/null 2>&1 || true
   sudo systemctl disable --now "$NEMOCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
-  log "stock OpenClaw verified; Hermes gateway disabled but retained for rollback"
+  if ! finalize_openclaw_gateway; then
+    log "ERROR: OpenClaw exclusivity proof failed; restoring Hermes gateway"
+    rollback_openclaw_gateway || true
+    return 1
+  fi
+  log "stock OpenClaw verified as exclusive gateway; Hermes retained only for rollback"
   install_linux_agent_service
 }
 
@@ -5083,8 +5104,8 @@ EOF
 install_mac_agent_wrapper() {
   local wrapper="$MAC_HOME/bin/mac-agent-service"
   local selftest="$MAC_HOME/bin/mac-agent-startup-self-test"
-  local executor="$MAC_HOME/bin/mac-hermes-task-executor"
-  local executor_py="$MAC_HOME/bin/mac-hermes-task-executor.py"
+  local executor="$MAC_HOME/bin/mac-task-executor"
+  local executor_py="$MAC_HOME/bin/mac-task-executor.py"
   mkdir -p "$MAC_HOME/bin"
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
@@ -5102,7 +5123,7 @@ agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
-capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 # Hardware capability probes: append gpu/cuda if nvidia-smi sees GPUs; always append cpu.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "^GPU"; then
   capabilities="$capabilities,gpu,cuda"
@@ -5189,10 +5210,10 @@ case "$mode" in
     done
     ;;
   loop)
-    executor="${MAC_WORKER_EXECUTOR:-$HOME/.mac/bin/mac-hermes-task-executor}"
-    if [ "$executor" = "$HOME/.mac/bin/mac-hermes-task-executor" ]; then
+    executor="${MAC_WORKER_EXECUTOR:-$HOME/.mac/bin/mac-task-executor}"
+    if [ "$executor" = "$HOME/.mac/bin/mac-task-executor" ]; then
       test -x "$HOME/.mac/venv/bin/python"
-      test -f "$HOME/.mac/bin/mac-hermes-task-executor.py"
+      test -f "$HOME/.mac/bin/mac-task-executor.py"
     fi
     exec "${common[@]}" --loop --executor "$executor"
     ;;
@@ -5208,21 +5229,8 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 set -a
-set +u
-[ -f "$HOME/.hermes/.env" ] && . "$HOME/.hermes/.env"
 . "$HOME/.mac/mac.env"
-set -u
 set +a
-export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-export HERMES_DISABLE_LAZY_INSTALLS=1
-export HERMES_REDACT_SECRETS=true
-if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
-  export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
-fi
-# ADR 0001 hu-04: the self-test runs from the single mac venv (vendored runtime).
 selftest_python="$HOME/.mac/venv/bin/python"
 exec "$selftest_python" - <<'PY'
 from __future__ import annotations
@@ -5286,35 +5294,7 @@ def probe_http(path_base: str, suffix: str, headers: dict[str, str] | None = Non
         return False, safe_error(exc)
 
 
-def first_context_value(context: dict[str, object], paths: list[tuple[str, ...]]) -> str:
-    for path in paths:
-        current: object = context
-        for key in path:
-            if not isinstance(current, dict):
-                current = None
-                break
-            current = current.get(key)
-        if current is not None:
-            return str(current)
-    return ""
-
-
-def output_contains_identity(output: str, field: str, value: str) -> bool:
-    if not value:
-        return False
-    normalized = output.lower().replace("_", " ")
-    field_text = field.lower().replace("_", " ")
-    value_text = value.lower().replace("_", " ")
-    candidates = (
-        f"{field.lower()}={value.lower()}",
-        f"{field_text}={value_text}",
-        f"{field_text}: {value_text}",
-        f"{field_text} = {value_text}",
-    )
-    return any(candidate in normalized for candidate in candidates)
-
-
-def classify_hermes_chat_failure(output: str) -> str:
+def classify_openclaw_agent_failure(output: str) -> str:
     normalized = output.lower()
     if (
         "budget_exceeded" in normalized
@@ -5330,7 +5310,6 @@ def classify_hermes_chat_failure(output: str) -> str:
 
 home = Path.home()
 mac_home = home / ".mac"
-hermes_home = Path(os.environ.get("HERMES_HOME") or home / ".hermes")
 report_path = Path(
     os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_REPORT")
     or mac_home / "logs" / "mac-agent-startup-self-test.json"
@@ -5348,9 +5327,14 @@ hermes_instance = (
 )
 persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or ""
 tenant_id = os.environ.get("MAC_FLEET_TENANT_ID") or ""
-context_path = Path(
-    os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE")
-    or hermes_home / "mac-runtime-context.json"
+resources_path = Path(
+    os.environ.get("MAC_WORKER_RESOURCES_FILE")
+    or mac_home / "openclaw" / "service-advertisement.json"
+)
+openclaw_config_path = mac_home / "openclaw" / "managed" / "openclaw.json"
+openclaw_agent_bin = Path(
+    os.environ.get("MAC_OPENCLAW_AGENT_BIN")
+    or mac_home / "bin" / "openclaw-agent"
 )
 qdrant_url = str(
     os.environ.get("QDRANT_URL")
@@ -5372,24 +5356,19 @@ firecrawl_key = os.environ.get("FIRECRAWL_API_KEY") or ""
 firecrawl_required = True
 firecrawl_required_flag = os.environ.get("MAC_REQUIRE_FIRECRAWL")
 timeout = int(os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT") or "120")
-# ADR 0001 hu-04: run the vendored Hermes runtime from the mac venv in-process.
-python_bin = str(mac_home / "venv" / "bin" / "python")
-hermes_vendored = str(mac_home / "src" / "mac" / "src" / "mac" / "_hermes")
-hermes_env = {**os.environ, "PYTHONPATH": hermes_vendored + os.pathsep + os.environ.get("PYTHONPATH", "")}
-
 problems: list[str] = []
 checks: dict[str, object] = {
     "identity_env": False,
-    "runtime_context": False,
+    "openclaw_runtime": False,
     "openshell_executor_config": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
-    "hermes_chat": False,
+    "openclaw_agent": False,
 }
 runtime_provider: dict[str, object] = {}
-chat_output = ""
-chat_returncode: int | None = None
-hermes_failure_class = ""
+agent_output = ""
+agent_returncode: int | None = None
+openclaw_failure_class = ""
 
 openshell_create_args = str(os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
 openshell_enabled = truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
@@ -5421,51 +5400,34 @@ for key, value in {
     "MAC_HERMES_INSTANCE_ID": hermes_instance,
     "MAC_HERMES_PERSONA_ID": persona_id,
     "MAC_FLEET_TENANT_ID": tenant_id,
-    "HERMES_HOME": str(hermes_home),
 }.items():
     if not value:
         problems.append(f"missing required identity env {key}")
 checks["identity_env"] = not any(problem.startswith("missing required identity env") for problem in problems)
 
 try:
-    context = json.loads(context_path.read_text(encoding="utf-8"))
+    resources = json.loads(resources_path.read_text(encoding="utf-8"))
 except Exception as exc:
-    context = {}
-    problems.append(f"runtime context unreadable at {context_path}: {safe_error(exc)}")
+    resources = {}
+    problems.append(
+        f"OpenClaw service advertisement unreadable at {resources_path}: {safe_error(exc)}"
+    )
 
-if context:
-    expected_context = {
-        "agent_id": (
-            agent_id,
-            [("agent_id",), ("agent", "agent_id"), ("environment", "MAC_AGENT_ID")],
-        ),
-        "agent_name": (
-            agent_name,
-            [("agent_name",), ("agent", "name"), ("environment", "MAC_WORKER_AGENT_NAME")],
-        ),
-        "hermes_instance_id": (
-            hermes_instance,
-            [
-                ("hermes_instance_id",),
-                ("agent", "hermes_instance_id"),
-                ("identity", "hermes_instance_id"),
-                ("environment", "MAC_HERMES_INSTANCE_ID"),
-            ],
-        ),
-        "persona_id": (
-            persona_id,
-            [("persona_id",), ("identity", "persona_id"), ("environment", "MAC_HERMES_PERSONA_ID")],
-        ),
-        "tenant_id": (
-            tenant_id,
-            [("tenant_id",), ("identity", "tenant_id"), ("environment", "MAC_FLEET_TENANT_ID")],
-        ),
-    }
-    for key, (expected, paths) in expected_context.items():
-        actual = first_context_value(context, paths)
-        if expected and actual != expected:
-            problems.append(f"runtime context mismatch {key}: expected {expected!r}, got {actual!r}")
-    checks["runtime_context"] = not any("runtime context" in problem for problem in problems)
+runtime = resources.get("openclaw_runtime") if isinstance(resources, dict) else None
+ownership = resources.get("gateway_ownership") if isinstance(resources, dict) else None
+if not isinstance(runtime, dict) or runtime.get("implementation") != "openclaw":
+    problems.append("OpenClaw runtime advertisement is missing or has the wrong implementation")
+elif runtime.get("verified") is not True:
+    problems.append("OpenClaw runtime advertisement is not verified")
+elif runtime.get("exclusive_service_owner") is not True:
+    problems.append("OpenClaw runtime lacks exclusive service-ownership proof")
+elif not isinstance(runtime.get("confinement"), dict) or runtime["confinement"].get("provider") != "openshell":
+    problems.append("OpenClaw runtime is not advertised inside OpenShell")
+if not isinstance(ownership, dict) or ownership.get("exclusive") is not True:
+    problems.append("OpenClaw gateway ownership proof is missing")
+checks["openclaw_runtime"] = not any(
+    problem.startswith("OpenClaw") for problem in problems
+)
 
 
 if not truthy(qdrant_required_flag):
@@ -5497,66 +5459,58 @@ elif firecrawl_url:
     checks["firecrawl_web_search"] = ok
 
 try:
-    sys.path.insert(0, hermes_vendored)
-    from hermes_cli.runtime_provider import resolve_runtime_provider
-
-    runtime_provider = resolve_runtime_provider(
-        target_model=os.environ.get("HERMES_INFERENCE_MODEL") or None
-    )
+    openclaw_config = json.loads(openclaw_config_path.read_text(encoding="utf-8"))
+    provider = openclaw_config["models"]["providers"]["mac-router"]
+    primary_model = openclaw_config["agents"]["defaults"]["model"]["primary"]
     runtime_provider = {
-        "provider": runtime_provider.get("provider"),
-        "source": runtime_provider.get("source"),
-        "model": runtime_provider.get("model"),
+        "provider": "mac-router",
+        "source": "openclaw_config",
+        "model": str(primary_model).removeprefix("mac-router/"),
+        "protocol": provider.get("api"),
     }
 except Exception as exc:
     runtime_provider = {"error": safe_error(exc)}
-    problems.append(f"Hermes runtime provider resolution failed: {safe_error(exc)}")
+    problems.append(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
 
-prompt = (
-    "From your MAC runtime context only, answer exactly: "
-    f"name={agent_name}; agent_id={agent_id}; hermes_instance={hermes_instance}. "
-    "Do not infer or proxy."
-)
+prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
 try:
     completed = subprocess.run(
-        [python_bin, "-m", "hermes_cli.main", "chat", "--query", prompt, "--quiet"],
+        [
+            str(openclaw_agent_bin),
+            "--agent",
+            "main",
+            "--message",
+            prompt,
+            "--session-id",
+            "mac-openclaw-startup-self-test",
+            "--json",
+        ],
         text=True,
         capture_output=True,
         timeout=timeout,
         check=False,
-        env=hermes_env,
+        env={**os.environ, "MAC_AGENT_ID": agent_id},
     )
-    chat_returncode = completed.returncode
-    chat_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
-    normalized = chat_output.lower()
+    agent_returncode = completed.returncode
+    agent_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
     if completed.returncode != 0:
-        hermes_failure_class = classify_hermes_chat_failure(chat_output)
-        problems.append(f"Hermes chat self-test exited {completed.returncode}")
-    expected_fragments = {
-        "name": agent_name,
-        "agent_id": agent_id,
-        "hermes_instance": hermes_instance,
-    }
-    for field, expected in expected_fragments.items():
-        if expected and not output_contains_identity(normalized, field, expected):
-            problems.append(f"Hermes chat self-test did not report {field}={expected}")
-    checks["hermes_chat"] = not any("Hermes chat self-test" in problem for problem in problems)
+        openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
+        problems.append(f"OpenClaw agent self-test exited {completed.returncode}")
+    elif "MAC_OPENCLAW_STARTUP_OK" not in agent_output:
+        problems.append("OpenClaw agent self-test did not return its sentinel")
+    checks["openclaw_agent"] = not any(
+        problem.startswith("OpenClaw agent self-test") for problem in problems
+    )
 except subprocess.TimeoutExpired as exc:
-    chat_returncode = None
-    chat_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
-    hermes_failure_class = classify_hermes_chat_failure(chat_output)
-    problems.append(f"Hermes chat self-test timed out after {timeout}s")
+    agent_returncode = None
+    agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
+    openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
+    problems.append(f"OpenClaw agent self-test timed out after {timeout}s")
 except Exception as exc:
-    chat_returncode = None
-    problems.append(f"Hermes chat self-test failed to execute: {safe_error(exc)}")
+    agent_returncode = None
+    problems.append(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
 
 blocking_problems = list(problems)
-if hermes_failure_class == "budget_exceeded":
-    blocking_problems = [
-        problem
-        for problem in blocking_problems
-        if not problem.startswith("Hermes chat self-test")
-    ]
 status = "passed"
 if problems:
     status = "failed" if blocking_problems else "degraded"
@@ -5587,9 +5541,9 @@ report = {
         },
     },
     "runtime_provider": runtime_provider,
-    "chat_returncode": chat_returncode,
-    "chat_output_tail": chat_output,
-    "hermes_failure_class": hermes_failure_class,
+    "agent_returncode": agent_returncode,
+    "agent_output_tail": agent_output,
+    "openclaw_failure_class": openclaw_failure_class,
     "problems": problems,
     "blocking_problems": blocking_problems,
 }
@@ -5632,28 +5586,16 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 set -a
-set +u
-[ -f "$HOME/.hermes/.env" ] && . "$HOME/.hermes/.env"
 . "$HOME/.mac/mac.env"
-set -u
 set +a
-export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-export HERMES_DISABLE_LAZY_INSTALLS=1
-export HERMES_REDACT_SECRETS=true
-if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
-  export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
-fi
-exec "$HOME/.mac/venv/bin/python" "$HOME/.mac/bin/mac-hermes-task-executor.py"
+exec "$HOME/.mac/venv/bin/python" "$HOME/.mac/bin/mac-task-executor.py"
 EOF
   chmod 700 "$executor"
 
 cat > "$executor_py" <<'PY'
 # Autonomous task executor shim. The real, unit-tested logic lives in the
 # mac.task_executor module (extracted from this heredoc per loop-01): it
-# builds the prompt, runs the vendored Hermes agent, writes deterministic
+# builds the prompt, runs a verified coding agent inside OpenShell, writes deterministic
 # evidence, emits executor telemetry, and feeds deployment lessons into
 # memory so the fleet gets smarter over time.
 from mac.task_executor import main
@@ -5661,6 +5603,11 @@ from mac.task_executor import main
 raise SystemExit(main())
 PY
   chmod 600 "$executor_py"
+  # Compatibility only for explicit pre-migration MAC_WORKER_EXECUTOR values.
+  # The target contains no Hermes runtime path and may be removed after config
+  # migration has converged fleet-wide.
+  ln -sf "$executor" "$MAC_HOME/bin/mac-hermes-task-executor"
+  ln -sf "$executor_py" "$MAC_HOME/bin/mac-hermes-task-executor.py"
 }
 
 install_linux_hermes_service() {
@@ -5895,6 +5842,11 @@ EOF
       return 1
     fi
     run_supervisorctl stop "$HERMES_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+    if ! finalize_openclaw_gateway; then
+      log "ERROR: OpenClaw exclusivity proof failed under supervisord; restoring Hermes gateway"
+      rollback_openclaw_gateway || true
+      return 1
+    fi
   fi
   run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
   sleep 3
@@ -6013,7 +5965,14 @@ EOF
   fi
   launchctl bootout "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
   launchctl disable "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  log "stock OpenClaw verified; Hermes launchd gateway disabled but retained for rollback"
+  launchctl bootout "gui/$uid/com.${FLEET_NAME}.nemoclaw-gateway" >/dev/null 2>&1 || true
+  launchctl disable "gui/$uid/com.${FLEET_NAME}.nemoclaw-gateway" >/dev/null 2>&1 || true
+  if ! finalize_openclaw_gateway; then
+    log "ERROR: OpenClaw exclusivity proof failed under launchd; restoring Hermes gateway"
+    rollback_openclaw_gateway || true
+    return 1
+  fi
+  log "stock OpenClaw verified as exclusive launchd gateway; Hermes retained only for rollback"
 }
 
 install_darwin_hermes_service() {

@@ -48,8 +48,10 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "USER sandbox" in container
     assert "nemoclaw gateway" not in container.lower()
     assert "/nemoclaw" not in container.lower()
-    assert "nemoclaw gateway" not in installer.lower()
-    assert "/nemoclaw" not in installer.lower()
+    # The cutover audit must name the legacy service to prove it is inactive,
+    # but the stock installer must never execute a NemoClaw binary.
+    assert "/usr/local/bin/nemoclaw" not in installer.lower()
+    assert "exec nemoclaw" not in installer.lower()
     assert 'image_revision" = "$OPENCLAW_IMAGE_REVISION"' in installer
     assert installer.count("/bin/bash -lc") >= 2
     assert "/usr/local/bin/mac-verify-bash-contract" in installer
@@ -82,9 +84,9 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
 def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Path) -> None:
     home = tmp_path / "home"
     mac_home = home / ".mac"
-    hermes_home = home / ".hermes"
-    hermes_home.mkdir(parents=True)
-    (hermes_home / "slack_home_channels.json").write_text(
+    openclaw_home = mac_home / "openclaw"
+    openclaw_home.mkdir(parents=True)
+    (openclaw_home / "slack_home_channels.json").write_text(
         json.dumps(
             [
                 {
@@ -184,12 +186,16 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert wrapper_path.stat().st_mode & 0o777 == 0o700
     assert stop_wrapper_path.stat().st_mode & 0o777 == 0o700
     assert (mac_home / "bin" / "openclaw-message").stat().st_mode & 0o777 == 0o700
+    assert (mac_home / "bin" / "openclaw-agent").stat().st_mode & 0o777 == 0o700
     assert (mac_home / "openclaw" / "home-channel-target").read_text(
         encoding="utf-8"
     ).strip() == "channel:C123HOME"
     wrapper = wrapper_path.read_text(encoding="utf-8")
     stop_wrapper = stop_wrapper_path.read_text(encoding="utf-8")
     message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
+        encoding="utf-8"
+    )
+    agent_wrapper = (mac_home / "bin" / "openclaw-agent").read_text(
         encoding="utf-8"
     )
     managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
@@ -206,6 +212,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         message_wrapper
     )
     assert "/bin/bash -lc" in message_wrapper
+    assert "/usr/local/bin/openclaw agent" in agent_wrapper
+    assert "/bin/bash -lc" in agent_wrapper
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         INSTALLER.read_text(encoding="utf-8")
     )
@@ -229,6 +237,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "install_darwin_openclaw_service" in deploy
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy
     assert "verify_openclaw_gateway" in deploy
+    assert "finalize_openclaw_gateway" in deploy
     assert "rollback_openclaw_gateway" in deploy
     assert "MAC_DEPLOY_OPENCLAW_LIVE_CANARY" in deploy
     assert "MAC_WORKER_RESOURCES_FILE" in deploy
@@ -241,7 +250,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "User=__MAC_USER__" in unit
 
 
-def test_openclaw_verification_probes_only_configured_channels_and_advertises_after_proof() -> None:
+def test_openclaw_verification_probes_then_advertises_after_exclusive_cutover() -> None:
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "validate-openclaw-channel-status.py" in installer
     assert "service-advertisement.json" in installer
@@ -250,10 +259,79 @@ def test_openclaw_verification_probes_only_configured_channels_and_advertises_af
     assert "--channel slack" in installer
     assert "--channel telegram" in installer
     assert "--dry-run --json" in installer
-    assert 'rm -f "$OPENCLAW_HOST_DIR/service-advertisement.json"' in installer
+    assert 'rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"' in installer
+    assert '"schema": "mac.gateway_ownership.v1"' in installer
+    assert '"exclusive_channel_owner"' in installer
+    assert 'finalize) finalize' in installer
     assert '"endpoint": "openshell://%s"' in installer
     assert '"access": "sandbox_exec"' in installer
     assert "http://127.0.0.1:${GATEWAY_PORT}/healthz" not in installer
+
+
+def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    sudo = bin_dir / "sudo"
+    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.chmod(0o700)
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
+        "  *) echo inactive; exit 3 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "systemd",
+    }
+
+    subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    advertisement = json.loads(
+        (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
+    )
+    assert advertisement["gateway_ownership"]["exclusive"] is True
+    assert advertisement["gateway_ownership"]["services"] == {
+        "openclaw": "active",
+        "hermes": "inactive",
+        "nemoclaw": "inactive",
+    }
+    assert advertisement["openclaw_runtime"]["exclusive_service_owner"] is True
+    assert advertisement["chat_gateway"]["exclusive_channel_owner"] is True
+    assert not (openclaw_home / "verification-pending.json").exists()
 
 
 def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> None:

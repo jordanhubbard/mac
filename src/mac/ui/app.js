@@ -1484,7 +1484,7 @@ function renderAgents() {
         <label>Name <input name="name" required ${disabledAttr(!writable)}></label>
         <label>Agent ID <input name="agent_id" placeholder="agent_rocky" ${disabledAttr(!writable)}></label>
         <label>Hermes Instance ID <input name="hermes_instance_id" placeholder="hermes_rocky" ${disabledAttr(!writable)}></label>
-        <label>Capabilities <input name="capabilities" placeholder="ops,python,hermes,review" ${disabledAttr(!writable)}></label>
+        <label>Capabilities <input name="capabilities" placeholder="ops,python,openclaw,review" ${disabledAttr(!writable)}></label>
         <label>Resources JSON <textarea name="resources" placeholder="{}" ${disabledAttr(!writable)}></textarea></label>
         <label>Actor <input name="actor" value="human" ${disabledAttr(!writable)}></label>
         <button type="submit" ${disabledAttr(!writable)}>Create</button>

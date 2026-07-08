@@ -7,8 +7,8 @@ rather than a metered API token. Routing the work through one of those CLIs is
 therefore materially cheaper than driving the LLM gateway directly. This module
 decides, from the same environment the executor runs in, *which* coding agent
 (if any) is available **and** authenticated, and how to invoke it
-non-interactively. When none qualifies the executor falls back to the vendored
-Hermes runtime -> LLM gateway path (its prior behavior).
+non-interactively. When none qualifies the executor fails closed so work cannot
+silently move to an unverified or retired runtime.
 
 Detection (priority order claude -> codex -> cursor; first qualifying wins):
 
@@ -44,22 +44,20 @@ __all__ = [
     "CodingAgentChoice",
     "resolve_coding_agent",
     "coding_agent_argv",
-    "messaging_mcp_enabled",
     "supports_per_invocation_mcp",
     "mcp_config_document",
     "PREFERENCE_ENV",
     "FORCE_ENV",
-    "MESSAGING_MCP_ENV",
     "AGENT_PRIORITY",
 ]
 
-#: Master on/off for coding-agent preference. Default ON ("use preferentially").
-#: Falsy -> always use the Hermes -> gateway fallback.
+#: Master on/off for coding-agent preference. Default ON. Falsy means no coding
+#: agent is eligible and the executor fails closed.
 PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 
 #: Pin or disable selection. ``claude``/``codex``/``cursor`` restrict
-#: consideration to that one agent (still must be available + authed, else we
-#: fall back); ``off``/``none``/``hermes``/``gateway`` disable preference.
+#: consideration to that one agent (still must be available + authed, else the
+#: executor fails closed); legacy disable values remain accepted during rollout.
 FORCE_ENV = "MAC_CODING_AGENT"
 
 #: Per-agent explicit command template (shlex-split). When set it is used
@@ -71,11 +69,6 @@ COMMAND_ENV = {
     "codex": "MAC_CODING_AGENT_CODEX_CMD",
     "cursor": "MAC_CODING_AGENT_CURSOR_CMD",
 }
-
-#: Register the vendored messaging MCP server with the coding agent where the
-#: CLI supports a per-invocation config (currently Claude Code). Default ON to
-#: match the Hermes messaging tool surface ("full parity where supported").
-MESSAGING_MCP_ENV = "MAC_CODING_AGENT_MESSAGING_MCP"
 
 #: Resolution priority. Earlier entries win when more than one qualifies.
 AGENT_PRIORITY: Tuple[str, ...] = ("claude", "codex", "cursor")
@@ -115,11 +108,6 @@ def _read_json(path: Path) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
-def messaging_mcp_enabled(env: Mapping[str, str]) -> bool:
-    """Whether to register the messaging MCP server (default ON)."""
-    return _truthy(env.get(MESSAGING_MCP_ENV, "1"))
-
-
 def supports_per_invocation_mcp(agent: str) -> bool:
     """True when the agent CLI accepts an MCP config per run (no global state).
 
@@ -136,8 +124,8 @@ def supports_per_invocation_mcp(agent: str) -> bool:
 class CodingAgentChoice:
     """The coding-agent routing decision plus the reason for it.
 
-    ``agent`` is ``""`` when no coding agent qualifies (the caller then uses the
-    Hermes -> gateway fallback). No secret ever appears here — only the *name*
+    ``agent`` is ``""`` when no coding agent qualifies (the caller fails closed).
+    No secret ever appears here — only the *name*
     of the env var / file that proved authentication (``auth_source``).
     """
 
@@ -506,11 +494,10 @@ def resolve_coding_agent(
     return _choice("", False, "", "", rationale, env)
 
 
-def mcp_config_document(server_command: List[str], name: str = "hermes") -> Dict[str, object]:
+def mcp_config_document(server_command: List[str], name: str = "server") -> Dict[str, object]:
     """An MCP client config registering a single stdio server ``name``.
 
-    ``server_command`` is the argv that launches the (messaging) MCP server,
-    e.g. ``[<python>, "-m", "hermes_cli.main", "mcp", "serve"]``.
+    ``server_command`` is the argv that launches a caller-selected MCP server.
     """
     command = server_command[0] if server_command else ""
     args = list(server_command[1:]) if len(server_command) > 1 else []
