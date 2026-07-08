@@ -40,8 +40,12 @@ export function platformLabel(item: DashboardAgent): string {
 export function availableCodingClis(item: DashboardAgent): string[] {
   const codingClis = record(record(item.agent.resources).coding_clis);
   const clis = record(codingClis.clis);
+  const requiresVerification = codingClis.schema === "mac.coding_clis.v2";
   return Object.entries(clis)
-    .filter(([, value]) => record(value).available === true)
+    .filter(([, value]) => {
+      const status = record(value);
+      return requiresVerification ? status.verified === true : status.available === true;
+    })
     .map(([name]) => name);
 }
 

@@ -1,6 +1,7 @@
 export type WorkbenchView =
   | "cockpit"
   | "work"
+  | "task"
   | "workflows"
   | "agents"
   | "runtime"

@@ -507,6 +507,38 @@ def _non_retryable_blocked_attempt_marker(value: Any) -> Optional[str]:
     return None
 
 
+def _normalize_blocked_detail(detail: Optional[Dict[str, Any]]) -> JsonDict:
+    """Require every new blocked-state ledger event to explain itself."""
+    normalized = ensure_json_object(detail)
+    if str(normalized.get("reason") or "").strip():
+        return normalized
+    dependencies = _metadata_string_list(
+        normalized.get("blocked_by_task_ids") or normalized.get("dependencies")
+    )
+    if dependencies:
+        normalized["reason"] = "waiting_on_dependencies"
+        normalized.setdefault("blocked_by_task_ids", dependencies)
+        return normalized
+    if str(normalized.get("question") or normalized.get("prompt") or "").strip():
+        normalized["reason"] = "operator_direction_required"
+        return normalized
+    if str(normalized.get("error") or "").strip():
+        normalized["reason"] = "execution_error"
+        return normalized
+    if normalized.get("problems"):
+        normalized["reason"] = "verification_problems"
+        return normalized
+    for key in ("failure_class", "diagnosis", "cause", "via"):
+        value = str(normalized.get(key) or "").strip()
+        if value:
+            normalized["reason"] = value
+            return normalized
+    raise ValidationError(
+        "blocked task transition requires a structured reason, dependency, "
+        "question, error, problem, failure_class, diagnosis, cause, or via"
+    )
+
+
 def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> Optional[str]:
     """Map a block/fail transition to a glanceable 'Problem / Remediation' note.
 
@@ -2493,6 +2525,7 @@ class ControlPlane:
             if isinstance(metadata, dict) and metadata.get("repository_url"):
                 item["repository_url"] = str(metadata.get("repository_url"))
 
+        project_pause_cache: Dict[str, bool] = {}
         for task in tasks:
             project = self._hermes_task_project_key(task)
             item = bucket(project)
@@ -2532,7 +2565,12 @@ class ControlPlane:
                         )
             compact = self._hermes_task_context(task)
             dispatch_held = self._task_dispatch_held(task)
-            project_paused = self._project_dispatch_paused(task.project)
+            project_key = str(task.project or "")
+            if project_key not in project_pause_cache:
+                project_pause_cache[project_key] = self._project_dispatch_paused(
+                    task.project
+                )
+            project_paused = project_pause_cache[project_key]
             if task.state == TaskState.OPEN.value and dispatch_held:
                 item["held_count"] += 1
             if (
@@ -3460,22 +3498,25 @@ class ControlPlane:
                             % task_id
                         )
                 else:
+                    creation_detail = {
+                        "title": title,
+                        "required_capabilities": task_capabilities,
+                        "dependencies": dep_ids,
+                        "execution_contract_type": (
+                            normalized_metadata.get("execution_contract", {}).get("type")
+                            if isinstance(normalized_metadata.get("execution_contract"), dict)
+                            else None
+                        ),
+                    }
+                    if state == TaskState.BLOCKED.value:
+                        creation_detail = _normalize_blocked_detail(creation_detail)
                     self._record_history(
                         task_id,
                         "task.created",
                         actor,
                         None,
                         state,
-                        {
-                            "title": title,
-                            "required_capabilities": task_capabilities,
-                            "dependencies": dep_ids,
-                            "execution_contract_type": (
-                                normalized_metadata.get("execution_contract", {}).get("type")
-                                if isinstance(normalized_metadata.get("execution_contract"), dict)
-                                else None
-                            ),
-                        },
+                        creation_detail,
                         conn=conn,
                     )
                     if optimizer_assignment is not None:
@@ -4010,6 +4051,8 @@ class ControlPlane:
                 updates.append("state = ?")
                 params.append(next_state)
                 detail["state"] = next_state
+                if next_state == TaskState.BLOCKED.value:
+                    detail = _normalize_blocked_detail(detail)
         should_reconcile_metadata = metadata is not None or project is not None or required_capabilities is not None
         explicit_required_capabilities_update = required_capabilities is not None
         if required_capabilities is not None:
@@ -4400,18 +4443,23 @@ class ControlPlane:
                         now,
                     ),
                 )
+                child_creation_detail = {
+                    "title": child["title"],
+                    "parent_task_id": parent.id,
+                    "relationship": "child",
+                    "dependencies": child["dependencies"],
+                }
+                if child["state"] == TaskState.BLOCKED.value:
+                    child_creation_detail = _normalize_blocked_detail(
+                        child_creation_detail
+                    )
                 self._record_history(
                     child["id"],
                     "task.created",
                     actor,
                     None,
                     child["state"],
-                    {
-                        "title": child["title"],
-                        "parent_task_id": parent.id,
-                        "relationship": "child",
-                        "dependencies": child["dependencies"],
-                    },
+                    child_creation_detail,
                     conn=conn,
                 )
                 if child["optimizer_assignment"] is not None:
@@ -4440,7 +4488,7 @@ class ControlPlane:
             )
             if parent.owner_agent_id:
                 self._set_agent_idle(parent.owner_agent_id, conn=conn)
-            detail = {
+            detail = _normalize_blocked_detail({
                 "child_task_ids": child_ids,
                 "blocked_by_task_ids": parent_dependencies,
                 "released_lease_id": release_lease_id,
@@ -4452,7 +4500,7 @@ class ControlPlane:
                     }
                     for index, child in enumerate(prepared)
                 ],
-            }
+            })
             self._record_history(
                 parent.id,
                 "task.children_added",
@@ -6366,6 +6414,8 @@ class ControlPlane:
         # writes target the non-existent prefix.
         task_id = task.id
         transition_detail = dict(detail or {})
+        if target == TaskState.BLOCKED.value:
+            transition_detail = _normalize_blocked_detail(transition_detail)
         if target == TaskState.CANCELLED.value:
             transition_detail = normalize_cancellation_detail(transition_detail)
             # Write guard: reject cancellations that point at a terminal or held
@@ -13796,6 +13846,11 @@ class ControlPlane:
             return False, "agent_resources_insufficient"
         if not self._agent_has_repository_commands(agent, task):
             return False, "repository_commands_missing"
+        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
+            agent, task
+        )
+        if not coding_route_ok:
+            return False, coding_route_reason
         # Role + hardware gates. Both no-op when neither the agent nor the
         # task carry role/hardware metadata, so the legacy capability path
         # below stays the dominant matcher for un-roled fleets.
@@ -13899,6 +13954,74 @@ class ControlPlane:
             return True
         available = _agent_resource_command_names(ensure_json_object(agent.resources))
         return set(required_commands).issubset(available)
+
+    def _agent_has_verified_coding_route(
+        self, agent: Agent, task: Task
+    ) -> Tuple[bool, str]:
+        """Require a fresh, exact in-sandbox route proof before repo dispatch."""
+        if not self._task_is_repo_coupled(task) or not _agent_requires_openshell(agent):
+            return True, "not_required"
+        if not _truthy_env("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT"):
+            return True, "strict_route_verification_disabled"
+        resources = ensure_json_object(agent.resources)
+        coding = ensure_json_object(resources.get("coding_clis"))
+        # A strict hub must fail closed while a worker is rolling forward. An
+        # old configuration-only report cannot prove that the route works from
+        # the actual sandbox, and accepting it would create a bypass precisely
+        # when credentials or protocol settings are broken.
+        if coding.get("schema") != "mac.coding_clis.v2":
+            return False, "coding_agent_route_unreported"
+        clis = ensure_json_object(coding.get("clis"))
+        try:
+            max_age = max(
+                1.0,
+                float(os.environ.get("MAC_CODING_ROUTE_MAX_AGE_SECONDS") or 1200.0),
+            )
+        except ValueError:
+            max_age = 1200.0
+        pinned_model = self._task_pinned_coding_model(task)
+        saw_fresh_route = False
+        for raw in clis.values():
+            item = ensure_json_object(raw)
+            if not (item.get("configured") is True and item.get("verified") is True):
+                continue
+            verification = ensure_json_object(item.get("verification"))
+            checked_at = str(verification.get("checked_at") or "").strip()
+            try:
+                age = (parse_time(utcnow()) - parse_time(checked_at)).total_seconds()
+            except Exception:  # noqa: BLE001 - malformed proof must fail closed.
+                continue
+            if age < 0 or age > max_age:
+                continue
+            if verification.get("route_fingerprint") != item.get("route_fingerprint"):
+                continue
+            saw_fresh_route = True
+            if not pinned_model:
+                return True, "verified"
+            verified_model = str(
+                verification.get("model") or item.get("model") or ""
+            ).strip()
+            verified_models = {
+                str(value).strip()
+                for value in (verification.get("verified_models") or [])
+                if str(value).strip()
+            }
+            if verified_model == pinned_model or pinned_model in verified_models:
+                return True, "verified"
+        if pinned_model and saw_fresh_route:
+            return False, "coding_agent_model_unverified"
+        return False, "coding_agent_route_unverified"
+
+    @staticmethod
+    def _task_pinned_coding_model(task: Task) -> str:
+        metadata = ensure_json_object(task.metadata)
+        is_review = isinstance(metadata.get("review_context"), dict)
+        key = "review_model" if is_review else "model"
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value[:256]
+        runtime = ensure_json_object(metadata.get("runtime"))
+        return str(runtime.get(key) or "").strip()[:256]
 
     def _task_required_runtime_digest(self, task: Task) -> Optional[str]:
         metadata = ensure_json_object(task.metadata)

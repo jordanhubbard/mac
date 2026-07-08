@@ -4444,6 +4444,126 @@ def test_repository_contract_project_commands_do_not_gate_dispatch(cp):
     assert cp.get_task(task.id).state == "claimed"
 
 
+def _verified_coding_route_resources(*, verified=True, model=""):
+    fingerprint = "sha256:route-proof"
+    return {
+        "openshell_required": True,
+        "commands": {
+            "schema": "mac.command_inventory.v1",
+            "available": ["git"],
+        },
+        "coding_clis": {
+            "schema": "mac.coding_clis.v2",
+            "clis": {
+                "codex": {
+                    "configured": True,
+                    "verified": verified,
+                    "provider": "mac-router",
+                    "protocol": "responses",
+                    "model": model,
+                    "route_fingerprint": fingerprint,
+                    "verification": {
+                        "schema": "mac.coding_agent.verification.v1",
+                        "verified": verified,
+                        "checked_at": utcnow(),
+                        "model": model,
+                        "route_fingerprint": fingerprint,
+                    },
+                }
+            },
+        },
+    }
+
+
+def test_repo_dispatch_requires_v2_in_sandbox_route_proof(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources=_verified_coding_route_resources(verified=False),
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+
+    assert cp.dispatch_once() is None
+    assert cp.get_task(task.id).state == "open"
+
+
+def test_repo_dispatch_accepts_fresh_matching_route_and_model(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    machine = cp.register_machine("worker")
+    agent = cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources=_verified_coding_route_resources(model="gpt-test"),
+    )
+    cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata={**_repository_task_metadata(), "model": "gpt-test"},
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["agent"]["id"] == agent.id
+
+
+def test_repo_dispatch_holds_unverified_pinned_model(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources=_verified_coding_route_resources(model="gpt-default"),
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata={**_repository_task_metadata(), "model": "qwen-pinned"},
+    )
+
+    assert cp.dispatch_once() is None
+    assert cp.get_task(task.id).state == "open"
+
+
+def test_repo_dispatch_strict_mode_rejects_legacy_route_report(cp, monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    machine = cp.register_machine("worker")
+    cp.register_agent(
+        machine.id,
+        "coder",
+        capabilities=["python"],
+        resources={
+            "openshell_required": True,
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["git"],
+            },
+            "coding_clis": {"schema": "mac.coding_clis.v1", "clis": {}},
+        },
+    )
+    task = cp.create_task(
+        "repo task",
+        project="repo-beads-mac",
+        required_capabilities=["git", "python"],
+        metadata=_repository_task_metadata(),
+    )
+
+    assert cp.dispatch_once() is None
+    assert cp.get_task(task.id).state == "open"
+
+
 def test_repository_contract_project_commands_gate_unsandboxed_dispatch(cp):
     machine = cp.register_machine("worker")
     cp.register_agent(
@@ -10175,9 +10295,29 @@ def test_reopen_task_requeues_terminal_task_and_resets_attempts(cp):
 
 def test_reopen_task_recovers_blocked_task(cp):
     task = cp.create_task("blocked recover", required_capabilities=["python"])
-    cp.transition_task(task.id, TaskState.BLOCKED.value, "dispatcher", {})
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "dispatcher",
+        {"reason": "operator_direction_required"},
+    )
     reopened = cp.reopen_task(task.id, "operator")
     assert reopened.state == TaskState.OPEN.value
+
+
+def test_blocked_transitions_require_reason_and_dependency_updates_record_one(cp):
+    dependency = cp.create_task("dependency")
+    task = cp.create_task("blocked ledger contract")
+
+    with pytest.raises(ValidationError, match="blocked task transition requires"):
+        cp.transition_task(task.id, TaskState.BLOCKED.value, "worker", {})
+
+    updated = cp.update_task(task.id, dependencies=[dependency.id], actor="worker")
+    assert updated.state == TaskState.BLOCKED.value
+    event = cp.task_history(task.id)[-1]
+    assert event.to_state == TaskState.BLOCKED.value
+    assert event.detail["reason"] == "waiting_on_dependencies"
+    assert event.detail["blocked_by_task_ids"] == [dependency.id]
 
 
 def test_force_complete_overrides_review_gate_for_stranded_task(cp):

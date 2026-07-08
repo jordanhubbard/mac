@@ -35,6 +35,7 @@ export function WorkbenchViewContent({
   selectedProjectId,
   onSelectTask,
   onSelectAgent,
+  onCloseTask,
   onRefresh,
 }: {
   view: WorkbenchView;
@@ -46,15 +47,24 @@ export function WorkbenchViewContent({
   selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
   onSelectAgent: (agentId: string) => void;
+  onCloseTask: () => void;
   onRefresh: () => void | Promise<void>;
 }) {
   const agents = data.agents.map((item) => item.agent);
   switch (view) {
+    case "task":
+      return (
+        <TaskView
+          data={data}
+          onClose={onCloseTask}
+          onRefresh={onRefresh}
+          selectedTaskId={selectedTaskId}
+        />
+      );
     case "work":
       return (
         <WorkView
           data={data}
-          onRefresh={onRefresh}
           onSelectTask={onSelectTask}
           selectedProjectId={selectedProjectId}
           selectedTaskId={selectedTaskId}
@@ -81,7 +91,6 @@ export function WorkbenchViewContent({
         <CockpitView
           agents={agents}
           data={data}
-          onRefresh={onRefresh}
           onSelectTask={onSelectTask}
           selectedProjectId={selectedProjectId}
           selectedTaskId={selectedTaskId}
@@ -119,16 +128,13 @@ function CockpitView({
   selectedTaskId,
   selectedProjectId,
   onSelectTask,
-  onRefresh,
 }: {
   data: DashboardState;
   agents: Agent[];
   selectedTaskId: string | null;
   selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
-  onRefresh: () => void | Promise<void>;
 }) {
-  const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const counts = data.overview.counts;
   const scopedTasks = useMemo(
     () =>
@@ -154,14 +160,6 @@ function CockpitView({
   const active = scopedTasks.filter(
     (detail) => !TERMINAL_STATES.has(String(detail.task.state)),
   ).length;
-  const inspectedTask = inspectedTaskId
-    ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
-    : null;
-  const canWrite = data.session?.can_write !== false;
-  function inspectTask(taskId: string) {
-    onSelectTask(taskId);
-    setInspectedTaskId(taskId);
-  }
   return (
     <main className="workbench-view cockpit-view">
       <ViewHeader
@@ -189,21 +187,12 @@ function CockpitView({
         </div>
         <WorkGraph
           agents={agents}
-          onInspectTask={inspectTask}
+          onInspectTask={onSelectTask}
           onSelectTask={onSelectTask}
           selectedTaskId={selectedTaskId}
           tasks={scopedTasks}
         />
       </section>
-      {inspectedTask ? (
-        <TaskInspector
-          canWrite={canWrite}
-          detail={inspectedTask}
-          key={inspectedTask.task.id}
-          onClose={() => setInspectedTaskId(null)}
-          onRefresh={onRefresh}
-        />
-      ) : null}
     </main>
   );
 }
@@ -237,17 +226,14 @@ function WorkView({
   selectedTaskId,
   selectedProjectId,
   onSelectTask,
-  onRefresh,
 }: {
   data: DashboardState;
   selectedTaskId: string | null;
   /** null = all projects */
   selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
-  onRefresh: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState("");
-  const [inspectedTaskId, setInspectedTaskId] = useState<string | null>(null);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return data.tasks.filter(({ task }) => {
@@ -262,14 +248,6 @@ function WorkView({
       );
     });
   }, [data.tasks, query, selectedProjectId]);
-  const inspectedTask = inspectedTaskId
-    ? data.tasks.find(({ task }) => task.id === inspectedTaskId) || null
-    : null;
-  const canWrite = data.session?.can_write !== false;
-  function inspectTask(taskId: string) {
-    onSelectTask(taskId);
-    setInspectedTaskId(taskId);
-  }
   return (
     <main className="workbench-view">
       <ViewHeader
@@ -293,20 +271,42 @@ function WorkView({
         <span>{visible.length} tasks{selectedProjectId ? ` in ${selectedProjectId}` : ""}</span>
       </div>
       <TaskKanban
-        onInspectTask={inspectTask}
+        onInspectTask={onSelectTask}
         onSelectTask={onSelectTask}
         selectedTaskId={selectedTaskId}
         tasks={visible}
       />
-      {inspectedTask ? (
-        <TaskInspector
-          canWrite={canWrite}
-          detail={inspectedTask}
-          key={inspectedTask.task.id}
-          onClose={() => setInspectedTaskId(null)}
-          onRefresh={onRefresh}
-        />
-      ) : null}
+    </main>
+  );
+}
+
+function TaskView({
+  data,
+  selectedTaskId,
+  onClose,
+  onRefresh,
+}: {
+  data: DashboardState;
+  selectedTaskId: string | null;
+  onClose: () => void;
+  onRefresh: () => void | Promise<void>;
+}) {
+  const detail = selectedTask(data, selectedTaskId);
+  if (!detail) {
+    return <div className="empty-state centered"><span>Select a task from the project tree or Work view.</span></div>;
+  }
+  if (!detail.detail_loaded) {
+    return <div className="loading-state"><i className="codicon codicon-loading codicon-modifier-spin" /> Loading task detail…</div>;
+  }
+  return (
+    <main className="workbench-view task-view">
+      <TaskInspector
+        canWrite={data.session?.can_write !== false}
+        detail={detail}
+        embedded
+        onClose={onClose}
+        onRefresh={onRefresh}
+      />
     </main>
   );
 }

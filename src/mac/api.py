@@ -23,6 +23,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
+from starlette.middleware.gzip import GZipMiddleware
 
 from mac.agentbus_control import (
     DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
@@ -248,6 +249,9 @@ DASHBOARD_TASK_EVIDENCE_LIMIT = 25
 DASHBOARD_TASK_REVIEW_LIMIT = 25
 DASHBOARD_TASK_PUBLICATION_LIMIT = 10
 DASHBOARD_MESSAGE_LIMIT = 200
+DASHBOARD_IDE_EVENT_LIMIT = 100
+DASHBOARD_IDE_MESSAGE_LIMIT = 40
+DASHBOARD_IDE_NOTIFICATION_LIMIT = 40
 _TASK_LIST_SUMMARY_FIELDS = frozenset(
     {
         "id",
@@ -263,6 +267,23 @@ _TASK_LIST_SUMMARY_FIELDS = frozenset(
 )
 _DASHBOARD_IDE_TASK_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
     {"dependencies", "required_capabilities"}
+)
+_DASHBOARD_IDE_PROJECT_FIELDS = frozenset(
+    {
+        "project",
+        "name",
+        "id",
+        "project_id",
+        "task_count",
+        "active_count",
+        "ready_count",
+        "held_count",
+        "blocked_count",
+        "review_count",
+        "completed_count",
+        "state_counts",
+        "status",
+    }
 )
 
 
@@ -2462,12 +2483,65 @@ def _dashboard_ide_task_dict(task_dict: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _dashboard_ide_project_summary(value: Dict[str, Any]) -> Dict[str, Any]:
+    """Project navigation needs counts, not embedded task/metadata payloads."""
+    return {
+        key: value[key]
+        for key in _DASHBOARD_IDE_PROJECT_FIELDS
+        if key in value
+    }
+
+
+def _dashboard_ide_finding(value: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the problems UI useful without shipping arbitrary finding detail."""
+    return {
+        key: value[key]
+        for key in (
+            "id",
+            "source_id",
+            "source_kind",
+            "finding_type",
+            "severity",
+            "status",
+            "title",
+            "fingerprint",
+            "first_seen_at",
+            "last_seen_at",
+            "resolved_at",
+            "resolution",
+        )
+        if key in value
+    }
+
+
+def _dashboard_ide_agent_is_physical(agent: Any, machine: Optional[Any]) -> bool:
+    """Exclude hub-local service identities from the physical fleet mesh."""
+    agent_resources = agent.resources if isinstance(agent.resources, dict) else {}
+    if agent_resources.get("virtual") is True or "hub_review_verifier" in agent_resources:
+        return False
+    if machine is None:
+        return True
+    labels = machine.labels if isinstance(machine.labels, dict) else {}
+    resources = machine.resources if isinstance(machine.resources, dict) else {}
+    return not (
+        labels.get("virtual") is True
+        or resources.get("virtual") is True
+        or machine.id == "machine_operator_review"
+    )
+
+
 def _dashboard_ide_resource_facts(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return {
         key: value[key]
-        for key in ("hardware", "coding_clis")
+        for key in (
+            "hardware",
+            "coding_clis",
+            "openclaw_runtime",
+            "chat_gateway",
+            "representation",
+        )
         if key in value
     }
 
@@ -2543,21 +2617,32 @@ def _dashboard_ide_state(
 
     machines = cp.list_machines()
     machines_by_id = {machine.id: machine for machine in machines}
-    agents = cp.list_agents()
+    all_agents = cp.list_agents()
+    agents = [
+        agent
+        for agent in all_agents
+        if _dashboard_ide_agent_is_physical(agent, machines_by_id.get(agent.machine_id))
+    ]
     tasks = cp.list_tasks()
     task_dicts = [task.to_dict() for task in tasks]
-    projects = cp.list_projects()
+    projects = cp._hermes_project_contexts(
+        tasks,
+        all_agents,
+        [item.to_dict() for item in cp.list_project_items()],
+        [repository.to_dict() for repository in cp.list_project_repositories()],
+        [project.to_dict() for project in cp.list_project_records()],
+    )
     workflows = [workflow.to_dict() for workflow in cp.list_workflows()][-120:]
     workflow_runs = cp.workflow_runs_summary()
     streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
     terminal_sessions = _dashboard_terminal_sessions_from_streams(streams)
     messages = [
         message.to_dict()
-        for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
+        for message in cp.list_messages(limit=DASHBOARD_IDE_MESSAGE_LIMIT)
     ]
     notifications = [
         notification.to_dict()
-        for notification in cp.list_notifications(limit=120)
+        for notification in cp.list_notifications(limit=DASHBOARD_IDE_NOTIFICATION_LIMIT)
     ]
     findings = [
         finding.to_dict()
@@ -2578,6 +2663,7 @@ def _dashboard_ide_state(
             "counts": {
                 "machines": len(machines),
                 "agents": len(agents),
+                "service_agents": len(all_agents) - len(agents),
                 "fleets": len(fleets),
                 "healthy_agents": sum(
                     1 for agent in agents if agent.health_status == "healthy"
@@ -2605,7 +2691,9 @@ def _dashboard_ide_state(
                 [agent.to_dict() for agent in agents], "status"
             ),
         },
-        "project_summaries": projects,
+        "project_summaries": [
+            _dashboard_ide_project_summary(project) for project in projects
+        ],
         "agents": [
             _dashboard_ide_agent(cp, agent, tasks, machines_by_id)
             for agent in agents
@@ -2618,7 +2706,7 @@ def _dashboard_ide_state(
         "workflows": workflows,
         "workflow_drafts": [],
         "workflow_runs": workflow_runs,
-        "events": cp.list_events(limit=240),
+        "events": cp.list_events(limit=DASHBOARD_IDE_EVENT_LIMIT),
         "messages": messages,
         "notifications": notifications,
         "observability": {},
@@ -2631,7 +2719,9 @@ def _dashboard_ide_state(
         "secrets": secrets,
         "secret_audits": [],
         "service_links": _dashboard_service_links(hermes_startup),
-        "integration_findings": findings,
+        "integration_findings": [
+            _dashboard_ide_finding(finding) for finding in findings
+        ],
         "artifacts": [],
         "terminal_sessions": terminal_sessions,
     }
@@ -3385,6 +3475,10 @@ def create_app(
             model_selection_service.stop()
 
     app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
+    # The Fleet IDE state is list-oriented JSON and compresses by roughly an
+    # order of magnitude over remote SSH/Tailscale paths. Streaming responses
+    # opt out explicitly below so their first event is never buffered by gzip.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
     app.state.control_plane = cp
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
@@ -3770,7 +3864,11 @@ def create_app(
                     break
                 await asyncio.sleep(poll_interval)
 
-        return StreamingResponse(iter_dashboard_states(), media_type="application/x-ndjson")
+        return StreamingResponse(
+            iter_dashboard_states(),
+            media_type="application/x-ndjson",
+            headers={"Content-Encoding": "identity"},
+        )
 
     @app.post("/dashboard/workflow-plan/preview")
     def dashboard_workflow_plan_preview(

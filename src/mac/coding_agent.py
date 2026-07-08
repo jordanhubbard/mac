@@ -30,13 +30,16 @@ fixtures (``resolve_coding_agent`` takes injectable ``env``/``home``/``which``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 __all__ = [
     "CodingAgentChoice",
@@ -143,18 +146,143 @@ class CodingAgentChoice:
     available: bool
     binary: str = ""
     auth_source: str = ""
+    provider: str = ""
+    protocol: str = ""
+    auth_kind: str = ""
+    endpoint: str = ""
+    model: str = ""
     rationale: List[str] = field(default_factory=list)
+
+    def route_fingerprint(self) -> str:
+        """Stable, secret-free identity of the route that was actually checked."""
+        payload = {
+            "agent": self.agent,
+            "binary": self.binary,
+            "provider": self.provider,
+            "protocol": self.protocol,
+            "auth_kind": self.auth_kind,
+            "auth_source": self.auth_source,
+            "endpoint": self.endpoint,
+            "model": self.model,
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
 
     def observable(self) -> Dict[str, object]:
         """Secret-free view for logs / the executor telemetry + observability."""
         return {
-            "schema": "mac.coding_agent.choice.v1",
+            "schema": "mac.coding_agent.choice.v2",
             "agent": self.agent or None,
             "available": self.available,
             "binary": self.binary or None,
             "auth_source": self.auth_source or None,
+            "provider": self.provider or None,
+            "protocol": self.protocol or None,
+            "auth_kind": self.auth_kind or None,
+            "endpoint": self.endpoint or None,
+            "model": self.model or None,
+            "route_fingerprint": self.route_fingerprint() if self.agent else None,
             "rationale": list(self.rationale),
         }
+
+
+def _safe_endpoint(value: object, default: str) -> str:
+    """Return a secret-free endpoint suitable for telemetry and fingerprints."""
+    text = str(value or default).strip() or default
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return default
+    if not parsed.scheme or not parsed.netloc:
+        return default
+    host = parsed.hostname or ""
+    if not host:
+        return default
+    netloc = "[%s]" % host if ":" in host else host
+    try:
+        port = parsed.port
+    except ValueError:
+        return default
+    if port is not None:
+        netloc += ":%d" % port
+    return urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _route_fields(
+    agent: str,
+    env: Mapping[str, str],
+    auth_source: str,
+) -> Dict[str, str]:
+    """Describe provider/protocol/auth separately from credential presence."""
+    if agent == "codex":
+        endpoint = _safe_endpoint(
+            env.get("MAC_CODEX_BASE_URL") or env.get("OPENAI_BASE_URL"),
+            "https://api.openai.com/v1",
+        )
+        explicit_provider = str(env.get("MAC_CODEX_PROVIDER") or "").strip()
+        host = (urlsplit(endpoint).hostname or "").lower()
+        provider = explicit_provider or (
+            "openai" if host.endswith("openai.com") else "mac-router"
+        )
+        auth_kind = "oauth_file" if auth_source == "~/.codex/auth.json" else "bearer_env"
+        return {
+            "provider": provider,
+            "protocol": str(env.get("MAC_CODEX_WIRE_API") or "responses").strip().lower(),
+            "auth_kind": auth_kind,
+            "endpoint": endpoint,
+            "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CODEX_MODEL") or "").strip(),
+        }
+    if agent == "claude":
+        provider = "anthropic"
+        auth_kind = "api_key"
+        if str(env.get("CLAUDE_CODE_USE_BEDROCK") or "").strip():
+            provider, auth_kind = "amazon-bedrock", "cloud_identity"
+        elif str(env.get("CLAUDE_CODE_USE_VERTEX") or "").strip():
+            provider, auth_kind = "google-vertex", "cloud_identity"
+        elif str(env.get("CLAUDE_CODE_USE_FOUNDRY") or "").strip():
+            provider, auth_kind = "microsoft-foundry", "cloud_identity"
+        elif auth_source == "ANTHROPIC_AUTH_TOKEN":
+            provider, auth_kind = "anthropic-gateway", "bearer_env"
+        elif auth_source == "CLAUDE_CODE_OAUTH_TOKEN" or auth_source.startswith("~/.claude"):
+            auth_kind = "oauth"
+        elif auth_source == "apiKeyHelper":
+            auth_kind = "credential_helper"
+        return {
+            "provider": provider,
+            "protocol": "anthropic-messages",
+            "auth_kind": auth_kind,
+            "endpoint": _safe_endpoint(env.get("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"),
+            "model": str(env.get("MAC_TASK_MODEL") or env.get("ANTHROPIC_MODEL") or "").strip(),
+        }
+    return {
+        "provider": "cursor",
+        "protocol": "cursor-agent",
+        "auth_kind": "api_key" if auth_source == "CURSOR_API_KEY" else "browser_session",
+        "endpoint": _safe_endpoint(
+            env.get("MAC_CURSOR_ENDPOINT") or env.get("CURSOR_AGENT_ENDPOINT"),
+            "https://api.cursor.com",
+        ),
+        "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CURSOR_MODEL") or "").strip(),
+    }
+
+
+def _choice(
+    agent: str,
+    available: bool,
+    binary: str,
+    auth_source: str,
+    rationale: List[str],
+    env: Mapping[str, str],
+) -> CodingAgentChoice:
+    route = _route_fields(agent, env, auth_source) if agent else {}
+    return CodingAgentChoice(
+        agent=agent,
+        available=available,
+        binary=binary,
+        auth_source=auth_source,
+        rationale=rationale,
+        **route,
+    )
 
 
 def _detect_claude(
@@ -164,8 +292,22 @@ def _detect_claude(
     binary = _which("claude", which)
     if not binary:
         return False, "", "", "claude: not on PATH"
+    for cloud_flag, source in (
+        ("CLAUDE_CODE_USE_BEDROCK", "aws_default_chain"),
+        ("CLAUDE_CODE_USE_VERTEX", "google_default_chain"),
+        ("CLAUDE_CODE_USE_FOUNDRY", "azure_default_chain"),
+    ):
+        if _truthy(env.get(cloud_flag)):
+            return True, binary, source, "claude: configured via %s" % cloud_flag
+    if str(env.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+        return True, binary, "ANTHROPIC_AUTH_TOKEN", "claude: configured via ANTHROPIC_AUTH_TOKEN"
     if str(env.get("ANTHROPIC_API_KEY") or "").strip():
-        return True, binary, "ANTHROPIC_API_KEY", "claude: authed via ANTHROPIC_API_KEY"
+        return True, binary, "ANTHROPIC_API_KEY", "claude: configured via ANTHROPIC_API_KEY"
+    settings = _read_json(home / ".claude" / "settings.json") or {}
+    if str(settings.get("apiKeyHelper") or "").strip():
+        return True, binary, "apiKeyHelper", "claude: configured via apiKeyHelper"
+    if str(env.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip():
+        return True, binary, "CLAUDE_CODE_OAUTH_TOKEN", "claude: configured via CLAUDE_CODE_OAUTH_TOKEN"
     credentials = home / ".claude" / ".credentials.json"
     try:
         if credentials.is_file() and credentials.stat().st_size > 0:
@@ -173,14 +315,14 @@ def _detect_claude(
                 True,
                 binary,
                 "~/.claude/.credentials.json",
-                "claude: authed via ~/.claude/.credentials.json",
+                "claude: configured via ~/.claude/.credentials.json",
             )
     except OSError:
         pass
     config = _read_json(home / ".claude.json")
     if config and str(config.get("primary_key") or "").strip():
-        return True, binary, "~/.claude.json:primary_key", "claude: authed via ~/.claude.json primary_key"
-    return False, binary, "", "claude: on PATH but no ANTHROPIC_API_KEY and no ~/.claude.json primary_key"
+        return True, binary, "~/.claude.json:primary_key", "claude: configured via ~/.claude.json primary_key"
+    return False, binary, "", "claude: on PATH but no supported credential configuration"
 
 
 def _detect_codex(
@@ -190,24 +332,25 @@ def _detect_codex(
     if not binary:
         return False, "", "", "codex: not on PATH"
     # Prefer non-rotating environment auth when available.  The OpenShell
-    # executor already transfers OPENAI_API_KEY/OPENAI_BASE_URL through its
+    # executor transfers the named credential + endpoint through its
     # private mode-0600 environment file, so this route can be verified inside
     # an ephemeral sandbox without copying Codex's rotating OAuth refresh-token
     # store and potentially leaving the host copy stale.
-    if str(env.get("OPENAI_API_KEY") or "").strip():
-        return True, binary, "OPENAI_API_KEY", "codex: authed via OPENAI_API_KEY"
+    for key in ("MAC_CODEX_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"):
+        if str(env.get(key) or "").strip():
+            return True, binary, key, "codex: configured via %s" % key
     auth = home / ".codex" / "auth.json"
     try:
         present = auth.is_file() and auth.stat().st_size > 0
     except OSError:
         present = False
     if present:
-        return True, binary, "~/.codex/auth.json", "codex: authed via ~/.codex/auth.json"
+        return True, binary, "~/.codex/auth.json", "codex: configured via ~/.codex/auth.json"
     return (
         False,
         binary,
         "",
-        "codex: on PATH but no OPENAI_API_KEY and ~/.codex/auth.json missing or empty",
+        "codex: on PATH but no supported credential configuration",
     )
 
 
@@ -218,10 +361,10 @@ def _detect_cursor(
     if not binary:
         return False, "", "", "cursor: cursor-agent/cursor not on PATH"
     if str(env.get("CURSOR_API_KEY") or "").strip():
-        return True, binary, "CURSOR_API_KEY", "cursor: authed via CURSOR_API_KEY"
+        return True, binary, "CURSOR_API_KEY", "cursor: configured via CURSOR_API_KEY"
     if (home / ".cursor").exists():
-        return True, binary, "~/.cursor", "cursor: authed via ~/.cursor"
-    return False, binary, "", "cursor: on PATH but no CURSOR_API_KEY and no ~/.cursor"
+        return True, binary, "~/.cursor", "cursor: configured via ~/.cursor"
+    return False, binary, "", "cursor: on PATH but no supported credential configuration"
 
 
 _DETECTORS = {
@@ -266,6 +409,7 @@ def detect_all(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
+    verification: Optional[Mapping[str, Mapping[str, object]]] = None,
 ) -> Dict[str, Dict[str, object]]:
     """Secret-free per-CLI auth status for every known coding agent.
 
@@ -281,11 +425,31 @@ def detect_all(
     out: Dict[str, Dict[str, object]] = {}
     for name, detect in _DETECTORS.items():
         available, binary, source, detail = detect(env, home, which)
+        choice = _choice(name, available, binary, source, [detail], env)
+        route = choice.observable()
+        checked = dict((verification or {}).get(name) or {})
+        matches = bool(
+            checked.get("route_fingerprint")
+            and checked.get("route_fingerprint") == choice.route_fingerprint()
+        )
+        verified = bool(matches and checked.get("verified") is True)
         out[name] = {
             "available": bool(available),
+            "configured": bool(available),
+            "verified": verified,
+            "verification_status": (
+                "verified" if verified else "failed" if matches else "unverified"
+            ),
             "on_path": bool(binary),
             "auth_source": source,
             "detail": detail,
+            "provider": route.get("provider"),
+            "protocol": route.get("protocol"),
+            "auth_kind": route.get("auth_kind"),
+            "endpoint": route.get("endpoint"),
+            "model": route.get("model"),
+            "route_fingerprint": route.get("route_fingerprint"),
+            "verification": checked if matches else {},
         }
     return out
 
@@ -308,12 +472,12 @@ def resolve_coding_agent(
 
     if not _truthy(env.get(PREFERENCE_ENV, "1")):
         rationale.append("%s is disabled; using Hermes -> gateway" % PREFERENCE_ENV)
-        return CodingAgentChoice(agent="", available=False, rationale=rationale)
+        return _choice("", False, "", "", rationale, env)
 
     forced = str(env.get(FORCE_ENV) or "").strip().lower()
     if forced in _DISABLE_VALUES:
         rationale.append("%s=%s disables coding-agent preference" % (FORCE_ENV, forced))
-        return CodingAgentChoice(agent="", available=False, rationale=rationale)
+        return _choice("", False, "", "", rationale, env)
 
     if forced and forced not in _DETECTORS:
         rationale.append("%s=%s is not a known agent; ignoring" % (FORCE_ENV, forced))
@@ -327,16 +491,10 @@ def resolve_coding_agent(
         available, binary, auth_source, reason = _DETECTORS[agent](env, home, which)
         rationale.append(reason)
         if available:
-            return CodingAgentChoice(
-                agent=agent,
-                available=True,
-                binary=binary,
-                auth_source=auth_source,
-                rationale=rationale,
-            )
+            return _choice(agent, True, binary, auth_source, rationale, env)
 
     rationale.append("no coding agent available/authed; using Hermes -> gateway")
-    return CodingAgentChoice(agent="", available=False, rationale=rationale)
+    return _choice("", False, "", "", rationale, env)
 
 
 def mcp_config_document(server_command: List[str], name: str = "hermes") -> Dict[str, object]:
@@ -393,6 +551,41 @@ def _default_argv(
     raise ValueError("unknown coding agent: %r" % agent)
 
 
+def _codex_provider_config_argv(choice: CodingAgentChoice) -> List[str]:
+    """Per-run custom-provider config, with credentials referenced by env name."""
+    if choice.agent != "codex" or not choice.endpoint:
+        return []
+    built_in_openai = (
+        choice.provider == "openai"
+        and choice.endpoint.rstrip("/") == "https://api.openai.com/v1"
+        and choice.auth_source in {"OPENAI_API_KEY", "~/.codex/auth.json"}
+    )
+    if built_in_openai:
+        return []
+    provider_name = "mac-openai" if choice.provider == "openai" else choice.provider
+    provider_id = re.sub(r"[^a-z0-9_-]+", "-", provider_name.lower()).strip("-") or "mac"
+    auth_env = choice.auth_source if re.fullmatch(r"[A-Z][A-Z0-9_]*", choice.auth_source) else ""
+    args = [
+        "-c",
+        "model_provider=%s" % json.dumps(provider_id),
+        "-c",
+        "model_providers.%s.name=%s" % (provider_id, json.dumps("MAC %s route" % choice.provider)),
+        "-c",
+        "model_providers.%s.base_url=%s" % (provider_id, json.dumps(choice.endpoint)),
+        "-c",
+        "model_providers.%s.wire_api=%s" % (
+            provider_id,
+            json.dumps(choice.protocol or "responses"),
+        ),
+    ]
+    if auth_env:
+        args += [
+            "-c",
+            "model_providers.%s.env_key=%s" % (provider_id, json.dumps(auth_env)),
+        ]
+    return args
+
+
 def coding_agent_argv(
     choice: CodingAgentChoice,
     prompt: str,
@@ -414,8 +607,12 @@ def coding_agent_argv(
     if override:
         return [*shlex.split(override), prompt]
 
-    task_model = str(env.get("MAC_TASK_MODEL") or "").strip()
+    task_model = str(env.get("MAC_TASK_MODEL") or choice.model or "").strip()
     argv = _default_argv(choice.agent, choice.binary, prompt, model=task_model)
+    if choice.agent == "codex":
+        # Provider config is inserted before the `exec` subcommand. Tokens are
+        # never put in argv; Codex reads the named environment variable.
+        argv = [argv[0], *_codex_provider_config_argv(choice), *argv[1:]]
     if mcp_config_path and supports_per_invocation_mcp(choice.agent):
         # Insert right after the binary so it precedes the `-p <prompt>` tail.
         argv = [argv[0], "--mcp-config", mcp_config_path, *argv[1:]]

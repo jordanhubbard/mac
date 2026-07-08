@@ -4,6 +4,7 @@
 const DEFAULT_BASE = "/api";
 const TOKEN_KEY = "mac.token";
 const API_BASE_KEY = "mac.apiBaseUrl";
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function runtimeEnv(): Record<string, string> {
   return (import.meta as ImportMeta & { env?: Record<string, string> }).env || {};
@@ -256,16 +257,28 @@ function requestHeaders(): Record<string, string> {
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await fetch(requestUrl(path), {
-    method,
-    headers: requestHeaders(),
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status} ${path}: ${text.slice(0, 300)}`);
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(requestUrl(path), {
+      method,
+      headers: requestHeaders(),
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status} ${path}: ${text.slice(0, 300)}`);
+    }
+    return (await response.json()) as T;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
   }
-  return (await response.json()) as T;
 }
 
 export async function streamDashboard(

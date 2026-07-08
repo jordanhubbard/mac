@@ -2933,6 +2933,78 @@ def test_register_worker_reports_command_inventory_without_command_capability(
     heartbeat_resources = worker._maybe_command_inventory_resources()
     assert heartbeat_resources is not None
     assert {"git", "gh", "python3"} <= set(heartbeat_resources["commands"]["available"])
+    assert heartbeat_resources["coding_clis"]["schema"] == "mac.coding_clis.v2"
+
+
+def test_worker_publishes_matching_sandbox_route_verification(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import coding_agent, task_executor
+
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("worker-host")
+    agent = cp.register_agent(machine.id, "worker", resources={})
+    choice = coding_agent.CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/usr/local/bin/codex",
+        auth_source="MAC_CODEX_TOKEN",
+        provider="mac-router",
+        protocol="responses",
+        auth_kind="bearer_env",
+        endpoint="https://hub.example/v1",
+    )
+    report = {
+        "schema": "mac.coding_agent.verification.v1",
+        "agent": "codex",
+        "provider": "mac-router",
+        "protocol": "responses",
+        "auth_kind": "bearer_env",
+        "auth_source": "MAC_CODEX_TOKEN",
+        "endpoint": "https://hub.example/v1",
+        "model": "",
+        "route_fingerprint": choice.route_fingerprint(),
+        "verified": True,
+        "checked_at": "2026-07-08T00:00:00+00:00",
+        "returncode": 0,
+        "failure_class": "",
+    }
+    monkeypatch.setattr(coding_agent, "resolve_coding_agent", lambda: choice)
+    monkeypatch.setattr(
+        task_executor,
+        "coding_agent_sandbox_verification",
+        lambda selected: report,
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_DETECTORS",
+        {
+            **coding_agent._DETECTORS,
+            "codex": lambda *_args: (
+                True,
+                choice.binary,
+                choice.auth_source,
+                "codex: configured for test",
+            ),
+        },
+    )
+    monkeypatch.setenv("MAC_CODEX_TOKEN", "secret-not-reported")
+    monkeypatch.setenv("MAC_CODEX_BASE_URL", choice.endpoint)
+    monkeypatch.setenv("MAC_CODEX_PROVIDER", choice.provider)
+
+    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    codex = resources["coding_clis"]["clis"]["codex"]
+    assert codex["configured"] is True
+    assert codex["verified"] is True
+    assert codex["provider"] == "mac-router"
+    assert codex["protocol"] == "responses"
+    assert "secret-not-reported" not in json.dumps(resources)
 
 
 def test_command_inventory_explicitly_probes_codegraph_when_scan_truncated(

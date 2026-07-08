@@ -183,14 +183,19 @@ the CLI under the live policy + forwarded env and must echo a sentinel back,
 proving end-to-end that the **binary exists, credentials resolve, and egress to
 the provider is permitted** in the sandbox.
 
-If the preflight fails, or if the selected CLI uses non-durable sandbox
-credentials, tasks fall back to the in-image Hermes runtime. Hermes still runs
-inside OpenShell against the uploaded worktree; the deterministic finalizer is
-the evidence gate and rejects repository runs that leave no changed files,
-passing tests/checks, or evidence manifest. Operators may restore the older
-fail-closed behavior with `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1` after
-they provision durable in-sandbox coding-agent credentials. The preflight
-verdict is cached per worker process.
+The worker runs this probe before dispatch and publishes a secret-free
+`mac.coding_clis.v2` heartbeat record containing the CLI, provider, wire
+protocol, endpoint, authentication kind/source, model, route fingerprint, and
+the matching `mac.coding_agent.verification.v1` result. Repository dispatch to
+an OpenShell agent requires a fresh successful proof. A task-pinned model also
+requires proof for that exact model. Presence of a binary, credential variable,
+or credential directory is only `configured`; it is never `verified`.
+
+The executor repeats the same fail-closed check after claim. If the selected
+CLI fails and the progress observer proves that the sandbox is clean and has no
+evidence manifest, repository bootstrap/tests/CodeGraph/publication are skipped;
+harvest and teardown still run. This makes an unavailable route terminate
+promptly without disguising it as a long finalizer stall.
 
 The unattended finalizer auto-commits modified tracked files but deliberately
 refuses untracked or staged-new files. A coding agent must commit its own new
@@ -215,8 +220,10 @@ the sandbox**:
 1. **Binary present** — `claude` / `codex` / `cursor-agent` is in the sandbox
    image (or uploaded via `MAC_OPENSHELL_CREATE_ARGS`). The standard MAC image
    installs `codex`.
-2. **Credentials reachable and durable** — env-key auth (`ANTHROPIC_API_KEY`,
-   `CURSOR_API_KEY`) is forwarded automatically. File-based Codex OAuth state
+2. **Credentials reachable and durable** — supported environment routes
+   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+   `CURSOR_API_KEY`, `MAC_CODEX_TOKEN`, `CODEX_API_KEY`, `OPENAI_API_KEY`) are
+   forwarded automatically. File-based Codex OAuth state
    (`~/.codex/auth.json`) is not uploaded by default because OpenShell upload is
    copy-only: a throwaway sandbox can consume and rotate the refresh token while
    the replacement is lost with the sandbox. `bootstrap-openshell.sh` only
@@ -242,11 +249,20 @@ the sandbox**:
 | `MAC_CODING_AGENT` | _(auto)_ | pin to `claude`/`codex`/`cursor`, or `off` to disable |
 | `MAC_CODING_AGENT_SANDBOX` | `verify` | `verify` = gate on the in-sandbox preflight; `trust` = assume the image is provisioned (skip the probe); `off` = never use a coding agent when confined |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | `180` | seconds for the in-sandbox preflight |
+| `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | `900` | successful route-proof lifetime in the executor/worker process |
+| `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | `60` | retry interval for a failed route proof |
+| `MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS` | success `900`, failure `60` | worker heartbeat probe cadence |
+| `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | `1200` | maximum proof age accepted by dispatch |
 | `MAC_CODING_AGENT_<AGENT>_CMD` | _(built-in)_ | override a CLI's invocation (shlex-split); prompt appended as the trailing arg |
 | `MAC_CODING_AGENT_MESSAGING_MCP` | `1` | register the messaging MCP server (unconfined path only, Claude) |
-| `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | `0` | strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox |
+| `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | `1` in fleet deploy | executor strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | `0` | bootstrap opt-in to upload `~/.codex/auth.json` / `config.toml` into sandboxes |
 | `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | `0` | executor opt-in to probe/use uploaded Codex file auth despite refresh-token rotation risk |
+| `MAC_CODEX_BASE_URL` | `OPENAI_BASE_URL` | explicit Codex provider endpoint; use a Responses-compatible endpoint |
+| `MAC_CODEX_TOKEN` | _(unset)_ | bearer read by Codex through `env_key`; the value never appears in argv or telemetry |
+| `MAC_CODEX_PROVIDER` | inferred | secret-free custom provider id (`openai` for the built-in endpoint, otherwise `mac-router`) |
+| `MAC_CODEX_WIRE_API` | `responses` | Codex wire protocol recorded and rendered into per-run custom-provider config |
+| `MAC_CODEX_MODEL` | fleet/task default | model included in the route fingerprint and dispatch proof |
 
 Set `MAC_CODING_AGENT_SANDBOX=trust` only after validating the image+policy out
 of band; it skips the per-task proof. `python -m mac.coding_agent` prints the

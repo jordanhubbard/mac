@@ -122,7 +122,125 @@ def test_codex_prefers_openshell_safe_environment_auth(tmp_path):
 
     assert choice.agent == "codex"
     assert choice.auth_source == "OPENAI_API_KEY"
-    assert choice.rationale == ["claude: not on PATH", "codex: authed via OPENAI_API_KEY"]
+    assert choice.rationale == ["claude: not on PATH", "codex: configured via OPENAI_API_KEY"]
+    assert choice.provider == "openai"
+    assert choice.protocol == "responses"
+    assert choice.auth_kind == "bearer_env"
+
+
+def test_codex_mac_router_route_is_explicit_and_secret_free(tmp_path):
+    choice = resolve_coding_agent(
+        env={
+            "OPENAI_API_KEY": "mac-secret-bearer",
+            "OPENAI_BASE_URL": "http://user:password@127.0.0.1:8789/v1?token=leak",
+        },
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert choice.provider == "mac-router"
+    assert choice.protocol == "responses"
+    assert choice.endpoint == "http://127.0.0.1:8789/v1"
+    observable = json.dumps(choice.observable())
+    assert "mac-secret-bearer" not in observable
+    assert "password" not in observable
+    assert "token=leak" not in observable
+
+
+def test_invalid_or_ipv6_endpoint_is_safely_normalized(tmp_path):
+    malformed = resolve_coding_agent(
+        env={"OPENAI_API_KEY": "secret", "OPENAI_BASE_URL": "http://host:bad/v1"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+    ipv6 = resolve_coding_agent(
+        env={"OPENAI_API_KEY": "secret", "OPENAI_BASE_URL": "http://[::1]:8789/v1"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert malformed.endpoint == "https://api.openai.com/v1"
+    assert ipv6.endpoint == "http://[::1]:8789/v1"
+
+
+def test_task_model_overrides_deployed_default_in_route_and_argv(tmp_path):
+    env = {
+        "OPENAI_API_KEY": "secret",
+        "MAC_CODEX_MODEL": "fleet-default",
+        "MAC_TASK_MODEL": "task-pinned",
+    }
+    choice = resolve_coding_agent(env=env, home=tmp_path, which=_which("codex"))
+    argv = coding_agent_argv(choice, "probe", env={})
+
+    assert choice.model == "task-pinned"
+    assert argv[argv.index("--model") + 1] == "task-pinned"
+
+
+def test_codex_nonstandard_env_auth_uses_custom_provider_even_at_openai(tmp_path):
+    choice = resolve_coding_agent(
+        env={"MAC_CODEX_TOKEN": "secret"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+    argv = coding_agent_argv(choice, "probe", env={})
+    joined = " ".join(argv)
+
+    assert 'model_provider="mac-openai"' in joined
+    assert 'model_providers.mac-openai.env_key="MAC_CODEX_TOKEN"' in joined
+    assert "secret" not in joined
+
+
+def test_route_fingerprint_changes_with_protocol_or_endpoint(tmp_path):
+    base = {"OPENAI_API_KEY": "same-secret"}
+    responses = resolve_coding_agent(
+        env={**base, "OPENAI_BASE_URL": "https://proxy-a.example/v1"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+    chat = resolve_coding_agent(
+        env={
+            **base,
+            "OPENAI_BASE_URL": "https://proxy-a.example/v1",
+            "MAC_CODEX_WIRE_API": "chat",
+        },
+        home=tmp_path,
+        which=_which("codex"),
+    )
+    other_endpoint = resolve_coding_agent(
+        env={**base, "OPENAI_BASE_URL": "https://proxy-b.example/v1"},
+        home=tmp_path,
+        which=_which("codex"),
+    )
+
+    assert len({responses.route_fingerprint(), chat.route_fingerprint(), other_endpoint.route_fingerprint()}) == 3
+
+
+def test_detect_all_requires_matching_route_verification(tmp_path):
+    from mac.coding_agent import detect_all
+
+    env = {"OPENAI_API_KEY": "secret", "OPENAI_BASE_URL": "https://proxy.example/v1"}
+    choice = resolve_coding_agent(env=env, home=tmp_path, which=_which("codex"))
+    verification = {
+        "codex": {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": "codex",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": True,
+            "checked_at": "2026-07-08T00:00:00+00:00",
+        }
+    }
+
+    matched = detect_all(env=env, home=tmp_path, which=_which("codex"), verification=verification)
+    changed = detect_all(
+        env={**env, "OPENAI_BASE_URL": "https://other.example/v1"},
+        home=tmp_path,
+        which=_which("codex"),
+        verification=verification,
+    )
+
+    assert matched["codex"]["verified"] is True
+    assert changed["codex"]["verified"] is False
+    assert changed["codex"]["verification"] == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +308,33 @@ def test_codex_default_argv_uses_exec_and_bypass():
     assert argv[-1] == "fix bug"
 
 
+def test_codex_custom_route_is_rendered_without_credential_value():
+    choice = CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/b/codex",
+        auth_source="MAC_CODEX_TOKEN",
+        provider="mac-router",
+        protocol="responses",
+        auth_kind="bearer_env",
+        endpoint="https://hub.example/v1",
+    )
+    argv = coding_agent_argv(
+        choice,
+        "fix bug",
+        env={"MAC_CODEX_TOKEN": "super-secret"},
+    )
+
+    joined = " ".join(argv)
+    assert argv[0] == "/b/codex"
+    assert "model_provider" in joined
+    assert "mac-router" in joined
+    assert "wire_api" in joined and "responses" in joined
+    assert "MAC_CODEX_TOKEN" in joined
+    assert "super-secret" not in joined
+    assert "exec" in argv
+
+
 def test_cursor_default_argv():
     choice = CodingAgentChoice(agent="cursor", available=True, binary="/b/cursor-agent")
     argv = coding_agent_argv(choice, "refactor", env={})
@@ -247,7 +392,7 @@ def test_observable_is_secret_free(tmp_path):
     assert "sk-super-secret" not in blob
     # Only the env var *name* is recorded, never the value.
     assert choice.observable()["auth_source"] == "ANTHROPIC_API_KEY"
-    assert choice.observable()["schema"] == "mac.coding_agent.choice.v1"
+    assert choice.observable()["schema"] == "mac.coding_agent.choice.v2"
 
 
 def test_detect_all_default_which_finds_binaries_on_path(tmp_path):

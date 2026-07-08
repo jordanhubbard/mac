@@ -5,8 +5,6 @@ import io
 import json
 import sys
 
-import pytest
-
 from mac.cli import main
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
@@ -73,6 +71,38 @@ def test_fleet_creds_status_handles_agents_without_reports(tmp_path):
     rc, out = _run(tmp_path, "fleet", "creds-status")
     assert rc in (None, 0)
     assert "no coding_clis report" in out["agents"][0]["status"]
+    assert out["needs_sync"] == {}
+
+
+def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_path):
+    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    machine = cp.register_machine("route-host", resources={})
+    cp.register_agent(
+        machine.id,
+        "route-worker",
+        capabilities=["python"],
+        resources={
+            "coding_clis": {
+                "schema": "mac.coding_clis.v2",
+                "clis": {
+                    "claude": {"on_path": False, "configured": False},
+                    "codex": {
+                        "on_path": True,
+                        "available": True,
+                        "configured": True,
+                        "verified": False,
+                        "verification": {"failure_class": "endpoint_protocol_mismatch"},
+                    },
+                    "cursor": {"on_path": False, "configured": False},
+                },
+            }
+        },
+    )
+
+    _rc, out = _run(tmp_path, "fleet", "creds-status")
+
+    row = out["agents"][0]
+    assert row["codex"] == "ROUTE UNAVAILABLE (endpoint_protocol_mismatch)"
     assert out["needs_sync"] == {}
 
 

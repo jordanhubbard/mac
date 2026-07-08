@@ -1057,9 +1057,21 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
             rows.append({"agent": name, "status": "(no coding_clis report yet — worker predates this feature or has not refreshed)"})
             continue
         summary = {}
+        report_schema = str(
+            ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema")
+            or ""
+        )
         for cli in KNOWN_CLIS:
             info = status.get(cli) if isinstance(status.get(cli), dict) else {}
-            if info.get("available"):
+            if report_schema == "mac.coding_clis.v2" and info.get("verified"):
+                summary[cli] = "verified (%s/%s)" % (
+                    info.get("provider") or "provider",
+                    info.get("protocol") or "protocol",
+                )
+            elif report_schema == "mac.coding_clis.v2" and info.get("configured"):
+                failure = ((info.get("verification") or {}).get("failure_class") or "unverified")
+                summary[cli] = "ROUTE UNAVAILABLE (%s)" % failure
+            elif info.get("available"):
                 summary[cli] = "ok (%s)" % (info.get("auth_source") or "authed")
             elif info.get("on_path"):
                 summary[cli] = "NEEDS SYNC"

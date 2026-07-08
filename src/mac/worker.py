@@ -405,7 +405,10 @@ def _detect_command_inventory() -> JsonDict:
     }
 
 
-def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict:
+def _resources_with_command_inventory(
+    resources: Optional[JsonDict],
+    coding_verification: Optional[JsonDict] = None,
+) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
     # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
@@ -415,10 +418,15 @@ def _resources_with_command_inventory(resources: Optional[JsonDict]) -> JsonDict
     try:
         from mac.coding_agent import detect_all as _detect_coding_clis
 
+        verification_by_agent: JsonDict = {}
+        if isinstance(coding_verification, dict):
+            verified_agent = str(coding_verification.get("agent") or "")
+            if verified_agent:
+                verification_by_agent[verified_agent] = coding_verification
         merged["coding_clis"] = {
-            "schema": "mac.coding_clis.v1",
+            "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
-            "clis": _detect_coding_clis(),
+            "clis": _detect_coding_clis(verification=verification_by_agent),
         }
     except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
         pass
@@ -598,6 +606,11 @@ class MacWorker:
         self._declared_digest = False
         self._declared_policy = False
         self._last_command_inventory_at = 0.0
+        self._coding_route_probe_thread: Optional[threading.Thread] = None
+        self._coding_route_probe_lock = threading.Lock()
+        self._coding_route_report: JsonDict = {}
+        self._coding_route_report_dirty = True
+        self._last_coding_route_probe_at = 0.0
         self._last_gateway_lease_renew_at = 0.0
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
@@ -4621,6 +4634,7 @@ class MacWorker:
                 heartbeat_status = "busy"
         except MacApiError:
             pass
+        self._maybe_start_coding_route_probe()
         payload: JsonDict = {"status": heartbeat_status}
         command_resources = self._maybe_command_inventory_resources()
         if command_resources is not None:
@@ -4644,7 +4658,13 @@ class MacWorker:
         if interval < 0:
             return None
         now = time.monotonic()
-        if self._last_command_inventory_at and (now - self._last_command_inventory_at) < interval:
+        with self._coding_route_probe_lock:
+            route_dirty = self._coding_route_report_dirty
+        if (
+            not route_dirty
+            and self._last_command_inventory_at
+            and (now - self._last_command_inventory_at) < interval
+        ):
             return None
         try:
             agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
@@ -4652,7 +4672,70 @@ class MacWorker:
         except Exception:
             return None
         self._last_command_inventory_at = now
-        return _resources_with_command_inventory(resources)
+        with self._coding_route_probe_lock:
+            route_report = dict(self._coding_route_report)
+            self._coding_route_report_dirty = False
+        return _resources_with_command_inventory(resources, route_report)
+
+    def _maybe_start_coding_route_probe(self) -> None:
+        """Asynchronously verify the preferred route before the hub dispatches work."""
+        with self._coding_route_probe_lock:
+            if self._coding_route_probe_thread is not None and self._coding_route_probe_thread.is_alive():
+                return
+            verified = self._coding_route_report.get("verified") is True
+            default_interval = 900.0 if verified else 60.0
+            interval = _env_float(
+                "MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS",
+                default_interval,
+            )
+            now = time.monotonic()
+            if self._last_coding_route_probe_at and now - self._last_coding_route_probe_at < max(1.0, interval):
+                return
+            self._last_coding_route_probe_at = now
+            self._coding_route_report = {
+                "schema": "mac.coding_agent.verification.v1",
+                "agent": "",
+                "verified": False,
+                "checked_at": _utcnow(),
+                "failure_class": "pending",
+            }
+            self._coding_route_report_dirty = True
+            thread = threading.Thread(
+                target=self._probe_coding_route,
+                name="mac-coding-route-probe-%s" % self.agent_id,
+                daemon=True,
+            )
+            self._coding_route_probe_thread = thread
+            thread.start()
+
+    def _probe_coding_route(self) -> None:
+        try:
+            from mac.coding_agent import resolve_coding_agent
+            from mac.task_executor import coding_agent_sandbox_verification
+
+            choice = resolve_coding_agent()
+            if choice.available:
+                report = coding_agent_sandbox_verification(choice)
+            else:
+                report = {
+                    "schema": "mac.coding_agent.verification.v1",
+                    "agent": "",
+                    "verified": False,
+                    "checked_at": _utcnow(),
+                    "failure_class": "not_configured",
+                }
+        except Exception as exc:  # noqa: BLE001 - verification failure is a route hold, not worker death.
+            report = {
+                "schema": "mac.coding_agent.verification.v1",
+                "agent": "",
+                "verified": False,
+                "checked_at": _utcnow(),
+                "failure_class": "probe_exception",
+                "detail": exc.__class__.__name__,
+            }
+        with self._coding_route_probe_lock:
+            self._coding_route_report = dict(report)
+            self._coding_route_report_dirty = True
 
     def _observe_metric(
         self,

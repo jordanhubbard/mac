@@ -618,6 +618,92 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert steps[4][0] == "delete"
 
 
+def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, monkeypatch):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-clean-failure")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    harvested = []
+    deleted = []
+    telemetry = []
+    monkeypatch.setattr(te, "_sandbox_download", lambda *args: harvested.append(args) or True)
+    monkeypatch.setattr(te, "_sandbox_delete", lambda name: deleted.append(name) or True)
+    monkeypatch.setattr(
+        te,
+        "_sandbox_run_repository_verification",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("clean agent failure must not enter repository verification")
+        ),
+    )
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: telemetry.append((event, detail)) or True,
+    )
+
+    class CleanProgress:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def evidence(self):
+            return {
+                "ready_observed": True,
+                "mutation_observed": False,
+                "manifest_observed": False,
+                "head_sha": "base",
+                "changed_file_count": 0,
+                "changed_file_digest": "",
+            }
+
+    monkeypatch.setattr(te, "_SandboxProgressMonitor", CleanProgress)
+    task = {
+        "id": "task-clean-failure",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {"test": {"command": "make test"}},
+            }
+        },
+    }
+
+    result = te._run_sandboxed(
+        lambda *_args, **_kwargs: _FakeResult(42, stderr="route unavailable"),
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+        workspace,
+        task["id"],
+        {"task": task},
+    )
+
+    assert result.returncode == 42
+    assert harvested and deleted == ["sb-clean-failure"]
+    skipped = [detail for event, detail in telemetry if event == "sandbox_verification_skipped"]
+    assert skipped == [
+        {
+            "task_id": "task-clean-failure",
+            "level": "warning",
+            "sandbox": "sb-clean-failure",
+            "reason": "clean_agent_failure",
+            "returncode": 42,
+        }
+    ]
+
+
 def test_sandbox_repository_verifier_kills_process_tree_on_timeout(tmp_path):
     task_file = tmp_path / "task.json"
     task_file.write_text(
@@ -2655,10 +2741,31 @@ def test_sandbox_mode_off_never_probes(monkeypatch):
 
     monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "off")
     monkeypatch.setattr(
-        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+        te, "_run_coding_agent_preflight_result", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
     )
     choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
     assert te._coding_agent_sandbox_ok(choice) is False
+
+
+def test_sandbox_coding_route_rewrites_host_loopback_endpoint(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setattr(te, "_openshell_host_alias", lambda: "host.openshell.internal")
+    choice = ca.CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/b/codex",
+        auth_source="OPENAI_API_KEY",
+        provider="mac-router",
+        protocol="responses",
+        auth_kind="bearer_env",
+        endpoint="http://127.0.0.1:8001/v1",
+    )
+
+    sandbox_choice = te._coding_agent_choice_for_sandbox(choice)
+
+    assert choice.endpoint == "http://127.0.0.1:8001/v1"
+    assert sandbox_choice.endpoint == "http://host.openshell.internal:8001/v1"
 
 
 def test_sandbox_mode_trust_skips_probe(monkeypatch):
@@ -2666,7 +2773,7 @@ def test_sandbox_mode_trust_skips_probe(monkeypatch):
 
     monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "trust")
     monkeypatch.setattr(
-        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+        te, "_run_coding_agent_preflight_result", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
     )
     choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex")
     assert te._coding_agent_sandbox_ok(choice) is True
@@ -2678,7 +2785,18 @@ def test_sandbox_verify_runs_probe_once_and_caches(monkeypatch):
     monkeypatch.delenv("MAC_CODING_AGENT_SANDBOX", raising=False)  # default = verify
     te._SANDBOX_PREFLIGHT_CACHE.clear()
     calls = []
-    monkeypatch.setattr(te, "_run_coding_agent_preflight", lambda c: calls.append(c.agent) or True)
+    monkeypatch.setattr(
+        te,
+        "_run_coding_agent_preflight_result",
+        lambda c: calls.append(c.agent)
+        or {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": c.agent,
+            "route_fingerprint": c.route_fingerprint(),
+            "verified": True,
+            "checked_at": te.utcnow(),
+        },
+    )
     choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude")
     assert te._coding_agent_sandbox_ok(choice) is True
     assert te._coding_agent_sandbox_ok(choice) is True  # second call served from cache
@@ -2692,7 +2810,7 @@ def test_sandbox_verify_skips_codex_rotating_file_auth_by_default(monkeypatch):
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", raising=False)
     te._SANDBOX_PREFLIGHT_CACHE.clear()
     monkeypatch.setattr(
-        te, "_run_coding_agent_preflight", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
+        te, "_run_coding_agent_preflight_result", lambda c: (_ for _ in ()).throw(AssertionError("must not probe"))
     )
     choice = ca.CodingAgentChoice(
         agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
@@ -2707,7 +2825,18 @@ def test_sandbox_verify_can_opt_into_codex_file_auth_probe(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH", "1")
     te._SANDBOX_PREFLIGHT_CACHE.clear()
     calls = []
-    monkeypatch.setattr(te, "_run_coding_agent_preflight", lambda c: calls.append(c.agent) or True)
+    monkeypatch.setattr(
+        te,
+        "_run_coding_agent_preflight_result",
+        lambda c: calls.append(c.agent)
+        or {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": c.agent,
+            "route_fingerprint": c.route_fingerprint(),
+            "verified": True,
+            "checked_at": te.utcnow(),
+        },
+    )
     choice = ca.CodingAgentChoice(
         agent="codex", available=True, binary="/b/codex", auth_source="~/.codex/auth.json"
     )

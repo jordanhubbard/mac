@@ -123,7 +123,7 @@ button.explorer-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 /* Center editor frame */
 .editor-stack { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg-0); }
 .editor-tabs { height: 38px; display: flex; align-items: stretch; flex: none; border-bottom: 1px solid var(--border); background: #091219; }
-.editor-tab { display: flex; align-items: center; gap: 7px; min-width: 160px; max-width: 310px; padding: 0 14px; border-right: 1px solid var(--border); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.editor-tab { display: flex; align-items: center; gap: 7px; min-width: 160px; max-width: 310px; padding: 0 14px; border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--muted); font: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .editor-tab.active { border-top: 2px solid var(--cyan); background: var(--bg-0); color: var(--text-strong); }
 .editor-tab .codicon-close { margin-left: auto; color: var(--faint); }
 .loading-state { display: grid; place-items: center; flex: 1; color: var(--muted); }
@@ -218,6 +218,8 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .kanban-inspect:hover { background: var(--bg-2); }
 .task-inspector-backdrop { position: fixed; z-index: 80; inset: 0; display: flex; justify-content: flex-end; background: rgb(0 0 0 / 58%); }
 .task-inspector { width: min(620px, calc(100vw - 40px)); height: 100%; padding: 18px; overflow: auto; border: 0; border-left: 1px solid var(--border-strong); background: var(--bg-1); box-shadow: -18px 0 45px rgb(0 0 0 / 35%); color: var(--text); }
+.task-view { overflow: hidden; }
+.task-inspector.task-inspector-embedded { width: 100%; max-width: none; border-left: 0; box-shadow: none; }
 .task-inspector-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .task-inspector-header h2 { margin: 3px 0; color: var(--text-strong); font-size: 20px; }
 .task-inspector-header small { color: var(--faint); font-family: var(--mono); }

@@ -404,6 +404,14 @@ def test_workbench_ide_state_is_bounded_and_does_not_load_secret_audits(monkeypa
         raise AssertionError("Fleet IDE projection must not load secret audits")
 
     monkeypatch.setattr(cp, "list_secret_audits", fail_secret_audits)
+    pause_checks = []
+    original_project_dispatch_paused = cp._project_dispatch_paused
+
+    def counted_project_dispatch_paused(project):
+        pause_checks.append(project)
+        return original_project_dispatch_paused(project)
+
+    monkeypatch.setattr(cp, "_project_dispatch_paused", counted_project_dispatch_paused)
     client = _make_client(cp)
 
     resp = client.get("/dashboard/state?view=ide", headers=_AUTH_HEADERS)
@@ -424,6 +432,55 @@ def test_workbench_ide_state_is_bounded_and_does_not_load_secret_audits(monkeypa
     assert "history" not in projected
     assert "evidence" not in projected
     assert len(resp.content) < 250_000
+    assert pause_checks == ["mac"]
+
+
+def test_workbench_ide_state_compresses_and_excludes_virtual_service_agents():
+    cp = ControlPlane.in_memory()
+    physical_machine = cp.register_machine("worker")
+    physical = cp.register_agent(
+        physical_machine.id,
+        "worker",
+        resources={
+            "openclaw_runtime": {
+                "implementation": "openclaw",
+                "verified": True,
+            },
+            "representation": {
+                "human_facing": False,
+                "mode": "delegated",
+            },
+        },
+    )
+    virtual_machine = cp.register_machine(
+        "operator-review",
+        labels={"virtual": True},
+        resources={"virtual": True},
+        machine_id="machine_operator_review",
+    )
+    cp.register_agent(
+        virtual_machine.id,
+        "hub-reviewer",
+        capabilities=["review"],
+        resources={"virtual": True},
+    )
+    for index in range(40):
+        cp.create_task("compressible task %d" % index, project="mac")
+    client = _make_client(cp)
+
+    resp = client.get(
+        "/dashboard/state?view=ide",
+        headers={**_AUTH_HEADERS, "Accept-Encoding": "gzip"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("content-encoding") == "gzip"
+    body = resp.json()
+    assert [item["agent"]["id"] for item in body["agents"]] == [physical.id]
+    assert body["overview"]["counts"]["agents"] == 1
+    resources = body["agents"][0]["agent"]["resources"]
+    assert resources["openclaw_runtime"]["implementation"] == "openclaw"
+    assert resources["representation"]["mode"] == "delegated"
 
 
 def test_workbench_compact_task_detail_is_explicitly_limited():
@@ -460,13 +517,12 @@ def test_dashboard_reads_do_not_observe_themselves_or_trigger_stream_updates():
         == 200
     )
     assert client.get("/.well-known/agent-card.json").status_code == 200
-    assert (
-        client.get(
-            "/dashboard/stream?timeout_seconds=0",
-            headers=_AUTH_HEADERS,
-        ).status_code
-        == 200
+    stream_response = client.get(
+        "/dashboard/stream?timeout_seconds=0",
+        headers={**_AUTH_HEADERS, "Accept-Encoding": "gzip"},
     )
+    assert stream_response.status_code == 200
+    assert stream_response.headers.get("content-encoding") == "identity"
 
     api_paths = [
         item.detail.get("path")

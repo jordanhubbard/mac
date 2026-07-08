@@ -60,7 +60,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -3406,13 +3406,16 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # sandboxed hermes can authenticate (the *_BASE_URL values have their host
     # loopback rewritten to the sandbox host alias in the private env file).
     "MAC_HERMES_GATEWAY_BASE_URL,MAC_HERMES_GATEWAY_API_KEY,MAC_HERMES_GATEWAY_PROVIDER,"
-    "OPENAI_BASE_URL,OPENAI_API_KEY,"
+    "OPENAI_BASE_URL,OPENAI_API_KEY,CODEX_API_KEY,"
+    "MAC_CODEX_BASE_URL,MAC_CODEX_TOKEN,MAC_CODEX_PROVIDER,MAC_CODEX_WIRE_API,MAC_CODEX_MODEL,"
     # Coding-agent CLI credentials (see mac.coding_agent). A sandboxed coding
     # agent authenticates safely via these env keys. File-based Codex auth is not
     # forwarded by default because OpenShell uploads are copies: a throwaway
     # sandbox can consume and rotate the refresh token without persisting the
     # replacement back to the host.
-    "ANTHROPIC_API_KEY,CURSOR_API_KEY"
+    "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_BASE_URL,ANTHROPIC_MODEL,"
+    "CLAUDE_CODE_OAUTH_TOKEN,CLAUDE_CODE_USE_BEDROCK,CLAUDE_CODE_USE_VERTEX,CLAUDE_CODE_USE_FOUNDRY,"
+    "CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL"
 )
 
 # PATH is an image/runtime invariant, not configuration to import from the
@@ -4926,6 +4929,27 @@ def _run_sandboxed(
             sandbox=name,
             returncode=int(getattr(result, "returncode", 1)),
         )
+        # A failed agent that demonstrably left the repository untouched cannot
+        # benefit from bootstrap/tests/CodeGraph/publication finalization. The
+        # old path spent minutes in those phases, renewed the lease, and made a
+        # clean authentication failure look like a hung task. Preserve harvest
+        # and teardown in ``finally``, but return the original failure promptly.
+        progress_evidence = progress.evidence()
+        if (
+            int(getattr(result, "returncode", 1)) != 0
+            and progress_evidence.get("ready_observed") is True
+            and progress_evidence.get("mutation_observed") is False
+            and progress_evidence.get("manifest_observed") is False
+        ):
+            emit_telemetry(
+                "sandbox_verification_skipped",
+                task_id=str(audit_id) if audit_id else None,
+                level="warning",
+                sandbox=name,
+                reason="clean_agent_failure",
+                returncode=int(getattr(result, "returncode", 1)),
+            )
+            return result
         verification_expected = (
             isinstance(opts.get("task"), dict)
             and task_is_repo_coupled(opts["task"])
@@ -5143,10 +5167,11 @@ def _coding_agent_mcp_config_path(workspace: Path, choice: Any) -> Optional[str]
         return None
 
 
-# Per-process cache of the in-sandbox preflight verdict, keyed by (agent, binary).
-# The worker is long-lived; we verify once and reuse, so the LLM-backed probe
-# does not run on every task.
-_SANDBOX_PREFLIGHT_CACHE: Dict[tuple, bool] = {}
+# Per-process cache keyed by the full secret-free route fingerprint. A binary-only
+# key incorrectly reused success after an endpoint, protocol, auth source, or model
+# changed. Entries expire so revoked credentials and dead routes stop dispatch.
+_SANDBOX_PREFLIGHT_CACHE: Dict[str, Dict[str, object]] = {}
+_SANDBOX_PREFLIGHT_CACHE_LOCK = threading.Lock()
 
 
 def _coding_agent_preflight_timeout() -> float:
@@ -5156,6 +5181,34 @@ def _coding_agent_preflight_timeout() -> float:
         return val if val > 0 else 180.0
     except ValueError:
         return 180.0
+
+
+def _coding_agent_preflight_ttl(verified: bool) -> float:
+    name = (
+        "MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS"
+        if verified
+        else "MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS"
+    )
+    default = 900.0 if verified else 60.0
+    try:
+        return max(1.0, float(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
+    text = (output or "").lower()
+    if returncode in {124, 137} or "timed out" in text or "timeout" in text:
+        return "timeout"
+    if "connection refused" in text or "failed to connect" in text:
+        return "endpoint_unreachable"
+    if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
+        return "authentication_failed"
+    if "404" in text or "not found" in text or "unsupported" in text:
+        return "endpoint_protocol_mismatch"
+    if returncode == 0:
+        return "sentinel_missing"
+    return "probe_failed"
 
 
 def _build_sandbox_probe_argv(
@@ -5184,6 +5237,15 @@ def _build_sandbox_probe_argv(
     return argv
 
 
+def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
+    """Rewrite host-loopback endpoints to the OpenShell host alias for argv use."""
+    endpoint = str(getattr(choice, "endpoint", "") or "")
+    if not endpoint:
+        return choice
+    rewritten = _rewrite_host_local_url(endpoint, _openshell_host_alias())
+    return replace(choice, endpoint=rewritten) if rewritten != endpoint else choice
+
+
 def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
     """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
     Best-effort: any failure returns a non-zero code (never raises)."""
@@ -5194,7 +5256,7 @@ def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, s
         return 1, str(exc)
 
 
-def _run_coding_agent_preflight(choice: Any) -> bool:
+def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
     """Verify, inside a throwaway OpenShell sandbox, that the coding agent runs
     end-to-end: it must execute, authenticate, reach the provider, and echo the
     sentinel back. Proves the agent will actually work for a real sandboxed task
@@ -5202,10 +5264,14 @@ def _run_coding_agent_preflight(choice: Any) -> bool:
     is NOT sufficient. The probe sandbox is always deleted."""
     from . import coding_agent as _ca
 
-    name = "mac-codingcap-%s-%d" % (choice.agent, os.getpid())
+    import uuid
+
+    name = "mac-codingcap-%s-%s" % (choice.agent, uuid.uuid4().hex[:12])
     with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
         private_dir = Path(tmp)
-        probe_argv = _ca.coding_agent_argv(choice, PROMPT_SENTINEL)
+        probe_argv = _ca.coding_agent_argv(
+            _coding_agent_choice_for_sandbox(choice), PROMPT_SENTINEL
+        )
         bundle = _write_agent_command_bundle(
             private_dir, _ca.PREFLIGHT_PROMPT, probe_argv
         )
@@ -5227,11 +5293,73 @@ def _run_coding_agent_preflight(choice: Any) -> bool:
             bundle.cleanup()
             _sandbox_step(["delete", name], timeout=60.0)
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
+    result: Dict[str, object] = {
+        "schema": "mac.coding_agent.verification.v1",
+        "agent": choice.agent,
+        "provider": getattr(choice, "provider", ""),
+        "protocol": getattr(choice, "protocol", ""),
+        "auth_kind": getattr(choice, "auth_kind", ""),
+        "auth_source": getattr(choice, "auth_source", ""),
+        "endpoint": getattr(choice, "endpoint", ""),
+        "model": getattr(choice, "model", ""),
+        "route_fingerprint": choice.route_fingerprint(),
+        "verified": ok,
+        "checked_at": utcnow(),
+        "returncode": rc,
+        "failure_class": "" if ok else _classify_coding_agent_preflight_failure(rc, out),
+    }
     sys.stderr.write(
         "[executor] coding-agent sandbox preflight (%s): %s\n"
-        % (choice.agent, "OK" if ok else "FAILED (rc=%s) — falling back to gateway" % rc)
+        % (
+            choice.agent,
+            "OK"
+            if ok
+            else "FAILED (rc=%s, class=%s) — falling back to gateway"
+            % (rc, result["failure_class"]),
+        )
     )
-    return ok
+    return result
+
+
+def _run_coding_agent_preflight(choice: Any) -> bool:
+    """Compatibility wrapper returning only the verified verdict."""
+    return bool(_run_coding_agent_preflight_result(choice).get("verified"))
+
+
+def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
+    """Return the cached/live full route verification used by worker heartbeats."""
+    if not getattr(choice, "available", False) or not getattr(choice, "agent", ""):
+        return {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": getattr(choice, "agent", ""),
+            "verified": False,
+            "checked_at": utcnow(),
+            "failure_class": "not_configured",
+        }
+    if not _coding_agent_auth_is_safe_for_openshell(choice):
+        return {
+            **choice.observable(),
+            "schema": "mac.coding_agent.verification.v1",
+            "verified": False,
+            "checked_at": utcnow(),
+            "failure_class": "unsafe_rotating_file_auth",
+        }
+    key = choice.route_fingerprint()
+    now = time.monotonic()
+    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
+        cached = _SANDBOX_PREFLIGHT_CACHE.get(key)
+    if cached is not None:
+        verified = bool(cached.get("verified"))
+        age = now - float(cached.get("cached_monotonic") or 0.0)
+        if age < _coding_agent_preflight_ttl(verified):
+            return {k: v for k, v in cached.items() if k != "cached_monotonic"}
+    result = _run_coding_agent_preflight_result(choice)
+    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
+        _SANDBOX_PREFLIGHT_CACHE[key] = {
+            **result,
+            "cached_monotonic": time.monotonic(),
+        }
+    return result
 
 
 def _coding_agent_sandbox_ok(choice: Any) -> bool:
@@ -5250,10 +5378,7 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
         return True
     if not _coding_agent_auth_is_safe_for_openshell(choice):
         return False
-    key = (choice.agent, choice.binary)
-    if key not in _SANDBOX_PREFLIGHT_CACHE:
-        _SANDBOX_PREFLIGHT_CACHE[key] = _run_coding_agent_preflight(choice)
-    return _SANDBOX_PREFLIGHT_CACHE[key]
+    return bool(coding_agent_sandbox_verification(choice).get("verified"))
 
 
 def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = None) -> List[str]:
@@ -5317,7 +5442,8 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(choice.agent, rationale, task_id=task_id)
-    return _ca.coding_agent_argv(choice, prompt, mcp_config_path=mcp_path)
+    argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
+    return _ca.coding_agent_argv(argv_choice, prompt, mcp_config_path=mcp_path)
 
 
 def _executor_backend() -> str:

@@ -8,6 +8,7 @@ function makeTask(
   project = "alpha",
   priority = 1,
   title?: string,
+  dependencies: string[] = [],
 ) {
   return {
     task: {
@@ -17,7 +18,7 @@ function makeTask(
       priority,
       state,
       owner_agent_id: null,
-      dependencies: [],
+      dependencies,
       required_capabilities: [],
     },
     detail_loaded: false,
@@ -31,7 +32,7 @@ function dashboardState(overrides?: {
   const baseTasks = [
     makeTask("alpha-open-1", "open", "alpha", 2, "Open alpha one"),
     makeTask("alpha-open-2", "open", "alpha", 1, "Open alpha two"),
-    makeTask("alpha-blocked-1", "blocked", "alpha", 1, "Blocked alpha"),
+    makeTask("alpha-blocked-1", "blocked", "alpha", 1, "Blocked alpha", ["alpha-open-1"]),
     makeTask("beta-open-1", "open", "beta", 1, "Open beta one"),
     makeTask("beta-completed-1", "completed", "beta", 0, "Completed beta"),
     makeTask("gamma-open-1", "open", "gamma", 1, "Open gamma one"),
@@ -170,12 +171,28 @@ async function setupPage(
     });
   });
   await page.route("**/api/tasks/*?view=compact", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").pop() || "unknown";
+    const summary = state.tasks.find(({ task }) => task.id === id)?.task || {
+      id,
+      title: "detail",
+      state: "open",
+      project: "alpha",
+      dependencies: [],
+    };
     await route.fulfill({
       json: {
-        task: { id: "unknown", title: "detail", state: "open", project: "alpha" },
+        task: { ...summary, description: `Full detail for ${summary.title}` },
         detail_loaded: true,
         evidence: [],
-        history: [],
+        history: summary.state === "blocked" ? [{
+          id: `history-${id}`,
+          event_type: "task.updated",
+          actor: "worker",
+          from_state: "open",
+          to_state: "blocked",
+          detail: { dependencies: summary.dependencies, state: "blocked" },
+          created_at: "2026-07-08T10:00:00+00:00",
+        }] : [],
         reviews: [],
         publications: [],
       },
@@ -288,6 +305,25 @@ test("chevron button expands project children", async ({ page }) => {
   const children = page.locator(".project-children");
   await expect(children.getByRole("button", { name: "Open alpha one", exact: true })).toBeVisible();
   await expect(children.getByRole("button", { name: "Blocked alpha", exact: true })).toBeVisible();
+});
+
+test("task tree selection always opens the dedicated task pane with block context", async ({ page }) => {
+  await setupPage(page);
+  await page.goto("/?view=agents");
+  await expect(page.getByRole("heading", { name: "Agent mesh" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Expand alpha" }).click();
+  await page.getByRole("button", { name: "Blocked alpha", exact: true }).click();
+
+  await expect(page).toHaveURL(/view=task/);
+  await expect(page.getByRole("heading", { name: "Blocked alpha" })).toBeVisible();
+  await expect(page.getByText("Waiting for dependency tasks to complete.")).toBeVisible();
+  await expect(page.locator(".blocked-context p", { hasText: "alpha-open-1" })).toBeVisible();
+  await expect(page.locator(".task-inspector-embedded")).toBeVisible();
+  await expect(page.locator(".task-inspector-backdrop")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Return to Work view" }).click();
+  await expect(page.getByRole("heading", { name: "Work", exact: true })).toBeVisible();
 });
 
 test("chevron button collapses project children", async ({ page }) => {

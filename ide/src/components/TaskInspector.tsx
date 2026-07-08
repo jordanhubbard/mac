@@ -42,6 +42,30 @@ export function latestBlockedContext(detail: TaskDetail): BlockedContext | null 
   return null;
 }
 
+function blockedContext(detail: TaskDetail): BlockedContext | null {
+  const recorded = latestBlockedContext(detail);
+  const dependencies = stringList(detail.task.dependencies);
+  if (recorded) {
+    const blockingTasks = recorded.blockingTasks.length ? recorded.blockingTasks : dependencies;
+    return {
+      ...recorded,
+      blockingTasks,
+      reason: recorded.reason || (blockingTasks.length ? "Waiting for dependency tasks to complete." : ""),
+    };
+  }
+  if (!dependencies.length) return null;
+  return {
+    actor: "task ledger",
+    at: stringValue(detail.task.updated_at || detail.task.created_at),
+    blockingTasks: dependencies,
+    detail: { dependencies, inferred_from: "task.dependencies" },
+    error: "",
+    problems: [],
+    question: "",
+    reason: "Waiting for dependency tasks to complete.",
+  };
+}
+
 function appendOperatorDirection(detail: TaskDetail, direction: string, at: string) {
   const task = detail.task;
   const currentDescription = String(task.description || "").trimEnd();
@@ -70,18 +94,20 @@ export function TaskInspector({
   canWrite,
   onClose,
   onRefresh,
+  embedded = false,
 }: {
   detail: TaskDetail;
   canWrite: boolean;
   onClose: () => void;
   onRefresh: () => void | Promise<void>;
+  embedded?: boolean;
 }) {
   const [direction, setDirection] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const task = detail.task;
   const blocked = String(task.state) === "blocked";
-  const context = latestBlockedContext(detail);
+  const context = blockedContext(detail);
 
   async function provideDirection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -105,19 +131,16 @@ export function TaskInspector({
     }
   }
 
-  return (
-    <div className="task-inspector-backdrop" onMouseDown={(event) => {
-      if (event.currentTarget === event.target) onClose();
-    }}>
-      <section aria-labelledby="task-inspector-title" aria-modal="true" className="task-inspector" role="dialog">
+  const inspector = (
+      <section aria-labelledby="task-inspector-title" aria-modal={embedded ? undefined : true} className={`task-inspector ${embedded ? "task-inspector-embedded" : ""}`} role={embedded ? "region" : "dialog"}>
         <header className="task-inspector-header">
           <div>
-            <span className="eyebrow">Task inspector</span>
+            <span className="eyebrow">Task</span>
             <h2 id="task-inspector-title">{task.title || task.id}</h2>
             <small>{task.id}</small>
           </div>
-          <button aria-label="Close task inspector" autoFocus className="icon-button" onClick={onClose} type="button">
-            <i className="codicon codicon-close" />
+          <button aria-label={embedded ? "Return to Work view" : "Close task inspector"} autoFocus className="icon-button" onClick={onClose} type="button">
+            <i className={`codicon codicon-${embedded ? "arrow-left" : "close"}`} />
           </button>
         </header>
 
@@ -145,7 +168,7 @@ export function TaskInspector({
                   <details open><summary>Recorded block context</summary><pre>{JSON.stringify(context.detail, null, 2)}</pre></details>
                 ) : null}
               </>
-            ) : <p>No structured block reason was recorded.</p>}
+            ) : <p>The task ledger contains an invalid blocked transition with no reason. Reopen it with direction or repair the ledger event before redispatch.</p>}
           </div>
         ) : null}
 
@@ -180,6 +203,13 @@ export function TaskInspector({
           ))}
         </div>
       </section>
+  );
+  if (embedded) return inspector;
+  return (
+    <div className="task-inspector-backdrop" onMouseDown={(event) => {
+      if (event.currentTarget === event.target) onClose();
+    }}>
+      {inspector}
     </div>
   );
 }

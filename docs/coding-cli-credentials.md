@@ -9,9 +9,10 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.
 1. **Start on your own machine.** Log in to whichever coding CLIs you want
    the fleet to use, exactly as you would for yourself (`claude` login,
    `codex login`, `cursor-agent login`). No fleet yet, no extra steps.
-2. **Create the fleet.** Deploy hub + workers as usual. Workers report their
-   per-CLI auth status (secret-free) in every heartbeat, so the hub always
-   knows who can run which CLI.
+2. **Create the fleet.** Deploy hub + workers as usual. Workers report both
+   credential configuration and a secret-free, end-to-end OpenShell route
+   verification. The hub dispatches repository work only to a fresh matching
+   provider/protocol/auth/model proof.
 3. **Sync credentials on demand.**
 
    ```bash
@@ -29,8 +30,8 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.
 
 | CLI | Sources, in priority order | Delivered to the worker as |
 |---|---|---|
-| codex | `~/.codex/auth.json` (+ `config.toml`) | the same files, mode 0600 |
-| claude | `ANTHROPIC_API_KEY` env → `~/.claude/.credentials.json` → macOS Keychain (service `"Claude Code"`) | `ANTHROPIC_API_KEY` in `~/.mac/mac.env`, or the credentials file |
+| codex | `MAC_CODEX_TOKEN` / `CODEX_API_KEY` / `OPENAI_API_KEY` → `~/.codex/auth.json` | environment auth is preferred; rotating file auth is not copied into OpenShell by default |
+| claude | cloud identity → `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `apiKeyHelper` → `CLAUDE_CODE_OAUTH_TOKEN` → local credentials | the matching environment/helper/cloud configuration |
 | cursor | `CURSOR_API_KEY` env → macOS Keychain (`"cursor-access-token"`) | `CURSOR_API_KEY` in `~/.mac/mac.env` |
 
 macOS note: Claude Code and Cursor keep their tokens in the Keychain, not in
@@ -39,8 +40,13 @@ logged-in user can) and materializes the portable form on the worker.
 
 **Transport rules** (same discipline as `mac fleet sync-token`): secrets move
 only over the fleet's SSH routes, only on **stdin** — never argv, env,
-stdout, or the hub ledger. The hub never sees the credential; it only sees
-the workers' secret-free status reports.
+stdout, or the hub ledger. The hub never sees the credential; it sees only
+route fields, a SHA-256 route fingerprint, the verification time/result, and a
+classified failure reason.
+
+`configured` is deliberately weaker than `verified`. A present token can still
+target the wrong wire protocol or a dead endpoint. `mac fleet creds-status`
+therefore reports `ROUTE UNAVAILABLE (...)` separately from `NEEDS SYNC`.
 
 ## Roaming workstations
 

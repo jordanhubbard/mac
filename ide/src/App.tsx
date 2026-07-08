@@ -22,7 +22,7 @@ import { WorkbenchExplorer } from "./components/WorkbenchExplorer";
 import { selectedTask, WorkbenchViewContent } from "./components/WorkbenchViews";
 
 const VIEWS = new Set<WorkbenchView>([
-  "cockpit", "work", "workflows", "agents", "runtime", "observability", "connections",
+  "cockpit", "work", "task", "workflows", "agents", "runtime", "observability", "connections",
 ]);
 const DASHBOARD_REFRESH_MIN_MS = 5_000;
 const TASK_DETAIL_CACHE_LIMIT = 20;
@@ -305,6 +305,11 @@ export function App() {
     pushProjectToUrl(projectId);
   }, []);
 
+  const handleSelectTask = useCallback((taskId: string) => {
+    setSelectedTaskId(taskId);
+    setView("task");
+  }, []);
+
   // Restore project from URL on popstate (browser back/forward)
   useEffect(() => {
     function onPopState() {
@@ -398,8 +403,7 @@ export function App() {
                   key={`${result.kind}-${result.id}`}
                   onClick={() => {
                     if (result.kind === "task") {
-                      setSelectedTaskId(result.id);
-                      setView("work");
+                      handleSelectTask(result.id);
                     } else {
                       setSelectedAgentId(result.id);
                       setView("agents");
@@ -435,7 +439,7 @@ export function App() {
                   data={viewData}
                   onSelectAgent={setSelectedAgentId}
                   onSelectProject={handleSelectProject}
-                  onSelectTask={setSelectedTaskId}
+                  onSelectTask={handleSelectTask}
                   selectedAgentId={selectedAgentId}
                   selectedProjectId={selectedProjectId}
                   selectedTaskId={selectedTaskId}
@@ -447,8 +451,8 @@ export function App() {
                 <Allotment.Pane minSize={320} preferredSize="70%">
                   <div className="editor-stack">
                     <div className="editor-tabs">
-                      <div className="editor-tab active"><i className="codicon codicon-dashboard" /> {view === "cockpit" ? "Cockpit" : view[0].toUpperCase() + view.slice(1)} <i className="codicon codicon-close" /></div>
-                      {detail ? <div className="editor-tab"><i className="codicon codicon-issues" /> {detail.task.title || detail.task.id}</div> : null}
+                      {view !== "task" ? <div className="editor-tab active"><i className="codicon codicon-dashboard" /> {view === "cockpit" ? "Cockpit" : view[0].toUpperCase() + view.slice(1)} <i className="codicon codicon-close" /></div> : null}
+                      {detail ? <button className={`editor-tab ${view === "task" ? "active" : ""}`} onClick={() => setView("task")} type="button"><i className="codicon codicon-issues" /> {detail.task.title || detail.task.id}</button> : null}
                     </div>
                     {loading ? <div className="loading-state"><i className="codicon codicon-loading codicon-modifier-spin" /> Loading fleet state…</div> : (
                       <WorkbenchViewContent
@@ -456,7 +460,8 @@ export function App() {
                         data={viewData}
                         onRefresh={refreshLatest}
                         onSelectAgent={setSelectedAgentId}
-                        onSelectTask={setSelectedTaskId}
+                        onCloseTask={() => setView("work")}
+                        onSelectTask={handleSelectTask}
                         selectedAgentId={selectedAgentId}
                         selectedProjectId={selectedProjectId}
                         selectedTaskId={selectedTaskId}
