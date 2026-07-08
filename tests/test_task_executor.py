@@ -1332,6 +1332,12 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
 
     ws = tmp_path / "ws"
     ws.mkdir()
+    recovery_entries = [
+        {"step": "bootstrap", "choice": "retry", "result": "ok"}
+    ]
+    (ws / "harness-recovery-log.json").write_text(
+        json.dumps(recovery_entries), encoding="utf-8"
+    )
     _install_fake_codegraph(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
@@ -1349,6 +1355,7 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["evidence_type"] == "repo_change"
     assert manifest["repo"]["pushed"] is True
     assert "README.md" in manifest["repo"]["files_changed"]
+    assert manifest["recovery"] == recovery_entries
     assert manifest["codegraph"]["status"] in {"pass", "skipped"}
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
@@ -1440,6 +1447,7 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is True
+    assert "recovery" not in manifest
     assert manifest["repo"]["push_remote"] == canonical.as_uri()
     assert manifest["push"]["remote"] == canonical.as_uri()
     assert (
@@ -2601,7 +2609,7 @@ def test_agent_argv_sandboxed_uses_coding_agent_only_when_verified(tmp_path, mon
     monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
     monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: True)
     argv = te._agent_argv("do it", tmp_path, confined=True)
-    assert argv[0] == "/b/claude" and argv[-1] == "do it"
+    assert argv[0] == "claude" and argv[-1] == "do it"
     # No per-invocation MCP wiring on the sandboxed path (host paths don't resolve
     # inside the sandbox); no host MCP config file written.
     assert "--mcp-config" not in argv
@@ -2810,6 +2818,32 @@ def test_sandbox_coding_route_rewrites_host_loopback_endpoint(monkeypatch):
 
     assert choice.endpoint == "http://127.0.0.1:8001/v1"
     assert sandbox_choice.endpoint == "http://host.openshell.internal:8001/v1"
+    assert choice.binary == "/b/codex"
+    assert sandbox_choice.binary == "codex"
+
+
+def test_sandbox_coding_route_uses_image_path_for_host_command_override(monkeypatch):
+    from mac import coding_agent as ca
+
+    monkeypatch.setenv(
+        "MAC_CODING_AGENT_CODEX_CMD",
+        "/opt/homebrew/bin/codex exec --skip-git-repo-check",
+    )
+    choice = ca.CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/opt/homebrew/bin/codex",
+    )
+
+    sandbox_choice = te._coding_agent_choice_for_sandbox(choice)
+    argv = ca.coding_agent_argv(
+        sandbox_choice,
+        "do it",
+        env=te._coding_agent_env_for_sandbox(sandbox_choice),
+    )
+
+    assert argv == ["codex", "exec", "--skip-git-repo-check", "do it"]
+    assert all("/opt/homebrew" not in item for item in argv)
 
 
 def test_sandbox_mode_trust_skips_probe(monkeypatch):
@@ -3369,41 +3403,6 @@ def test_load_harness_recovery_log_non_list_json(tmp_path):
 def test_load_harness_recovery_log_empty_list(tmp_path):
     (tmp_path / "harness-recovery-log.json").write_text("[]")
     assert te._load_harness_recovery_log(tmp_path) == []
-
-
-# ---------------------------------------------------------------------------
-# Recovery key in run_deterministic_git_finalizer evidence manifest
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Recovery key in run_deterministic_git_finalizer evidence manifest
-# ---------------------------------------------------------------------------
-
-
-def test_git_finalizer_recovery_key_via_load_function(tmp_path, monkeypatch):
-    """run_deterministic_git_finalizer calls _load_harness_recovery_log and
-    includes the result as 'recovery' in the manifest when non-empty."""
-    # Patch _load_harness_recovery_log so we don't need a real log file
-    recovery_entries = [{"step": "bootstrap", "choice": "retry", "result": "ok"}]
-    monkeypatch.setattr(te, "_load_harness_recovery_log", lambda ws: recovery_entries)
-
-    # We can't easily mock the whole git/network stack here, so verify the
-    # contract: when the function is called with a non-git workspace it returns
-    # early and does NOT write a manifest (publication_target must be git://).
-    # The recovery logic is exercised at the point the manifest is assembled.
-    # We confirm through a targeted inspect of the source that the call is present.
-    import inspect
-    src = inspect.getsource(te.run_deterministic_git_finalizer)
-    assert "_load_harness_recovery_log(task_workspace)" in src
-    assert 'manifest["recovery"] = recovery_log' in src
-
-
-def test_git_finalizer_omits_recovery_key_source_check():
-    """Source confirms recovery key only added when recovery_log is non-empty."""
-    import inspect
-    src = inspect.getsource(te.run_deterministic_git_finalizer)
-    assert "if recovery_log:" in src
 
 
 # ---------------------------------------------------------------------------

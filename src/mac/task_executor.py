@@ -5297,12 +5297,50 @@ def _build_sandbox_probe_argv(
 
 
 def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
-    """Rewrite host-loopback endpoints to the OpenShell host alias for argv use."""
+    """Return a choice whose endpoint and executable resolve inside OpenShell.
+
+    Coding-agent detection intentionally runs on the host, where ``which`` returns
+    an absolute host path (for example ``/opt/homebrew/bin/codex``).  Passing that
+    path into a Linux sandbox bypasses the sandbox's PATH contract and fails even
+    when the image contains the CLI at ``/usr/local/bin/codex``.  Execute the
+    detected basename through the image-owned PATH instead.  The preflight still
+    proves that the corresponding binary is actually present before work routes
+    to it.
+    """
     endpoint = str(getattr(choice, "endpoint", "") or "")
-    if not endpoint:
+    binary = str(getattr(choice, "binary", "") or "")
+    rewritten_endpoint = (
+        _rewrite_host_local_url(endpoint, _openshell_host_alias())
+        if endpoint
+        else endpoint
+    )
+    sandbox_binary = Path(binary).name if binary else binary
+    if rewritten_endpoint == endpoint and sandbox_binary == binary:
         return choice
-    rewritten = _rewrite_host_local_url(endpoint, _openshell_host_alias())
-    return replace(choice, endpoint=rewritten) if rewritten != endpoint else choice
+    return replace(choice, endpoint=rewritten_endpoint, binary=sandbox_binary)
+
+
+def _coding_agent_env_for_sandbox(choice: Any) -> Dict[str, str]:
+    """Normalize an explicit coding-agent command onto the sandbox PATH.
+
+    Command overrides remain useful for CLI flag drift, but their executable may
+    not be a host-only absolute path.  Other explicit arguments are preserved and
+    are validated by the same live sandbox preflight.
+    """
+    from . import coding_agent as _ca
+
+    import shlex
+
+    env = dict(os.environ)
+    key = _ca.COMMAND_ENV.get(str(getattr(choice, "agent", "") or ""))
+    raw = str(env.get(key) or "").strip() if key else ""
+    if not raw:
+        return env
+    argv = shlex.split(raw)
+    if argv:
+        argv[0] = Path(argv[0]).name
+        env[key] = shlex.join(argv)
+    return env
 
 
 def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, str]":
@@ -5328,8 +5366,11 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
     name = "mac-codingcap-%s-%s" % (choice.agent, uuid.uuid4().hex[:12])
     with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
         private_dir = Path(tmp)
+        sandbox_choice = _coding_agent_choice_for_sandbox(choice)
         probe_argv = _ca.coding_agent_argv(
-            _coding_agent_choice_for_sandbox(choice), PROMPT_SENTINEL
+            sandbox_choice,
+            PROMPT_SENTINEL,
+            env=_coding_agent_env_for_sandbox(sandbox_choice),
         )
         bundle = _write_agent_command_bundle(
             private_dir, _ca.PREFLIGHT_PROMPT, probe_argv
@@ -5502,7 +5543,13 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(choice.agent, rationale, task_id=task_id)
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
-    return _ca.coding_agent_argv(argv_choice, prompt, mcp_config_path=mcp_path)
+    argv_env = _coding_agent_env_for_sandbox(argv_choice) if confined else None
+    return _ca.coding_agent_argv(
+        argv_choice,
+        prompt,
+        env=argv_env,
+        mcp_config_path=mcp_path,
+    )
 
 
 def _executor_backend() -> str:
