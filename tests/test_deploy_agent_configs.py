@@ -1671,6 +1671,96 @@ fleets:
     ]
 
 
+@pytest.mark.parametrize(
+    "agents_yaml",
+    [
+        """
+agents:
+  hub:
+    target: operator@hub.example.internal
+    os: darwin
+""",
+        """
+agents:
+  - name: hub
+    target: operator@hub.example.internal
+    os: darwin
+""",
+    ],
+    ids=["mapping-agents", "list-agents"],
+)
+def test_deploy_accepts_flat_single_fleet_registry(tmp_path, agents_yaml):
+    registry = tmp_path / "fleets.yaml"
+    registry.write_text(
+        (
+            """
+sample: false
+fleet_name: default
+hub_agent: hub
+control_port: 8789
+"""
+            + agents_yaml
+        ).lstrip(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            "specs",
+            str(ROOT / "deploy" / "fleet" / "config.yaml"),
+            str(registry),
+            "hub",
+            "hub",
+        ],
+        input=fleet_config_query_source(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split("|", 2)[:2] == [
+        "hub",
+        "operator@hub.example.internal",
+    ]
+
+
+def test_deploy_rejects_flat_route_only_registry_before_building_specs(tmp_path):
+    registry = tmp_path / "fleets.yaml"
+    registry.write_text(
+        """
+hub_agent: hub
+agents:
+  hub:
+    target: operator@hub.example.internal
+    os: darwin
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            "specs",
+            str(ROOT / "deploy" / "fleet" / "config.yaml"),
+            str(registry),
+            "hub",
+            "hub",
+        ],
+        input=fleet_config_query_source(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "route-only target registry" in result.stderr
+    assert "sample: false" in result.stderr
+
+
 def test_deploy_rejects_route_only_registry_before_building_specs(tmp_path):
     registry = tmp_path / "fleets.yaml"
     registry.write_text(

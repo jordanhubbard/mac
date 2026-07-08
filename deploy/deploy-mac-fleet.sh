@@ -70,7 +70,9 @@ Usage:
 Deploy mac as the local ACC replacement to a fleet declared in
 ~/.mac/fleets.yaml, or in MAC_DEPLOY_FLEETS_CONFIG. Real fleet topology must
 live outside this Git repository. The checked-in deploy/fleet/config.yaml is a
-generic schema/defaults sample only.
+generic schema/defaults sample only. The registry may use a top-level
+``fleets`` mapping/list or the single-fleet flat form written by setup; agents
+may be keyed by name or expressed as a list. See docs/fleet-registry-schema.md.
 
 Each host gets:
   - ~/.mac/src/mac from this repository (includes the vendored Hermes runtime
@@ -600,6 +602,19 @@ base = load_yaml(base_path)
 def normalize_fleets(data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     fleets = data.get("fleets")
     result: Dict[str, Dict[str, Any]] = {}
+    # Match scripts/setup-fleet.py's read contract: a single-fleet registry may
+    # omit the outer ``fleets`` wrapper.  This is still a registry shape, not a
+    # request to merge in the checked-in sample topology; the route-only guard
+    # below continues to require ``sample: false`` before deployment.
+    if fleets is None and data.get("hub_agent") and data.get("agents"):
+        hub = text_field(data.get("hub_agent"))
+        if not hub:
+            print("ERROR: every fleet entry in %s needs a hub_agent" % registry_path, file=sys.stderr)
+            raise SystemExit(2)
+        fleet = deepcopy(data)
+        fleet["hub_agent"] = hub
+        result[hub] = fleet
+        return result
     if isinstance(fleets, dict):
         for key, value in fleets.items():
             if not isinstance(value, dict):
