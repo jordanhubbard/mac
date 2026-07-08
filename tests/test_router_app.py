@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import mac.router_app as _ra
 from mac.provider_router import Provider, ProviderRouter
 from mac.router_app import (
     ProviderProxy,
     _ensure_max_tokens_floor,
     build_proxy_from_env,
+    mac_route_context_headers,
     mount_router,
     resolve_provider_key,
 )
@@ -256,7 +258,7 @@ def test_mount_adds_routes_when_inproc_with_providers():
     proxy = ProviderProxy(_router(), _fake_forward({"primary": (200, {"ok": True})})[0])
     assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}, proxy=proxy) is True
     paths = {r.path for r in app.routes}
-    assert "/v1/chat/completions" in paths and "/v1/embeddings" in paths
+    assert {"/v1/chat/completions", "/v1/responses", "/v1/embeddings"} <= paths
 
 
 def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypatch):
@@ -353,6 +355,7 @@ def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypa
     }
     assert route_keys == {
         ("POST", "/v1/chat/completions"),
+        ("POST", "/v1/responses"),
         ("POST", "/v1/embeddings"),
         ("POST", "/v1/genai/{path:path}"),
         ("POST", "/v1/audio/{path:path}"),
@@ -366,6 +369,24 @@ def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypa
     assert chat.status_code == 200
     assert chat.json()["choices"][0]["message"]["content"] == "ready"
     assert calls[-1][1] == "/chat/completions"
+    assert calls[-1][2]["model"] == "meta/llama-route-test"
+
+    responses = client.post(
+        "/v1/responses",
+        json={
+            "model": "*",
+            "instructions": "Be concise",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        },
+    )
+    assert responses.status_code == 200
+    assert responses.json()["object"] == "response"
+    assert responses.json()["output"][0]["content"][0]["text"] == "ready"
+    assert calls[-1][1] == "/chat/completions"
+    assert calls[-1][2]["messages"] == [
+        {"role": "system", "content": "Be concise"},
+        {"role": "user", "content": "hi"},
+    ]
     assert calls[-1][2]["model"] == "meta/llama-route-test"
 
     embeddings = client.post("/v1/embeddings", json={"model": "*", "input": "hello"})
@@ -844,9 +865,6 @@ def test_build_proxy_never_uses_gpt_41_mini_for_wildcard_default():
 # mac_route_context_headers
 # ---------------------------------------------------------------------------
 
-from mac.router_app import mac_route_context_headers
-
-
 def test_mac_route_context_headers_explicit_values():
     """Explicit arguments are echoed as lowercase header keys."""
     headers = mac_route_context_headers(
@@ -922,9 +940,6 @@ def test_mac_route_context_headers_is_exported():
 # ---------------------------------------------------------------------------
 # Principal-mismatch hardening — _is_principal_mismatch_rejected() + 403 gate
 # ---------------------------------------------------------------------------
-
-import mac.router_app as _ra
-
 
 def test_reject_mismatch_env_var_truthy_values():
     """All truthy env var spellings activate the mismatch gate."""

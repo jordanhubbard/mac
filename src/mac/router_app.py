@@ -1227,8 +1227,13 @@ def mount_router(
     route_observer: Optional[RouteObserver] = None,
     media_agent_table_provider: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> bool:
-    """Mount /v1/chat/completions + /v1/embeddings (+ /v1/genai image proxy) on
-    ``app`` when MAC_ROUTER_BACKEND=inproc. Returns True if anything mounted.
+    """Mount the OpenAI chat, Responses, and embeddings surfaces on ``app``.
+
+    ``/v1/responses`` is translated onto the configured Chat Completions
+    upstream because current Codex requires the Responses wire protocol while
+    several MAC providers expose only the older OpenAI-compatible chat API.
+    The routes are mounted only when ``MAC_ROUTER_BACKEND=inproc``. Returns True
+    if anything mounted.
     Default backend is 'tokenhub' → no-op, so an existing fleet is unchanged until
     flipped. ``media_agent_table_provider`` (optional) lets the media router
     compose bindings from live self-advertising agents (capability auto-routing)."""
@@ -1250,6 +1255,12 @@ def mount_router(
     if proxy is None:
         return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
+    from mac.responses_adapter import (
+        buffered_chat_to_responses_stream,
+        chat_response_to_responses,
+        chat_stream_to_responses,
+        responses_request_to_chat,
+    )
 
     # Evaluate once at mount time so the gate is consistent for the lifetime of
     # the process (no per-request os.environ lookups; flipping the env var
@@ -1289,6 +1300,32 @@ def mount_router(
             return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
         status, out = proxy.complete("/chat/completions", body, route_context=route_context)
         return JSONResponse(out, status_code=status)
+
+    @app.post("/v1/responses")
+    def _responses(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401
+        route_context = _route_context_from_request(request, body)
+        mismatch = _mismatch_response(route_context)
+        if mismatch is not None:
+            return mismatch
+        responses_body = _strip_internal_route_context(body)
+        chat_body = responses_request_to_chat(responses_body)
+        if responses_body.get("stream"):
+            status, obj = proxy.stream_complete(
+                "/chat/completions", chat_body, route_context=route_context
+            )
+            if status == 200:
+                if isinstance(obj, dict):
+                    stream = buffered_chat_to_responses_stream(obj, responses_body)
+                else:
+                    stream = chat_stream_to_responses(obj, responses_body)
+                return StreamingResponse(stream, media_type="text/event-stream")
+            return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
+        status, out = proxy.complete(
+            "/chat/completions", chat_body, route_context=route_context
+        )
+        if 200 <= status < 300 and isinstance(out, dict):
+            out = chat_response_to_responses(out, responses_body)
+        return JSONResponse(out if isinstance(out, dict) else {}, status_code=status)
 
     @app.post("/v1/embeddings")
     def _embeddings(request: Request, body: Dict[str, Any] = Body(...)) -> Any:  # noqa: ANN401

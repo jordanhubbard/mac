@@ -225,18 +225,9 @@ def _route_fields(
             "openai" if host.endswith("openai.com") else "mac-router"
         )
         auth_kind = "oauth_file" if auth_source == "~/.codex/auth.json" else "bearer_env"
-        # MAC's in-process router exposes the OpenAI-compatible Chat Completions
-        # surface, not ``/v1/responses``.  Codex defaults to Responses upstream,
-        # so an implicit MAC-router route must select ``chat`` or every otherwise
-        # healthy in-sandbox probe reaches the hub and receives a 404.  Operators
-        # can still pin either protocol for a custom proxy with
-        # MAC_CODEX_WIRE_API.
-        default_wire_api = "responses" if provider == "openai" else "chat"
         return {
             "provider": provider,
-            "protocol": str(
-                env.get("MAC_CODEX_WIRE_API") or default_wire_api
-            ).strip().lower(),
+            "protocol": str(env.get("MAC_CODEX_WIRE_API") or "responses").strip().lower(),
             "auth_kind": auth_kind,
             "endpoint": endpoint,
             "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CODEX_MODEL") or "").strip(),
