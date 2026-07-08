@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from types import SimpleNamespace
 
 import pytest
 
@@ -212,6 +211,27 @@ def test_subprocess_executor_exports_task_iteration_budget(monkeypatch, tmp_path
 
     assert execution.returncode == 0
     assert captured["env"]["MAC_TASK_MAX_ITERATIONS"] == "12"
+
+
+def test_subprocess_executor_does_not_inherit_task_scoped_overrides(
+    monkeypatch, tmp_path
+) -> None:
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setenv("MAC_TASK_MODEL", "stale/model")
+    monkeypatch.setenv("MAC_TASK_MAX_ITERATIONS", "999")
+    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+
+    worker.SubprocessExecutor(["executor"])(
+        {"id": "task_unpinned", "metadata": {}}, tmp_path
+    )
+
+    assert "MAC_TASK_MODEL" not in captured["env"]
+    assert "MAC_TASK_MAX_ITERATIONS" not in captured["env"]
 
 
 def test_review_verdict_compares_executor_changed_files(monkeypatch, tmp_path) -> None:

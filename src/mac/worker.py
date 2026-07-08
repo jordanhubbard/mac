@@ -189,6 +189,14 @@ class SubprocessExecutor:
 
     def __call__(self, task: JsonDict, task_dir: Path) -> WorkerExecution:
         env = os.environ.copy()
+        # These are task-scoped inputs, not worker defaults.  A long-lived
+        # worker may itself have been launched from an operator shell (or an
+        # older service definition) that carried values from a previous task.
+        # Clear them before resolving the current task so an unpinned task
+        # falls back to the coding agent's configured default and remains
+        # inside that agent credential's model policy.
+        env.pop("MAC_TASK_MODEL", None)
+        env.pop("MAC_TASK_MAX_ITERATIONS", None)
         repository_context = _load_repository_context(task_dir)
         env.update(
             {

@@ -1631,6 +1631,7 @@ def test_deploy_accepts_canonical_mapping_shaped_agent_registry(tmp_path):
         """
 fleets:
   default:
+    sample: false
     fleet_name: default
     hub_agent: hub
     control_port: 8789
@@ -1663,6 +1664,42 @@ fleets:
         "hub",
         "operator@hub.example.internal",
     ]
+
+
+def test_deploy_rejects_route_only_registry_before_building_specs(tmp_path):
+    registry = tmp_path / "fleets.yaml"
+    registry.write_text(
+        """
+fleets:
+  default:
+    hub_agent: hub
+    agents:
+      hub:
+        target: operator@hub.example.internal
+        os: darwin
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            "specs",
+            str(ROOT / "deploy" / "fleet" / "config.yaml"),
+            str(registry),
+            "hub",
+            "hub",
+        ],
+        input=fleet_config_query_source(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "route-only target registry" in result.stderr
+    assert "sample: false" in result.stderr
 
 
 def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):

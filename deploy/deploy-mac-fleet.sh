@@ -655,6 +655,21 @@ if registry_present:
             file=sys.stderr,
         )
         raise SystemExit(2)
+    # ~/.mac/fleets.yaml is also the canonical SSH target registry.  Its
+    # compact route-only form intentionally contains just targets and must not
+    # be merged with the checked-in sample defaults: doing so fabricates a
+    # deploy topology (fleet identity, service labels, shared-service owner)
+    # that can mutate a healthy host under the wrong identity.  setup-fleet
+    # writes ``sample: false`` as the explicit full-topology marker.
+    if fleet.get("sample") is not False:
+        print(
+            "ERROR: fleet %s in %s is a route-only target registry, not a full "
+            "deployment topology. Run make setup (or scripts/setup-fleet.py) "
+            "to write an explicit fleet entry with sample: false before deploying."
+            % (text_field(fleet.get("fleet_name") or fleet.get("hub_agent")), registry_path),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     cfg = merge_dicts(base, {k: v for k, v in fleet.items() if k != "agents"})
     cfg["agents"] = list(agent_map(fleet.get("agents") if "agents" in fleet else base.get("agents")).values())
 else:
