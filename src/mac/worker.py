@@ -7,6 +7,7 @@ import fcntl
 import fnmatch
 import hashlib
 import json
+import logging
 import os
 import pty
 import re
@@ -79,6 +80,7 @@ from mac.gitops import (
 
 
 JsonDict = Dict[str, Any]
+logger = logging.getLogger("mac.worker")
 Executor = Callable[[JsonDict, Path], "WorkerExecution"]
 CommandAuditSink = Callable[[JsonDict], None]
 StatusUpdateSink = Callable[[JsonDict], JsonDict]
@@ -3636,20 +3638,20 @@ class MacWorker:
                 task_dir,
                 execution,
             )
+        metadata = self._execution_metadata(task_dir, execution)
         result_path = task_dir / "worker-result.json"
         result_path.write_text(
             json.dumps(
                 {
                     "returncode": execution.returncode,
                     "summary": execution.summary,
-                    "metadata": self._execution_metadata(task_dir, execution),
+                    "metadata": metadata,
                 },
                 indent=2,
                 sort_keys=True,
             ),
             encoding="utf-8",
         )
-        metadata = self._execution_metadata(task_dir, execution)
         artifacts = _durable_evidence_artifacts(task_dir, result_path)
         evidence_result = self.client.post(
             "/tasks/%s/evidence" % quote(task_id, safe=""),
@@ -4260,6 +4262,23 @@ class MacWorker:
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = dict(execution.metadata)
+        # J-lens is optional diagnostic evidence only.  Its adapter catches
+        # model/checkpoint/input failures, and this outer boundary guarantees a
+        # future adapter regression still cannot change task success, review,
+        # or publication decisions.
+        try:
+            from mac.jlens.advisory import advisory_audit_from_environment
+
+            jlens_audit = advisory_audit_from_environment(
+                task_dir, execution.metadata
+            )
+            if jlens_audit is not None:
+                metadata["jlens_audit"] = jlens_audit
+        except Exception as exc:  # noqa: BLE001 - advisory means non-authoritative.
+            logger.warning("J-lens advisory evidence unavailable: %s", exc)
+        # Raw residual tensors can be very large and are an executor-to-auditor
+        # handoff, not durable task evidence.  Persist only the bounded result.
+        metadata.pop("jlens_activations", None)
         repository_context = _load_repository_context(task_dir)
         manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
         manifest = _enrich_verification_manifest_from_repository_context(

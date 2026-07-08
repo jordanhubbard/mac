@@ -1,0 +1,4 @@
+{"id":"cal-1","split":"calibration","activations":[[-2.0,2.0],[-1.5,1.5]],"label":0}
+{"id":"cal-2","split":"calibration","activations":[[-1.0,1.0],[-0.5,0.5]],"label":0}
+{"id":"cal-3","split":"calibration","activations":[[0.5,-0.5],[1.0,-1.0]],"label":1}
+{"id":"cal-4","split":"calibration","activations":[[1.5,-1.5],[2.0,-2.0]],"label":1}

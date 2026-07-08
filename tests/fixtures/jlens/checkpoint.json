@@ -1,0 +1,7 @@
+{
+  "bias": 0.0,
+  "negative_label": "typical",
+  "positive_label": "flagged",
+  "threshold": 0.5,
+  "weights": [1.0, -1.0]
+}
