@@ -2956,6 +2956,7 @@ def test_worker_publishes_matching_sandbox_route_verification(
         protocol="responses",
         auth_kind="bearer_env",
         endpoint="https://hub.example/v1",
+        model="*",
     )
     report = {
         "schema": "mac.coding_agent.verification.v1",
@@ -2965,7 +2966,7 @@ def test_worker_publishes_matching_sandbox_route_verification(
         "auth_kind": "bearer_env",
         "auth_source": "MAC_CODEX_TOKEN",
         "endpoint": "https://hub.example/v1",
-        "model": "",
+        "model": "*",
         "route_fingerprint": choice.route_fingerprint(),
         "verified": True,
         "checked_at": "2026-07-08T00:00:00+00:00",
