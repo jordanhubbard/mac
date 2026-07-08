@@ -50,6 +50,17 @@ def deploy_script_text():
     return (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 
 
+def fleet_config_query_source() -> str:
+    script = deploy_script_text()
+    match = re.search(
+        r"fleet_config_query\(\) \{.*?<<'PY'\n(?P<source>.*?)\nPY\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert match is not None
+    return match.group("source")
+
+
 def deploy_env_config(
     tmp_path,
     *,
@@ -1612,6 +1623,46 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert 'fleet_scoped_env MAC_ROUTER_BACKEND' in deploy
     assert 'fleet_scoped_env MAC_ROUTER_PROVIDERS' in deploy
     assert "MAC_API_TOKEN" not in env
+
+
+def test_deploy_accepts_canonical_mapping_shaped_agent_registry(tmp_path):
+    registry = tmp_path / "fleets.yaml"
+    registry.write_text(
+        """
+fleets:
+  default:
+    fleet_name: default
+    hub_agent: hub
+    control_port: 8789
+    agents:
+      hub:
+        target: operator@hub.example.internal
+        os: darwin
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            "specs",
+            str(ROOT / "deploy" / "fleet" / "config.yaml"),
+            str(registry),
+            "hub",
+            "hub",
+        ],
+        input=fleet_config_query_source(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split("|", 2)[:2] == [
+        "hub",
+        "operator@hub.example.internal",
+    ]
 
 
 def test_setup_fleet_wizard_can_write_explicit_headscale_provider(tmp_path):

@@ -547,11 +547,36 @@ def require_no_pipe(fields: Iterable[str]) -> None:
 def agent_map(items: Any) -> Dict[str, Dict[str, Any]]:
     if not items:
         return {}
-    if not isinstance(items, list):
-        print("ERROR: fleet config agents must be a list", file=sys.stderr)
+    normalized: List[Dict[str, Any]] = []
+    if isinstance(items, dict):
+        # ~/.mac/fleets.yaml is also the CLI/SSH source of truth, whose compact
+        # form keys agents by name.  Deploy must accept that canonical mapping
+        # instead of requiring operators to maintain a second list-shaped
+        # topology file.  An explicit name may be repeated, but it must agree
+        # with the mapping key so selection cannot silently target another host.
+        for key, value in items.items():
+            if not isinstance(value, dict):
+                print("ERROR: each fleet agent must be a mapping", file=sys.stderr)
+                raise SystemExit(2)
+            item = deepcopy(value)
+            key_name = text_field(key)
+            explicit_name = text_field(item.get("name"))
+            if explicit_name and explicit_name != key_name:
+                print(
+                    "ERROR: fleet agent name %s does not match mapping key %s"
+                    % (explicit_name, key_name),
+                    file=sys.stderr,
+                )
+                raise SystemExit(2)
+            item["name"] = key_name
+            normalized.append(item)
+    elif isinstance(items, list):
+        normalized = [deepcopy(item) for item in items]
+    else:
+        print("ERROR: fleet config agents must be a mapping or list", file=sys.stderr)
         raise SystemExit(2)
     result: Dict[str, Dict[str, Any]] = {}
-    for item in items:
+    for item in normalized:
         if not isinstance(item, dict):
             print("ERROR: each fleet agent must be a mapping", file=sys.stderr)
             raise SystemExit(2)
