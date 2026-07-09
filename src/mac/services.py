@@ -14601,8 +14601,8 @@ class ControlPlane:
         for task in self._dispatch_candidate_tasks(project=project):
             tenant_key = self._task_tenant_id(task) or ""
             groups.setdefault(tenant_key, []).append(task)
-        for tenant_tasks in groups.values():
-            tenant_tasks.sort(key=lambda item: self._dispatch_task_sort_key(item, now))
+        for tenant_id, tenant_tasks in groups.items():
+            groups[tenant_id] = self._interleave_tasks_by_project(tenant_tasks, now)
         tenant_order = sorted(
             groups,
             key=lambda tenant_id: (
@@ -14615,6 +14615,34 @@ class ControlPlane:
             for tenant_id in tenant_order:
                 if groups[tenant_id]:
                     ordered.append(groups[tenant_id].pop(0))
+        return ordered
+
+    def _interleave_tasks_by_project(self, tasks: List[Task], now: str) -> List[Task]:
+        """Round-robin a tenant's candidates across projects.
+
+        Projects sharing a tenant otherwise contend on a single
+        (priority, age) order, so one project flooding high-priority tasks
+        starves its siblings for up to the aging period. Interleaving gives
+        every project with ready work a claim slot each cycle; within a
+        project the (priority, age) order is preserved.
+        """
+        projects: Dict[str, List[Task]] = {}
+        for task in tasks:
+            projects.setdefault(task.project or "", []).append(task)
+        for project_tasks in projects.values():
+            project_tasks.sort(key=lambda item: self._dispatch_task_sort_key(item, now))
+        project_order = sorted(
+            projects,
+            key=lambda name: (
+                *self._dispatch_task_sort_key(projects[name][0], now),
+                name,
+            ),
+        )
+        ordered: List[Task] = []
+        while any(projects.values()):
+            for name in project_order:
+                if projects[name]:
+                    ordered.append(projects[name].pop(0))
         return ordered
 
     def _dispatch_candidate_tasks(self, *, project: Optional[str] = None) -> List[Task]:

@@ -3687,6 +3687,48 @@ def test_dispatch_tick_round_robins_between_tenants(cp):
     assert [item["task"]["id"] for item in tick["assignments"]] == [task_a1.id, task_b.id]
 
 
+def test_dispatch_round_robins_between_projects_within_tenant(cp):
+    flood = [
+        cp.create_task(
+            "flood-%d" % index,
+            project="flood",
+            priority=100,
+            required_capabilities=["python"],
+        )
+        for index in range(3)
+    ]
+    starved = cp.create_task(
+        "starved",
+        project="starved",
+        priority=10,
+        required_capabilities=["python"],
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    # The low-priority project's head task gets the second claim slot instead
+    # of queueing behind every high-priority task from the flooding project.
+    assert [task.id for task in ordered] == [
+        flood[0].id,
+        starved.id,
+        flood[1].id,
+        flood[2].id,
+    ]
+
+
+def test_dispatch_preserves_priority_order_within_project(cp):
+    low = cp.create_task(
+        "low", project="solo", priority=10, required_capabilities=["python"]
+    )
+    high = cp.create_task(
+        "high", project="solo", priority=100, required_capabilities=["python"]
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    assert [task.id for task in ordered] == [high.id, low.id]
+
+
 def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     worker = register_agent(cp, "worker", ["python"])
     normal = cp.create_task(
