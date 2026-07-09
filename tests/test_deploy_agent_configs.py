@@ -2078,6 +2078,10 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
     )
     (log_dir / "deploy-manifest-latest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+    # Spokes have a mac.env but intentionally do not run a loopback control
+    # plane. Reconciliation must rely on the role-aware remote health gate and
+    # matching durable manifests instead of probing 127.0.0.1:8789.
+    (tmp_path / ".mac" / "mac.env").write_text("MAC_PORT=9\n", encoding="utf-8")
 
     result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts)
 

@@ -1021,12 +1021,10 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
             % (label, deploy.get("timestamp"))
         )
 PY
-if [ -f "$mac_home/mac.env" ]; then
-  set -a
-  . "$mac_home/mac.env"
-  set +a
-  curl -fsS --max-time 10 "http://127.0.0.1:${MAC_PORT:-8789}/health" >/dev/null
-fi
+# The remote transaction already performed the role-aware health check before
+# writing the post manifest.  Do not unconditionally probe loopback here: a
+# spoke intentionally has no local control plane, so 127.0.0.1:8789 is not a
+# valid reconciliation target for it.
 echo "remote reconciliation succeeded for $agent"
 REMOTE
 }
@@ -1280,6 +1278,11 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DRAIN_POLL_SECONDS "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"
+  # Starting/restarting the worker from inside the remote install transaction
+  # can terminate that transaction before its post manifest is durable (most
+  # visibly under supervisord).  The outer controller owns the restart after
+  # it has reconciled the post manifest.
+  add_remote_env MAC_DEPLOY_DEFER_AGENT_RESTART 1
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
   add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"
@@ -1487,6 +1490,7 @@ DRAIN_MODE="${MAC_DEPLOY_DRAIN_MODE:-wait}"
 DRAIN_TIMEOUT_SECONDS="${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}"
 DRAIN_POLL_SECONDS="${MAC_DEPLOY_DRAIN_POLL_SECONDS:-10}"
 DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
+DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 SRC_DIR="$MAC_HOME/src/mac"
@@ -5720,16 +5724,20 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable "$MAC_AGENT_SERVICE_NAME"
   restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  sudo systemctl restart "$MAC_AGENT_SERVICE_NAME"
-  sleep 3
-  sudo systemctl show "$MAC_AGENT_SERVICE_NAME" \
-    -p LoadState \
-    -p ActiveState \
-    -p SubState \
-    -p UnitFileState \
-    -p MainPID \
-    -p NRestarts || true
-  sudo journalctl -u "$MAC_AGENT_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-agent-journal.txt" || true
+  if truthy "$DEFER_AGENT_RESTART"; then
+    log "deferring mac-agent restart until post-manifest reconciliation"
+  else
+    sudo systemctl restart "$MAC_AGENT_SERVICE_NAME"
+    sleep 3
+    sudo systemctl show "$MAC_AGENT_SERVICE_NAME" \
+      -p LoadState \
+      -p ActiveState \
+      -p SubState \
+      -p UnitFileState \
+      -p MainPID \
+      -p NRestarts || true
+    sudo journalctl -u "$MAC_AGENT_SERVICE_NAME" --since "$restart_since" --no-pager > "$LOG_DIR/mac-agent-journal.txt" || true
+  fi
 }
 
 
@@ -5824,6 +5832,11 @@ EOF
   restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   run_supervisorctl reread >/dev/null
   run_supervisorctl update >/dev/null
+  if truthy "$DEFER_AGENT_RESTART"; then
+    # ``update`` starts newly added autostart programs.  Keep the agent down
+    # until the outer deploy controller has reconciled the post manifest.
+    run_supervisorctl stop "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+  fi
   if control_plane_enabled; then
     run_supervisorctl restart "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$MAC_SUPERVISORD_PROG" >/dev/null
     sleep 3
@@ -5863,8 +5876,12 @@ EOF
       return 1
     fi
   fi
-  run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
-  sleep 3
+  if truthy "$DEFER_AGENT_RESTART"; then
+    log "deferring mac-agent restart until post-manifest reconciliation"
+  else
+    run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
+    sleep 3
+  fi
   if control_plane_enabled; then
     run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
   else
@@ -6063,12 +6080,16 @@ EOF
   launchctl bootout "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL" >/dev/null 2>&1 || true
   : > "$LOG_DIR/mac-agent.log"
   launchctl enable "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
-  if ! launchctl bootstrap "gui/$uid" "$plist"; then
+  if truthy "$DEFER_AGENT_RESTART"; then
+    log "deferring mac-agent restart until post-manifest reconciliation"
+  else
+    if ! launchctl bootstrap "gui/$uid" "$plist"; then
+      launchctl kickstart -k "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
+    fi
     launchctl kickstart -k "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
+    sleep 3
+    launchctl list "$MAC_AGENT_LAUNCHD_LABEL" || true
   fi
-  launchctl kickstart -k "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL"
-  sleep 3
-  launchctl list "$MAC_AGENT_LAUNCHD_LABEL" || true
 }
 
 classify_gateway_logs() {
@@ -6328,6 +6349,9 @@ REMOTE
       set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop || true
       return 1
     fi
+  else
+    echo "==> ${agent}: restarting mac-agent after post-manifest reconciliation"
+    set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
   fi
 }
 

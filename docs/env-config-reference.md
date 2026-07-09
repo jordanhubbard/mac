@@ -117,6 +117,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_CONTROL_BIND_HOST` | str | consumer-defined | deployment | Deployment setting: deploy control bind host. |
 | `MAC_DEPLOY_CONTROL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy control port. |
 | `MAC_DEPLOY_DATABASE_URL` | str | consumer-defined | deployment | Deployment setting: deploy database url. |
+| `MAC_DEPLOY_DEFER_AGENT_RESTART` | str | consumer-defined | deployment | Deployment setting: deploy defer agent restart. |
 | `MAC_DEPLOY_DEFER_CLEAR_DRAIN` | str | consumer-defined | deployment | Deployment setting: deploy defer clear drain. |
 | `MAC_DEPLOY_DIRECT_HUB` | str | consumer-defined | deployment | Deployment setting: deploy direct hub. |
 | `MAC_DEPLOY_DRAIN_MODE` | str | consumer-defined | deployment | Deployment setting: deploy drain mode. |
@@ -216,7 +217,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key env. |
 | `MAC_DEPLOY_TARGET` | str | consumer-defined | deployment | Deployment setting: deploy target. |
 | `MAC_DEPLOY_TOKENHUB_API_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub api key. |
-| `MAC_DEPLOY_TOKENHUB_API_KEY__ROCKY` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub api key  rocky. |
 | `MAC_DEPLOY_TOKENHUB_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy tokenhub install. |
 | `MAC_DEPLOY_TOKENHUB_PORT` | int | consumer-defined | deployment | Deployment setting: deploy tokenhub port. |
 | `MAC_DEPLOY_TOKENHUB_REF` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub ref. |

@@ -18,6 +18,7 @@ def test_deploy_drains_worker_before_stopping_services():
     assert "MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS" in text
     assert 'add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"' in text
     assert 'add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"' in text
+    assert "add_remote_env MAC_DEPLOY_DEFER_AGENT_RESTART 1" in text
     assert 'timeout = float(os.environ.get("MAC_DEPLOY_API_TIMEOUT_SECONDS") or "30")' in text
     assert 'health_status":"degraded' in text
 
@@ -49,3 +50,15 @@ def test_openshell_deploy_holds_drain_until_bootstrap_succeeds():
     assert "supervisor=launchd" in text
     assert "supervisor=supervisord" in text
     assert "OpenShell bootstrap failed; mac-agent remains stopped and drained" in text
+
+
+def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
+    text = script_text()
+
+    assert 'DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"' in text
+    assert text.count("deferring mac-agent restart until post-manifest reconciliation") == 3
+    reconcile_pos = text.index('reconcile_remote_deploy "$agent" "$target"')
+    external_restart_pos = text.index(
+        'restarting mac-agent after post-manifest reconciliation', reconcile_pos
+    )
+    assert reconcile_pos < external_restart_pos

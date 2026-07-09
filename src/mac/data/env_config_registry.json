@@ -1373,6 +1373,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy defer agent restart.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DEFER_AGENT_RESTART",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy defer clear drain.",
     "family": "deployment",
     "name": "MAC_DEPLOY_DEFER_CLEAR_DRAIN",
@@ -2507,17 +2518,6 @@
     "sources": [
       "scripts/purge-dead-tokenhub-keys.sh",
       "src/mac/fleet_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy tokenhub api key  rocky.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_TOKENHUB_API_KEY__ROCKY",
-    "retired": false,
-    "sources": [
-      "scripts/purge-dead-tokenhub-keys.sh"
     ],
     "type": "str"
   },

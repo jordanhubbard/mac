@@ -26,7 +26,8 @@ DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
 # Dead retired-TokenHub vars. The regex also matches an optional `export ` prefix
-# and an optional fleet-scoped `__SUFFIX` (e.g. MAC_DEPLOY_TOKENHUB_API_KEY__ROCKY).
+# and an optional fleet-scoped suffix (`MAC_DEPLOY_TOKENHUB_API_KEY` followed
+# by `__<FLEET_SUFFIX>`).
 PAT='^(export )?(TOKENHUB_API_KEY|TOKENHUB_ADMIN_TOKEN|TOKENHUB_AGENT_KEY|TOKENHUB_URL|MAC_REQUIRE_TOKENHUB|MAC_TOKENHUB_PORT|MAC_TOKENHUB_URL|MAC_DEPLOY_TOKENHUB_API_KEY|MAC_DEPLOY_TOKENHUB_URL|MAC_DEPLOY_TOKENHUB_PORT|MAC_DEPLOY_TOKENHUB_INSTALL|MAC_DEPLOY_TOKENHUB_REF)(__[A-Za-z0-9_]+)?='
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
