@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac.fleet_learning import (
@@ -381,25 +381,7 @@ class OperatorResultValidator(EvidenceValidator):
                 "provide repo_change/test/no_change evidence with a pushed repo anchor "
                 "(repo.head_sha, repo.pushed=true, repo.remote_ref)"
             ]
-        # Structured proof (findings/artifacts) is always sufficient.
-        if _manifest_list(manifest.raw.get("artifacts")) or _manifest_list(manifest.raw.get("findings")):
-            return []
-        combined = (
-            str(manifest.raw.get("summary") or "") + " " + str(manifest.raw.get("result") or "")
-        ).strip()
-        if not combined:
-            return ["operator_result evidence requires summary, result, findings, or artifacts"]
-        # autonomy-loop fix: reject degenerate / placeholder deliverable text so
-        # the executor's fallback writer can't turn agent chatter ("hello hello
-        # hello") or its own "completed without textual output" stub into a
-        # PUBLISHED task. Genuine planning summaries clear the distinct-token bar.
-        if not _operator_result_is_substantive(combined):
-            return [
-                "operator_result evidence is not substantive (degenerate or placeholder "
-                "text); provide a real summary/result describing the completed work, or "
-                "structured findings/artifacts"
-            ]
-        return []
+        return operator_result_validation_problems(manifest.raw)
 
 
 VALIDATORS: Dict[str, EvidenceValidator] = {
@@ -477,3 +459,44 @@ def _operator_result_is_substantive(text: str) -> bool:
     # distinct token; a real summary carries several.
     tokens = {t for t in re.findall(r"[a-z0-9]+", cleaned.lower()) if len(t) > 1}
     return len(tokens) >= _OPERATOR_RESULT_MIN_DISTINCT_TOKENS
+
+
+def operator_result_validation_problems(raw: Mapping[str, Any]) -> List[str]:
+    """Validate both canonical nested and legacy flat operator results.
+
+    Executors write the typed verification envelope at the top level and the
+    actual report under ``operator_result``.  Older producers wrote the report
+    fields directly on the envelope.  Treat both locations as one logical
+    result so worker preflight and server validation cannot disagree.
+    """
+    nested = raw.get("operator_result")
+    sources: List[Mapping[str, Any]] = []
+    if isinstance(nested, Mapping):
+        sources.append(nested)
+    sources.append(raw)
+
+    if any(
+        _manifest_list(source.get("artifacts"))
+        or _manifest_list(source.get("findings"))
+        for source in sources
+    ):
+        return []
+
+    combined = " ".join(
+        part
+        for source in sources
+        for part in (
+            str(source.get("summary") or "").strip(),
+            str(source.get("result") or "").strip(),
+        )
+        if part
+    ).strip()
+    if not combined:
+        return ["operator_result evidence requires summary, result, findings, or artifacts"]
+    if not _operator_result_is_substantive(combined):
+        return [
+            "operator_result evidence is not substantive (degenerate or placeholder "
+            "text); provide a real summary/result describing the completed work, or "
+            "structured findings/artifacts"
+        ]
+    return []

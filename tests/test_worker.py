@@ -1145,8 +1145,10 @@ def test_mac_worker_accepts_operator_result_without_repository_anchor(tmp_path: 
             "schema": "mac.worker_evidence.v1",
             "status": "complete",
             "evidence_type": "operator_result",
-            "summary": "Plan produced",
-            "result": "Story graph and verification plan produced.",
+            "operator_result": {
+                "summary": "Plan produced",
+                "result": "Story graph and verification plan produced.",
+            },
         }
         (task_dir / "mac-evidence.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),

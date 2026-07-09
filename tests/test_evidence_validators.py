@@ -192,6 +192,56 @@ def test_operator_result_rejects_degenerate_and_placeholder_text():
     assert validate_evidence_type("operator_result", structured, passed_check_count=_passed_check_count) == []
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("summary", "Worker host runtime checks all passed."),
+        ("result", "Recovered the worker and verified normal execution."),
+        ("findings", [{"check": "runtime", "status": "PASS"}]),
+        ("artifacts", [{"uri": "artifact://recovery-report"}]),
+    ],
+)
+def test_operator_result_accepts_canonical_nested_content(field, value):
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "operator_result",
+        "operator_result": {field: value},
+    }
+
+    assert (
+        validate_evidence_type(
+            "operator_result",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [None, {}, "not-an-object"],
+)
+def test_operator_result_rejects_empty_or_malformed_nested_content(nested):
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "operator_result",
+        "operator_result": nested,
+    }
+
+    problems = validate_evidence_type(
+        "operator_result",
+        manifest,
+        passed_check_count=_passed_check_count,
+    )
+
+    assert problems == [
+        "operator_result evidence requires summary, result, findings, or artifacts"
+    ]
+
+
 def test_repo_change_requires_tests_only_when_contract_demands():
     # mac-wjy3: tests:null is rejected only when the contract requires tests.
     base = _repo_manifest()  # has a passing check, no tests list

@@ -6233,22 +6233,9 @@ def _worker_verification_contract_problems(
         # locally and fails the task cleanly, instead of submitting it and
         # crashing on the server's 400. One definition of "substantive" —
         # reused from evidence_validators so worker and server can't drift.
-        from mac.evidence_validators import _operator_result_is_substantive
+        from mac.evidence_validators import operator_result_validation_problems
 
-        if _manifest_list(manifest.get("artifacts")) or _manifest_list(manifest.get("findings")):
-            return []
-        combined = (
-            str(manifest.get("summary") or "") + " " + str(manifest.get("result") or "")
-        ).strip()
-        if not combined:
-            return ["operator_result evidence requires summary, result, findings, or artifacts"]
-        if not _operator_result_is_substantive(combined):
-            return [
-                "operator_result evidence is not substantive (degenerate or placeholder "
-                "text); provide a real summary/result describing the completed work, or "
-                "structured findings/artifacts"
-            ]
-        return []
+        return operator_result_validation_problems(manifest)
     return ["unsupported verification.evidence_type: %s" % evidence_type]
 
 
