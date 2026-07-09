@@ -280,7 +280,8 @@ class SQLiteStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     human_assignees TEXT,
-                    created_by_human TEXT
+                    created_by_human TEXT,
+                    idempotency_key TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_tasks_state_priority
@@ -2111,6 +2112,13 @@ class SQLiteStore:
         )
         self._ensure_column(
             "tasks", "created_by_human", "created_by_human TEXT"
+        )
+        self._ensure_column(
+            "tasks", "idempotency_key", "idempotency_key TEXT"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key"
+            " ON tasks (idempotency_key) WHERE idempotency_key IS NOT NULL"
         )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
