@@ -919,6 +919,13 @@ finalize() {
       hermes_state="$(sudo systemctl is-active "${fleet}-hermes-gateway.service" 2>/dev/null || true)"
       nemoclaw_state="$(sudo systemctl is-active "${fleet}-nemoclaw-gateway.service" 2>/dev/null || true)"
       [ "$nemoclaw_state" = unknown ] && nemoclaw_state=not_installed
+      # Belt-and-suspenders: if reset-failed did not run, systemd may report
+      # "failed" for a stopped unit. Normalize failed -> inactive so the
+      # ownership check does not reject a legitimately stopped hermes service.
+      case "$hermes_state" in
+        active|running|starting|backoff) ;;
+        failed) hermes_state=inactive ;;
+      esac
       ;;
     launchd)
       local uid

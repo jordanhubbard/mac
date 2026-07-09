@@ -5063,6 +5063,7 @@ PY
     return 1
   fi
   sudo systemctl disable --now "$HERMES_SERVICE_NAME" >/dev/null 2>&1 || true
+  sudo systemctl reset-failed "$HERMES_SERVICE_NAME" 2>/dev/null || true
   sudo systemctl disable --now "$NEMOCLAW_SERVICE_NAME" >/dev/null 2>&1 || true
   if ! finalize_openclaw_gateway; then
     log "ERROR: OpenClaw exclusivity proof failed; restoring Hermes gateway"
@@ -5108,6 +5109,7 @@ install_linux_nemoclaw_service() {
   if sudo systemctl is-enabled --quiet "$HERMES_SERVICE_NAME" 2>/dev/null; then
     sudo systemctl disable "$HERMES_SERVICE_NAME"
   fi
+  sudo systemctl reset-failed "$HERMES_SERVICE_NAME" 2>/dev/null || true
   log "hermes gateway stopped and disabled; NemoClaw gateway active"
   install_linux_agent_service
 }
