@@ -76,3 +76,13 @@ def test_remote_deploy_payload_is_materialized_before_execution():
     assert 'bash "$payload"' in text
     assert 'remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"' in text
     assert '${remote_env[*]} bash -s' not in text
+
+
+def test_supervisord_rotates_each_gateway_implementation_log_before_classification():
+    text = script_text()
+    function = text.split("install_supervisord_service() {", 1)[1].split(
+        "install_darwin_service() {", 1
+    )[0]
+
+    assert '"$LOG_DIR/hermes-gateway.log" "$LOG_DIR/openclaw-gateway.log"' in function
+    assert 'sudo truncate -s 0 "$gateway_log"' in function

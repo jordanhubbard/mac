@@ -5842,8 +5842,14 @@ environment=HOME="$HOME"
 EOF
   # Remove stale worker-side hub tunnel conf from previous deploy approach
   sudo rm -f "$conf_dir/${FLEET_NAME}-hub-tunnel.conf" 2>/dev/null || true
-  # Truncate gateway log so classify_gateway_logs only sees output from this deploy
-  sudo truncate -s 0 "$LOG_DIR/hermes-gateway.log" 2>/dev/null || : > "$LOG_DIR/hermes-gateway.log" 2>/dev/null || true
+  # Truncate both possible gateway logs so classify_gateway_logs only sees
+  # output from this deploy.  OpenClaw and Hermes share the same classifier;
+  # leaving the inactive implementation's selected log cumulative can make a
+  # historical traceback fail every otherwise healthy future deployment.
+  local gateway_log
+  for gateway_log in "$LOG_DIR/hermes-gateway.log" "$LOG_DIR/openclaw-gateway.log"; do
+    sudo truncate -s 0 "$gateway_log" 2>/dev/null || : > "$gateway_log" 2>/dev/null || true
+  done
   restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   run_supervisorctl reread >/dev/null
   run_supervisorctl update >/dev/null
