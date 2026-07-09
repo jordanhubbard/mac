@@ -363,10 +363,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OBSERVABILITY_VERBOSE_POLL` | bool | consumer-defined | core | Core setting: observability verbose poll. |
 | `MAC_OPENCLAW_AGENT_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent bin. |
 | `MAC_OPENCLAW_AGENT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent id. |
+| `MAC_OPENCLAW_BOOTSTRAP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw bootstrap token. |
 | `MAC_OPENCLAW_BUILD_CONTEXT` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw build context. |
 | `MAC_OPENCLAW_CANARY_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw canary ok. |
 | `MAC_OPENCLAW_CHANNELS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw channels. |
 | `MAC_OPENCLAW_CONTAINERFILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw containerfile. |
+| `MAC_OPENCLAW_CONTINUITY_MIGRATOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw continuity migrator. |
+| `MAC_OPENCLAW_CONTROL_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw control url. |
 | `MAC_OPENCLAW_CREDENTIALS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw credentials file. |
 | `MAC_OPENCLAW_DOCKER_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw docker bin. |
 | `MAC_OPENCLAW_DRY_RUN` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw dry run. |
@@ -403,6 +406,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram canary target. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup interval. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup timeout. |
+| `MAC_OPENCLAW_WORKSPACE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw workspace. |
 | `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow codex file auth. |
 | `MAC_OPENSHELL_ALLOW_NO_LANDLOCK` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow no landlock. |
 | `MAC_OPENSHELL_BIN` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell bin. |

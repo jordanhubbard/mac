@@ -1208,6 +1208,19 @@ deploy_host() {
   scp_target="${scp_parts[$last_index]}"
   scp_args=("${scp_parts[@]:0:$last_index}")
 
+  # A non-interactive OpenClaw node must not inherit the stock blank wizard
+  # identity.  The provisioner is a no-op when Hermes or a configured
+  # OpenClaw workspace already exists; otherwise it asks an established fleet
+  # agent for a distinct, roster-aware personality and installs the validated
+  # proposal before the remote transaction starts.
+  MAC_OPENCLAW_BOOTSTRAP_TOKEN="$hub_token" \
+  PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON_BIN" "$ROOT/scripts/provision-openclaw-personality.py" \
+      --config "$FLEET_REGISTRY_CONFIG" \
+      --fleet "$HUB_SELECTOR" \
+      --agent "$agent" \
+      --hub-url "$hub_url"
+
   echo "==> ${agent}: copying mac release archive"
   scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$ARCHIVE" "${scp_target}:${remote_archive}"
   echo "==> ${agent}: copying fleet registry"

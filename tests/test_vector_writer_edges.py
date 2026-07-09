@@ -298,11 +298,13 @@ def test_recall_builds_filters_and_normalizes_hits() -> None:
         filter_payload={"must": [{"key": "existing"}]},
         project="project-a",
         tenant_id="tenant-a",
+        agent_id="agent-a",
     )
     search = calls[-1][1]
     assert search["limit"] == 1
     assert search["score_threshold"] == 0.25
-    assert len(search["filter"]["must"]) == 3
+    assert len(search["filter"]["must"]) == 4
+    assert {"key": "agent_id", "match": {"value": "agent-a"}} in search["filter"]["must"]
     assert hits == [
         {
             "memory_id": None,

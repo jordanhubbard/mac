@@ -8,7 +8,7 @@
 set -euo pipefail
 
 OPENCLAW_VERSION="2026.6.11"
-OPENCLAW_IMAGE_REVISION="5"
+OPENCLAW_IMAGE_REVISION="7"
 OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
@@ -16,17 +16,22 @@ MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
 OPENCLAW_HOST_DIR="${MAC_OPENCLAW_HOST_DIR:-$MAC_HOME/openclaw}"
 MANAGED_DIR="$OPENCLAW_HOST_DIR/managed"
 WORKSPACE_DIR="$OPENCLAW_HOST_DIR/workspace"
+STATE_DIR="$OPENCLAW_HOST_DIR/state"
+MIGRATION_DIR="$OPENCLAW_HOST_DIR/migration"
+ARCHIVE_DIR="$OPENCLAW_HOST_DIR/archive"
 BACKUP_DIR="$OPENCLAW_HOST_DIR/backups"
 POLICY_PATH="$OPENCLAW_HOST_DIR/openclaw-policy.yaml"
 WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
 STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 AGENT_WRAPPER_PATH="$MAC_HOME/bin/openclaw-agent"
+CURIOSITY_WRAPPER_PATH="$MAC_HOME/bin/curiosity"
 VERIFICATION_RECORD_PATH="$OPENCLAW_HOST_DIR/verification-pending.json"
 ADVERTISEMENT_PATH="$OPENCLAW_HOST_DIR/service-advertisement.json"
 CONTAINERFILE="${MAC_OPENCLAW_CONTAINERFILE:-$MAC_SRC/deploy/openclaw/OpenClaw.Containerfile}"
 BUILD_CONTEXT="${MAC_OPENCLAW_BUILD_CONTEXT:-$MAC_SRC}"
 POLICY_TEMPLATE="${MAC_OPENCLAW_POLICY_TEMPLATE:-$MAC_SRC/deploy/openclaw/openclaw-policy.yaml}"
+CONTINUITY_MIGRATOR="${MAC_OPENCLAW_CONTINUITY_MIGRATOR:-$MAC_SRC/deploy/openclaw/migrate-hermes-continuity.py}"
 GATEWAY_PORT="${MAC_OPENCLAW_GATEWAY_PORT:-18789}"
 DRY_RUN="${MAC_OPENCLAW_DRY_RUN:-0}"
 SKIP_IMAGE="${MAC_OPENCLAW_SKIP_IMAGE:-0}"
@@ -206,6 +211,10 @@ source_host_env() {
   MAC_OPENCLAW_AGENT_ID="${MAC_OPENCLAW_AGENT_ID:-${MAC_AGENT_ID:-}}"
   MAC_OPENCLAW_INSTANCE_ID="${MAC_OPENCLAW_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-${MAC_WORKER_HERMES_INSTANCE_ID:-}}}"
   MAC_OPENCLAW_ROUTER_URL="${MAC_OPENCLAW_ROUTER_URL:-${MAC_HERMES_GATEWAY_BASE_URL:-${OPENAI_BASE_URL:-${CUSTOM_BASE_URL:-}}}}"
+  MAC_OPENCLAW_CONTROL_URL="${MAC_OPENCLAW_CONTROL_URL:-${MAC_HUB_URL:-${MAC_API_URL:-}}}"
+  if [ -z "$MAC_OPENCLAW_CONTROL_URL" ]; then
+    MAC_OPENCLAW_CONTROL_URL="${MAC_OPENCLAW_ROUTER_URL%/v1}"
+  fi
   MAC_OPENCLAW_ROUTER_API_KEY="${MAC_OPENCLAW_ROUTER_API_KEY:-${MAC_HERMES_GATEWAY_API_KEY:-${MAC_API_TOKEN:-}}}"
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
@@ -262,6 +271,7 @@ source_host_env() {
   suffix="$(printf '%s' "$MAC_OPENCLAW_AGENT_ID" | sed -E 's/^agent_//; s/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' | tr '[:upper:]' '[:lower:]')"
   SANDBOX_NAME="${MAC_OPENCLAW_SANDBOX_NAME:-mac-openclaw-${suffix:-gateway}}"
   export MAC_OPENCLAW_AGENT_ID MAC_OPENCLAW_INSTANCE_ID MAC_OPENCLAW_ROUTER_URL
+  export MAC_OPENCLAW_CONTROL_URL
   export MAC_OPENCLAW_ROUTER_API_KEY MAC_OPENCLAW_MODEL MAC_OPENCLAW_FLEET_NAME
   export MAC_OPENCLAW_HOME_CHANNEL MAC_OPENCLAW_SLACK_BOT_TOKEN
   export MAC_OPENCLAW_SLACK_APP_TOKEN MAC_OPENCLAW_TELEGRAM_BOT_TOKEN
@@ -341,8 +351,10 @@ validate_env() {
 
 prepare_directories() {
   umask 077
-  mkdir -p "$MANAGED_DIR" "$WORKSPACE_DIR" "$BACKUP_DIR" "$MAC_HOME/bin"
-  chmod 0700 "$OPENCLAW_HOST_DIR" "$MANAGED_DIR" "$WORKSPACE_DIR" "$BACKUP_DIR"
+  mkdir -p "$MANAGED_DIR" "$WORKSPACE_DIR" "$STATE_DIR" "$MIGRATION_DIR" \
+    "$ARCHIVE_DIR" "$BACKUP_DIR" "$MAC_HOME/bin"
+  chmod 0700 "$OPENCLAW_HOST_DIR" "$MANAGED_DIR" "$WORKSPACE_DIR" \
+    "$STATE_DIR" "$MIGRATION_DIR" "$ARCHIVE_DIR" "$BACKUP_DIR"
   if [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ]; then
     printf '%s\n' "$MAC_OPENCLAW_HOME_CHANNEL" > "$OPENCLAW_HOST_DIR/home-channel-target"
     chmod 0600 "$OPENCLAW_HOST_DIR/home-channel-target"
@@ -427,9 +439,18 @@ config = {
     "plugins": {
         "enabled": True,
         "entries": {
+            "mac-continuity": {
+                "enabled": True,
+                "hooks": {
+                    "allowConversationAccess": True,
+                    "allowPromptInjection": True,
+                },
+                "config": {"maxMemories": 5, "timeoutMs": 2500},
+            },
             "slack": {"enabled": "slack" in configured},
             "telegram": {"enabled": "telegram" in configured},
         },
+        "load": {"paths": ["/opt/mac-openclaw/plugins/mac-continuity"]},
     },
     "models": {
         "mode": "merge",
@@ -449,18 +470,23 @@ config = {
     "agents": {
         "defaults": {
             "model": {"primary": provider_model},
-            "workspace": "/home/sandbox/workspace",
+            "workspace": "/sandbox/workspace",
+            "memorySearch": {
+                "provider": "none",
+                "experimental": {"sessionMemory": True},
+                "sources": ["memory", "sessions"],
+            },
         },
         "list": [{
             "id": "main",
             "default": True,
             "name": os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or os.environ["MAC_OPENCLAW_AGENT_ID"],
-            "workspace": "/home/sandbox/workspace",
+            "workspace": "/sandbox/workspace",
         }],
     },
+    "tools": {"sessions": {"visibility": "agent"}},
 }
-if configured:
-    config["plugins"]["allow"] = sorted(configured)
+config["plugins"]["allow"] = sorted(configured | {"mac-continuity"})
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -476,11 +502,15 @@ import sys
 
 values = {
     "HOME": "/home/sandbox",
+    "MAC_OPENCLAW_AGENT_ID": os.environ["MAC_OPENCLAW_AGENT_ID"],
+    "MAC_OPENCLAW_CONTROL_URL": os.environ["MAC_OPENCLAW_CONTROL_URL"],
     "MAC_OPENCLAW_ROUTER_API_KEY": os.environ["MAC_OPENCLAW_ROUTER_API_KEY"],
+    "MAC_OPENCLAW_WORKSPACE": "/sandbox/workspace",
+    "MAC_OPENCLAW_SLACK_ACCOUNT_ID": os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default"),
     "NODE_ENV": "production",
     "OPENCLAW_CONFIG_PATH": "/home/sandbox/.config/mac-openclaw/openclaw.json",
     "OPENCLAW_GATEWAY_TOKEN": os.environ["OPENCLAW_GATEWAY_TOKEN"],
-    "OPENCLAW_STATE_DIR": "/home/sandbox/.openclaw-data",
+    "OPENCLAW_STATE_DIR": "/sandbox/state",
 }
 if os.environ.get("MAC_OPENCLAW_SLACK_APP_TOKEN"):
     account_ids = [
@@ -512,7 +542,29 @@ set -euo pipefail
 set -a
 . /home/sandbox/.config/mac-openclaw/runtime.env
 set +a
-exec /usr/local/bin/openclaw gateway run
+child=0
+cleanup() {
+  trap - EXIT INT TERM
+  if [ "$child" -gt 0 ] && kill -0 "$child" >/dev/null 2>&1; then
+    kill -TERM "$child" >/dev/null 2>&1 || true
+    wait "$child" 2>/dev/null || true
+  fi
+}
+trap 'cleanup; exit 143' INT TERM
+trap cleanup EXIT
+/usr/local/bin/openclaw gateway run &
+child=$!
+for _attempt in $(seq 1 45); do
+  /usr/local/bin/openclaw health --verbose --json >/dev/null 2>&1 && break
+  kill -0 "$child" >/dev/null 2>&1 || wait "$child"
+  sleep 2
+done
+/usr/local/bin/openclaw health --verbose --json >/dev/null
+/usr/local/bin/node /opt/mac-openclaw/apply-cron-plan.mjs \
+  /home/sandbox/.config/mac-openclaw/cron-plan.json
+if wait "$child"; then status=0; else status=$?; fi
+child=0
+exit "$status"
 EOF
   chmod 0700 "$MANAGED_DIR/entrypoint.sh"
 }
@@ -530,8 +582,77 @@ write_workspace_context() {
 - MAC router: ${MAC_OPENCLAW_ROUTER_URL}
 - Model route: mac-router/${MAC_OPENCLAW_MODEL}
 - Task execution is a separate MAC worker role and is not performed by this gateway.
+
+## Curiosity and moral clarity
+
+Be endlessly curious, ruthless toward bad data, angry at abuse, and exacting about evidence.
+
+- Curiosity creates quarantined candidates. It never writes durable memory without a separate explicit approval carrying an external approval ID.
+- Angry Librarian mode challenges bad sourcing, missing provenance, and inflated certainty; challenge claims, never demean people.
+- Moral Clarity mode names evidenced abuse, power and responsibility asymmetries, and moral injury. Do not manufacture balance or flatten materially unequal conduct into false equivalence.
+- Protective anger is evidence-bound, proportionate, non-dehumanizing, and directed toward stopping harm and protecting people.
+- State what is observed, sourced, inferred, contradicted, and still unknown. Revise when better evidence arrives.
 EOF
   chmod 0600 "$WORKSPACE_DIR/AGENTS.md"
+}
+
+migrate_continuity() {
+  [ -x "$CONTINUITY_MIGRATOR" ] \
+    || die "continuity migrator not found or not executable: $CONTINUITY_MIGRATOR"
+  local proposal="$MIGRATION_DIR/personality-proposal.json"
+  local proposal_args=()
+  [ ! -f "$proposal" ] || proposal_args=(--identity-proposal "$proposal")
+  "$CONTINUITY_MIGRATOR" \
+    --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
+    --workspace "$WORKSPACE_DIR" \
+    --state-dir "$STATE_DIR" \
+    --migration-dir "$MIGRATION_DIR" \
+    --agent-id "$MAC_OPENCLAW_AGENT_ID" \
+    --public-identity "$MAC_OPENCLAW_PUBLIC_IDENTITY" \
+    --report "$MIGRATION_DIR/last-run.json" \
+    "${proposal_args[@]}" >/dev/null \
+    || die "Hermes/OpenClaw continuity migration failed; see $MIGRATION_DIR/last-run.json"
+  if [ -f "$MIGRATION_DIR/cron-plan.json" ]; then
+    cp -f "$MIGRATION_DIR/cron-plan.json" "$MANAGED_DIR/cron-plan.json"
+  else
+    printf '%s\n' '{"schema":"mac.openclaw_cron_migration.v1","jobs":[]}' \
+      > "$MANAGED_DIR/cron-plan.json"
+  fi
+  python3 - "$MANAGED_DIR/cron-plan.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    plan = json.load(handle)
+jobs = plan.setdefault("jobs", [])
+name = "MAC continuous curiosity review"
+managed = {
+    "legacy_id": "mac-curiosity-continuous-v1",
+    "name": name,
+    "cron": "23 */6 * * *",
+    "message": (
+        "Review recent work and memory for one consequential unknown or weakly supported belief. "
+        "Use evidence and provenance, name counterevidence and unknowns, propose a falsifiable test, "
+        "then call curiosity_candidate_submit. Do not promote it to durable memory. If no worthwhile "
+        "candidate exists, do nothing. Apply Angry Librarian scrutiny to claims, and Moral Clarity "
+        "without false equivalence when documented abuse or moral injury is relevant."
+    ),
+    "enabled": True,
+    "delivery": "local",
+    "origin": {"runtime": "mac", "feature": "curiosity-sidecar"},
+}
+for index, job in enumerate(jobs):
+    if job.get("name") == name or job.get("legacy_id") == managed["legacy_id"]:
+        jobs[index] = managed
+        break
+else:
+    jobs.append(managed)
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(plan, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+  chmod 0600 "$MANAGED_DIR/cron-plan.json"
 }
 
 render_policy() {
@@ -564,7 +685,27 @@ write_host_wrapper() {
 set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
+HOST_ROOT=$(printf '%q' "$OPENCLAW_HOST_DIR")
+WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
+STATE=$(printf '%q' "$STATE_DIR")
 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || exit 0
+tmp="\$HOST_ROOT/.checkpoint-\$\$"
+rm -rf "\$tmp"
+mkdir -p "\$tmp"
+if "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/workspace "\$tmp/workspace" </dev/null \
+    && "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/state "\$tmp/state" </dev/null; then
+  chmod -R go-rwx "\$tmp"
+  stamp="\$HOST_ROOT/archive/checkpoint-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
+  mkdir -p "\$stamp"
+  [ ! -e "\$WORKSPACE" ] || mv -f "\$WORKSPACE" "\$stamp/workspace"
+  [ ! -e "\$STATE" ] || mv -f "\$STATE" "\$stamp/state"
+  mv -f "\$tmp/workspace" "\$WORKSPACE"
+  mv -f "\$tmp/state" "\$STATE"
+  find "\$HOST_ROOT/archive" -mindepth 1 -maxdepth 1 -type d \
+    -name 'checkpoint-*' -print | sort -r | sed -n '3,\$p' | \
+    while IFS= read -r obsolete; do rm -rf "\$obsolete"; done
+fi
+rm -rf "\$tmp"
 "\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1 || true
 EOF
   chmod 0700 "$STOP_WRAPPER_PATH"
@@ -577,6 +718,7 @@ IMAGE=$(printf '%q' "$OPENCLAW_IMAGE")
 POLICY=$(printf '%q' "$POLICY_PATH")
 MANAGED=$(printf '%q' "$MANAGED_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
+STATE=$(printf '%q' "$STATE_DIR")
 STOPPER=$(printf '%q' "$STOP_WRAPPER_PATH")
 
 stop_gateway() {
@@ -607,7 +749,8 @@ run_attached() {
 # OpenShell 0.0.72 cannot re-establish create-time forwarding or reliably
 # reap every foreground exec process in a reused service sandbox. Recreate
 # only this long-lived gateway container on service start; the pinned image is
-# cached, while durable identities, outbox state, and memory remain in MAC.
+# cached, while the stop wrapper checkpoints OpenClaw's complete workspace and
+# state tree before deletion.
 stop_gateway
 
 run_attached "\$OPEN_SHELL" sandbox create \
@@ -619,7 +762,10 @@ run_attached "\$OPEN_SHELL" sandbox create \
   --upload "\$MANAGED/openclaw.json:/home/sandbox/.config/mac-openclaw/openclaw.json" \
   --upload "\$MANAGED/runtime.env:/home/sandbox/.config/mac-openclaw/runtime.env" \
   --upload "\$MANAGED/entrypoint.sh:/home/sandbox/.config/mac-openclaw/entrypoint.sh" \
-  --upload "\$WORKSPACE/AGENTS.md:/home/sandbox/workspace/AGENTS.md" \
+  --upload "\$MANAGED/cron-plan.json:/home/sandbox/.config/mac-openclaw/cron-plan.json" \
+  --upload "\$WORKSPACE:/sandbox" \
+  --upload "\$STATE:/sandbox" \
+  --no-git-ignore \
   -- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh
 exit \$?
 EOF
@@ -642,6 +788,15 @@ exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
   /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw agent "\$@"' mac-openclaw-agent "\$@"
 EOF
   chmod 0700 "$AGENT_WRAPPER_PATH"
+  cat > "$CURIOSITY_WRAPPER_PATH" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+OPEN_SHELL=$(printf '%q' "$openshell_bin")
+SANDBOX=$(printf '%q' "$SANDBOX_NAME")
+exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
+  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/curiosity "\$@"' mac-openclaw-curiosity "\$@"
+EOF
+  chmod 0700 "$CURIOSITY_WRAPPER_PATH"
 }
 
 build_image() {
@@ -680,8 +835,52 @@ backup_and_delete_stale_sandbox() {
   local stamp="$BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$stamp"
   chmod 0700 "$stamp"
-  "$openshell_bin" sandbox download "$SANDBOX_NAME" /home/sandbox/.openclaw-data "$stamp" >/dev/null 2>&1 || true
-  "$openshell_bin" sandbox download "$SANDBOX_NAME" /home/sandbox/workspace "$stamp" >/dev/null 2>&1 || true
+  # OpenShell only permits host downloads from /sandbox. Stage the previous
+  # image's legacy /home paths there before replacing revision 5 and earlier.
+  "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- /bin/bash -c \
+    'rm -rf /sandbox/mac-openclaw-legacy-export; mkdir -p /sandbox/mac-openclaw-legacy-export; cp -a /home/sandbox/.openclaw-data /sandbox/mac-openclaw-legacy-export/state 2>/dev/null || true; cp -a /home/sandbox/workspace /sandbox/mac-openclaw-legacy-export/workspace 2>/dev/null || true' \
+    </dev/null >/dev/null 2>&1 || true
+  "$openshell_bin" sandbox download "$SANDBOX_NAME" \
+    /sandbox/mac-openclaw-legacy-export "$stamp/export" \
+    </dev/null >/dev/null 2>&1 || true
+  python3 - "$stamp/export" "$STATE_DIR" "$WORKSPACE_DIR" "$stamp/conflicts" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import sys
+
+source, state, workspace, conflicts = map(Path, sys.argv[1:])
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def merge(src, dst, conflict_root):
+    if not src.is_dir():
+        return
+    for item in src.rglob("*"):
+        if not item.is_file():
+            continue
+        rel = item.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            shutil.copy2(item, target)
+        elif digest(item) != digest(target):
+            candidate = conflict_root / rel
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, candidate)
+
+merge(source / "state", state, conflicts / "state")
+merge(source / "workspace", workspace, conflicts / "workspace")
+for root in (state, workspace, conflicts):
+    if root.exists():
+        for path in [root, *root.rglob("*")]:
+            try:
+                os.chmod(path, 0o700 if path.is_dir() else 0o600)
+            except OSError:
+                pass
+PY
   "$openshell_bin" sandbox delete "$SANDBOX_NAME" >/dev/null
   log "replaced stale sandbox (version=$version image_revision=${image_revision:-missing}) after owner-only state backup at $stamp"
 }
@@ -698,6 +897,7 @@ prepare() {
   write_runtime_env
   write_managed_entrypoint
   write_workspace_context
+  migrate_continuity
   render_policy
   local openshell_bin
   openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
@@ -745,12 +945,89 @@ wait_for_sandbox_ready() {
 verify() {
   source_host_env
   validate_env
+  python3 - "$MIGRATION_DIR/last-run.json" "$WORKSPACE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report_path, workspace = Path(sys.argv[1]), Path(sys.argv[2])
+with report_path.open(encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("schema") != "mac.openclaw_continuity_migration.v1":
+    raise SystemExit("invalid OpenClaw continuity migration report")
+if report.get("status") != "completed" or not report.get("source_preserved"):
+    raise SystemExit("OpenClaw continuity migration did not complete reversibly")
+for name in ("SOUL.md", "IDENTITY.md"):
+    path = workspace / name
+    if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+        raise SystemExit("OpenClaw continuity workspace is missing %s" % name)
+if (workspace / "BOOTSTRAP.md").exists():
+    raise SystemExit("interactive BOOTSTRAP.md remains in a managed non-interactive workspace")
+PY
   local openshell_bin
   openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
   wait_for_sandbox_ready "$openshell_bin"
   sandbox_command "$openshell_bin" /usr/local/bin/mac-verify-bash-contract
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null
+  local plugin_status="$OPENCLAW_HOST_DIR/continuity-plugin-status.json"
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw plugins inspect \
+    mac-continuity --runtime --json > "$plugin_status"
+  chmod 0600 "$plugin_status"
+  python3 - "$plugin_status" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    value = json.load(handle)
+plugin = value.get("plugin") or {}
+tools = set(plugin.get("toolNames") or [])
+hooks = set(plugin.get("hookNames") or [])
+tools.update(item.get("name") for item in value.get("tools") or [] if isinstance(item, dict))
+hooks.update(
+    item.get("name") or item.get("event") or item.get("hookName")
+    for item in value.get("typedHooks") or []
+    if isinstance(item, dict)
+)
+if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled"}:
+    raise SystemExit("mac-continuity plugin was discovered but not imported")
+if not {
+    "mac_memory_recall", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
+    "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
+} <= tools:
+    raise SystemExit("mac-continuity plugin tools are incomplete")
+if "before_prompt_build" not in hooks:
+    raise SystemExit("mac-continuity prompt hook is absent")
+PY
+  sandbox_command "$openshell_bin" /usr/local/bin/curiosity verify \
+    > "$OPENCLAW_HOST_DIR/curiosity-ledger-status.json"
+  sandbox_command "$openshell_bin" /usr/local/bin/curiosity abuse-frame \
+    --event 'verification fixture' --comparison 'comparison fixture' \
+    --power-asymmetry --responsibility-asymmetry \
+    > "$OPENCLAW_HOST_DIR/curiosity-abuse-frame-status.json"
+  chmod 0600 "$OPENCLAW_HOST_DIR/curiosity-ledger-status.json" \
+    "$OPENCLAW_HOST_DIR/curiosity-abuse-frame-status.json"
+  grep -q '"valid": true' "$OPENCLAW_HOST_DIR/curiosity-ledger-status.json" \
+    || die "OpenClaw curiosity provenance ledger failed verification"
+  grep -q '"possible_false_equivalence": true' \
+    "$OPENCLAW_HOST_DIR/curiosity-abuse-frame-status.json" \
+    || die "OpenClaw curiosity abuse-frame canary failed"
+  local memory_status="$OPENCLAW_HOST_DIR/memory-status.json"
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory index --force --agent main
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory status --json > "$memory_status"
+  chmod 0600 "$memory_status"
+  local continuity_marker continuity_search="$OPENCLAW_HOST_DIR/continuity-memory-search.json"
+  continuity_marker="$(python3 - "$MAC_OPENCLAW_AGENT_ID" <<'PY'
+import hashlib
+import sys
+print("MAC_CONTINUITY_" + hashlib.sha256(sys.argv[1].encode()).hexdigest()[:16])
+PY
+)"
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory search \
+    --agent main --max-results 5 --json "$continuity_marker" > "$continuity_search"
+  chmod 0600 "$continuity_search"
+  grep -q "$continuity_marker" "$continuity_search" \
+    || die "OpenClaw native memory search did not recall the continuity acceptance marker"
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
       local slack_account
@@ -781,6 +1058,23 @@ verify() {
       --session-id mac-openclaw-canary --json)"
     printf '%s' "$output" | grep -q 'MAC_OPENCLAW_CANARY_OK' \
       || die "authenticated model canary did not return the sentinel"
+    local expected_identity identity_output
+    expected_identity="$(python3 - "$WORKSPACE_DIR/IDENTITY.md" <<'PY'
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"(?im)^- \*\*Name:\*\*\s*(.+?)\s*$", text)
+if not match:
+    raise SystemExit("IDENTITY.md has no Name field")
+print(match.group(1))
+PY
+)"
+    identity_output="$(sandbox_command "$openshell_bin" /usr/local/bin/openclaw agent \
+      --agent main \
+      --message 'Read your workspace IDENTITY.md. Respond with only the exact Name field; do not infer it from this request.' \
+      --session-id mac-openclaw-identity-canary --json)"
+    printf '%s' "$identity_output" | grep -Fq "$expected_identity" \
+      || die "OpenClaw semantic identity canary did not recover the migrated name"
     local canary_message="MAC OpenClaw canary from ${MAC_OPENCLAW_AGENT_ID}"
     case ",$MAC_OPENCLAW_CHANNELS," in
       *,slack,*)

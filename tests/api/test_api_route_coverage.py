@@ -1235,7 +1235,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     if method == "DELETE":
-        if path_template == "/agents/{agent_id}/mood":
+        if path_template in {"/agents/{agent_id}/mood", "/v1/agents/{agent_id}/mood"}:
             kwargs["json"] = {"cleared_by": "operator", "reason": "route coverage"}
         return RequestCase(path, kwargs, expected)
 
@@ -1531,6 +1531,7 @@ edges:
         ("POST", "/workflows/runs/{run_id}/cancel"): {"reason": "route coverage", "actor": "operator"},
         ("POST", "/agents/{agent_id}/mood"): {"mode": "warm", "set_by": "operator"},
         ("PUT", "/agents/{agent_id}/mood"): {"mode": "cheerful", "set_by": "operator"},
+        ("POST", "/v1/agents/{agent_id}/mood"): {"mode": "warm", "reason": "route coverage"},
         ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
         ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
         ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},

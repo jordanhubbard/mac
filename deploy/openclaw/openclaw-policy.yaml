@@ -16,6 +16,7 @@ filesystem_policy:
     - /etc
     - /proc
     - /app
+    - /opt
   read_write:
     - /tmp
     - /dev
@@ -24,8 +25,9 @@ filesystem_policy:
     # upload itself; OpenClaw already needs read access to the credentials, and
     # network egress remains constrained by the deny-by-default proxy policy.
     - /home/sandbox/.config/mac-openclaw
-    - /home/sandbox/.openclaw-data
-    - /home/sandbox/workspace
+    # State and workspace live under OpenShell's transferable /sandbox root.
+    # The service wrapper checkpoints both trees before recreating a sandbox.
+    - /sandbox
 
 landlock:
   # MAC independently checks for a usable OpenShell enforcement boundary.  The

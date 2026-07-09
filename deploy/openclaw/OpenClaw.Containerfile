@@ -12,13 +12,16 @@ ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.6.11@sha256:3814fb1f62f9cfc59
 FROM ${OPENCLAW_IMAGE}
 
 ARG OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"
-ARG MAC_OPENCLAW_IMAGE_REVISION="5"
+ARG MAC_OPENCLAW_IMAGE_REVISION="7"
 
 USER root
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
+COPY deploy/openclaw/apply-cron-plan.mjs /opt/mac-openclaw/apply-cron-plan.mjs
+COPY deploy/openclaw/curiosity-sidecar.py /usr/local/bin/curiosity
+COPY deploy/openclaw/plugins/mac-continuity /opt/mac-openclaw/plugins/mac-continuity
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash iproute2 \
-    && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
+    && chmod 0755 /usr/local/bin/mac-verify-bash-contract /usr/local/bin/curiosity \
     && /usr/local/bin/mac-verify-bash-contract \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system sandbox \
@@ -27,13 +30,16 @@ RUN apt-get update \
          /home/sandbox/.config/mac-openclaw \
          /home/sandbox/.openclaw-data \
          /home/sandbox/workspace \
-    && install -d -m 0755 -o sandbox -g sandbox /sandbox \
+    && chmod 0755 /opt/mac-openclaw/apply-cron-plan.mjs \
+    && chmod -R a+rX /opt/mac-openclaw/plugins \
+    && install -d -m 0700 -o sandbox -g sandbox \
+         /sandbox /sandbox/state /sandbox/workspace \
     && printf '%s\n' "${MAC_OPENCLAW_IMAGE_REVISION}" \
          > /etc/mac-openclaw-image-revision
 
 ENV HOME=/home/sandbox \
     OPENCLAW_CONFIG_PATH=/home/sandbox/.config/mac-openclaw/openclaw.json \
-    OPENCLAW_STATE_DIR=/home/sandbox/.openclaw-data \
+    OPENCLAW_STATE_DIR=/sandbox/state \
     NODE_ENV=production
 
 WORKDIR /home/sandbox

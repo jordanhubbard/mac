@@ -557,6 +557,7 @@ class VectorWriterService:
         filter_payload: Optional[JsonDict] = None,
         project: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Embed ``query_text`` and ask Qdrant for the top hits.
 
@@ -564,8 +565,8 @@ class VectorWriterService:
         ``{memory_id, task_id, score, summary, point_id, payload}``
         ordered by descending score.
 
-        Server-side filtering: pass ``project`` and/or ``tenant_id`` to
-        scope the search to a project / tenant. Combine with
+        Server-side filtering: pass ``project``, ``tenant_id``, and/or
+        ``agent_id`` to scope the search. Combine with
         ``filter_payload`` if you need richer Qdrant filter clauses.
         """
         if tier not in MAC_MEMORY_COLLECTIONS:
@@ -584,6 +585,8 @@ class VectorWriterService:
             must_clauses.append({"key": "project", "match": {"value": project}})
         if tenant_id:
             must_clauses.append({"key": "tenant_id", "match": {"value": tenant_id}})
+        if agent_id:
+            must_clauses.append({"key": "agent_id", "match": {"value": agent_id}})
         if filter_payload:
             body["filter"] = filter_payload
             # If callers supply both, must clauses get folded in.

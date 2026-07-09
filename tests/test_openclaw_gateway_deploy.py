@@ -18,13 +18,22 @@ FLEET_CONFIG = ROOT / "deploy" / "fleet" / "config.yaml"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-openclaw-gateway.service"
 
 
+def _seed_hermes_identity(home: Path, name: str = "Test Agent") -> None:
+    hermes = home / ".hermes"
+    memories = hermes / "memories"
+    memories.mkdir(parents=True)
+    (hermes / "SOUL.md").write_text(f"# {name}\n\nDistinct test soul.\n", encoding="utf-8")
+    (memories / "USER.md").write_text("# User\n\nLearn preferences from evidence.\n", encoding="utf-8")
+    (memories / "MEMORY.md").write_text("# Memory\n\nContinuity seed.\n", encoding="utf-8")
+
+
 def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> None:
     assert INSTALLER.stat().st_mode & 0o111
     container = CONTAINERFILE.read_text(encoding="utf-8")
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "ghcr.io/openclaw/openclaw:2026.6.11@sha256:" in container
     assert 'OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"' in container
-    assert 'MAC_OPENCLAW_IMAGE_REVISION="5"' in container
+    assert 'MAC_OPENCLAW_IMAGE_REVISION="7"' in container
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.
@@ -37,7 +46,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="5"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="7"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -55,6 +64,10 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert 'image_revision" = "$OPENCLAW_IMAGE_REVISION"' in installer
     assert installer.count("/bin/bash -lc") >= 2
     assert "/usr/local/bin/mac-verify-bash-contract" in installer
+    assert "migrate-hermes-continuity.py" in installer
+    assert "apply-cron-plan.mjs" in container
+    assert "curiosity-sidecar.py /usr/local/bin/curiosity" in container
+    assert "/opt/mac-openclaw/plugins/mac-continuity" in container
 
 
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
@@ -63,6 +76,7 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     read_only, read_write = text.split("  read_write:", maxsplit=1)
     assert "/home/sandbox/.config/mac-openclaw" not in read_only
     assert "/home/sandbox/.config/mac-openclaw" in read_write
+    assert "- /sandbox" in read_write
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
     for host in (
@@ -81,11 +95,54 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert "0.0.0.0/0" not in text
 
 
+def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    script = f"""
+      const mod = await import({json.dumps(plugin)});
+      const hooks = new Map();
+      const tools = new Map();
+      globalThis.fetch = async () => ({{
+        ok: true,
+        json: async () => ({{
+          mood_prompt: "Current mood: warm",
+          memories: [{{summary: "durable fact", score: 0.9}}],
+        }}),
+      }});
+      const api = {{
+        pluginConfig: {{maxMemories: 5, timeoutMs: 1000}},
+        logger: {{warn: () => {{}}}},
+        on: (name, handler) => hooks.set(name, handler),
+        registerTool: (tool) => tools.set(tool.name, tool),
+      }};
+      mod.default.register(api);
+      if (!hooks.has("before_prompt_build")) process.exit(2);
+      if (!["mac_memory_recall", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
+      const result = await hooks.get("before_prompt_build")({{prompt: "what matters?"}});
+      if (!result.prependContext.includes("Current mood: warm")) process.exit(4);
+      if (!result.prependContext.includes("durable fact")) process.exit(5);
+    """
+    env = {
+        **os.environ,
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+
 def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Path) -> None:
     home = tmp_path / "home"
     mac_home = home / ".mac"
     openclaw_home = mac_home / "openclaw"
     openclaw_home.mkdir(parents=True)
+    _seed_hermes_identity(home)
     (openclaw_home / "slack_home_channels.json").write_text(
         json.dumps(
             [
@@ -179,14 +236,24 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert telegram["botToken"]["id"] == "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"
     assert telegram["dmPolicy"] == "pairing"
     assert telegram["groupPolicy"] == "allowlist"
-    assert config["plugins"] == {
-        "allow": ["slack", "telegram"],
-        "enabled": True,
-        "entries": {
-            "slack": {"enabled": True},
-            "telegram": {"enabled": True},
-        },
+    assert config["plugins"]["allow"] == ["mac-continuity", "slack", "telegram"]
+    assert config["plugins"]["entries"]["slack"] == {"enabled": True}
+    assert config["plugins"]["entries"]["telegram"] == {"enabled": True}
+    assert config["plugins"]["entries"]["mac-continuity"]["enabled"] is True
+    assert config["plugins"]["entries"]["mac-continuity"]["hooks"] == {
+        "allowConversationAccess": True,
+        "allowPromptInjection": True,
     }
+    assert config["plugins"]["load"]["paths"] == [
+        "/opt/mac-openclaw/plugins/mac-continuity"
+    ]
+    assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
+    assert config["agents"]["defaults"]["memorySearch"] == {
+        "experimental": {"sessionMemory": True},
+        "provider": "none",
+        "sources": ["memory", "sessions"],
+    }
+    assert config["tools"]["sessions"]["visibility"] == "agent"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
     assert config_path.stat().st_mode & 0o777 == 0o600
@@ -197,6 +264,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         if line and not line.startswith("#") and "=" in line
     }
     assert {
+        "MAC_OPENCLAW_AGENT_ID",
+        "MAC_OPENCLAW_CONTROL_URL",
+        "MAC_OPENCLAW_WORKSPACE",
         "MAC_OPENCLAW_SLACK_OFFTERA_APP_TOKEN",
         "MAC_OPENCLAW_SLACK_OFFTERA_BOT_TOKEN",
         "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN",
@@ -210,6 +280,15 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     }.isdisjoint(runtime_keys)
     assert wrapper_path.stat().st_mode & 0o777 == 0o700
     assert stop_wrapper_path.stat().st_mode & 0o777 == 0o700
+    curiosity_wrapper = mac_home / "bin" / "curiosity"
+    assert curiosity_wrapper.stat().st_mode & 0o777 == 0o700
+    assert "/usr/local/bin/curiosity" in curiosity_wrapper.read_text(encoding="utf-8")
+    cron_plan = json.loads((managed / "cron-plan.json").read_text(encoding="utf-8"))
+    curiosity_job = next(
+        job for job in cron_plan["jobs"] if job["name"] == "MAC continuous curiosity review"
+    )
+    assert curiosity_job["enabled"] is True
+    assert "curiosity_candidate_submit" in curiosity_job["message"]
     assert (mac_home / "bin" / "openclaw-message").stat().st_mode & 0o777 == 0o700
     assert (mac_home / "bin" / "openclaw-agent").stat().st_mode & 0o777 == 0o700
     assert (mac_home / "openclaw" / "home-channel-target").read_text(
@@ -228,9 +307,14 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "-- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "sandbox delete" in stop_wrapper
+    assert "sandbox download" in stop_wrapper
+    assert "/sandbox/workspace" in stop_wrapper
+    assert "/sandbox/state" in stop_wrapper
     assert "pgrep -x openclaw" not in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
     assert "stop_gateway" in wrapper
+    assert '--upload "$WORKSPACE:/sandbox"' in wrapper
+    assert '--upload "$STATE:/sandbox"' in wrapper
     subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
     subprocess.run(["bash", "-n", str(stop_wrapper_path)], check=True, timeout=10)
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
@@ -330,6 +414,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     calls = tmp_path / "calls"
     openclaw_home = mac_home / "openclaw"
     openclaw_home.mkdir(parents=True)
+    _seed_hermes_identity(home)
     (openclaw_home / "slack_home_channels.json").write_text(
         json.dumps(
             [
@@ -363,6 +448,12 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "  sandbox:exec)\n"
         "    case \"$*\" in\n"
         "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
+        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"mac_memory_recall\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+        "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
+        "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
+        "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"
+        "      *'memory search'*) printf '%s\\n' \"$*\" ;;\n"
+        "      *'Read your workspace IDENTITY.md'*) printf '%s\\n' '{\"result\": \"mac-hive\"}' ;;\n"
         "      *'openclaw agent'*) printf '%s\\n' '{\"result\": \"MAC_OPENCLAW_CANARY_OK\"}' ;;\n"
         "      *) : ;;\n"
         "    esac\n"
@@ -544,6 +635,7 @@ def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
 def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> None:
     home = tmp_path / "home"
     mac_home = home / ".mac"
+    _seed_hermes_identity(home, "Headless Test")
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": str(home),
@@ -576,13 +668,16 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text()
     workspace = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text()
     assert config["channels"] == {}
-    assert config["plugins"]["entries"] == {
-        "slack": {"enabled": False},
-        "telegram": {"enabled": False},
-    }
-    assert "SLACK_" not in runtime
+    assert config["plugins"]["entries"]["slack"] == {"enabled": False}
+    assert config["plugins"]["entries"]["telegram"] == {"enabled": False}
+    assert config["plugins"]["entries"]["mac-continuity"]["enabled"] is True
+    assert "SLACK_APP_TOKEN" not in runtime
+    assert "SLACK_BOT_TOKEN" not in runtime
     assert "TELEGRAM_" not in runtime
     assert "Representation mode: delegated" in workspace
+    assert "Be endlessly curious, ruthless toward bad data" in workspace
+    assert "Angry Librarian mode" in workspace
+    assert "false equivalence" in workspace
     installer = INSTALLER.read_text(encoding="utf-8")
     assert 'MAC_OPENCLAW_CHANNELS=""' in installer
     assert "local channels=()" not in installer

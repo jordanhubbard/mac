@@ -10314,6 +10314,7 @@ class ControlPlane:
         min_score: Optional[float] = None,
         project: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         qdrant_url: Optional[str] = None,
         vector_writer: Optional[Any] = None,
     ) -> List[JsonDict]:
@@ -10344,6 +10345,7 @@ class ControlPlane:
             score_threshold=min_score,
             project=project,
             tenant_id=tenant_id,
+            agent_id=agent_id,
         )
 
     def recall_dream_artifacts(

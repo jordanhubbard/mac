@@ -560,6 +560,7 @@
     "name": "MAC_API_URL",
     "retired": false,
     "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/cli.py",
       "src/mac/dispatch.py",
       "src/mac/ide_launcher.py"
@@ -3601,6 +3602,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
+      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/systemd/mac-fleet-context.service",
       "src/mac/_hermes/agent/agent_init.py",
@@ -4336,7 +4338,20 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/openclaw/curiosity-sidecar.py",
       "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw bootstrap token.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_BOOTSTRAP_TOKEN",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "scripts/provision-openclaw-personality.py"
     ],
     "type": "str"
   },
@@ -4378,6 +4393,28 @@
     "description": "Openclaw Runtime setting: openclaw containerfile.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_CONTAINERFILE",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw continuity migrator.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_CONTINUITY_MIGRATOR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw control url.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_CONTROL_URL",
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh"
@@ -4802,6 +4839,18 @@
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw workspace.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_WORKSPACE",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/curiosity-sidecar.py",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,

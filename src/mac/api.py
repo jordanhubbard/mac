@@ -7033,8 +7033,11 @@ def create_app(
         min_score: Optional[float] = Query(default=None),
         project: Optional[str] = Query(default=None),
         tenant_id: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
+        if principal.agent_id and agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError("agent token cannot recall a peer agent's memory")
         return cp.recall_memory(
             q,
             tier=tier,
@@ -7042,7 +7045,78 @@ def create_app(
             min_score=min_score,
             project=project,
             tenant_id=tenant_id,
+            agent_id=agent_id,
         )
+
+    @app.get("/v1/agents/{agent_id}/continuity")
+    def get_openclaw_continuity_context(
+        agent_id: str,
+        q: str = Query(default="", max_length=8000),
+        limit: int = Query(default=5, ge=0, le=20),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Return the bound agent's dynamic mood and medium-term memories.
+
+        This endpoint is the narrow runtime bridge used by MAC's OpenClaw
+        plugin.  It lives below ``/v1`` so an ordinary bound agent token can
+        read its own context without receiving fleet-wide ``read`` scope.
+        """
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError("agent token cannot read a peer agent's continuity context")
+        cp.get_agent(agent_id)
+        mood = cp.get_current_mood(agent_id)
+        memories: List[Dict[str, Any]] = []
+        if q.strip() and limit:
+            for tier in ("medium", "long"):
+                for memory in cp.recall_memory(
+                    q,
+                    tier=tier,
+                    limit=limit,
+                    agent_id=agent_id,
+                ):
+                    memories.append({**memory, "tier": tier})
+            memories.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+            memories = memories[:limit]
+        from mac.mood_policy import render_mood_overlay
+
+        mood_dict = mood.to_dict() if mood is not None else None
+        return {
+            "schema": "mac.openclaw_continuity_context.v1",
+            "agent_id": agent_id,
+            "mood": mood_dict,
+            "mood_prompt": render_mood_overlay(
+                str((mood_dict or {}).get("mode") or ""),
+                reason=(mood_dict or {}).get("reason"),
+            ),
+            "memories": memories,
+        }
+
+    @app.post("/v1/agents/{agent_id}/mood")
+    def set_openclaw_agent_mood(
+        agent_id: str,
+        body: MoodSet,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Allow a bound OpenClaw runtime to self-report only its own mood."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError("agent token cannot set a peer agent's mood")
+        values = _data(body)
+        values.setdefault("set_by", agent_id)
+        return cp.set_mood(agent_id, **values).to_dict()
+
+    @app.delete("/v1/agents/{agent_id}/mood")
+    def clear_openclaw_agent_mood(
+        agent_id: str,
+        body: MoodClear,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Optional[Dict[str, Any]]:
+        """Allow a bound OpenClaw runtime to clear only its own mood."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError("agent token cannot clear a peer agent's mood")
+        values = _data(body)
+        values.setdefault("cleared_by", agent_id)
+        cleared = cp.clear_mood(agent_id, **values)
+        return cleared.to_dict() if cleared is not None else None
 
     @app.get("/v1/memory/dreams/recall")
     def recall_dream_artifacts(

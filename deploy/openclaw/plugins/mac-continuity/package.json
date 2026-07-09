@@ -1,0 +1,15 @@
+{
+  "name": "@mac/openclaw-continuity",
+  "version": "1.0.0",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.6.11"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "compat": {
+      "pluginApi": ">=2026.6.11",
+      "minGatewayVersion": "2026.6.11"
+    }
+  }
+}

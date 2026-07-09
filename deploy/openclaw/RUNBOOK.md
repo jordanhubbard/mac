@@ -14,11 +14,62 @@ host `openclaw-agent` wrapper; no path falls back to Hermes chat.
 - OpenClaw: `2026.6.11`
 - Source image: `ghcr.io/openclaw/openclaw:2026.6.11`
 - Manifest digest: `sha256:3814fb1f62f9cfc5944de088c5817c68c88b5d721feebe36420b666a90a61ce7`
-- Local image: `localhost/mac-openclaw:2026.6.11`
+- Local image: `localhost/mac-openclaw:2026.6.11-mac.7`
 - OpenShell: the MAC fleet pin installed by `deploy/openshell/bootstrap-openshell.sh`
 
 The official image is extended only with OpenShell's required non-root
-`sandbox` identity and MAC's state-directory layout.
+`sandbox` identity, Bash contract, MAC's state-directory layout, and the
+repo-owned `mac-continuity` plugin.
+
+## Identity and memory continuity
+
+The host is authoritative for the transferable OpenClaw trees:
+
+- `~/.mac/openclaw/workspace` — SOUL, IDENTITY, USER, MEMORY, daily/history
+  memory, and migrated skills;
+- `~/.mac/openclaw/state` — OpenClaw sessions, device identity, plugin state,
+  cron state, and indexes;
+- `~/.mac/openclaw/migration` — source hashes, counts, redaction totals,
+  conflicts, cron conversion plan, and personality provenance;
+- `~/.mac/openclaw/archive` — the two most recent pre-restart checkpoints.
+
+When `~/.hermes` exists, `migrate-hermes-continuity.py` imports its identity,
+authoritative `memories/USER.md` and `memories/MEMORY.md`, text conversation
+history, skills, and enabled/disabled cron definitions. It never modifies or
+deletes the Hermes source. High-confidence credentials are redacted before any
+file enters the OpenClaw workspace; binary skill assets containing credential-
+like bytes are withheld. Locally edited OpenClaw files win over a later Hermes
+re-import and the new candidate is recorded as a private conflict.
+
+When `~/.hermes` is absent, an already configured OpenClaw workspace is also
+authoritative. Only when both are absent does fleet deploy ask a reachable,
+established agent to propose a unique roster-aware name, role, vibe, SOUL,
+starter USER, and starter MEMORY. The proposal is schema/duplicate/secret
+validated and its mentor provenance is persisted before non-interactive setup.
+Deployment fails closed if no mentor can produce a valid proposal; MAC never
+silently installs the stock blank wizard identity.
+
+OpenClaw's native keyword and session memory search covers the workspace and
+OpenClaw sessions. The `mac-continuity` prompt hook additionally fetches the
+agent's current MAC mood plus agent-scoped medium and long memories before each
+turn. Its tools let the agent recall those memories and self-report, read, or
+clear its own mood; bound agent tokens cannot act on a peer.
+
+The image also ships `/usr/local/bin/curiosity` and a host wrapper at
+`~/.mac/bin/curiosity`. A six-hour local OpenClaw cron performs the continuous
+curiosity pass. Candidate hypotheses, evidence, counterevidence, provenance,
+and falsifiable tests remain quarantined under durable OpenClaw state. The
+sidecar records every transition in a hash-chained provenance ledger and never
+writes a candidate to workspace memory until an explicit `curiosity approve`
+includes an actor, reason, and external approval ID. Agent tools can submit and
+inspect candidates and invoke `curiosity abuse-frame`; they intentionally do
+not expose approval. Existing Hermes curiosity trees are redacted and
+preserved as untrusted migration material, never silently promoted.
+
+`AGENTS.md` applies the evidence-bound Angry Librarian and Moral Clarity
+postures to both migrated and newly mentored identities: challenge weak claims,
+surface possible false equivalence when power or responsibility differs, and
+direct protective anger toward preventing harm without dehumanization.
 
 ## Host-local inputs
 
@@ -71,11 +122,12 @@ sandbox. They are never passed through process argv.
 deploy/openclaw/install-openclaw-gateway.sh prepare
 ```
 
-This operation is idempotent. It renders the policy and configuration, builds
-the pinned image if absent, writes the host wrapper, and preserves the existing
-gateway token. If an older OpenClaw sandbox must be replaced, its state and
-workspace are downloaded to the owner-only `~/.mac/openclaw/backups/` tree
-before deletion.
+This operation is idempotent. It runs the reversible continuity import, renders
+the policy and configuration, builds the pinned image if absent, writes the
+host wrapper, and preserves the existing gateway token. If an older OpenClaw
+sandbox must be replaced, its legacy `/home` state is first staged through
+OpenShell's transferable `/sandbox` root and merged into the owner-only host
+state; differing files are retained under `~/.mac/openclaw/backups/`.
 
 ## Fleet deployment
 
@@ -91,6 +143,11 @@ this order:
 starts OpenClaw, then requires all of these checks before disabling Hermes:
 
 - `openclaw config validate --json`;
+- runtime import of `mac-continuity`, all seven continuity/curiosity tools, and its
+  `before_prompt_build` hook;
+- curiosity ledger verification and an abuse-frame false-equivalence canary;
+- forced native memory indexing and exact recall of the private per-agent
+  continuity marker;
 - authenticated in-sandbox `openclaw health --verbose --json` RPC health;
 - live Slack and Telegram channel probes.
 
@@ -144,14 +201,15 @@ On every worker start, `mac-agent-startup-self-test` independently requires the
 exclusive advertisement, OpenShell confinement, readable OpenClaw model route,
 and a `MAC_OPENCLAW_STARTUP_OK` model sentinel through `openclaw-agent`.
 
-The gateway remains inside an OpenShell sandbox, but that service sandbox is
-disposable: each service start recreates its container from the cached pinned
-image. OpenShell 0.0.72 cannot re-establish create-time forwarding or reliably
-reap every foreground exec process in a reused service sandbox. Recreating the
-container guarantees one channel consumer without rebuilding the image. Durable
-identity, outbox, and memory state remains in MAC; this does not change reuse of
-task-execution sandboxes. MAC verifies health through the supported sandbox RPC
-instead of advertising a stale loopback endpoint.
+The gateway remains inside an OpenShell sandbox, and its container is still
+recreated from the cached image on each service start because OpenShell 0.0.72
+cannot safely reuse its forwarding/process boundary. The data is not
+disposable: the stop wrapper downloads `/sandbox/workspace` and
+`/sandbox/state`, atomically promotes both host checkpoints, then deletes the
+container. Startup uploads the complete host trees. This guarantees one channel
+consumer while retaining OpenClaw's own identity, sessions, outbox, plugin,
+cron, and memory state across recreation. Task-execution sandbox reuse is a
+separate policy.
 
 ## Rollback
 
@@ -162,8 +220,9 @@ MAC_OPENCLAW_SUPERVISOR=auto \
 ```
 
 Rollback stops and disables the OpenClaw supervisor entry and restores the
-retained Hermes gateway. It deliberately preserves the OpenClaw sandbox,
-configuration, and state for diagnosis or a corrected retry.
+retained Hermes gateway. It deliberately preserves the host OpenClaw workspace,
+configuration, state, migration manifests, and checkpoints for diagnosis or a
+corrected retry.
 
 ## Updating OpenClaw
 

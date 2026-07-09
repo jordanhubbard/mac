@@ -1,0 +1,102 @@
+from fastapi.testclient import TestClient
+
+from mac.api import create_app
+from mac.services import ControlPlane
+
+
+def test_bound_agent_reads_own_mood_and_scoped_memory(monkeypatch) -> None:
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("continuity-host")
+    agent = cp.register_agent(machine.id, "continuity-agent")
+    peer = cp.register_agent(machine.id, "peer-agent")
+    cp.set_mood(agent.id, "warm", reason="continuity test")
+    captured = []
+
+    def recall(query, **kwargs):
+        captured.append({"query": query, **kwargs})
+        return [{"summary": "remember the test", "score": 0.9}]
+
+    monkeypatch.setattr(cp, "recall_memory", recall)
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={
+            "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
+        },
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    with TestClient(app) as client:
+        own = client.get(
+            f"/v1/agents/{agent.id}/continuity?q=what+matters&limit=3",
+            headers=headers,
+        )
+        refused = client.get(f"/v1/agents/{peer.id}/continuity", headers=headers)
+
+    assert own.status_code == 200
+    payload = own.json()
+    assert payload["schema"] == "mac.openclaw_continuity_context.v1"
+    assert payload["mood"]["mode"] == "warm"
+    assert "Current mood: **warm**" in payload["mood_prompt"]
+    assert payload["memories"][0]["summary"] == "remember the test"
+    assert captured == [
+        {"query": "what matters", "tier": "medium", "limit": 3, "agent_id": agent.id},
+        {"query": "what matters", "tier": "long", "limit": 3, "agent_id": agent.id},
+    ]
+    assert refused.status_code == 403
+
+
+def test_bound_agent_cannot_recall_peer_memory(monkeypatch) -> None:
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("recall-host")
+    agent = cp.register_agent(machine.id, "recall-agent")
+    peer = cp.register_agent(machine.id, "recall-peer")
+    monkeypatch.setattr(cp, "recall_memory", lambda *_a, **_k: [])
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={
+            "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
+        },
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            f"/v1/memory/recall?q=x&agent_id={peer.id}",
+            headers={"Authorization": "Bearer agent-token"},
+        )
+    assert response.status_code == 403
+
+
+def test_bound_openclaw_agent_can_set_and_clear_only_its_own_mood() -> None:
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("mood-host")
+    agent = cp.register_agent(machine.id, "mood-agent")
+    peer = cp.register_agent(machine.id, "mood-peer")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={
+            "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
+        },
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    with TestClient(app) as client:
+        set_own = client.post(
+            f"/v1/agents/{agent.id}/mood",
+            headers=headers,
+            json={"mode": "cheerful", "reason": "a passing migration"},
+        )
+        set_peer = client.post(
+            f"/v1/agents/{peer.id}/mood",
+            headers=headers,
+            json={"mode": "warm"},
+        )
+        clear_own = client.request(
+            "DELETE",
+            f"/v1/agents/{agent.id}/mood",
+            headers=headers,
+            json={"reason": "test complete"},
+        )
+
+    assert set_own.status_code == 200
+    assert set_own.json()["mode"] == "cheerful"
+    assert set_own.json()["set_by"] == agent.id
+    assert set_peer.status_code == 403
+    assert clear_own.status_code == 200
+    assert clear_own.json()["cleared_by"] == agent.id
