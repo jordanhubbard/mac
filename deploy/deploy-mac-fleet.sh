@@ -5879,18 +5879,19 @@ EOF
   if truthy "$DEFER_AGENT_RESTART"; then
     log "deferring mac-agent restart until post-manifest reconciliation"
     # An intentionally STOPPED supervisord program makes ``status`` return 3.
-    # Do not feed that expected state through the privilege fallback below;
-    # the post manifest records service state and the outer controller owns
-    # the subsequent restart/readback.
-    return 0
+    # Do not feed that expected state through the privilege fallback below.
+    # Keep executing the remote deployment, however: the post manifest must be
+    # durable before the outer controller owns the subsequent restart/readback.
+    printf '%s STOPPED (restart deferred until post-manifest reconciliation)\n' \
+      "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt"
   else
     run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
     sleep 3
-  fi
-  if control_plane_enabled; then
-    run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
-  else
-    run_supervisorctl status "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+    if control_plane_enabled; then
+      run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+    else
+      run_supervisorctl status "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+    fi
   fi
   printf 'supervisord restarted at %s\n' "$restart_since" >> "$LOG_DIR/supervisord-services.txt"
 }
