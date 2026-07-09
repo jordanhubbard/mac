@@ -213,6 +213,10 @@ source_host_env() {
   MAC_OPENCLAW_SLACK_ACCOUNT_IDS="${MAC_OPENCLAW_SLACK_ACCOUNT_IDS:-$MAC_OPENCLAW_SLACK_ACCOUNT_ID}"
   MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
   MAC_OPENCLAW_HOME_CHANNEL="${MAC_OPENCLAW_HOME_CHANNEL:-${MAC_HERMES_SLACK_HOME_CHANNEL_NAME:-${SLACK_HOME_CHANNEL_NAME:-}}}"
+  # Keep the logical operator input as well as the resolved primary target.
+  # Multi-workspace live canaries must resolve the same channel name inside
+  # each Slack team; reusing the primary team's channel ID is incorrect.
+  slack_home_channel_input="$MAC_OPENCLAW_HOME_CHANNEL"
   local primary_slack_suffix primary_slack_bot_key primary_slack_app_key
   primary_slack_suffix="$(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
   primary_slack_bot_key="MAC_OPENCLAW_SLACK_${primary_slack_suffix:-DEFAULT}_BOT_TOKEN"
@@ -315,11 +319,15 @@ validate_env() {
   if truthy "$LIVE_CANARY"; then
     case ",$MAC_OPENCLAW_CHANNELS," in
       *,slack,*)
-        [ -n "$MAC_OPENCLAW_HOME_CHANNEL" ] || die "Slack live canary requires a home channel"
-        case "$MAC_OPENCLAW_HOME_CHANNEL" in
-          channel:*|conversation:*|user:*) ;;
-          *) die "Slack live canary requires a durable channel target; could not resolve $MAC_OPENCLAW_HOME_CHANNEL for account $MAC_OPENCLAW_SLACK_ACCOUNT_ID" ;;
-        esac
+        local slack_account slack_target
+        for slack_account in $(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_IDS" | tr ',' ' '); do
+          slack_target="$(resolve_slack_home_target "$slack_home_channel_input" "$slack_account")"
+          [ -n "$slack_target" ] || die "Slack live canary requires a home channel for account $slack_account"
+          case "$slack_target" in
+            channel:*|conversation:*|user:*) ;;
+            *) die "Slack live canary requires a durable channel target; could not resolve $slack_home_channel_input for account $slack_account" ;;
+          esac
+        done
         ;;
     esac
     case ",$MAC_OPENCLAW_CHANNELS," in
@@ -776,10 +784,14 @@ verify() {
     local canary_message="MAC OpenClaw canary from ${MAC_OPENCLAW_AGENT_ID}"
     case ",$MAC_OPENCLAW_CHANNELS," in
       *,slack,*)
-        sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
-          --channel slack --account "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" \
-          --target "$MAC_OPENCLAW_HOME_CHANNEL" \
-          --message "$canary_message" --json >/dev/null
+        local slack_account slack_target
+        for slack_account in $(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_IDS" | tr ',' ' '); do
+          slack_target="$(resolve_slack_home_target "$slack_home_channel_input" "$slack_account")"
+          sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+            --channel slack --account "$slack_account" \
+            --target "$slack_target" \
+            --message "$canary_message" --json >/dev/null
+        done
         ;;
     esac
     case ",$MAC_OPENCLAW_CHANNELS," in
@@ -802,17 +814,27 @@ import time
 path = sys.argv[1]
 agent_id = os.environ["MAC_OPENCLAW_AGENT_ID"]
 suffix = agent_id.removeprefix("agent_")
-channels = {
-    channel: {
+channels = {}
+for channel in os.environ.get("MAC_OPENCLAW_CHANNELS", "").split(","):
+    if not channel:
+        continue
+    prefix = "MAC_OPENCLAW_%s" % channel.upper()
+    primary_account = os.environ.get("%s_ACCOUNT_ID" % prefix, "default")
+    account_ids = []
+    for account_id in os.environ.get(
+        "%s_ACCOUNT_IDS" % prefix, primary_account
+    ).split(","):
+        account_id = account_id.strip()
+        if account_id and account_id not in account_ids:
+            account_ids.append(account_id)
+    channels[channel] = {
         "enabled": True,
         "transport": "socket" if channel == "slack" else "long_polling",
-        "account_id": os.environ.get(
-            "MAC_OPENCLAW_%s_ACCOUNT_ID" % channel.upper(), "default"
-        ),
+        # Keep the scalar for older consumers while advertising the complete
+        # native OpenClaw multi-account topology to current consumers.
+        "account_id": primary_account,
+        "account_ids": account_ids or [primary_account],
     }
-    for channel in os.environ.get("MAC_OPENCLAW_CHANNELS", "").split(",")
-    if channel
-}
 runtime = {
     "schema": "mac.openclaw_runtime.v1",
     "implementation": "openclaw",

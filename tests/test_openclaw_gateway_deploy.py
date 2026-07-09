@@ -96,7 +96,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
                     "channel_name": "#rockyandfriends",
                 },
                 {
-                    "name": "other",
+                    "name": "omgjkh",
                     "team_id": "T456",
                     "channel_id": "C456HOME",
                     "channel_name": "#rockyandfriends",
@@ -327,9 +327,32 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
     counter = tmp_path / "attempts"
+    calls = tmp_path / "calls"
+    openclaw_home = mac_home / "openclaw"
+    openclaw_home.mkdir(parents=True)
+    (openclaw_home / "slack_home_channels.json").write_text(
+        json.dumps(
+            [
+                {
+                    "name": "offtera",
+                    "team_id": "T123",
+                    "channel_id": "C123HOME",
+                    "channel_name": "#rockyandfriends",
+                },
+                {
+                    "name": "omgjkh",
+                    "team_id": "T456",
+                    "channel_id": "C456HOME",
+                    "channel_name": "#rockyandfriends",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
     openshell = bin_dir / "openshell"
     openshell.write_text(
         "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> \"$MAC_TEST_CALLS\"\n"
         "counter=${MAC_TEST_ATTEMPTS:?}\n"
         "attempts=$(cat \"$counter\" 2>/dev/null || echo 0)\n"
         "case \"$1:$2\" in\n"
@@ -339,7 +362,8 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "    ;;\n"
         "  sandbox:exec)\n"
         "    case \"$*\" in\n"
-        "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {}}' ;;\n"
+        "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
+        "      *'openclaw agent'*) printf '%s\\n' '{\"result\": \"MAC_OPENCLAW_CANARY_OK\"}' ;;\n"
         "      *) : ;;\n"
         "    esac\n"
         "    ;;\n"
@@ -360,9 +384,19 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
         "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
         "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_PUBLIC_IDENTITY": "mac-hive",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_ID": "offtera",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_IDS": "offtera,omgjkh",
+        "MAC_OPENCLAW_HOME_CHANNEL": "rockyandfriends",
+        "MAC_OPENCLAW_SLACK_BOT_TOKEN": "xoxb-primary-placeholder",
+        "MAC_OPENCLAW_SLACK_APP_TOKEN": "xapp-primary-placeholder",
+        "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN": "xoxb-second-placeholder",
+        "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN": "xapp-second-placeholder",
+        "MAC_OPENCLAW_LIVE_CANARY": "1",
         "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT": "3",
         "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL": "0",
         "MAC_TEST_ATTEMPTS": str(counter),
+        "MAC_TEST_CALLS": str(calls),
     }
     subprocess.run(
         [str(INSTALLER), "prepare"],
@@ -383,13 +417,22 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     )
 
     assert int(counter.read_text(encoding="utf-8")) >= 3
-    assert "verified stock OpenClaw headless runtime" in result.stdout
+    assert "verified stock OpenClaw runtime" in result.stdout
     pending = json.loads(
         (mac_home / "openclaw" / "verification-pending.json").read_text(
             encoding="utf-8"
         )
     )
     assert pending["openclaw_runtime"]["verified"] is True
+    assert pending["chat_gateway"]["channels"]["slack"] == {
+        "account_id": "offtera",
+        "account_ids": ["offtera", "omgjkh"],
+        "enabled": True,
+        "transport": "socket",
+    }
+    calls_text = calls.read_text(encoding="utf-8")
+    assert "--account offtera --target channel:C123HOME" in calls_text
+    assert "--account omgjkh --target channel:C456HOME" in calls_text
 
 
 def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
