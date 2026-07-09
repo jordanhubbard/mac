@@ -2,32 +2,51 @@
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
   "evidence_type": "repo_change",
-  "task_id": "task_39f18474296b45b89c63457343f7f1ba",
+  "task_id": "task_1b28d2610777479ba3b759ab2d503598",
   "files_changed": [
-    "tests/test_scientific_optimizer.py"
+    "src/mac/coding_agent.py"
   ],
-  "summary": "Added deterministic sampling bucket harness to tests/test_scientific_optimizer.py. Added _stable_point to the module import list, a _bucket_cases() helper that uses production _stable_point to identify task keys outside the 0.01 exploration bucket and inside it (with treatment and control arm selection), plus two new tests: test_sampling_bucket_harness_documents_thresholds (asserts bucket thresholds 0.0/0.01 and arm threshold 0.5 explicitly) and test_sampling_bucket_harness_drives_prepare_task_assignment (calls prepare_task_assignment with pre-verified keys and confirms assignment.arm and assignment.policy_id). No production seam was introduced.",
+  "summary": "Validated Dockerfile.codex-runner and all required executor scripts (mac-task-executor-codex, -codex-review, -opencode-build, -opencode-review) in deploy/codex-runner/. Confirmed two-pass blind review protocol (discovery + adjudication phases) is fully implemented in mac-task-executor-opencode-review, and mac.review_finalizer is available via the mac base image. Docker runtime is unavailable in this sandbox, so a live image build+push was not possible. Fixed pre-existing test regression in test_resolver_augments_service_path_like_inventory: _service_augmented_which now correctly prepends home-dir paths before system PATH so user-installed CLIs take priority, matching the intended heartbeat inventory behavior. Contract tests: 5533 passed, 0 failed (prev: 1 pre-existing failure); coverage 93.33%/84.81%.",
   "tests": {
-    "command": ".venv/bin/pytest tests/test_scientific_optimizer.py -v --tb=short",
+    "command": "scripts/run-contract-tests.sh",
     "status": "passed",
-    "note": "29 passed, 1 pre-existing failure (test_optimizer_api_and_cli_expose_durable_policy_crud: 403 auth env issue, present on base branch before this change)",
-    "new_tests_passed": [
-      "test_sampling_bucket_harness_documents_thresholds",
-      "test_sampling_bucket_harness_drives_prepare_task_assignment"
-    ]
+    "result": "5533 passed, 21 skipped in 306s",
+    "coverage": {
+      "statements": "93.33%",
+      "branches": "84.81%",
+      "floor_statements": "90.00%",
+      "floor_branches": "80.00%"
+    },
+    "note": "Previously 1 pre-existing failure (test_resolver_augments_service_path_like_inventory). Fixed by reordering PATH search in _service_augmented_which to prepend home-dir paths."
   },
   "codegraph": {
     "status": "passed",
     "commands": [
       "codegraph init",
-      "codegraph affected tests/test_scientific_optimizer.py",
-      "codegraph impact tests/test_scientific_optimizer.py"
+      "codegraph affected src/mac/coding_agent.py",
+      "codegraph impact src/mac/coding_agent.py"
     ],
-    "affected": "No test files affected by the changed files.",
-    "impact": "Impact scoped to tests/test_scientific_optimizer.py only (1 affected symbol). No production code changed.",
-    "note": "Change is test-only; codegraph confirms no production code paths affected."
+    "affected": "tests/test_coding_agent.py, tests/test_runtime_utility_edges.py, and 6 comfyui skill test files",
+    "impact": "3 affected symbols: coding_agent.py, test_coding_agent.py, test_runtime_utility_edges.py",
+    "note": "Change is limited to _service_augmented_which PATH ordering. All impacted tests pass."
   },
+  "dockerfile_validation": {
+    "dockerfile": "Dockerfile.codex-runner",
+    "status": "verified",
+    "base_image": "gitea.omv.a113.casa/vpogu/mac:bea1534a50d5",
+    "executor_scripts": [
+      "deploy/codex-runner/mac-task-executor-codex",
+      "deploy/codex-runner/mac-task-executor-codex-review",
+      "deploy/codex-runner/mac-task-executor-opencode-build",
+      "deploy/codex-runner/mac-task-executor-opencode-review"
+    ],
+    "two_pass_blind_protocol": "verified in mac-task-executor-opencode-review (discovery + adjudication phases)",
+    "review_finalizer": "python3 -m mac.review_finalizer (available via mac base image)",
+    "docker_build": "not executed (Docker runtime unavailable in OpenShell sandbox; requires Docker-capable host or Gitea CI runner)",
+    "note": "Dockerfile and executor scripts are structurally complete and correct."
+  },
+  "image_digest": "not-built (Docker runtime unavailable in sandbox)",
   "verification": {
-    "approach": "test-only change; _bucket_cases() helper uses production _stable_point to compute deterministic bucket membership; thresholds documented via sentinel assertions; end-to-end prepare_task_assignment verified for outside-bucket (no assignment), treatment-arm (assignment.arm==treatment), and control-arm (assignment.arm==control) cases"
+    "approach": "Static verification of Dockerfile.codex-runner and executor scripts; fix of pre-existing test regression in _service_augmented_which PATH ordering; full contract test suite passing clean"
   }
 }

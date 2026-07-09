@@ -389,7 +389,7 @@ def _service_augmented_which(
     ]
     base = str(env.get("PATH") or "")
     search = os.pathsep.join(
-        [p for p in base.split(os.pathsep) if p] + [p for p in extra if p not in base]
+        [p for p in extra if p not in base] + [p for p in base.split(os.pathsep) if p]
     )
 
     def _which_augmented(name: str) -> Optional[str]:
