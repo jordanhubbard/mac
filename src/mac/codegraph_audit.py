@@ -288,6 +288,12 @@ def run_codegraph_audit(
     timeout: float = 180.0,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> JsonDict:
+    deadline = time.monotonic() + max(0.001, float(timeout))
+
+    def remaining(*, cap: float | None = None) -> float:
+        value = max(0.001, deadline - time.monotonic())
+        return min(value, cap) if cap is not None else value
+
     relevant = codegraph_relevant_files(files_changed)
     audit: JsonDict = {
         "schema": CODEGRAPH_AUDIT_SCHEMA,
@@ -316,7 +322,9 @@ def run_codegraph_audit(
         audit.setdefault("warnings", []).append("could not update .git/info/exclude: %s" % exc)
 
     index_cmd = [binary, "sync", str(repo_path)] if (repo_path / ".codegraph").exists() else [binary, "init", str(repo_path)]
-    index_result = _run_codegraph_command(index_cmd, cwd=repo_path, timeout=timeout, runner=runner)
+    index_result = _run_codegraph_command(
+        index_cmd, cwd=repo_path, timeout=remaining(), runner=runner
+    )
     audit["commands"].append(index_result)
     if index_result["returncode"] != 0:
         combined = "%s\n%s" % (index_result.get("stdout", ""), index_result.get("stderr", ""))
@@ -324,11 +332,13 @@ def run_codegraph_audit(
             unlock = _run_codegraph_command(
                 [binary, "unlock", str(repo_path)],
                 cwd=repo_path,
-                timeout=min(timeout, 30.0),
+                timeout=remaining(cap=30.0),
                 runner=runner,
             )
             audit["commands"].append(unlock)
-            index_result = _run_codegraph_command(index_cmd, cwd=repo_path, timeout=timeout, runner=runner)
+            index_result = _run_codegraph_command(
+                index_cmd, cwd=repo_path, timeout=remaining(), runner=runner
+            )
             audit["commands"].append(index_result)
     if index_result["returncode"] != 0:
         audit.update({"status": "fail", "reason": "index_failed"})
@@ -338,7 +348,7 @@ def run_codegraph_audit(
         [binary, "affected", "--path", str(repo_path), "--stdin", "--json"],
         cwd=repo_path,
         input_text="\n".join(relevant) + "\n",
-        timeout=timeout,
+        timeout=remaining(),
         runner=runner,
     )
     audit["commands"].append(affected)

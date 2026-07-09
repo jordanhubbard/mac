@@ -199,12 +199,25 @@ def test_task_iteration_override_separates_executor_and_reviewer_budgets() -> No
 def test_subprocess_executor_exports_task_iteration_budget(monkeypatch, tmp_path) -> None:
     captured = {}
 
-    def fake_run(argv, **kwargs):
-        captured["argv"] = argv
-        captured["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(argv, 0, "ok", "")
+    class ImmediateProcess:
+        pid = 999999
+        returncode = 0
 
-    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            captured["env"] = kwargs["env"]
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(worker.subprocess, "Popen", ImmediateProcess)
+    monkeypatch.setattr(worker, "_terminate_process_tree", lambda *_a, **_k: None)
     execution = worker.SubprocessExecutor(["executor"])(
         {"id": "task_1", "metadata": {"max_iterations": 12}}, tmp_path
     )
@@ -218,13 +231,27 @@ def test_subprocess_executor_does_not_inherit_task_scoped_overrides(
 ) -> None:
     captured = {}
 
-    def fake_run(argv, **kwargs):
-        captured["env"] = kwargs["env"]
-        return subprocess.CompletedProcess(argv, 0, "ok", "")
+    class ImmediateProcess:
+        pid = 999999
+        returncode = 0
+
+        def __init__(self, argv, **kwargs):
+            del argv
+            captured["env"] = kwargs["env"]
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
 
     monkeypatch.setenv("MAC_TASK_MODEL", "stale/model")
     monkeypatch.setenv("MAC_TASK_MAX_ITERATIONS", "999")
-    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+    monkeypatch.setattr(worker.subprocess, "Popen", ImmediateProcess)
+    monkeypatch.setattr(worker, "_terminate_process_tree", lambda *_a, **_k: None)
 
     worker.SubprocessExecutor(["executor"])(
         {"id": "task_unpinned", "metadata": {}}, tmp_path

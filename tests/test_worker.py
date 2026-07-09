@@ -1240,6 +1240,149 @@ def test_mac_worker_audits_subprocess_commands(tmp_path: Path):
         assert "argv0" in detail
 
 
+def test_subprocess_executor_timeout_kills_descendants_in_other_sessions(tmp_path: Path):
+    executor_script = tmp_path / "executor_tree.py"
+    executor_script.write_text(
+        "\n".join(
+            [
+                "import os, subprocess, sys, time",
+                "from pathlib import Path",
+                "workspace = Path(os.environ['MAC_TASK_WORKSPACE'])",
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)",
+                "(workspace / 'child.pid').write_text(str(child.pid), encoding='utf-8')",
+                "time.sleep(60)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    executor = SubprocessExecutor([sys.executable, str(executor_script)], timeout=0.5)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        executor({"id": "task_timeout_tree"}, task_dir)
+
+    child_pid = int((task_dir / "child.pid").read_text(encoding="utf-8"))
+    import psutil
+
+    assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+
+
+def test_subprocess_executor_explicit_cancel_is_audited(tmp_path: Path):
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    executor = SubprocessExecutor(
+        [sys.executable, "-c", "import time; time.sleep(60)"], timeout=30.0
+    )
+    records: list[Dict[str, Any]] = []
+    executor.audit_sink = records.append
+    result: list[WorkerExecution] = []
+
+    thread = threading.Thread(
+        target=lambda: result.append(executor({"id": "task_cancel_tree"}, task_dir))
+    )
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not executor.has_active_process() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert executor.cancel_current("ledger task cancelled") is True
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert result and result[0].returncode != 0
+    cancelled = [item for item in records if item.get("phase") == "cancelled"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["metadata"]["cancel_reason"] == "ledger task cancelled"
+
+
+def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("cancel running executor", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    executor = SubprocessExecutor(
+        [sys.executable, "-c", "import time; time.sleep(60)"], timeout=30.0
+    )
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        lease_seconds=60,
+        lease_renew_interval_seconds=0.05,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    results: list[Any] = []
+    thread = threading.Thread(target=lambda: results.append(worker.run_once()))
+    thread.start()
+    deadline = time.monotonic() + 5.0
+    while not executor.has_active_process() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert executor.has_active_process()
+
+    cp.transition_task(
+        task.id,
+        TaskState.CANCELLED.value,
+        "operator",
+        {"reason": "test cancellation"},
+    )
+    thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert results and results[0].status == "stale_result"
+    assert cp.list_evidence(task.id) == []
+    observations = cp.list_observability(layer="worker", limit=50)
+    cancelled = [item for item in observations if item.name == "worker.execution.cancelled"]
+    assert cancelled and cancelled[0].detail["process_tree_terminated"] is True
+
+
+def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("timeout with partial finalizer progress", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    executor_script = tmp_path / "timeout_executor.py"
+    executor_script.write_text(
+        "\n".join(
+            [
+                "import json, os, time",
+                "from pathlib import Path",
+                "workspace = Path(os.environ['MAC_TASK_WORKSPACE'])",
+                "progress = {'schema': 'mac.finalizer_progress.v1', 'phase': 'guarded_push', 'status': 'running'}",
+                "(workspace / 'finalizer-progress.json').write_text(json.dumps(progress), encoding='utf-8')",
+                "time.sleep(60)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        SubprocessExecutor([sys.executable, str(executor_script)], timeout=0.5),
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    assert result.evidence is not None
+    artifacts = result.evidence["metadata"]["durable_artifacts"]["artifacts"]
+    progress_artifacts = [
+        artifact for artifact in artifacts if artifact["artifact_type"] == "finalizer_progress"
+    ]
+    assert len(progress_artifacts) == 1
+    assert progress_artifacts[0]["name"] == "finalizer-progress.json"
+    history = cp.task_history(task.id)
+    timeout_transition = [
+        item
+        for item in history
+        if item.event_type == "task.transitioned" and item.to_state == TaskState.BLOCKED.value
+    ][-1]
+    assert timeout_transition.detail["reason"] == "executor_timeout"
+    assert timeout_transition.detail["process_tree_terminated"] is True
+
+
 def test_validate_git_remote_url_rejects_argv_smuggling():
     """mac-raud: remote_url from worker-supplied evidence must not be
     interpretable as a git option."""

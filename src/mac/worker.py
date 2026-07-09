@@ -20,6 +20,7 @@ import subprocess
 import struct
 import sys
 import termios
+import tempfile
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -180,6 +181,56 @@ class DebugTerminalSession:
     closed: bool = False
 
 
+def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 1.0) -> None:
+    """Terminate *process* and every descendant, including new sessions.
+
+    Executor children are allowed to create their own process groups (the test
+    watchdog does this deliberately), so killing only the executor's process
+    group is insufficient.  ``psutil`` is a runtime dependency and gives us a
+    cross-platform recursive tree walk; the process-group fallback also catches
+    descendants that race between the walk and termination.
+    """
+
+    try:
+        import psutil
+
+        parent = psutil.Process(process.pid)
+        descendants = parent.children(recursive=True)
+        for child in reversed(descendants):
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        try:
+            parent.terminate()
+        except psutil.NoSuchProcess:
+            pass
+        # Do not let psutil reap the direct child: ``subprocess.Popen`` must do
+        # that itself or CPython can observe ChildProcessError and substitute a
+        # false zero return code.  Waiting on descendants is safe.
+        _, alive = psutil.wait_procs(
+            descendants, timeout=max(0.0, float(grace_seconds))
+        )
+        for item in alive:
+            try:
+                item.kill()
+            except psutil.NoSuchProcess:
+                pass
+    except Exception:  # noqa: BLE001 - process cleanup must retain a fallback.
+        pass
+
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        if process.poll() is None:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 class SubprocessExecutor:
     def __init__(self, argv: List[str], timeout: Optional[float] = None) -> None:
         if not argv:
@@ -188,6 +239,24 @@ class SubprocessExecutor:
         self.timeout = timeout
         self.audit_sink: Optional[CommandAuditSink] = None
         self.audit_context: JsonDict = {}
+        self._process_lock = threading.Lock()
+        self._active_process: Optional[subprocess.Popen[Any]] = None
+        self._cancel_reason = ""
+
+    def has_active_process(self) -> bool:
+        with self._process_lock:
+            return self._active_process is not None
+
+    def cancel_current(self, reason: str = "task assignment cancelled") -> bool:
+        """Cancel the active executor and its complete descendant tree."""
+
+        with self._process_lock:
+            process = self._active_process
+            if process is None:
+                return False
+            self._cancel_reason = str(reason or "task assignment cancelled")
+        _terminate_process_tree(process)
+        return True
 
     def __call__(self, task: JsonDict, task_dir: Path) -> WorkerExecution:
         env = os.environ.copy()
@@ -246,15 +315,55 @@ class SubprocessExecutor:
         }
         self._emit_audit({**base_record, "phase": "started"})
         try:
-            completed = subprocess.run(
-                self.argv,
-                cwd=str(task_dir),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                check=False,
-            )
+            # Files, rather than pipes, ensure a descendant that inherited
+            # stdout/stderr cannot keep ``communicate`` blocked after the
+            # declared executor exits.  The executor starts a new session so
+            # timeout/cancellation has an additional process-group fence.
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
+                with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+                    process = subprocess.Popen(
+                        self.argv,
+                        cwd=str(task_dir),
+                        env=env,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        text=True,
+                        start_new_session=True,
+                    )
+                    with self._process_lock:
+                        self._cancel_reason = ""
+                        self._active_process = process
+                    timed_out = False
+                    try:
+                        process.wait(timeout=self.timeout)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        _terminate_process_tree(process)
+                        process.wait()
+                    finally:
+                        # A successful command may still have background
+                        # descendants.  Retire them before releasing the task.
+                        _terminate_process_tree(process, grace_seconds=0.0)
+                        with self._process_lock:
+                            cancel_reason = self._cancel_reason
+                            self._active_process = None
+                    stdout_file.seek(0)
+                    stderr_file.seek(0)
+                    stdout = stdout_file.read()
+                    stderr = stderr_file.read()
+                    if timed_out:
+                        raise subprocess.TimeoutExpired(
+                            self.argv,
+                            self.timeout or 0.0,
+                            output=stdout,
+                            stderr=stderr,
+                        )
+                    completed = subprocess.CompletedProcess(
+                        self.argv,
+                        int(process.returncode),
+                        stdout,
+                        stderr,
+                    )
         except subprocess.TimeoutExpired as exc:
             completed_at = _utcnow()
             stdout = _coerce_process_output(exc.stdout)
@@ -291,10 +400,15 @@ class SubprocessExecutor:
         completed_at = _utcnow()
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
+        cancelled = bool(cancel_reason)
         self._emit_audit(
             {
                 **base_record,
-                "phase": "completed" if completed.returncode == 0 else "failed",
+                "phase": (
+                    "cancelled"
+                    if cancelled
+                    else "completed" if completed.returncode == 0 else "failed"
+                ),
                 "completed_at": completed_at,
                 "duration_ms": (time.monotonic() - started_monotonic) * 1000.0,
                 "returncode": completed.returncode,
@@ -302,6 +416,10 @@ class SubprocessExecutor:
                 "stderr_sha256": _sha256_text(stderr),
                 "stdout_bytes": len(stdout.encode("utf-8")),
                 "stderr_bytes": len(stderr.encode("utf-8")),
+                "metadata": {
+                    **base_record["metadata"],
+                    **({"cancel_reason": cancel_reason} if cancelled else {}),
+                },
             }
         )
         return WorkerExecution(
@@ -759,6 +877,7 @@ class MacWorker:
         and the Job pod just needs to execute it.
         """
         task_id = task["id"]
+        task_dir: Optional[Path] = None
         self._observe_log(
             "worker.task_claimed",
             subject_type="task",
@@ -860,6 +979,47 @@ class MacWorker:
                         "manual_repair_required": True,
                         "returncode": execution.returncode,
                         "evidence_id": evidence["id"],
+                    },
+                },
+            )
+            return WorkerRunResult(
+                status="blocked",
+                task=blocked_task,
+                lease=lease,
+                evidence=evidence,
+                error=execution.summary,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if not self._assignment_is_current(task_id, lease["id"]):
+                return self._stale_result(task_id, lease, str(exc))
+            stdout = _coerce_process_output(exc.stdout)
+            stderr = _coerce_process_output(exc.stderr)
+            execution = WorkerExecution(
+                124,
+                "executor timed out after %ss" % exc.timeout,
+                stdout=stdout,
+                stderr=stderr,
+                metadata={
+                    "timeout_seconds": exc.timeout,
+                    "process_tree_terminated": True,
+                },
+            )
+            evidence = (
+                self._record_execution(task_id, task_dir, execution)
+                if task_dir is not None
+                else None
+            )
+            blocked_task = self.client.post(
+                "/tasks/%s/transition" % quote(task_id, safe=""),
+                {
+                    "target_state": "blocked",
+                    "actor": self.agent_id,
+                    "detail": {
+                        "reason": "executor_timeout",
+                        "manual_repair_required": True,
+                        "timeout_seconds": exc.timeout,
+                        "process_tree_terminated": True,
+                        "evidence_id": evidence.get("id") if evidence else None,
                     },
                 },
             )
@@ -1010,7 +1170,39 @@ class MacWorker:
         stop: threading.Event,
         interval_seconds: float,
     ) -> None:
-        while not stop.wait(interval_seconds):
+        cancellation_poll_seconds = max(
+            0.01,
+            min(
+                5.0,
+                _env_float("MAC_WORKER_CANCELLATION_POLL_SECONDS", 5.0),
+                interval_seconds,
+            ),
+        )
+        next_renewal = time.monotonic() + interval_seconds
+        while not stop.wait(cancellation_poll_seconds):
+            if (
+                isinstance(self.executor, SubprocessExecutor)
+                and self.executor.has_active_process()
+                and not self._assignment_is_current(task_id, lease_id)
+            ):
+                reason = "task assignment is no longer current"
+                cancelled = self.executor.cancel_current(reason)
+                self._observe_log(
+                    "worker.execution.cancelled",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={
+                        "agent_id": self.agent_id,
+                        "lease_id": lease_id,
+                        "reason": reason,
+                        "process_tree_terminated": cancelled,
+                    },
+                )
+                return
+            if time.monotonic() < next_renewal:
+                continue
+            next_renewal = time.monotonic() + interval_seconds
             try:
                 lease = self.client.post(
                     "/leases/%s/renew" % quote(lease_id, safe=""),
@@ -5253,6 +5445,7 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "stdout.txt", "stdout.txt", "stdout"),
         (task_dir / "stderr.txt", "stderr.txt", "stderr"),
         (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
+        (task_dir / "finalizer-progress.json", "finalizer-progress.json", "finalizer_progress"),
         (task_dir / "mac-sandbox-verification.json", "mac-sandbox-verification.json", "sandbox_verification"),
         (task_dir / "openshell-salvage.json", "openshell-salvage.json", "sandbox_salvage"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),

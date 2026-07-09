@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import mac.gitops as gitops
@@ -288,3 +289,24 @@ def test_sync_worktree_conflict_aborts_and_preserves_work(tmp_path: Path) -> Non
 def test_sync_worktree_no_remote_is_skipped(tmp_path: Path) -> None:
     origin, canonical, work, base = _fixture(tmp_path)
     assert gitops.sync_worktree_with_canonical(work, "", "main")["status"] == "skipped"
+
+
+def test_guarded_push_phase_budget_bounds_publication_lock_wait(tmp_path: Path) -> None:
+    _origin, canonical, work, base = _fixture(tmp_path)
+    target = resolve_canonical_publication_target(
+        worktree=work,
+        canonical_remote=canonical.as_uri(),
+        canonical_branch="main",
+        destination_branch="task/lock-timeout",
+        prepared_base_sha=base,
+        isolation_key="task-lock-timeout",
+    )
+    with target.lock_path.open("a+", encoding="utf-8") as held_lock:
+        gitops.fcntl.flock(held_lock, gitops.fcntl.LOCK_EX)
+        started = time.monotonic()
+        result = guarded_push(target, timeout=0.1)
+        elapsed = time.monotonic() - started
+
+    assert result.ok is False
+    assert "timed out acquiring canonical publication lock" in result.error
+    assert elapsed < 1.0

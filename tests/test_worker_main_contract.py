@@ -262,13 +262,29 @@ def test_subprocess_executor_audits_timeout_oserror_and_sink_failure(
     executor.audit_sink = audit.append
     executor.audit_context = {"task_id": "task_1", "lease_id": "lease_1"}
 
-    monkeypatch.setattr(
-        worker.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired("runner", 2, output=b"partial", stderr=b"late")
-        ),
-    )
+    class TimeoutProcess:
+        pid = 999999
+        returncode = -9
+
+        def __init__(self, *_args, **kwargs):
+            kwargs["stdout"].write("partial")
+            kwargs["stderr"].write("late")
+            self.wait_count = 0
+
+        def wait(self, timeout=None):
+            self.wait_count += 1
+            if self.wait_count == 1:
+                raise subprocess.TimeoutExpired("runner", timeout)
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(worker.subprocess, "Popen", TimeoutProcess)
+    monkeypatch.setattr(worker, "_terminate_process_tree", lambda *_args, **_kwargs: None)
     with pytest.raises(subprocess.TimeoutExpired):
         executor(task, task_dir)
     assert audit[-1]["phase"] == "timeout"
@@ -276,7 +292,7 @@ def test_subprocess_executor_audits_timeout_oserror_and_sink_failure(
 
     monkeypatch.setattr(
         worker.subprocess,
-        "run",
+        "Popen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("missing executable")),
     )
     with pytest.raises(OSError, match="missing executable"):

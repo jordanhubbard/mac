@@ -3859,3 +3859,95 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, mon
 def test_load_preserved_executor_state_missing_snapshot_raises(tmp_path):
     with pytest.raises(te.PreservationMissing):
         te.load_preserved_executor_state(tmp_path)
+
+
+def test_finalizer_phase_timeout_supports_per_phase_override(monkeypatch):
+    monkeypatch.setenv("MAC_FINALIZER_GUARDED_PUSH_TIMEOUT", "42.5")
+
+    assert te._finalizer_phase_timeout("guarded_push") == 42.5
+
+
+def test_finalizer_phase_context_persists_active_and_timeout_state(tmp_path, monkeypatch):
+    events = []
+    partial = []
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda event, **detail: events.append((event, detail)) or True
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        with te._FinalizerPhaseContext(
+            tmp_path,
+            "task_phase_timeout",
+            "guarded_push",
+            partial_evidence_fn=lambda **detail: partial.append(detail),
+        ):
+            running = json.loads(
+                (tmp_path / "finalizer-progress.json").read_text(encoding="utf-8")
+            )
+            assert running["status"] == "running"
+            assert running["phase"] == "guarded_push"
+            raise subprocess.TimeoutExpired(["git", "push"], 1.0)
+
+    completed = json.loads(
+        (tmp_path / "finalizer-progress.json").read_text(encoding="utf-8")
+    )
+    assert completed["status"] == "timeout"
+    assert completed["elapsed_ms"] >= 0
+    assert partial == [{"phase": "guarded_push", "reason": "timeout"}]
+    assert [event for event, _ in events] == [
+        "finalizer_phase_started",
+        "finalizer_phase_timeout",
+    ]
+
+
+def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
+    _origin, canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    events = []
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda event, **detail: events.append((event, detail)) or True
+    )
+    task = {
+        "id": "task_phase_lifecycle",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": canonical.as_uri(),
+                    "test": {"command": "true"},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    started = {
+        detail["phase"]
+        for event, detail in events
+        if event == "finalizer_phase_started"
+    }
+    completed = {
+        detail["phase"]
+        for event, detail in events
+        if event == "finalizer_phase_completed"
+    }
+    expected = {
+        "repository_snapshot",
+        "canonical_sync",
+        "cleanup",
+        "bootstrap",
+        "contract_tests",
+        "publication_preflight",
+        "codegraph_audit",
+        "guarded_push",
+        "evidence_writeback",
+    }
+    assert expected <= started
+    assert expected <= completed
+    assert any(event == "finalizer_completed" for event, _ in events)
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is True

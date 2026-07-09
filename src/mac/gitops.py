@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import fcntl
+import functools
 import hashlib
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +30,7 @@ _GIT_REMOTE_URL_RE = re.compile(
 )
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+_GIT_TIMEOUT_STATE = threading.local()
 
 
 def validate_git_remote_url(value: str) -> str:
@@ -270,16 +273,102 @@ def redact_git_remote_auth_in_text(value: str) -> str:
     return _AUTHED_HTTP_REMOTE_RE.sub(r"\1\2:<redacted>@\4", text)
 
 
+def _git_timeout_scope(timeout: Optional[float]):
+    class _Scope:
+        def __enter__(self) -> None:
+            self.prior = getattr(_GIT_TIMEOUT_STATE, "deadline", None)
+            if timeout is None:
+                self.deadline = self.prior
+            else:
+                self.deadline = time.monotonic() + max(0.001, float(timeout))
+            _GIT_TIMEOUT_STATE.deadline = self.deadline
+
+        def __exit__(self, *_args: object) -> None:
+            _GIT_TIMEOUT_STATE.deadline = self.prior
+
+    return _Scope()
+
+
+def _remaining_git_timeout() -> Optional[float]:
+    deadline = getattr(_GIT_TIMEOUT_STATE, "deadline", None)
+    if deadline is None:
+        return None
+    return max(0.001, float(deadline) - time.monotonic())
+
+
+def _git_timeout_scoped(function):
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        timeout = kwargs.pop("timeout", None)
+        with _git_timeout_scope(timeout):
+            return function(*args, **kwargs)
+
+    return wrapped
+
+
+def _kill_git_process_tree(process: subprocess.Popen[str]) -> None:
+    try:
+        import psutil
+
+        parent = psutil.Process(process.pid)
+        descendants = parent.children(recursive=True)
+        for item in reversed(descendants):
+            try:
+                item.kill()
+            except psutil.NoSuchProcess:
+                pass
+        try:
+            parent.kill()
+        except psutil.NoSuchProcess:
+            pass
+    except Exception:  # noqa: BLE001 - retain the process-group fallback.
+        pass
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, 9)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        if process.poll() is None:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def _run_git(worktree: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     argv = ["git", *args]
+    timeout = _remaining_git_timeout()
     try:
-        return subprocess.run(
+        if timeout is None:
+            return subprocess.run(
+                argv,
+                cwd=str(worktree),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        process = subprocess.Popen(
             argv,
             cwd=str(worktree),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            start_new_session=os.name == "posix",
         )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _kill_git_process_tree(process)
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(
+                argv,
+                124,
+                stdout or (exc.stdout if isinstance(exc.stdout, str) else ""),
+                stderr
+                or (exc.stderr if isinstance(exc.stderr, str) else "")
+                or "git operation exceeded finalizer phase budget",
+            )
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
     except OSError as exc:
         return subprocess.CompletedProcess(argv, 127, "", str(exc))
 
@@ -289,6 +378,7 @@ def _git_failure(proc: subprocess.CompletedProcess[str], fallback: str) -> str:
     return redact_git_remote_auth_in_text(detail)
 
 
+@_git_timeout_scoped
 def resolve_canonical_publication_target(
     *,
     worktree: Path,
@@ -297,6 +387,7 @@ def resolve_canonical_publication_target(
     destination_branch: str,
     prepared_base_sha: str,
     isolation_key: str,
+    timeout: Optional[float] = None,
 ) -> CanonicalPublicationTarget:
     """Resolve and validate the immutable target reused by check and push."""
     root = Path(worktree).expanduser().resolve()
@@ -566,8 +657,13 @@ def _canonical_freshness_locked(
     )
 
 
+@_git_timeout_scoped
 def sync_worktree_with_canonical(
-    worktree: Path, canonical_remote: str, canonical_branch: str
+    worktree: Path,
+    canonical_remote: str,
+    canonical_branch: str,
+    *,
+    timeout: Optional[float] = None,
 ) -> Dict[str, str]:
     """Rebase the task worktree onto the advanced canonical tip BEFORE the
     contract test runs, so the suite validates the projected published tree.
@@ -617,15 +713,21 @@ def sync_worktree_with_canonical(
     return {"status": "rebased", "canonical_tip": tip}
 
 
+@_git_timeout_scoped
 def check_canonical_freshness(
     target: CanonicalPublicationTarget,
+    *,
+    timeout: Optional[float] = None,
 ) -> CanonicalFreshnessResult:
     """Fetch and verify canonical ancestry without publishing anything."""
     return _canonical_publication_operation(target, push=False)
 
 
+@_git_timeout_scoped
 def guarded_push(
     target: CanonicalPublicationTarget,
+    *,
+    timeout: Optional[float] = None,
 ) -> CanonicalFreshnessResult:
     """Re-fetch canonical state and push only when task HEAD contains it.
 
@@ -651,7 +753,26 @@ def _canonical_publication_operation(
     result: Optional[CanonicalFreshnessResult] = None
     try:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            remaining = _remaining_git_timeout()
+            if remaining is None:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            else:
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        remaining = _remaining_git_timeout()
+                        if remaining is not None and remaining <= 0.01:
+                            return CanonicalFreshnessResult(
+                                False,
+                                target,
+                                head_sha=target.task_head_sha,
+                                error="timed out acquiring canonical publication lock",
+                            )
+                        time.sleep(
+                            min(0.05, remaining) if remaining is not None else 0.05
+                        )
         except OSError as exc:
             return CanonicalFreshnessResult(
                 False,

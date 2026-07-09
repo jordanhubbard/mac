@@ -2260,6 +2260,8 @@ def _repository_bootstrap_timeout() -> float:
 def _run_repository_bootstrap_if_needed(
     worktree_path: Path,
     task: Dict[str, Any],
+    *,
+    timeout: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     bootstrap = _repository_contract_bootstrap(task)
     command = str(bootstrap.get("command") or "").strip()
@@ -2281,13 +2283,10 @@ def _run_repository_bootstrap_if_needed(
         }
     started = time.time()
     try:
-        completed = subprocess.run(
+        completed = _run_captured(
             ["bash", "-lc", command],
-            cwd=str(worktree_path),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_repository_bootstrap_timeout(),
+            worktree_path,
+            timeout if timeout is not None else _repository_bootstrap_timeout(),
         )
         return {
             "command": command,
@@ -2542,8 +2541,11 @@ def _blind_review_protocol(
 # Deterministic finalizers + fail-closed fallback (ported, behavior preserved)
 # ---------------------------------------------------------------------------
 
-def _git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+def _git(args, cwd, *, timeout: Optional[float] = None):
+    argv = ["git", *args]
+    if timeout is None:
+        return subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, check=False)
+    return _run_captured(argv, Path(cwd), timeout)
 
 
 def _split_porcelain_status(status_text: str) -> tuple[List[str], List[str], List[str]]:
@@ -2744,6 +2746,210 @@ def _record_recovery_learnings(
             pass
 
 
+_FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
+    "repository_snapshot": 60.0,
+    "canonical_sync": 300.0,
+    "cleanup": 120.0,
+    "bootstrap": 1800.0,
+    "contract_tests": 1800.0,
+    "publication_preflight": 180.0,
+    "codegraph_audit": 300.0,
+    "guarded_push": 180.0,
+    "evidence_writeback": 60.0,
+    "lesson_curation": 60.0,
+}
+
+
+def _finalizer_phase_timeout(phase: str) -> float:
+    env_key = "MAC_FINALIZER_%s_TIMEOUT" % phase.upper().replace("-", "_")
+    raw = os.environ.get(env_key, "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    if phase == "bootstrap":
+        return _repository_bootstrap_timeout()
+    if phase == "contract_tests":
+        try:
+            value = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "") or 1800.0)
+            return value if value > 0 else 1800.0
+        except ValueError:
+            return 1800.0
+    return _FINALIZER_PHASE_DEFAULTS.get(phase, 600.0)
+
+
+class _FinalizerPhaseContext:
+    """Persist and emit one bounded finalizer phase's lifecycle.
+
+    The context supplies the budget to the operation it encloses; subprocess
+    boundaries must use ``timeout`` so the limit is enforced where the process
+    tree can be terminated safely.  ``finalizer-progress.json`` is written at
+    phase start as well as completion, leaving a durable active-phase marker if
+    the executor itself is killed.
+    """
+
+    def __init__(
+        self,
+        task_workspace: Path,
+        task_id: Optional[str],
+        phase: str,
+        *,
+        partial_evidence_fn: Optional[Callable[..., None]] = None,
+    ) -> None:
+        self.task_workspace = task_workspace
+        self.task_id = task_id
+        self.phase = phase
+        self.timeout = _finalizer_phase_timeout(phase)
+        self.partial_evidence_fn = partial_evidence_fn
+        self.started_at = ""
+        self._started = 0.0
+        self.deadline = 0.0
+        self._status = "pass"
+        self._reason = ""
+
+    @property
+    def remaining(self) -> float:
+        return max(0.001, self.deadline - time.monotonic())
+
+    def _write_progress(self, status: str, **extra: Any) -> None:
+        payload = {
+            "schema": "mac.finalizer_progress.v1",
+            "task_id": self.task_id,
+            "phase": self.phase,
+            "status": status,
+            "started_at": self.started_at,
+            "budget_seconds": self.timeout,
+            **extra,
+        }
+        path = self.task_workspace / "finalizer-progress.json"
+        temporary = self.task_workspace / "finalizer-progress.json.tmp"
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temporary.replace(path)
+
+    def mark_failed(self, reason: str = "") -> None:
+        self._status = "fail"
+        self._reason = str(reason or "")
+
+    def __enter__(self) -> "_FinalizerPhaseContext":
+        self._started = time.monotonic()
+        self.deadline = self._started + self.timeout
+        self.started_at = utcnow()
+        self._write_progress(
+            "running",
+            deadline_monotonic=self.deadline,
+        )
+        emit_telemetry(
+            "finalizer_phase_started",
+            task_id=self.task_id,
+            phase=self.phase,
+            budget_seconds=self.timeout,
+        )
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, _traceback: Any) -> bool:
+        elapsed_ms = (time.monotonic() - self._started) * 1000.0
+        timed_out = bool(
+            exc_type is not None
+            and issubclass(exc_type, (TimeoutError, subprocess.TimeoutExpired))
+        )
+        cancelled = bool(
+            exc_type is not None and issubclass(exc_type, (KeyboardInterrupt, SystemExit))
+        )
+        if timed_out:
+            status = "timeout"
+        elif cancelled:
+            status = "cancelled"
+        elif exc_type is not None:
+            status = "fail"
+        else:
+            status = self._status
+        reason = self._reason or (str(exc_value) if exc_value is not None else "")
+        self._write_progress(
+            status,
+            completed_at=utcnow(),
+            elapsed_ms=elapsed_ms,
+            reason=reason,
+        )
+        event = (
+            "finalizer_phase_timeout"
+            if timed_out
+            else "finalizer_phase_cancelled" if cancelled else "finalizer_phase_completed"
+        )
+        emit_telemetry(
+            event,
+            task_id=self.task_id,
+            level="warning" if status != "pass" else "info",
+            phase=self.phase,
+            status=status,
+            budget_seconds=self.timeout,
+            elapsed_ms=elapsed_ms,
+            reason=reason,
+        )
+        if (timed_out or cancelled or exc_type is not None) and self.partial_evidence_fn:
+            try:
+                self.partial_evidence_fn(phase=self.phase, reason=status)
+            except Exception:  # noqa: BLE001 - retain the original exception.
+                pass
+        return False
+
+
+def _write_partial_finalizer_evidence(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    *,
+    phase: str,
+    reason: str,
+    head_sha: str = "",
+    base_sha: str = "",
+    branch: str = "",
+    files_changed: Optional[List[str]] = None,
+    bootstrap: Optional[Dict[str, Any]] = None,
+    tests: Optional[Dict[str, Any]] = None,
+    codegraph: Optional[Dict[str, Any]] = None,
+) -> None:
+    manifest: Dict[str, Any] = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "fail",
+        "partial": True,
+        "evidence_type": "repo_change",
+        "summary": "Deterministic finalizer interrupted during %s: %s" % (phase, reason),
+        "finalizer_interrupted": {"phase": phase, "reason": reason},
+        "repo": {
+            "head_sha": head_sha,
+            "base_sha": base_sha,
+            "pushed": False,
+            "remote_ref": "refs/heads/" + branch if branch and branch != "HEAD" else "",
+            "dirty": True,
+            "files_changed": list(files_changed or []),
+        },
+        "tests": [tests] if tests is not None else None,
+        "push": {
+            "returncode": 124 if reason == "timeout" else 1,
+            "status": "skipped",
+            "reason": "finalizer interrupted during %s: %s" % (phase, reason),
+        },
+        "checks": [
+            {
+                "name": "git_finalizer",
+                "returncode": 124 if reason == "timeout" else 1,
+                "status": "fail",
+            }
+        ],
+    }
+    if bootstrap is not None:
+        manifest["bootstrap"] = bootstrap
+    if codegraph is not None:
+        manifest["codegraph"] = codegraph
+    (task_workspace / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) -> None:
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
@@ -2758,52 +2964,123 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     worktree_path = Path(worktree).expanduser() if worktree else None
     if not worktree_path or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
         return
-    status = _git(["status", "--porcelain"], worktree_path)
-    tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(status.stdout)
-    if untracked_paths:
-        _write_git_finalizer_refusal_manifest(
+    task_id = str(task.get("id") or "") or None
+    emit_telemetry("finalizer_started", task_id=task_id)
+    progress: Dict[str, Any] = {
+        "head_sha": "",
+        "base_sha": _repository_prepared_base(task),
+        "branch": "",
+        "files_changed": [],
+        "bootstrap": None,
+        "tests": None,
+        "codegraph": None,
+    }
+
+    def _partial_evidence(*, phase: str, reason: str) -> None:
+        _write_partial_finalizer_evidence(
             task_workspace,
             task,
-            worktree_path,
-            _untracked_finalize_message(untracked_paths),
-            status_stdout=status.stdout,
-            untracked_paths=untracked_paths,
-            staged_new_paths=[],
+            phase=phase,
+            reason=reason,
+            head_sha=str(progress["head_sha"]),
+            base_sha=str(progress["base_sha"]),
+            branch=str(progress["branch"]),
+            files_changed=list(progress["files_changed"]),
+            bootstrap=progress["bootstrap"],
+            tests=progress["tests"],
+            codegraph=progress["codegraph"],
         )
-        return
-    if staged_new_paths:
-        _write_git_finalizer_refusal_manifest(
-            task_workspace,
-            task,
-            worktree_path,
-            _new_file_finalize_message(staged_new_paths),
-            status_stdout=status.stdout,
-            untracked_paths=[],
-            staged_new_paths=staged_new_paths,
+
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "repository_snapshot",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        status = _git(
+            ["status", "--porcelain"], worktree_path, timeout=phase.remaining
         )
-        return
-    if tracked_lines:
-        _git(["add", "-u"], worktree_path)
-        commit_msg = "auto-commit: %s" % task.get("id", "unknown")
-        _git(
-            ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet", "commit", "-m", commit_msg],
-            worktree_path,
+        tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(
+            status.stdout
         )
-    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
-    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+        if untracked_paths:
+            _write_git_finalizer_refusal_manifest(
+                task_workspace,
+                task,
+                worktree_path,
+                _untracked_finalize_message(untracked_paths),
+                status_stdout=status.stdout,
+                untracked_paths=untracked_paths,
+                staged_new_paths=[],
+            )
+            phase.mark_failed("untracked files refused")
+            return
+        if staged_new_paths:
+            _write_git_finalizer_refusal_manifest(
+                task_workspace,
+                task,
+                worktree_path,
+                _new_file_finalize_message(staged_new_paths),
+                status_stdout=status.stdout,
+                untracked_paths=[],
+                staged_new_paths=staged_new_paths,
+            )
+            phase.mark_failed("staged new files refused")
+            return
+        if tracked_lines:
+            _git(["add", "-u"], worktree_path, timeout=phase.remaining)
+            commit_msg = "auto-commit: %s" % task.get("id", "unknown")
+            _git(
+                [
+                    "-c",
+                    "user.email=mac-fleet@nvidia.com",
+                    "-c",
+                    "user.name=MAC fleet",
+                    "commit",
+                    "-m",
+                    commit_msg,
+                ],
+                worktree_path,
+                timeout=phase.remaining,
+            )
+        head_sha = _git(
+            ["rev-parse", "HEAD"], worktree_path, timeout=phase.remaining
+        ).stdout.strip()
+        branch = (
+            _git(
+                ["rev-parse", "--abbrev-ref", "HEAD"],
+                worktree_path,
+                timeout=phase.remaining,
+            ).stdout.strip()
+            or "HEAD"
+        )
+        progress["head_sha"] = head_sha
+        progress["branch"] = branch
     # Rebase onto the advanced canonical tip BEFORE the contract test runs, so
     # the suite validates the projected published tree. Fleet agents race each
     # other to one canonical branch; a task that took an hour almost always
     # finds main moved, and without this it dies at the publication freshness
     # gate after all its work passed. Clean rebases only — a conflict aborts
     # and the existing gate reports its precise error.
-    canonical_sync = sync_worktree_with_canonical(
-        worktree_path,
-        _repository_publication_remote(task),
-        _repository_contract_canonical_branch(task),
-    )
-    if canonical_sync.get("status") == "rebased":
-        head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "canonical_sync",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        canonical_sync = sync_worktree_with_canonical(
+            worktree_path,
+            _repository_publication_remote(task),
+            _repository_contract_canonical_branch(task),
+            timeout=phase.remaining,
+        )
+        if canonical_sync.get("status") == "rebased":
+            head_sha = _git(
+                ["rev-parse", "HEAD"], worktree_path, timeout=phase.remaining
+            ).stdout.strip()
+            progress["head_sha"] = head_sha
+        if canonical_sync.get("status") not in {"fresh", "rebased"}:
+            phase.mark_failed(str(canonical_sync.get("reason") or canonical_sync.get("status")))
     # Purge synced build artifacts before the host build. The agent built in the
     # task SANDBOX (e.g. Linux); those object files / binaries sync back into this
     # worktree, but this finalizer runs on the EXECUTOR HOST, which may be a
@@ -2812,34 +3089,66 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     # binary the host can't execute -> spurious "tests failed". `git clean -Xdf`
     # removes only gitignored files (obj/, bin/, caches) and keeps the agent's
     # new untracked SOURCE files, forcing a clean native rebuild.
-    _git(["clean", "-Xdf"], worktree_path)
-    bootstrap = _run_repository_bootstrap_if_needed(worktree_path, task)
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "cleanup",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        cleanup = _git(["clean", "-Xdf"], worktree_path, timeout=phase.remaining)
+        if cleanup.returncode != 0:
+            phase.mark_failed(clip_process_text(cleanup.stderr or cleanup.stdout))
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "bootstrap",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        bootstrap = _run_repository_bootstrap_if_needed(
+            worktree_path, task, timeout=phase.remaining
+        )
+        progress["bootstrap"] = bootstrap
+        if bootstrap is not None and bootstrap.get("returncode") != 0:
+            phase.mark_failed(str(bootstrap.get("error") or bootstrap.get("status")))
     test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
     tests = None
     if test_cmd:
-        # Progress-based: kills on output stall, not on a total-runtime guess
-        # that goes stale every time legitimate work grows.
-        tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], worktree_path)
-        tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
-        import re as _re
+        with _FinalizerPhaseContext(
+            task_workspace,
+            task_id,
+            "contract_tests",
+            partial_evidence_fn=_partial_evidence,
+        ) as phase:
+            # Progress watchdog plus a phase hard ceiling; both terminate the
+            # complete verifier process group.
+            tr = run_with_stall_watchdog(
+                ["bash", "-lc", test_cmd],
+                worktree_path,
+                hard_timeout=phase.remaining,
+            )
+            tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
+            import re as _re
 
-        passed = failed = total = None
-        m = _re.search(r"(\d+) passed", tail)
-        if m:
-            passed = int(m.group(1))
-        m = _re.search(r"(\d+) failed", tail)
-        if m:
-            failed = int(m.group(1))
-        if passed is not None or failed is not None:
-            total = (passed or 0) + (failed or 0)
-        tests = {
-            "command": test_cmd,
-            "returncode": int(tr.returncode),
-            "passed": passed,
-            "failed": failed,
-            "total": total,
-            "status": "pass" if tr.returncode == 0 else "fail",
-        }
+            passed = failed = total = None
+            m = _re.search(r"(\d+) passed", tail)
+            if m:
+                passed = int(m.group(1))
+            m = _re.search(r"(\d+) failed", tail)
+            if m:
+                failed = int(m.group(1))
+            if passed is not None or failed is not None:
+                total = (passed or 0) + (failed or 0)
+            tests = {
+                "command": test_cmd,
+                "returncode": int(tr.returncode),
+                "passed": passed,
+                "failed": failed,
+                "total": total,
+                "status": "pass" if tr.returncode == 0 else "fail",
+            }
+            progress["tests"] = tests
+            if tr.returncode != 0:
+                phase.mark_failed(clip_process_text(tr.stderr or tr.stdout))
     bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
     tests_ok = tests is None or tests.get("returncode") == 0
     canonical_remote_raw = _repository_publication_remote(task)
@@ -2848,37 +3157,65 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     lease_id = _repository_lease_id(task)
     destination_branch = branch if branch != "HEAD" else ""
     publication_target = None
-    try:
-        if not lease_id:
-            raise ValueError("repository context is missing repository_lease_id")
-        publication_target = resolve_canonical_publication_target(
-            worktree=worktree_path,
-            canonical_remote=canonical_remote_raw,
-            canonical_branch=canonical_branch,
-            destination_branch=destination_branch,
-            prepared_base_sha=prepared_base_sha,
-            isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
-        )
-        freshness = check_canonical_freshness(publication_target)
-    except (OSError, ValueError) as exc:
-        freshness = CanonicalFreshnessResult(
-            False,
-            publication_target,
-            head_sha=head_sha,
-            error=str(exc),
-        )
-    freshness_error: Optional[str] = None if freshness.ok else freshness.error
-    base_sha = freshness.canonical_tip_sha or prepared_base_sha
-    files_changed = list(freshness.files_changed)
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "publication_preflight",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        try:
+            if not lease_id:
+                raise ValueError("repository context is missing repository_lease_id")
+            publication_target = resolve_canonical_publication_target(
+                worktree=worktree_path,
+                canonical_remote=canonical_remote_raw,
+                canonical_branch=canonical_branch,
+                destination_branch=destination_branch,
+                prepared_base_sha=prepared_base_sha,
+                isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
+                timeout=phase.remaining,
+            )
+            freshness = check_canonical_freshness(
+                publication_target, timeout=phase.remaining
+            )
+        except (OSError, ValueError) as exc:
+            freshness = CanonicalFreshnessResult(
+                False,
+                publication_target,
+                head_sha=head_sha,
+                error=str(exc),
+            )
+        if not freshness.ok:
+            phase.mark_failed(freshness.error)
+        freshness_error: Optional[str] = None if freshness.ok else freshness.error
+        base_sha = freshness.canonical_tip_sha or prepared_base_sha
+        files_changed = list(freshness.files_changed)
+        progress["base_sha"] = base_sha
+        progress["files_changed"] = files_changed
     # Record the diff base (canonical tip) so the reviewer can compute a
     # non-empty base..head diff. Without base_sha the review snapshot's
     # files_changed is always [] (which the repo_change validator rejects).
-    codegraph = run_codegraph_audit(worktree_path, files_changed)
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "codegraph_audit",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        codegraph = run_codegraph_audit(
+            worktree_path, files_changed, timeout=phase.remaining
+        )
+        progress["codegraph"] = codegraph
+        if str(codegraph.get("status") or "") not in {"pass", "skipped"}:
+            phase.mark_failed(str(codegraph.get("reason") or "codegraph audit failed"))
     codegraph_problems = codegraph_audit_manifest_problems(
         {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
     )
     codegraph_ok = not codegraph_problems
-    final_status = _git(["status", "--porcelain"], worktree_path).stdout.strip()
+    final_status = _git(
+        ["status", "--porcelain"],
+        worktree_path,
+        timeout=_finalizer_phase_timeout("publication_preflight"),
+    ).stdout.strip()
     clean = not bool(final_status)
     freshness_ok = freshness_error is None
     pushed = False
@@ -2888,7 +3225,15 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     )
     if bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok:
         assert publication_target is not None
-        publication = guarded_push(publication_target)
+        with _FinalizerPhaseContext(
+            task_workspace,
+            task_id,
+            "guarded_push",
+            partial_evidence_fn=_partial_evidence,
+        ) as phase:
+            publication = guarded_push(publication_target, timeout=phase.remaining)
+            if not publication.ok or not publication.remote_verified:
+                phase.mark_failed(publication.error)
         push_remote_display = (
             publication.target.remote_display
             if publication.target is not None
@@ -2977,8 +3322,30 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     recovery_log = _load_harness_recovery_log(task_workspace)
     if recovery_log:
         manifest["recovery"] = recovery_log
-    (task_workspace / "mac-evidence.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "evidence_writeback",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        (task_workspace / "mac-evidence.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if not all_ok:
+            phase.mark_failed(
+                str(
+                    push_evidence.get("reason")
+                    or push_evidence.get("stderr")
+                    or "finalizer failed"
+                )
+            )
+    emit_telemetry(
+        "finalizer_completed",
+        task_id=task_id,
+        level="info" if all_ok else "warning",
+        all_ok=all_ok,
+        pushed=pushed,
+        head_sha=head_sha,
     )
 
 
@@ -6232,15 +6599,20 @@ def _run_executor(
             outcome=outcome["outcome"],
             signals=outcome["signals"],
         )
-        record_deployment_learning(task, outcome)
-        record_curated_lessons(task, outcome)
-        # recovery-learn-01: if mid-flight recoveries occurred, feed each
-        # choice+outcome into the deployment-learning loop so selection
-        # quality improves over time (task spec rule 5).
-        try:
-            _record_recovery_learnings(task_workspace, task, outcome)
-        except Exception:  # noqa: BLE001
-            pass
+        with _FinalizerPhaseContext(
+            task_workspace,
+            task_id,
+            "lesson_curation",
+        ):
+            record_deployment_learning(task, outcome)
+            record_curated_lessons(task, outcome)
+            # recovery-learn-01: if mid-flight recoveries occurred, feed each
+            # choice+outcome into the deployment-learning loop so selection
+            # quality improves future recovery choices.
+            try:
+                _record_recovery_learnings(task_workspace, task, outcome)
+            except Exception:  # noqa: BLE001
+                pass
 
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
