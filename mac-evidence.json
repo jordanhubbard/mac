@@ -1,32 +1,30 @@
 {
   "codegraph": {
-    "note": "Changed files are a bash shell script (install-openclaw-gateway.sh) and a test file. codegraph init ran successfully (38536 nodes, 126850 edges). codegraph affected reported no Python test files affected, as expected for shell script changes.",
-    "reason": "non_code_change",
-    "status": "skipped"
+    "affected": {
+      "affectedTests": [],
+      "changedFiles": [
+        "tests/test_openclaw_gateway_deploy.py"
+      ],
+      "totalDependentsTraversed": 0
+    },
+    "note": "Changed file is a test file only. codegraph init ran successfully (38618 nodes, 126977 edges). codegraph affected reported no downstream dependents, as expected for a test-only change.",
+    "status": "passed"
   },
   "evidence_type": "repo_change",
   "files_changed": [
-    "deploy/openclaw/install-openclaw-gateway.sh",
     "tests/test_openclaw_gateway_deploy.py"
   ],
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
-  "summary": "Fixed NemoClaw gateway_ownership state: absent supervisor program now reports not_installed instead of a raw error string. For the supervisord path, captured full supervisorctl output and checked for 'no such process' to set nemoclaw_state=not_installed. For the systemd path, normalized 'unknown' is-active result to not_installed. Added a comment in the inline Python block accepting not_installed as a valid non-error state. Added two new pytest tests (supervisord 'no such process' and systemd 'unknown' paths). All 13 tests in test_openclaw_gateway_deploy.py pass; full contract suite: 5518 passed, 1 pre-existing failure (test_invoke_sandboxed_runs_full_lifecycle, unrelated to this change).",
-  "task_id": "task_477ec0c9cc564b9fb0b2d2636530499f",
+  "summary": "Added two focused deployment tests covering hermes 'failed' state normalization and hermes-active rejection in tests/test_openclaw_gateway_deploy.py. test_finalize_systemd_hermes_failed_state_normalized_to_inactive verifies that finalize() succeeds and publishes hermes=inactive when systemctl returns 'failed' (exit 3). test_finalize_systemd_hermes_active_still_dies verifies that finalize() exits non-zero and does NOT publish an advertisement when hermes is still active. All 15 tests in the file pass.",
+  "task_id": "task_3bb4d641255e4d08ae1363adba5a14da",
   "tests": {
-    "command": "scripts/run-contract-tests.sh",
-    "coverage": {
-      "branches": "84.83%",
-      "floor_branches": "80.00%",
-      "floor_statements": "90.00%",
-      "statements": "93.33%"
-    },
-    "note": "1 pre-existing failure: tests/test_openshell_sandbox.py::test_invoke_sandboxed_runs_full_lifecycle (unrelated to this change).",
-    "result": "5518 passed, 21 skipped, 1 pre-existing failure",
+    "command": "python3 -m pytest tests/test_openclaw_gateway_deploy.py -x -q",
+    "result": "15 passed in 0.99s",
     "status": "passed",
     "targeted": {
-      "command": "pytest tests/test_openclaw_gateway_deploy.py -v",
-      "result": "13 passed in 1.27s"
+      "command": "python3 -m pytest tests/test_openclaw_gateway_deploy.py::test_finalize_systemd_hermes_failed_state_normalized_to_inactive tests/test_openclaw_gateway_deploy.py::test_finalize_systemd_hermes_active_still_dies -v",
+      "result": "2 passed in 0.11s"
     }
   }
 }

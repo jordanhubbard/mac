@@ -750,3 +750,138 @@ def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
     assert advertisement["gateway_ownership"]["exclusive"] is True
     assert advertisement["gateway_ownership"]["services"]["nemoclaw"] == "not_installed"
     assert not (openclaw_home / "verification-pending.json").exists()
+
+
+def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
+    tmp_path: Path,
+) -> None:
+    """systemctl is-active returning 'failed' (exit 3) for the hermes unit must
+    be normalized to inactive; finalize() must succeed and publish
+    services.hermes == 'inactive' (the normalized value) with exclusive == True."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    sudo = bin_dir / "sudo"
+    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.chmod(0o700)
+    # hermes returns "failed" with exit 3 — exactly what systemd emits when a
+    # unit stopped with an error but reset-failed was not yet called.
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
+        "  *-hermes-gateway.service)   echo failed; exit 3 ;;\n"
+        "  *-nemoclaw-gateway.service) echo unknown; exit 4 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "systemd",
+    }
+
+    result = subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, (
+        f"finalize() must succeed when hermes is in 'failed' state (normalized to inactive);\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    advertisement = json.loads(
+        (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
+    )
+    assert advertisement["gateway_ownership"]["exclusive"] is True
+    # The installer normalizes failed -> inactive before recording state.
+    assert advertisement["gateway_ownership"]["services"]["hermes"] == "inactive"
+    assert advertisement["gateway_ownership"]["services"]["nemoclaw"] == "not_installed"
+    assert not (openclaw_home / "verification-pending.json").exists()
+
+
+def test_finalize_systemd_hermes_active_still_dies(
+    tmp_path: Path,
+) -> None:
+    """When systemctl is-active returns 'active' for the hermes unit, finalize()
+    must exit with a non-zero code and must NOT publish a service advertisement."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    sudo = bin_dir / "sudo"
+    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.chmod(0o700)
+    # hermes is still active — OpenClaw cutover has not completed.
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
+        "  *-hermes-gateway.service)   echo active; exit 0 ;;\n"
+        "  *-nemoclaw-gateway.service) echo unknown; exit 4 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "systemd",
+    }
+
+    result = subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+
+    assert result.returncode != 0, (
+        "finalize() must fail (non-zero exit) when hermes is still active after OpenClaw cutover"
+    )
+    assert not (openclaw_home / "service-advertisement.json").exists(), (
+        "service-advertisement.json must NOT be written when hermes is still active"
+    )
