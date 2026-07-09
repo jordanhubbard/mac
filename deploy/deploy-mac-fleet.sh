@@ -5878,6 +5878,11 @@ EOF
   fi
   if truthy "$DEFER_AGENT_RESTART"; then
     log "deferring mac-agent restart until post-manifest reconciliation"
+    # An intentionally STOPPED supervisord program makes ``status`` return 3.
+    # Do not feed that expected state through the privilege fallback below;
+    # the post manifest records service state and the outer controller owns
+    # the subsequent restart/readback.
+    return 0
   else
     run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
     sleep 3

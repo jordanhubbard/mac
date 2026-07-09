@@ -57,6 +57,7 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
 
     assert 'DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"' in text
     assert text.count("deferring mac-agent restart until post-manifest reconciliation") == 3
+    assert "An intentionally STOPPED supervisord program makes" in text
     reconcile_pos = text.index('reconcile_remote_deploy "$agent" "$target"')
     external_restart_pos = text.index(
         'restarting mac-agent after post-manifest reconciliation', reconcile_pos
